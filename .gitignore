@@ -1,0 +1,49 @@
+# User data (NEVER commit)
+profile.json
+resume.txt
+resume.pdf
+*.env
+.env.*
+!.env.example
+
+# Runtime artifacts
+*.db
+.runtime_tailor_test/
+tailored_resumes/
+cover_letters/
+chrome-workers/
+apply-workers/
+apply_logs/
+logs/
+
+# Local design and planning scratchpads
+handoff_from_design/
+docs/superpowers/
+
+# MCP configs (per-machine)
+.mcp*.json
+
+# Python
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+.venv/
