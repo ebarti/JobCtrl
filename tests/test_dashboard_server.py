@@ -194,6 +194,11 @@ def test_live_dashboard_html_fetches_api_payload():
     assert "Import from resume PDF" in html
     assert "data-profile-splitter" in html
     assert "data-profile-panel-toggle" in html
+    assert "panes" in html
+    assert "show inputs" in html
+    assert "show preview" in html
+    assert "editors" not in html
+    assert "jobhunter.profileEditorPx" in html
     assert "jobhunter.profileEditorPct" in html
     assert 'id="jobhunter-data"' not in html
     assert "jobhunter status --watch" not in html
