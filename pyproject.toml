@@ -24,6 +24,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "playwright>=1.40",
     "python-dotenv>=1.0",
+    "pypdf>=5.0",
     "pyyaml>=6.0",
     "pandas>=2.0",
     ]

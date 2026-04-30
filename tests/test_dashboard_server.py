@@ -125,6 +125,22 @@ class _ServerContext:
         with urllib.request.urlopen(request, timeout=5) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def post_multipart(self, path: str, *, field_name: str, filename: str, payload: bytes):
+        boundary = "----jobhunter-test-boundary"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode("utf-8") + payload + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}{path}",
+            data=body,
+            headers={"content-type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+
     def patch_json(self, path: str, payload: dict):
         request = urllib.request.Request(
             f"{self.base_url}{path}",
@@ -174,6 +190,11 @@ def test_live_dashboard_html_fetches_api_payload():
     assert "/api/dashboard" in html
     assert "/api/open-artifact" in html
     assert "/api/profile-config" in html
+    assert "/api/profile-import" in html
+    assert "Import from resume PDF" in html
+    assert "data-profile-splitter" in html
+    assert "data-profile-panel-toggle" in html
+    assert "jobhunter.profileEditorPct" in html
     assert 'id="jobhunter-data"' not in html
     assert "jobhunter status --watch" not in html
     assert "jobhunter status" in html
@@ -285,6 +306,63 @@ def test_dashboard_profile_config_get_and_patch(tmp_path, monkeypatch):
         assert loaded["profile"]["exists"] is True
         assert loaded["profile"]["text"] == saved["profile"]["text"]
         assert loaded["latex_template"]["text"] == template_text
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_profile_import_returns_unsaved_profile_and_style_draft(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    profile_path = Path(tmp_path) / "profile.json"
+    template_path = Path(tmp_path) / "resume_template.tex"
+    style_path = Path(tmp_path) / "resume_style.json"
+    init_db(db_path)
+    imported_profile = _profile_payload()
+    imported_profile["personal"]["email"] = "imported@example.com"
+    imported_style = {
+        "document_font_size": "10pt",
+        "paper_size": "letterpaper",
+        "font_family": "roman",
+        "moderncv_style": "banking",
+        "moderncv_color": "green",
+        "page_scale": 0.8,
+        "hints_column_width_cm": 3.5,
+        "body_alignment": "left",
+    }
+
+    def fake_import_resume_pdf(pdf_bytes, *, filename="", base_profile=None, base_style=None):
+        assert pdf_bytes.startswith(b"%PDF")
+        assert filename == "resume.pdf"
+        assert base_profile["personal"]["email"] == "jordan.candidate@example.com"
+        return {
+            "profile": imported_profile,
+            "style": imported_style,
+            "source": {"filename": filename, "pages": 1, "warnings": []},
+        }
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.PROFILE_PATH", profile_path)
+        monkeypatch.setattr("jobhunter.config.RESUME_TEMPLATE_PATH", template_path)
+        monkeypatch.setattr("jobhunter.config.RESUME_STYLE_PATH", style_path)
+        monkeypatch.setattr("jobhunter.dashboard_server.import_resume_pdf", fake_import_resume_pdf)
+
+        with _ServerContext() as server:
+            imported = server.post_multipart(
+                "/api/profile-import",
+                field_name="resume_pdf",
+                filename="resume.pdf",
+                payload=b"%PDF-1.7 test",
+            )
+
+        assert imported["ok"] is True
+        assert imported["profile"]["data"]["personal"]["email"] == "imported@example.com"
+        assert imported["style"]["data"]["font_family"] == "roman"
+        assert r"\documentclass[10pt,letterpaper,roman]{moderncv}" in imported["latex_template"]["text"]
+        assert imported["source"]["filename"] == "resume.pdf"
+        assert not profile_path.exists()
+        assert not style_path.exists()
+        assert not template_path.exists()
     finally:
         close_connection(db_path)
 

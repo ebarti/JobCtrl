@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 import webbrowser
+from email import policy
+from email.parser import BytesParser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +20,7 @@ from rich.console import Console
 
 from jobhunter import config
 from jobhunter.database import close_connection, get_connection
+from jobhunter.profile_import import MAX_IMPORT_BYTES, import_resume_pdf
 from jobhunter.resume_profile import (
     get_custom_tailoring_prompt,
     get_tailoring_policy,
@@ -142,6 +145,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._handle_retry()
             elif parsed.path == "/api/open-artifact":
                 self._handle_open_artifact()
+            elif parsed.path == "/api/profile-import":
+                self._handle_profile_import()
             else:
                 self._send_error(HTTPStatus.NOT_FOUND, "not_found", f"No route for {parsed.path}")
         except ValueError as exc:
@@ -179,21 +184,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "config": settings})
 
     def _handle_get_profile_config(self) -> None:
-        profile_path = config.PROFILE_PATH
-        if profile_path.exists():
-            profile_text = profile_path.read_text(encoding="utf-8")
-            profile_exists = True
-        else:
-            profile_text = _default_profile_json_text()
-            profile_exists = False
-
-        try:
-            profile_data = json.loads(profile_text)
-        except json.JSONDecodeError:
-            profile_data = None
-        profile_data = _profile_for_editor(profile_data)
-        if isinstance(profile_data, dict):
-            profile_text = json.dumps(profile_data, indent=2, ensure_ascii=False) + "\n"
+        profile_data, profile_text, profile_exists = _load_profile_for_editor()
         style = load_resume_style()
         if not config.RESUME_TEMPLATE_PATH.exists():
             save_latex_template(build_latex_template_from_style(style))
@@ -202,7 +193,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "profile": {
-                    "path": str(profile_path),
+                    "path": str(config.PROFILE_PATH),
                     "exists": profile_exists,
                     "text": profile_text,
                     "data": profile_data,
@@ -223,6 +214,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "{{ skills_section }}",
                     ],
                 },
+            }
+        )
+
+    def _handle_profile_import(self) -> None:
+        filename, pdf_bytes = self._read_multipart_file("resume_pdf")
+        base_profile, _, _ = _load_profile_for_editor()
+        imported = import_resume_pdf(
+            pdf_bytes,
+            filename=filename,
+            base_profile=base_profile if isinstance(base_profile, dict) else None,
+            base_style=load_resume_style(),
+        )
+        profile = _profile_for_editor(imported["profile"])
+        require_resume_master(profile)
+        profile_text = json.dumps(profile, indent=2, ensure_ascii=False) + "\n"
+        style = imported["style"]
+        template_text = build_latex_template_from_style(style)
+        self._send_json(
+            {
+                "ok": True,
+                "profile": {
+                    "path": str(config.PROFILE_PATH),
+                    "exists": config.PROFILE_PATH.exists(),
+                    "text": profile_text,
+                    "data": profile,
+                },
+                "style": {"path": str(config.RESUME_STYLE_PATH), "data": style},
+                "latex_template": {
+                    "path": str(config.RESUME_TEMPLATE_PATH),
+                    "text": template_text,
+                    "tokens": [
+                        "{{ personal_data }}",
+                        "{{ resume_body }}",
+                        "{{ executive_profile_section }}",
+                        "{{ experience_section }}",
+                        "{{ education_section }}",
+                        "{{ skills_section }}",
+                    ],
+                },
+                "source": imported.get("source", {}),
             }
         )
 
@@ -326,6 +357,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("JSON body must be an object.")
         return payload
 
+    def _read_multipart_file(self, field_name: str) -> tuple[str, bytes]:
+        content_type = self.headers.get("content-type", "")
+        if "multipart/form-data" not in content_type:
+            raise ValueError("Expected multipart/form-data upload.")
+        length = int(self.headers.get("content-length") or 0)
+        if length <= 0:
+            raise ValueError("Upload body is empty.")
+        if length > MAX_IMPORT_BYTES + 1024 * 1024:
+            raise ValueError(f"Upload body must be {MAX_IMPORT_BYTES // (1024 * 1024)}MB or smaller.")
+
+        raw = self.rfile.read(length)
+        message = BytesParser(policy=policy.default).parsebytes(
+            f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + raw
+        )
+        if not message.is_multipart():
+            raise ValueError("Upload body is not multipart.")
+
+        for part in message.iter_parts():
+            disposition = part.get_content_disposition()
+            name = part.get_param("name", header="content-disposition")
+            if disposition == "form-data" and name == field_name:
+                payload = part.get_payload(decode=True) or b""
+                filename = part.get_filename() or "resume.pdf"
+                if not payload:
+                    raise ValueError("Uploaded PDF is empty.")
+                return filename, payload
+        raise ValueError(f"Missing upload field: {field_name}.")
+
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -372,6 +431,25 @@ def _default_profile_json_text() -> str:
     if example_path.exists():
         return example_path.read_text(encoding="utf-8")
     return json.dumps({"personal": {}, "resume": {}}, indent=2) + "\n"
+
+
+def _load_profile_for_editor() -> tuple[Any, str, bool]:
+    profile_path = config.PROFILE_PATH
+    if profile_path.exists():
+        profile_text = profile_path.read_text(encoding="utf-8")
+        profile_exists = True
+    else:
+        profile_text = _default_profile_json_text()
+        profile_exists = False
+
+    try:
+        profile_data = json.loads(profile_text)
+    except json.JSONDecodeError:
+        profile_data = None
+    profile_data = _profile_for_editor(profile_data)
+    if isinstance(profile_data, dict):
+        profile_text = json.dumps(profile_data, indent=2, ensure_ascii=False) + "\n"
+    return profile_data, profile_text, profile_exists
 
 
 def serve_dashboard(
