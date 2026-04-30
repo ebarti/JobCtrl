@@ -34,7 +34,14 @@ from jobhunter.scoring.pdf import (
     save_latex_template,
     save_resume_style,
 )
-from jobhunter.state import build_dashboard_data, reset_job_stage
+from jobhunter.state import (
+    build_dashboard_data,
+    build_dashboard_job_detail,
+    delete_dashboard_jobs,
+    list_dashboard_artifacts,
+    list_dashboard_jobs,
+    reset_job_stage,
+)
 from jobhunter.view import dashboard_html
 
 console = Console()
@@ -90,6 +97,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return build_dashboard_data(
             self._fresh_connection(),
             dashboard_settings=self.server.dashboard_settings,
+            include_lists=False,
         )
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002
@@ -115,6 +123,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/dashboard":
                 self._send_json(self._dashboard_data())
+            elif parsed.path == "/api/jobs":
+                self._handle_list_jobs(parsed.query)
+            elif parsed.path == "/api/artifacts":
+                self._handle_list_artifacts(parsed.query)
             elif parsed.path == "/api/job":
                 self._handle_get_job(parsed.query)
             elif parsed.path == "/api/profile-config":
@@ -154,18 +166,84 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "server_error", str(exc))
 
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path == "/api/jobs":
+                self._handle_delete_jobs()
+            else:
+                self._send_error(HTTPStatus.NOT_FOUND, "not_found", f"No route for {parsed.path}")
+        except ValueError as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, "bad_request", str(exc))
+        except Exception as exc:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "server_error", str(exc))
+
     def _handle_get_job(self, query: str) -> None:
         params = parse_qs(query)
         url = (params.get("url") or [""])[0]
         if not url:
             self._send_error(HTTPStatus.BAD_REQUEST, "missing_url", "Query parameter 'url' is required.")
             return
-        data = self._dashboard_data()
-        detail = data.get("job_detail", {}).get(url)
+        detail = build_dashboard_job_detail(
+            self._fresh_connection(),
+            url,
+            dashboard_settings=self.server.dashboard_settings,
+        )
         if detail is None:
             self._send_error(HTTPStatus.NOT_FOUND, "job_not_found", f"No job detail for {url}")
             return
         self._send_json(detail)
+
+    def _handle_list_jobs(self, query: str) -> None:
+        params = parse_qs(query)
+        self._send_json(
+            list_dashboard_jobs(
+                self._fresh_connection(),
+                page=_int_param(params, "page", 1),
+                page_size=_int_param(params, "page_size", 50),
+                sort=_str_param(params, "sort", "discovered_at"),
+                direction=_str_param(params, "dir", "desc"),
+                query=_str_param(params, "q", ""),
+                kind=_str_param(params, "kind", "all"),
+                filter_stage=_str_param(params, "filter_stage", ""),
+                filter_state=_str_param(params, "filter_state", ""),
+                current_stage=_str_param(params, "current_stage", "all"),
+                dashboard_settings=self.server.dashboard_settings,
+            )
+        )
+
+    def _handle_list_artifacts(self, query: str) -> None:
+        params = parse_qs(query)
+        self._send_json(
+            list_dashboard_artifacts(
+                self._fresh_connection(),
+                page=_int_param(params, "page", 1),
+                page_size=_int_param(params, "page_size", 50),
+                sort=_str_param(params, "sort", "created_at"),
+                direction=_str_param(params, "dir", "desc"),
+                query=_str_param(params, "q", ""),
+                status=_str_param(params, "status", "all"),
+            )
+        )
+
+    def _handle_delete_jobs(self) -> None:
+        payload = self._read_json()
+        urls = payload.get("urls")
+        filters = payload.get("filters")
+        if urls is not None and not isinstance(urls, list):
+            raise ValueError("urls must be a list.")
+        if filters is not None and not isinstance(filters, dict):
+            raise ValueError("filters must be an object.")
+        confirm_count = payload.get("confirm_count")
+        self._send_json(
+            delete_dashboard_jobs(
+                self._fresh_connection(),
+                urls=urls,
+                filters=filters,
+                confirm_count=int(confirm_count) if confirm_count is not None else None,
+                dashboard_settings=self.server.dashboard_settings,
+            )
+        )
 
     def _handle_retry(self) -> None:
         payload = self._read_json()
@@ -320,19 +398,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not path:
             raise ValueError("'path' is required.")
 
-        data = self._dashboard_data()
-        known_paths = {
-            artifact["path"]
-            for artifact in data.get("artifacts", [])
-            if artifact.get("path")
-        }
-        for detail in data.get("job_detail", {}).values():
-            known_paths.update(
-                artifact["path"]
-                for artifact in detail.get("artifacts", [])
-                if artifact.get("path")
-            )
-        if path not in known_paths:
+        if not _is_known_artifact_path(self._fresh_connection(), path):
             self._send_error(HTTPStatus.NOT_FOUND, "artifact_not_found", f"No known artifact for {path}")
             return
 
@@ -409,8 +475,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _cors_headers(self) -> None:
         self.send_header("access-control-allow-origin", "http://127.0.0.1")
-        self.send_header("access-control-allow-methods", "GET, POST, PATCH, OPTIONS")
+        self.send_header("access-control-allow-methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header("access-control-allow-headers", "content-type")
+
+
+def _str_param(params: dict[str, list[str]], key: str, default: str) -> str:
+    value = (params.get(key) or [default])[0]
+    return str(value or default)
+
+
+def _int_param(params: dict[str, list[str]], key: str, default: int) -> int:
+    value = (params.get(key) or [default])[0]
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_known_artifact_path(conn, path: str) -> bool:
+    row = conn.execute("SELECT 1 FROM job_artifacts WHERE path = ? LIMIT 1", (path,)).fetchone()
+    if row:
+        return True
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM jobs
+        WHERE tailored_resume_path = ?
+           OR cover_letter_path = ?
+           OR replace(tailored_resume_path, '.txt', '.pdf') = ?
+           OR replace(cover_letter_path, '.txt', '.pdf') = ?
+        LIMIT 1
+        """,
+        (path, path, path, path),
+    ).fetchone()
+    return bool(row)
 
 
 def _open_local_file(path: Path) -> None:
