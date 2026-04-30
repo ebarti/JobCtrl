@@ -217,6 +217,11 @@ def test_live_dashboard_html_fetches_api_payload():
     assert "data-artifact-path" in html
     assert "/api/config" in html
     assert "/api/dashboard" in html
+    assert "SUMMARY_REFRESH_MS = 30000" in html
+    assert "function isListView()" in html
+    assert "function scheduledRefresh(){if(isListView())return;refreshData();}" in html
+    assert "setInterval(scheduledRefresh,SUMMARY_REFRESH_MS)" in html
+    assert "setInterval(refreshData,2000)" not in html
     assert "/api/jobs" in html
     assert "/api/artifacts" in html
     assert 'method:"DELETE"' in html
