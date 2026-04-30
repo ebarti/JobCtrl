@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from email import policy
 from email.parser import BytesParser
@@ -20,6 +22,7 @@ from rich.console import Console
 
 from jobhunter import config
 from jobhunter.database import close_connection, get_connection
+from jobhunter.pipeline import STAGE_ORDER
 from jobhunter.profile_import import MAX_IMPORT_BYTES, import_resume_pdf
 from jobhunter.resume_profile import (
     get_custom_tailoring_prompt,
@@ -100,6 +103,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             include_lists=False,
         )
 
+    def _command_data(self) -> dict[str, Any]:
+        return build_dashboard_data(
+            self._fresh_connection(),
+            dashboard_settings=self.server.dashboard_settings,
+            include_lists=True,
+        )
+
     def log_message(self, format: str, *args) -> None:  # noqa: A002
         return
 
@@ -155,6 +165,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/retry":
                 self._handle_retry()
+            elif parsed.path == "/api/command":
+                self._handle_command()
             elif parsed.path == "/api/open-artifact":
                 self._handle_open_artifact()
             elif parsed.path == "/api/profile-import":
@@ -254,6 +266,74 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("'stage' and 'url' are required.")
         job_url = reset_job_stage(self._fresh_connection(), url, stage, reset_attempts=reset_attempts)
         self._send_json({"ok": True, "job_url": job_url, "stage": stage, "reset_attempts": reset_attempts})
+
+    def _handle_command(self) -> None:
+        payload = self._read_json()
+        command = str(payload.get("cmd") or "").strip()
+        if not command:
+            raise ValueError("'cmd' is required.")
+
+        action = _parse_dashboard_command(command, self._command_data())
+        if action["mode"] == "noop":
+            self._send_json(
+                {
+                    "ok": True,
+                    "cmd": command,
+                    "mode": "noop",
+                    "message": action["message"],
+                    "output": action["message"],
+                }
+            )
+            return
+
+        args = _dashboard_command_args(action["argv"])
+        if action["mode"] == "capture":
+            completed = subprocess.run(
+                args,
+                cwd=_project_root(),
+                env=_command_env(),
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+            output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+            self._send_json(
+                {
+                    "ok": completed.returncode == 0,
+                    "cmd": command,
+                    "mode": "capture",
+                    "returncode": completed.returncode,
+                    "output": output,
+                },
+                status=HTTPStatus.OK if completed.returncode == 0 else HTTPStatus.ACCEPTED,
+            )
+            return
+
+        log_path = _command_log_path(action["label"])
+        log_file = log_path.open("w", encoding="utf-8")
+        try:
+            proc = subprocess.Popen(
+                args,
+                cwd=_project_root(),
+                env=_command_env(),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        finally:
+            log_file.close()
+        self._send_json(
+            {
+                "ok": True,
+                "cmd": command,
+                "mode": "background",
+                "pid": proc.pid,
+                "log_path": str(log_path),
+                "message": f"Started {command}",
+            },
+            status=HTTPStatus.ACCEPTED,
+        )
 
     def _handle_update_config(self) -> None:
         payload = self._read_json()
@@ -509,6 +589,179 @@ def _is_known_artifact_path(conn, path: str) -> bool:
         (path, path, path, path),
     ).fetchone()
     return bool(row)
+
+
+def _parse_dashboard_command(command: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Parse one UI-emitted command into an allowlisted action."""
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        raise ValueError(f"Invalid command: {exc}") from exc
+    if not argv or argv[0] != "jobhunter":
+        raise ValueError("Only JobHunter commands emitted by this dashboard can be run.")
+
+    subcommand = argv[1] if len(argv) > 1 else ""
+    known_urls = _known_job_urls(data)
+    valid_stage_commands = set(STAGE_ORDER)
+
+    if subcommand == "dashboard" and len(argv) == 2:
+        return {
+            "mode": "noop",
+            "argv": argv,
+            "label": "dashboard",
+            "message": "Dashboard is already open.",
+        }
+
+    if subcommand in {"status", "runs", "doctor"}:
+        _validate_info_command(argv)
+        return {"mode": "capture", "argv": argv, "label": subcommand}
+
+    if subcommand == "retry":
+        _validate_retry_command(argv, known_urls)
+        return {"mode": "background" if "--run" in argv else "capture", "argv": argv, "label": "retry"}
+
+    if subcommand == "apply":
+        _validate_apply_command(argv, known_urls)
+        return {"mode": "background", "argv": argv, "label": "apply"}
+
+    if subcommand in valid_stage_commands:
+        _validate_stage_command(argv)
+        return {"mode": "background", "argv": argv, "label": subcommand}
+
+    raise ValueError(f"Command is not allowed from the dashboard: {subcommand or command}")
+
+
+def _validate_info_command(argv: list[str]) -> None:
+    subcommand = argv[1]
+    if subcommand in {"status", "doctor"} and len(argv) == 2:
+        return
+    if subcommand == "runs":
+        i = 2
+        while i < len(argv):
+            flag = argv[i]
+            if flag in {"--failed-only"}:
+                i += 1
+                continue
+            if flag in {"--limit", "-l", "--events", "-e", "--run-id"} and i + 1 < len(argv):
+                if flag != "--run-id":
+                    _require_int(argv[i + 1], flag)
+                i += 2
+                continue
+            raise ValueError(f"Unsupported runs option: {flag}")
+        return
+    raise ValueError(f"Unsupported {subcommand} command options.")
+
+
+def _validate_retry_command(argv: list[str], known_urls: set[str]) -> None:
+    valid_retry_stages = set(STAGE_ORDER) | {"apply"}
+    if len(argv) < 4:
+        raise ValueError("Retry commands must include a stage and job URL.")
+    stage = argv[2]
+    url = argv[3]
+    if stage not in valid_retry_stages:
+        raise ValueError(f"Unsupported retry stage: {stage}")
+    _require_known_url(url, known_urls)
+    for flag in argv[4:]:
+        if flag not in {"--reset-attempts", "--run"}:
+            raise ValueError(f"Unsupported retry option: {flag}")
+
+
+def _validate_apply_command(argv: list[str], known_urls: set[str]) -> None:
+    i = 2
+    has_url = False
+    while i < len(argv):
+        flag = argv[i]
+        if flag == "--url" and i + 1 < len(argv):
+            _require_known_url(argv[i + 1], known_urls)
+            has_url = True
+            i += 2
+            continue
+        if flag in {"--dry-run", "--headless"}:
+            i += 1
+            continue
+        if flag in {"--limit", "-l", "--workers", "-w", "--min-score", "--model", "-m"} and i + 1 < len(argv):
+            if flag in {"--limit", "-l", "--workers", "-w", "--min-score"}:
+                _require_int(argv[i + 1], flag)
+            i += 2
+            continue
+        raise ValueError(f"Unsupported apply option: {flag}")
+    if not has_url:
+        raise ValueError("Dashboard apply commands must target one known job URL.")
+
+
+def _validate_stage_command(argv: list[str]) -> None:
+    i = 2
+    while i < len(argv):
+        flag = argv[i]
+        if flag in {"--dry-run", "--rescore", "--retailor"}:
+            i += 1
+            continue
+        if flag in {"--limit", "--workers", "-w", "--min-score"} and i + 1 < len(argv):
+            _require_int(argv[i + 1], flag)
+            i += 2
+            continue
+        if flag == "--validation" and i + 1 < len(argv):
+            if argv[i + 1] not in {"strict", "normal", "lenient"}:
+                raise ValueError("Unsupported validation mode.")
+            i += 2
+            continue
+        raise ValueError(f"Unsupported stage option: {flag}")
+
+
+def _known_job_urls(data: dict[str, Any]) -> set[str]:
+    urls = set(data.get("job_detail", {}).keys())
+    for job in data.get("jobs", []):
+        for key in ("job_url", "application_url"):
+            value = job.get(key)
+            if value:
+                urls.add(str(value))
+    for detail in data.get("job_detail", {}).values():
+        for key in ("url", "application_url"):
+            value = detail.get(key)
+            if value:
+                urls.add(str(value))
+    return urls
+
+
+def _require_known_url(url: str, known_urls: set[str]) -> None:
+    if url not in known_urls:
+        raise ValueError("Command targets a job URL that is not in the dashboard data.")
+
+
+def _require_int(value: str, flag: str) -> None:
+    try:
+        int(value)
+    except ValueError as exc:
+        raise ValueError(f"{flag} expects an integer value.") from exc
+
+
+def _dashboard_command_args(argv: list[str]) -> list[str]:
+    return [sys.executable, "-m", "jobhunter.cli", *argv[1:]]
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _command_env() -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = (
+        f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else src_path
+    )
+    env["PYTHONUNBUFFERED"] = "1"
+    env["NO_COLOR"] = "1"
+    env["TERM"] = "dumb"
+    return env
+
+
+def _command_log_path(label: str) -> Path:
+    root = config.APP_DIR / "dashboard_commands"
+    root.mkdir(parents=True, exist_ok=True)
+    safe_label = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in label) or "command"
+    return root / f"{int(time.time())}_{safe_label}.log"
 
 
 def _open_local_file(path: Path) -> None:

@@ -226,11 +226,19 @@ def test_live_dashboard_html_fetches_api_payload():
     assert "/api/artifacts" in html
     assert 'method:"DELETE"' in html
     assert "/api/open-artifact" in html
+    assert "/api/command" in html
     assert "/api/profile-config" in html
     assert "/api/profile-import" in html
+    assert "data-command-run" in html
+    assert "data-command-copy" in html
     assert "Import from resume PDF" in html
     assert "data-profile-splitter" in html
     assert "data-profile-panel-toggle" in html
+    assert "panes" in html
+    assert "show inputs" in html
+    assert "show preview" in html
+    assert "editors" not in html
+    assert "jobhunter.profileEditorPx" in html
     assert "jobhunter.profileEditorPct" in html
     assert 'id="jobhunter-data"' not in html
     assert "jobhunter status --watch" not in html
@@ -672,6 +680,95 @@ def test_dashboard_job_api_and_retry_post(tmp_path, monkeypatch):
         assert row["detail_scraped_at"] is None
         assert state["state"] == "pending"
         assert state["attempt_count"] == 0
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_command_endpoint_captures_allowlisted_status(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+    calls = []
+
+    class _Completed:
+        returncode = 0
+        stdout = "status ok\n"
+        stderr = ""
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return _Completed()
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.run", fake_run)
+
+        with _ServerContext() as server:
+            result = server.post_json("/api/command", {"cmd": "jobhunter status"})
+
+        assert result["ok"] is True
+        assert result["mode"] == "capture"
+        assert result["output"] == "status ok"
+        assert calls[0][0][-1] == "status"
+        assert "shell" not in calls[0][1]
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_command_endpoint_starts_allowlisted_apply(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn)
+    calls = []
+
+    class _Proc:
+        pid = 12345
+
+    def fake_popen(args, **kwargs):
+        calls.append((args, kwargs))
+        return _Proc()
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.dashboard_server.config.APP_DIR", Path(tmp_path) / ".jobhunter")
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.Popen", fake_popen)
+
+        with _ServerContext() as server:
+            result = server.post_json(
+                "/api/command",
+                {"cmd": "jobhunter apply --url https://example.com/job"},
+            )
+
+        assert result["ok"] is True
+        assert result["mode"] == "background"
+        assert result["pid"] == 12345
+        assert calls[0][0][-3:] == ["apply", "--url", "https://example.com/job"]
+        assert Path(result["log_path"]).parent.name == "dashboard_commands"
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_command_endpoint_rejects_unknown_commands(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+
+        with _ServerContext() as server:
+            try:
+                server.post_json("/api/command", {"cmd": "rm -rf /"})
+            except urllib.error.HTTPError as exc:
+                status_code = exc.code
+                body = json.loads(exc.read().decode("utf-8"))
+            else:
+                raise AssertionError("Expected command API to reject non-JobHunter command.")
+
+        assert status_code == 400
+        assert body["ok"] is False
+        assert body["error"]["code"] == "bad_request"
     finally:
         close_connection(db_path)
 
