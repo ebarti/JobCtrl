@@ -10,26 +10,45 @@ from jobhunter.database import close_connection, init_db
 from jobhunter.view import dashboard_html
 
 
-def _insert_job(conn, *, url: str = "https://example.com/job", detail_error: str | None = None) -> None:
+def _insert_job(
+    conn,
+    *,
+    url: str = "https://example.com/job",
+    title: str = "Platform Engineer",
+    site: str = "ExampleCo",
+    discovered_at: str = "2026-04-29T10:00:00+00:00",
+    fit_score: int | None = None,
+    detail_error: str | None = None,
+) -> None:
     conn.execute(
         """
         INSERT INTO jobs (
-            url, title, site, strategy, discovered_at, detail_error
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            url, title, site, strategy, discovered_at, fit_score, detail_error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             url,
-            "Platform Engineer",
-            "ExampleCo",
+            title,
+            site,
             "test",
-            "2026-04-29T10:00:00+00:00",
+            discovered_at,
+            fit_score,
             detail_error,
         ),
     )
     conn.commit()
 
 
-def _insert_artifact(conn, *, path: str, url: str = "https://example.com/job") -> None:
+def _insert_artifact(
+    conn,
+    *,
+    path: str,
+    url: str = "https://example.com/job",
+    status: str = "active",
+    artifact_type: str = "tailored_resume_txt",
+    created_at: str = "2026-04-29T10:05:00+00:00",
+    size_bytes: int = 12,
+) -> None:
     conn.execute(
         """
         INSERT INTO job_artifacts (
@@ -39,11 +58,11 @@ def _insert_artifact(conn, *, path: str, url: str = "https://example.com/job") -
         (
             url,
             "tailor",
-            "tailored_resume_txt",
-            "active",
+            artifact_type,
+            status,
             path,
-            "2026-04-29T10:05:00+00:00",
-            12,
+            created_at,
+            size_bytes,
         ),
     )
     conn.commit()
@@ -151,6 +170,16 @@ class _ServerContext:
         with urllib.request.urlopen(request, timeout=5) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def delete_json(self, path: str, payload: dict):
+        request = urllib.request.Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"content-type": "application/json"},
+            method="DELETE",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+
 
 def test_live_dashboard_html_fetches_api_payload():
     html = dashboard_html(live=True)
@@ -188,6 +217,14 @@ def test_live_dashboard_html_fetches_api_payload():
     assert "data-artifact-path" in html
     assert "/api/config" in html
     assert "/api/dashboard" in html
+    assert "SUMMARY_REFRESH_MS = 30000" in html
+    assert "function isListView()" in html
+    assert "function scheduledRefresh(){if(isListView())return;refreshData();}" in html
+    assert "setInterval(scheduledRefresh,SUMMARY_REFRESH_MS)" in html
+    assert "setInterval(refreshData,2000)" not in html
+    assert "/api/jobs" in html
+    assert "/api/artifacts" in html
+    assert 'method:"DELETE"' in html
     assert "/api/open-artifact" in html
     assert "/api/command" in html
     assert "/api/profile-config" in html
@@ -223,6 +260,141 @@ def test_dashboard_api_returns_live_payload(tmp_path, monkeypatch):
         assert data["schema_version"] == 2
         assert data["totals"]["jobs"] == 1
         assert data["triage"][0]["stage"] == "enrich"
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_jobs_api_paginates_after_global_sort(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn, url="https://example.com/a", title="Alpha", site="Acme", fit_score=4)
+    _insert_job(conn, url="https://example.com/b", title="Bravo", site="Beta", fit_score=9)
+    _insert_job(conn, url="https://example.com/c", title="Charlie", site="Core", fit_score=6)
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+
+        with _ServerContext() as server:
+            page_1 = server.get_json("/api/jobs?page=1&page_size=2&sort=fit_score&dir=desc")
+            page_2 = server.get_json("/api/jobs?page=2&page_size=2&sort=fit_score&dir=desc")
+
+        assert page_1["pagination"] == {
+            "page": 1,
+            "page_size": 2,
+            "total": 3,
+            "total_pages": 2,
+            "has_prev": False,
+            "has_next": True,
+        }
+        assert [item["title"] for item in page_1["items"]] == ["Bravo", "Charlie"]
+        assert [item["title"] for item in page_2["items"]] == ["Alpha"]
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_jobs_api_filters_before_pagination(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn, url="https://example.com/glassdoor-1", title="Backend Engineer", site="Glassdoor", fit_score=7)
+    _insert_job(conn, url="https://example.com/glassdoor-2", title="Frontend Engineer", site="Glassdoor", fit_score=8)
+    _insert_job(conn, url="https://example.com/other", title="Security Engineer", site="OtherCo", fit_score=10)
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+
+        with _ServerContext() as server:
+            data = server.get_json("/api/jobs?page=1&page_size=1&q=glassdoor&sort=title&dir=asc")
+
+        assert data["pagination"]["total"] == 2
+        assert data["pagination"]["total_pages"] == 2
+        assert [item["title"] for item in data["items"]] == ["Backend Engineer"]
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_artifacts_api_paginates_and_filters(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn, url="https://example.com/job-a", title="Alpha", site="Acme")
+    _insert_job(conn, url="https://example.com/job-b", title="Bravo", site="Beta")
+    _insert_artifact(conn, url="https://example.com/job-a", path="/tmp/zeta.pdf", status="active")
+    _insert_artifact(conn, url="https://example.com/job-b", path="/tmp/alpha.pdf", status="active")
+    _insert_artifact(conn, url="https://example.com/job-b", path="/tmp/stale.pdf", status="stale")
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+
+        with _ServerContext() as server:
+            data = server.get_json("/api/artifacts?page=1&page_size=1&status=active&sort=path&dir=asc")
+
+        assert data["pagination"]["total"] == 2
+        assert data["pagination"]["total_pages"] == 2
+        assert [item["path"] for item in data["items"]] == ["/tmp/alpha.pdf"]
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_jobs_delete_explicit_urls_removes_child_rows(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn, url="https://example.com/delete-me")
+    _insert_job(conn, url="https://example.com/keep-me")
+    _insert_artifact(conn, url="https://example.com/delete-me", path="/tmp/delete-me.pdf")
+    conn.execute(
+        """
+        INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("https://example.com/delete-me", "score", "failed", "error", "failed", "2026-04-29T10:00:00+00:00"),
+    )
+    conn.commit()
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+
+        with _ServerContext() as server:
+            result = server.delete_json("/api/jobs", {"urls": ["https://example.com/delete-me"], "confirm_count": 1})
+
+        assert result["deleted"] == 1
+        assert conn.execute("SELECT COUNT(*) AS count FROM jobs").fetchone()["count"] == 1
+        assert conn.execute("SELECT url FROM jobs").fetchone()["url"] == "https://example.com/keep-me"
+        assert conn.execute("SELECT COUNT(*) AS count FROM job_artifacts").fetchone()["count"] == 0
+        assert conn.execute("SELECT COUNT(*) AS count FROM job_events").fetchone()["count"] == 0
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_jobs_delete_filter_requires_matching_confirm_count(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn, url="https://example.com/glassdoor-1", site="Glassdoor")
+    _insert_job(conn, url="https://example.com/glassdoor-2", site="Glassdoor")
+    _insert_job(conn, url="https://example.com/other", site="OtherCo")
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+
+        with _ServerContext() as server:
+            try:
+                server.delete_json("/api/jobs", {"filters": {"q": "glassdoor"}, "confirm_count": 1})
+            except urllib.error.HTTPError as exc:
+                status_code = exc.code
+                body = json.loads(exc.read().decode("utf-8"))
+            else:
+                raise AssertionError("expected 400")
+
+            deleted = server.delete_json("/api/jobs", {"filters": {"q": "glassdoor"}, "confirm_count": 2})
+
+        assert status_code == 400
+        assert body["error"]["code"] == "bad_request"
+        assert deleted["deleted"] == 2
+        remaining = conn.execute("SELECT site FROM jobs").fetchall()
+        assert [row["site"] for row in remaining] == ["OtherCo"]
     finally:
         close_connection(db_path)
 

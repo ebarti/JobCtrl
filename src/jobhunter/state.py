@@ -39,6 +39,8 @@ MAX_ATTEMPTS: dict[str, int | None] = {
 }
 
 SEVERITY_RANK: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
+DEFAULT_LIST_PAGE_SIZE = 50
+MAX_LIST_PAGE_SIZE = 200
 
 
 def utc_now() -> str:
@@ -644,6 +646,407 @@ def _first_actionable_stage(states: list[dict[str, Any]]) -> dict[str, Any] | No
     return None
 
 
+def _job_summary(
+    conn,
+    job: dict[str, Any],
+    states: list[dict[str, Any]],
+    *,
+    artifact_count: int | None = None,
+) -> dict[str, Any]:
+    action = _first_actionable_stage(states)
+    return {
+        "job_url": job["url"],
+        "title": job.get("title") or "Untitled",
+        "company": job.get("site") or "Unknown",
+        "site": job.get("site") or "Unknown",
+        "strategy": job.get("strategy") or "",
+        "location": job.get("location") or "",
+        "salary": job.get("salary") or "",
+        "discovered_at": job.get("discovered_at"),
+        "application_url": job.get("application_url"),
+        "fit_score": job.get("fit_score"),
+        "current_stage": action["stage"] if action else "complete",
+        "current_state": action["state"] if action else "succeeded",
+        "error_code": action.get("error_code") if action else None,
+        "error_message": action.get("error_message") if action else None,
+        "next_action": action.get("next_action") if action else None,
+        "artifact_count": artifact_count if artifact_count is not None else _artifact_count(conn, job),
+        "apply_status": job.get("apply_status"),
+        "applied_at": job.get("applied_at"),
+    }
+
+
+def _job_detail(conn, job: dict[str, Any], states: list[dict[str, Any]]) -> dict[str, Any]:
+    action = _first_actionable_stage(states)
+    return {
+        "url": job["url"],
+        "title": job.get("title") or "Untitled",
+        "company": job.get("site") or "Unknown",
+        "site": job.get("site") or "Unknown",
+        "strategy": job.get("strategy") or "",
+        "location": job.get("location") or "",
+        "salary": job.get("salary") or "",
+        "discovered_at": job.get("discovered_at"),
+        "fit_score": job.get("fit_score"),
+        "score_reasoning": job.get("score_reasoning"),
+        "application_url": job.get("application_url"),
+        "stages": states,
+        "events": _recent_events(conn, job["url"], limit=12),
+        "artifacts": _artifact_entries(conn, job),
+        "apply_runs": _recent_apply_runs(conn, job["url"], limit=8),
+        "next_action": _next_action_payload(action),
+        "description_preview": (job.get("full_description") or job.get("description") or "")[:800],
+    }
+
+
+def _artifact_count(conn, job: dict[str, Any]) -> int:
+    rows = conn.execute(
+        "SELECT COUNT(*) AS count FROM job_artifacts WHERE job_url = ?",
+        (job["url"],),
+    ).fetchone()
+    legacy_paths = [
+        job.get("tailored_resume_path"),
+        _pdf_sibling(job.get("tailored_resume_path")),
+        job.get("cover_letter_path"),
+        _pdf_sibling(job.get("cover_letter_path")),
+    ]
+    return int(rows["count"] if rows else 0) + sum(1 for path in legacy_paths if path)
+
+
+def _paged(items: list[dict[str, Any]], *, page: int, page_size: int) -> dict[str, Any]:
+    total = len(items)
+    safe_page_size = max(1, min(MAX_LIST_PAGE_SIZE, int(page_size or DEFAULT_LIST_PAGE_SIZE)))
+    total_pages = max(1, (total + safe_page_size - 1) // safe_page_size)
+    safe_page = max(1, min(int(page or 1), total_pages))
+    start = (safe_page - 1) * safe_page_size
+    end = start + safe_page_size
+    return {
+        "items": items[start:end],
+        "pagination": {
+            "page": safe_page,
+            "page_size": safe_page_size,
+            "total": total,
+            "total_pages": total_pages,
+            "has_prev": safe_page > 1,
+            "has_next": safe_page < total_pages,
+        },
+    }
+
+
+def _sort_items(
+    items: list[dict[str, Any]],
+    *,
+    sort: str,
+    direction: str,
+    allowed: dict[str, str],
+) -> list[dict[str, Any]]:
+    key = allowed.get(sort, allowed["default"])
+    reverse = direction == "desc"
+
+    def sort_value(item: dict[str, Any]):
+        value = item.get(key)
+        if key in {"fit_score", "artifact_count"}:
+            return int(value or 0)
+        return str(value or "").lower()
+
+    return sorted(items, key=lambda item: (sort_value(item), str(item.get("job_url") or "")), reverse=reverse)
+
+
+def _matches_query(item: dict[str, Any], query: str, fields: tuple[str, ...]) -> bool:
+    if not query:
+        return True
+    needle = query.lower()
+    return needle in " ".join(str(item.get(field) or "") for field in fields).lower()
+
+
+def _matches_job_filter(
+    item: dict[str, Any],
+    states_by_stage: dict[str, dict[str, Any]],
+    *,
+    kind: str = "all",
+    filter_stage: str = "",
+    filter_state: str = "",
+    current_stage: str = "all",
+) -> bool:
+    if current_stage and current_stage != "all" and item["current_stage"] != current_stage:
+        return False
+    if kind == "stage":
+        stage_state = states_by_stage.get(filter_stage)
+        return bool(stage_state and stage_state.get("state") != "skipped")
+    if kind == "state":
+        return item["current_state"] == filter_state
+    if kind == "failures":
+        return item["current_state"] in {"failed", "exhausted"}
+    if kind == "ready":
+        return states_by_stage.get("apply", {}).get("state") == "pending"
+    if kind == "applied":
+        return bool(item.get("applied_at"))
+    if kind == "dry_runs":
+        return item.get("apply_status") == "dry_run"
+    return True
+
+
+def _all_job_summaries(
+    conn,
+    *,
+    min_score: int,
+) -> list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]:
+    initialize_missing_state_rows(conn)
+    rows = conn.execute("SELECT * FROM jobs ORDER BY discovered_at DESC NULLS LAST, title").fetchall()
+    summaries = []
+    for row in rows:
+        job = _row_to_dict(row)
+        states = get_job_stage_states(conn, job, min_score=min_score)
+        states_by_stage = {state["stage"]: state for state in states}
+        summaries.append((_job_summary(conn, job, states), states_by_stage))
+    return summaries
+
+
+def list_dashboard_jobs(
+    conn,
+    *,
+    page: int = 1,
+    page_size: int = DEFAULT_LIST_PAGE_SIZE,
+    sort: str = "discovered_at",
+    direction: str = "desc",
+    query: str = "",
+    kind: str = "all",
+    filter_stage: str = "",
+    filter_state: str = "",
+    current_stage: str = "all",
+    min_score: int | None = None,
+    dashboard_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return one globally sorted and filtered page of job summaries."""
+    settings = config.normalize_dashboard_settings(dashboard_settings or {})
+    if min_score is not None:
+        settings = config.normalize_dashboard_settings({"min_fit_score": min_score}, base=settings)
+    min_score_value = int(settings["min_fit_score"])
+
+    filtered = [
+        item
+        for item, states_by_stage in _all_job_summaries(conn, min_score=min_score_value)
+        if _matches_job_filter(
+            item,
+            states_by_stage,
+            kind=kind,
+            filter_stage=filter_stage,
+            filter_state=filter_state,
+            current_stage=current_stage,
+        )
+        and _matches_query(
+            item,
+            query,
+            (
+                "title",
+                "company",
+                "site",
+                "location",
+                "salary",
+                "current_stage",
+                "current_state",
+                "error_code",
+                "error_message",
+                "job_url",
+            ),
+        )
+    ]
+    sorted_items = _sort_items(
+        filtered,
+        sort=sort,
+        direction=direction,
+        allowed={
+            "default": "discovered_at",
+            "discovered_at": "discovered_at",
+            "fit_score": "fit_score",
+            "company": "company",
+            "title": "title",
+            "stage": "current_stage",
+            "state": "current_state",
+            "artifacts": "artifact_count",
+        },
+    )
+    page_data = _paged(sorted_items, page=page, page_size=page_size)
+    return {
+        "ok": True,
+        **page_data,
+        "sort": {"field": sort, "direction": direction},
+        "filter": {
+            "q": query,
+            "kind": kind,
+            "filter_stage": filter_stage,
+            "filter_state": filter_state,
+            "current_stage": current_stage,
+        },
+    }
+
+
+def _all_artifact_summaries(conn) -> list[dict[str, Any]]:
+    rows = conn.execute("SELECT * FROM jobs ORDER BY discovered_at DESC NULLS LAST, title").fetchall()
+    summaries = []
+    for row in rows:
+        job = _row_to_dict(row)
+        for artifact in _artifact_entries(conn, job):
+            summaries.append(
+                {
+                    "job_url": job["url"],
+                    "title": job.get("title") or "Untitled",
+                    "company": job.get("site") or "Unknown",
+                    "site": job.get("site") or "Unknown",
+                    **artifact,
+                }
+            )
+    return summaries
+
+
+def list_dashboard_artifacts(
+    conn,
+    *,
+    page: int = 1,
+    page_size: int = DEFAULT_LIST_PAGE_SIZE,
+    sort: str = "created_at",
+    direction: str = "desc",
+    query: str = "",
+    status: str = "all",
+) -> dict[str, Any]:
+    """Return one globally sorted and filtered page of artifact summaries."""
+    filtered = [
+        item
+        for item in _all_artifact_summaries(conn)
+        if (status == "all" or item.get("status") == status)
+        and _matches_query(item, query, ("title", "company", "type", "status", "path", "job_url"))
+    ]
+    sorted_items = _sort_items(
+        filtered,
+        sort=sort,
+        direction=direction,
+        allowed={
+            "default": "at",
+            "created_at": "at",
+            "company": "company",
+            "title": "title",
+            "type": "type",
+            "status": "status",
+            "path": "path",
+        },
+    )
+    page_data = _paged(sorted_items, page=page, page_size=page_size)
+    return {
+        "ok": True,
+        **page_data,
+        "sort": {"field": sort, "direction": direction},
+        "filter": {"q": query, "status": status},
+    }
+
+
+def build_dashboard_job_detail(
+    conn,
+    url: str,
+    *,
+    min_score: int | None = None,
+    dashboard_settings: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build the detail payload for one job URL or application URL."""
+    settings = config.normalize_dashboard_settings(dashboard_settings or {})
+    if min_score is not None:
+        settings = config.normalize_dashboard_settings({"min_fit_score": min_score}, base=settings)
+    row = conn.execute(
+        "SELECT * FROM jobs WHERE url = ? OR application_url = ?",
+        (url, url),
+    ).fetchone()
+    if not row:
+        return None
+    job = _row_to_dict(row)
+    ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
+    conn.commit()
+    states = get_job_stage_states(conn, job, min_score=int(settings["min_fit_score"]))
+    return _job_detail(conn, job, states)
+
+
+def delete_dashboard_jobs(
+    conn,
+    *,
+    urls: list[str] | None = None,
+    filters: dict[str, Any] | None = None,
+    confirm_count: int | None = None,
+    dashboard_settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Delete explicit jobs or all jobs matching a server-side list filter."""
+    if urls:
+        target_urls = sorted(set(str(url) for url in urls if url))
+        if confirm_count is not None and int(confirm_count) != len(target_urls):
+            raise ValueError(
+                f"confirm_count {confirm_count} does not match selected count {len(target_urls)}."
+            )
+    elif filters:
+        page = list_dashboard_jobs(
+            conn,
+            page=1,
+            page_size=MAX_LIST_PAGE_SIZE,
+            sort=str(filters.get("sort") or "discovered_at"),
+            direction=str(filters.get("direction") or filters.get("dir") or "desc"),
+            query=str(filters.get("q") or ""),
+            kind=str(filters.get("kind") or "all"),
+            filter_stage=str(filters.get("filter_stage") or ""),
+            filter_state=str(filters.get("filter_state") or ""),
+            current_stage=str(filters.get("current_stage") or "all"),
+            dashboard_settings=dashboard_settings,
+        )
+        total = int(page["pagination"]["total"])
+        if confirm_count is not None and int(confirm_count) != total:
+            raise ValueError(f"confirm_count {confirm_count} does not match filtered count {total}.")
+        target_urls = [
+            item["job_url"]
+            for item, states_by_stage in _all_job_summaries(
+                conn,
+                min_score=int(config.normalize_dashboard_settings(dashboard_settings or {})["min_fit_score"]),
+            )
+            if _matches_job_filter(
+                item,
+                states_by_stage,
+                kind=str(filters.get("kind") or "all"),
+                filter_stage=str(filters.get("filter_stage") or ""),
+                filter_state=str(filters.get("filter_state") or ""),
+                current_stage=str(filters.get("current_stage") or "all"),
+            )
+            and _matches_query(
+                item,
+                str(filters.get("q") or ""),
+                (
+                    "title",
+                    "company",
+                    "site",
+                    "location",
+                    "salary",
+                    "current_stage",
+                    "current_state",
+                    "error_code",
+                    "error_message",
+                    "job_url",
+                ),
+            )
+        ]
+    else:
+        raise ValueError("urls or filters is required.")
+
+    if not target_urls:
+        return {"ok": True, "deleted": 0, "urls": []}
+
+    placeholders = ",".join("?" for _ in target_urls)
+    run_rows = conn.execute(
+        f"SELECT run_id FROM apply_runs WHERE job_url IN ({placeholders})",
+        target_urls,
+    ).fetchall()
+    run_ids = [row["run_id"] for row in run_rows]
+    if run_ids:
+        run_placeholders = ",".join("?" for _ in run_ids)
+        conn.execute(f"DELETE FROM apply_run_events WHERE run_id IN ({run_placeholders})", run_ids)
+    for table in ("apply_runs", "job_stage_states", "job_events", "job_artifacts", "jobs"):
+        conn.execute(f"DELETE FROM {table} WHERE job_url IN ({placeholders})" if table != "jobs" else f"DELETE FROM jobs WHERE url IN ({placeholders})", target_urls)
+    conn.commit()
+    return {"ok": True, "deleted": len(target_urls), "urls": target_urls}
+
+
 def _severity(stage_state: dict[str, Any], job: dict[str, Any]) -> str:
     if stage_state["state"] in {"failed", "exhausted"}:
         return "high" if int(job.get("fit_score") or 0) >= 7 else "medium"
@@ -809,6 +1212,7 @@ def build_dashboard_data(
     *,
     min_score: int | None = None,
     dashboard_settings: dict[str, Any] | None = None,
+    include_lists: bool = True,
 ) -> dict[str, Any]:
     """Build the JSON contract consumed by the generated operations dashboard."""
     if conn is None:
@@ -848,43 +1252,19 @@ def build_dashboard_data(
         states = stage_by_url[job["url"]]
         action = _first_actionable_stage(states)
         apply_state = next(item for item in states if item["stage"] == "apply")
-        artifacts = _artifact_entries(conn, job)
-        events = _recent_events(conn, job["url"], limit=12)
-        apply_runs_for_job = _recent_apply_runs(conn, job["url"], limit=8)
-
-        job_summaries.append(
-            {
-                "job_url": job["url"],
-                "title": job.get("title") or "Untitled",
-                "company": job.get("site") or "Unknown",
-                "site": job.get("site") or "Unknown",
-                "strategy": job.get("strategy") or "",
-                "location": job.get("location") or "",
-                "salary": job.get("salary") or "",
-                "discovered_at": job.get("discovered_at"),
-                "application_url": job.get("application_url"),
-                "fit_score": job.get("fit_score"),
-                "current_stage": action["stage"] if action else "complete",
-                "current_state": action["state"] if action else "succeeded",
-                "error_code": action.get("error_code") if action else None,
-                "error_message": action.get("error_message") if action else None,
-                "next_action": action.get("next_action") if action else None,
-                "artifact_count": len(artifacts),
-                "apply_status": job.get("apply_status"),
-                "applied_at": job.get("applied_at"),
-            }
-        )
-
-        for artifact in artifacts:
-            artifact_summaries.append(
-                {
-                    "job_url": job["url"],
-                    "title": job.get("title") or "Untitled",
-                    "company": job.get("site") or "Unknown",
-                    "site": job.get("site") or "Unknown",
-                    **artifact,
-                }
-            )
+        if include_lists:
+            artifacts = _artifact_entries(conn, job)
+            job_summaries.append(_job_summary(conn, job, states, artifact_count=len(artifacts)))
+            for artifact in artifacts:
+                artifact_summaries.append(
+                    {
+                        "job_url": job["url"],
+                        "title": job.get("title") or "Untitled",
+                        "company": job.get("site") or "Unknown",
+                        "site": job.get("site") or "Unknown",
+                        **artifact,
+                    }
+                )
 
         if action and action["state"] in {"failed", "blocked", "exhausted", "stale"}:
             triage.append(
@@ -924,25 +1304,8 @@ def build_dashboard_data(
                 }
             )
 
-        job_detail[job["url"]] = {
-            "url": job["url"],
-            "title": job.get("title") or "Untitled",
-            "company": job.get("site") or "Unknown",
-            "site": job.get("site") or "Unknown",
-            "strategy": job.get("strategy") or "",
-            "location": job.get("location") or "",
-            "salary": job.get("salary") or "",
-            "discovered_at": job.get("discovered_at"),
-            "fit_score": job.get("fit_score"),
-            "score_reasoning": job.get("score_reasoning"),
-            "application_url": job.get("application_url"),
-            "stages": states,
-            "events": events,
-            "artifacts": artifacts,
-            "apply_runs": apply_runs_for_job,
-            "next_action": _next_action_payload(action),
-            "description_preview": (job.get("full_description") or job.get("description") or "")[:800],
-        }
+        if include_lists:
+            job_detail[job["url"]] = _job_detail(conn, job, states)
 
     triage.sort(
         key=lambda item: (
