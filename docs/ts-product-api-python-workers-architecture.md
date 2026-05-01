@@ -2,55 +2,82 @@
 
 ## Purpose
 
-This document captures the target architecture for evolving JobHunter from a
-local Python application with an embedded dashboard into a production SaaS
-product with:
+This document describes the near-term architecture for validating JobHunter
+locally before SaaS hardening.
 
-- a TypeScript product API,
-- a real frontend application,
-- durable workflow orchestration,
-- Python automation workers,
-- multi-tenant storage,
-- secure artifact handling,
-- auditable user and worker activity.
+The immediate goal is to make the automation reliable:
 
-The goal is not to rewrite the automation engine for its own sake. The goal is
-to split product responsibilities from automation responsibilities so that the
-system can scale, recover from partial failures, expose safe UI controls, and
-support subscription billing.
+- every job has clear per-stage state,
+- failed stages can be retried without rerunning the whole pipeline,
+- the UI can trigger real actions instead of only showing copyable commands,
+- generated artifacts are visible and easy to inspect locally,
+- profile and resume-style configuration remain usable from the UI,
+- the Python automation code keeps doing the work it already does.
+
+Production-only work has been moved to `TODO_FUTURE.md`. That includes
+tenancy, auth, billing, hosted deployment, Postgres migration, object storage,
+secret vaulting, audit logs, retention policy, and hosted apply hardening.
 
 ## Executive Recommendation
 
-Use a TypeScript product API for user-facing product concerns and keep Python
-for automation work.
+Use a TypeScript product API for local product/UI concerns and keep Python for
+automation work.
 
-Recommended stack:
+Recommended local-first stack:
 
-- Frontend: React application, preferably Vite + TanStack Router for a pure
-  authenticated dashboard, or Next.js if server-rendered product pages and
-  auth-heavy routing become important.
-- Product API: TypeScript, NestJS with Fastify adapter as the default
-  production choice. Pure Fastify remains a good leaner alternative.
-- Workflows: Temporal.
-- Workers: Python activity workers wrapping the current discovery,
-  enrichment, scoring, tailoring, PDF, apply, and resume-import modules.
-- Database: Postgres.
-- Artifacts: object storage with signed preview/download URLs.
-- Realtime: Server-Sent Events first; WebSockets later only if needed.
-- Deployment: Cloudflare for DNS/WAF/CDN/static frontend, container runtime
-  for API/workers, managed Postgres, managed object storage, managed Temporal.
+- Frontend: React with Vite, TanStack Router, and TanStack Query.
+- Product API: TypeScript with Fastify and Zod or TypeBox validation.
+- Contracts: OpenAPI or schema-first DTOs shared by frontend and API.
+- Workers: Python modules wrapping the current discovery, enrichment, scoring,
+  tailoring, PDF, apply, and resume-import code.
+- Database: keep local SQLite for the first validation loop.
+- Artifacts: keep local files, but register them in a normalized artifact table.
+- Realtime: Server-Sent Events from the local API, or explicit manual refresh
+  where SSE is not implemented yet.
 
-The product API should own identity, tenancy, billing, authorization, API
-contracts, workflow commands, and read models. Python workers should execute
-side-effectful automation and return typed results/events.
+Fastify is the pragmatic default for this stage because the local product API
+needs clear routing and validation without pulling in SaaS-scale framework
+structure. If the product later needs larger auth, billing, admin, and tenant
+modules, the future SaaS architecture can revisit NestJS.
+
+## Local Validation Scope
+
+In scope now:
+
+- split generated dashboard HTML from the API,
+- build a real frontend app,
+- build a local TypeScript API,
+- keep SQLite as the local persistence layer,
+- make `job_stage_states` the operational source of truth,
+- expose structured UI actions for retry/generate/apply,
+- keep local artifact paths but record artifact metadata,
+- make worker runs observable,
+- stabilize dry-run behavior,
+- stabilize targeted apply behavior,
+- add tests around state transitions and UI actions.
+
+Out of scope now:
+
+- multi-tenant product model,
+- hosted authentication and authorization,
+- subscription billing,
+- hosted deployment,
+- Postgres migration,
+- object storage,
+- encrypted secret vault,
+- formal audit log,
+- production retention policy,
+- hosted browser isolation.
+
+See `TODO_FUTURE.md` for those deferred items.
 
 ## Current Architecture Review
 
-### P0: The Current Dashboard Server Is A Local Control Plane, Not A Product API
+### P0: The Current Dashboard Server Owns Too Many Responsibilities
 
-`src/jobhunter/dashboard_server.py` uses `BaseHTTPRequestHandler` as router,
-controller, static server, command runner, local file opener, profile editor,
-and JSON API.
+`src/jobhunter/dashboard_server.py` currently acts as router, controller,
+static server, local API, profile editor, PDF import endpoint, command runner,
+and local artifact opener.
 
 Current endpoints include:
 
@@ -69,64 +96,18 @@ Current endpoints include:
 - `POST /api/open-artifact`
 - `DELETE /api/jobs`
 
-This is workable for a trusted local dashboard, but it is not safe as a hosted
-SaaS API because it mixes:
+Local implication:
 
-- HTTP routing,
-- file writes,
-- profile and template mutation,
-- SQLite reads/writes,
-- subprocess execution,
-- local filesystem opening,
-- CORS behavior,
-- dashboard HTML serving,
-- worker-like command execution.
+This should be split into a real API service and a frontend app. The API can
+remain local-only, but it should expose structured actions instead of mixing
+HTML serving, command execution, state mutation, and file opening in one request
+handler.
 
-Production implication: replace this with a TypeScript API that exposes typed
-product actions. Do not carry `POST /api/command` forward as a hosted endpoint.
+### P0: Per-Job State Is Still Not Clean Enough
 
-### P0: Sensitive Data Is Stored And Logged As Local Files
-
-Current local storage is rooted under `JOBHUNTER_DIR` or `~/.jobhunter` in
-`src/jobhunter/config.py`.
-
-Sensitive local files and folders include:
-
-- `profile.json`
-- `.env`
-- `resume.txt`
-- `resume.pdf`
-- `resume_template.tex`
-- `resume_style.json`
-- `dashboard.json`
-- `tailored_resumes/`
-- `cover_letters/`
-- `logs/`
-- `chrome-workers/`
-- `apply-workers/`
-
-Risk areas:
-
-- `profile.json` can include personal data and application credentials.
-- `.env` stores provider keys in plaintext.
-- apply prompts can embed profile data, resume text, cover letter text, upload
-  paths, job-site credentials, and automation keys.
-- tailoring reports can persist prompts, raw job descriptions, raw LLM
-  responses, parsed JSON, and generated resume text.
-- browser-worker profiles can include cookies, sessions, local storage, and
-  browser databases.
-- generated artifacts are path-based and deletion removes DB rows without
-  necessarily deleting files.
-
-Production implication: secrets must move to encrypted secret storage, artifacts
-must move to object storage, logs must be redacted, and sensitive prompt/output
-payloads must be treated as encrypted artifacts rather than default logs.
-
-### P1: Workflow State Has Multiple Sources Of Truth
-
-`src/jobhunter/database.py` stores a wide `jobs` table keyed by `url`. That row
-contains discovery, enrichment, scoring, tailoring, cover-letter, PDF, and apply
-fields.
+`src/jobhunter/database.py` stores a wide `jobs` table keyed by URL. That row
+contains fields for discovery, enrichment, scoring, tailoring, cover letter,
+PDF, and apply.
 
 The newer state model adds:
 
@@ -134,86 +115,56 @@ The newer state model adds:
 - `job_events`
 - `job_artifacts`
 
-`src/jobhunter/state.py` still derives legacy stage state from nullable columns,
-then merges that with explicit stage rows.
+`src/jobhunter/state.py` still derives state from legacy nullable columns and
+merges that with explicit state rows.
 
-Production implication: the product model needs one canonical source of truth.
-The recommended source is `job_stage_states` plus append-only `job_events`, with
-legacy columns imported only during migration.
+Local implication:
 
-### P1: URLs Are Used As Primary Identity
+For local validation, `job_stage_states` should become the operational source
+of truth. Legacy fields can stay for compatibility, but retries, next actions,
+dashboard counts, and UI state should come from normalized stage state.
 
-The current `jobs.url` primary key is fragile:
-
-- enrichment can resolve and mutate URLs,
-- duplicate or redirected jobs become hard to model,
-- external URLs are too long and unstable for product identity,
-- tenant scoping cannot be safely expressed with only URL identity.
-
-Production implication: use stable internal IDs such as UUID or ULID. Preserve
-source URL and canonical URL as fields with `UNIQUE (tenant_id, canonical_url)`.
-
-### P1: The Current Pipeline Is Not Durable Or Distributed
+### P1: Pipeline Execution Is Still Too Coupled To One Process
 
 `src/jobhunter/pipeline.py` orchestrates stages in-process. It has stage
 helpers, a streaming mode, and a single-job mode, but the execution model is
-still local-process orchestration with DB polling and threads.
+still local process orchestration with DB polling and threads.
 
-Current stage definitions are also inconsistent:
+Local implication:
 
-- pipeline stages omit `apply`,
-- state stages include `apply`.
+Do not build hosted workflow infrastructure yet. Instead, introduce an explicit
+local command/run model:
 
-Production implication: use a durable workflow engine. Temporal should own
-job-level and batch-level workflow progression, retries, cancellation,
-heartbeats, timeouts, and recovery.
+- API records a requested action,
+- Python worker code claims or executes the action,
+- stage state updates are recorded consistently,
+- the UI reads state and events,
+- retries target one stage at a time.
 
-### P1: The Frontend Is Generated HTML/JS, Not A Product Frontend
+This gives the project workflow discipline without committing to production
+workflow infrastructure before the local automation works.
+
+### P1: The Frontend Is Generated HTML And JavaScript
 
 `src/jobhunter/view.py` generates CSS, JavaScript, and HTML as Python strings.
-The frontend currently owns:
+The frontend currently owns dashboard rendering, jobs, artifacts, profile
+editing, job drawer behavior, retry actions, delete actions, and dashboard
+polling.
 
-- KPI rendering,
-- funnel rendering,
-- jobs list,
-- artifacts list,
-- job drawer,
-- profile editor,
-- style editor,
-- retry actions,
-- delete actions,
-- local artifact opening,
-- dashboard polling.
+Local implication:
 
-Pain points:
+Move this into a real React frontend. The local API should serve JSON only.
+The UI should use typed API calls and should preserve filters, pagination, and
+selection state while updates arrive.
 
-- no typed component boundary,
-- no generated client,
-- no frontend routing model,
-- no auth/session model,
-- no tenant model,
-- hardcoded command strings,
-- imperative global state,
-- limited testability.
+### P1: Product Actions Are Still Command Strings
 
-Production implication: move this to a real frontend app using typed API
-contracts and component-level tests.
+The dashboard still exposes copyable commands and some direct command execution.
 
-### P1: Artifacts Are Local Paths Instead Of Product Objects
+Local implication:
 
-Generated resumes, cover letters, PDFs, LaTeX debug files, prompts, reports,
-logs, and upload copies are currently represented primarily as filesystem paths.
-
-Production implication: artifacts should be rows in Postgres and bytes in
-object storage. A user should interact with artifact IDs, preview URLs, and
-download URLs, never host-local paths.
-
-### P1: Product Actions Are Currently Shell Commands
-
-The dashboard still exposes copyable commands and, in some places, direct
-command execution through the local API.
-
-Production implication: product actions must be structured API calls such as:
+Copyable commands are useful and should stay, but UI buttons should call
+structured endpoints:
 
 - retry this stage,
 - generate materials,
@@ -223,27 +174,35 @@ Production implication: product actions must be structured API calls such as:
 - import profile from resume,
 - preview resume.
 
-The UI can still show copyable CLI commands for local workflows, but the hosted
-product should not depend on shell command strings.
+The API should translate actions into local worker commands. The frontend
+should not need to know shell syntax.
 
-## Target System Boundaries
+### P1: Artifacts Need Metadata Even If They Stay Local
+
+Generated resumes, cover letters, PDFs, LaTeX files, reports, logs, and upload
+copies are currently represented primarily as filesystem paths.
+
+Local implication:
+
+Keep local files for now, but make artifact records first-class. The UI should
+load artifact metadata from the database and open local files through an API
+action only when the path is known to JobHunter.
+
+## Target Local System Boundaries
 
 ### TypeScript Product API Owns
 
-- user authentication,
-- tenant and membership model,
-- billing and usage limits,
-- API contracts,
+- local HTTP routing,
+- DTO validation,
 - dashboard read models,
-- job CRUD,
-- job filtering, sorting, and pagination,
-- profile and resume-style configuration,
-- artifact metadata and authorization,
-- workflow creation and control,
-- worker command dispatch,
-- realtime event streams,
-- audit logging,
-- admin/support tooling.
+- job list/detail APIs,
+- global filtering and sorting,
+- pagination,
+- profile and resume-style APIs,
+- local artifact metadata APIs,
+- structured action endpoints,
+- worker run visibility,
+- SSE event stream where practical.
 
 ### Python Workers Own
 
@@ -255,39 +214,36 @@ product should not depend on shell command strings.
 - PDF generation,
 - resume PDF import/extraction,
 - apply automation,
-- provider-specific browser or scraping integration.
-
-### Workflow Engine Owns
-
-- durable job workflows,
-- batch workflows,
-- retries,
-- cancellation,
-- timeouts,
-- worker heartbeats,
-- stage dependencies,
-- idempotency,
-- resume-after-crash behavior.
+- provider-specific browser or scraping behavior.
 
 ### Frontend Owns
 
 - dashboard UX,
+- jobs list UX,
+- artifacts list UX,
+- job drawer UX,
 - profile editor UX,
 - resume style editor UX,
-- jobs and artifacts tables,
-- job drawer,
-- workflow action buttons,
-- optimistic UI where safe,
-- realtime updates,
-- form validation presentation.
+- action buttons,
+- filter/sort/pagination state,
+- local artifact open/preview controls,
+- realtime or manual refresh behavior.
 
-## Proposed Monorepo Layout
+### SQLite Owns
+
+- local jobs,
+- local stage state,
+- local events,
+- local artifacts,
+- local worker/action runs,
+- local dashboard settings.
+
+## Proposed Local Monorepo Layout
 
 ```text
 apps/
   web/
     src/
-      app/
       components/
       features/
       routes/
@@ -298,273 +254,108 @@ services/
   api/
     src/
       modules/
-        auth/
-        tenants/
-        billing/
+        dashboard/
         jobs/
         stages/
-        workflows/
+        actions/
         profiles/
         artifacts/
         events/
         settings/
-        secrets/
-        admin/
-        webhooks/
       main.ts
-
-  orchestrator/
-    src/
-      workflows/
-      activities/
-      task-queues/
-
-  workers-python/
-    jobhunter_workers/
-      discovery/
-      enrichment/
-      scoring/
-      tailoring/
-      pdf/
-      apply/
-      profile_import/
 
 packages/
   contracts/
-    openapi/
-    events/
+    schemas/
     generated/
 
-  ui/
-    components/
-    tokens/
-
-  config/
-    eslint/
-    tsconfig/
-    env/
-
-infra/
-  terraform/
-  migrations/
-  docker/
+src/
+  jobhunter/
+    discovery/
+    enrichment/
+    scoring/
+    apply/
 ```
 
-## TypeScript API Framework Decision
+The current Python package can stay where it is initially. The important split
+is behavioral: TypeScript owns the product API and frontend contract; Python
+owns automation execution.
 
-Recommended default: NestJS with Fastify adapter.
+## TypeScript API Decision
 
-Why this is the default for this product:
+Use Fastify for the local product API.
 
-- the product API will have many bounded modules,
-- auth and tenant guards need to be consistently applied,
-- billing webhooks need a clear module boundary,
-- DTO validation and OpenAPI generation matter,
-- admin APIs need stricter structure,
-- the team may grow,
-- background workflow commands need consistent validation and authorization.
+Reasons:
 
-When to choose pure Fastify instead:
+- small surface area,
+- fast local startup,
+- clear route registration,
+- good JSON performance,
+- easy schema validation,
+- easy OpenAPI generation,
+- no large framework structure before the product shape stabilizes.
 
-- the team wants a smaller framework,
-- API surface remains narrow,
-- OpenAPI and dependency injection can be kept simple,
-- faster cold start and lower abstraction overhead are more important than
-  framework structure.
+Use Zod or TypeBox for DTO validation. Pick one and generate frontend client
+types from the same schemas.
 
-When to choose Hono:
+Recommended local modules:
 
-- the API is intentionally deployed at the edge,
-- most routes are lightweight request/response operations,
-- there is no heavy workflow integration in the same service.
+- `dashboard`
+- `jobs`
+- `stages`
+- `actions`
+- `profiles`
+- `artifacts`
+- `events`
+- `settings`
 
-Recommended split:
+Do not build auth, tenants, billing, admin, or hosted secrets modules in this
+local validation pass.
 
-- product API in NestJS/Fastify on containers,
-- optional edge/BFF routes later if needed,
-- no system-of-record business logic inside frontend route handlers.
+## Frontend Decision
 
-## Frontend Framework Decision
+Use React with Vite.
 
-Use React. The main choice is Vite vs Next.js.
+Recommended libraries:
 
-Choose Vite + TanStack Router if:
+- TanStack Router for routes,
+- TanStack Query for API state,
+- React Hook Form for profile/style forms,
+- Zod or generated schemas for validation,
+- Playwright for end-to-end checks,
+- Vitest for component and data-transform tests.
 
-- the app is primarily an authenticated dashboard,
-- SEO does not matter for the dashboard,
-- we want simple static hosting,
-- the API is fully separate,
-- we want low deployment complexity.
+Core routes:
 
-Choose Next.js if:
+- `/dashboard`
+- `/jobs`
+- `/jobs/:jobKey`
+- `/artifacts`
+- `/profile`
+- `/runs`
 
-- product pages, onboarding, account pages, and dashboard share one app,
-- server-side session checks are valuable,
-- auth callback handling and layout composition matter,
-- server-rendered product experiences become important.
+The job drawer can be route-backed so deep links keep working.
 
-Recommendation for the current product direction:
-
-- start with Vite + TanStack Router for the dashboard app,
-- keep marketing/docs separate or static,
-- revisit Next.js only when server-rendering creates clear product value.
-
-## High-Level Runtime Architecture
+## Local Runtime Architecture
 
 ```mermaid
 flowchart LR
-  Web["Frontend App"] --> API["TypeScript Product API"]
-  API --> PG["Postgres"]
-  API --> Objects["Object Storage"]
-  API --> Billing["Billing Provider"]
-  API --> Auth["Auth Provider"]
-  API --> Temporal["Temporal"]
-
-  Temporal --> Orchestrator["TS Workflow Worker"]
-  Orchestrator --> PyWorkers["Python Activity Workers"]
-
-  PyWorkers --> JobSites["Job Boards / Career Sites"]
-  PyWorkers --> LLMs["LLM Providers"]
-  PyWorkers --> Browser["Browser / Apply Automation"]
-  PyWorkers --> Objects
-  PyWorkers --> PG
-
-  API --> Events["SSE Event Stream"]
+  Web["React Frontend"] --> API["Local TypeScript API"]
+  API --> DB["SQLite"]
+  API --> Files["Local Artifacts"]
+  API --> Events["SSE / Manual Refresh"]
   Events --> Web
+
+  API --> Actions["Local Action Queue"]
+  Actions --> Py["Python Workers"]
+  Py --> DB
+  Py --> Files
+  Py --> Sites["Job Boards / Career Sites"]
+  Py --> LLM["LLM Providers"]
+  Py --> Browser["Local Browser / Apply Automation"]
 ```
 
-## Product API Modules
-
-### Auth
-
-Responsibilities:
-
-- session validation,
-- JWT validation,
-- service-token validation,
-- API key validation if exposed later,
-- CSRF protection for cookie-auth write routes.
-
-### Tenants
-
-Responsibilities:
-
-- tenants,
-- users,
-- memberships,
-- roles,
-- invitations,
-- tenant-scoped authorization.
-
-### Billing
-
-Responsibilities:
-
-- plans,
-- subscriptions,
-- usage ledger,
-- quota checks,
-- billing-provider webhooks,
-- trial state,
-- entitlement checks.
-
-### Profiles
-
-Responsibilities:
-
-- applicant profile,
-- resume facts,
-- work authorization defaults,
-- compensation defaults,
-- required experiences,
-- required bullets,
-- tailoring constraints,
-- writing style controls,
-- prompt customization,
-- resume style,
-- template versions,
-- resume import drafts.
-
-### Jobs
-
-Responsibilities:
-
-- job creation,
-- job list,
-- global filtering,
-- global sorting,
-- pagination,
-- job detail,
-- job updates,
-- bulk delete,
-- manual URL intake.
-
-### Stages
-
-Responsibilities:
-
-- current stage state,
-- retries,
-- exhaustion,
-- blocking reasons,
-- next action,
-- stage attempt history.
-
-### Workflows
-
-Responsibilities:
-
-- start workflow,
-- cancel workflow,
-- retry stage,
-- pause/resume where supported,
-- expose workflow run status,
-- map UI actions to durable workflow commands.
-
-### Artifacts
-
-Responsibilities:
-
-- artifact metadata,
-- artifact versions,
-- upload registration,
-- preview URL generation,
-- download URL generation,
-- retention status,
-- deletion.
-
-### Events
-
-Responsibilities:
-
-- job events,
-- stage events,
-- worker events,
-- workflow events,
-- realtime SSE stream,
-- event cursors.
-
-### Secrets
-
-Responsibilities:
-
-- secret metadata,
-- encrypted provider credentials,
-- encrypted job-site credentials,
-- key rotation hooks,
-- decrypt audit trail.
-
-### Admin
-
-Responsibilities:
-
-- support visibility,
-- tenant health,
-- stuck workflow recovery,
-- usage inspection,
-- operational audit views.
-
-## Core API Contract
+## Core Local API Contract
 
 ### Dashboard
 
@@ -587,71 +378,66 @@ Returns:
 ```http
 GET    /v1/jobs
 POST   /v1/jobs
-GET    /v1/jobs/:jobId
-PATCH  /v1/jobs/:jobId
-DELETE /v1/jobs/:jobId
+GET    /v1/jobs/:jobKey
+PATCH  /v1/jobs/:jobKey
+DELETE /v1/jobs/:jobKey
 POST   /v1/jobs/bulk-delete
 ```
 
 List query parameters:
 
-- `cursor`
-- `pageSize`
-- `sort`
-- `dir`
-- `q`
-- `stage`
-- `state`
-- `source`
-- `company`
-- `minFitScore`
-- `maxFitScore`
-- `createdFrom`
-- `createdTo`
+- `cursor` or `page`,
+- `pageSize`,
+- `sort`,
+- `dir`,
+- `q`,
+- `stage`,
+- `state`,
+- `source`,
+- `company`,
+- `minFitScore`,
+- `maxFitScore`.
 
-Sorting must be global, handled by SQL, not just the currently displayed page.
+Sorting should be handled by the API over the full matching set, not by sorting
+only the currently displayed page.
 
 ### Job Actions
 
 ```http
-POST /v1/jobs/:jobId/actions/retry-stage
-POST /v1/jobs/:jobId/actions/generate-materials
-POST /v1/jobs/:jobId/actions/apply
-POST /v1/jobs/:jobId/actions/cancel
-POST /v1/jobs/:jobId/actions/mark-applied
-POST /v1/jobs/:jobId/actions/mark-skipped
+POST /v1/jobs/:jobKey/actions/retry-stage
+POST /v1/jobs/:jobKey/actions/generate-materials
+POST /v1/jobs/:jobKey/actions/apply
+POST /v1/jobs/:jobKey/actions/cancel
+POST /v1/jobs/:jobKey/actions/mark-applied
+POST /v1/jobs/:jobKey/actions/mark-skipped
 ```
 
 Actions return:
 
-- `workflowRunId`,
+- `runId`,
 - accepted command payload,
 - current stage state,
-- realtime stream cursor.
+- optional event cursor.
 
 ### Artifacts
 
 ```http
-GET /v1/artifacts
-GET /v1/artifacts/:artifactId
-GET /v1/artifacts/:artifactId/preview
-GET /v1/artifacts/:artifactId/download
-DELETE /v1/artifacts/:artifactId
+GET  /v1/artifacts
+GET  /v1/artifacts/:artifactId
+POST /v1/artifacts/:artifactId/open
 ```
 
 Artifact rows should expose:
 
 - `artifactId`,
-- `jobId`,
+- `jobKey`,
 - `stage`,
 - `type`,
 - `status`,
-- `mimeType`,
+- `localPath`,
 - `sizeBytes`,
 - `createdAt`,
-- `createdByRunId`,
-- `previewUrl`,
-- `downloadUrl`.
+- `createdByRunId`.
 
 ### Profile
 
@@ -663,158 +449,58 @@ POST  /v1/profile/preview
 POST  /v1/profile/style/preview
 ```
 
-Profile writes should use optimistic concurrency with an `etag` or version ID.
+Profile writes should preserve the existing local `profile.json` and
+`resume_style.json` behavior until the local editor is stable.
 
-### Workflow Runs
-
-```http
-GET /v1/workflow-runs/:runId
-GET /v1/workflow-runs/:runId/events
-```
-
-### Realtime
+### Runs And Events
 
 ```http
-GET /v1/events/stream?cursor=...
+GET /v1/runs
+GET /v1/runs/:runId
+GET /v1/jobs/:jobKey/events
+GET /v1/events/stream
 ```
 
-Start with Server-Sent Events. Event payloads should include:
+The event stream is local convenience, not hosted realtime infrastructure.
 
-- `eventId`,
-- `tenantId`,
-- `type`,
-- `occurredAt`,
-- `jobId`,
-- `workflowRunId`,
-- `stageRunId`,
-- `payload`.
+## Local Data Model
 
-## Canonical Data Model
-
-### Identity And Tenancy
-
-```text
-tenants
-  id
-  name
-  plan
-  created_at
-  updated_at
-
-users
-  id
-  email
-  name
-  auth_provider_subject
-  created_at
-  updated_at
-
-tenant_memberships
-  tenant_id
-  user_id
-  role
-  created_at
-```
-
-Every product table should carry `tenant_id`.
-
-### Profiles
-
-```text
-applicant_profiles
-  id
-  tenant_id
-  owner_user_id
-  current_version_id
-  created_at
-  updated_at
-
-profile_versions
-  id
-  tenant_id
-  profile_id
-  version
-  profile_json
-  created_by_user_id
-  created_at
-
-resume_style_versions
-  id
-  tenant_id
-  profile_id
-  version
-  style_json
-  created_by_user_id
-  created_at
-
-resume_template_versions
-  id
-  tenant_id
-  profile_id
-  version
-  template_kind
-  template_json
-  template_source_artifact_id
-  created_by_user_id
-  created_at
-```
-
-Raw LaTeX should not be the primary user-facing style model. The user-facing
-model should be structured style data, rendered through controlled templates.
+Keep SQLite for now. Normalize only what is needed to make local automation
+reliable.
 
 ### Jobs
 
-```text
-jobs
-  id
-  tenant_id
-  source_url
-  canonical_url
-  application_url
-  title
-  company
-  source
-  strategy
-  salary
-  location
-  description
-  full_description
-  discovered_at
-  created_at
-  updated_at
-```
+Keep the existing `jobs` table initially.
 
-Recommended constraint:
+Near-term improvements:
 
-```text
-UNIQUE (tenant_id, canonical_url)
-```
+- avoid mutating primary job identity during enrichment,
+- define a canonical `jobKey` used by the API,
+- keep original URL and application URL separate,
+- make stage state read paths prefer `job_stage_states`.
 
 ### Stage State
 
+`job_stage_states` should become the source used by the dashboard and actions.
+
+Required fields:
+
 ```text
-job_stage_states
-  tenant_id
-  job_id
-  stage
-  state
-  attempt_count
-  max_attempts
-  workflow_run_id
-  stage_run_id
-  worker_id
-  lease_expires_at
-  heartbeat_at
-  started_at
-  updated_at
-  finished_at
-  duration_ms
-  error_code
-  error_message
-  retryable
-  blocked_by_json
-  next_action
-  metadata_json
+job_key
+stage
+state
+attempt_count
+max_attempts
+started_at
+updated_at
+finished_at
+duration_ms
+error_code
+error_message
+retryable
+blocked_by_json
+next_action
+metadata_json
 ```
 
 Canonical stages:
@@ -846,78 +532,56 @@ stale
 
 ### Events
 
-```text
-job_events
-  id
-  tenant_id
-  job_id
-  workflow_run_id
-  stage_run_id
-  event_type
-  severity
-  message
-  payload_json
-  occurred_at
-```
-
-This should be append-only.
-
-### Workflow And Automation Runs
+Use `job_events` as an append-only local history:
 
 ```text
-workflow_runs
-  id
-  tenant_id
-  workflow_type
-  status
-  requested_by_user_id
-  temporal_workflow_id
-  temporal_run_id
-  input_json
-  result_json
-  created_at
-  started_at
-  finished_at
-
-automation_runs
-  id
-  tenant_id
-  job_id
-  workflow_run_id
-  stage
-  worker_id
-  model
-  status
-  dry_run
-  headless
-  token_usage_json
-  cost_json
-  error_code
-  error_message
-  created_at
-  started_at
-  finished_at
+id
+job_key
+run_id
+stage
+event_type
+severity
+message
+payload_json
+occurred_at
 ```
+
+### Runs
+
+Add or normalize local run records:
+
+```text
+run_id
+job_key
+action
+stage
+status
+requested_at
+started_at
+finished_at
+error_code
+error_message
+metadata_json
+```
+
+The exact table can evolve from current `apply_runs` and existing event tables,
+but the UI needs a unified way to show current and recent work.
 
 ### Artifacts
 
+Keep local files, but record metadata:
+
 ```text
-artifacts
-  id
-  tenant_id
-  job_id
-  stage
-  artifact_type
-  content_type
-  storage_key
-  sha256
-  size_bytes
-  status
-  version
-  created_by_run_id
-  retention_expires_at
-  created_at
-  updated_at
+artifact_id
+job_key
+stage
+artifact_type
+local_path
+status
+size_bytes
+created_by_run_id
+created_at
+updated_at
 ```
 
 Artifact types:
@@ -934,110 +598,64 @@ Artifact types:
 - `profile_import_source_pdf`
 - `profile_import_extraction`
 
-### Secrets
-
-```text
-tenant_secrets
-  id
-  tenant_id
-  kind
-  display_name
-  vault_ref
-  created_by_user_id
-  created_at
-  rotated_at
-  revoked_at
-```
-
-Do not store raw secrets in profile JSON.
-
-### Audit Log
-
-```text
-audit_log
-  id
-  tenant_id
-  actor_type
-  actor_id
-  action
-  resource_type
-  resource_id
-  request_id
-  ip_address
-  user_agent
-  outcome
-  metadata_json
-  occurred_at
-```
-
-Audit records should not contain raw PII or secrets.
-
-## Workflow Design
+## Local Workflow Design
 
 ### Job Workflow
 
-Each job should have a durable workflow with stage transitions:
+Each job should progress through:
 
 ```text
 discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 ```
 
-The workflow should:
+The local workflow should:
 
 - evaluate prerequisites before each stage,
 - mark blocked states explicitly,
 - retry retryable failures,
 - stop on exhausted failures,
 - emit events after every transition,
-- create artifact records for every generated file,
-- support manual retry from any failed/exhausted stage,
-- support cancellation.
+- record artifact metadata for generated files,
+- support manual retry from any failed or exhausted stage,
+- support canceling queued or running local actions where practical.
 
 ### Batch Workflow
 
-A batch workflow should:
+A local batch run should:
 
 - discover jobs from configured sources,
-- create or update job records,
-- fan out job workflows,
-- enforce tenant concurrency limits,
+- create or update job rows,
+- create stage state rows,
+- process each stage without requiring a whole-pipeline rerun,
 - record aggregate progress,
-- expose batch-level status to the UI.
+- expose batch status to the UI.
 
 ### Apply Workflow
 
-Apply automation is the most sensitive workflow and should be isolated.
+Local apply automation should:
 
-It should:
-
-- require explicit user confirmation unless the tenant has enabled auto-apply,
 - support dry run without marking jobs applied,
-- never share browser state between tenants,
-- avoid storing raw cookies/session files unless explicitly required,
-- store logs as restricted artifacts,
-- redact secrets from events,
-- produce a verifiable final result.
+- show exact failure and next action,
+- record run output in local logs/artifacts,
+- allow retrying a single job,
+- avoid blocking forever on a silent child process,
+- make target URL apply work for fresh jobs.
 
-Hosted apply automation may require a separate security decision. A safer first
-production model is local user-runner apply automation controlled by the hosted
-product API.
+Hosted apply concerns are tracked in `TODO_FUTURE.md`.
 
 ## Python Worker Contract
 
-Python workers should accept typed activity inputs and return typed activity
-results.
+Python workers should accept explicit local action payloads and return explicit
+results. They do not need hosted service contracts yet.
 
-Example activity input:
+Example action input:
 
 ```json
 {
-  "tenantId": "ten_...",
-  "jobId": "job_...",
-  "workflowRunId": "wf_...",
-  "stageRunId": "sr_...",
-  "profileVersionId": "pv_...",
-  "styleVersionId": "sv_...",
-  "artifactInputs": ["art_..."],
+  "runId": "run_...",
+  "jobKey": "https://example.com/job",
+  "stage": "tailor",
+  "profilePath": "~/.jobhunter/profile.json",
   "options": {
     "minFitScore": 7,
     "dryRun": false,
@@ -1046,7 +664,7 @@ Example activity input:
 }
 ```
 
-Example activity result:
+Example action result:
 
 ```json
 {
@@ -1055,28 +673,25 @@ Example activity result:
   "artifacts": [
     {
       "type": "tailored_resume_pdf",
-      "contentType": "application/pdf",
-      "storageKey": "tenants/ten_.../jobs/job_.../resume.pdf",
-      "sha256": "...",
+      "localPath": "~/.jobhunter/tailored_resumes/example.pdf",
       "sizeBytes": 190700
     }
   ],
   "metrics": {
     "durationMs": 42000,
     "inputTokens": 1200,
-    "outputTokens": 800,
-    "costUsd": "0.014"
+    "outputTokens": 800
   },
   "warnings": []
 }
 ```
 
-Workers should not independently invent product state. They should emit
-structured results and events that the workflow/API can validate.
+Workers should update stage state through one shared helper path, not by each
+stage inventing its own success/failure semantics.
 
-## Realtime Model
+## Local Realtime Model
 
-Use SSE for the first production realtime implementation.
+Use SSE when practical.
 
 Event types:
 
@@ -1091,103 +706,22 @@ Event types:
 - `job.stage.exhausted`
 - `artifact.created`
 - `artifact.updated`
-- `workflow.run.started`
-- `workflow.run.updated`
-- `workflow.run.finished`
+- `run.started`
+- `run.updated`
+- `run.finished`
 - `profile.updated`
-- `billing.usage_recorded`
 
 Frontend behavior:
 
 - lists should not reload wholesale on a timer,
 - filters and sort state should remain stable,
 - incoming events should patch visible rows,
-- if an event affects the active filter count, the UI should update counts
-  without resetting user selection,
+- counts should update without resetting user selection,
 - manual refresh should remain available.
-
-## Security Requirements
-
-Minimum production requirements:
-
-- authenticated API access,
-- tenant authorization on every route,
-- CSRF protection for cookie-auth write routes,
-- rate limiting,
-- request IDs,
-- audit logging,
-- encrypted secrets,
-- signed artifact URLs,
-- object-store lifecycle policies,
-- redacted logs,
-- LLM prompt/output retention controls,
-- deletion workflow covering DB rows, artifacts, search indexes, queue jobs,
-  and backups,
-- tenant isolation tests,
-- admin action auditing.
-
-Data that should be treated as high risk:
-
-- resumes,
-- cover letters,
-- profile data,
-- addresses,
-- phone numbers,
-- compensation data,
-- job-site passwords,
-- provider API keys,
-- browser cookies,
-- generated prompts,
-- raw LLM outputs,
-- apply logs.
-
-## Deployment Model
-
-Recommended production setup:
-
-- Cloudflare:
-  - DNS,
-  - WAF,
-  - CDN,
-  - bot protection,
-  - static frontend hosting.
-- Container runtime:
-  - TypeScript API,
-  - Temporal workflow workers,
-  - Python activity workers.
-- Managed Postgres:
-  - product data,
-  - workflow read models,
-  - audit log.
-- Object storage:
-  - resumes,
-  - cover letters,
-  - PDFs,
-  - logs,
-  - reports,
-  - import sources.
-- Temporal Cloud:
-  - durable workflows,
-  - retries,
-  - worker visibility.
-- Secret manager:
-  - provider keys,
-  - job-site credentials,
-  - worker secrets.
-- Billing provider:
-  - subscriptions,
-  - checkout,
-  - invoices,
-  - usage metering.
-- Observability:
-  - OpenTelemetry,
-  - error tracking,
-  - LLM tracing with redaction,
-  - metrics dashboards.
 
 ## Migration Plan
 
-### Phase 0: Freeze Current Behavior
+### Phase 0: Freeze Current Local Behavior
 
 Add contract snapshots for:
 
@@ -1200,81 +734,33 @@ Add contract snapshots for:
 - retry,
 - delete.
 
-The current API contracts are implicit in `src/jobhunter/view.py` and
-`src/jobhunter/state.py`. Freeze them before porting.
+This protects the local product while replacing the server and UI.
 
-### Phase 1: Define Product Contracts
+### Phase 1: Define Local Contracts
 
 Create `packages/contracts` with:
 
-- OpenAPI schemas,
-- event schemas,
+- route DTOs,
+- event DTOs,
 - generated TypeScript client,
-- Python DTO validation models for worker payloads.
+- Python validation models where useful.
 
 Do this before building the new API.
 
-### Phase 2: Introduce Postgres Schema
-
-Create migrations for:
-
-- tenants,
-- users,
-- memberships,
-- jobs,
-- stage states,
-- events,
-- workflow runs,
-- automation runs,
-- artifacts,
-- profiles,
-- style/template versions,
-- settings,
-- secrets,
-- usage ledger,
-- audit log.
-
-### Phase 3: Build A Legacy Importer
-
-Treat one local app directory as one tenant import.
-
-Import:
-
-- `jobhunter.db`,
-- `profile.json`,
-- `resume.txt`,
-- `resume.pdf`,
-- `resume_template.tex`,
-- `resume_style.json`,
-- `searches.yaml`,
-- `dashboard.json`,
-- tailored resume artifacts,
-- cover letter artifacts.
-
-Do not import by default:
-
-- browser profiles,
-- raw logs,
-- MCP configs,
-- temporary worker folders.
-
-Sensitive-log import should be a separate explicit action with redaction.
-
-### Phase 4: Build Read-Only TS API
+### Phase 2: Build Read-Only TypeScript API
 
 Implement:
 
-- auth,
-- tenant context,
 - dashboard summary,
 - jobs list/detail,
 - artifacts list/detail,
 - profile read,
-- settings read.
+- settings read,
+- health endpoint.
 
-Validate against legacy contract snapshots.
+Read from the existing SQLite database first.
 
-### Phase 5: Move Frontend To A Real App
+### Phase 3: Move Frontend To React
 
 Port:
 
@@ -1287,123 +773,110 @@ Port:
 - profile import,
 - action buttons.
 
-Use the generated TypeScript API client. Remove dashboard list polling and
-replace it with SSE-driven updates.
+Use the generated TypeScript API client.
 
-### Phase 6: Add Workflow Orchestration
+### Phase 4: Make Stage State Canonical
 
-Introduce Temporal with:
+Update local read and action paths so they use `job_stage_states` for:
 
-- job workflow,
-- batch workflow,
-- profile import workflow if needed,
-- artifact generation workflow,
-- apply workflow as a later isolated milestone.
+- current stage,
+- current state,
+- blocked reason,
+- failed reason,
+- retryability,
+- next action,
+- stage counts.
 
-Start with enrich, score, tailor, cover, and PDF. Leave apply for a dedicated
-security pass.
+Legacy columns can remain, but should stop driving UI truth.
 
-### Phase 7: Wrap Python Modules As Activities
+### Phase 5: Wrap Python Stage Functions
 
-Wrap existing Python modules behind typed worker entrypoints.
+Wrap existing Python stage modules behind local action entrypoints:
 
-Activities should:
+- discovery,
+- enrichment,
+- scoring,
+- tailoring,
+- cover letters,
+- PDF generation,
+- apply,
+- profile import.
 
-- accept typed input,
-- resolve tenant-scoped secrets,
-- write artifacts to object storage,
-- return typed outputs,
-- emit stage events,
-- avoid direct product DB mutation except through controlled repositories or
-  activity result commits.
+Each wrapper should:
 
-### Phase 8: Replace Command Execution
+- accept explicit input,
+- record run start,
+- update stage state,
+- record artifacts,
+- record events,
+- return explicit success/failure.
 
-Remove hosted reliance on command strings.
+### Phase 6: Replace Command Execution With Structured Actions
 
-Replace:
+Replace UI command execution with API actions:
 
-- `jobhunter retry ...`
-- `jobhunter apply ...`
-- `jobhunter run ...`
+- retry stage,
+- generate materials,
+- apply,
+- cancel,
+- delete jobs,
+- import profile.
 
-with structured API actions that start workflows.
+Keep copyable CLI commands as secondary affordances.
 
-The CLI can remain as:
+### Phase 7: Local Reliability QA
 
-- local developer tool,
-- local worker runner,
-- API client for advanced users.
+Before moving toward SaaS hardening, verify:
 
-### Phase 9: Harden Apply Automation
-
-Before hosted apply automation:
-
-- isolate browser profiles per tenant and run,
-- decide whether cookies are ever stored,
-- define consent boundaries,
-- redact logs,
-- verify dry-run semantics,
-- enforce apply concurrency limits,
-- define external-site failure policy,
-- decide local-runner vs hosted-runner model.
-
-### Phase 10: Production Readiness
-
-Add:
-
-- tenant isolation tests,
-- authz tests,
-- contract tests,
-- workflow replay tests,
-- worker idempotency tests,
-- frontend Playwright tests,
-- artifact authorization tests,
-- load tests for lists and events,
-- backup/restore drills,
-- billing webhook tests,
-- deletion/retention tests.
+- dry run never marks a job applied,
+- apply timeout stops silent hangs,
+- stages can retry individually,
+- enrichment failures are not terminal by accident,
+- PDFs are generated only from approved artifacts,
+- cover letters do not silently fall back to the wrong resume,
+- targeted apply includes fresh jobs,
+- filters and selections survive live updates,
+- generated artifacts open from the UI,
+- local profile/style save and discard flows work.
 
 ## Test Strategy
 
 ### API Tests
 
 - route validation,
-- auth required,
-- tenant isolation,
 - pagination,
 - global sorting,
 - filtering,
-- optimistic concurrency,
-- artifact authorization,
+- profile read/write,
+- artifact lookup/open,
 - structured action dispatch,
-- billing quota enforcement.
+- invalid action payloads.
 
 ### Contract Tests
 
-- OpenAPI schema snapshots,
+- schema snapshots,
 - generated client compatibility,
-- legacy DTO parity tests during migration.
+- legacy DTO parity while migrating from the Python dashboard server.
 
 ### Worker Tests
 
-- activity input validation,
-- idempotency,
+- action input validation,
+- stage success path,
+- stage failure path,
 - retry behavior,
 - timeout behavior,
 - artifact output correctness,
-- redaction behavior.
+- idempotent rerun where practical.
 
 ### Workflow Tests
 
-- full happy path,
+- full local happy path,
 - stage failure,
-- retry,
+- retry one stage,
 - exhausted stage,
 - blocked stage,
-- cancellation,
-- resume after worker crash,
-- duplicate command idempotency.
+- cancellation where supported,
+- duplicate command handling.
 
 ### Frontend Tests
 
@@ -1412,84 +885,63 @@ Add:
 - global sort,
 - filters persist through events,
 - job drawer deep link,
-- artifact preview/download,
+- artifact open,
 - profile field save/discard,
 - save all/discard all,
 - profile import,
 - workflow action buttons,
 - realtime updates.
 
-### Security Tests
-
-- cross-tenant access denial,
-- artifact URL expiry,
-- CSRF protection,
-- secret redaction,
-- audit log creation,
-- admin-only route protection.
-
 ## Risks And Mitigations
 
 ### Risk: Big-Bang Rewrite
 
-Mitigation: use a strangler migration. Keep Python automation intact while
-moving product API, frontend, and state model incrementally.
+Mitigation: migrate in slices. Keep Python automation intact while replacing
+the API and frontend around it.
 
 ### Risk: State Parity Bugs
 
-Mitigation: freeze legacy outputs and run parity tests against imported data.
+Mitigation: freeze legacy outputs and compare new API DTOs against current
+dashboard data during migration.
 
-### Risk: Apply Automation Security
+### Risk: Apply Automation Remains Fragile
 
-Mitigation: postpone hosted apply automation until browser/session/secrets
-isolation is designed. Launch with local runner if needed.
-
-### Risk: LLM Cost Spikes
-
-Mitigation: usage ledger, per-tenant quotas, rate limits, model controls, and
-budget alerts.
-
-### Risk: Artifact Leakage
-
-Mitigation: object storage keys scoped by tenant, signed URLs, access checks,
-short expiry, and audit logs.
+Mitigation: isolate apply as its own worker action, enforce timeouts, preserve
+logs locally, and make dry-run behavior testable.
 
 ### Risk: Unbounded Lists
 
-Mitigation: SQL-backed pagination, indexed filters, global sorting, and
-separate summary/read models.
+Mitigation: implement API-backed pagination, indexed local queries where useful,
+global sorting, and stable filter state in the UI.
 
-### Risk: Custom LaTeX Execution
+### Risk: Custom LaTeX Breaks Local PDF Generation
 
-Mitigation: avoid raw user-authored LaTeX as the primary style interface.
-Render controlled templates in sandboxed workers.
+Mitigation: keep template validation, surface PDF errors in stage state, and
+store failed build logs as local artifacts.
 
-## Open Decisions
+## Open Local Decisions
 
-1. Should apply automation be hosted, local-runner only, or hybrid?
-2. Is the first product B2C single-user or team/org from day one?
-3. Should the frontend be Vite or Next.js?
-4. Should Temporal be managed or self-hosted?
-5. Should the local CLI remain a supported edition or become a worker/importer?
-6. Which auth provider should be used?
-7. Which billing dimensions matter: jobs discovered, applications submitted,
-   LLM tokens, active workflows, or seats?
-8. What retention policy should be default for resumes, cover letters, logs,
-   prompts, and application events?
+1. Should the local API use Fastify with Zod or Fastify with TypeBox?
+2. Should the first frontend route system be TanStack Router or plain React
+   Router?
+3. Should local job identity remain URL-based for the first pass, or should a
+   local `job_key` abstraction be introduced immediately?
+4. Should worker actions run inline from the API during the first slice, or via
+   a local queue table from the beginning?
+5. Should SSE be implemented immediately, or should manual refresh be used
+   until action/state behavior is stable?
 
 ## Recommended First Implementation Slice
 
-The first slice should not touch automation behavior.
+The first slice should not change automation behavior.
 
 Build:
 
-1. contract package,
-2. Postgres schema,
-3. legacy importer,
-4. read-only TypeScript API,
-5. frontend consuming the TypeScript API for dashboard/jobs/artifacts/profile.
+1. route and DTO schemas,
+2. read-only TypeScript API over the existing SQLite database,
+3. generated frontend API client,
+4. React dashboard/jobs/artifacts/profile shell,
+5. parity tests against the current dashboard server responses.
 
-Only after read parity is verified should workflow actions be introduced.
-
-This keeps the rewrite grounded and prevents the project from losing working
-automation while product architecture is rebuilt.
+Only after read parity is verified should structured action endpoints start
+replacing command execution.
