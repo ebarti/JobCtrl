@@ -1,0 +1,45 @@
+{
+  "name": "jobhunter",
+  "version": "0.3.0",
+  "private": true,
+  "description": "AI-powered end-to-end job application pipeline",
+  "type": "module",
+  "scripts": {
+    "api:dev": "tsx services/api/src/main.ts",
+    "api:start": "tsx services/api/src/main.ts",
+    "api:check": "tsc --noEmit",
+    "api:test": "vitest run services/api/test",
+    "test": "npm run api:check && npm run api:test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ebarti/JobHunter.git"
+  },
+  "keywords": [
+    "job-search",
+    "automation",
+    "ai",
+    "resume",
+    "apply",
+    "job-application"
+  ],
+  "author": "ebarti",
+  "license": "AGPL-3.0-only",
+  "bugs": {
+    "url": "https://github.com/ebarti/JobHunter/issues"
+  },
+  "homepage": "https://github.com/ebarti/JobHunter#readme",
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "better-sqlite3": "^12.9.0",
+    "fastify": "^5.8.5",
+    "zod": "^4.4.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}

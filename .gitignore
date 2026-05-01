@@ -34,6 +34,9 @@ dist/
 build/
 *.egg
 
+# Node
+node_modules/
+
 # IDE
 .vscode/
 .idea/
