@@ -76,7 +76,7 @@ Revisit when:
 - the API is exposed beyond localhost,
 - the app is hosted,
 - multiple users share infrastructure,
-- a browser session can access another user’s data.
+- a browser session can access another user's data.
 
 ### Billing And Subscription Infrastructure
 
@@ -230,7 +230,7 @@ Do not commit local logs or generated artifacts. Keep them under the local app d
 
 Revisit when:
 
-- logs leave the user’s machine,
+- logs leave the user's machine,
 - hosted workers write centralized logs,
 - users can download or share run logs,
 - deletion and retention policies are required.
@@ -325,11 +325,11 @@ Future work:
 
 Why deferred:
 
-Local validation can use the user’s own machine and browser context. Hosted browser automation is a separate security project.
+Local validation can use the user's own machine and browser context. Hosted browser automation is a separate security project.
 
 Revisit when:
 
-- apply automation runs outside the user’s machine,
+- apply automation runs outside the user's machine,
 - browser sessions are stored remotely,
 - multiple users share worker infrastructure.
 
@@ -455,7 +455,7 @@ Move items out of this file when one of these becomes true:
 
 - a hosted alpha is planned,
 - more than one user needs the same deployment,
-- workers run outside the user’s machine,
+- workers run outside the user's machine,
 - user data leaves local storage,
 - billing or subscriptions are implemented,
 - support/admin access is needed,
