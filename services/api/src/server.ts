@@ -8,10 +8,12 @@ import {
 import { databaseExists, openReadOnlyDatabase } from "./db.js";
 import {
   buildDashboardSummary,
+  getArtifactDetail,
   getJobDetail,
   listArtifacts,
   listJobs,
   readProfileConfig,
+  readSettingsConfig,
 } from "./read-model.js";
 
 const LOCAL_ORIGIN_PATTERNS = [
@@ -25,6 +27,7 @@ export interface BuildAppOptions {
   profilePath: string;
   resumeStylePath: string;
   resumeTemplatePath: string;
+  settingsPath: string;
   logger?: boolean;
 }
 
@@ -64,6 +67,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listArtifacts(db, ArtifactListQuerySchema.parse(request.query))),
   );
 
+  app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const detail = getArtifactDetail(db, decodeRouteParam(request.params.artifactId));
+      if (!detail) {
+        void reply.code(404);
+        return { ok: false, error: "artifact_not_found" };
+      }
+      return detail;
+    }),
+  );
+
   app.get("/v1/profile", async () =>
     readProfileConfig({
       profilePath: options.profilePath,
@@ -71,6 +85,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       resumeTemplatePath: options.resumeTemplatePath,
     }),
   );
+
+  app.get("/v1/settings", async () => readSettingsConfig({ settingsPath: options.settingsPath }));
 
   return app;
 }

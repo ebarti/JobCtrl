@@ -17,11 +17,22 @@ beforeEach(() => {
     profilePath: path.join(tempDir, "profile.json"),
     resumeStylePath: path.join(tempDir, "resume_style.json"),
     resumeTemplatePath: path.join(tempDir, "resume_template.tex"),
+    settingsPath: path.join(tempDir, "dashboard.json"),
   };
   seedDatabase(options.dbPath);
   fs.writeFileSync(options.profilePath, JSON.stringify({ personal: { full_name: "Jordan Candidate" } }));
   fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "moderncv" }));
   fs.writeFileSync(options.resumeTemplatePath, "\\documentclass{article}");
+  fs.writeFileSync(
+    options.settingsPath,
+    JSON.stringify({
+      target_role: "Platform Engineering",
+      location_filter: "Remote",
+      min_fit_score: 8,
+      auto_apply: true,
+      apply_concurrency: 3,
+    }),
+  );
 });
 
 afterEach(() => {
@@ -167,6 +178,36 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns artifact detail by artifact id", async () => {
+    const app = buildApp(options);
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_txt" });
+    const listBody = listResponse.json();
+    const artifactId = encodeURIComponent(listBody.items[0].artifactId);
+    const response = await app.inject({ method: "GET", url: `/v1/artifacts/${artifactId}` });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      artifact: {
+        jobKey: "https://example.com/jobs/ready",
+        type: "tailored_resume_txt",
+        status: "active",
+      },
+    });
+
+    await app.close();
+  });
+
+  it("returns 404 for unknown artifacts", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/artifacts/missing-artifact" });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ ok: false, error: "artifact_not_found" });
+
+    await app.close();
+  });
+
   it("rejects malformed job detail routes before lookup", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/jobs/%E0%A4%A" });
@@ -187,6 +228,47 @@ describe("local TypeScript API", () => {
       profile: { personal: { full_name: "Jordan Candidate" } },
       style: { font_family: "moderncv" },
       templateText: "\\documentclass{article}",
+    });
+
+    await app.close();
+  });
+
+  it("returns normalized runtime settings", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/settings" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      settings: {
+        targetRole: "Platform Engineering",
+        locationFilter: "Remote",
+        minFitScore: 8,
+        autoApply: true,
+        applyConcurrency: 3,
+      },
+      paths: {
+        settingsPath: options.settingsPath,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("falls back to defaults when settings are missing", async () => {
+    fs.rmSync(options.settingsPath);
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/settings" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      settings: {
+        targetRole: "",
+        locationFilter: "",
+        minFitScore: 7,
+        autoApply: false,
+        applyConcurrency: 1,
+      },
     });
 
     await app.close();

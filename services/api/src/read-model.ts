@@ -1,11 +1,17 @@
 import fs from "node:fs";
 
 import type {
+  ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
+  DashboardSettings,
+  DashboardSummary,
+  JobDetail,
   JobListQuery,
   JobSummary,
   PaginatedResponse,
+  ProfileConfigResponse,
+  SettingsResponse,
   Stage,
   StageState,
   StageSummary,
@@ -90,53 +96,13 @@ const STATE_RANK: Record<StageState, number> = {
   succeeded: 9,
 };
 
-export interface DashboardSummary {
-  ok: true;
-  generatedAt: string;
-  totals: {
-    jobs: number;
-    failures: number;
-    blocked: number;
-    ready: number;
-    applied: number;
-    dryRuns: number;
-  };
-  funnel: Array<{
-    stage: Stage;
-    total: number;
-    succeeded: number;
-    running: number;
-    pending: number;
-    blocked: number;
-    failed: number;
-  }>;
-  activity: Array<{
-    jobKey: string | null;
-    stage: string;
-    level: string;
-    message: string;
-    at: string | null;
-  }>;
-  applyRuns: Array<{
-    runId: string;
-    jobKey: string;
-    title: string;
-    company: string;
-    status: string;
-    dryRun: boolean;
-    startedAt: string | null;
-  }>;
-}
-
-export interface JobDetail {
-  ok: true;
-  job: JobSummary & {
-    descriptionPreview: string;
-    scoreReasoning: string;
-  };
-  stages: StageSummary[];
-  artifacts: ArtifactSummary[];
-}
+const DEFAULT_SETTINGS: DashboardSettings = {
+  targetRole: "",
+  locationFilter: "",
+  minFitScore: 7,
+  autoApply: false,
+  applyConcurrency: 1,
+};
 
 export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   const jobs = loadJobs(db);
@@ -232,17 +198,46 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
   });
 }
 
+export function getArtifactDetail(db: SqliteDatabase, artifactId: string): ArtifactDetail | null {
+  const artifact = artifactsForJobs(db, loadJobs(db)).find((item) => item.artifactId === artifactId);
+  return artifact ? { ok: true, artifact } : null;
+}
+
 export function readProfileConfig(paths: {
   profilePath: string;
   resumeStylePath: string;
   resumeTemplatePath: string;
-}): { ok: true; profile: unknown; style: unknown; templateText: string; paths: Record<string, string> } {
+}): ProfileConfigResponse {
   return {
     ok: true,
     profile: readJson(paths.profilePath, {}),
     style: readJson(paths.resumeStylePath, {}),
     templateText: readText(paths.resumeTemplatePath),
     paths,
+  };
+}
+
+export function readSettingsConfig(paths: { settingsPath: string }): SettingsResponse {
+  return {
+    ok: true,
+    settings: normalizeSettings(readJson(paths.settingsPath, {})),
+    paths,
+  };
+}
+
+function normalizeSettings(raw: unknown): DashboardSettings {
+  const source = isRecord(raw) ? raw : {};
+  return {
+    targetRole: normalizeText(source.targetRole ?? source.target_role, DEFAULT_SETTINGS.targetRole),
+    locationFilter: normalizeText(source.locationFilter ?? source.location_filter, DEFAULT_SETTINGS.locationFilter),
+    minFitScore: normalizeInt(source.minFitScore ?? source.min_fit_score, DEFAULT_SETTINGS.minFitScore, 0, 10),
+    autoApply: normalizeBool(source.autoApply ?? source.auto_apply, DEFAULT_SETTINGS.autoApply),
+    applyConcurrency: normalizeInt(
+      source.applyConcurrency ?? source.apply_concurrency,
+      DEFAULT_SETTINGS.applyConcurrency,
+      1,
+      16,
+    ),
   };
 }
 
@@ -766,4 +761,40 @@ function asNullableNumber(value: unknown): number | null {
   }
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeText(value: unknown, fallback: string): string {
+  const text = asString(value).trim();
+  return text.length <= 160 ? text : fallback;
+}
+
+function normalizeInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  const numberValue = Number.parseInt(asString(value), 10);
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+  return Math.min(maximum, Math.max(minimum, numberValue));
+}
+
+function normalizeBool(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return fallback;
 }

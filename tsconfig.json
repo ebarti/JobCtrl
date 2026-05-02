@@ -12,6 +12,6 @@
     "exactOptionalPropertyTypes": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["services/**/*.ts"],
+  "include": ["services/**/*.ts", "packages/**/*.ts", "apps/**/*.ts"],
   "exclude": ["node_modules"]
 }

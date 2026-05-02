@@ -4,6 +4,10 @@
   "private": true,
   "description": "AI-powered end-to-end job application pipeline",
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "api:dev": "tsx services/api/src/main.ts",
     "api:start": "tsx services/api/src/main.ts",
@@ -30,6 +34,7 @@
   },
   "homepage": "https://github.com/ebarti/JobHunter#readme",
   "dependencies": {
+    "@jobhunter/contracts": "file:packages/contracts",
     "@fastify/cors": "^11.2.0",
     "better-sqlite3": "^12.9.0",
     "fastify": "^5.8.5",

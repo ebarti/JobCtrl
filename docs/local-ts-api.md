@@ -1,7 +1,8 @@
 # Local TypeScript API
 
 JobHunter now has an initial local TypeScript API scaffold under
-`services/api`.
+`services/api`, with shared DTOs and a small typed client under
+`packages/contracts`.
 
 This API is intentionally local-first. It reads the existing local SQLite
 database and profile/style/template files, then exposes typed JSON endpoints for
@@ -31,6 +32,7 @@ Environment variables:
 - `JOBHUNTER_PROFILE_PATH`: explicit `profile.json` path
 - `JOBHUNTER_RESUME_STYLE_PATH`: explicit `resume_style.json` path
 - `JOBHUNTER_RESUME_TEMPLATE_PATH`: explicit `resume_template.tex` path
+- `JOBHUNTER_DASHBOARD_CONFIG_PATH`: explicit editable dashboard settings path
 - `JOBHUNTER_API_HOST`: bind host, default `127.0.0.1`
 - `JOBHUNTER_API_PORT`: bind port, default `8766`
 
@@ -42,11 +44,16 @@ GET /v1/dashboard/summary
 GET /v1/jobs
 GET /v1/jobs/:jobKey
 GET /v1/artifacts
+GET /v1/artifacts/:artifactId
 GET /v1/profile
+GET /v1/settings
 ```
 
 The jobs and artifacts list endpoints support pagination, filtering, and global
 sorting over the matching local dataset.
+
+The shared `@jobhunter/contracts` package exports the request schemas, response
+types, and `createJobHunterApiClient()` for the future React frontend.
 
 ## Verify
 
