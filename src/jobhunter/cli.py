@@ -463,6 +463,38 @@ def main(
 
 
 @app.command()
+def action(
+    stage: str = typer.Argument(..., help=f"Action stage. Valid: {', '.join((*VALID_STAGES, 'apply', 'profile_import'))}."),
+    url: Optional[str] = typer.Option(None, "--url", help="Target job URL for targeted actions."),
+    limit: int = typer.Option(0, "--limit", help="Maximum records to process. 0 means stage default."),
+    workers: int = typer.Option(1, "--workers", "-w", help="Worker count for supported actions."),
+    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for material/apply actions."),
+    validation: str = typer.Option("normal", "--validation", help="Validation mode for material generation."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Return the planned action without executing."),
+    pdf_path: Optional[str] = typer.Option(None, "--pdf", help="Resume PDF path for profile_import."),
+) -> None:
+    """Run a structured local action and print its JSON result."""
+    from jobhunter.actions import LocalActionRequest, run_local_action
+
+    validation = _validate_validation_mode(validation)
+    result = run_local_action(
+        LocalActionRequest(
+            stage=stage,
+            job_url=url,
+            limit=limit,
+            workers=workers,
+            min_score=min_score,
+            validation_mode=validation,
+            dry_run=dry_run,
+            pdf_path=pdf_path,
+        )
+    )
+    console.print_json(data=result.to_dict())
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def init() -> None:
     """Run the first-time setup wizard (profile, resume, search config)."""
     from jobhunter.wizard.init import run_wizard
