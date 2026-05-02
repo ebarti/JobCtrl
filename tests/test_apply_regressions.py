@@ -1,5 +1,8 @@
+import sys
+import time
 from pathlib import Path
 
+from jobhunter.apply import launcher
 from jobhunter.apply.launcher import acquire_job, mark_result
 from jobhunter.database import close_connection, get_connection, init_db
 
@@ -70,3 +73,64 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
         assert state["error_code"] == "DRY_RUN"
     finally:
         close_connection(db_path)
+
+
+def test_run_job_timeout_stops_silent_stdout_hang(tmp_path, monkeypatch):
+    app_dir = tmp_path / "app"
+    log_dir = tmp_path / "logs"
+    worker_dir = tmp_path / "workers"
+    app_dir.mkdir()
+    log_dir.mkdir()
+    worker_dir.mkdir()
+    monkeypatch.setattr(launcher.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(launcher.config, "LOG_DIR", log_dir)
+    monkeypatch.setattr(launcher.config, "APPLY_WORKER_DIR", worker_dir)
+    monkeypatch.setitem(launcher.config.DEFAULTS, "apply_timeout", 1)
+    monkeypatch.setattr(launcher.prompt_mod, "build_prompt", lambda **_kwargs: "apply prompt")
+
+    original_popen = launcher.subprocess.Popen
+    spawned = []
+
+    def fake_popen(_cmd, *args, **kwargs):
+        script = (
+            "import sys, time\n"
+            "sys.stdout.write('{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"started\"}]}}\\n')\n"
+            "sys.stdout.flush()\n"
+            "time.sleep(60)\n"
+        )
+        proc = original_popen([sys.executable, "-c", script], *args, **kwargs)
+        spawned.append(proc)
+        return proc
+
+    def safe_kill_process_tree(pid):
+        for proc in spawned:
+            if proc.pid == pid and proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(launcher, "_kill_process_tree", safe_kill_process_tree)
+
+    started = time.monotonic()
+    result, duration_ms = launcher.run_job(
+        {
+            "url": "https://example.com/job",
+            "application_url": "https://example.com/apply",
+            "title": "Platform Engineer",
+            "site": "ExampleCo",
+            "fit_score": 9,
+            "location": "Remote",
+            "full_description": "Build reliable systems.",
+            "cover_letter_path": None,
+            "tailored_resume_path": None,
+        },
+        port=9222,
+        worker_id=77,
+        run_ctx={"run_id": "timeout-test"},
+    )
+
+    assert result == "failed:timeout"
+    assert duration_ms >= 900
+    assert time.monotonic() - started < 5
+    assert spawned
+    assert all(proc.poll() is not None for proc in spawned)
