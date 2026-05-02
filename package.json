@@ -4,6 +4,9 @@
   "private": true,
   "description": "AI-powered end-to-end job application pipeline",
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"

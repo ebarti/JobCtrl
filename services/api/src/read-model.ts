@@ -17,7 +17,7 @@ import type {
   StageSummary,
 } from "./contracts.js";
 import { STAGES } from "./contracts.js";
-import { allRows, getRow, tableExists, type SqliteDatabase } from "./db.js";
+import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 
 type JobRow = Record<string, unknown> & {
   url?: string;
@@ -104,6 +104,40 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   applyConcurrency: 1,
 };
 
+const JOB_COLUMNS = [
+  "url",
+  "title",
+  "site",
+  "strategy",
+  "location",
+  "salary",
+  "discovered_at",
+  "application_url",
+  "description",
+  "full_description",
+  "detail_scraped_at",
+  "detail_error",
+  "fit_score",
+  "score_reasoning",
+  "scored_at",
+  "tailored_resume_path",
+  "tailored_at",
+  "tailor_attempts",
+  "cover_letter_path",
+  "cover_letter_at",
+  "cover_attempts",
+  "apply_status",
+  "apply_error",
+  "applied_at",
+] as const;
+
+const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
+  discovered_at: "discovered_at",
+  title: "LOWER(COALESCE(title, ''))",
+  company: "LOWER(COALESCE(site, ''))",
+  fit_score: "COALESCE(fit_score, -1)",
+};
+
 export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   const jobs = loadJobs(db);
   const explicitStates = loadStageStates(db);
@@ -130,7 +164,16 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
 }
 
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
-  const jobs = loadJobs(db);
+  const sqlSortColumn = SQL_JOB_SORT_COLUMNS[query.sort];
+  if (!query.q && !query.stage && !query.state && sqlSortColumn) {
+    const page = loadJobPage(db, query, sqlSortColumn);
+    const explicitStates = loadStageStates(db);
+    const artifactCounts = artifactCountByJob(db, page.jobs);
+    const summaries = page.jobs.map((job) => buildJobSummary(job, statesForJob(job, explicitStates), artifactCounts));
+    return paginateWithTotal(summaries, page.total, page.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+  }
+
+  const jobs = loadJobs(db, jobSqlFilter(query));
   const explicitStates = loadStageStates(db);
   const artifactCounts = artifactCountByJob(db, jobs);
   const normalizedQuery = query.q.toLowerCase();
@@ -141,15 +184,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
 
   filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
 
-  return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, {
-    q: query.q,
-    stage: query.stage ?? "",
-    state: query.state ?? "",
-    source: query.source,
-    company: query.company,
-    minFitScore: query.minFitScore ?? null,
-    maxFitScore: query.maxFitScore ?? null,
-  });
+  return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
 }
 
 export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | null {
@@ -213,7 +248,6 @@ export function readProfileConfig(paths: {
     profile: readJson(paths.profilePath, {}),
     style: readJson(paths.resumeStylePath, {}),
     templateText: readText(paths.resumeTemplatePath),
-    paths,
   };
 }
 
@@ -241,11 +275,71 @@ function normalizeSettings(raw: unknown): DashboardSettings {
   };
 }
 
-function loadJobs(db: SqliteDatabase): JobRow[] {
+function loadJobs(db: SqliteDatabase, sqlFilter = { where: "", params: [] as SqliteValue[] }): JobRow[] {
   if (!tableExists(db, "jobs")) {
     return [];
   }
-  return allRows<JobRow>(db, "SELECT * FROM jobs");
+  return allRows<JobRow>(db, `SELECT ${JOB_COLUMNS.join(", ")} FROM jobs${sqlFilter.where}`, sqlFilter.params);
+}
+
+function loadJobPage(
+  db: SqliteDatabase,
+  query: JobListQuery,
+  sqlSortColumn: string,
+): { jobs: JobRow[]; page: number; total: number } {
+  if (!tableExists(db, "jobs")) {
+    return { jobs: [], page: 1, total: 0 };
+  }
+  const filter = jobSqlFilter(query);
+  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${filter.where}`, filter.params);
+  const total = Number(totalRow?.count ?? 0);
+  const pages = Math.max(1, Math.ceil(total / query.pageSize));
+  const page = Math.min(query.page, pages);
+  const offset = (page - 1) * query.pageSize;
+  const direction = query.dir === "asc" ? "ASC" : "DESC";
+  const jobs = allRows<JobRow>(
+    db,
+    `SELECT ${JOB_COLUMNS.join(", ")} FROM jobs${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
+    [...filter.params, query.pageSize, offset],
+  );
+  return { jobs, page, total };
+}
+
+function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
+  const clauses: string[] = [];
+  const params: SqliteValue[] = [];
+  if (query.source) {
+    clauses.push("LOWER(COALESCE(site, '')) LIKE ?");
+    params.push(`%${query.source.toLowerCase()}%`);
+  }
+  if (query.company) {
+    clauses.push("LOWER(COALESCE(site, '')) LIKE ?");
+    params.push(`%${query.company.toLowerCase()}%`);
+  }
+  if (query.minFitScore !== undefined) {
+    clauses.push("COALESCE(fit_score, -1) >= ?");
+    params.push(query.minFitScore);
+  }
+  if (query.maxFitScore !== undefined) {
+    clauses.push("COALESCE(fit_score, 999) <= ?");
+    params.push(query.maxFitScore);
+  }
+  return {
+    where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
+    params,
+  };
+}
+
+function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
+  return {
+    q: query.q,
+    stage: query.stage ?? "",
+    state: query.state ?? "",
+    source: query.source,
+    company: query.company,
+    minFitScore: query.minFitScore ?? null,
+    maxFitScore: query.maxFitScore ?? null,
+  };
 }
 
 function findJob(db: SqliteDatabase, jobKey: string): JobRow | null {
@@ -472,14 +566,14 @@ function artifactsForJobs(db: SqliteDatabase, jobs: JobRow[]): ArtifactSummary[]
 
 function formatArtifact(row: ArtifactRow, job: JobRow): ArtifactSummary {
   const localPath = asString(row.path);
-  const sizeBytes = asNullableNumber(row.size_bytes) ?? pathSize(localPath);
+  const sizeBytes = asNullableNumber(row.size_bytes);
   return {
     artifactId: asString(row.artifact_id) || `${asString(row.job_url)}:${asString(row.artifact_type)}:${localPath}`,
     jobKey: job.url ?? "",
     title: asString(job.title) || "Untitled",
     company: asString(job.site) || "Unknown",
     type: asString(row.artifact_type) || "artifact",
-    status: asString(row.status) || (pathExists(localPath) ? "active" : "stale"),
+    status: asString(row.status) || "active",
     localPath,
     createdAt: asNullableString(row.created_at),
     sizeBytes,
@@ -499,7 +593,6 @@ function legacyArtifacts(job: JobRow, existing: ArtifactSummary[]): ArtifactSumm
     if (!localPath || seen.has(`${type}:${localPath}`)) {
       return [];
     }
-    const sizeBytes = pathSize(localPath);
     return [
       {
         artifactId: `${job.url}:${type}:${localPath}`,
@@ -507,11 +600,11 @@ function legacyArtifacts(job: JobRow, existing: ArtifactSummary[]): ArtifactSumm
         title: asString(job.title) || "Untitled",
         company: asString(job.site) || "Unknown",
         type,
-        status: pathExists(localPath) ? "active" : "stale",
+        status: "active",
         localPath,
         createdAt: asNullableString(createdAt),
-        sizeBytes,
-        size: formatSize(sizeBytes),
+        sizeBytes: null,
+        size: formatSize(null),
       },
     ];
   });
@@ -606,6 +699,33 @@ function paginate<T>(
   };
 }
 
+function paginateWithTotal<T>(
+  items: T[],
+  total: number,
+  page: number,
+  pageSize: number,
+  sortField: string,
+  sortDir: "asc" | "desc",
+  filter: Record<string, unknown>,
+): PaginatedResponse<T> {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  return {
+    ok: true,
+    items,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pages,
+    },
+    sort: {
+      field: sortField,
+      dir: sortDir,
+    },
+    filter,
+  };
+}
+
 function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
   if (!tableExists(db, "job_events")) {
     return [];
@@ -675,19 +795,8 @@ function pdfSibling(value: string | null | undefined): string {
   return `${value.replace(/\.[^.]+$/, "")}.pdf`;
 }
 
-function pathExists(value: string): boolean {
-  return Boolean(value) && fs.existsSync(value);
-}
-
-function pathSize(value: string): number | null {
-  if (!pathExists(value)) {
-    return null;
-  }
-  return fs.statSync(value).size;
-}
-
 function formatSize(size: number | null): string {
-  if (!size) {
+  if (size === null) {
     return "missing";
   }
   if (size < 1024) {

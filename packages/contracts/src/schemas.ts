@@ -206,7 +206,6 @@ export interface ProfileConfigResponse {
   profile: unknown;
   style: unknown;
   templateText: string;
-  paths: Record<string, string>;
 }
 
 export interface DashboardSettings {
@@ -224,4 +223,3 @@ export interface SettingsResponse {
     settingsPath: string;
   };
 }
-

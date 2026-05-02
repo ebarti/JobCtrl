@@ -14,6 +14,8 @@ local job and profile data.
 
 ## Run
 
+Requires Node.js 20.19+.
+
 ```bash
 npm install
 npm run api:dev

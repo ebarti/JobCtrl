@@ -98,6 +98,20 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns a controlled error when the local database cannot be read", async () => {
+    fs.writeFileSync(options.dbPath, "not a sqlite database");
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBeGreaterThanOrEqual(500);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/^db_(open|read)_failed$/),
+    });
+
+    await app.close();
+  });
+
   it("filters, sorts, and paginates jobs globally", async () => {
     const app = buildApp(options);
     const response = await app.inject({
@@ -198,6 +212,23 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("formats zero-byte artifacts as real files instead of missing files", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare("UPDATE job_artifacts SET size_bytes = 0 WHERE artifact_type = ?").run("tailored_resume_txt");
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_txt" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().items[0]).toMatchObject({
+      sizeBytes: 0,
+      size: "0b",
+    });
+
+    await app.close();
+  });
+
   it("returns 404 for unknown artifacts", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/artifacts/missing-artifact" });
@@ -223,12 +254,14 @@ describe("local TypeScript API", () => {
     const response = await app.inject({ method: "GET", url: "/v1/profile" });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
+    const body = response.json();
+    expect(body).toMatchObject({
       ok: true,
       profile: { personal: { full_name: "Jordan Candidate" } },
       style: { font_family: "moderncv" },
       templateText: "\\documentclass{article}",
     });
+    expect(body.paths).toBeUndefined();
 
     await app.close();
   });

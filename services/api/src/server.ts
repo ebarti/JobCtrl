@@ -108,10 +108,20 @@ function withDb<T>(
     void reply.code(503);
     return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${dbPath}` };
   }
-  const db = openReadOnlyDatabase(dbPath);
+
+  let db: ReturnType<typeof openReadOnlyDatabase> | null = null;
   try {
+    db = openReadOnlyDatabase(dbPath);
     return read(db);
+  } catch (error) {
+    const opened = db !== null;
+    void reply.code(opened ? 500 : 503);
+    return {
+      ok: false,
+      error: opened ? "db_read_failed" : "db_open_failed",
+      message: error instanceof Error ? error.message : "Unable to read the JobHunter database.",
+    };
   } finally {
-    db.close();
+    db?.close();
   }
 }
