@@ -477,18 +477,22 @@ def action(
     from jobhunter.actions import LocalActionRequest, run_local_action
 
     validation = _validate_validation_mode(validation)
-    result = run_local_action(
-        LocalActionRequest(
-            stage=stage,
-            job_url=url,
-            limit=limit,
-            workers=workers,
-            min_score=min_score,
-            validation_mode=validation,
-            dry_run=dry_run,
-            pdf_path=pdf_path,
+    try:
+        result = run_local_action(
+            LocalActionRequest(
+                stage=stage,
+                job_url=url,
+                limit=limit,
+                workers=workers,
+                min_score=min_score,
+                validation_mode=validation,
+                dry_run=dry_run,
+                pdf_path=pdf_path,
+            )
         )
-    )
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
     console.print_json(data=result.to_dict())
     if not result.ok:
         raise typer.Exit(code=1)

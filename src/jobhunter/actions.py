@@ -161,7 +161,7 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
     if request.stage == "apply":
         from jobhunter.apply.launcher import main as apply_main
 
-        apply_main(
+        applied, failed = apply_main(
             limit=request.limit,
             target_url=request.job_url,
             min_score=request.min_score,
@@ -171,14 +171,14 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
             continuous=request.continuous,
             workers=request.workers,
         )
-        return {"status": "ok"}
+        return {"status": "ok" if failed == 0 else "failed", "applied": applied, "failed": failed}
     if request.stage == "profile_import":
         if not request.pdf_path:
             raise ValueError("profile_import requires pdf_path.")
         from jobhunter.profile_import import import_resume_pdf
         from jobhunter.scoring.pdf import load_resume_style
 
-        pdf_path = Path(request.pdf_path)
+        pdf_path = Path(request.pdf_path).expanduser()
         draft = import_resume_pdf(
             pdf_path.read_bytes(),
             filename=pdf_path.name,
@@ -195,6 +195,8 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
 
 def _action_succeeded(result: dict[str, Any]) -> bool:
     if result.get("errors"):
+        return False
+    if int(result.get("failed") or 0) > 0:
         return False
     status = str(result.get("status") or "ok").lower()
     return not status.startswith("error") and status not in {"failed", "failure"}
@@ -270,4 +272,3 @@ def _describe_action(request: LocalActionRequest) -> dict[str, Any]:
         "min_score": request.min_score,
         "validation_mode": request.validation_mode,
     }
-

@@ -4,8 +4,11 @@ from typer.testing import CliRunner
 
 from jobhunter import actions
 from jobhunter.actions import LocalActionRequest, run_local_action
+from jobhunter.apply import launcher
 from jobhunter.cli import app
 from jobhunter.database import close_connection, get_connection, init_db
+from jobhunter import profile_import
+from jobhunter.scoring import pdf as scoring_pdf
 
 
 def test_local_stage_action_records_events(tmp_path, monkeypatch):
@@ -83,6 +86,53 @@ def test_local_action_dry_run_does_not_execute(monkeypatch, tmp_path):
         close_connection(db_path)
 
 
+def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(launcher, "main", lambda **_kwargs: (0, 1))
+
+    try:
+        result = run_local_action(LocalActionRequest(stage="apply", job_url="https://example.com/job", limit=1))
+
+        assert result.ok is False
+        assert result.status == "failed"
+        assert result.result["failed"] == 1
+    finally:
+        close_connection(db_path)
+
+
+def test_profile_import_action_expands_user_paths(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+    pdf_path = tmp_path / "resume.pdf"
+    pdf_path.write_bytes(b"%PDF")
+
+    def fake_import(data, *, filename, base_profile, base_style):
+        return {
+            "profile": {"filename": filename, "bytes": len(data), "base": base_profile},
+            "style": base_style,
+        }
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(actions.config, "load_profile", lambda: {"name": "Base"})
+    monkeypatch.setattr(profile_import, "import_resume_pdf", fake_import)
+    monkeypatch.setattr(scoring_pdf, "load_resume_style", lambda: {"font": "moderncv"})
+
+    try:
+        result = run_local_action(LocalActionRequest(stage="profile_import", pdf_path="~/resume.pdf"))
+
+        assert result.ok is True
+        assert result.result["draft"]["profile"] == {"filename": "resume.pdf", "bytes": 4, "base": {"name": "Base"}}
+        assert result.result["draft"]["style"] == {"font": "moderncv"}
+    finally:
+        close_connection(db_path)
+
+
 def test_action_cli_prints_json(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     init_db(db_path)
@@ -102,3 +152,19 @@ def test_action_cli_prints_json(tmp_path, monkeypatch):
     finally:
         close_connection(db_path)
 
+
+def test_action_cli_reports_validation_errors_without_traceback(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+
+    try:
+        result = CliRunner().invoke(app, ["action", "not-a-stage"])
+
+        assert result.exit_code == 1
+        assert "Unknown action stage: not-a-stage" in result.stdout
+        assert "Traceback" not in result.stdout
+    finally:
+        close_connection(db_path)
