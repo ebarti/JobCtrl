@@ -1,9 +1,11 @@
 import {
+  type ArtifactSortField,
   type ArtifactSummary,
   createJobHunterApiClient,
   type DashboardSummary,
   type JobDetail,
   type JobSummary,
+  type JobSortField,
   type PaginatedResponse,
   type ProfileConfigResponse,
   type SettingsResponse,
@@ -190,8 +192,8 @@ function Dashboard({
                 ]}
               />
               <span className="legend">
-                {stage.failed ? <span className="failed">{stage.failed} failed</span> : null}
-                {stage.blocked ? <span className="blocked">{stage.blocked} blocked</span> : null}
+                {stage.failed ? <span className="danger">{stage.failed} failed</span> : null}
+                {stage.blocked ? <span className="warn">{stage.blocked} blocked</span> : null}
                 <span>{stage.pending} pending</span>
               </span>
             </button>
@@ -243,25 +245,30 @@ function JobsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.E
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState<Stage | "all">("all");
   const [state, setState] = useState<StageState | "all">("all");
-  const [sort, setSort] = useState("discovered_at");
+  const [sort, setSort] = useState<JobSortField>("discovered_at");
   const [dir, setDir] = useState<Direction>("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
       setData(
         await api.jobs({
           page,
           pageSize,
           q: query,
-          sort: sort as never,
+          sort,
           dir,
           stage: stage === "all" ? undefined : stage,
           state: state === "all" ? undefined : state,
         }),
       );
+    } catch (requestError) {
+      setData(null);
+      setError(requestError instanceof Error ? requestError.message : "Unable to load jobs.");
     } finally {
       setLoading(false);
     }
@@ -296,6 +303,7 @@ function JobsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.E
   return (
     <section className="card full">
       <CardHeader title="Jobs" meta={data ? `${data.pagination.total} total` : "loading"} />
+      {error ? <div className="banner inline">{error}</div> : null}
       <div className="toolbar">
         <input aria-label="Search jobs" placeholder="Filter jobs, companies, errors..." value={query} onChange={(event) => setQuery(event.target.value)} />
         <select value={stage} onChange={(event) => setStage(event.target.value as Stage | "all")}>
@@ -345,24 +353,35 @@ function JobsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.E
 
 function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.Element {
   const [data, setData] = useState<PaginatedResponse<ArtifactSummary> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  const [sort, setSort] = useState("created_at");
+  const [sort, setSort] = useState<ArtifactSortField>("created_at");
   const [dir, setDir] = useState<Direction>("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
   const load = useCallback(async () => {
-    setData(
-      await api.artifacts({
-        page,
-        pageSize,
-        q: query,
-        sort: sort as never,
-        dir,
-        status: status === "all" ? "" : status,
-      }),
-    );
+    setLoading(true);
+    setError("");
+    try {
+      setData(
+        await api.artifacts({
+          page,
+          pageSize,
+          q: query,
+          sort,
+          dir,
+          status: status === "all" ? "" : status,
+        }),
+      );
+    } catch (requestError) {
+      setData(null);
+      setError(requestError instanceof Error ? requestError.message : "Unable to load artifacts.");
+    } finally {
+      setLoading(false);
+    }
   }, [dir, page, pageSize, query, sort, status]);
 
   useEffect(() => {
@@ -372,6 +391,7 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
   return (
     <section className="card full">
       <CardHeader title="Artifacts" meta={data ? `${data.pagination.total} total` : "loading"} />
+      {error ? <div className="banner inline">{error}</div> : null}
       <div className="toolbar">
         <input aria-label="Search artifacts" placeholder="Filter artifacts..." value={query} onChange={(event) => setQuery(event.target.value)} />
         <select value={status} onChange={(event) => setStatus(event.target.value)}>
@@ -389,6 +409,7 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
         </button>
       </div>
       <div className="table">
+        {loading && !data ? <Empty title="Loading artifacts." /> : null}
         {data?.items.map((artifact) => (
           <button className="data-row artifact" key={artifact.artifactId} onClick={() => onOpenJob(artifact.jobKey)} type="button">
             <span className={`tag ${artifact.status === "active" ? "ok" : "muted"}`}>{artifact.status}</span>
@@ -499,7 +520,7 @@ function JobDrawer({ jobKey, onClose }: { jobKey: string; onClose: () => void })
   return (
     <div className="drawer-backdrop">
       <aside className="drawer">
-        <button className="drawer-close" onClick={onClose} type="button">
+        <button aria-label="Close job details" className="drawer-close" onClick={onClose} type="button">
           x
         </button>
         {error ? <Empty title={error} /> : null}
@@ -653,17 +674,17 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function SelectPairs({
+function SelectPairs<T extends string>({
   options,
   value,
   onChange,
 }: {
-  options: readonly (readonly [string, string])[];
-  value: string;
-  onChange: (value: string) => void;
+  options: readonly (readonly [T, string])[];
+  value: T;
+  onChange: (value: T) => void;
 }): JSX.Element {
   return (
-    <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <select value={value} onChange={(event) => onChange(event.target.value as T)}>
       {options.map(([item, label]) => (
         <option key={item} value={item}>
           {label}

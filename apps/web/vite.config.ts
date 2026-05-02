@@ -1,9 +1,10 @@
+import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
-  root: new URL(".", import.meta.url).pathname,
+  root: fileURLToPath(new URL(".", import.meta.url)),
   envPrefix: "VITE_",
   server: {
     port: 5173,
@@ -17,4 +18,3 @@ export default defineConfig({
     emptyOutDir: true,
   },
 });
-
