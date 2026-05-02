@@ -1,0 +1,10 @@
+{
+  "name": "@jobhunter/web",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@jobhunter/contracts": "file:../../packages/contracts"
+  }
+}
+

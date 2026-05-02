@@ -16,7 +16,10 @@
     "api:start": "tsx services/api/src/main.ts",
     "api:check": "tsc --noEmit",
     "api:test": "vitest run services/api/test",
-    "test": "npm run api:check && npm run api:test"
+    "web:dev": "vite --config apps/web/vite.config.ts --host 127.0.0.1",
+    "web:build": "vite build --config apps/web/vite.config.ts",
+    "web:preview": "vite preview --config apps/web/vite.config.ts --host 127.0.0.1",
+    "test": "npm run api:check && npm run api:test && npm run web:build"
   },
   "repository": {
     "type": "git",
@@ -46,8 +49,14 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
+    "vite": "^7.3.0",
     "vitest": "^4.1.5"
   }
 }

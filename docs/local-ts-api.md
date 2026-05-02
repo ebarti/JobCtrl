@@ -27,6 +27,16 @@ The API defaults to:
 http://127.0.0.1:8766
 ```
 
+The React frontend shell is under `apps/web`:
+
+```bash
+npm run web:dev
+```
+
+The Vite dev server proxies `/v1/*` to the local API at
+`http://127.0.0.1:8766`. Set `VITE_JOBHUNTER_API_BASE_URL` if the API is bound
+elsewhere.
+
 Environment variables:
 
 - `JOBHUNTER_DIR`: local app directory, default `~/.jobhunter`
@@ -61,6 +71,7 @@ types, and `createJobHunterApiClient()` for the future React frontend.
 
 ```bash
 npm test
+npm run web:build
 uv run pytest tests/test_dashboard_server.py -q
 ```
 
