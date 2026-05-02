@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -737,23 +738,38 @@ def test_dashboard_command_endpoint_runs_allowlisted_apply_action(tmp_path, monk
         calls.append(request)
         return _Result(request)
 
+    def fail_shell(*_args, **_kwargs):  # pragma: no cover - assertion guard
+        raise AssertionError("apply command should not shell out")
+
     try:
         monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
         monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
         monkeypatch.setattr("jobhunter.dashboard_server.run_local_action", fake_run_local_action)
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.run", fail_shell)
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.Popen", fail_shell)
 
         with _ServerContext() as server:
             result = server.post_json(
                 "/api/command",
                 {"cmd": "jobhunter apply --url https://example.com/job"},
             )
+            action_id = result["action"]["action_id"]
+            action = result["action"]
+            for _ in range(20):
+                action = server.get_json(f"/api/action?id={urllib.parse.quote(action_id)}")["action"]
+                if action["status"] == "succeeded":
+                    break
+                time.sleep(0.05)
 
         assert result["ok"] is True
         assert result["mode"] == "action"
-        assert result["action"]["stage"] == "apply"
-        assert result["action"]["job_url"] == "https://example.com/job"
+        assert result["action"]["status"] == "queued"
+        assert action["status"] == "succeeded"
+        assert action["result"]["stage"] == "apply"
+        assert action["result"]["job_url"] == "https://example.com/job"
         assert calls[0].stage == "apply"
         assert calls[0].job_url == "https://example.com/job"
+        assert calls[0].limit == 1
     finally:
         close_connection(db_path)
 
