@@ -78,9 +78,9 @@ jobhunter action profile_import --pdf ~/resume.pdf
 ```
 
 The action wrapper records start/finish events in `job_events` and returns a
-JSON result. The current implementation delegates to the existing Python stage
-runners; later API phases can call the same entrypoint instead of executing
-copyable CLI command strings.
+JSON result. The live Python dashboard now uses this path for retry, stage, and
+apply buttons instead of shelling out through copyable command strings. The
+commands remain visible for manual copying.
 
 ## Verify
 

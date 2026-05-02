@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from rich.console import Console
 
+from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter import config
 from jobhunter.database import close_connection, get_connection
 from jobhunter.pipeline import STAGE_ORDER
@@ -310,30 +311,53 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
 
-        log_path = _command_log_path(action["label"])
-        log_file = log_path.open("w", encoding="utf-8")
-        try:
-            proc = subprocess.Popen(
-                args,
-                cwd=_project_root(),
-                env=_command_env(),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        finally:
-            log_file.close()
+        result = self._run_structured_command_action(command, action)
         self._send_json(
             {
-                "ok": True,
+                "ok": result.get("ok", False),
                 "cmd": command,
-                "mode": "background",
-                "pid": proc.pid,
-                "log_path": str(log_path),
-                "message": f"Started {command}",
+                "mode": "action",
+                "action": result,
+                "message": result.get("message") or result.get("status") or command,
+                "output": json.dumps(result, indent=2, sort_keys=True),
             },
-            status=HTTPStatus.ACCEPTED,
+            status=HTTPStatus.OK if result.get("ok", False) else HTTPStatus.ACCEPTED,
         )
+
+    def _run_structured_command_action(self, command: str, action: dict[str, Any]) -> dict[str, Any]:
+        if action["kind"] == "retry":
+            stage = action["stage"]
+            job_url = reset_job_stage(
+                self._fresh_connection(),
+                action["url"],
+                stage,
+                reset_attempts=bool(action.get("reset_attempts")),
+            )
+            if not action.get("run_after"):
+                return {
+                    "ok": True,
+                    "kind": "retry",
+                    "stage": stage,
+                    "job_url": job_url,
+                    "status": "reset",
+                    "message": f"Reset {stage} for retry.",
+                }
+            if stage == "apply":
+                request = LocalActionRequest(stage="apply", job_url=job_url, limit=1)
+            else:
+                request = LocalActionRequest(stage=stage, limit=1)
+            result = run_local_action(request).to_dict()
+            result["kind"] = "retry"
+            result["job_url"] = job_url
+            return result
+
+        if action["kind"] == "stage":
+            return run_local_action(action["request"]).to_dict()
+
+        if action["kind"] == "apply":
+            return run_local_action(action["request"]).to_dict()
+
+        raise ValueError(f"Unsupported structured command action for {command}.")
 
     def _handle_update_config(self) -> None:
         payload = self._read_json()
@@ -618,15 +642,36 @@ def _parse_dashboard_command(command: str, data: dict[str, Any]) -> dict[str, An
 
     if subcommand == "retry":
         _validate_retry_command(argv, known_urls)
-        return {"mode": "background" if "--run" in argv else "capture", "argv": argv, "label": "retry"}
+        return {
+            "mode": "action",
+            "kind": "retry",
+            "argv": argv,
+            "label": "retry",
+            "stage": argv[2],
+            "url": argv[3],
+            "reset_attempts": "--reset-attempts" in argv,
+            "run_after": "--run" in argv,
+        }
 
     if subcommand == "apply":
         _validate_apply_command(argv, known_urls)
-        return {"mode": "background", "argv": argv, "label": "apply"}
+        return {
+            "mode": "action",
+            "kind": "apply",
+            "argv": argv,
+            "label": "apply",
+            "request": _local_action_request_from_apply(argv),
+        }
 
     if subcommand in valid_stage_commands:
         _validate_stage_command(argv)
-        return {"mode": "background", "argv": argv, "label": subcommand}
+        return {
+            "mode": "action",
+            "kind": "stage",
+            "argv": argv,
+            "label": subcommand,
+            "request": _local_action_request_from_stage(argv),
+        }
 
     raise ValueError(f"Command is not allowed from the dashboard: {subcommand or command}")
 
@@ -650,6 +695,45 @@ def _validate_info_command(argv: list[str]) -> None:
             raise ValueError(f"Unsupported runs option: {flag}")
         return
     raise ValueError(f"Unsupported {subcommand} command options.")
+
+
+def _local_action_request_from_stage(argv: list[str]) -> LocalActionRequest:
+    stage = argv[1]
+    return LocalActionRequest(
+        stage=stage,
+        limit=_int_option(argv, "--limit", "-l", default=0),
+        workers=_int_option(argv, "--workers", "-w", default=1),
+        min_score=_int_option(argv, "--min-score", default=7),
+        validation_mode=_str_option(argv, "--validation", default="normal"),
+        dry_run="--dry-run" in argv,
+        rescore="--rescore" in argv,
+        retailor="--retailor" in argv,
+    )
+
+
+def _local_action_request_from_apply(argv: list[str]) -> LocalActionRequest:
+    return LocalActionRequest(
+        stage="apply",
+        job_url=_str_option(argv, "--url", default=None),
+        limit=_int_option(argv, "--limit", "-l", default=0),
+        workers=_int_option(argv, "--workers", "-w", default=1),
+        min_score=_int_option(argv, "--min-score", default=7),
+        model=_str_option(argv, "--model", "-m", default="haiku") or "haiku",
+        headless="--headless" in argv,
+        dry_run="--dry-run" in argv,
+    )
+
+
+def _str_option(argv: list[str], *flags: str, default: str | None = "") -> str | None:
+    for index, item in enumerate(argv):
+        if item in flags and index + 1 < len(argv):
+            return argv[index + 1]
+    return default
+
+
+def _int_option(argv: list[str], *flags: str, default: int = 0) -> int:
+    value = _str_option(argv, *flags, default=None)
+    return int(value) if value not in (None, "") else default
 
 
 def _validate_retry_command(argv: list[str], known_urls: set[str]) -> None:
