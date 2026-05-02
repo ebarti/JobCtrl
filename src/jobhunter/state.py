@@ -118,22 +118,25 @@ def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = Non
         )
 
 
-def initialize_missing_state_rows(conn=None, limit: int = 0) -> int:
+def initialize_missing_state_rows(conn=None, limit: int = 0, *, min_score: int = 7) -> int:
     """Backfill missing stage rows for existing jobs.
 
-    Existing explicit rows are not overwritten. This makes migration safe and
-    cheap enough to run from dashboard generation or startup paths.
+    Existing non-placeholder explicit rows are not overwritten. Missing rows and
+    old auto-created placeholder rows are materialized from the legacy ``jobs``
+    columns once, after which readers can treat ``job_stage_states`` as the
+    canonical source of pipeline truth.
     """
     if conn is None:
         conn = get_connection()
-    query = "SELECT url, discovered_at FROM jobs ORDER BY discovered_at DESC"
+    query = "SELECT * FROM jobs ORDER BY discovered_at DESC"
     params: list[Any] = []
     if limit > 0:
         query += " LIMIT ?"
         params.append(limit)
     rows = conn.execute(query, params).fetchall()
     for row in rows:
-        ensure_job_stage_rows(conn, row["url"], discovered_at=row["discovered_at"])
+        job = _row_to_dict(row)
+        _materialize_legacy_stage_rows(conn, job, min_score=min_score)
     conn.commit()
     return len(rows)
 
@@ -613,27 +616,60 @@ def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
     return explicit
 
 
+def _materialize_legacy_stage_rows(conn, job: dict[str, Any], *, min_score: int = 7) -> None:
+    """Create canonical rows from legacy job columns without clobbering real state."""
+    explicit = _load_explicit_states(conn, job["url"])
+    for legacy_state in derive_legacy_stage_states(job, min_score=min_score):
+        existing = explicit.get(legacy_state["stage"])
+        if existing and not _is_placeholder_state(existing, legacy_state):
+            continue
+        set_stage_state(
+            conn,
+            job["url"],
+            legacy_state["stage"],
+            legacy_state["state"],
+            attempt_count=legacy_state.get("attempt_count"),
+            max_attempts=legacy_state.get("max_attempts"),
+            started_at=legacy_state.get("started_at"),
+            finished_at=legacy_state.get("finished_at"),
+            duration_ms=legacy_state.get("duration_ms"),
+            error_code=legacy_state.get("error_code"),
+            error_message=legacy_state.get("error_message"),
+            retryable=bool(legacy_state.get("retryable", True)),
+            blocked_by=legacy_state.get("blocked_by") or [],
+            next_action=legacy_state.get("next_action"),
+            metadata=legacy_state.get("metadata") or {},
+        )
+
+
+def _is_placeholder_state(existing: dict[str, Any], legacy_state: dict[str, Any]) -> bool:
+    """Return true for rows created by the old default-row backfill."""
+    if legacy_state["state"] == existing.get("state"):
+        return False
+    return (
+        existing.get("state") == "pending"
+        and int(existing.get("attempt_count") or 0) == 0
+        and not existing.get("error_code")
+        and not existing.get("error_message")
+        and not existing.get("next_action")
+        and not existing.get("blocked_by")
+        and not existing.get("started_at")
+        and not existing.get("finished_at")
+    )
+
+
 def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> list[dict[str, Any]]:
-    """Return merged explicit + legacy stage states for one job."""
+    """Return canonical stage states for one job."""
     legacy = {item["stage"]: item for item in derive_legacy_stage_states(job, min_score=min_score)}
     explicit = _load_explicit_states(conn, job["url"])
-    merged: list[dict[str, Any]] = []
 
+    if not explicit:
+        return [legacy[stage] for stage in STAGE_ORDER]
+
+    states: list[dict[str, Any]] = []
     for stage in STAGE_ORDER:
-        legacy_state = legacy[stage]
-        explicit_state = explicit.get(stage)
-        if not explicit_state:
-            merged.append(legacy_state)
-            continue
-
-        if legacy_state["state"] == "succeeded":
-            merged.append({**explicit_state, **legacy_state})
-        elif explicit_state.get("state") not in (None, "pending"):
-            merged.append({**legacy_state, **explicit_state})
-        else:
-            merged.append(legacy_state)
-
-    return merged
+        states.append(explicit.get(stage) or legacy[stage])
+    return states
 
 
 def _first_actionable_stage(states: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -791,7 +827,7 @@ def _all_job_summaries(
     *,
     min_score: int,
 ) -> list[tuple[dict[str, Any], dict[str, dict[str, Any]]]]:
-    initialize_missing_state_rows(conn)
+    initialize_missing_state_rows(conn, min_score=min_score)
     rows = conn.execute("SELECT * FROM jobs ORDER BY discovered_at DESC NULLS LAST, title").fetchall()
     summaries = []
     for row in rows:
@@ -1221,7 +1257,7 @@ def build_dashboard_data(
     if min_score is not None:
         settings = config.normalize_dashboard_settings({"min_fit_score": min_score}, base=settings)
     min_score_value = int(settings["min_fit_score"])
-    initialize_missing_state_rows(conn)
+    initialize_missing_state_rows(conn, min_score=min_score_value)
 
     rows = conn.execute("SELECT * FROM jobs ORDER BY discovered_at DESC NULLS LAST, title").fetchall()
     jobs = [_row_to_dict(row) for row in rows]
@@ -1353,7 +1389,8 @@ def build_dashboard_data(
         "apply_runs": apply_runs,
         "job_detail": job_detail,
         "legacy": {
-            "using_legacy_columns": True,
+            "using_legacy_columns": False,
+            "stage_truth": "job_stage_states",
             "state_rows_initialized": True,
         },
     }
