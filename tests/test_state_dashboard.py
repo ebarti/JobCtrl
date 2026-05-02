@@ -9,6 +9,7 @@ from jobhunter.state import (
     derive_legacy_stage_states,
     ensure_job_stage_rows,
     get_job_stage_states,
+    initialize_missing_state_rows,
     set_stage_state,
 )
 from jobhunter.view import generate_dashboard
@@ -177,7 +178,8 @@ def test_placeholder_stage_rows_are_upgraded_from_legacy_columns(tmp_path):
         conn.commit()
 
         before = get_job_stage_states(conn, job)
-        assert next(item for item in before if item["stage"] == "score")["state"] == "pending"
+        assert next(item for item in before if item["stage"] == "score")["state"] == "succeeded"
+        assert next(item for item in before if item["stage"] == "apply")["next_action"] == f"jobhunter apply --url {job['url']}"
 
         data = build_dashboard_data(conn)
         after = get_job_stage_states(conn, job)
@@ -185,6 +187,7 @@ def test_placeholder_stage_rows_are_upgraded_from_legacy_columns(tmp_path):
         assert next(item for item in after if item["stage"] == "score")["state"] == "succeeded"
         assert next(item for item in after if item["stage"] == "tailor")["state"] == "succeeded"
         assert any(item["job_url"] == job["url"] for item in data["ready"])
+        assert initialize_missing_state_rows(conn) == 0
     finally:
         close_connection(db_path)
 

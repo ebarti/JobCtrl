@@ -128,15 +128,46 @@ def initialize_missing_state_rows(conn=None, limit: int = 0, *, min_score: int =
     """
     if conn is None:
         conn = get_connection()
-    query = "SELECT * FROM jobs ORDER BY discovered_at DESC"
-    params: list[Any] = []
+    query = """
+        SELECT jobs.*
+        FROM jobs
+        LEFT JOIN job_stage_states states ON states.job_url = jobs.url
+        GROUP BY jobs.url
+        HAVING
+            COUNT(states.stage) < ?
+            OR SUM(
+                CASE
+                    WHEN states.stage IS NULL THEN 1
+                    WHEN states.state = 'pending'
+                        AND COALESCE(states.attempt_count, 0) = 0
+                        AND states.error_code IS NULL
+                        AND states.error_message IS NULL
+                        AND states.next_action IS NULL
+                        AND states.started_at IS NULL
+                        AND states.finished_at IS NULL
+                        AND states.duration_ms IS NULL
+                        AND states.blocked_by_json IS NULL
+                    THEN 1
+                    WHEN states.stage = 'discover'
+                        AND states.state = 'succeeded'
+                        AND COALESCE(states.attempt_count, 0) = 0
+                        AND states.started_at IS NULL
+                        AND states.finished_at IS NULL
+                    THEN 1
+                    ELSE 0
+                END
+            ) > 0
+        ORDER BY jobs.discovered_at DESC
+    """
+    params: list[Any] = [len(STAGE_ORDER)]
     if limit > 0:
         query += " LIMIT ?"
         params.append(limit)
     rows = conn.execute(query, params).fetchall()
+    explicit_by_job = _load_all_explicit_states(conn)
     for row in rows:
         job = _row_to_dict(row)
-        _materialize_legacy_stage_rows(conn, job, min_score=min_score)
+        _materialize_legacy_stage_rows(conn, job, min_score=min_score, explicit=explicit_by_job.get(job["url"], {}))
     conn.commit()
     return len(rows)
 
@@ -616,9 +647,27 @@ def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
     return explicit
 
 
-def _materialize_legacy_stage_rows(conn, job: dict[str, Any], *, min_score: int = 7) -> None:
+def _load_all_explicit_states(conn) -> dict[str, dict[str, dict[str, Any]]]:
+    rows = conn.execute("SELECT * FROM job_stage_states").fetchall()
+    by_job: dict[str, dict[str, dict[str, Any]]] = {}
+    for row in rows:
+        data = _row_to_dict(row)
+        data["blocked_by"] = _json_loads(data.pop("blocked_by_json", None), [])
+        data["metadata"] = _json_loads(data.pop("metadata_json", None), {})
+        data["retryable"] = bool(data.get("retryable", 1))
+        by_job.setdefault(data["job_url"], {})[data["stage"]] = data
+    return by_job
+
+
+def _materialize_legacy_stage_rows(
+    conn,
+    job: dict[str, Any],
+    *,
+    min_score: int = 7,
+    explicit: dict[str, dict[str, Any]] | None = None,
+) -> None:
     """Create canonical rows from legacy job columns without clobbering real state."""
-    explicit = _load_explicit_states(conn, job["url"])
+    explicit = _load_explicit_states(conn, job["url"]) if explicit is None else explicit
     for legacy_state in derive_legacy_stage_states(job, min_score=min_score):
         existing = explicit.get(legacy_state["stage"])
         if existing and not _is_placeholder_state(existing, legacy_state):
@@ -644,17 +693,28 @@ def _materialize_legacy_stage_rows(conn, job: dict[str, Any], *, min_score: int 
 
 def _is_placeholder_state(existing: dict[str, Any], legacy_state: dict[str, Any]) -> bool:
     """Return true for rows created by the old default-row backfill."""
-    if legacy_state["state"] == existing.get("state"):
+    if _has_real_state_fields(existing):
         return False
+    if existing.get("state") == "pending":
+        return True
     return (
-        existing.get("state") == "pending"
-        and int(existing.get("attempt_count") or 0) == 0
-        and not existing.get("error_code")
-        and not existing.get("error_message")
-        and not existing.get("next_action")
-        and not existing.get("blocked_by")
-        and not existing.get("started_at")
-        and not existing.get("finished_at")
+        existing.get("stage") == "discover"
+        and existing.get("state") == "succeeded"
+        and legacy_state.get("state") == "succeeded"
+    )
+
+
+def _has_real_state_fields(existing: dict[str, Any]) -> bool:
+    return (
+        int(existing.get("attempt_count") or 0) != 0
+        or bool(existing.get("error_code"))
+        or bool(existing.get("error_message"))
+        or bool(existing.get("next_action"))
+        or bool(existing.get("blocked_by"))
+        or bool(existing.get("started_at"))
+        or bool(existing.get("finished_at"))
+        or bool(existing.get("duration_ms"))
+        or bool(existing.get("metadata"))
     )
 
 
@@ -668,7 +728,11 @@ def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> li
 
     states: list[dict[str, Any]] = []
     for stage in STAGE_ORDER:
-        states.append(explicit.get(stage) or legacy[stage])
+        existing = explicit.get(stage)
+        if existing and not _is_placeholder_state(existing, legacy[stage]):
+            states.append(existing)
+        else:
+            states.append(legacy[stage])
     return states
 
 
