@@ -224,6 +224,17 @@ jobhunter dashboard                    # Open HTML results dashboard
 
 ---
 
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Domain model](docs/DOMAIN_MODEL.md)
+- [Decisions](docs/DECISIONS.md)
+- [Backlog](docs/BACKLOG.md)
+- [Delivered work](docs/DELIVERED.md)
+- [Plan archive](docs/plans/)
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and PR guidelines.

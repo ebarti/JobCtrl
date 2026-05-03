@@ -14,7 +14,7 @@ The immediate goal is to make the automation reliable:
 - profile and resume-style configuration remain usable from the UI,
 - the Python automation code keeps doing the work it already does.
 
-Production-only work has been moved to `TODO_FUTURE.md`. That includes
+Production-only work has been moved to `../../BACKLOG.md`. That includes
 tenancy, auth, billing, hosted deployment, Postgres migration, object storage,
 secret vaulting, audit logs, retention policy, and hosted apply hardening.
 
@@ -69,7 +69,7 @@ Out of scope now:
 - production retention policy,
 - hosted browser isolation.
 
-See `TODO_FUTURE.md` for those deferred items.
+See `../../BACKLOG.md` for those deferred items.
 
 ## Current Architecture Review
 
@@ -641,7 +641,7 @@ Local apply automation should:
 - avoid blocking forever on a silent child process,
 - make target URL apply work for fresh jobs.
 
-Hosted apply concerns are tracked in `TODO_FUTURE.md`.
+Hosted apply concerns are tracked in `../../BACKLOG.md`.
 
 ## Python Worker Contract
 
@@ -839,7 +839,7 @@ Before moving toward SaaS hardening, verify:
 - generated artifacts open from the UI,
 - local profile/style save and discard flows work.
 
-The repeatable Phase 7 checklist lives in `docs/local-reliability-qa.md`.
+The repeatable Phase 7 checklist lives in `docs/plans/implemented/2026-05-03-local-reliability-qa.md`.
 
 ## Test Strategy
 
