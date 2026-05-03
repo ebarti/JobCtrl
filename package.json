@@ -14,12 +14,13 @@
   "scripts": {
     "api:dev": "tsx services/api/src/main.ts",
     "api:start": "tsx services/api/src/main.ts",
-    "api:check": "tsc --noEmit",
+    "api:check": "tsc --noEmit --project tsconfig.api.json",
     "api:test": "vitest run services/api/test",
+    "web:check": "tsc --noEmit --project tsconfig.web.json",
     "web:dev": "vite --config apps/web/vite.config.ts --host 127.0.0.1",
     "web:build": "vite build --config apps/web/vite.config.ts",
     "web:preview": "vite preview --config apps/web/vite.config.ts --host 127.0.0.1",
-    "test": "npm run api:check && npm run api:test && npm run web:build"
+    "test": "npm run api:check && npm run api:test && npm run web:check && npm run web:build"
   },
   "repository": {
     "type": "git",

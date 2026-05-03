@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@jobhunter/contracts": "file:../../packages/contracts"
+    "@jobhunter/contracts": "file:../../packages/contracts",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
   }
 }
-

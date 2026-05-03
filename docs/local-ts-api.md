@@ -71,7 +71,6 @@ types, and `createJobHunterApiClient()` for the future React frontend.
 
 ```bash
 npm test
-npm run web:build
 uv run pytest tests/test_dashboard_server.py -q
 ```
 

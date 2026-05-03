@@ -13,7 +13,7 @@ import {
   type StageState,
   STAGES,
 } from "@jobhunter/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type View = "dashboard" | "jobs" | "artifacts" | "profile";
 type Direction = "asc" | "desc";
@@ -86,7 +86,7 @@ export function App(): JSX.Element {
             </button>
           ))}
         </nav>
-        <select className="select" value={density} onChange={(event) => setDensity(event.target.value)}>
+        <select aria-label="Row density" className="select" value={density} onChange={(event) => setDensity(event.target.value)}>
           <option value="compact">compact</option>
           <option value="regular">regular</option>
           <option value="comfy">comfy</option>
@@ -188,12 +188,14 @@ function Dashboard({
                   ["done", stage.succeeded],
                   ["failed", stage.failed],
                   ["blocked", stage.blocked],
-                  ["pending", stage.pending + stage.running],
+                  ["running", stage.running],
+                  ["pending", stage.pending],
                 ]}
               />
               <span className="legend">
                 {stage.failed ? <span className="danger">{stage.failed} failed</span> : null}
                 {stage.blocked ? <span className="warn">{stage.blocked} blocked</span> : null}
+                {stage.running ? <span>{stage.running} running</span> : null}
                 <span>{stage.pending} pending</span>
               </span>
             </button>
@@ -250,27 +252,35 @@ function JobsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.E
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [error, setError] = useState("");
+  const requestSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = requestSeq.current + 1;
+    requestSeq.current = requestId;
     setLoading(true);
     setError("");
     try {
-      setData(
-        await api.jobs({
-          page,
-          pageSize,
-          q: query,
-          sort,
-          dir,
-          stage: stage === "all" ? undefined : stage,
-          state: state === "all" ? undefined : state,
-        }),
-      );
+      const nextData = await api.jobs({
+        page,
+        pageSize,
+        q: query,
+        sort,
+        dir,
+        stage: stage === "all" ? undefined : stage,
+        state: state === "all" ? undefined : state,
+      });
+      if (requestId === requestSeq.current) {
+        setData(nextData);
+      }
     } catch (requestError) {
-      setData(null);
-      setError(requestError instanceof Error ? requestError.message : "Unable to load jobs.");
+      if (requestId === requestSeq.current) {
+        setData(null);
+        setError(requestError instanceof Error ? requestError.message : "Unable to load jobs.");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestSeq.current) {
+        setLoading(false);
+      }
     }
   }, [dir, page, pageSize, query, sort, stage, state]);
 
@@ -305,8 +315,22 @@ function JobsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.E
       <CardHeader title="Jobs" meta={data ? `${data.pagination.total} total` : "loading"} />
       {error ? <div className="banner inline">{error}</div> : null}
       <div className="toolbar">
-        <input aria-label="Search jobs" placeholder="Filter jobs, companies, errors..." value={query} onChange={(event) => setQuery(event.target.value)} />
-        <select value={stage} onChange={(event) => setStage(event.target.value as Stage | "all")}>
+        <input
+          aria-label="Search jobs"
+          placeholder="Filter jobs, companies, errors..."
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setPage(1);
+          }}
+        />
+        <select
+          value={stage}
+          onChange={(event) => {
+            setStage(event.target.value as Stage | "all");
+            setPage(1);
+          }}
+        >
           <option value="all">all stages</option>
           {STAGES.map((item) => (
             <option key={item} value={item}>
@@ -314,16 +338,41 @@ function JobsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): JSX.E
             </option>
           ))}
         </select>
-        <select value={state} onChange={(event) => setState(event.target.value as StageState | "all")}>
+        <select
+          value={state}
+          onChange={(event) => {
+            setState(event.target.value as StageState | "all");
+            setPage(1);
+          }}
+        >
           {["all", "pending", "running", "succeeded", "failed", "blocked", "exhausted", "stale"].map((item) => (
             <option key={item} value={item}>
               {item} states
             </option>
           ))}
         </select>
-        <SelectPairs options={jobSortFields} value={sort} onChange={setSort} />
-        <DirectionSelect value={dir} onChange={setDir} />
-        <PageSize value={pageSize} onChange={setPageSize} />
+        <SelectPairs
+          options={jobSortFields}
+          value={sort}
+          onChange={(value) => {
+            setSort(value);
+            setPage(1);
+          }}
+        />
+        <DirectionSelect
+          value={dir}
+          onChange={(value) => {
+            setDir(value);
+            setPage(1);
+          }}
+        />
+        <PageSize
+          value={pageSize}
+          onChange={(value) => {
+            setPageSize(value);
+            setPage(1);
+          }}
+        />
         <button className="tab" onClick={() => void load()} type="button">
           refresh
         </button>
@@ -361,26 +410,34 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
   const [dir, setDir] = useState<Direction>("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const requestSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = requestSeq.current + 1;
+    requestSeq.current = requestId;
     setLoading(true);
     setError("");
     try {
-      setData(
-        await api.artifacts({
-          page,
-          pageSize,
-          q: query,
-          sort,
-          dir,
-          status: status === "all" ? "" : status,
-        }),
-      );
+      const nextData = await api.artifacts({
+        page,
+        pageSize,
+        q: query,
+        sort,
+        dir,
+        status: status === "all" ? "" : status,
+      });
+      if (requestId === requestSeq.current) {
+        setData(nextData);
+      }
     } catch (requestError) {
-      setData(null);
-      setError(requestError instanceof Error ? requestError.message : "Unable to load artifacts.");
+      if (requestId === requestSeq.current) {
+        setData(null);
+        setError(requestError instanceof Error ? requestError.message : "Unable to load artifacts.");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestSeq.current) {
+        setLoading(false);
+      }
     }
   }, [dir, page, pageSize, query, sort, status]);
 
@@ -393,17 +450,50 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
       <CardHeader title="Artifacts" meta={data ? `${data.pagination.total} total` : "loading"} />
       {error ? <div className="banner inline">{error}</div> : null}
       <div className="toolbar">
-        <input aria-label="Search artifacts" placeholder="Filter artifacts..." value={query} onChange={(event) => setQuery(event.target.value)} />
-        <select value={status} onChange={(event) => setStatus(event.target.value)}>
+        <input
+          aria-label="Search artifacts"
+          placeholder="Filter artifacts..."
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setPage(1);
+          }}
+        />
+        <select
+          value={status}
+          onChange={(event) => {
+            setStatus(event.target.value);
+            setPage(1);
+          }}
+        >
           {["all", "active", "approved", "candidate", "stale"].map((item) => (
             <option key={item} value={item}>
               {item}
             </option>
           ))}
         </select>
-        <SelectPairs options={artifactSortFields} value={sort} onChange={setSort} />
-        <DirectionSelect value={dir} onChange={setDir} />
-        <PageSize value={pageSize} onChange={setPageSize} />
+        <SelectPairs
+          options={artifactSortFields}
+          value={sort}
+          onChange={(value) => {
+            setSort(value);
+            setPage(1);
+          }}
+        />
+        <DirectionSelect
+          value={dir}
+          onChange={(value) => {
+            setDir(value);
+            setPage(1);
+          }}
+        />
+        <PageSize
+          value={pageSize}
+          onChange={(value) => {
+            setPageSize(value);
+            setPage(1);
+          }}
+        />
         <button className="tab" onClick={() => void load()} type="button">
           refresh
         </button>
@@ -437,16 +527,22 @@ function ProfileView(): JSX.Element {
   const [templateText, setTemplateText] = useState("");
   const [showImport, setShowImport] = useState(true);
   const [loadRevision, setLoadRevision] = useState(0);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     async function load() {
-      const [profileResponse, settingsResponse] = await Promise.all([api.profile(), api.settings()]);
-      setProfile(profileResponse);
-      setSettings(settingsResponse);
-      setProfileText(JSON.stringify(profileResponse.profile, null, 2));
-      setStyleText(JSON.stringify(profileResponse.style, null, 2));
-      setTemplateText(profileResponse.templateText);
-      setLoadRevision((value) => value + 1);
+      setLoadError("");
+      try {
+        const [profileResponse, settingsResponse] = await Promise.all([api.profile(), api.settings()]);
+        setProfile(profileResponse);
+        setSettings(settingsResponse);
+        setProfileText(JSON.stringify(profileResponse.profile, null, 2));
+        setStyleText(JSON.stringify(profileResponse.style, null, 2));
+        setTemplateText(profileResponse.templateText);
+        setLoadRevision((value) => value + 1);
+      } catch (requestError) {
+        setLoadError(requestError instanceof Error ? requestError.message : "Unable to load profile.");
+      }
     }
     void load();
   }, []);
@@ -457,6 +553,7 @@ function ProfileView(): JSX.Element {
     <div className="profile-layout">
       <section className="card">
         <CardHeader title="Profile" meta={settings ? `min fit ${settings.settings.minFitScore}` : "loading"} />
+        {loadError ? <div className="banner inline">{loadError}</div> : null}
         {showImport ? (
           <section className="import-panel">
             <label className="import-target">

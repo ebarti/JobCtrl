@@ -311,6 +311,10 @@ textarea {
   background: var(--warn);
 }
 
+.seg-running {
+  background: var(--info);
+}
+
 .seg-pending {
   background: var(--soft);
 }
