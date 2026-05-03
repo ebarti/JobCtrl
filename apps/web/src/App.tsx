@@ -404,6 +404,7 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
   const [data, setData] = useState<PaginatedResponse<ArtifactSummary> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [openStatus, setOpenStatus] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState<ArtifactSortField>("created_at");
@@ -445,10 +446,22 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
     void load();
   }, [load]);
 
+  const openArtifact = async (artifact: ArtifactSummary) => {
+    setError("");
+    setOpenStatus("");
+    try {
+      const response = await api.openArtifact(artifact.artifactId);
+      setOpenStatus(`opened ${response.artifact.type}`);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to open artifact.");
+    }
+  };
+
   return (
     <section className="card full">
       <CardHeader title="Artifacts" meta={data ? `${data.pagination.total} total` : "loading"} />
       {error ? <div className="banner inline">{error}</div> : null}
+      {openStatus ? <div className="status-line">{openStatus}</div> : null}
       <div className="toolbar">
         <input
           aria-label="Search artifacts"
@@ -501,7 +514,7 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
       <div className="table">
         {loading && !data ? <Empty title="Loading artifacts." /> : null}
         {data?.items.map((artifact) => (
-          <button className="data-row artifact" key={artifact.artifactId} onClick={() => onOpenJob(artifact.jobKey)} type="button">
+          <div className="data-row artifact" key={artifact.artifactId}>
             <span className={`tag ${artifact.status === "active" ? "ok" : "muted"}`}>{artifact.status}</span>
             <span className="title-stack">
               <b>{artifact.title}</b>
@@ -510,7 +523,15 @@ function ArtifactsView({ onOpenJob }: { onOpenJob: (jobKey: string) => void }): 
             <span>{artifact.type}</span>
             <span className="path-cell">{artifact.localPath}</span>
             <span className="mono">{artifact.size}</span>
-          </button>
+            <span className="row-actions">
+              <button className="tab on" onClick={() => void openArtifact(artifact)} type="button">
+                open
+              </button>
+              <button className="tab" onClick={() => onOpenJob(artifact.jobKey)} type="button">
+                job
+              </button>
+            </span>
+          </div>
         ))}
         {data && data.items.length === 0 ? <Empty title="No artifacts match." /> : null}
       </div>
@@ -525,55 +546,132 @@ function ProfileView(): JSX.Element {
   const [profileText, setProfileText] = useState("");
   const [styleText, setStyleText] = useState("");
   const [templateText, setTemplateText] = useState("");
+  const [originalProfileText, setOriginalProfileText] = useState("");
+  const [originalStyleText, setOriginalStyleText] = useState("");
+  const [originalTemplateText, setOriginalTemplateText] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [importProfile, setImportProfile] = useState(true);
+  const [importStyle, setImportStyle] = useState(true);
   const [showImport, setShowImport] = useState(true);
-  const [loadRevision, setLoadRevision] = useState(0);
   const [loadError, setLoadError] = useState("");
+  const [saveStatus, setSaveStatus] = useState("");
+  const [busy, setBusy] = useState("");
 
-  useEffect(() => {
-    async function load() {
-      setLoadError("");
-      try {
-        const [profileResponse, settingsResponse] = await Promise.all([api.profile(), api.settings()]);
-        setProfile(profileResponse);
-        setSettings(settingsResponse);
-        setProfileText(JSON.stringify(profileResponse.profile, null, 2));
-        setStyleText(JSON.stringify(profileResponse.style, null, 2));
-        setTemplateText(profileResponse.templateText);
-        setLoadRevision((value) => value + 1);
-      } catch (requestError) {
-        setLoadError(requestError instanceof Error ? requestError.message : "Unable to load profile.");
-      }
-    }
-    void load();
+  const applyProfileResponse = useCallback((profileResponse: ProfileConfigResponse) => {
+    const nextProfileText = JSON.stringify(profileResponse.profile, null, 2);
+    const nextStyleText = JSON.stringify(profileResponse.style, null, 2);
+    setProfile(profileResponse);
+    setProfileText(nextProfileText);
+    setStyleText(nextStyleText);
+    setTemplateText(profileResponse.templateText);
+    setOriginalProfileText(nextProfileText);
+    setOriginalStyleText(nextStyleText);
+    setOriginalTemplateText(profileResponse.templateText);
   }, []);
 
+  const load = useCallback(async () => {
+    setLoadError("");
+    setSaveStatus("");
+    try {
+      const [profileResponse, settingsResponse] = await Promise.all([api.profile(), api.settings()]);
+      applyProfileResponse(profileResponse);
+      setSettings(settingsResponse);
+    } catch (requestError) {
+      setLoadError(requestError instanceof Error ? requestError.message : "Unable to load profile.");
+    }
+  }, [applyProfileResponse]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   const profileName = useMemo(() => extractName(profile?.profile), [profile]);
+  const profileDirty = profileText !== originalProfileText;
+  const styleDirty = styleText !== originalStyleText;
+  const templateDirty = templateText !== originalTemplateText;
+  const anyDirty = profileDirty || styleDirty || templateDirty;
+
+  const savePatch = async (label: string, patch: Parameters<typeof api.updateProfile>[0]) => {
+    setBusy(label);
+    setSaveStatus("");
+    setLoadError("");
+    try {
+      const response = await api.updateProfile(patch);
+      applyProfileResponse(response);
+      setSaveStatus(`${label} saved`);
+    } catch (requestError) {
+      setLoadError(requestError instanceof Error ? requestError.message : `Unable to save ${label}.`);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const importResume = async () => {
+    if (!selectedFile) {
+      return;
+    }
+    setBusy("import");
+    setSaveStatus("");
+    setLoadError("");
+    try {
+      const imported = await api.importResume({
+        filename: selectedFile.name,
+        pdfBase64: await fileToBase64(selectedFile),
+        importProfile,
+        importStyle,
+      });
+      const nextProfile = imported.profile ?? profile?.profile ?? {};
+      const nextStyle = imported.style ?? profile?.style ?? {};
+      const nextTemplate = imported.templateText ?? templateText;
+      if (imported.profile !== undefined) {
+        setProfileText(JSON.stringify(imported.profile, null, 2));
+      }
+      if (imported.style !== undefined) {
+        setStyleText(JSON.stringify(imported.style, null, 2));
+      }
+      if (imported.templateText !== undefined) {
+        setTemplateText(imported.templateText);
+      }
+      setProfile({ ok: true, profile: nextProfile, style: nextStyle, templateText: nextTemplate });
+      setSaveStatus(`import draft ${imported.action?.status ?? "ready"}`);
+    } catch (requestError) {
+      setLoadError(requestError instanceof Error ? requestError.message : "Unable to import resume.");
+    } finally {
+      setBusy("");
+    }
+  };
 
   return (
     <div className="profile-layout">
       <section className="card">
         <CardHeader title="Profile" meta={settings ? `min fit ${settings.settings.minFitScore}` : "loading"} />
         {loadError ? <div className="banner inline">{loadError}</div> : null}
+        {saveStatus ? <div className="status-line">{saveStatus}</div> : null}
         {showImport ? (
           <section className="import-panel">
             <label className="import-target">
               <span className="import-icon">PDF</span>
               <span>
                 <b>Resume PDF</b>
-                <small>No file selected</small>
+                <small>{selectedFile?.name ?? "No file selected"}</small>
               </span>
-              <input aria-label="Resume PDF" type="file" accept="application/pdf" />
+              <input
+                aria-label="Resume PDF"
+                type="file"
+                accept="application/pdf"
+                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+              />
               <em>choose file</em>
             </label>
             <div className="import-options">
               <label>
-                <input type="checkbox" defaultChecked /> profile data
+                <input type="checkbox" checked={importProfile} onChange={(event) => setImportProfile(event.target.checked)} /> profile data
               </label>
               <label>
-                <input type="checkbox" defaultChecked /> style data
+                <input type="checkbox" checked={importStyle} onChange={(event) => setImportStyle(event.target.checked)} /> style data
               </label>
-              <button className="tab" disabled type="button">
-                import
+              <button className="tab on" disabled={!selectedFile || busy === "import"} onClick={() => void importResume()} type="button">
+                {busy === "import" ? "importing" : "import"}
               </button>
               <button className="tab" onClick={() => setShowImport(false)} type="button">
                 hide
@@ -585,9 +683,58 @@ function ProfileView(): JSX.Element {
             show import
           </button>
         )}
-        <Editor label="profile.json" revision={loadRevision} value={profileText} onChange={setProfileText} />
-        <Editor label="resume_style.json" revision={loadRevision} value={styleText} onChange={setStyleText} />
-        <Editor label="resume_template.tex" revision={loadRevision} value={templateText} onChange={setTemplateText} />
+        <div className="editor-bulk-actions">
+          <button
+            className="tab on"
+            disabled={!anyDirty || Boolean(busy)}
+            onClick={() => void savePatch("profile files", { profileText, styleText, templateText })}
+            type="button"
+          >
+            save all
+          </button>
+          <button
+            className="tab"
+            disabled={!anyDirty || Boolean(busy)}
+            onClick={() => {
+              setProfileText(originalProfileText);
+              setStyleText(originalStyleText);
+              setTemplateText(originalTemplateText);
+            }}
+            type="button"
+          >
+            discard all
+          </button>
+          <button className="tab" disabled={Boolean(busy)} onClick={() => void load()} type="button">
+            reload
+          </button>
+        </div>
+        <Editor
+          dirty={profileDirty}
+          label="profile.json"
+          saving={busy === "profile.json"}
+          value={profileText}
+          onChange={setProfileText}
+          onDiscard={() => setProfileText(originalProfileText)}
+          onSave={() => void savePatch("profile.json", { profileText })}
+        />
+        <Editor
+          dirty={styleDirty}
+          label="resume_style.json"
+          saving={busy === "resume_style.json"}
+          value={styleText}
+          onChange={setStyleText}
+          onDiscard={() => setStyleText(originalStyleText)}
+          onSave={() => void savePatch("resume_style.json", { styleText })}
+        />
+        <Editor
+          dirty={templateDirty}
+          label="resume_template.tex"
+          saving={busy === "resume_template.tex"}
+          value={templateText}
+          onChange={setTemplateText}
+          onDiscard={() => setTemplateText(originalTemplateText)}
+          onSave={() => void savePatch("resume_template.tex", { templateText })}
+        />
       </section>
       <aside className="preview">
         <div className="preview-page">
@@ -604,15 +751,44 @@ function ProfileView(): JSX.Element {
 function JobDrawer({ jobKey, onClose }: { jobKey: string; onClose: () => void }): JSX.Element {
   const [detail, setDetail] = useState<JobDetail | null>(null);
   const [error, setError] = useState("");
+  const [actionStatus, setActionStatus] = useState("");
+  const [actionBusy, setActionBusy] = useState("");
 
-  useEffect(() => {
+  const loadDetail = useCallback(async () => {
     setDetail(null);
     setError("");
-    api
-      .job(jobKey)
-      .then(setDetail)
-      .catch((requestError: unknown) => setError(requestError instanceof Error ? requestError.message : "Unable to load job."));
+    try {
+      setDetail(await api.job(jobKey));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load job.");
+    }
   }, [jobKey]);
+
+  useEffect(() => {
+    void loadDetail();
+  }, [loadDetail]);
+
+  const runAction = async (label: string, action: () => Promise<{ status: string }>) => {
+    setActionBusy(label);
+    setActionStatus("");
+    setError("");
+    try {
+      const result = await action();
+      setActionStatus(`${label} ${result.status}`);
+      await loadDetail();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : `Unable to ${label}.`);
+    } finally {
+      setActionBusy("");
+    }
+  };
+
+  const openArtifact = async (artifact: ArtifactSummary) => {
+    await runAction("open artifact", async () => {
+      const result = await api.openArtifact(artifact.artifactId);
+      return { status: result.opened ? "opened" : "failed" };
+    });
+  };
 
   return (
     <div className="drawer-backdrop">
@@ -632,10 +808,64 @@ function JobDrawer({ jobKey, onClose }: { jobKey: string; onClose: () => void })
                 <p>{detail.job.location || "-"} · {detail.job.salary || "-"}</p>
               </span>
             </div>
-            <div className="notice">
-              <b>{detail.job.nextAction || "Next action"}</b>
-              <code>{`jobhunter retry ${detail.job.currentStage} ${detail.job.jobKey}`}</code>
+            <div className="action-panel">
+              <span>
+                <b>{detail.job.nextAction || "Local actions"}</b>
+                <small>
+                  {detail.job.currentStage} · {detail.job.currentState}
+                </small>
+              </span>
+              <button
+                className="tab on"
+                disabled={Boolean(actionBusy)}
+                onClick={() =>
+                  void runAction("retry stage", () =>
+                    api.retryStage(detail.job.jobKey, {
+                      stage: detail.job.currentStage,
+                      resetAttempts: false,
+                      runAfter: false,
+                      dryRun: false,
+                    }),
+                  )
+                }
+                type="button"
+              >
+                retry
+              </button>
+              <button
+                className="tab"
+                disabled={Boolean(actionBusy)}
+                onClick={() => void runAction("generate materials", () => api.generateMaterials(detail.job.jobKey))}
+                type="button"
+              >
+                generate
+              </button>
+              <button
+                className="tab"
+                disabled={Boolean(actionBusy)}
+                onClick={() => void runAction("apply dry-run", () => api.applyJob(detail.job.jobKey, { dryRun: true }))}
+                type="button"
+              >
+                dry-run
+              </button>
+              <button
+                className="tab"
+                disabled={Boolean(actionBusy)}
+                onClick={() => void runAction("mark applied", () => api.markApplied(detail.job.jobKey))}
+                type="button"
+              >
+                applied
+              </button>
+              <button
+                className="tab"
+                disabled={Boolean(actionBusy)}
+                onClick={() => void runAction("mark skipped", () => api.markSkipped(detail.job.jobKey))}
+                type="button"
+              >
+                skip
+              </button>
             </div>
+            {actionStatus ? <div className="status-line">{actionStatus}</div> : null}
             <div className="timeline">
               {detail.stages.map((stage) => (
                 <div key={stage.stage}>
@@ -651,6 +881,9 @@ function JobDrawer({ jobKey, onClose }: { jobKey: string; onClose: () => void })
                   <span className={`tag ${artifact.status === "active" ? "ok" : "muted"}`}>{artifact.status}</span>
                   <span>{artifact.type}</span>
                   <code>{artifact.localPath}</code>
+                  <button className="tab on" disabled={Boolean(actionBusy)} onClick={() => void openArtifact(artifact)} type="button">
+                    open
+                  </button>
                 </div>
               ))}
             </Section>
@@ -711,23 +944,22 @@ function Pager({
 }
 
 function Editor({
+  dirty,
   label,
-  revision,
+  saving,
   value,
   onChange,
+  onDiscard,
+  onSave,
 }: {
+  dirty: boolean;
   label: string;
-  revision: number;
+  saving: boolean;
   value: string;
   onChange: (value: string) => void;
+  onDiscard: () => void;
+  onSave: () => void;
 }): JSX.Element {
-  const [original, setOriginal] = useState(value);
-  const dirty = value !== original;
-
-  useEffect(() => {
-    setOriginal(value);
-  }, [revision]);
-
   return (
     <label className={`editor ${dirty ? "dirty" : ""}`}>
       <span>
@@ -738,18 +970,20 @@ function Editor({
               className="tab on"
               onClick={(event) => {
                 event.preventDefault();
-                setOriginal(value);
+                onSave();
               }}
+              disabled={saving}
               type="button"
             >
-              save draft
+              {saving ? "saving" : "save"}
             </button>
             <button
               className="tab"
               onClick={(event) => {
                 event.preventDefault();
-                onChange(original);
+                onDiscard();
               }}
+              disabled={saving}
               type="button"
             >
               discard
@@ -855,6 +1089,15 @@ function extractContact(profile: unknown): string {
 
 function extractSummary(profile: unknown): string {
   return readString(profile, ["resume", "executive_profile_baseline"]) || readString(profile, ["resume", "summary"]) || "-";
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(index, index + 0x8000));
+  }
+  return btoa(binary);
 }
 
 function readString(source: unknown, path: string[]): string {

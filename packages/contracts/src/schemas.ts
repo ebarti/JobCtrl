@@ -3,6 +3,9 @@ import { z } from "zod";
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "pdf", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
 
+export const MATERIAL_STAGES = ["tailor", "cover", "pdf"] as const;
+export type MaterialStage = (typeof MATERIAL_STAGES)[number];
+
 export const STAGE_STATES = [
   "pending",
   "queued",
@@ -31,6 +34,70 @@ export const ARTIFACT_SORT_FIELDS = ["created_at", "title", "company", "type", "
 export type ArtifactSortField = (typeof ARTIFACT_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
+
+export const RetryStageRequestSchema = z
+  .object({
+    stage: z.enum(STAGES),
+    resetAttempts: z.boolean().default(false),
+    runAfter: z.boolean().default(false),
+    dryRun: z.boolean().default(false),
+  })
+  .strict();
+export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
+
+export const GenerateMaterialsRequestSchema = z
+  .object({
+    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover", "pdf"]),
+    dryRun: z.boolean().default(false),
+    limit: z.number().int().min(1).max(200).default(1),
+  })
+  .strict();
+export type GenerateMaterialsRequest = z.infer<typeof GenerateMaterialsRequestSchema>;
+
+export const ApplyJobRequestSchema = z
+  .object({
+    dryRun: z.boolean().default(true),
+    headless: z.boolean().default(false),
+    limit: z.number().int().min(1).max(200).default(1),
+    model: z.string().trim().min(1).max(80).default("haiku"),
+  })
+  .strict();
+export type ApplyJobRequest = z.infer<typeof ApplyJobRequestSchema>;
+
+export const CancelJobActionRequestSchema = z
+  .object({
+    runId: z.string().trim().min(1).max(160).optional(),
+  })
+  .strict();
+export type CancelJobActionRequest = z.infer<typeof CancelJobActionRequestSchema>;
+
+export const MarkJobActionRequestSchema = z
+  .object({
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type MarkJobActionRequest = z.infer<typeof MarkJobActionRequestSchema>;
+
+export const ProfileUpdateRequestSchema = z
+  .object({
+    profile: z.unknown().optional(),
+    profileText: z.string().optional(),
+    style: z.unknown().optional(),
+    styleText: z.string().optional(),
+    templateText: z.string().optional(),
+  })
+  .strict();
+export type ProfileUpdateRequest = z.infer<typeof ProfileUpdateRequestSchema>;
+
+export const ProfileImportRequestSchema = z
+  .object({
+    filename: z.string().trim().min(1).max(260).default("resume.pdf"),
+    pdfBase64: z.string().min(1),
+    importProfile: z.boolean().default(true),
+    importStyle: z.boolean().default(true),
+  })
+  .strict();
+export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 
 const optionalText = z
   .string()
@@ -201,11 +268,63 @@ export interface ArtifactDetail {
   artifact: ArtifactSummary;
 }
 
+export interface ArtifactOpenResponse {
+  ok: true;
+  artifact: ArtifactSummary;
+  opened: true;
+  path: string;
+}
+
 export interface ProfileConfigResponse {
   ok: true;
   profile: unknown;
   style: unknown;
   templateText: string;
+}
+
+export interface ProfileImportResponse {
+  ok: true;
+  profile?: unknown;
+  style?: unknown;
+  templateText?: string;
+  source?: unknown;
+  action?: ActionRunResponse;
+}
+
+export interface ActionCommandPayload {
+  action:
+    | "retry_stage"
+    | "generate_materials"
+    | "apply"
+    | "cancel"
+    | "mark_applied"
+    | "mark_skipped"
+    | "profile_import";
+  jobKey: string;
+  stage?: Stage;
+  stages?: MaterialStage[];
+  resetAttempts?: boolean;
+  runAfter?: boolean;
+  dryRun?: boolean;
+  limit?: number;
+  model?: string;
+  headless?: boolean;
+  runId?: string;
+  reason?: string;
+}
+
+export interface ActionRunResponse {
+  ok: true;
+  runId: string;
+  actionId: string;
+  action: ActionCommandPayload["action"];
+  status: string;
+  jobKey: string;
+  command: ActionCommandPayload;
+  stage?: StageSummary;
+  result?: unknown;
+  eventCursor?: string | null;
+  message?: string;
 }
 
 export interface DashboardSettings {

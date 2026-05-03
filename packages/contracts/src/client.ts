@@ -1,13 +1,23 @@
 import type {
+  ActionRunResponse,
+  ApplyJobRequest,
   ArtifactDetail,
   ArtifactListQuery,
+  ArtifactOpenResponse,
   ArtifactSummary,
+  CancelJobActionRequest,
   DashboardSummary,
+  GenerateMaterialsRequest,
   JobDetail,
   JobListQuery,
   JobSummary,
+  MarkJobActionRequest,
   PaginatedResponse,
   ProfileConfigResponse,
+  ProfileImportRequest,
+  ProfileImportResponse,
+  ProfileUpdateRequest,
+  RetryStageRequest,
   SettingsResponse,
 } from "./schemas.js";
 
@@ -51,23 +61,80 @@ export class JobHunterApiClient {
     return this.get(`/v1/artifacts/${encodeURIComponent(artifactId)}`);
   }
 
+  openArtifact(artifactId: string): Promise<ArtifactOpenResponse> {
+    return this.post(`/v1/artifacts/${encodeURIComponent(artifactId)}/open`);
+  }
+
   profile(): Promise<ProfileConfigResponse> {
     return this.get("/v1/profile");
+  }
+
+  updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse> {
+    return this.patch("/v1/profile", body);
+  }
+
+  importResume(body: ProfileImportRequest): Promise<ProfileImportResponse> {
+    return this.post("/v1/profile/import-resume", body);
   }
 
   settings(): Promise<SettingsResponse> {
     return this.get("/v1/settings");
   }
 
+  retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/retry-stage`, body);
+  }
+
+  generateMaterials(jobKey: string, body: Partial<GenerateMaterialsRequest> = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/generate-materials`, body);
+  }
+
+  applyJob(jobKey: string, body: Partial<ApplyJobRequest> = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/apply`, body);
+  }
+
+  cancelJobAction(jobKey: string, body: CancelJobActionRequest = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/cancel`, body);
+  }
+
+  markApplied(jobKey: string, body: MarkJobActionRequest = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-applied`, body);
+  }
+
+  markSkipped(jobKey: string, body: MarkJobActionRequest = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-skipped`, body);
+  }
+
   private async get<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+    return this.request("GET", path, query ? { query } : {});
+  }
+
+  private async patch<T>(path: string, body?: unknown): Promise<T> {
+    return this.request("PATCH", path, { body });
+  }
+
+  private async post<T>(path: string, body?: unknown): Promise<T> {
+    return this.request("POST", path, { body });
+  }
+
+  private async request<T>(
+    method: "GET" | "PATCH" | "POST",
+    path: string,
+    options: { body?: unknown; query?: Record<string, QueryValue> } = {},
+  ): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
-    for (const [key, value] of Object.entries(query ?? {})) {
+    for (const [key, value] of Object.entries(options.query ?? {})) {
       if (value !== undefined && value !== null && value !== "") {
         url.searchParams.set(key, String(value));
       }
     }
     const href = this.baseUrl ? url.href : `${url.pathname}${url.search}`;
-    const response = await fetch(href);
+    const init: RequestInit = { method };
+    if (method !== "GET" && options.body !== undefined) {
+      init.body = JSON.stringify(options.body);
+      init.headers = { "content-type": "application/json" };
+    }
+    const response = await fetch(href, init);
     if (!response.ok) {
       throw new Error(`JobHunter API request failed: ${response.status} ${response.statusText}`);
     }

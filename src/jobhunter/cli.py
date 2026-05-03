@@ -472,6 +472,8 @@ def action(
     validation: str = typer.Option("normal", "--validation", help="Validation mode for material generation."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Return the planned action without executing."),
     pdf_path: Optional[str] = typer.Option(None, "--pdf", help="Resume PDF path for profile_import."),
+    model: str = typer.Option("haiku", "--model", "-m", help="Apply action model."),
+    headless: bool = typer.Option(False, "--headless", help="Run apply browser action headless."),
 ) -> None:
     """Run a structured local action and print its JSON result."""
     from jobhunter.actions import LocalActionRequest, run_local_action
@@ -488,6 +490,8 @@ def action(
                 validation_mode=validation,
                 dry_run=dry_run,
                 pdf_path=pdf_path,
+                model=model,
+                headless=headless,
             )
         )
     except (OSError, ValueError) as exc:

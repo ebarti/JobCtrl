@@ -139,6 +139,40 @@ def test_apply_action_uses_single_job_default_limit(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
+def test_action_cli_passes_apply_model_and_headless_options(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+    calls = []
+
+    def fake_apply(**kwargs):
+        calls.append(kwargs)
+        return (1, 0)
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(launcher, "main", fake_apply)
+
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "action",
+                "apply",
+                "--url",
+                "https://example.com/job",
+                "--model",
+                "sonnet",
+                "--headless",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert calls[0]["model"] == "sonnet"
+        assert calls[0]["headless"] is True
+    finally:
+        close_connection(db_path)
+
+
 def test_local_action_returns_structured_bootstrap_failure(monkeypatch):
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: (_ for _ in ()).throw(RuntimeError("db unavailable")))
 

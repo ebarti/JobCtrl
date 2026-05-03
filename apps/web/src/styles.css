@@ -352,7 +352,7 @@ textarea {
 }
 
 .data-row.artifact {
-  grid-template-columns: 92px minmax(220px, 1fr) 160px minmax(240px, 1.3fr) 90px;
+  grid-template-columns: 92px minmax(220px, 1fr) 150px minmax(240px, 1.3fr) 80px auto;
   gap: 14px;
 }
 
@@ -369,6 +369,10 @@ textarea {
 
 .activity-row {
   grid-template-columns: 70px 90px minmax(0, 1fr);
+}
+
+.section .mini-row {
+  grid-template-columns: 92px 150px minmax(0, 1fr) auto;
 }
 
 .title-stack {
@@ -451,6 +455,20 @@ textarea {
   border-top: 1px solid var(--rule);
 }
 
+.row-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.status-line {
+  border-bottom: 1px solid var(--rule);
+  padding: 9px 16px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .empty,
 .banner {
   padding: 28px 16px;
@@ -515,6 +533,29 @@ textarea {
   border-radius: 6px;
   background: rgba(199, 103, 69, 0.1);
   padding: 12px;
+}
+
+.action-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(5, auto);
+  gap: 8px;
+  align-items: center;
+  margin: 16px 28px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-2);
+  padding: 12px;
+}
+
+.action-panel span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.action-panel small {
+  color: var(--muted);
 }
 
 .timeline {
@@ -635,6 +676,13 @@ textarea {
   padding: 10px;
 }
 
+.editor-bulk-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
 .editor {
   display: flex;
   flex-direction: column;
@@ -702,7 +750,9 @@ textarea {
 
   .data-row.job,
   .data-row.artifact,
-  .funnel-row {
+  .funnel-row,
+  .action-panel,
+  .section .mini-row {
     grid-template-columns: 1fr;
   }
 }
