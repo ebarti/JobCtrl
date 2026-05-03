@@ -839,6 +839,8 @@ Before moving toward SaaS hardening, verify:
 - generated artifacts open from the UI,
 - local profile/style save and discard flows work.
 
+The repeatable Phase 7 checklist lives in `docs/local-reliability-qa.md`.
+
 ## Test Strategy
 
 ### API Tests
