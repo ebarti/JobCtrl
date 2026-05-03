@@ -50,6 +50,7 @@ const LOCAL_ORIGIN_PATTERNS = [
   /^https?:\/\/127\.0\.0\.1(?::\d+)?$/,
   /^https?:\/\/\[::1\](?::\d+)?$/,
 ];
+const LOCAL_CORS_METHODS = ["GET", "HEAD", "POST", "PATCH"];
 const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 
 export interface BuildAppOptions {
@@ -75,6 +76,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   void app.register(cors, {
     origin: LOCAL_ORIGIN_PATTERNS,
+    methods: LOCAL_CORS_METHODS,
   });
 
   app.addHook("onRequest", async (request, reply) => {

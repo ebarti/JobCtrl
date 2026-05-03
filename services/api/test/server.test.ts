@@ -97,6 +97,25 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("allows loopback browser preflight for local profile saves", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/profile",
+      headers: {
+        origin: "http://127.0.0.1:5173",
+        "access-control-request-method": "PATCH",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:5173");
+    expect(response.headers["access-control-allow-methods"]).toContain("PATCH");
+    expect(response.headers["access-control-allow-methods"]).toContain("POST");
+
+    await app.close();
+  });
+
   it("rejects non-loopback browser mutation sources before handlers run", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued" }));
     const opener = vi.fn(async () => undefined);
