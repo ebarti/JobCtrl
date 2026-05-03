@@ -83,7 +83,7 @@ def import_resume_pdf(
 
     The importer is intentionally local and draft-oriented: it extracts best-effort
     profile facts and visual style settings, but leaves persistence to the
-    dashboard's existing save-all flow.
+    local UI/API save flow.
     """
     result = extract_pdf_text(pdf_bytes)
     profile = profile_from_resume_text(result.text, base_profile=base_profile)

@@ -1,11 +1,9 @@
 """JobHunter configuration: paths, platform detection, user data."""
 
-import json
 import os
 import platform
 import shutil
 from pathlib import Path
-from typing import Any
 
 # User data directory — all user-specific files live here
 APP_DIR = Path(os.environ.get("JOBHUNTER_DIR", Path.home() / ".jobhunter"))
@@ -19,7 +17,6 @@ RESUME_TEMPLATE_PATH = APP_DIR / "resume_template.tex"
 RESUME_STYLE_PATH = APP_DIR / "resume_style.json"
 SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
 ENV_PATH = APP_DIR / ".env"
-DASHBOARD_CONFIG_PATH = APP_DIR / "dashboard.json"
 
 # Generated output
 TAILORED_DIR = APP_DIR / "tailored_resumes"
@@ -177,93 +174,6 @@ DEFAULTS = {
     "viewport": "1280x900",
 }
 
-DASHBOARD_DEFAULTS = {
-    "target_role": "Job search pipeline",
-    "location_filter": "Configured searches",
-    "min_fit_score": DEFAULTS["min_score"],
-    "auto_apply": False,
-    "apply_concurrency": 1,
-}
-
-
-def _coerce_dashboard_int(name: str, value: Any, *, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{name} must be an integer.") from exc
-    if parsed < minimum or parsed > maximum:
-        raise ValueError(f"{name} must be between {minimum} and {maximum}.")
-    return parsed
-
-
-def _coerce_dashboard_bool(name: str, value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "on"}:
-            return True
-        if lowered in {"false", "0", "no", "off"}:
-            return False
-    raise ValueError(f"{name} must be true or false.")
-
-
-def _coerce_dashboard_text(name: str, value: Any) -> str:
-    text = str(value or "").strip()
-    if len(text) > 160:
-        raise ValueError(f"{name} must be 160 characters or fewer.")
-    return text
-
-
-def normalize_dashboard_settings(
-    values: dict[str, Any] | None = None,
-    *,
-    base: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Validate and normalize editable dashboard runtime settings."""
-    source = {**DASHBOARD_DEFAULTS, **(base or {}), **(values or {})}
-    return {
-        "target_role": _coerce_dashboard_text("target_role", source["target_role"]),
-        "location_filter": _coerce_dashboard_text("location_filter", source["location_filter"]),
-        "min_fit_score": _coerce_dashboard_int("min_fit_score", source["min_fit_score"], minimum=0, maximum=10),
-        "auto_apply": _coerce_dashboard_bool("auto_apply", source["auto_apply"]),
-        "apply_concurrency": _coerce_dashboard_int(
-            "apply_concurrency",
-            source["apply_concurrency"],
-            minimum=1,
-            maximum=16,
-        ),
-    }
-
-
-def load_dashboard_settings(path: Path | None = None) -> dict[str, Any]:
-    """Load editable dashboard settings from the user data directory."""
-    settings_path = path or DASHBOARD_CONFIG_PATH
-    if not settings_path.exists():
-        return normalize_dashboard_settings()
-    try:
-        raw = json.loads(settings_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid dashboard config JSON at {settings_path}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ValueError(f"Dashboard config at {settings_path} must be a JSON object.")
-    return normalize_dashboard_settings(raw)
-
-
-def save_dashboard_settings(
-    values: dict[str, Any],
-    *,
-    base: dict[str, Any] | None = None,
-    path: Path | None = None,
-) -> dict[str, Any]:
-    """Persist editable dashboard settings and return the normalized values."""
-    settings = normalize_dashboard_settings(values, base=base)
-    settings_path = path or DASHBOARD_CONFIG_PATH
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return settings
-
-
 def load_env():
     """Load environment variables from ~/.jobhunter/.env if it exists."""
     from dotenv import load_dotenv
@@ -284,7 +194,7 @@ TIER_LABELS = {
 }
 
 TIER_COMMANDS: dict[int, list[str]] = {
-    1: ["init", "discover", "enrich", "run", "status", "dashboard"],
+    1: ["init", "discover", "enrich", "run", "status"],
     2: ["score", "tailor", "cover", "pdf"],
     3: ["apply"],
 }

@@ -63,10 +63,10 @@ Delivered:
 
 Delivered:
 
-- dashboard retry/stage/apply buttons routed through structured actions
+- local UI retry/stage/apply buttons routed through structured actions
 - copyable CLI commands retained
-- long-running dashboard actions queued in background threads
-- `/api/action?id=...` status polling endpoint
+- long-running local actions queued in background threads
+- action status polling for long-running local commands
 
 ## PR #13: Local Reliability QA Gate
 
@@ -77,8 +77,8 @@ Delivered:
 - repeatable local reliability command checklist
 - regression matrix for high-risk local workflows
 - React browser smoke checklist
-- Python dashboard smoke checklist for artifact opening, profile/style save,
-  discard, and resume PDF import drafts
+- React/API product checks for artifact opening, profile/style save, discard,
+  and resume PDF import drafts
 
 ## 2026-05-03: Local TS Product API + Python Workers Architecture
 

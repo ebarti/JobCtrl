@@ -6,8 +6,7 @@ JobHunter now has an initial local TypeScript API scaffold under
 
 This API is intentionally local-first. It reads the existing local SQLite
 database and profile/style/template files, then exposes typed JSON endpoints for
-the future React dashboard. It does not replace the Python automation pipeline
-or the current Python dashboard server yet.
+the React web UI. It does not replace the Python automation pipeline.
 
 Browser CORS access is limited to localhost origins because the API exposes
 local job and profile data.
@@ -44,7 +43,7 @@ Environment variables:
 - `JOBHUNTER_PROFILE_PATH`: explicit `profile.json` path
 - `JOBHUNTER_RESUME_STYLE_PATH`: explicit `resume_style.json` path
 - `JOBHUNTER_RESUME_TEMPLATE_PATH`: explicit `resume_template.tex` path
-- `JOBHUNTER_DASHBOARD_CONFIG_PATH`: explicit editable dashboard settings path
+- `JOBHUNTER_DASHBOARD_CONFIG_PATH`: explicit local UI settings path
 - `JOBHUNTER_API_HOST`: bind host, default `127.0.0.1`
 - `JOBHUNTER_API_PORT`: bind port, default `8766`
 
@@ -78,16 +77,13 @@ jobhunter action profile_import --pdf ~/resume.pdf
 ```
 
 The action wrapper records start/finish events in `job_events` and returns a
-JSON result. The live Python dashboard now uses this path for retry, stage, and
-apply buttons instead of shelling out through copyable command strings. The
-commands remain visible for manual copying.
+JSON result. The TypeScript API uses this path for retry, stage, and apply
+actions instead of relying on shell-parsed command strings. The commands remain
+visible for manual copying.
 
 ## Verify
 
 ```bash
 npm test
-uv run pytest tests/test_dashboard_server.py -q
+uv run pytest tests/test_actions.py tests/test_profile_import.py -q
 ```
-
-The Python dashboard tests remain in place because the current dashboard server
-is still the production local UI until the React frontend is built.

@@ -8,19 +8,17 @@ proposal and delivery history lives under `docs/plans/`.
 JobHunter is a local-first job-search automation system. The product surface is
 a local web UI and API; the automation engine remains Python because the
 existing discovery, enrichment, scoring, tailoring, PDF generation, and apply
-flows are already implemented there.
+flows are already implemented there. The supported runtime shape has three
+components: local TypeScript API, local TypeScript UI, and Python automation
+engine.
 
 ```mermaid
 flowchart LR
   Web["React web UI"] --> Api["Local TypeScript API"]
-  Web --> PyDash["Python dashboard server"]
   Api --> Db["SQLite in ~/.jobhunter"]
-  PyDash --> Db
   Api --> Files["Local artifacts"]
-  PyDash --> Files
   Api --> Actions["Structured local actions"]
-  PyDash --> Actions
-  Actions --> Workers["Python automation workers"]
+  Actions --> Workers["Python automation engine"]
   Workers --> Db
   Workers --> Files
   Workers --> Boards["Job boards and career sites"]
@@ -67,21 +65,7 @@ Near-term responsibilities:
 
 - event stream or explicit refresh contract
 
-### Python Dashboard Server
-
-`src/jobhunter/dashboard_server.py` is still the production local UI/API for
-several mature local operations while the React/TypeScript path is being built.
-It owns:
-
-- profile/style patching
-- PDF resume import draft generation
-- local artifact opening
-- structured command button execution
-- local action queue status for dashboard-triggered commands
-
-This server should shrink over time as the TypeScript API reaches parity.
-
-### Python Workers
+### Python Automation Engine
 
 Python owns automation execution:
 
@@ -124,7 +108,6 @@ Python CLI:
 ```bash
 uv run jobhunter doctor
 uv run jobhunter run
-uv run jobhunter dashboard
 uv run jobhunter action score --limit 5
 ```
 

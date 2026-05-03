@@ -101,7 +101,7 @@ Consequences:
 
 Status: accepted
 
-Decision: `job_stage_states` should drive dashboard truth, retries, next
+Decision: `job_stage_states` should drive UI/API truth, retries, next
 actions, failure state, and blocked state.
 
 Rationale:
@@ -112,7 +112,7 @@ Rationale:
 
 Consequences:
 
-- dashboard read paths materialize and hydrate stage rows
+- read paths materialize and hydrate stage rows
 - retry operations target one stage
 - tests must cover legacy-to-explicit state parity
 
@@ -131,6 +131,5 @@ Rationale:
 
 Consequences:
 
-- dashboard command actions queue in the background
-- `/api/action?id=...` exposes local action status
+- local UI actions use TypeScript API action endpoints
 - Python action wrappers return structured JSON-safe results
