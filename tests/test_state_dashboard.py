@@ -192,6 +192,36 @@ def test_placeholder_stage_rows_are_upgraded_from_legacy_columns(tmp_path):
         close_connection(db_path)
 
 
+def test_old_discover_placeholder_with_timestamp_is_upgraded(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        conn.execute(
+            """
+            UPDATE job_stage_states
+            SET attempt_count = 0, started_at = ?, finished_at = ?
+            WHERE job_url = ? AND stage = 'discover'
+            """,
+            (job["discovered_at"], job["discovered_at"], job["url"]),
+        )
+        conn.commit()
+
+        assert initialize_missing_state_rows(conn) == 1
+
+        discover = conn.execute(
+            "SELECT attempt_count, started_at, finished_at FROM job_stage_states WHERE job_url = ? AND stage = 'discover'",
+            (job["url"],),
+        ).fetchone()
+        assert discover["attempt_count"] == 1
+        assert discover["started_at"] == job["discovered_at"]
+        assert discover["finished_at"] == job["discovered_at"]
+    finally:
+        close_connection(db_path)
+
+
 def test_generate_dashboard_embeds_payload(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)

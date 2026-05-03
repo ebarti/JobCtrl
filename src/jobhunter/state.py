@@ -107,14 +107,16 @@ def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = Non
     now = utc_now()
     for stage in STAGE_ORDER:
         state = "succeeded" if stage == "discover" else "pending"
+        attempt_count = 1 if stage == "discover" and discovered_at else 0
+        started_at = discovered_at if stage == "discover" else None
         finished_at = discovered_at if stage == "discover" else None
         conn.execute(
             """
             INSERT OR IGNORE INTO job_stage_states (
-                job_url, stage, state, attempt_count, max_attempts, updated_at, finished_at
-            ) VALUES (?, ?, ?, 0, ?, ?, ?)
+                job_url, stage, state, attempt_count, max_attempts, started_at, updated_at, finished_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (job_url, stage, state, MAX_ATTEMPTS.get(stage), now, finished_at),
+            (job_url, stage, state, attempt_count, MAX_ATTEMPTS.get(stage), started_at, now, finished_at),
         )
 
 
@@ -151,8 +153,6 @@ def initialize_missing_state_rows(conn=None, limit: int = 0, *, min_score: int =
                     WHEN states.stage = 'discover'
                         AND states.state = 'succeeded'
                         AND COALESCE(states.attempt_count, 0) = 0
-                        AND states.started_at IS NULL
-                        AND states.finished_at IS NULL
                     THEN 1
                     ELSE 0
                 END
@@ -164,9 +164,11 @@ def initialize_missing_state_rows(conn=None, limit: int = 0, *, min_score: int =
         query += " LIMIT ?"
         params.append(limit)
     rows = conn.execute(query, params).fetchall()
-    explicit_by_job = _load_all_explicit_states(conn)
-    for row in rows:
-        job = _row_to_dict(row)
+    if not rows:
+        return 0
+    jobs = [_row_to_dict(row) for row in rows]
+    explicit_by_job = _load_explicit_states_for_jobs(conn, [job["url"] for job in jobs])
+    for job in jobs:
         _materialize_legacy_stage_rows(conn, job, min_score=min_score, explicit=explicit_by_job.get(job["url"], {}))
     conn.commit()
     return len(rows)
@@ -649,6 +651,18 @@ def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
 
 def _load_all_explicit_states(conn) -> dict[str, dict[str, dict[str, Any]]]:
     rows = conn.execute("SELECT * FROM job_stage_states").fetchall()
+    return _group_explicit_states(rows)
+
+
+def _load_explicit_states_for_jobs(conn, job_urls: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+    if not job_urls:
+        return {}
+    placeholders = ",".join("?" for _ in job_urls)
+    rows = conn.execute(f"SELECT * FROM job_stage_states WHERE job_url IN ({placeholders})", job_urls).fetchall()
+    return _group_explicit_states(rows)
+
+
+def _group_explicit_states(rows) -> dict[str, dict[str, dict[str, Any]]]:
     by_job: dict[str, dict[str, dict[str, Any]]] = {}
     for row in rows:
         data = _row_to_dict(row)
@@ -693,6 +707,13 @@ def _materialize_legacy_stage_rows(
 
 def _is_placeholder_state(existing: dict[str, Any], legacy_state: dict[str, Any]) -> bool:
     """Return true for rows created by the old default-row backfill."""
+    if (
+        existing.get("stage") == "discover"
+        and existing.get("state") == "succeeded"
+        and legacy_state.get("state") == "succeeded"
+        and int(existing.get("attempt_count") or 0) == 0
+    ):
+        return True
     if _has_real_state_fields(existing):
         return False
     if existing.get("state") == "pending":
