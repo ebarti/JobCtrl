@@ -7,6 +7,7 @@ import { createJobHunterApiClient } from "@jobhunter/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
+import { defaultActionDispatcher } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -52,7 +53,7 @@ describe("local TypeScript API", () => {
 
     await createJobHunterApiClient().health();
 
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8766/v1/health");
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8766/v1/health", { method: "GET" });
     fetchMock.mockRestore();
   });
 
@@ -92,6 +93,117 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("allows loopback browser preflight for local profile saves", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/profile",
+      headers: {
+        origin: "http://127.0.0.1:5173",
+        "access-control-request-method": "PATCH",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://127.0.0.1:5173");
+    expect(response.headers["access-control-allow-methods"]).toContain("PATCH");
+    expect(response.headers["access-control-allow-methods"]).toContain("POST");
+
+    await app.close();
+  });
+
+  it("rejects non-loopback browser mutation sources before handlers run", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const opener = vi.fn(async () => undefined);
+    const importer = vi.fn(async () => ({ profile: {} }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch, artifactOpener: opener, profileImporter: importer });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const originalProfile = fs.readFileSync(options.profilePath, "utf8");
+
+    const mutationRequests = [
+      {
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/apply`,
+        payload: { dryRun: true },
+      },
+      {
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+        payload: { reason: "cross-site" },
+      },
+      {
+        method: "POST",
+        url: "/v1/artifacts/1/open",
+      },
+      {
+        method: "PATCH",
+        url: "/v1/profile",
+        payload: { profileText: JSON.stringify({ personal: { full_name: "Cross Site" } }) },
+      },
+      {
+        method: "POST",
+        url: "/v1/profile/import-resume",
+        payload: { filename: "resume.pdf", pdfBase64: Buffer.from("%PDF test").toString("base64") },
+      },
+    ] as const;
+
+    for (const request of mutationRequests) {
+      const response = await app.inject({
+        ...request,
+        headers: { origin: "https://example.com" },
+      });
+      expect(response.statusCode, `${request.method} ${request.url}: ${response.body}`).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+    }
+
+    const refererResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/mark-skipped`,
+      headers: { referer: "https://example.com/jobs" },
+      payload: { reason: "cross-site" },
+    });
+    expect(refererResponse.statusCode, refererResponse.body).toBe(403);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(opener).not.toHaveBeenCalled();
+    expect(importer).not.toHaveBeenCalled();
+    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
+
+    const db = new Database(options.dbPath);
+    const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get("https://example.com/jobs/ready") as {
+      apply_status: string | null;
+      applied_at: string | null;
+    };
+    db.close();
+    expect(row).toMatchObject({ apply_status: null, applied_at: null });
+
+    await app.close();
+  });
+
+  it("allows loopback browser and no-origin mutation callers", async () => {
+    const app = buildApp(options);
+    const appliedKey = encodeURIComponent("https://example.com/jobs/ready");
+    const skippedKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
+
+    const loopback = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${appliedKey}/actions/mark-applied`,
+      headers: { origin: "http://127.0.0.1:5173" },
+      payload: { reason: "local browser" },
+    });
+    const noOrigin = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${skippedKey}/actions/mark-skipped`,
+      payload: { reason: "CLI" },
+    });
+
+    expect(loopback.statusCode, loopback.body).toBe(200);
+    expect(noOrigin.statusCode, noOrigin.body).toBe(200);
+    expect(loopback.json()).toMatchObject({ action: "mark_applied", stage: { state: "succeeded" } });
+    expect(noOrigin.json()).toMatchObject({ action: "mark_skipped", stage: { state: "skipped" } });
 
     await app.close();
   });
@@ -262,6 +374,257 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("opens only a known existing artifact through the injected opener", async () => {
+    const opened: string[] = [];
+    const app = buildApp({
+      ...options,
+      artifactOpener: async (artifactPath) => {
+        opened.push(artifactPath);
+      },
+    });
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_txt" });
+    const artifact = listResponse.json().items[0];
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/open`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      opened: true,
+      path: artifact.localPath,
+    });
+    expect(opened).toEqual([artifact.localPath]);
+
+    await app.close();
+  });
+
+  it("rejects artifact open when the known local file is missing", async () => {
+    const opened = vi.fn();
+    const db = new Database(options.dbPath);
+    const artifactPath = db.prepare("SELECT path FROM job_artifacts LIMIT 1").get() as { path: string };
+    fs.rmSync(artifactPath.path);
+    db.close();
+
+    const app = buildApp({ ...options, artifactOpener: opened });
+    const response = await app.inject({ method: "POST", url: "/v1/artifacts/1/open" });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({ ok: false, error: "artifact_missing" });
+    expect(opened).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("resets a retry stage through a structured job action", async () => {
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/failed-score");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "score", resetAttempts: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "retry_stage",
+      status: "reset",
+      stage: {
+        stage: "score",
+        state: "pending",
+        attemptCount: 0,
+      },
+    });
+
+    const db = new Database(options.dbPath);
+    const job = db.prepare("SELECT fit_score, scored_at FROM jobs WHERE url = ?").get("https://example.com/jobs/failed-score") as {
+      fit_score: number | null;
+      scored_at: string | null;
+    };
+    const event = db.prepare("SELECT stage, level, message FROM job_events ORDER BY event_id DESC LIMIT 1").get() as {
+      stage: string;
+      level: string;
+      message: string;
+    };
+    db.close();
+    expect(job).toMatchObject({ fit_score: null, scored_at: null });
+    expect(event).toMatchObject({ stage: "score", level: "info", message: "Retry reset requested for score" });
+
+    await app.close();
+  });
+
+  it("dispatches run-after apply retry through the job-scoped action dispatcher path", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const retryResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "apply", runAfter: true, dryRun: true },
+    });
+
+    expect(retryResponse.statusCode, retryResponse.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "retry_stage",
+        jobKey: "https://example.com/jobs/ready",
+        stage: "apply",
+        runAfter: true,
+        dryRun: true,
+      }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("rejects unsupported per-job material generation and run-after material retries without dispatching", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const generateResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-materials`,
+      payload: { stages: ["tailor", "cover"], dryRun: true, limit: 1 },
+    });
+    const retryResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "pdf", runAfter: true, dryRun: true },
+    });
+
+    expect(generateResponse.statusCode, generateResponse.body).toBe(400);
+    expect(generateResponse.json()).toMatchObject({
+      ok: false,
+      accepted: false,
+      error: "unsupported_per_job_material_action",
+      jobKey: "https://example.com/jobs/ready",
+    });
+    expect(retryResponse.statusCode, retryResponse.body).toBe(400);
+    expect(retryResponse.json()).toMatchObject({
+      ok: false,
+      accepted: false,
+      error: "unsupported_per_job_material_action",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    const db = new Database(options.dbPath);
+    const pdfStage = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?")
+      .get("https://example.com/jobs/ready", "pdf") as { state: string };
+    db.close();
+    expect(pdfStage.state).toBe("succeeded");
+
+    await app.close();
+  });
+
+  it("does not translate unsupported material actions into global stage CLI commands", async () => {
+    await expect(
+      defaultActionDispatcher(
+        {
+          action: "generate_materials",
+          jobKey: "https://example.com/jobs/ready",
+          stages: ["tailor"],
+          limit: 1,
+          dryRun: true,
+        },
+        { appDir: tempDir },
+      ),
+    ).resolves.toMatchObject({
+      status: "unsupported",
+      message: "No job-scoped local command is available for this action.",
+    });
+    await expect(
+      defaultActionDispatcher(
+        {
+          action: "retry_stage",
+          jobKey: "https://example.com/jobs/ready",
+          stage: "tailor",
+          runAfter: true,
+          limit: 1,
+          dryRun: true,
+        },
+        { appDir: tempDir },
+      ),
+    ).resolves.toMatchObject({
+      status: "unsupported",
+      message: "No job-scoped local command is available for this action.",
+    });
+  });
+
+  it("validates job action bodies before dispatch", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "not-a-stage" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("defaults apply actions to dry-run dispatch", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", runId: "run-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/apply`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "apply",
+      status: "queued",
+      command: {
+        dryRun: true,
+        limit: 1,
+      },
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("marks jobs applied and skipped through structured actions", async () => {
+    const app = buildApp(options);
+    const appliedKey = encodeURIComponent("https://example.com/jobs/ready");
+    const skippedKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
+
+    const applied = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${appliedKey}/actions/mark-applied`,
+      payload: { reason: "manual confirmation" },
+    });
+    const skipped = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${skippedKey}/actions/mark-skipped`,
+      payload: { reason: "not a fit" },
+    });
+
+    expect(applied.statusCode, applied.body).toBe(200);
+    expect(skipped.statusCode, skipped.body).toBe(200);
+    expect(applied.json()).toMatchObject({ action: "mark_applied", stage: { state: "succeeded" } });
+    expect(skipped.json()).toMatchObject({ action: "mark_skipped", stage: { state: "skipped" } });
+
+    await app.close();
+  });
+
   it("rejects malformed job detail routes before lookup", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/jobs/%E0%A4%A" });
@@ -285,6 +648,122 @@ describe("local TypeScript API", () => {
       templateText: "\\documentclass{article}",
     });
     expect(body.paths).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("persists profile, style, and template updates with JSON validation", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profileText: JSON.stringify({ personal: { full_name: "Taylor Updated" } }),
+        styleText: JSON.stringify({ font_family: "classic" }),
+        templateText: "\\documentclass{moderncv}",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profile: { personal: { full_name: "Taylor Updated" } },
+      style: { font_family: "classic" },
+      templateText: "\\documentclass{moderncv}",
+    });
+    expect(JSON.parse(fs.readFileSync(options.profilePath, "utf8"))).toMatchObject({
+      personal: { full_name: "Taylor Updated" },
+    });
+
+    await app.close();
+  });
+
+  it("rejects invalid profile JSON writes", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profileText: "{" },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile" });
+
+    await app.close();
+  });
+
+  it("validates all profile update inputs before writing any files", async () => {
+    const app = buildApp(options);
+    const originalProfile = fs.readFileSync(options.profilePath, "utf8");
+    const originalStyle = fs.readFileSync(options.resumeStylePath, "utf8");
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profileText: JSON.stringify({ personal: { full_name: "Should Not Persist" } }),
+        styleText: "{",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile" });
+    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
+    expect(fs.readFileSync(options.resumeStylePath, "utf8")).toBe(originalStyle);
+
+    await app.close();
+  });
+
+  it("imports resume PDFs through an injected profile importer without running Python in tests", async () => {
+    const importer = vi.fn(async (input) => ({
+      profile: { personal: { full_name: "Imported Candidate" } },
+      style: { font_family: "imported" },
+      templateText: "\\documentclass{article}",
+      source: { filename: input.filename, bytes: input.pdfBytes.length },
+    }));
+    const app = buildApp({ ...options, profileImporter: importer });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/import-resume",
+      payload: {
+        filename: "resume.pdf",
+        pdfBase64: Buffer.from("%PDF test").toString("base64"),
+        importProfile: true,
+        importStyle: true,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profile: { personal: { full_name: "Imported Candidate" } },
+      style: { font_family: "imported" },
+      source: { filename: "resume.pdf", bytes: 9 },
+    });
+    expect(importer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filename: "resume.pdf",
+        importProfile: true,
+        importStyle: true,
+        pdfBytes: expect.any(Buffer),
+      }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("rejects malformed resume import payloads before importer dispatch", async () => {
+    const importer = vi.fn();
+    const app = buildApp({ ...options, profileImporter: importer });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/import-resume",
+      payload: { filename: "resume.pdf", pdfBase64: "not base64 !!" },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile_import" });
+    expect(importer).not.toHaveBeenCalled();
 
     await app.close();
   });

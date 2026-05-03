@@ -79,3 +79,17 @@ Delivered:
 - React browser smoke checklist
 - Python dashboard smoke checklist for artifact opening, profile/style save,
   discard, and resume PDF import drafts
+
+## 2026-05-03: Local TS Product API + Python Workers Architecture
+
+Plan: `docs/plans/implemented/2026-05-01-ts-product-api-python-workers-architecture.md`
+
+Delivered:
+
+- TypeScript API structured job action endpoints for retry, material
+  generation, dry-run apply, cancel, mark-applied, and mark-skipped
+- safe artifact-open action for known local artifacts only
+- profile/style/template writes and resume-import draft endpoint through the
+  typed API
+- React job drawer action buttons, artifact open controls, and persistent
+  profile save/discard/import controls

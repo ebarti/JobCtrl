@@ -8,6 +8,10 @@ export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
   return new Database(dbPath, { readonly: true, fileMustExist: true });
 }
 
+export function openDatabase(dbPath: string): SqliteDatabase {
+  return new Database(dbPath, { fileMustExist: true });
+}
+
 export function databaseExists(dbPath: string): boolean {
   return fs.existsSync(dbPath);
 }

@@ -18,6 +18,24 @@ Production-only work has been moved to `../../BACKLOG.md`. That includes
 tenancy, auth, billing, hosted deployment, Postgres migration, object storage,
 secret vaulting, audit logs, retention policy, and hosted apply hardening.
 
+## Delivered Local Slice
+
+The local-first architecture slice is implemented for the current TypeScript API
+and React shell:
+
+- the TypeScript API exposes structured local job action endpoints for retry,
+  material generation, dry-run apply, cancel, mark-applied, and mark-skipped;
+- profile, resume style, and LaTeX template writes persist through the
+  TypeScript API with JSON validation;
+- resume PDF import is routed through an explicit local action/import interface
+  and returns an unsaved draft to the UI;
+- artifact opening goes through a TypeScript API action that only opens
+  DB-backed or legacy-known artifact paths that still exist locally;
+- the React shell uses the typed client for job actions, artifact open, and
+  profile save/discard/import controls.
+
+Hosted/SaaS concerns remain deferred to `../../BACKLOG.md`.
+
 ## Executive Recommendation
 
 Use a TypeScript product API for local product/UI concerns and keep Python for

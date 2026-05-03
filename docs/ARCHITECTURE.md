@@ -56,14 +56,15 @@ Current responsibilities:
 - dashboard summary endpoint
 - jobs list/detail endpoints
 - artifacts list/detail endpoints
-- profile/settings read endpoints
+- artifact open endpoint with known-path validation
+- profile/settings read and write endpoints
+- resume PDF import draft endpoint
+- structured job action endpoints for retry, material generation, dry-run apply,
+  cancel, mark-applied, and mark-skipped
 - pagination, filtering, and global sorting
 
 Near-term responsibilities:
 
-- profile/style write endpoints
-- structured action endpoints
-- artifact open endpoint
 - event stream or explicit refresh contract
 
 ### Python Dashboard Server
@@ -145,6 +146,6 @@ git diff --check
 
 ## Plan History
 
-- `docs/plans/proposed/2026-05-01-ts-product-api-python-workers-architecture.md`
+- `docs/plans/implemented/2026-05-01-ts-product-api-python-workers-architecture.md`
 - `docs/plans/implemented/2026-05-02-local-ts-api.md`
 - `docs/plans/implemented/2026-05-03-local-reliability-qa.md`
