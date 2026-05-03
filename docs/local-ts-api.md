@@ -67,6 +67,21 @@ sorting over the matching local dataset.
 The shared `@jobhunter/contracts` package exports the request schemas, response
 types, and `createJobHunterApiClient()` for the future React frontend.
 
+## Local Actions
+
+Python automation can also be invoked through a structured local action wrapper:
+
+```bash
+jobhunter action score --limit 5
+jobhunter action apply --url https://example.com/job --dry-run
+jobhunter action profile_import --pdf ~/resume.pdf
+```
+
+The action wrapper records start/finish events in `job_events` and returns a
+JSON result. The current implementation delegates to the existing Python stage
+runners; later API phases can call the same entrypoint instead of executing
+copyable CLI command strings.
+
 ## Verify
 
 ```bash

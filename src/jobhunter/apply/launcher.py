@@ -1153,7 +1153,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False, model: str = "sonnet",
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+         poll_interval: int = 60, workers: int = 1) -> tuple[int, int]:
     """Launch the apply pipeline.
 
     Args:
@@ -1180,6 +1180,9 @@ def main(limit: int = 1, target_url: str | None = None,
     else:
         effective_limit = limit
         mode_label = f"{limit} jobs"
+
+    total_applied = 0
+    total_failed = 0
 
     # Initialize dashboard for all workers
     for i in range(workers):
@@ -1292,3 +1295,4 @@ def main(limit: int = 1, target_url: str | None = None,
     finally:
         _stop_event.set()
         kill_all_chrome()
+    return total_applied, total_failed
