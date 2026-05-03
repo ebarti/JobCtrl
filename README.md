@@ -40,7 +40,7 @@ jobhunter apply --dry-run  # fill forms without submitting
 ## Two Paths
 
 ### Full Pipeline (recommended)
-**Requires:** Python 3.11+, TeX Live/MacTeX (`pdflatex`), Node.js (for npx), Gemini API key (free), Claude Code CLI, Chrome
+**Requires:** Python 3.11+, TeX Live/MacTeX (`pdflatex`), Node.js 20.19+, Gemini API key (free), Claude Code CLI, Chrome
 
 Runs every pipeline stage, then launches autonomous application submission. This is the full power of JobHunter.
 
@@ -89,7 +89,7 @@ Auto-apply is a separate command that consumes the generated materials and submi
 |-----------|-------------|---------|
 | Python 3.11+ | Everything | Core runtime |
 | TeX Live/MacTeX (`pdflatex`) | Resume PDFs | Required for tailored resume PDF generation |
-| Node.js 18+ | Auto-apply | Needed for `npx` to run Playwright MCP server |
+| Node.js 20.19+ | Auto-apply, local TypeScript API, React web UI | Needed for TypeScript tooling and `npx` to run Playwright MCP server |
 | Gemini API key | Scoring, tailoring, cover letters | Free tier (15 RPM / 1M tokens/day) is enough |
 | Chrome/Chromium | Auto-apply | Auto-detected on most systems |
 | Claude Code CLI | Auto-apply | Install from [claude.ai/code](https://claude.ai/code) |
