@@ -835,14 +835,6 @@ function JobDrawer({ jobKey, onClose }: { jobKey: string; onClose: () => void })
               <button
                 className="tab"
                 disabled={Boolean(actionBusy)}
-                onClick={() => void runAction("generate materials", () => api.generateMaterials(detail.job.jobKey))}
-                type="button"
-              >
-                generate
-              </button>
-              <button
-                className="tab"
-                disabled={Boolean(actionBusy)}
                 onClick={() => void runAction("apply dry-run", () => api.applyJob(detail.job.jobKey, { dryRun: true }))}
                 type="button"
               >

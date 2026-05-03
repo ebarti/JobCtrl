@@ -7,6 +7,7 @@ import { createJobHunterApiClient } from "@jobhunter/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
+import { defaultActionDispatcher } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -92,6 +93,98 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("rejects non-loopback browser mutation sources before handlers run", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const opener = vi.fn(async () => undefined);
+    const importer = vi.fn(async () => ({ profile: {} }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch, artifactOpener: opener, profileImporter: importer });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const originalProfile = fs.readFileSync(options.profilePath, "utf8");
+
+    const mutationRequests = [
+      {
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/apply`,
+        payload: { dryRun: true },
+      },
+      {
+        method: "POST",
+        url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+        payload: { reason: "cross-site" },
+      },
+      {
+        method: "POST",
+        url: "/v1/artifacts/1/open",
+      },
+      {
+        method: "PATCH",
+        url: "/v1/profile",
+        payload: { profileText: JSON.stringify({ personal: { full_name: "Cross Site" } }) },
+      },
+      {
+        method: "POST",
+        url: "/v1/profile/import-resume",
+        payload: { filename: "resume.pdf", pdfBase64: Buffer.from("%PDF test").toString("base64") },
+      },
+    ] as const;
+
+    for (const request of mutationRequests) {
+      const response = await app.inject({
+        ...request,
+        headers: { origin: "https://example.com" },
+      });
+      expect(response.statusCode, `${request.method} ${request.url}: ${response.body}`).toBe(403);
+      expect(response.json()).toMatchObject({ ok: false, error: "cross_site_request" });
+    }
+
+    const refererResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/mark-skipped`,
+      headers: { referer: "https://example.com/jobs" },
+      payload: { reason: "cross-site" },
+    });
+    expect(refererResponse.statusCode, refererResponse.body).toBe(403);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(opener).not.toHaveBeenCalled();
+    expect(importer).not.toHaveBeenCalled();
+    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
+
+    const db = new Database(options.dbPath);
+    const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get("https://example.com/jobs/ready") as {
+      apply_status: string | null;
+      applied_at: string | null;
+    };
+    db.close();
+    expect(row).toMatchObject({ apply_status: null, applied_at: null });
+
+    await app.close();
+  });
+
+  it("allows loopback browser and no-origin mutation callers", async () => {
+    const app = buildApp(options);
+    const appliedKey = encodeURIComponent("https://example.com/jobs/ready");
+    const skippedKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
+
+    const loopback = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${appliedKey}/actions/mark-applied`,
+      headers: { origin: "http://127.0.0.1:5173" },
+      payload: { reason: "local browser" },
+    });
+    const noOrigin = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${skippedKey}/actions/mark-skipped`,
+      payload: { reason: "CLI" },
+    });
+
+    expect(loopback.statusCode, loopback.body).toBe(200);
+    expect(noOrigin.statusCode, noOrigin.body).toBe(200);
+    expect(loopback.json()).toMatchObject({ action: "mark_applied", stage: { state: "succeeded" } });
+    expect(noOrigin.json()).toMatchObject({ action: "mark_skipped", stage: { state: "skipped" } });
 
     await app.close();
   });
@@ -343,7 +436,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("dispatches run-after retry and material generation through the action dispatcher", async () => {
+  it("dispatches run-after apply retry through the job-scoped action dispatcher path", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -351,38 +444,97 @@ describe("local TypeScript API", () => {
     const retryResponse = await app.inject({
       method: "POST",
       url: `/v1/jobs/${jobKey}/actions/retry-stage`,
-      payload: { stage: "pdf", runAfter: true, dryRun: true },
-    });
-    const generateResponse = await app.inject({
-      method: "POST",
-      url: `/v1/jobs/${jobKey}/actions/generate-materials`,
-      payload: { stages: ["tailor", "cover"], dryRun: true, limit: 1 },
+      payload: { stage: "apply", runAfter: true, dryRun: true },
     });
 
     expect(retryResponse.statusCode, retryResponse.body).toBe(202);
-    expect(generateResponse.statusCode, generateResponse.body).toBe(202);
-    expect(dispatch).toHaveBeenNthCalledWith(
-      1,
+    expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "retry_stage",
         jobKey: "https://example.com/jobs/ready",
-        stage: "pdf",
+        stage: "apply",
         runAfter: true,
-        dryRun: true,
-      }),
-      expect.objectContaining({ appDir: tempDir }),
-    );
-    expect(dispatch).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        action: "generate_materials",
-        stages: ["tailor", "cover"],
         dryRun: true,
       }),
       expect.objectContaining({ appDir: tempDir }),
     );
 
     await app.close();
+  });
+
+  it("rejects unsupported per-job material generation and run-after material retries without dispatching", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const generateResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-materials`,
+      payload: { stages: ["tailor", "cover"], dryRun: true, limit: 1 },
+    });
+    const retryResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "pdf", runAfter: true, dryRun: true },
+    });
+
+    expect(generateResponse.statusCode, generateResponse.body).toBe(400);
+    expect(generateResponse.json()).toMatchObject({
+      ok: false,
+      accepted: false,
+      error: "unsupported_per_job_material_action",
+      jobKey: "https://example.com/jobs/ready",
+    });
+    expect(retryResponse.statusCode, retryResponse.body).toBe(400);
+    expect(retryResponse.json()).toMatchObject({
+      ok: false,
+      accepted: false,
+      error: "unsupported_per_job_material_action",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    const db = new Database(options.dbPath);
+    const pdfStage = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?")
+      .get("https://example.com/jobs/ready", "pdf") as { state: string };
+    db.close();
+    expect(pdfStage.state).toBe("succeeded");
+
+    await app.close();
+  });
+
+  it("does not translate unsupported material actions into global stage CLI commands", async () => {
+    await expect(
+      defaultActionDispatcher(
+        {
+          action: "generate_materials",
+          jobKey: "https://example.com/jobs/ready",
+          stages: ["tailor"],
+          limit: 1,
+          dryRun: true,
+        },
+        { appDir: tempDir },
+      ),
+    ).resolves.toMatchObject({
+      status: "unsupported",
+      message: "No job-scoped local command is available for this action.",
+    });
+    await expect(
+      defaultActionDispatcher(
+        {
+          action: "retry_stage",
+          jobKey: "https://example.com/jobs/ready",
+          stage: "tailor",
+          runAfter: true,
+          limit: 1,
+          dryRun: true,
+        },
+        { appDir: tempDir },
+      ),
+    ).resolves.toMatchObject({
+      status: "unsupported",
+      message: "No job-scoped local command is available for this action.",
+    });
   });
 
   it("validates job action bodies before dispatch", async () => {
@@ -517,6 +669,27 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(400);
     expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile" });
+
+    await app.close();
+  });
+
+  it("validates all profile update inputs before writing any files", async () => {
+    const app = buildApp(options);
+    const originalProfile = fs.readFileSync(options.profilePath, "utf8");
+    const originalStyle = fs.readFileSync(options.resumeStylePath, "utf8");
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profileText: JSON.stringify({ personal: { full_name: "Should Not Persist" } }),
+        styleText: "{",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile" });
+    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
+    expect(fs.readFileSync(options.resumeStylePath, "utf8")).toBe(originalStyle);
 
     await app.close();
   });

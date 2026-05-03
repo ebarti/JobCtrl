@@ -50,6 +50,7 @@ const LOCAL_ORIGIN_PATTERNS = [
   /^https?:\/\/127\.0\.0\.1(?::\d+)?$/,
   /^https?:\/\/\[::1\](?::\d+)?$/,
 ];
+const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 
 export interface BuildAppOptions {
   appDir?: string;
@@ -74,6 +75,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   void app.register(cors, {
     origin: LOCAL_ORIGIN_PATTERNS,
+  });
+
+  app.addHook("onRequest", async (request, reply) => {
+    if (!UNSAFE_METHODS.has(request.method)) {
+      return;
+    }
+    if (isTrustedMutationSource(request.headers.origin, request.headers.referer)) {
+      return;
+    }
+    return reply.code(403).send({
+      ok: false,
+      error: "cross_site_request",
+      message: "Mutation requests require a loopback Origin or Referer.",
+    });
   });
 
   app.get("/v1/health", async () => ({
@@ -106,6 +121,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    if (body.runAfter && body.stage !== "apply") {
+      void reply.code(400);
+      return unsupportedPerJobMaterialAction();
+    }
     return withWritableDb(reply, options.dbPath, async (db) => {
       const reset = resetJobStage(db, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
@@ -135,16 +154,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
       }
-      const command = {
-        action: "generate_materials" as const,
-        jobKey: jobUrl,
-        stages: body.stages,
-        dryRun: body.dryRun,
-        limit: body.limit,
-      };
-      const dispatch = await actionDispatcher(command, actionContext);
-      void reply.code(202);
-      return buildActionResponse(command, dispatch);
+      void body;
+      void reply.code(400);
+      return unsupportedPerJobMaterialAction(jobUrl);
     });
   });
 
@@ -331,6 +343,66 @@ function decodeRouteParam(value: string): string {
   } catch {
     return value;
   }
+}
+
+function isTrustedMutationSource(
+  originHeader: string | string[] | undefined,
+  refererHeader: string | string[] | undefined,
+): boolean {
+  const origins = [
+    ...headerValues(originHeader).map(parseOriginHeader),
+    ...headerValues(refererHeader).map(parseRefererOrigin),
+  ];
+  if (origins.length === 0) {
+    return true;
+  }
+  return origins.every((origin) => origin !== null && isLoopbackOrigin(origin));
+}
+
+function headerValues(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return value ? [value] : [];
+}
+
+function parseOriginHeader(value: string): string | null {
+  if (!value || value === "null") {
+    return null;
+  }
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function parseRefererOrigin(value: string): string | null {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  return LOCAL_ORIGIN_PATTERNS.some((pattern) => pattern.test(origin));
+}
+
+function unsupportedPerJobMaterialAction(jobKey?: string): {
+  ok: false;
+  accepted: false;
+  error: string;
+  jobKey?: string;
+  message: string;
+} {
+  return {
+    ok: false,
+    accepted: false,
+    error: "unsupported_per_job_material_action",
+    ...(jobKey ? { jobKey } : {}),
+    message: "Per-job material generation is disabled until targeted stage execution is implemented.",
+  };
 }
 
 function withDb<T>(

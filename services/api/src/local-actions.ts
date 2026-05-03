@@ -51,6 +51,12 @@ export const defaultActionDispatcher: ActionDispatcher = async (command, context
   }
 
   const commands = buildCliCommands(command);
+  if (!commands.length) {
+    return {
+      status: "unsupported",
+      message: "No job-scoped local command is available for this action.",
+    };
+  }
   const pids = commands.map((argv) => spawnDetached(argv, context.appDir));
   return {
     status: "queued",
@@ -141,13 +147,11 @@ function buildCliCommands(command: ActionCommandPayload): string[][] {
     if (command.stage === "apply") {
       return [applyActionArgs(command)];
     }
-    return [stageActionArgs(command.stage, command.limit ?? 1, Boolean(command.dryRun))];
+    return [];
   }
 
   if (command.action === "generate_materials") {
-    return (command.stages ?? ["tailor", "cover", "pdf"]).map((stage) =>
-      stageActionArgs(stage, command.limit ?? 1, Boolean(command.dryRun)),
-    );
+    return [];
   }
 
   if (command.action === "apply") {
@@ -155,14 +159,6 @@ function buildCliCommands(command: ActionCommandPayload): string[][] {
   }
 
   return [];
-}
-
-function stageActionArgs(stage: string, limit: number, dryRun: boolean): string[] {
-  const args = ["run", "jobhunter", "action", stage, "--limit", String(limit)];
-  if (dryRun) {
-    args.push("--dry-run");
-  }
-  return args;
 }
 
 function applyActionArgs(command: ActionCommandPayload): string[] {

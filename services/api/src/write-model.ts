@@ -153,25 +153,36 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
 
 export function writeProfileConfig(paths: ProfilePaths, request: ProfileUpdateRequest): ProfileConfigResponse {
   let wrote = false;
+  let profile: Record<string, unknown> | undefined;
+  let style: Record<string, unknown> | undefined;
+  let templateText: string | undefined;
+
   if (request.profile !== undefined || request.profileText !== undefined) {
-    const profile = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
-    writeJson(paths.profilePath, profile);
+    profile = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
     wrote = true;
   }
   if (request.style !== undefined || request.styleText !== undefined) {
-    const style = parseJsonObjectInput(request.style, request.styleText, "resume_style.json");
-    writeJson(paths.resumeStylePath, style);
+    style = parseJsonObjectInput(request.style, request.styleText, "resume_style.json");
     wrote = true;
   }
   if (request.templateText !== undefined) {
     if (!request.templateText.trim()) {
       throw new InputError("resume_template.tex cannot be empty.");
     }
-    writeText(paths.resumeTemplatePath, request.templateText);
+    templateText = request.templateText;
     wrote = true;
   }
   if (!wrote) {
     throw new InputError("At least one profile, style, or template field is required.");
+  }
+  if (profile !== undefined) {
+    writeJson(paths.profilePath, profile);
+  }
+  if (style !== undefined) {
+    writeJson(paths.resumeStylePath, style);
+  }
+  if (templateText !== undefined) {
+    writeText(paths.resumeTemplatePath, templateText);
   }
   return readProfileConfig(paths);
 }
