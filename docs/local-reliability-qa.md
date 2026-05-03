@@ -23,6 +23,10 @@ npm run api:dev
 npm run web:dev -- --port 5173
 ```
 
+Open the URL printed by Vite. It is usually `http://127.0.0.1:5173`, but Vite
+can choose a different port when 5173 is already in use because the web dev
+server does not run with `strictPort`.
+
 ## Reliability Matrix
 
 | Risk | Validation | Coverage |
@@ -40,12 +44,13 @@ npm run web:dev -- --port 5173
 | Style PDF import is opaque | Resume PDF import maps PDF metadata into editable style controls. | `tests/test_profile_import.py::test_style_from_pdf_metadata_infers_editable_style_controls` |
 | Jobs list overloads the UI | List APIs paginate after applying global filters and sorting. | `services/api/test/server.test.ts` |
 | Filters reset while editing | The React frontend has no automatic list polling; list refresh is explicit through the refresh button or filter changes. | Browser smoke |
-| Generated artifacts cannot be opened safely | The local dashboard only opens known artifact paths through the artifact-open endpoint. | `tests/test_dashboard_server.py` |
-| Profile/style save and discard flows regress | The local dashboard exposes profile patching, PDF import drafts, and field-level draft controls. | `tests/test_dashboard_server.py` and browser smoke |
+| Generated artifacts cannot be opened safely | The Python dashboard only opens known artifact paths through the artifact-open endpoint. The React shell currently validates artifact discovery only. | `tests/test_dashboard_server.py::test_dashboard_open_artifact_post_opens_known_file` and `tests/test_dashboard_server.py::test_dashboard_open_artifact_rejects_unknown_file` |
+| Profile/style save and discard flows regress | The Python dashboard persists profile patches and PDF import drafts safely. The React shell smoke only validates draft controls until React write endpoints land. | `tests/test_dashboard_server.py` and browser smoke |
 
-## Manual Browser Smoke
+## React Browser Smoke
 
-Use the in-app browser or Playwright against `http://127.0.0.1:5173`:
+Use the in-app browser or Playwright against the Vite URL printed by
+`npm run web:dev`:
 
 1. Confirm the API indicator shows live.
 2. Open dashboard, jobs, artifacts, and profile views.
@@ -55,7 +60,21 @@ Use the in-app browser or Playwright against `http://127.0.0.1:5173`:
    not just sorting the visible page.
 5. Open a job drawer from jobs and artifacts.
 6. Open the profile view and edit a field. Confirm field-level draft controls
-   appear and discard restores the previous value.
+   appear and discard restores the previous value. Do not count this as a
+   persistent profile/style save check until React write endpoints land.
+
+## Python Dashboard Smoke
+
+Run `uv run jobhunter dashboard` and use the printed local dashboard URL:
+
+1. Open a known generated artifact from a job drawer. Confirm unknown or missing
+   artifact paths are rejected by the UI/API.
+2. Edit a profile or style field, save it, reload the dashboard, and confirm the
+   saved value is still present.
+3. Edit another field and use discard or discard all. Confirm the previous value
+   is restored and no file changes are written.
+4. Import a resume PDF as a draft. Confirm the generated profile/style changes
+   remain unsaved until an explicit save action.
 
 Do not move this stack into SaaS hardening until the automated commands pass
 and the manual browser smoke is clean.
