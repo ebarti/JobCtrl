@@ -64,6 +64,7 @@ type StageRow = {
 };
 
 type ArtifactRow = {
+  row_id?: number | string | null;
   artifact_id?: number | string | null;
   job_url?: string;
   artifact_type?: string;
@@ -234,7 +235,7 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
 }
 
 export function getArtifactDetail(db: SqliteDatabase, artifactId: string): ArtifactDetail | null {
-  const artifact = artifactsForJobs(db, loadJobs(db)).find((item) => item.artifactId === artifactId);
+  const artifact = findDbArtifact(db, artifactId) ?? findLegacyArtifact(db, artifactId);
   return artifact ? { ok: true, artifact } : null;
 }
 
@@ -550,7 +551,7 @@ function artifactsForJobs(db: SqliteDatabase, jobs: JobRow[]): ArtifactSummary[]
   const jobByUrl = new Map(jobs.map((job) => [job.url ?? "", job]));
   const artifacts: ArtifactSummary[] = [];
   if (tableExists(db, "job_artifacts")) {
-    for (const row of allRows<ArtifactRow>(db, "SELECT rowid AS artifact_id, * FROM job_artifacts")) {
+    for (const row of allRows<ArtifactRow>(db, "SELECT rowid AS row_id, * FROM job_artifacts")) {
       const job = jobByUrl.get(asString(row.job_url));
       if (!job || !row.path) {
         continue;
@@ -568,7 +569,7 @@ function formatArtifact(row: ArtifactRow, job: JobRow): ArtifactSummary {
   const localPath = asString(row.path);
   const sizeBytes = asNullableNumber(row.size_bytes);
   return {
-    artifactId: asString(row.artifact_id) || `${asString(row.job_url)}:${asString(row.artifact_type)}:${localPath}`,
+    artifactId: asString(row.row_id ?? row.artifact_id) || `${asString(row.job_url)}:${asString(row.artifact_type)}:${localPath}`,
     jobKey: job.url ?? "",
     title: asString(job.title) || "Untitled",
     company: asString(job.site) || "Unknown",
@@ -579,6 +580,24 @@ function formatArtifact(row: ArtifactRow, job: JobRow): ArtifactSummary {
     sizeBytes,
     size: formatSize(sizeBytes),
   };
+}
+
+function findDbArtifact(db: SqliteDatabase, artifactId: string): ArtifactSummary | null {
+  if (!tableExists(db, "job_artifacts") || !tableExists(db, "jobs")) {
+    return null;
+  }
+  const row = getRow<ArtifactRow>(db, "SELECT rowid AS row_id, * FROM job_artifacts WHERE CAST(rowid AS TEXT) = ? LIMIT 1", [
+    artifactId,
+  ]);
+  if (!row || !row.path) {
+    return null;
+  }
+  const job = findJob(db, asString(row.job_url));
+  return job ? formatArtifact(row, job) : null;
+}
+
+function findLegacyArtifact(db: SqliteDatabase, artifactId: string): ArtifactSummary | null {
+  return artifactsForJobs(db, loadJobs(db)).find((item) => item.artifactId === artifactId) ?? null;
 }
 
 function legacyArtifacts(job: JobRow, existing: ArtifactSummary[]): ArtifactSummary[] {

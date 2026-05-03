@@ -12,6 +12,7 @@ import type {
 } from "./schemas.js";
 
 type QueryValue = boolean | number | string | null | undefined;
+const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 
 export interface HealthResponse {
   ok: true;
@@ -22,7 +23,7 @@ export interface HealthResponse {
 export class JobHunterApiClient {
   readonly baseUrl: string;
 
-  constructor(baseUrl = "") {
+  constructor(baseUrl = defaultBaseUrl()) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
   }
 
@@ -74,7 +75,10 @@ export class JobHunterApiClient {
   }
 }
 
-export function createJobHunterApiClient(baseUrl = ""): JobHunterApiClient {
+export function createJobHunterApiClient(baseUrl?: string): JobHunterApiClient {
   return new JobHunterApiClient(baseUrl);
 }
 
+function defaultBaseUrl(): string {
+  return typeof window === "undefined" ? DEFAULT_NODE_BASE_URL : "";
+}

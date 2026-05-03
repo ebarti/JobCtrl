@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createJobHunterApiClient } from "@jobhunter/contracts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resolveApiConfig } from "../src/config.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -40,6 +42,27 @@ afterEach(() => {
 });
 
 describe("local TypeScript API", () => {
+  it("defaults the shared API client to the local API origin under Node.js", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, dbPath: options.dbPath, dbExists: true }), {
+        status: 200,
+        statusText: "OK",
+      }),
+    );
+
+    await createJobHunterApiClient().health();
+
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:8766/v1/health");
+    fetchMock.mockRestore();
+  });
+
+  it("refuses non-loopback API binds unless explicitly allowed", () => {
+    expect(() => resolveApiConfig({ JOBHUNTER_API_HOST: "0.0.0.0" })).toThrow(/Refusing to bind/);
+    expect(resolveApiConfig({ JOBHUNTER_API_HOST: "0.0.0.0", JOBHUNTER_API_ALLOW_REMOTE_BIND: "1" }).host).toBe(
+      "0.0.0.0",
+    );
+  });
+
   it("reports local database health", async () => {
     const app = buildApp(options);
     const response = await app.inject({

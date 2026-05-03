@@ -1,1 +1,1 @@
-export * from "../../../packages/contracts/src/index.js";
+export * from "@jobhunter/contracts";
