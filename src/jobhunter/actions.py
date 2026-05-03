@@ -67,33 +67,45 @@ class LocalActionResult:
 
 def run_local_action(request: LocalActionRequest) -> LocalActionResult:
     """Run one structured local action and record start/finish events."""
-    if request.stage not in ACTION_STAGES:
-        raise ValueError(f"Unknown action stage: {request.stage}")
-
-    _bootstrap_runtime()
     action_id = f"act-{uuid4().hex}"
     started_at = utc_now()
     start = perf_counter()
-    _record_action_event(
-        request,
-        "action_started",
-        "info",
-        f"{request.stage} action started",
-        {"action_id": action_id, "dry_run": request.dry_run},
-    )
 
-    if request.dry_run:
-        return _finish_action(
-            request,
-            action_id,
-            started_at,
-            start,
-            ok=True,
-            status="dry_run",
-            result={"planned": _describe_action(request)},
+    if request.stage not in ACTION_STAGES:
+        return LocalActionResult(
+            ok=False,
+            action_id=action_id,
+            stage=request.stage,
+            status="failed",
+            started_at=started_at,
+            finished_at=utc_now(),
+            duration_ms=int((perf_counter() - start) * 1000),
+            job_url=request.job_url,
+            dry_run=request.dry_run,
+            error=f"Unknown action stage: {request.stage}",
         )
 
     try:
+        _bootstrap_runtime()
+        _record_action_event(
+            request,
+            "action_started",
+            "info",
+            f"{request.stage} action started",
+            {"action_id": action_id, "dry_run": request.dry_run},
+        )
+
+        if request.dry_run:
+            return _finish_action(
+                request,
+                action_id,
+                started_at,
+                start,
+                ok=True,
+                status="dry_run",
+                result={"planned": _describe_action(request)},
+            )
+
         result = _execute_action(request)
         ok = _action_succeeded(result)
         status = "succeeded" if ok else "failed"
@@ -162,7 +174,7 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
         from jobhunter.apply.launcher import main as apply_main
 
         applied, failed = apply_main(
-            limit=request.limit,
+            limit=_effective_apply_limit(request),
             target_url=request.job_url,
             min_score=request.min_score,
             headless=request.headless,
@@ -202,6 +214,10 @@ def _action_succeeded(result: dict[str, Any]) -> bool:
     return not status.startswith("error") and status not in {"failed", "failure"}
 
 
+def _effective_apply_limit(request: LocalActionRequest) -> int:
+    return 0 if request.continuous else max(1, request.limit)
+
+
 def _finish_action(
     request: LocalActionRequest,
     action_id: str,
@@ -216,17 +232,20 @@ def _finish_action(
 ) -> LocalActionResult:
     finished_at = utc_now()
     duration_ms = int((perf_counter() - start) * 1000)
-    _record_action_event(
-        request,
-        "action_succeeded" if ok else "action_failed",
-        "info" if ok else "error",
-        f"{request.stage} action {status}",
-        {
-            "action_id": action_id,
-            "duration_ms": duration_ms,
-            "error": error,
-        },
-    )
+    try:
+        _record_action_event(
+            request,
+            "action_succeeded" if ok else "action_failed",
+            "info" if ok else "error",
+            f"{request.stage} action {status}",
+            {
+                "action_id": action_id,
+                "duration_ms": duration_ms,
+                "error": error,
+            },
+        )
+    except Exception:  # noqa: BLE001 - action results must stay JSON-safe when event logging fails
+        pass
     return LocalActionResult(
         ok=ok,
         action_id=action_id,
@@ -264,11 +283,7 @@ def _record_action_event(
 
 
 def _describe_action(request: LocalActionRequest) -> dict[str, Any]:
-    return {
-        "stage": request.stage,
-        "job_url": request.job_url,
-        "limit": request.limit,
-        "workers": request.workers,
-        "min_score": request.min_score,
-        "validation_mode": request.validation_mode,
-    }
+    planned = asdict(request)
+    if request.stage == "apply":
+        planned["effective_limit"] = _effective_apply_limit(request)
+    return planned

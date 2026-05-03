@@ -78,10 +78,22 @@ def test_local_action_dry_run_does_not_execute(monkeypatch, tmp_path):
     monkeypatch.setattr(actions, "run_pipeline", should_not_run)
 
     try:
-        result = run_local_action(LocalActionRequest(stage="enrich", dry_run=True))
+        result = run_local_action(
+            LocalActionRequest(
+                stage="enrich",
+                dry_run=True,
+                rescore=True,
+                retailor=True,
+                import_profile=False,
+                import_style=True,
+            )
+        )
         assert result.ok is True
         assert result.status == "dry_run"
         assert result.result["planned"]["stage"] == "enrich"
+        assert result.result["planned"]["rescore"] is True
+        assert result.result["planned"]["retailor"] is True
+        assert result.result["planned"]["import_profile"] is False
     finally:
         close_connection(db_path)
 
@@ -102,6 +114,40 @@ def test_apply_action_propagates_failed_count(tmp_path, monkeypatch):
         assert result.result["failed"] == 1
     finally:
         close_connection(db_path)
+
+
+def test_apply_action_uses_single_job_default_limit(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+    calls = []
+
+    def fake_apply(**kwargs):
+        calls.append(kwargs)
+        return (1, 0)
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(launcher, "main", fake_apply)
+
+    try:
+        result = run_local_action(LocalActionRequest(stage="apply", job_url="https://example.com/job"))
+
+        assert result.ok is True
+        assert calls[0]["limit"] == 1
+        assert calls[0]["continuous"] is False
+    finally:
+        close_connection(db_path)
+
+
+def test_local_action_returns_structured_bootstrap_failure(monkeypatch):
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: (_ for _ in ()).throw(RuntimeError("db unavailable")))
+
+    result = run_local_action(LocalActionRequest(stage="score"))
+
+    assert result.ok is False
+    assert result.status == "failed"
+    assert result.error == "db unavailable"
+    assert "RuntimeError" in (result.traceback or "")
 
 
 def test_profile_import_action_expands_user_paths(tmp_path, monkeypatch):
