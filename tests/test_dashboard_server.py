@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -715,36 +716,93 @@ def test_dashboard_command_endpoint_captures_allowlisted_status(tmp_path, monkey
         close_connection(db_path)
 
 
-def test_dashboard_command_endpoint_starts_allowlisted_apply(tmp_path, monkeypatch):
+def test_dashboard_command_endpoint_runs_allowlisted_apply_action(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
     _insert_job(conn)
     calls = []
 
-    class _Proc:
-        pid = 12345
+    class _Result:
+        def __init__(self, request):
+            self.request = request
 
-    def fake_popen(args, **kwargs):
-        calls.append((args, kwargs))
-        return _Proc()
+        def to_dict(self):
+            return {
+                "ok": True,
+                "stage": self.request.stage,
+                "job_url": self.request.job_url,
+                "status": "succeeded",
+            }
+
+    def fake_run_local_action(request):
+        calls.append(request)
+        return _Result(request)
+
+    def fail_shell(*_args, **_kwargs):  # pragma: no cover - assertion guard
+        raise AssertionError("apply command should not shell out")
 
     try:
         monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
         monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
-        monkeypatch.setattr("jobhunter.dashboard_server.config.APP_DIR", Path(tmp_path) / ".jobhunter")
-        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.Popen", fake_popen)
+        monkeypatch.setattr("jobhunter.dashboard_server.run_local_action", fake_run_local_action)
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.run", fail_shell)
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.Popen", fail_shell)
 
         with _ServerContext() as server:
             result = server.post_json(
                 "/api/command",
                 {"cmd": "jobhunter apply --url https://example.com/job"},
             )
+            action_id = result["action"]["action_id"]
+            action = result["action"]
+            for _ in range(20):
+                action = server.get_json(f"/api/action?id={urllib.parse.quote(action_id)}")["action"]
+                if action["status"] == "succeeded":
+                    break
+                time.sleep(0.05)
 
         assert result["ok"] is True
-        assert result["mode"] == "background"
-        assert result["pid"] == 12345
-        assert calls[0][0][-3:] == ["apply", "--url", "https://example.com/job"]
-        assert Path(result["log_path"]).parent.name == "dashboard_commands"
+        assert result["mode"] == "action"
+        assert result["action"]["status"] == "queued"
+        assert action["status"] == "succeeded"
+        assert action["result"]["stage"] == "apply"
+        assert action["result"]["job_url"] == "https://example.com/job"
+        assert calls[0].stage == "apply"
+        assert calls[0].job_url == "https://example.com/job"
+        assert calls[0].limit == 1
+    finally:
+        close_connection(db_path)
+
+
+def test_dashboard_command_endpoint_resets_retry_without_shelling_out(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_job(conn, detail_error="timeout")
+
+    def fail_run(*_args, **_kwargs):  # pragma: no cover - assertion guard
+        raise AssertionError("retry command should not shell out")
+
+    try:
+        monkeypatch.setattr("jobhunter.database.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.config.DB_PATH", db_path)
+        monkeypatch.setattr("jobhunter.dashboard_server.subprocess.run", fail_run)
+
+        with _ServerContext() as server:
+            result = server.post_json(
+                "/api/command",
+                {"cmd": "jobhunter retry enrich https://example.com/job --reset-attempts"},
+            )
+
+        state = conn.execute(
+            "SELECT state, attempt_count FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
+            ("https://example.com/job",),
+        ).fetchone()
+        assert result["ok"] is True
+        assert result["mode"] == "action"
+        assert result["action"]["kind"] == "retry"
+        assert result["action"]["status"] == "reset"
+        assert state["state"] == "pending"
+        assert state["attempt_count"] == 0
     finally:
         close_connection(db_path)
 

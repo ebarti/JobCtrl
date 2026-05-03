@@ -17,9 +17,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 from rich.console import Console
 
+from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter import config
 from jobhunter.database import close_connection, get_connection
 from jobhunter.pipeline import STAGE_ORDER
@@ -74,6 +76,8 @@ class DashboardHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, handler_class, *, min_score: int | None = None):
         super().__init__(server_address, handler_class)
         self.dashboard_settings = config.load_dashboard_settings()
+        self.command_actions: dict[str, dict[str, Any]] = {}
+        self.command_actions_lock = threading.Lock()
         if min_score is not None:
             self.dashboard_settings = config.normalize_dashboard_settings(
                 {"min_fit_score": min_score},
@@ -139,6 +143,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._handle_list_artifacts(parsed.query)
             elif parsed.path == "/api/job":
                 self._handle_get_job(parsed.query)
+            elif parsed.path == "/api/action":
+                self._handle_get_action(parsed.query)
             elif parsed.path == "/api/profile-config":
                 self._handle_get_profile_config()
             else:
@@ -286,8 +292,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
 
-        args = _dashboard_command_args(action["argv"])
         if action["mode"] == "capture":
+            args = _dashboard_command_args(action["argv"])
             completed = subprocess.run(
                 args,
                 cwd=_project_root(),
@@ -310,30 +316,137 @@ class DashboardHandler(BaseHTTPRequestHandler):
             )
             return
 
-        log_path = _command_log_path(action["label"])
-        log_file = log_path.open("w", encoding="utf-8")
-        try:
-            proc = subprocess.Popen(
-                args,
-                cwd=_project_root(),
-                env=_command_env(),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        finally:
-            log_file.close()
+        if self._should_queue_structured_action(action):
+            result = self._queue_structured_command_action(command, action)
+            response_ok = True
+            response_status = HTTPStatus.ACCEPTED
+        else:
+            result = self._run_structured_command_action(command, action)
+            response_ok = result.get("ok", False)
+            response_status = HTTPStatus.OK if response_ok else HTTPStatus.ACCEPTED
+
         self._send_json(
             {
-                "ok": True,
+                "ok": response_ok,
                 "cmd": command,
-                "mode": "background",
-                "pid": proc.pid,
-                "log_path": str(log_path),
-                "message": f"Started {command}",
+                "mode": "action",
+                "action": result,
+                "message": result.get("message") or result.get("status") or command,
+                "output": json.dumps(result, indent=2, sort_keys=True),
             },
-            status=HTTPStatus.ACCEPTED,
+            status=response_status,
         )
+
+    @staticmethod
+    def _should_queue_structured_action(action: dict[str, Any]) -> bool:
+        return not (action["kind"] == "retry" and not action.get("run_after"))
+
+    def _queue_structured_command_action(self, command: str, action: dict[str, Any]) -> dict[str, Any]:
+        action_id = f"cmd_{int(time.time() * 1000)}_{uuid4().hex[:10]}"
+        queued = {
+            "ok": True,
+            "action_id": action_id,
+            "cmd": command,
+            "kind": action["kind"],
+            "status": "queued",
+            "message": "Queued local action.",
+            "created_at": time.time(),
+        }
+        self._store_command_action(action_id, queued)
+        worker = threading.Thread(
+            target=self._run_queued_command_action,
+            args=(action_id, command, action),
+            daemon=True,
+        )
+        worker.start()
+        return queued
+
+    def _run_queued_command_action(self, action_id: str, command: str, action: dict[str, Any]) -> None:
+        self._store_command_action(
+            action_id,
+            {"status": "running", "message": "Running local action.", "started_at": time.time()},
+        )
+        try:
+            result = self._run_structured_command_action(command, action)
+            ok = bool(result.get("ok", False))
+            status = "succeeded" if ok else "failed"
+            self._store_command_action(
+                action_id,
+                {
+                    "ok": ok,
+                    "status": status,
+                    "message": result.get("message") or result.get("status") or status,
+                    "result": result,
+                    "output": json.dumps(result, indent=2, sort_keys=True),
+                    "finished_at": time.time(),
+                },
+            )
+        except Exception as exc:  # pragma: no cover - exercised through HTTP behavior.
+            failure = {"ok": False, "status": "failed", "error": str(exc)}
+            self._store_command_action(
+                action_id,
+                {
+                    **failure,
+                    "message": str(exc),
+                    "result": failure,
+                    "output": json.dumps(failure, indent=2, sort_keys=True),
+                    "finished_at": time.time(),
+                },
+            )
+
+    def _store_command_action(self, action_id: str, patch: dict[str, Any]) -> None:
+        with self.server.command_actions_lock:
+            current = self.server.command_actions.get(action_id, {"action_id": action_id})
+            self.server.command_actions[action_id] = {**current, **patch}
+
+    def _handle_get_action(self, query: str) -> None:
+        params = parse_qs(query)
+        action_id = (params.get("id") or [""])[0]
+        if not action_id:
+            self._send_error(HTTPStatus.BAD_REQUEST, "bad_request", "'id' is required.")
+            return
+        with self.server.command_actions_lock:
+            action = self.server.command_actions.get(action_id)
+            payload = dict(action) if action else None
+        if payload is None:
+            self._send_error(HTTPStatus.NOT_FOUND, "not_found", f"No action found for {action_id}.")
+            return
+        self._send_json({"ok": True, "action": payload})
+
+    def _run_structured_command_action(self, command: str, action: dict[str, Any]) -> dict[str, Any]:
+        if action["kind"] == "retry":
+            stage = action["stage"]
+            job_url = reset_job_stage(
+                self._fresh_connection(),
+                action["url"],
+                stage,
+                reset_attempts=bool(action.get("reset_attempts")),
+            )
+            if not action.get("run_after"):
+                return {
+                    "ok": True,
+                    "kind": "retry",
+                    "stage": stage,
+                    "job_url": job_url,
+                    "status": "reset",
+                    "message": f"Reset {stage} for retry.",
+                }
+            if stage == "apply":
+                request = LocalActionRequest(stage="apply", job_url=job_url, limit=1)
+            else:
+                request = LocalActionRequest(stage=stage, limit=1)
+            result = run_local_action(request).to_dict()
+            result["kind"] = "retry"
+            result["job_url"] = job_url
+            return result
+
+        if action["kind"] == "stage":
+            return run_local_action(action["request"]).to_dict()
+
+        if action["kind"] == "apply":
+            return run_local_action(action["request"]).to_dict()
+
+        raise ValueError(f"Unsupported structured command action for {command}.")
 
     def _handle_update_config(self) -> None:
         payload = self._read_json()
@@ -618,15 +731,36 @@ def _parse_dashboard_command(command: str, data: dict[str, Any]) -> dict[str, An
 
     if subcommand == "retry":
         _validate_retry_command(argv, known_urls)
-        return {"mode": "background" if "--run" in argv else "capture", "argv": argv, "label": "retry"}
+        return {
+            "mode": "action",
+            "kind": "retry",
+            "argv": argv,
+            "label": "retry",
+            "stage": argv[2],
+            "url": argv[3],
+            "reset_attempts": "--reset-attempts" in argv,
+            "run_after": "--run" in argv,
+        }
 
     if subcommand == "apply":
         _validate_apply_command(argv, known_urls)
-        return {"mode": "background", "argv": argv, "label": "apply"}
+        return {
+            "mode": "action",
+            "kind": "apply",
+            "argv": argv,
+            "label": "apply",
+            "request": _local_action_request_from_apply(argv),
+        }
 
     if subcommand in valid_stage_commands:
         _validate_stage_command(argv)
-        return {"mode": "background", "argv": argv, "label": subcommand}
+        return {
+            "mode": "action",
+            "kind": "stage",
+            "argv": argv,
+            "label": subcommand,
+            "request": _local_action_request_from_stage(argv),
+        }
 
     raise ValueError(f"Command is not allowed from the dashboard: {subcommand or command}")
 
@@ -650,6 +784,51 @@ def _validate_info_command(argv: list[str]) -> None:
             raise ValueError(f"Unsupported runs option: {flag}")
         return
     raise ValueError(f"Unsupported {subcommand} command options.")
+
+
+def _local_action_request_from_stage(argv: list[str]) -> LocalActionRequest:
+    stage = argv[1]
+    return LocalActionRequest(
+        stage=stage,
+        limit=_int_option(argv, "--limit", "-l", default=0),
+        workers=_int_option(argv, "--workers", "-w", default=1),
+        min_score=_int_option(argv, "--min-score", default=7),
+        validation_mode=_str_option(argv, "--validation", default="normal"),
+        dry_run="--dry-run" in argv,
+        rescore="--rescore" in argv,
+        retailor="--retailor" in argv,
+    )
+
+
+def _local_action_request_from_apply(argv: list[str]) -> LocalActionRequest:
+    job_url = _str_option(argv, "--url", default=None)
+    limit_default = 1 if job_url and not _has_option(argv, "--limit", "-l") else 0
+    return LocalActionRequest(
+        stage="apply",
+        job_url=job_url,
+        limit=_int_option(argv, "--limit", "-l", default=limit_default),
+        workers=_int_option(argv, "--workers", "-w", default=1),
+        min_score=_int_option(argv, "--min-score", default=7),
+        model=_str_option(argv, "--model", "-m", default="haiku") or "haiku",
+        headless="--headless" in argv,
+        dry_run="--dry-run" in argv,
+    )
+
+
+def _has_option(argv: list[str], *flags: str) -> bool:
+    return any(item in flags for item in argv)
+
+
+def _str_option(argv: list[str], *flags: str, default: str | None = "") -> str | None:
+    for index, item in enumerate(argv):
+        if item in flags and index + 1 < len(argv):
+            return argv[index + 1]
+    return default
+
+
+def _int_option(argv: list[str], *flags: str, default: int = 0) -> int:
+    value = _str_option(argv, *flags, default=None)
+    return int(value) if value not in (None, "") else default
 
 
 def _validate_retry_command(argv: list[str], known_urls: set[str]) -> None:
