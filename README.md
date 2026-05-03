@@ -1,252 +1,368 @@
 # JobHunter
 
-**Applied to 1,000 jobs in 2 days. Fully autonomous. Open source.**
+JobHunter is a local-first job search automation system. It keeps your profile,
+job database, generated materials, browser state, and logs on your machine while
+helping you move jobs through a staged pipeline:
 
-[![PyPI version](https://img.shields.io/pypi/v/jobhunter?color=blue)](https://pypi.org/project/jobhunter/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/ebarti/JobHunter?style=social)](https://github.com/ebarti/JobHunter)
+```text
+discover -> enrich -> score -> tailor -> cover -> pdf -> apply
+```
 
----
+The automation engine is Python. The newer product surface is a local
+TypeScript API plus a React web UI. SQLite and local files remain the source of
+truth while the project validates reliability before any hosted/SaaS hardening.
 
 ## What It Does
 
-JobHunter is a staged autonomous job application pipeline. It discovers jobs across 5+ boards, scores them against your resume with AI, tailors your resume per job, writes cover letters, converts them to upload-ready PDFs, and can **submit applications for you**. It navigates forms, uploads documents, answers screening questions, all hands-free.
+JobHunter can:
 
-Run the whole pipeline in one shot, or drive each stage directly.
+- find jobs from configured searches and supported source registries;
+- enrich job rows with full descriptions and application URLs;
+- score jobs against your candidate profile with an LLM;
+- tailor resumes from your structured resume baseline;
+- generate cover letters;
+- convert generated text artifacts to PDFs;
+- show stage state, failures, retries, artifacts, and apply runs in a local UI;
+- optionally drive local browser-based application submission.
 
-```bash
-pip install jobhunter
-pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex
-jobhunter init          # one-time setup: resume, profile, preferences, API keys
-jobhunter doctor        # verify your setup — shows what's installed and what's missing
-jobhunter run           # discover > enrich > score > tailor > cover letters
-jobhunter run -w 4      # parallel discovery, enrichment, scoring, and tailoring
-jobhunter discover      # run only stage 1
-jobhunter enrich        # run only stage 2
-jobhunter score -w 4    # run only stage 3 with parallel LLM scoring
-jobhunter tailor -w 4   # run only stage 4 with parallel LLM tailoring
-jobhunter cover         # run only stage 5
-jobhunter pdf           # convert pending resumes / cover letters to PDF
-jobhunter apply         # autonomous browser-driven submission
-jobhunter apply -w 3    # parallel apply (3 Chrome instances)
-jobhunter apply --dry-run  # fill forms without submitting
+Auto-apply is powerful and should be treated as an explicit submission tool. Use
+dry-run paths and targeted commands before allowing it to submit anything.
+
+## Current System Shape
+
+JobHunter is split by responsibility:
+
+- `src/jobhunter`: Python CLI, pipeline, workers, profile import, PDF creation,
+  dashboard server, and apply automation.
+- `services/api`: local Fastify API for typed read models and product-facing
+  JSON endpoints.
+- `apps/web`: React/Vite local web UI shell.
+- `packages/contracts`: shared TypeScript schemas and API client.
+- `docs`: architecture, domain model, decisions, backlog, and delivery history.
+
+The Python dashboard is still the most complete local control surface. The
+TypeScript API and React app are the migration path for a cleaner local product
+UI.
+
+## Safety And Data
+
+By default, JobHunter writes user data under:
+
+```text
+~/.jobhunter/
 ```
 
-> **Why two install commands?** `python-jobspy` pins an exact numpy version in its metadata that conflicts with pip's resolver, but works fine at runtime with any modern numpy. The `--no-deps` flag bypasses the resolver; the second command installs jobspy's actual runtime dependencies. Everything except `python-jobspy` installs normally.
+Important local files include:
 
----
+- `profile.json`: structured candidate and application data.
+- `searches.yaml`: search targets and discovery configuration.
+- `.env`: API keys and local runtime settings.
+- `jobhunter.db`: local SQLite database.
+- `resume_template.tex` and `resume_style.json`: PDF rendering inputs.
+- `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts.
+- `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
 
-## Two Paths
+Do not commit profile data, keys, generated resumes, cover letters, PDFs,
+browser profiles, logs, or SQLite databases.
 
-### Full Pipeline (recommended)
-**Requires:** Python 3.11+, TeX Live/MacTeX (`pdflatex`), Node.js 20.19+, Gemini API key (free), Claude Code CLI, Chrome
-
-Runs every pipeline stage, then launches autonomous application submission. This is the full power of JobHunter.
-
-### Discovery + Tailoring Only
-**Requires:** Python 3.11+, TeX Live/MacTeX (`pdflatex`), Gemini API key (free)
-
-Runs discovery, enrichment, scoring, tailoring, cover-letter generation, and PDF conversion. You submit applications manually with the AI-prepared materials.
-
----
-
-## The Pipeline
-
-| Stage | What Happens |
-|-------|-------------|
-| **1. Discover** | Scrapes 5 job boards (Indeed, LinkedIn, Glassdoor, ZipRecruiter, Google Jobs) + 48 Workday employer portals + 30 direct career sites |
-| **2. Enrich** | Fetches full job descriptions via JSON-LD, CSS selectors, or AI-powered extraction |
-| **3. Score** | AI rates every job 1-10 based on your resume and preferences. Only high-fit jobs proceed |
-| **4. Tailor** | AI rewrites your resume per job: reorganizes, emphasizes relevant experience, adds keywords. Never fabricates |
-| **5. Cover Letter** | AI generates a targeted cover letter per job |
-| **6. PDF** | Converts tailored resumes and cover letters into upload-ready PDFs |
-
-Each stage is independent. Run `jobhunter run` for the full pipeline, or
-call `jobhunter discover`, `jobhunter enrich`, `jobhunter score`,
-`jobhunter tailor`, `jobhunter cover`, and `jobhunter pdf` individually.
-
-Auto-apply is a separate command that consumes the generated materials and submits applications.
-
----
-
-## JobHunter vs The Alternatives
-
-| Feature | JobHunter | AIHawk | Manual |
-|---------|-----------|--------|--------|
-| Job discovery | 5 boards + Workday + direct sites | LinkedIn only | One board at a time |
-| AI scoring | 1-10 fit score per job | Basic filtering | Your gut feeling |
-| Resume tailoring | Per-job AI rewrite | Template-based | Hours per application |
-| Auto-apply | Full form navigation + submission | LinkedIn Easy Apply only | Click, type, repeat |
-| Supported sites | Indeed, LinkedIn, Glassdoor, ZipRecruiter, Google Jobs, 46 Workday portals, 28 direct sites | LinkedIn | Whatever you open |
-| License | AGPL-3.0 | MIT | N/A |
-
----
+The local TypeScript API binds to `127.0.0.1` by default. Binding it to a
+non-loopback interface requires an explicit opt-in because it exposes local job,
+profile, and artifact metadata.
 
 ## Requirements
 
-| Component | Required For | Details |
-|-----------|-------------|---------|
-| Python 3.11+ | Everything | Core runtime |
-| TeX Live/MacTeX (`pdflatex`) | Resume PDFs | Required for tailored resume PDF generation |
-| Node.js 20.19+ | Auto-apply, local TypeScript API, React web UI | Needed for TypeScript tooling and `npx` to run Playwright MCP server |
-| Gemini API key | Scoring, tailoring, cover letters | Free tier (15 RPM / 1M tokens/day) is enough |
-| Chrome/Chromium | Auto-apply | Auto-detected on most systems |
-| Claude Code CLI | Auto-apply | Install from [claude.ai/code](https://claude.ai/code) |
+Core pipeline:
 
-**Gemini API key is free.** Get one at [aistudio.google.com](https://aistudio.google.com). OpenAI and local models (Ollama/llama.cpp) are also supported.
+- Python 3.11 or newer.
+- A local LLM provider configuration for scoring, tailoring, and cover letters.
+  Gemini, OpenAI, and local HTTP-backed providers are supported through
+  environment variables.
+- A TeX distribution with `pdflatex` for PDF output.
 
-### Optional
+Local API and web UI:
 
-| Component | What It Does |
-|-----------|-------------|
-| CapSolver API key | Solves CAPTCHAs during auto-apply (hCaptcha, reCAPTCHA, Turnstile, FunCaptcha). Without it, CAPTCHA-blocked applications just fail gracefully |
+- Node.js 20.19 or newer.
 
-> **Note:** python-jobspy is installed separately with `--no-deps` because it pins an exact numpy version in its metadata that conflicts with pip's resolver. It works fine with modern numpy at runtime.
+Auto-apply:
 
----
+- Chrome or Chromium.
+- Node.js and `npx` for the Playwright MCP runtime.
+- Claude Code CLI for browser-driven form completion.
+- Optional `CAPSOLVER_API_KEY` for CAPTCHA solving.
+
+Run the doctor command after setup. It is the fastest way to see which tier of
+functionality is available on your machine.
+
+## Install From Source
+
+```bash
+git clone https://github.com/ebarti/JobHunter.git
+cd JobHunter
+uv sync
+uv run jobhunter doctor
+```
+
+For development of the local TypeScript API and React app:
+
+```bash
+npm install
+npm test
+```
+
+Discovery can use `python-jobspy` when installed. If `jobhunter doctor` reports
+that JobSpy is missing, install it with the command shown by the doctor output.
+
+## First-Time Setup
+
+Create your local profile and configuration:
+
+```bash
+uv run jobhunter init
+uv run jobhunter doctor
+```
+
+The setup writes local files into `~/.jobhunter`. Review them before running a
+large pipeline:
+
+```bash
+ls ~/.jobhunter
+```
+
+At minimum, confirm:
+
+- your profile and resume facts are accurate;
+- your search configuration is narrow enough for a first run;
+- your LLM key or local model endpoint is configured;
+- `pdflatex` is available if you need PDFs;
+- Chrome and Claude Code are available only if you intend to use auto-apply.
+
+## Running The Pipeline
+
+Run all material-generation stages:
+
+```bash
+uv run jobhunter run
+```
+
+Run specific stages:
+
+```bash
+uv run jobhunter discover
+uv run jobhunter enrich
+uv run jobhunter score --workers 4
+uv run jobhunter tailor --workers 4 --min-score 7
+uv run jobhunter cover --min-score 7
+uv run jobhunter pdf
+```
+
+Run stages by name through the orchestrator:
+
+```bash
+uv run jobhunter run discover enrich score
+uv run jobhunter run tailor cover pdf --validation normal
+uv run jobhunter run --stream
+```
+
+Useful options:
+
+- `--dry-run`: preview a stage without executing it.
+- `--workers` / `-w`: parallelize supported stages.
+- `--limit`: cap eligible records for supported single-stage commands.
+- `--min-score`: control which scored jobs proceed to materials or apply.
+- `--validation strict|normal|lenient`: tune tailoring and cover-letter checks.
+- `--retailor`: regenerate tailored resumes for jobs that already have one.
+
+## Single-Job And Retry Commands
+
+Process one URL:
+
+```bash
+uv run jobhunter job https://example.com/job/123 --tailor --dry-run
+uv run jobhunter job https://example.com/job/123 --tailor
+uv run jobhunter job https://example.com/job/123 --apply --dry-run
+```
+
+Reset one stage for one job:
+
+```bash
+uv run jobhunter retry score https://example.com/job/123
+uv run jobhunter retry tailor https://example.com/job/123 --reset-attempts
+```
+
+`retry --run` can process other eligible pending work for some stages. Use it
+deliberately.
+
+## Auto-Apply
+
+Auto-apply launches local browser workers and can submit applications. Start
+with dry runs and narrow targets:
+
+```bash
+uv run jobhunter apply --dry-run --limit 1
+uv run jobhunter apply --url https://example.com/job/123 --dry-run
+```
+
+Run apply for prepared jobs:
+
+```bash
+uv run jobhunter apply --limit 5
+uv run jobhunter apply --workers 3 --min-score 8
+```
+
+Utility modes:
+
+```bash
+uv run jobhunter apply --gen --url https://example.com/job/123
+uv run jobhunter apply --mark-applied https://example.com/job/123
+uv run jobhunter apply --mark-failed https://example.com/job/123 --fail-reason "manual review"
+uv run jobhunter apply --reset-failed
+```
+
+Auto-apply requires a prepared profile, generated materials, Chrome/Chromium,
+Node.js, and Claude Code CLI.
+
+## Structured Local Actions
+
+The CLI also exposes a JSON-returning action surface used by local UI paths:
+
+```bash
+uv run jobhunter action score --limit 5 --dry-run
+uv run jobhunter action apply --url https://example.com/job/123 --dry-run
+uv run jobhunter action profile_import --pdf ~/resume.pdf --dry-run
+```
+
+These actions record start and finish events where possible and return
+structured success or failure data.
+
+## Dashboards And Local UI
+
+Start the Python dashboard:
+
+```bash
+uv run jobhunter dashboard
+```
+
+Generate the older static dashboard:
+
+```bash
+uv run jobhunter dashboard --static
+```
+
+Run the local TypeScript API:
+
+```bash
+npm run api:dev
+```
+
+Run the React web UI:
+
+```bash
+npm run web:dev
+```
+
+The Vite dev server proxies `/v1/*` to the local API by default. Set
+`VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
+
+## Inspecting Progress
+
+Show pipeline counts:
+
+```bash
+uv run jobhunter status
+```
+
+Inspect recent apply runs:
+
+```bash
+uv run jobhunter runs
+uv run jobhunter runs --failed-only
+uv run jobhunter runs --run-id <prefix>
+```
+
+The normalized stage states are stored in `job_stage_states`, and events are
+stored in `job_events`. Prefer the dashboard and CLI over direct SQLite edits.
 
 ## Configuration
 
-All generated by `jobhunter init`:
+JobHunter uses local user configuration plus package-shipped registries:
 
-### `profile.json`
-Your personal data in one structured file: contact info, work authorization, compensation, structured resume entries, skills, tailoring constraints, and EEO defaults. Powers scoring, tailoring, PDF rendering, and form auto-fill.
+- `~/.jobhunter/profile.json`: candidate data, application defaults, resume
+  baseline, tailoring controls.
+- `~/.jobhunter/searches.yaml`: searches and source settings.
+- `~/.jobhunter/.env`: provider keys and runtime environment.
+- `src/jobhunter/config/employers.yaml`: packaged employer registry.
+- `src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
+- `src/jobhunter/config/searches.example.yaml`: example search file.
 
-The `resume` block is mandatory. JobHunter uses it as the canonical resume template for LaTeX rendering and fact-preserving tailoring:
+Common environment variables:
 
-```json
-{
-  "resume": {
-    "executive_profile": {"baseline_text": "Short factual summary."},
-    "experience_entries": [
-      {
-        "id": "current_role",
-        "date_range": "Jan 2022 -- Present",
-        "title": "Software Engineer",
-        "company": "Example Corp",
-        "location": "Remote",
-        "bullets": ["Built and maintained production services."]
-      }
-    ],
-    "education_entries": [],
-    "skill_categories": [
-      {"id": "languages", "label": "Languages", "items": ["Python", "SQL"]}
-    ],
-    "tailoring_rules": {
-      "required_experience_entry_ids": ["current_role"],
-      "required_skill_category_ids": ["languages"],
-      "max_experience_bullets": 4
-    }
-  }
-}
-```
+- `JOBHUNTER_DIR`: override the local app directory.
+- `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
+- `LLM_MODEL`: choose the model for the configured provider.
+- `CHROME_PATH`: override Chrome/Chromium detection.
+- `PDFLATEX_PATH`: override LaTeX detection.
+- `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
+- `JOBHUNTER_API_HOST`, `JOBHUNTER_API_PORT`: local TypeScript API bind
+  settings.
 
-### `searches.yaml`
-Job search queries, target titles, locations, boards. Run multiple searches with different parameters.
+## Development
 
-### `.env`
-API keys and runtime config: `GEMINI_API_KEY`, `LLM_MODEL`, `CAPSOLVER_API_KEY` (optional).
-
-Do not commit `~/.jobhunter/profile.json`, `.env`, generated prompts, logs, tailored resumes, PDFs, browser worker directories, or SQLite databases. The repository `.gitignore` excludes these local artifacts by default.
-
-### Package configs (shipped with JobHunter)
-- `config/employers.yaml` - Workday employer registry (48 preconfigured)
-- `config/sites.yaml` - Direct career sites (30+), blocked sites, base URLs, manual ATS domains
-- `config/searches.example.yaml` - Example search configuration
-
----
-
-## How Stages Work
-
-### Discover
-Queries Indeed, LinkedIn, Glassdoor, ZipRecruiter, Google Jobs via JobSpy. Scrapes 48 Workday employer portals (configurable in `employers.yaml`). Hits 30 direct career sites with custom extractors. Deduplicates by URL.
-
-### Enrich
-Visits each job URL and extracts the full description. 3-tier cascade: JSON-LD structured data, then CSS selector patterns, then AI-powered extraction for unknown layouts.
-
-### Score
-AI scores every job 1-10 against your profile. 9-10 = strong match, 7-8 = good, 5-6 = moderate, 1-4 = skip. Only jobs above your threshold proceed to tailoring.
-
-### Tailor
-Generates a custom resume per job: reorders experience, emphasizes relevant skills, incorporates keywords from the job description. Your `resume_facts` (companies, projects, metrics) are preserved exactly. The AI reorganizes but never fabricates.
-
-### Cover Letter
-Writes a targeted cover letter per job referencing the specific company, role, and how your experience maps to their requirements.
-
-### PDF
-Converts tailored resumes and cover letters into upload-ready PDFs. Resume PDFs require `pdflatex`; run `jobhunter doctor` before relying on PDF conversion.
-
-### Auto-Apply
-Claude Code launches a Chrome instance, navigates to each application page, detects the form type, fills personal information and work history, uploads the tailored resume and cover letter, answers screening questions with AI, and submits. A live dashboard shows progress in real-time.
-
-The Playwright MCP server is configured automatically at runtime per worker. No manual MCP setup needed.
+Install dependencies:
 
 ```bash
-# Utility modes (no Chrome/Claude needed)
-jobhunter apply --mark-applied URL    # manually mark a job as applied
-jobhunter apply --mark-failed URL     # manually mark a job as failed
-jobhunter apply --reset-failed        # reset all failed jobs for retry
-jobhunter apply --gen --url URL       # generate prompt file for manual debugging
+npm install
+uv sync --extra dev
 ```
 
----
+Run the standard checks:
 
-## CLI Reference
-
-```
-jobhunter init                         # First-time setup wizard
-jobhunter discover                     # Run only discovery
-jobhunter enrich                       # Run only enrichment
-jobhunter score                        # Run only scoring
-jobhunter tailor                       # Run only resume tailoring
-jobhunter tailor --retailor            # Re-run tailoring for already-tailored jobs
-jobhunter cover                        # Run only cover letter generation
-jobhunter pdf                          # Convert pending text artifacts to PDF
-jobhunter doctor                       # Verify setup, diagnose missing requirements
-jobhunter run [stages...]              # Run pipeline stages (or 'all')
-jobhunter run --workers 4              # Parallel discovery/enrichment/score/tailor
-jobhunter run --stream                 # Concurrent stages (streaming mode)
-jobhunter run --min-score 8            # Override score threshold
-jobhunter run --dry-run                # Preview without executing
-jobhunter run --validation lenient     # Relax validation (recommended for Gemini free tier)
-jobhunter run --validation strict      # Strictest validation (retries on any banned word)
-jobhunter run tailor --retailor        # Re-tailor resumes in a sequential run
-jobhunter apply                        # Launch auto-apply
-jobhunter apply --workers 3            # Parallel browser workers
-jobhunter apply --dry-run              # Fill forms without submitting
-jobhunter apply --continuous           # Run forever, polling for new jobs
-jobhunter apply --headless             # Headless browser mode
-jobhunter apply --url URL              # Apply to a specific job
-jobhunter status                       # Pipeline statistics
-jobhunter dashboard                    # Open HTML results dashboard
+```bash
+npm test
+uv run --extra dev pytest -q
+uv run --extra dev ruff check .
+git diff --check
 ```
 
----
+Useful focused checks:
 
-## Documentation
+```bash
+npm run api:check
+npm run api:test
+npm run web:check
+npm run web:build
+uv run --extra dev pytest tests/test_state_dashboard.py -q
+```
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Domain model](docs/DOMAIN_MODEL.md)
-- [Decisions](docs/DECISIONS.md)
-- [Backlog](docs/BACKLOG.md)
-- [Delivered work](docs/DELIVERED.md)
-- [Plan archive](docs/plans/)
+Build the Python package:
 
----
+```bash
+uv run --extra dev python -m build
+```
 
-## Contributing
+## Project Status
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and PR guidelines.
+The near-term priority is local reliability:
 
----
+- make per-stage state canonical;
+- keep retries targeted and observable;
+- keep generated artifacts registered before the UI opens them;
+- keep dry-run apply behavior safe;
+- move product-facing UI/API behavior from the Python dashboard to the
+  TypeScript API and React app in small slices.
+
+Hosted accounts, billing, object storage, Postgres migration, hosted workers,
+and SaaS deployment are intentionally deferred until the local workflow is
+reliable.
+
+## Documentation Map
+
+- `docs/ARCHITECTURE.md`: current architecture and runtime boundaries.
+- `docs/DOMAIN_MODEL.md`: domain language and ownership rules.
+- `docs/DECISIONS.md`: accepted architecture decisions.
+- `docs/DELIVERED.md`: delivery history by PR.
+- `docs/BACKLOG.md`: deferred local and hosted work.
+- `docs/plans/`: proposed and implemented feature plans.
 
 ## License
 
-JobHunter is licensed under the [GNU Affero General Public License v3.0](LICENSE).
-
-You are free to use, modify, and distribute this software. If you deploy a modified version as a service, you must release your source code under the same license.
-
-## Responsible Use
-
-JobHunter can fill and submit job applications with personal data. You are responsible for reviewing generated materials, answering truthfully, respecting each site's terms, and choosing whether autonomous submission is appropriate for your situation. Use `jobhunter apply --dry-run` before unattended submissions.
+JobHunter is licensed under AGPL-3.0-only.
