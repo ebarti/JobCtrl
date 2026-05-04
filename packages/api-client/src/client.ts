@@ -26,7 +26,7 @@ import type {
   RetryStageRequest,
   SettingsUpdateRequest,
   SettingsResponse,
-} from "./schemas.js";
+} from "@jobhunter/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
@@ -199,5 +199,5 @@ export function createJobHunterApiClient(baseUrl?: string): JobHunterApiClient {
 }
 
 function defaultBaseUrl(): string {
-  return typeof window === "undefined" ? DEFAULT_NODE_BASE_URL : "";
+  return "window" in globalThis ? "" : DEFAULT_NODE_BASE_URL;
 }

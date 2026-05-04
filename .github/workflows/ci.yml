@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e "workers/automation[dev]"
 
       - name: Install LaTeX
         env:
@@ -33,13 +33,41 @@ jobs:
           sudo apt-get install -y --no-install-recommends texlive-latex-extra texlive-fonts-extra
 
       - name: Lint
-        run: ruff check src/ tests/
+        run: ruff check workers/automation/src workers/automation/tests
 
       - name: Release scan
         run: python scripts/release_check.py
 
       - name: Test
-        run: pytest tests/ -v
+        run: pytest workers/automation/tests -v
 
       - name: Build package
-        run: python -m build
+        run: python -m build workers/automation
+
+  typescript:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check
+        run: pnpm -r check
+
+      - name: Test
+        run: pnpm --filter @jobhunter/api test
+
+      - name: Build web
+        run: pnpm --filter @jobhunter/web build

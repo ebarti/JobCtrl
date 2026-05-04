@@ -4,25 +4,26 @@
   "private": true,
   "description": "AI-powered end-to-end job application pipeline",
   "type": "module",
+  "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=20.19.0"
   },
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
   "scripts": {
-    "api:dev": "tsx services/api/src/main.ts",
-    "api:start": "tsx services/api/src/main.ts",
-    "api:check": "tsc --noEmit --project tsconfig.api.json",
-    "api:test": "vitest run services/api/test",
-    "web:check": "tsc --noEmit --project tsconfig.web.json",
-    "web:dev": "vite --config apps/web/vite.config.ts --host 127.0.0.1",
-    "web:build": "vite build --config apps/web/vite.config.ts",
-    "web:preview": "vite preview --config apps/web/vite.config.ts --host 127.0.0.1",
-    "qa:seed": "tsx services/api/test/qa-seed.ts",
-    "qa:test": "vitest run services/api/test/qa-workflow.test.ts",
-    "test": "npm run api:check && npm run api:test && npm run web:check && npm run web:build"
+    "api:dev": "corepack pnpm --filter @jobhunter/api dev",
+    "api:start": "corepack pnpm --filter @jobhunter/api start",
+    "api:check": "corepack pnpm --filter @jobhunter/api check",
+    "api:test": "corepack pnpm --filter @jobhunter/api test",
+    "web:check": "corepack pnpm --filter @jobhunter/web check",
+    "web:dev": "corepack pnpm --filter @jobhunter/web dev",
+    "web:build": "corepack pnpm --filter @jobhunter/web build",
+    "web:preview": "corepack pnpm --filter @jobhunter/web preview",
+    "qa:seed": "corepack pnpm --filter @jobhunter/api qa:seed",
+    "qa:test": "corepack pnpm --filter @jobhunter/api qa:test",
+    "python:test": "uv --project workers/automation run --extra dev pytest -q",
+    "python:lint": "uv --project workers/automation run --extra dev ruff check .",
+    "python:build": "uv --project workers/automation run --extra dev python -m build workers/automation",
+    "check": "corepack pnpm --filter @jobhunter/contracts check && corepack pnpm --filter @jobhunter/api-client check && corepack pnpm api:check && corepack pnpm web:check && corepack pnpm python:lint",
+    "test": "corepack pnpm api:test && corepack pnpm web:build && corepack pnpm python:test"
   },
   "repository": {
     "type": "git",
@@ -42,24 +43,13 @@
     "url": "https://github.com/ebarti/JobHunter/issues"
   },
   "homepage": "https://github.com/ebarti/JobHunter#readme",
-  "dependencies": {
-    "@jobhunter/contracts": "file:packages/contracts",
-    "@fastify/cors": "^11.2.0",
-    "better-sqlite3": "^12.9.0",
-    "fastify": "^5.8.5",
-    "zod": "^4.4.1"
-  },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.6.0",
-    "@types/react": "^19.2.7",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.3",
-    "vite": "^7.3.0",
-    "vitest": "^4.1.5"
+    "typescript": "^6.0.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

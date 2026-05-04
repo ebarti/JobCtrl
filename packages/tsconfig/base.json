@@ -4,16 +4,11 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "jsx": "react-jsx",
-    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "types": ["node", "vitest/globals"]
-  },
-  "include": ["services/**/*.ts", "packages/**/*.ts", "apps/**/*.ts"],
-  "exclude": ["node_modules"]
+    "exactOptionalPropertyTypes": true
+  }
 }

@@ -10,7 +10,16 @@ a local web UI and API; the automation engine remains Python because the
 existing discovery, enrichment, scoring, tailoring, PDF generation, and apply
 flows are already implemented there. The supported runtime shape has three
 components: local TypeScript API, local TypeScript UI, and Python automation
-engine.
+worker.
+
+Repository ownership mirrors those runtime boundaries:
+
+- `apps/web`: runnable React/Vite frontend.
+- `apps/api`: runnable local Fastify API.
+- `packages/contracts`: shared schemas, DTOs, enums, and domain types.
+- `packages/api-client`: typed transport client used by the frontend and tests.
+- `workers/automation`: uv-managed Python automation worker and CLI package.
+- `packages/tsconfig`: shared TypeScript compiler presets.
 
 ```mermaid
 flowchart LR
@@ -39,12 +48,13 @@ The React frontend under `apps/web` owns user interaction:
 - filtering, sorting, pagination, and drawer state
 - UI action buttons
 
-The frontend uses `@jobhunter/contracts` as its typed API client and schema
-boundary. It should not know shell command syntax.
+The frontend uses `@jobhunter/api-client` for API transport and
+`@jobhunter/contracts` for shared schemas and DTOs. It should not know shell
+command syntax.
 
 ### TypeScript Product API
 
-The local TypeScript API under `services/api` owns typed JSON read models and
+The local TypeScript API under `apps/api` owns typed JSON read models and
 local product endpoints. It is intentionally bound to loopback by default
 because it exposes local job, profile, and artifact metadata.
 
@@ -78,8 +88,9 @@ Python owns automation execution:
 - profile import from resume PDF
 - apply automation
 
-Workers should be invoked through structured local actions and should update
-stage state, events, and artifacts through shared helpers.
+The worker package lives under `workers/automation`. It should be invoked
+through structured local actions and should update stage state, events, and
+artifacts through shared helpers.
 
 ### SQLite And Files
 
@@ -106,24 +117,25 @@ before the UI can open them.
 Python CLI:
 
 ```bash
-uv run jobhunter doctor
-uv run jobhunter run
-uv run jobhunter action score --limit 5
+uv --project workers/automation run jobhunter doctor
+uv --project workers/automation run jobhunter run
+uv --project workers/automation run jobhunter action score --limit 5
 ```
 
 TypeScript API and web UI:
 
 ```bash
-npm run api:dev
-npm run web:dev
+pnpm api:dev
+pnpm web:dev
 ```
 
 Verification:
 
 ```bash
-npm test
-uv run --extra dev pytest -q
-uv run --extra dev ruff check .
+pnpm test
+uv --project workers/automation run --extra dev pytest -q
+uv --project workers/automation run --extra dev ruff check .
+uv --project workers/automation run --extra dev python -m build workers/automation
 git diff --check
 ```
 

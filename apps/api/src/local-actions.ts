@@ -3,8 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import type { ActionCommandPayload, ActionRunResponse } from "./contracts.js";
+
+const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
+const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
 
 export interface ActionDispatchContext {
   appDir: string;
@@ -72,7 +76,7 @@ export const defaultActionDispatcher: ActionDispatcher = async (command, context
   return {
     status: "queued",
     result: {
-      commands: commands.map((argv) => ["uv", ...argv]),
+      commands: commands.map((argv) => ["uv", "--project", AUTOMATION_PROJECT_DIR, ...argv]),
       pids,
     },
   };
@@ -129,7 +133,17 @@ export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (inpu
   try {
     await runCommand(
       "uv",
-      ["run", "python", "-c", PROFILE_PREVIEW_SCRIPT, input.profilePath, input.resumeTemplatePath, outputPath],
+      [
+        "--project",
+        AUTOMATION_PROJECT_DIR,
+        "run",
+        "python",
+        "-c",
+        PROFILE_PREVIEW_SCRIPT,
+        input.profilePath,
+        input.resumeTemplatePath,
+        outputPath,
+      ],
       context.appDir,
     );
     return fs.readFileSync(outputPath);
@@ -210,7 +224,7 @@ function applyActionArgs(command: ActionCommandPayload): string[] {
 }
 
 function spawnDetached(argv: string[], appDir: string): number | undefined {
-  const child = spawn("uv", argv, {
+  const child = spawn("uv", ["--project", AUTOMATION_PROJECT_DIR, ...argv], {
     detached: true,
     env: {
       ...process.env,
@@ -238,7 +252,7 @@ async function runProfileImportCli(
   context: ActionDispatchContext,
 ): Promise<unknown> {
   const args = ["run", "jobhunter", "action", "profile_import", "--pdf", pdfPath];
-  return runJsonCommand("uv", args, context.appDir);
+  return runJsonCommand("uv", ["--project", AUTOMATION_PROJECT_DIR, ...args], context.appDir);
 }
 
 function runCommand(command: string, args: string[], appDir: string): Promise<string> {

@@ -3,9 +3,24 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "check": "tsc --noEmit --project tsconfig.json",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
   "dependencies": {
-    "@jobhunter/contracts": "file:../../packages/contracts",
+    "@jobhunter/api-client": "workspace:*",
+    "@jobhunter/contracts": "workspace:*",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@jobhunter/tsconfig": "workspace:*",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.0"
   }
 }

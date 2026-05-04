@@ -34,12 +34,12 @@ dry-run paths and targeted commands before allowing it to submit anything.
 
 JobHunter is split by responsibility:
 
-- `services/api`: local TypeScript/Fastify API for typed read models, local
+- `apps/api`: local TypeScript/Fastify API for typed read models, local
   product actions, profile/settings, artifacts, and worker invocation.
 - `apps/web`: current React/Vite local web shell; planned direction is
   TanStack Router plus TanStack Query as the UI grows beyond the shell.
-- `src/jobhunter`: Python automation engine, CLI, workers, profile import, PDF
-  creation, and apply automation.
+- `workers/automation/src/jobhunter`: Python automation engine, CLI, workers,
+  profile import, PDF creation, and apply automation.
 
 ## Safety And Data
 
@@ -79,6 +79,7 @@ Core pipeline:
 Local API and web UI:
 
 - Node.js 20.19 or newer.
+- pnpm through Corepack.
 
 Auto-apply:
 
@@ -95,15 +96,15 @@ functionality is available on your machine.
 ```bash
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
-uv sync
-uv run jobhunter doctor
+corepack pnpm install
+uv --project workers/automation sync
+uv --project workers/automation run jobhunter doctor
 ```
 
 For development of the local TypeScript API and current React/Vite shell:
 
 ```bash
-npm install
-npm test
+pnpm test
 ```
 
 Discovery can use `python-jobspy` when installed. If `jobhunter doctor` reports
@@ -114,8 +115,8 @@ that JobSpy is missing, install it with the command shown by the doctor output.
 Create your local profile and configuration:
 
 ```bash
-uv run jobhunter init
-uv run jobhunter doctor
+uv --project workers/automation run jobhunter init
+uv --project workers/automation run jobhunter doctor
 ```
 
 The setup writes local files into `~/.jobhunter`. Review them before running a
@@ -138,26 +139,26 @@ At minimum, confirm:
 Run all material-generation stages:
 
 ```bash
-uv run jobhunter run
+uv --project workers/automation run jobhunter run
 ```
 
 Run specific stages:
 
 ```bash
-uv run jobhunter discover
-uv run jobhunter enrich
-uv run jobhunter score --workers 4
-uv run jobhunter tailor --workers 4 --min-score 7
-uv run jobhunter cover --min-score 7
-uv run jobhunter pdf
+uv --project workers/automation run jobhunter discover
+uv --project workers/automation run jobhunter enrich
+uv --project workers/automation run jobhunter score --workers 4
+uv --project workers/automation run jobhunter tailor --workers 4 --min-score 7
+uv --project workers/automation run jobhunter cover --min-score 7
+uv --project workers/automation run jobhunter pdf
 ```
 
 Run stages by name through the orchestrator:
 
 ```bash
-uv run jobhunter run discover enrich score
-uv run jobhunter run tailor cover pdf --validation normal
-uv run jobhunter run --stream
+uv --project workers/automation run jobhunter run discover enrich score
+uv --project workers/automation run jobhunter run tailor cover pdf --validation normal
+uv --project workers/automation run jobhunter run --stream
 ```
 
 Useful options:
@@ -174,16 +175,16 @@ Useful options:
 Process one URL:
 
 ```bash
-uv run jobhunter job https://example.com/job/123 --tailor --dry-run
-uv run jobhunter job https://example.com/job/123 --tailor
-uv run jobhunter job https://example.com/job/123 --apply --dry-run
+uv --project workers/automation run jobhunter job https://example.com/job/123 --tailor --dry-run
+uv --project workers/automation run jobhunter job https://example.com/job/123 --tailor
+uv --project workers/automation run jobhunter job https://example.com/job/123 --apply --dry-run
 ```
 
 Reset one stage for one job:
 
 ```bash
-uv run jobhunter retry score https://example.com/job/123
-uv run jobhunter retry tailor https://example.com/job/123 --reset-attempts
+uv --project workers/automation run jobhunter retry score https://example.com/job/123
+uv --project workers/automation run jobhunter retry tailor https://example.com/job/123 --reset-attempts
 ```
 
 `retry --run` can process other eligible pending work for some stages. Use it
@@ -195,24 +196,24 @@ Auto-apply launches local browser workers and can submit applications. Start
 with dry runs and narrow targets:
 
 ```bash
-uv run jobhunter apply --dry-run --limit 1
-uv run jobhunter apply --url https://example.com/job/123 --dry-run
+uv --project workers/automation run jobhunter apply --dry-run --limit 1
+uv --project workers/automation run jobhunter apply --url https://example.com/job/123 --dry-run
 ```
 
 Run apply for prepared jobs:
 
 ```bash
-uv run jobhunter apply --limit 5
-uv run jobhunter apply --workers 3 --min-score 8
+uv --project workers/automation run jobhunter apply --limit 5
+uv --project workers/automation run jobhunter apply --workers 3 --min-score 8
 ```
 
 Utility modes:
 
 ```bash
-uv run jobhunter apply --gen --url https://example.com/job/123
-uv run jobhunter apply --mark-applied https://example.com/job/123
-uv run jobhunter apply --mark-failed https://example.com/job/123 --fail-reason "manual review"
-uv run jobhunter apply --reset-failed
+uv --project workers/automation run jobhunter apply --gen --url https://example.com/job/123
+uv --project workers/automation run jobhunter apply --mark-applied https://example.com/job/123
+uv --project workers/automation run jobhunter apply --mark-failed https://example.com/job/123 --fail-reason "manual review"
+uv --project workers/automation run jobhunter apply --reset-failed
 ```
 
 Auto-apply requires a prepared profile, generated materials, Chrome/Chromium,
@@ -223,9 +224,9 @@ Node.js, and Claude Code CLI.
 The CLI also exposes a JSON-returning action surface used by local UI paths:
 
 ```bash
-uv run jobhunter action score --limit 5 --dry-run
-uv run jobhunter action apply --url https://example.com/job/123 --dry-run
-uv run jobhunter action profile_import --pdf ~/resume.pdf --dry-run
+uv --project workers/automation run jobhunter action score --limit 5 --dry-run
+uv --project workers/automation run jobhunter action apply --url https://example.com/job/123 --dry-run
+uv --project workers/automation run jobhunter action profile_import --pdf ~/resume.pdf --dry-run
 ```
 
 These actions record start and finish events where possible and return
@@ -236,13 +237,13 @@ structured success or failure data.
 Run the local TypeScript API:
 
 ```bash
-npm run api:dev
+pnpm api:dev
 ```
 
 Run the current React/Vite web shell:
 
 ```bash
-npm run web:dev
+pnpm web:dev
 ```
 
 The Vite dev server proxies `/v1/*` to the local API by default. Set
@@ -253,15 +254,15 @@ The Vite dev server proxies `/v1/*` to the local API by default. Set
 Show pipeline counts:
 
 ```bash
-uv run jobhunter status
+uv --project workers/automation run jobhunter status
 ```
 
 Inspect recent apply runs:
 
 ```bash
-uv run jobhunter runs
-uv run jobhunter runs --failed-only
-uv run jobhunter runs --run-id <prefix>
+uv --project workers/automation run jobhunter runs
+uv --project workers/automation run jobhunter runs --failed-only
+uv --project workers/automation run jobhunter runs --run-id <prefix>
 ```
 
 The normalized stage states are stored in `job_stage_states`, and events are
@@ -276,9 +277,9 @@ JobHunter uses local user configuration plus package-shipped registries:
   baseline, tailoring controls.
 - `~/.jobhunter/searches.yaml`: searches and source settings.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
-- `src/jobhunter/config/employers.yaml`: packaged employer registry.
-- `src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
-- `src/jobhunter/config/searches.example.yaml`: example search file.
+- `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
+- `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
+- `workers/automation/src/jobhunter/config/searches.example.yaml`: example search file.
 
 Common environment variables:
 
@@ -296,43 +297,43 @@ Common environment variables:
 Install dependencies:
 
 ```bash
-npm install
-uv sync --extra dev
+corepack pnpm install
+uv --project workers/automation sync --extra dev
 ```
 
 Run the standard checks:
 
 ```bash
-npm test
-uv run --extra dev pytest -q
-uv run --extra dev ruff check .
+pnpm check
+pnpm test
+uv --project workers/automation run --extra dev python -m build workers/automation
 git diff --check
 ```
 
 Useful focused checks:
 
 ```bash
-npm run api:check
-npm run api:test
-npm run qa:test
-npm run web:check
-npm run web:build
-uv run --extra dev pytest tests/test_state_dashboard.py -q
+pnpm api:check
+pnpm api:test
+pnpm qa:test
+pnpm web:check
+pnpm web:build
+uv --project workers/automation run --extra dev pytest workers/automation/tests/test_state_dashboard.py -q
 ```
 
 Seed a disposable local QA workspace when you need to exercise destructive UI
 flows without touching `~/.jobhunter`:
 
 ```bash
-npm run qa:seed -- /tmp/jobhunter-qa
-JOBHUNTER_DIR=/tmp/jobhunter-qa npm run api:dev
-VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 npm run web:dev -- --port 5173
+pnpm qa:seed -- /tmp/jobhunter-qa
+JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm api:dev
+VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 ```
 
 Build the Python package:
 
 ```bash
-uv run --extra dev python -m build
+uv --project workers/automation run --extra dev python -m build workers/automation
 ```
 
 ## Project Status
@@ -353,11 +354,15 @@ reliable.
 
 ## Documentation Map
 
-- `docs/ARCHITECTURE.md`: current architecture and runtime boundaries.
-- `docs/DOMAIN_MODEL.md`: domain language and ownership rules.
-- `docs/DECISIONS.md`: accepted architecture decisions.
-- `docs/DELIVERED.md`: delivery history by PR.
-- `docs/BACKLOG.md`: deferred local and hosted work.
+- `docs/README.md`: documentation index.
+- `docs/architecture.md`: current architecture and runtime boundaries.
+- `docs/domain-model.md`: domain language and ownership rules.
+- `docs/local-development.md`: setup, run, build, test, and lint commands.
+- `docs/local-ts-api.md`: local API and web development notes.
+- `docs/local-reliability-qa.md`: local QA checklist and regression matrix.
+- `docs/decisions.md`: accepted architecture decisions.
+- `docs/delivered.md`: delivery history by PR.
+- `docs/backlog.md`: deferred local and hosted work.
 - `docs/plans/`: proposed and implemented feature plans.
 
 ## License
