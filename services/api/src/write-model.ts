@@ -2,16 +2,21 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type {
+  BulkJobMutationRequest,
+  DeleteJobRequest,
+  JobMutationResponse,
   MarkJobActionRequest,
   ProfileConfigResponse,
   ProfileUpdateRequest,
+  SettingsResponse,
+  SettingsUpdateRequest,
   Stage,
   StageState,
   StageSummary,
 } from "./contracts.js";
 import { STAGES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
-import { readProfileConfig } from "./read-model.js";
+import { matchingJobKeys, readProfileConfig, readSettingsConfig } from "./read-model.js";
 
 export class InputError extends Error {}
 
@@ -151,6 +156,65 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
   return { jobUrl, stage: getStageState(db, jobUrl, stage) };
 }
 
+export function softDeleteJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {
+  return softDeleteJobs(db, { allMatching: false, jobKeys: [jobKey], reason: request.reason });
+}
+
+export function softDeleteJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  ensureDeletedJobsTable(db);
+  const deletedAt = new Date().toISOString();
+  const jobKeys = mutableJobKeys(db, request);
+  const statement = db.prepare(`
+    INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+    VALUES (?, ?, ?, NULL)
+    ON CONFLICT(job_url) DO UPDATE SET
+      deleted_at = excluded.deleted_at,
+      reason = excluded.reason,
+      restored_at = NULL
+  `);
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      statement.run(jobUrl, deletedAt, request.reason ?? null);
+      recordActionEvent(db, {
+        jobUrl,
+        stage: currentMutableStage(db, jobUrl),
+        eventType: "job_deleted",
+        level: "info",
+        message: "Job soft-deleted from the local API.",
+        payload: { reason: request.reason ?? "" },
+      });
+    }
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
+export function restoreJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
+  return restoreJobs(db, { allMatching: false, jobKeys: [jobKey] });
+}
+
+export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  ensureDeletedJobsTable(db);
+  const restoredAt = new Date().toISOString();
+  const jobKeys = mutableJobKeys(db, request);
+  const statement = db.prepare("UPDATE jobhunter_deleted_jobs SET restored_at = ? WHERE job_url = ? AND restored_at IS NULL");
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      statement.run(restoredAt, jobUrl);
+      recordActionEvent(db, {
+        jobUrl,
+        stage: currentMutableStage(db, jobUrl),
+        eventType: "job_restored",
+        level: "info",
+        message: "Job restored from deleted jobs.",
+        payload: {},
+      });
+    }
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
 export function writeProfileConfig(paths: ProfilePaths, request: ProfileUpdateRequest): ProfileConfigResponse {
   let wrote = false;
   let profile: Record<string, unknown> | undefined;
@@ -185,6 +249,45 @@ export function writeProfileConfig(paths: ProfilePaths, request: ProfileUpdateRe
     writeText(paths.resumeTemplatePath, templateText);
   }
   return readProfileConfig(paths);
+}
+
+export function writeSettingsConfig(paths: { settingsPath: string }, request: SettingsUpdateRequest): SettingsResponse {
+  const next = readJsonObject(paths.settingsPath);
+  let wrote = false;
+
+  const assign = (key: string, value: unknown) => {
+    next[key] = value;
+    wrote = true;
+  };
+
+  if (request.targetRole !== undefined) {
+    assign("target_role", request.targetRole);
+  }
+  if (request.locationFilter !== undefined) {
+    assign("location_filter", request.locationFilter);
+  }
+  if (request.minFitScore !== undefined) {
+    assign("min_fit_score", request.minFitScore);
+  }
+  if (request.autoApply !== undefined) {
+    assign("auto_apply", request.autoApply);
+  }
+  if (request.applyConcurrency !== undefined) {
+    assign("apply_concurrency", request.applyConcurrency);
+  }
+  if (request.scoreCriteria !== undefined) {
+    assign("score_criteria", request.scoreCriteria);
+  }
+  if (request.targetCriteria !== undefined) {
+    assign("target_criteria", request.targetCriteria);
+  }
+
+  if (!wrote) {
+    throw new InputError("At least one settings field is required.");
+  }
+
+  writeJson(paths.settingsPath, next);
+  return readSettingsConfig(paths);
 }
 
 function updateLegacyJobColumnsForReset(
@@ -223,6 +326,31 @@ function updateLegacyJobColumnsForReset(
     }
   }
   updateExistingJobColumns(db, jobUrl, updates);
+}
+
+function ensureDeletedJobsTable(db: SqliteDatabase): void {
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+      job_url TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL,
+      reason TEXT,
+      restored_at TEXT,
+      FOREIGN KEY(job_url) REFERENCES jobs(url)
+    )`,
+  ).run();
+}
+
+function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): string[] {
+  if (request.allMatching) {
+    return uniqueJobKeys(matchingJobKeys(db, request.filter ?? {}));
+  }
+  return uniqueJobKeys(request.jobKeys)
+    .map((jobKey) => resolveJobUrl(db, jobKey))
+    .filter((jobUrl): jobUrl is string => Boolean(jobUrl));
+}
+
+function uniqueJobKeys(jobKeys: string[]): string[] {
+  return Array.from(new Set(jobKeys.map((jobKey) => jobKey.trim()).filter(Boolean)));
 }
 
 function updateExistingJobColumns(db: SqliteDatabase, jobUrl: string, updates: Record<string, SqliteValue>): void {
@@ -399,6 +527,17 @@ function parseJson(text: string, label: string): unknown {
 
 function writeJson(filePath: string, value: Record<string, unknown>): void {
   writeText(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function readJsonObject(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+  const parsed = parseJson(fs.readFileSync(filePath, "utf8"), path.basename(filePath));
+  if (!isRecord(parsed)) {
+    throw new InputError(`${path.basename(filePath)} must be a JSON object.`);
+  }
+  return parsed;
 }
 
 function writeText(filePath: string, value: string): void {

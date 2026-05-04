@@ -10,6 +10,7 @@ Run these before merging the Phase 7 stack branch:
 
 ```bash
 npm test
+npm run qa:test
 uv run pytest -q
 git diff --check
 ```
@@ -26,6 +27,19 @@ npm run web:dev -- --port 5173
 Open the URL printed by Vite. It is usually `http://127.0.0.1:5173`, but Vite
 can choose a different port when 5173 is already in use because the web dev
 server does not run with `strictPort`.
+
+For destructive browser QA, seed a disposable workspace and point both servers
+at it:
+
+```bash
+npm run qa:seed -- /tmp/jobhunter-qa
+JOBHUNTER_DIR=/tmp/jobhunter-qa npm run api:dev
+VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 npm run web:dev -- --port 5173
+```
+
+The seed includes active and failed jobs, deleted-job workflows, artifacts,
+missing files, apply runs, dashboard events, profile files, settings, and a
+safe local artifact directory.
 
 ## Reliability Matrix
 
@@ -46,6 +60,7 @@ server does not run with `strictPort`.
 | Filters reset while editing | The React frontend has no automatic list polling; list refresh is explicit through the refresh button or filter changes. | Browser smoke |
 | Generated artifacts cannot be opened safely | The TypeScript API only opens known local artifact paths, and the React UI routes artifact buttons through that API. | `services/api/test/server.test.ts` and browser smoke |
 | Profile/style save and discard flows regress | The TypeScript API persists profile/style/template changes, and the React UI exposes save, discard, and resume-import draft controls. | `services/api/test/server.test.ts` and browser smoke |
+| Destructive UI workflows need safe data | A disposable seeded QA workspace exercises soft delete/restore, artifact open/missing handling, profile/settings saves, credentials, and dashboard filtering without touching the user's real local database. | `services/api/test/qa-workflow.test.ts` and browser smoke against `npm run qa:seed` |
 
 ## React Browser Smoke
 

@@ -8,22 +8,30 @@ import {
   type ActionCommandPayload,
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
+  BulkJobMutationRequestSchema,
   CancelJobActionRequestSchema,
+  CredentialKeys,
+  CredentialUpdateRequestSchema,
+  DeleteJobRequestSchema,
   GenerateMaterialsRequestSchema,
   JobListQuerySchema,
   MarkJobActionRequestSchema,
   ProfileImportRequestSchema,
   ProfileUpdateRequestSchema,
   RetryStageRequestSchema,
+  SettingsUpdateRequestSchema,
 } from "./contracts.js";
 import { databaseExists, openDatabase, openReadOnlyDatabase } from "./db.js";
+import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   buildActionResponse,
   defaultActionDispatcher,
   defaultArtifactOpener,
+  defaultProfilePreviewRenderer,
   defaultProfileImporter,
   type ActionDispatcher,
   type ArtifactOpener,
+  type ProfilePreviewRenderer,
   type ProfileImporter,
 } from "./local-actions.js";
 import {
@@ -41,8 +49,13 @@ import {
   markJobApplied,
   markJobSkipped,
   resetJobStage,
+  restoreJob,
+  restoreJobs,
   resolveJobUrl,
+  softDeleteJob,
+  softDeleteJobs,
   writeProfileConfig,
+  writeSettingsConfig,
 } from "./write-model.js";
 
 const LOCAL_ORIGIN_PATTERNS = [
@@ -50,7 +63,7 @@ const LOCAL_ORIGIN_PATTERNS = [
   /^https?:\/\/127\.0\.0\.1(?::\d+)?$/,
   /^https?:\/\/\[::1\](?::\d+)?$/,
 ];
-const LOCAL_CORS_METHODS = ["GET", "HEAD", "POST", "PATCH"];
+const LOCAL_CORS_METHODS = ["DELETE", "GET", "HEAD", "POST", "PATCH"];
 const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 
 export interface BuildAppOptions {
@@ -62,16 +75,20 @@ export interface BuildAppOptions {
   settingsPath: string;
   actionDispatcher?: ActionDispatcher;
   artifactOpener?: ArtifactOpener;
+  credentialStore?: CredentialStore;
   profileImporter?: ProfileImporter;
+  profilePreviewRenderer?: ProfilePreviewRenderer;
   logger?: boolean;
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
-  const app = Fastify({ logger: options.logger ?? false });
+  const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
+  const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
+  const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
   const actionContext = { appDir };
 
   void app.register(cors, {
@@ -107,6 +124,22 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
   );
 
+  app.post("/v1/jobs/bulk-delete", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
+  });
+
+  app.post("/v1/jobs/bulk-restore", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => restoreJobs(db, body));
+  });
+
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
       const detail = getJobDetail(db, decodeRouteParam(request.params.jobKey));
@@ -116,6 +149,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       return detail;
     }),
+  );
+
+  app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) => {
+    const body = parseBody(reply, DeleteJobRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => softDeleteJob(db, decodeRouteParam(request.params.jobKey), body));
+  });
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/restore", async (request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => restoreJob(db, decodeRouteParam(request.params.jobKey))),
   );
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/retry-stage", async (request, reply) => {
@@ -285,6 +330,30 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }),
   );
 
+  app.get("/v1/profile/preview.pdf", async (_request, reply) => {
+    try {
+      const pdfBytes = await profilePreviewRenderer(
+        {
+          profilePath: options.profilePath,
+          resumeStylePath: options.resumeStylePath,
+          resumeTemplatePath: options.resumeTemplatePath,
+        },
+        actionContext,
+      );
+      return reply
+        .header("content-type", "application/pdf")
+        .header("cache-control", "no-store")
+        .send(pdfBytes);
+    } catch (error) {
+      void reply.code(500);
+      return {
+        ok: false,
+        error: "profile_preview_failed",
+        message: error instanceof Error ? error.message : "Unable to render profile preview.",
+      };
+    }
+  });
+
   app.patch("/v1/profile", async (request, reply) => {
     const body = parseBody(reply, ProfileUpdateRequestSchema, request.body ?? {});
     if (!body) {
@@ -335,6 +404,41 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/settings", async () => readSettingsConfig({ settingsPath: options.settingsPath }));
+
+  app.patch("/v1/settings", async (request, reply) => {
+    const body = parseBody(reply, SettingsUpdateRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    try {
+      return writeSettingsConfig({ settingsPath: options.settingsPath }, body);
+    } catch (error) {
+      if (error instanceof InputError) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_settings", message: error.message };
+      }
+      throw error;
+    }
+  });
+
+  app.get("/v1/credentials", async () => credentialStore.list());
+
+  app.patch("/v1/credentials", async (request, reply) => {
+    const body = parseBody(reply, CredentialUpdateRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return credentialStore.set(body.key, body.value);
+  });
+
+  app.delete<{ Params: { key: string } }>("/v1/credentials/:key", async (request, reply) => {
+    const key = decodeRouteParam(request.params.key);
+    if (!CredentialKeys.includes(key as (typeof CredentialKeys)[number])) {
+      void reply.code(400);
+      return { ok: false, error: "invalid_credential_key" };
+    }
+    return credentialStore.delete(key as (typeof CredentialKeys)[number]);
+  });
 
   return app;
 }

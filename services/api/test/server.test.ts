@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 
-import { createJobHunterApiClient } from "@jobhunter/contracts";
+import { CredentialKeys, createJobHunterApiClient, type CredentialKey } from "@jobhunter/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
@@ -34,6 +34,8 @@ beforeEach(() => {
       min_fit_score: 8,
       auto_apply: true,
       apply_concurrency: 3,
+      score_criteria: "Security leadership and platform reliability.",
+      target_criteria: "Director-plus infrastructure and security roles.",
     }),
   );
 });
@@ -136,6 +138,11 @@ describe("local TypeScript API", () => {
         payload: { reason: "cross-site" },
       },
       {
+        method: "DELETE",
+        url: `/v1/jobs/${jobKey}`,
+        payload: { reason: "cross-site" },
+      },
+      {
         method: "POST",
         url: "/v1/artifacts/1/open",
       },
@@ -148,6 +155,15 @@ describe("local TypeScript API", () => {
         method: "POST",
         url: "/v1/profile/import-resume",
         payload: { filename: "resume.pdf", pdfBase64: Buffer.from("%PDF test").toString("base64") },
+      },
+      {
+        method: "PATCH",
+        url: "/v1/credentials",
+        payload: { key: "OPENAI_API_KEY", value: "cross-site" },
+      },
+      {
+        method: "DELETE",
+        url: "/v1/credentials/OPENAI_API_KEY",
       },
     ] as const;
 
@@ -227,7 +243,14 @@ describe("local TypeScript API", () => {
       succeeded: 2,
       blocked: 0,
     });
-    expect(body.activity[0]).toMatchObject({ stage: "score", level: "error" });
+    expect(body.activity[0]).toMatchObject({
+      eventId: "1",
+      jobKey: "https://example.com/jobs/failed-score",
+      title: "Backend Engineer",
+      company: "ExampleCo",
+      stage: "score",
+      level: "error",
+    });
     expect(body.applyRuns[0]).toMatchObject({ runId: "run-1", dryRun: true });
 
     await app.close();
@@ -265,6 +288,68 @@ describe("local TypeScript API", () => {
       currentState: "failed",
       fitScore: 8,
     });
+
+    await app.close();
+  });
+
+  it("soft-deletes jobs, hides them from active lists, and restores them", async () => {
+    const app = buildApp(options);
+    const readyKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const singleDelete = await app.inject({
+      method: "DELETE",
+      url: `/v1/jobs/${readyKey}`,
+      payload: { reason: "not relevant" },
+    });
+    const bulkDelete = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-delete",
+      payload: { allMatching: true, filter: { state: "failed", deleted: "active" }, jobKeys: [] },
+    });
+
+    expect(singleDelete.statusCode, singleDelete.body).toBe(200);
+    expect(singleDelete.json()).toMatchObject({ ok: true, count: 1, jobKeys: ["https://example.com/jobs/ready"] });
+    expect(bulkDelete.statusCode, bulkDelete.body).toBe(200);
+    expect(bulkDelete.json()).toMatchObject({ ok: true, count: 1, jobKeys: ["https://example.com/jobs/failed-score"] });
+
+    const active = await app.inject({ method: "GET", url: "/v1/jobs" });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(active.json().pagination.total).toBe(1);
+    expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual(["https://example.com/jobs/blocked-tailor"]);
+
+    const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted&sort=title&dir=asc" });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(deleted.json().pagination.total).toBe(2);
+    expect(deleted.json().items[0]).toMatchObject({ deletedAt: expect.any(String) });
+
+    const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(summary.statusCode, summary.body).toBe(200);
+    expect(summary.json().totals).toMatchObject({
+      jobs: 1,
+      failures: 0,
+      blocked: 1,
+      ready: 0,
+      dryRuns: 0,
+    });
+    expect(summary.json().activity).toHaveLength(0);
+    expect(summary.json().applyRuns).toHaveLength(0);
+
+    const artifacts = await app.inject({ method: "GET", url: "/v1/artifacts" });
+    expect(artifacts.statusCode, artifacts.body).toBe(200);
+    expect(artifacts.json().pagination.total).toBe(0);
+
+    const restore = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-restore",
+      payload: { allMatching: true, filter: { deleted: "deleted" }, jobKeys: [] },
+    });
+    expect(restore.statusCode, restore.body).toBe(200);
+    expect(restore.json()).toMatchObject({ ok: true, count: 2 });
+
+    const restored = await app.inject({ method: "GET", url: "/v1/jobs" });
+    expect(restored.json().pagination.total).toBe(3);
+    const emptyDeleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
+    expect(emptyDeleted.json().pagination.total).toBe(0);
 
     await app.close();
   });
@@ -391,6 +476,42 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
+      ok: true,
+      opened: true,
+      path: artifact.localPath,
+    });
+    expect(opened).toEqual([artifact.localPath]);
+
+    await app.close();
+  });
+
+  it("resolves legacy artifact ids with slashes for detail and open routes", async () => {
+    const opened: string[] = [];
+    const app = buildApp({
+      ...options,
+      artifactOpener: async (artifactPath) => {
+        opened.push(artifactPath);
+      },
+    });
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+    const artifact = listResponse.json().items[0];
+    fs.writeFileSync(artifact.localPath, "%PDF test");
+    const artifactId = encodeURIComponent(artifact.artifactId);
+
+    const detailResponse = await app.inject({ method: "GET", url: `/v1/artifacts/${artifactId}` });
+    const openResponse = await app.inject({ method: "POST", url: `/v1/artifacts/${artifactId}/open` });
+
+    expect(detailResponse.statusCode, detailResponse.body).toBe(200);
+    expect(detailResponse.json()).toMatchObject({
+      ok: true,
+      artifact: {
+        artifactId: artifact.artifactId,
+        jobKey: "https://example.com/jobs/ready",
+        type: "tailored_resume_pdf",
+      },
+    });
+    expect(openResponse.statusCode, openResponse.body).toBe(200);
+    expect(openResponse.json()).toMatchObject({
       ok: true,
       opened: true,
       path: artifact.localPath,
@@ -768,6 +889,27 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("serves a rendered profile PDF preview", async () => {
+    const renderer = vi.fn(async () => Buffer.from("%PDF-1.7\nmock preview"));
+    const app = buildApp({ ...options, profilePreviewRenderer: renderer });
+    const response = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers["content-type"]).toContain("application/pdf");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.rawPayload.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(renderer).toHaveBeenCalledWith(
+      {
+        profilePath: options.profilePath,
+        resumeStylePath: options.resumeStylePath,
+        resumeTemplatePath: options.resumeTemplatePath,
+      },
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
   it("returns normalized runtime settings", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/settings" });
@@ -781,6 +923,8 @@ describe("local TypeScript API", () => {
         minFitScore: 8,
         autoApply: true,
         applyConcurrency: 3,
+        scoreCriteria: "Security leadership and platform reliability.",
+        targetCriteria: "Director-plus infrastructure and security roles.",
       },
       paths: {
         settingsPath: options.settingsPath,
@@ -803,7 +947,104 @@ describe("local TypeScript API", () => {
         minFitScore: 7,
         autoApply: false,
         applyConcurrency: 1,
+        scoreCriteria: "",
+        targetCriteria: "",
       },
+    });
+
+    await app.close();
+  });
+
+  it("persists editable runtime settings", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: {
+        targetRole: "CISO",
+        locationFilter: "Europe remote",
+        minFitScore: 9,
+        autoApply: false,
+        applyConcurrency: 2,
+        scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
+        targetCriteria: "Target senior engineering leadership roles.",
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      settings: {
+        targetRole: "CISO",
+        locationFilter: "Europe remote",
+        minFitScore: 9,
+        autoApply: false,
+        applyConcurrency: 2,
+        scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
+        targetCriteria: "Target senior engineering leadership roles.",
+      },
+    });
+    expect(JSON.parse(fs.readFileSync(options.settingsPath, "utf8"))).toMatchObject({
+      target_role: "CISO",
+      location_filter: "Europe remote",
+      min_fit_score: 9,
+      auto_apply: false,
+      apply_concurrency: 2,
+      score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
+      target_criteria: "Target senior engineering leadership roles.",
+    });
+
+    await app.close();
+  });
+
+  it("stores credential configuration through the injected credential store", async () => {
+    const stored = new Map<CredentialKey, string>();
+    const credentialStore = {
+      list: vi.fn(async () => ({
+        ok: true as const,
+        credentials: CredentialKeys.map((key) => ({
+          key,
+          label: key,
+          configured: stored.has(key),
+          storage: "keychain" as const,
+        })),
+      })),
+      set: vi.fn(async (key: CredentialKey, value: string) => {
+        stored.set(key, value);
+        return credentialStore.list();
+      }),
+      delete: vi.fn(async (key: CredentialKey) => {
+        stored.delete(key);
+        return credentialStore.list();
+      }),
+    };
+    const app = buildApp({ ...options, credentialStore });
+
+    const initial = await app.inject({ method: "GET", url: "/v1/credentials" });
+    expect(initial.statusCode, initial.body).toBe(200);
+    expect(initial.json().credentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "OPENAI_API_KEY", configured: false, storage: "keychain" }),
+        expect.objectContaining({ key: "GEMINI_API_KEY", configured: false, storage: "keychain" }),
+      ]),
+    );
+
+    const save = await app.inject({
+      method: "PATCH",
+      url: "/v1/credentials",
+      payload: { key: "OPENAI_API_KEY", value: "test-secret" },
+    });
+    expect(save.statusCode, save.body).toBe(200);
+    expect(credentialStore.set).toHaveBeenCalledWith("OPENAI_API_KEY", "test-secret");
+    expect(save.json().credentials.find((credential: { key: string }) => credential.key === "OPENAI_API_KEY")).toMatchObject({
+      configured: true,
+    });
+
+    const remove = await app.inject({ method: "DELETE", url: "/v1/credentials/OPENAI_API_KEY" });
+    expect(remove.statusCode, remove.body).toBe(200);
+    expect(credentialStore.delete).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(remove.json().credentials.find((credential: { key: string }) => credential.key === "OPENAI_API_KEY")).toMatchObject({
+      configured: false,
     });
 
     await app.close();

@@ -20,6 +20,8 @@
     "web:dev": "vite --config apps/web/vite.config.ts --host 127.0.0.1",
     "web:build": "vite build --config apps/web/vite.config.ts",
     "web:preview": "vite preview --config apps/web/vite.config.ts --host 127.0.0.1",
+    "qa:seed": "tsx services/api/test/qa-seed.ts",
+    "qa:test": "vitest run services/api/test/qa-workflow.test.ts",
     "test": "npm run api:check && npm run api:test && npm run web:check && npm run web:build"
   },
   "repository": {

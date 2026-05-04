@@ -5,11 +5,17 @@ import type {
   ArtifactListQuery,
   ArtifactOpenResponse,
   ArtifactSummary,
+  BulkJobMutationRequest,
   CancelJobActionRequest,
+  CredentialKey,
+  CredentialsResponse,
+  CredentialUpdateRequest,
   DashboardSummary,
+  DeleteJobRequest,
   GenerateMaterialsRequest,
   JobDetail,
   JobListQuery,
+  JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
   PaginatedResponse,
@@ -18,6 +24,7 @@ import type {
   ProfileImportResponse,
   ProfileUpdateRequest,
   RetryStageRequest,
+  SettingsUpdateRequest,
   SettingsResponse,
 } from "./schemas.js";
 
@@ -53,6 +60,22 @@ export class JobHunterApiClient {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}`);
   }
 
+  deleteJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {
+    return this.delete(`/v1/jobs/${encodeURIComponent(jobKey)}`, body);
+  }
+
+  deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-delete", body);
+  }
+
+  restoreJob(jobKey: string): Promise<JobMutationResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/restore`);
+  }
+
+  restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-restore", body);
+  }
+
   artifacts(query: Partial<ArtifactListQuery> = {}): Promise<PaginatedResponse<ArtifactSummary>> {
     return this.get("/v1/artifacts", query);
   }
@@ -69,6 +92,15 @@ export class JobHunterApiClient {
     return this.get("/v1/profile");
   }
 
+  profilePreviewPdfUrl(cacheKey?: QueryValue): string {
+    const path = "/v1/profile/preview.pdf";
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
+      url.searchParams.set("v", String(cacheKey));
+    }
+    return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
+  }
+
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse> {
     return this.patch("/v1/profile", body);
   }
@@ -79,6 +111,22 @@ export class JobHunterApiClient {
 
   settings(): Promise<SettingsResponse> {
     return this.get("/v1/settings");
+  }
+
+  updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse> {
+    return this.patch("/v1/settings", body);
+  }
+
+  credentials(): Promise<CredentialsResponse> {
+    return this.get("/v1/credentials");
+  }
+
+  updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse> {
+    return this.patch("/v1/credentials", body);
+  }
+
+  deleteCredential(key: CredentialKey): Promise<CredentialsResponse> {
+    return this.delete(`/v1/credentials/${encodeURIComponent(key)}`);
   }
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse> {
@@ -117,8 +165,12 @@ export class JobHunterApiClient {
     return this.request("POST", path, { body });
   }
 
+  private async delete<T>(path: string, body?: unknown): Promise<T> {
+    return this.request("DELETE", path, { body });
+  }
+
   private async request<T>(
-    method: "GET" | "PATCH" | "POST",
+    method: "DELETE" | "GET" | "PATCH" | "POST",
     path: string,
     options: { body?: unknown; query?: Record<string, QueryValue> } = {},
   ): Promise<T> {

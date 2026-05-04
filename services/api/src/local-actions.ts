@@ -45,6 +45,17 @@ export type ProfileImporter = (
   context: ActionDispatchContext,
 ) => Promise<ProfileImportResult>;
 
+export interface ProfilePreviewInput {
+  profilePath: string;
+  resumeStylePath: string;
+  resumeTemplatePath: string;
+}
+
+export type ProfilePreviewRenderer = (
+  input: ProfilePreviewInput,
+  context: ActionDispatchContext,
+) => Promise<Buffer>;
+
 export const defaultActionDispatcher: ActionDispatcher = async (command, context) => {
   if (command.action === "retry_stage" && !command.runAfter) {
     return { status: "reset", message: "Stage reset for retry." };
@@ -107,6 +118,21 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
         result,
       },
     };
+  } finally {
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  }
+};
+
+export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-profile-preview-"));
+  const outputPath = path.join(tempDir, "resume-preview.pdf");
+  try {
+    await runCommand(
+      "uv",
+      ["run", "python", "-c", PROFILE_PREVIEW_SCRIPT, input.profilePath, input.resumeTemplatePath, outputPath],
+      context.appDir,
+    );
+    return fs.readFileSync(outputPath);
   } finally {
     fs.rmSync(tempDir, { force: true, recursive: true });
   }
@@ -215,6 +241,36 @@ async function runProfileImportCli(
   return runJsonCommand("uv", args, context.appDir);
 }
 
+function runCommand(command: string, args: string[], appDir: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: {
+        ...process.env,
+        JOBHUNTER_DIR: appDir,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout);
+        return;
+      }
+      reject(new Error(stderr.trim() || stdout.trim() || `Command failed with exit code ${code ?? "unknown"}.`));
+    });
+  });
+}
+
 function runJsonCommand(command: string, args: string[], appDir: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -245,6 +301,47 @@ function runJsonCommand(command: string, args: string[], appDir: string): Promis
     });
   });
 }
+
+const PROFILE_PREVIEW_SCRIPT = `
+import json
+import sys
+from pathlib import Path
+
+from jobhunter.scoring.pdf import build_latex, render_pdf_latex
+
+profile_path = Path(sys.argv[1])
+template_path = Path(sys.argv[2])
+output_path = Path(sys.argv[3])
+
+profile = json.loads(profile_path.read_text(encoding="utf-8"))
+resume = profile.get("resume", {}) if isinstance(profile, dict) else {}
+executive_profile = resume.get("executive_profile", {}) if isinstance(resume.get("executive_profile", {}), dict) else {}
+
+data = {
+    "executive_profile": executive_profile.get("baseline_text", ""),
+    "experience_updates": [
+        {
+            "id": entry.get("id"),
+            "title": entry.get("title", ""),
+            "bullets": entry.get("bullets", []),
+        }
+        for entry in resume.get("experience_entries", [])
+        if isinstance(entry, dict) and entry.get("id")
+    ],
+    "skill_category_updates": [
+        {
+            "id": category.get("id"),
+            "items": category.get("items", []),
+        }
+        for category in resume.get("skill_categories", [])
+        if isinstance(category, dict) and category.get("id")
+    ],
+}
+
+template_text = template_path.read_text(encoding="utf-8") if template_path.exists() else None
+latex = build_latex(data, profile, template_text=template_text)
+render_pdf_latex(latex, str(output_path))
+`;
 
 function parseFirstJsonObject(output: string): unknown {
   const start = output.indexOf("{");
