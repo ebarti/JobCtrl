@@ -38,12 +38,31 @@ When changing behavior, add or update unit tests for the changed logic. When cha
 
 Any major UI/UX regression found by the human must become a QA regression test or an explicitly documented QA checklist item before the work is considered complete.
 
+## Documentation Requirements
+
+**PRs that add meaningful new capabilities MUST include documentation updates.** Do not add doc bloat: internal refactors, test-only changes, bug fixes that do not change public behavior, and renaming without functional change do NOT need doc updates.
+
+When a doc update is warranted:
+
+| What changed | Update |
+| --- | --- |
+| User-facing product behavior, CLI commands, runtime requirements, generated local artifacts, or safety notes | `README.md` |
+| Local QA expectations, regression matrix entries, high-risk workflows, or manually verified product paths | `docs/local-reliability-qa.md` |
+| Local TypeScript API behavior, web app development commands, API/web verification, or dashboard migration details | `docs/local-ts-api.md` |
+| TypeScript API plus Python worker architecture, local-first boundaries, orchestration, or phased migration constraints | `docs/ts-product-api-python-workers-architecture.md` |
+| TypeScript/API/web scripts, package metadata, dependencies, or tooling commands | `package.json` |
+| Python package metadata, CLI entry point, Python version, optional dev dependencies, or Ruff config | `pyproject.toml` |
+| Agent workflow rules, PR expectations, repo-specific constraints, or automation guidance | `AGENTS.md` |
+
+If multiple surfaces changed, update every relevant document. If no documentation update is warranted for a meaningful-looking change, explain why in the PR description. Keep documentation edits narrow: update the existing owning document, remove stale instructions, and avoid creating new docs unless no listed document owns the behavior.
+
 ## Agent Behavior
 
 - Do not resolve material ambiguity by assumption. Ask for clarification when the goal, scope, constraints, or expected validation are unclear.
 - If a reasonable assumption is low-risk and needed to make progress, state it explicitly before acting.
 - Treat payloads, local generated artifacts, and job/application data as sensitive. Do not expose secrets, profile data, API keys, resumes, cover letters, generated PDFs, browser profiles, SQLite databases, or application logs unless the user explicitly requests them.
 - Prefer repo-grounded answers and edits over generic advice. Check the referenced docs and current code before making architectural claims.
+- **Subagent spawning:** You may spawn as many subagents as you need for parallel or complex work. Do not artificially limit concurrency — if a task naturally decomposes into independent subtasks, run them in parallel.
 
 ## Engineering Conventions And PR Expectations
 
@@ -91,26 +110,6 @@ Run the QA loop after the PR review gate passes:
 5. If Blocker or High QA findings remain after 3 QA fixer attempts, stop and report `Blocked` with the remaining findings instead of marking the work complete.
 
 End only when both the PR review gate and QA gate return `PASS`. The final response must include the PR number, review/QA gate results, verification commands and results, and any remaining Medium or Low risks.
-
-
-## Plan Docs (Superpowers Output)
-
-Save feature plan/spec output under `docs/plans/`, NOT the default
-`docs/superpowers/`.
-
-- **Default rule:** keep one document per feature/change.
-- Put the plan/spec in `docs/plans/proposed/YYYY-MM-DD-<topic>.md`.
-- **If the changeset you are creating implements the feature completely**, move that same file to
-  `docs/plans/implemented/`.
-- If a proposed document is no longer active and did not ship as written,
-  move it to `docs/plans/archived/` instead of rewriting it in place.
-  Archived plans are historical context, not backlog.
-- If you need plan/checklist content, fold it into the same document under
-  its own section instead of creating a separate `*-plan.md` file.
-
-This overrides the superpowers defaults. Do NOT create `docs/superpowers/`
-directories. Do NOT create both a plans doc and a separate plan doc for the
-same feature by default.
 
 ## Constraints And Do-Not Rules
 
