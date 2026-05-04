@@ -20,7 +20,7 @@ Rationale:
 Consequences:
 
 - local data remains in `~/.jobhunter`
-- SaaS hardening belongs in `docs/BACKLOG.md`
+- SaaS hardening belongs in `docs/backlog.md`
 - local safety and reliability tests gate near-term work
 
 ## 2026-05-01: TypeScript Product API, Python Workers
@@ -39,9 +39,10 @@ Rationale:
 
 Consequences:
 
-- `services/api` owns the local TypeScript API
-- `packages/contracts` owns shared DTOs and the typed client
-- `src/jobhunter` remains the automation engine
+- `apps/api` owns the local TypeScript API
+- `packages/contracts` owns shared DTOs and schemas
+- `packages/api-client` owns typed API transport
+- `workers/automation/src/jobhunter` remains the automation engine
 
 ## 2026-05-02: Fastify For The Local API
 
@@ -78,7 +79,7 @@ Consequences:
 
 - Node.js `>=20.19.0` is required
 - `apps/web` owns the React app
-- `npm test` must include web typecheck and build
+- `pnpm test` must include web typecheck and build
 
 ## 2026-05-02: Loopback API Binding By Default
 
@@ -133,3 +134,27 @@ Consequences:
 
 - local UI actions use TypeScript API action endpoints
 - Python action wrappers return structured JSON-safe results
+
+## 2026-05-04: pnpm Workspace With Python Automation Worker
+
+Status: accepted
+
+Decision: organize the repository as a pnpm TypeScript workspace with runnable
+apps under `apps/`, shared TypeScript packages under `packages/`, and the
+Python automation worker under `workers/automation`.
+
+Rationale:
+
+- the product surface is now a TypeScript frontend plus local TypeScript API
+- pnpm workspace filters make package ownership and commands explicit
+- Python remains an independently packaged worker/CLI runtime managed by uv
+- splitting `packages/contracts` from `packages/api-client` keeps schemas free
+  of transport concerns
+
+Consequences:
+
+- `apps/api` and `apps/web` are the runnable TypeScript apps
+- `packages/contracts` is schemas/DTOs/types only
+- `packages/api-client` owns fetch/client behavior
+- `workers/automation/pyproject.toml` owns Python packaging and CLI metadata
+- `pnpm-lock.yaml` is the canonical JavaScript lockfile

@@ -25,7 +25,9 @@ jobs:
         run: pip install build
 
       - name: Build package
-        run: python -m build
+        run: python -m build workers/automation
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: workers/automation/dist

@@ -1,7 +1,7 @@
 # Backlog
 
 This is the authoritative roadmap. Keep detailed historical proposals under
-`docs/plans/proposed/`; move delivered work to `docs/DELIVERED.md`.
+`docs/plans/proposed/`; move delivered work to `docs/delivered.md`.
 
 ## Local Product Validation
 

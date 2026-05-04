@@ -22,8 +22,9 @@ Plan: `docs/plans/implemented/2026-05-02-local-ts-api.md`
 
 Delivered:
 
-- `services/api` Fastify API scaffold
-- `packages/contracts` shared schemas and typed client
+- `apps/api` Fastify API scaffold
+- `packages/contracts` shared schemas and DTOs
+- `packages/api-client` typed client
 - local SQLite read endpoints for health, dashboard, jobs, artifacts, profile,
   and settings
 - API host loopback validation
@@ -35,8 +36,8 @@ Delivered:
 
 - `apps/web` React/Vite app
 - dashboard, jobs, artifacts, and profile views
-- typed client usage through `@jobhunter/contracts`
-- web typecheck/build included in `npm test`
+- typed client usage through `@jobhunter/api-client`
+- web typecheck/build included in `pnpm test`
 - request staleness guards and visible load errors
 - filter/page reset behavior for list views
 

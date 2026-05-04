@@ -7,6 +7,7 @@ Thank you for your interest in contributing to JobHunter. This guide covers ever
 ### Prerequisites
 
 - Python 3.11 or higher
+- Node.js 20.19 or higher with Corepack
 - TeX Live or MacTeX (`pdflatex`) for PDF tests
 - Git
 
@@ -15,18 +16,22 @@ Thank you for your interest in contributing to JobHunter. This guide covers ever
 ```bash
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
-pip install -e ".[dev]"
+corepack pnpm install
+uv --project workers/automation sync --extra dev
 playwright install chromium
 ```
 
-This installs JobHunter in editable mode with all development dependencies (pytest, ruff, etc.) and downloads the Chromium browser binary for Playwright.
+This installs the TypeScript workspace, syncs the Python automation worker with
+development dependencies, and downloads the Chromium browser binary for
+Playwright.
 
 ### Verify Installation
 
 ```bash
-jobhunter --version
-pytest tests/ -v
-ruff check src/
+uv --project workers/automation run jobhunter --version
+uv --project workers/automation run --extra dev pytest -q
+uv --project workers/automation run --extra dev ruff check .
+pnpm test
 python scripts/release_check.py
 ```
 
@@ -34,11 +39,11 @@ python scripts/release_check.py
 
 ### Adding New Workday Employers
 
-Workday employer portals are configured in `config/employers.yaml`. To add a new employer:
+Workday employer portals are configured in `workers/automation/src/jobhunter/config/employers.yaml`. To add a new employer:
 
 1. Find the company's Workday career portal URL (usually `https://company.wd5.myworkdaysite.com/`)
 2. Identify the Workday instance number (wd1, wd3, wd5, etc.) and the tenant ID
-3. Add an entry to `config/employers.yaml`:
+3. Add an entry to `workers/automation/src/jobhunter/config/employers.yaml`:
 
 ```yaml
 - name: "Company Name"
@@ -47,15 +52,15 @@ Workday employer portals are configured in `config/employers.yaml`. To add a new
   url: "https://company.wd5.myworkdaysite.com/en-US/recruiting"
 ```
 
-4. Test discovery: `jobhunter discover --employer "Company Name"`
+4. Test discovery: `uv --project workers/automation run jobhunter discover --employer "Company Name"`
 5. Submit a PR with the new entry
 
 ### Adding New Career Sites
 
-Direct career site scrapers are configured in `config/sites.yaml`. To add a new site:
+Direct career site scrapers are configured in `workers/automation/src/jobhunter/config/sites.yaml`. To add a new site:
 
 1. Inspect the company's careers page and identify the job listing structure
-2. Add an entry to `config/sites.yaml` with CSS selectors:
+2. Add an entry to `workers/automation/src/jobhunter/config/sites.yaml` with CSS selectors:
 
 ```yaml
 - name: "Company Name"
@@ -68,7 +73,7 @@ Direct career site scrapers are configured in `config/sites.yaml`. To add a new 
     description: ".job-description"
 ```
 
-3. Test: `jobhunter discover --site "Company Name"`
+3. Test: `uv --project workers/automation run jobhunter discover --site "Company Name"`
 4. Submit a PR
 
 ### Bug Fixes and Features
@@ -85,13 +90,10 @@ Direct career site scrapers are configured in `config/sites.yaml`. To add a new 
 
 ```bash
 # Run all tests
-pytest tests/ -v
+pnpm test
 
 # Run a specific test file
-pytest tests/test_scoring.py -v
-
-# Run with coverage
-pytest tests/ --cov=src/jobhunter --cov-report=term-missing
+uv --project workers/automation run --extra dev pytest workers/automation/tests/test_state_dashboard.py -v
 
 # Run public-release sanity checks
 python scripts/release_check.py
@@ -103,13 +105,13 @@ JobHunter uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
 
 ```bash
 # Check for issues
-ruff check src/
+uv --project workers/automation run --extra dev ruff check .
 
 # Auto-fix what can be fixed
-ruff check src/ --fix
+uv --project workers/automation run --extra dev ruff check . --fix
 
 # Format code
-ruff format src/
+uv --project workers/automation run --extra dev ruff format .
 ```
 
 ### Code Style Guidelines
@@ -133,20 +135,19 @@ ruff format src/
 
 ```
 JobHunter/
-├── src/jobhunter/       # Main package
-│   ├── __init__.py
-│   ├── cli.py            # CLI entry points
-│   ├── discover/         # Stage 1: job discovery scrapers
-│   ├── enrich/           # Stage 2: description extraction
-│   ├── score/            # Stage 3: AI scoring
-│   ├── tailor/           # Stage 4: resume tailoring
-│   ├── cover/            # Stage 5: cover letter generation
-│   ├── apply/            # Stage 6: browser automation
-│   └── utils/            # Shared utilities
-├── config/               # Default configuration files
-├── tests/                # Test suite
-├── docs/                 # Documentation
-└── pyproject.toml        # Package configuration
+├── apps/
+│   ├── api/              # Local TypeScript/Fastify API
+│   └── web/              # React/Vite frontend
+├── packages/
+│   ├── contracts/        # Shared schemas, DTOs, enums, and types
+│   ├── api-client/       # Typed API transport client
+│   └── tsconfig/         # Shared TypeScript compiler presets
+├── workers/
+│   └── automation/       # Python automation worker, CLI, and tests
+├── docs/                 # Canonical docs and historical plans
+├── scripts/              # Repository maintenance scripts
+├── pnpm-workspace.yaml   # TypeScript workspace definition
+└── package.json          # Root orchestration scripts
 ```
 
 ## License

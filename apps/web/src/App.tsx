@@ -1,10 +1,10 @@
 import {
   type ArtifactSortField,
   type ArtifactSummary,
+  type BulkJobMutationRequest,
   type CredentialKey,
   CredentialKeys,
   type CredentialsResponse,
-  createJobHunterApiClient,
   type DashboardSummary,
   type DashboardSettings,
   type JobDetail,
@@ -17,6 +17,8 @@ import {
   type StageState,
   STAGES,
 } from "@jobhunter/contracts";
+import { createJobHunterApiClient } from "@jobhunter/api-client";
+import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type View = "dashboard" | "jobs" | "artifacts" | "config" | "profile";
@@ -464,12 +466,21 @@ function JobsView({
     setAllMatchingSelected(false);
   };
 
-  const currentJobFilter = () => ({
-    q: globalQuery,
-    stage: stage === "all" ? undefined : stage,
-    state: state === "all" ? undefined : state,
-    deleted,
-  });
+  const currentJobFilter = (): NonNullable<BulkJobMutationRequest["filter"]> => {
+    const filter: NonNullable<BulkJobMutationRequest["filter"]> = {
+      q: globalQuery,
+      deleted,
+      source: "",
+      company: "",
+    };
+    if (stage !== "all") {
+      filter.stage = stage;
+    }
+    if (state !== "all") {
+      filter.state = state;
+    }
+    return filter;
+  };
 
   const changeSort = (field: JobSortColumn) => {
     if (sort === field) {
@@ -495,7 +506,7 @@ function JobsView({
     setLoading(true);
     setError("");
     try {
-      const payload = allMatchingSelected
+      const payload: BulkJobMutationRequest = allMatchingSelected
         ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
         : { allMatching: false, jobKeys };
       if (restoring) {
@@ -2146,7 +2157,7 @@ function Pager({
   page,
   onPage,
 }: {
-  pagination?: PaginatedResponse<unknown>["pagination"];
+  pagination: PaginatedResponse<unknown>["pagination"] | undefined;
   page: number;
   onPage: (page: number) => void;
 }): JSX.Element {
@@ -2386,7 +2397,7 @@ function parseScoreReasoning(text: string): { keywords: string[]; reason: string
   const scoreMatch = text.match(/\bscore\s*:\s*([0-9]+(?:\.[0-9]+)?)/i);
   const keywordMatch = text.match(/\bkeywords\s*:\s*(.*)$/i);
   const score = scoreMatch ? Number.parseFloat(scoreMatch[1] ?? "") : null;
-  const keywords = keywordMatch
+  const keywords = keywordMatch?.[1]
     ? keywordMatch[1]
         .split(",")
         .map((keyword) => keyword.trim())

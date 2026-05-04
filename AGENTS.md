@@ -5,9 +5,10 @@ Use these repository documents before making architectural, workflow, or QA deci
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, and known high-risk workflows that need test coverage.
 - `docs/local-ts-api.md`: local TypeScript API, web app development commands, API/web verification, and dashboard migration context.
-- `docs/ts-product-api-python-workers-architecture.md`: target architecture for TypeScript API plus Python workers, local-first boundaries, and phased migration constraints.
+- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, local-first boundaries, and phased migration constraints.
+- `docs/domain-model.md`: core domain language, bounded contexts, aggregates, and ownership rules.
 - `package.json`: current TypeScript/API/web scripts.
-- `pyproject.toml`: Python package metadata, CLI entry point, Python version, optional dev dependencies, and Ruff config.
+- `workers/automation/pyproject.toml`: Python package metadata, CLI entry point, Python version, optional dev dependencies, and Ruff config.
 
 ## How To Run The Project
 
@@ -15,10 +16,10 @@ To be defined as a complete, single source of truth. Until this is finalized, in
 
 Known local commands:
 
-- Python CLI: `uv run jobhunter doctor`, `uv run jobhunter run`, or targeted `uv run jobhunter <command>` after dependencies are installed.
-- TypeScript API: `npm run api:dev`.
-- Web app: `npm run web:dev`.
-- Web preview after build: `npm run web:preview`.
+- Python CLI: `uv --project workers/automation run jobhunter doctor`, `uv --project workers/automation run jobhunter run`, or targeted `uv --project workers/automation run jobhunter <command>` after dependencies are installed.
+- TypeScript API: `pnpm api:dev`.
+- Web app: `pnpm web:dev`.
+- Web preview after build: `pnpm web:preview`.
 
 Do not run auto-apply, browser submission, destructive profile/database actions, or commands that submit applications unless the user explicitly asks for that behavior.
 
@@ -26,13 +27,13 @@ Do not run auto-apply, browser submission, destructive profile/database actions,
 
 The unit-test and QA command set must be made explicit as the project evolves. Until a stronger command matrix exists, use the following defaults and narrow them to the touched surface when appropriate:
 
-- Full TypeScript/API/web verification: `npm test`.
-- TypeScript API typecheck: `npm run api:check`.
-- TypeScript API tests: `npm run api:test`.
-- Web build: `npm run web:build`.
-- Python tests: `uv run pytest -q`.
-- Python lint: `uv run ruff check .`.
-- Python package build: `uv run python -m build`.
+- Full TypeScript/API/web verification: `pnpm test`.
+- TypeScript API typecheck: `pnpm api:check`.
+- TypeScript API tests: `pnpm api:test`.
+- Web build: `pnpm web:build`.
+- Python tests: `uv --project workers/automation run --extra dev pytest -q`.
+- Python lint: `uv --project workers/automation run --extra dev ruff check .`.
+- Python package build: `uv --project workers/automation run --extra dev python -m build workers/automation`.
 
 When changing behavior, add or update unit tests for the changed logic. When changing user-facing behavior, local API behavior, browser flows, or UI/UX, include a QA stage that exercises the product path, not only unit tests.
 
@@ -49,9 +50,9 @@ When a doc update is warranted:
 | User-facing product behavior, CLI commands, runtime requirements, generated local artifacts, or safety notes | `README.md` |
 | Local QA expectations, regression matrix entries, high-risk workflows, or manually verified product paths | `docs/local-reliability-qa.md` |
 | Local TypeScript API behavior, web app development commands, API/web verification, or dashboard migration details | `docs/local-ts-api.md` |
-| TypeScript API plus Python worker architecture, local-first boundaries, orchestration, or phased migration constraints | `docs/ts-product-api-python-workers-architecture.md` |
+| TypeScript API plus Python worker architecture, local-first boundaries, orchestration, or phased migration constraints | `docs/architecture.md` |
 | TypeScript/API/web scripts, package metadata, dependencies, or tooling commands | `package.json` |
-| Python package metadata, CLI entry point, Python version, optional dev dependencies, or Ruff config | `pyproject.toml` |
+| Python package metadata, CLI entry point, Python version, optional dev dependencies, or Ruff config | `workers/automation/pyproject.toml` |
 | Agent workflow rules, PR expectations, repo-specific constraints, or automation guidance | `AGENTS.md` |
 
 If multiple surfaces changed, update every relevant document. If no documentation update is warranted for a meaningful-looking change, explain why in the PR description. Keep documentation edits narrow: update the existing owning document, remove stale instructions, and avoid creating new docs unless no listed document owns the behavior.

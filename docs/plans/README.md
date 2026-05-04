@@ -8,4 +8,4 @@ the top of `docs/`.
   landed or been superseded by canonical docs.
 
 When a plan is implemented, keep the original plan here and summarize the
-actual delivered result in `docs/DELIVERED.md`.
+actual delivered result in `docs/delivered.md`.

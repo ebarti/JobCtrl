@@ -3,7 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 
-import { CredentialKeys, createJobHunterApiClient, type CredentialKey } from "@jobhunter/contracts";
+import { createJobHunterApiClient } from "@jobhunter/api-client";
+import { CredentialKeys, type CredentialKey } from "@jobhunter/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
