@@ -19,11 +19,14 @@ export const STAGE_STATES = [
   "stale",
 ] as const;
 export type StageState = (typeof STAGE_STATES)[number];
+export const JOB_DELETED_FILTERS = ["active", "deleted", "all"] as const;
+export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
 
 export const JOB_SORT_FIELDS = [
   "discovered_at",
   "title",
   "company",
+  "location",
   "fit_score",
   "current_stage",
   "current_state",
@@ -34,6 +37,15 @@ export const ARTIFACT_SORT_FIELDS = ["created_at", "title", "company", "type", "
 export type ArtifactSortField = (typeof ARTIFACT_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
+
+const optionalText = z
+  .string()
+  .trim()
+  .optional()
+  .catch("")
+  .transform((value) => value ?? "");
+
+const optionalNumber = z.coerce.number().int().optional().catch(undefined);
 
 export const RetryStageRequestSchema = z
   .object({
@@ -78,6 +90,40 @@ export const MarkJobActionRequestSchema = z
   .strict();
 export type MarkJobActionRequest = z.infer<typeof MarkJobActionRequestSchema>;
 
+export const DeleteJobRequestSchema = z
+  .object({
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type DeleteJobRequest = z.infer<typeof DeleteJobRequestSchema>;
+
+export const BulkJobMutationFilterSchema = z
+  .object({
+    q: optionalText,
+    stage: z.enum(STAGES).optional().catch(undefined),
+    state: z.enum(STAGE_STATES).optional().catch(undefined),
+    deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    source: optionalText,
+    company: optionalText,
+    minFitScore: optionalNumber,
+    maxFitScore: optionalNumber,
+  })
+  .strict();
+export type BulkJobMutationFilter = z.infer<typeof BulkJobMutationFilterSchema>;
+
+export const BulkJobMutationRequestSchema = z
+  .object({
+    jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
+    allMatching: z.boolean().default(false),
+    filter: BulkJobMutationFilterSchema.optional(),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict()
+  .refine((value) => value.allMatching || value.jobKeys.length > 0, {
+    message: "Provide jobKeys or set allMatching.",
+  });
+export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema>;
+
 export const ProfileUpdateRequestSchema = z
   .object({
     profile: z.unknown().optional(),
@@ -99,14 +145,29 @@ export const ProfileImportRequestSchema = z
   .strict();
 export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 
-const optionalText = z
-  .string()
-  .trim()
-  .optional()
-  .catch("")
-  .transform((value) => value ?? "");
+export const SettingsUpdateRequestSchema = z
+  .object({
+    targetRole: z.string().trim().max(240).optional(),
+    locationFilter: z.string().trim().max(240).optional(),
+    minFitScore: z.coerce.number().int().min(0).max(10).optional(),
+    autoApply: z.boolean().optional(),
+    applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
+    scoreCriteria: z.string().max(8000).optional(),
+    targetCriteria: z.string().max(8000).optional(),
+  })
+  .strict();
+export type SettingsUpdateRequest = z.infer<typeof SettingsUpdateRequestSchema>;
 
-const optionalNumber = z.coerce.number().int().optional().catch(undefined);
+export const CredentialKeys = ["OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_URL"] as const;
+export type CredentialKey = (typeof CredentialKeys)[number];
+
+export const CredentialUpdateRequestSchema = z
+  .object({
+    key: z.enum(CredentialKeys),
+    value: z.string().min(1).max(8000),
+  })
+  .strict();
+export type CredentialUpdateRequest = z.infer<typeof CredentialUpdateRequestSchema>;
 
 export const JobListQuerySchema = z
   .object({
@@ -118,6 +179,7 @@ export const JobListQuerySchema = z
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
+    deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     source: optionalText,
     company: optionalText,
     minFitScore: optionalNumber,
@@ -184,6 +246,7 @@ export interface JobSummary {
   artifactCount: number;
   applyStatus: string | null;
   appliedAt: string | null;
+  deletedAt: string | null;
 }
 
 export interface ArtifactSummary {
@@ -236,7 +299,10 @@ export interface DashboardSummary {
     failed: number;
   }>;
   activity: Array<{
+    eventId: string;
     jobKey: string | null;
+    title: string | null;
+    company: string | null;
     stage: string;
     level: string;
     message: string;
@@ -327,12 +393,20 @@ export interface ActionRunResponse {
   message?: string;
 }
 
+export interface JobMutationResponse {
+  ok: true;
+  count: number;
+  jobKeys: string[];
+}
+
 export interface DashboardSettings {
   targetRole: string;
   locationFilter: string;
   minFitScore: number;
   autoApply: boolean;
   applyConcurrency: number;
+  scoreCriteria: string;
+  targetCriteria: string;
 }
 
 export interface SettingsResponse {
@@ -341,4 +415,14 @@ export interface SettingsResponse {
   paths: {
     settingsPath: string;
   };
+}
+
+export interface CredentialsResponse {
+  ok: true;
+  credentials: Array<{
+    key: CredentialKey;
+    label: string;
+    configured: boolean;
+    storage: "keychain";
+  }>;
 }

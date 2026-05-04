@@ -9,8 +9,10 @@ discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 ```
 
 The automation engine is Python. The newer product surface is a local
-TypeScript API plus a React web UI. SQLite and local files remain the source of
-truth while the project validates reliability before any hosted/SaaS hardening.
+TypeScript API plus a React/Vite web shell. The intended frontend direction is
+TanStack Router for client-side routing plus TanStack Query for API/cache state
+management. SQLite and local files remain the source of truth while the project
+validates reliability before any hosted/SaaS hardening.
 
 ## What It Does
 
@@ -34,7 +36,8 @@ JobHunter is split by responsibility:
 
 - `services/api`: local TypeScript/Fastify API for typed read models, local
   product actions, profile/settings, artifacts, and worker invocation.
-- `apps/web`: React/Vite local web UI.
+- `apps/web`: current React/Vite local web shell; planned direction is
+  TanStack Router plus TanStack Query as the UI grows beyond the shell.
 - `src/jobhunter`: Python automation engine, CLI, workers, profile import, PDF
   creation, and apply automation.
 
@@ -96,7 +99,7 @@ uv sync
 uv run jobhunter doctor
 ```
 
-For development of the local TypeScript API and React app:
+For development of the local TypeScript API and current React/Vite shell:
 
 ```bash
 npm install
@@ -236,7 +239,7 @@ Run the local TypeScript API:
 npm run api:dev
 ```
 
-Run the React web UI:
+Run the current React/Vite web shell:
 
 ```bash
 npm run web:dev
@@ -311,9 +314,19 @@ Useful focused checks:
 ```bash
 npm run api:check
 npm run api:test
+npm run qa:test
 npm run web:check
 npm run web:build
 uv run --extra dev pytest tests/test_state_dashboard.py -q
+```
+
+Seed a disposable local QA workspace when you need to exercise destructive UI
+flows without touching `~/.jobhunter`:
+
+```bash
+npm run qa:seed -- /tmp/jobhunter-qa
+JOBHUNTER_DIR=/tmp/jobhunter-qa npm run api:dev
+VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 npm run web:dev -- --port 5173
 ```
 
 Build the Python package:
@@ -330,7 +343,9 @@ The near-term priority is local reliability:
 - keep retries targeted and observable;
 - keep generated artifacts registered before the UI opens them;
 - keep dry-run apply behavior safe;
-- keep product-facing behavior in the TypeScript API and React app.
+- keep product-facing behavior in the TypeScript API and current React/Vite
+  shell while steering frontend architecture toward TanStack Router and
+  TanStack Query.
 
 Hosted accounts, billing, object storage, Postgres migration, hosted workers,
 and SaaS deployment are intentionally deferred until the local workflow is
