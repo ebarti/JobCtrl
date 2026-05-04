@@ -32,17 +32,11 @@ dry-run paths and targeted commands before allowing it to submit anything.
 
 JobHunter is split by responsibility:
 
-- `src/jobhunter`: Python CLI, pipeline, workers, profile import, PDF creation,
-  dashboard server, and apply automation.
-- `services/api`: local Fastify API for typed read models and product-facing
-  JSON endpoints.
-- `apps/web`: React/Vite local web UI shell.
-- `packages/contracts`: shared TypeScript schemas and API client.
-- `docs`: architecture, domain model, decisions, backlog, and delivery history.
-
-The Python dashboard is still the most complete local control surface. The
-TypeScript API and React app are the migration path for a cleaner local product
-UI.
+- `services/api`: local TypeScript/Fastify API for typed read models, local
+  product actions, profile/settings, artifacts, and worker invocation.
+- `apps/web`: React/Vite local web UI.
+- `src/jobhunter`: Python automation engine, CLI, workers, profile import, PDF
+  creation, and apply automation.
 
 ## Safety And Data
 
@@ -234,19 +228,7 @@ uv run jobhunter action profile_import --pdf ~/resume.pdf --dry-run
 These actions record start and finish events where possible and return
 structured success or failure data.
 
-## Dashboards And Local UI
-
-Start the Python dashboard:
-
-```bash
-uv run jobhunter dashboard
-```
-
-Generate the older static dashboard:
-
-```bash
-uv run jobhunter dashboard --static
-```
+## Local UI
 
 Run the local TypeScript API:
 
@@ -280,7 +262,8 @@ uv run jobhunter runs --run-id <prefix>
 ```
 
 The normalized stage states are stored in `job_stage_states`, and events are
-stored in `job_events`. Prefer the dashboard and CLI over direct SQLite edits.
+stored in `job_events`. Prefer the local UI/API and CLI over direct SQLite
+edits.
 
 ## Configuration
 
@@ -347,8 +330,7 @@ The near-term priority is local reliability:
 - keep retries targeted and observable;
 - keep generated artifacts registered before the UI opens them;
 - keep dry-run apply behavior safe;
-- move product-facing UI/API behavior from the Python dashboard to the
-  TypeScript API and React app in small slices.
+- keep product-facing behavior in the TypeScript API and React app.
 
 Hosted accounts, billing, object storage, Postgres migration, hosted workers,
 and SaaS deployment are intentionally deferred until the local workflow is

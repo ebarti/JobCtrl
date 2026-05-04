@@ -89,15 +89,18 @@ Out of scope now:
 
 See `../../BACKLOG.md` for those deferred items.
 
-## Current Architecture Review
+## Historical Architecture Review
 
-### P0: The Current Dashboard Server Owns Too Many Responsibilities
+The following review described the local architecture before the Python web
+dashboard compatibility layer was removed.
 
-`src/jobhunter/dashboard_server.py` currently acts as router, controller,
-static server, local API, profile editor, PDF import endpoint, command runner,
-and local artifact opener.
+### P0: The Former Dashboard Server Owned Too Many Responsibilities
 
-Current endpoints include:
+At the time of this plan, `src/jobhunter/dashboard_server.py` acted as router,
+controller, static server, local API, profile editor, PDF import endpoint,
+command runner, and local artifact opener.
+
+Historical endpoints included:
 
 - `GET /`
 - `GET /api/health`
@@ -254,7 +257,7 @@ action only when the path is known to JobHunter.
 - local events,
 - local artifacts,
 - local worker/action runs,
-- local dashboard settings.
+- local UI settings.
 
 ## Proposed Local Monorepo Layout
 
@@ -876,7 +879,7 @@ The repeatable Phase 7 checklist lives in `docs/plans/implemented/2026-05-03-loc
 
 - schema snapshots,
 - generated client compatibility,
-- legacy DTO parity while migrating from the Python dashboard server.
+- legacy DTO parity while retiring the former Python web dashboard server.
 
 ### Worker Tests
 
@@ -961,7 +964,7 @@ Build:
 2. read-only TypeScript API over the existing SQLite database,
 3. generated frontend API client,
 4. React dashboard/jobs/artifacts/profile shell,
-5. parity tests against the current dashboard server responses.
+5. parity tests against the former dashboard server responses.
 
 Only after read parity is verified should structured action endpoints start
 replacing command execution.

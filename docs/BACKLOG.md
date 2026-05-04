@@ -7,12 +7,6 @@ This is the authoritative roadmap. Keep detailed historical proposals under
 
 ### Frontend/API Parity
 
-- Add profile/style write endpoints to the TypeScript API.
-- Move artifact opening from the Python dashboard server to the TypeScript API.
-- Move profile PDF import from the Python dashboard server to the TypeScript
-  API action surface.
-- Replace Python dashboard-only profile/style persistence checks with React
-  end-to-end checks once the React write path exists.
 - Add event streaming or targeted row patching so lists do not reload wholesale.
 
 ### Worker Reliability
@@ -32,8 +26,8 @@ This is the authoritative roadmap. Keep detailed historical proposals under
 
 ### UI Quality
 
-- Add React tests for profile field save/discard once persistence exists.
-- Add React tests for artifact open once API support exists.
+- Add React tests for persisted profile field save/discard behavior.
+- Add React tests for artifact open behavior.
 - Add browser smoke coverage for action buttons and action status polling.
 - Preserve user filters, sort, page, and selection during live updates.
 

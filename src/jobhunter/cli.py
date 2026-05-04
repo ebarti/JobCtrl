@@ -1094,27 +1094,6 @@ def runs(
 
 
 @app.command()
-def dashboard(
-    host: str = typer.Option("127.0.0.1", "--host", help="Host/interface for the live dashboard server."),
-    port: int = typer.Option(8765, "--port", "-p", help="Port for the live dashboard server."),
-    no_open: bool = typer.Option(False, "--no-open", help="Do not open the browser automatically."),
-    static: bool = typer.Option(False, "--static", help="Generate the old static HTML dashboard and exit."),
-) -> None:
-    """Open the live local dashboard backed by the SQLite API."""
-    _bootstrap()
-
-    if static:
-        from jobhunter.view import open_dashboard
-
-        open_dashboard()
-        return
-
-    from jobhunter.dashboard_server import serve_dashboard
-
-    serve_dashboard(host=host, port=port, open_browser=not no_open)
-
-
-@app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
@@ -1157,7 +1136,7 @@ def doctor() -> None:
     if RESUME_TEMPLATE_PATH.exists():
         results.append(("resume_template.tex", ok_mark, str(RESUME_TEMPLATE_PATH)))
     else:
-        results.append(("resume_template.tex", warn_mark, "Open dashboard > profile to create/edit"))
+        results.append(("resume_template.tex", warn_mark, "Use the local UI profile view to create/edit"))
 
     # Search config
     if SEARCH_CONFIG_PATH.exists():
