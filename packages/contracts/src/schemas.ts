@@ -124,6 +124,178 @@ export const BulkJobMutationRequestSchema = z
   });
 export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema>;
 
+// ---------------------------------------------------------------------------
+// Profile schemas — mirror packages/domain-types/src/profile/profile.ts
+//
+// Wire format keeps the snake_case JSON shape from the canonical
+// ``profile.json`` file (the Python aggregate's ``to_dict()`` output) so the
+// API ↔ worker boundary is one schema, not two. Field names match the JSON,
+// not the camelCase TS interfaces.
+// ---------------------------------------------------------------------------
+
+export const TAILORING_MODES = ["strict", "balanced", "aggressive"] as const;
+export const WRITING_TONES = ["direct", "executive", "technical", "confident", "warm"] as const;
+export const BULLET_STYLES = ["balanced", "impact", "technical_depth", "leadership"] as const;
+export const VERBOSITY_LEVELS = ["concise", "balanced", "detailed"] as const;
+export const KEYWORD_DENSITIES = ["natural", "moderate", "high"] as const;
+
+const ProfilePersonalSchema = z
+  .object({
+    full_name: z.string().default(""),
+    preferred_name: z.string().default(""),
+    email: z.string().default(""),
+    phone: z.string().default(""),
+    address: z.string().default(""),
+    city: z.string().default(""),
+    province_state: z.string().default(""),
+    country: z.string().default(""),
+    postal_code: z.string().default(""),
+    linkedin_url: z.string().default(""),
+    github_url: z.string().default(""),
+    portfolio_url: z.string().default(""),
+    website_url: z.string().default(""),
+    password: z.string().default(""),
+  })
+  .partial();
+
+const ProfileWorkAuthSchema = z
+  .object({
+    legally_authorized_to_work: z.string().default(""),
+    require_sponsorship: z.string().default(""),
+    work_permit_type: z.string().default(""),
+  })
+  .partial();
+
+const ProfileCompensationSchema = z
+  .object({
+    salary_expectation: z.string().default(""),
+    salary_currency: z.string().default("USD"),
+    salary_range_min: z.string().default(""),
+    salary_range_max: z.string().default(""),
+    currency_conversion_note: z.string().default(""),
+  })
+  .partial();
+
+const ProfileAvailabilitySchema = z
+  .object({
+    earliest_start_date: z.string().default(""),
+    available_for_full_time: z.string().default(""),
+    available_for_contract: z.string().default(""),
+  })
+  .partial();
+
+const ProfileExperienceMetadataSchema = z
+  .object({
+    years_of_experience_total: z.string().default(""),
+    education_level: z.string().default(""),
+    current_job_title: z.string().default(""),
+    current_company: z.string().default(""),
+    target_role: z.string().default(""),
+  })
+  .partial();
+
+const ProfileEeoSchema = z
+  .object({
+    gender: z.string().default("Decline to self-identify"),
+    race_ethnicity: z.string().default("Decline to self-identify"),
+    veteran_status: z.string().default("Decline to self-identify"),
+    disability_status: z.string().default("Decline to self-identify"),
+  })
+  .partial();
+
+const ProfileExperienceEntrySchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  company: z.string().min(1),
+  date_range: z.string().default(""),
+  location: z.string().default(""),
+  bullets: z.array(z.string()).default([]),
+});
+
+const ProfileEducationEntrySchema = z.object({
+  id: z.string().min(1),
+  degree: z.string().default(""),
+  institution: z.string().default(""),
+  location: z.string().default(""),
+  date: z.string().default(""),
+});
+
+const ProfileSkillCategorySchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  items: z.array(z.string()).default([]),
+});
+
+const ProfileTailoringPolicySchema = z
+  .object({
+    mode: z.enum(TAILORING_MODES).default("balanced"),
+    allow_title_reframing: z.boolean().default(false),
+    allow_achievement_rewriting: z.boolean().default(true),
+    allow_skill_reordering: z.boolean().default(true),
+    allow_summary_rewrite: z.boolean().default(true),
+    allow_minor_inference: z.boolean().default(false),
+  })
+  .partial();
+
+const ProfileWritingStyleSchema = z
+  .object({
+    tone: z.enum(WRITING_TONES).default("direct"),
+    bullet_style: z.enum(BULLET_STYLES).default("balanced"),
+    verbosity: z.enum(VERBOSITY_LEVELS).default("balanced"),
+    keyword_density: z.enum(KEYWORD_DENSITIES).default("natural"),
+    avoid_first_person: z.boolean().default(true),
+  })
+  .partial();
+
+const ProfileTailoringRulesSchema = z
+  .object({
+    required_experience_entry_ids: z.array(z.string()).default([]),
+    required_education_entry_ids: z.array(z.string()).default([]),
+    required_skill_category_ids: z.array(z.string()).default([]),
+    required_bullets_by_experience_id: z.record(z.string(), z.array(z.string())).default({}),
+    max_experience_bullets: z.number().int().positive().default(4),
+    custom_tailoring_prompt: z.string().default(""),
+    tailoring_policy: ProfileTailoringPolicySchema.default({}),
+    writing_style: ProfileWritingStyleSchema.default({}),
+  })
+  .partial();
+
+const ProfileResumeMasterSchema = z.object({
+  executive_profile: z
+    .object({ baseline_text: z.string().default("") })
+    .partial()
+    .default({}),
+  experience_entries: z.array(ProfileExperienceEntrySchema).min(1, {
+    message: "profile.resume.experience_entries must contain at least one entry.",
+  }),
+  education_entries: z.array(ProfileEducationEntrySchema).default([]),
+  skill_categories: z.array(ProfileSkillCategorySchema).default([]),
+  tailoring_rules: ProfileTailoringRulesSchema.default({}),
+});
+
+const ProfileResumeConstraintsSchema = z
+  .object({
+    real_metrics: z.array(z.string()).default([]),
+  })
+  .partial();
+
+/** Canonical profile.json shape. ``passthrough()`` preserves forward-compatible
+ * keys we don't yet model so a round-trip never silently drops data. */
+export const ProfileSchema = z
+  .object({
+    personal: ProfilePersonalSchema.default({}),
+    work_authorization: ProfileWorkAuthSchema.default({}),
+    availability: ProfileAvailabilitySchema.default({}),
+    compensation: ProfileCompensationSchema.default({}),
+    experience: ProfileExperienceMetadataSchema.default({}),
+    eeo_voluntary: ProfileEeoSchema.default({}),
+    resume: ProfileResumeMasterSchema,
+    resume_constraints: ProfileResumeConstraintsSchema.default({}),
+  })
+  .passthrough();
+
+export type ProfileShape = z.infer<typeof ProfileSchema>;
+
 export const ProfileUpdateRequestSchema = z
   .object({
     profile: z.unknown().optional(),
@@ -343,6 +515,10 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
+  /** Profile JSON. Validated against ``ProfileSchema`` server-side; the wire
+   * type stays ``unknown`` so the web client (which renders the raw JSON in
+   * a textarea) is not forced to satisfy every required field at compile
+   * time. Programmatic consumers should re-parse with ``ProfileSchema``. */
   profile: unknown;
   style: unknown;
   templateText: string;
@@ -350,6 +526,7 @@ export interface ProfileConfigResponse {
 
 export interface ProfileImportResponse {
   ok: true;
+  /** Draft profile dict — nullable shape so partial imports don't lose data. */
   profile?: unknown;
   style?: unknown;
   templateText?: string;

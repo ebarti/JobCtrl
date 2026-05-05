@@ -776,11 +776,26 @@ describe("local TypeScript API", () => {
 
   it("persists profile, style, and template updates with JSON validation", async () => {
     const app = buildApp(options);
+    const validProfile = {
+      personal: { full_name: "Taylor Updated" },
+      resume: {
+        experience_entries: [
+          {
+            id: "role_1",
+            title: "Engineer",
+            company: "Example",
+            date_range: "2024 -- Present",
+            location: "Remote",
+            bullets: ["Shipped reliable systems."],
+          },
+        ],
+      },
+    };
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: {
-        profileText: JSON.stringify({ personal: { full_name: "Taylor Updated" } }),
+        profileText: JSON.stringify(validProfile),
         styleText: JSON.stringify({ font_family: "classic" }),
         templateText: "\\documentclass{moderncv}",
       },

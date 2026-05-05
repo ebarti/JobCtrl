@@ -316,7 +316,7 @@ def build_latex(
     Args:
         data: Parsed LLM JSON with executive_profile, experience_updates,
               skill_category_updates.
-        profile: User profile dict (from load_profile()).
+        profile: User profile dict (typically ``ProfileSnapshot.as_dict()``).
 
     Returns:
         Complete LaTeX source string ready for pdflatex.

@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from jobhunter import config
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -418,11 +419,10 @@ If CapSolver genuinely failed (errorId > 0):
 
 def build_prompt(job: dict, tailored_resume: str,
                  cover_letter: str | None = None,
-                 dry_run: bool = False) -> str:
+                 dry_run: bool = False,
+                 snapshot: ProfileSnapshot | None = None,
+                 search_config: dict | None = None) -> str:
     """Build the full instruction prompt for the apply agent.
-
-    Loads the user profile and search config internally. All personal data
-    comes from the profile -- nothing is hardcoded.
 
     Args:
         job: Job dict from the database (must have url, title, site,
@@ -430,12 +430,22 @@ def build_prompt(job: dict, tailored_resume: str,
         tailored_resume: Plain-text content of the tailored resume.
         cover_letter: Optional plain-text cover letter content.
         dry_run: If True, tell the agent not to click Submit.
+        snapshot: Caller-supplied ProfileSnapshot — required for the typed
+                  flow; the legacy ``None`` default loads via the repository
+                  for backward compatibility with single-call CLI invocations.
+        search_config: Caller-supplied search config dict; defaults to the
+                  on-disk ``searches.yaml``.
 
     Returns:
         Complete prompt string for the AI agent.
     """
-    profile = config.load_profile()
-    search_config = config.load_search_config()
+    if snapshot is None:
+        from jobhunter.infrastructure.profile import get_profile_repository
+        from jobhunter.domain.tenant import LOCAL_TENANT
+        snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
+    if search_config is None:
+        search_config = config.load_search_config()
+    profile = snapshot.as_dict()
     personal = profile["personal"]
 
     # --- Resolve resume PDF path ---

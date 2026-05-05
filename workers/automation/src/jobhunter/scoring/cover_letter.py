@@ -11,8 +11,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from jobhunter.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
+from jobhunter.config import COVER_LETTER_DIR, RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.llm import get_client
 from jobhunter.state import ensure_job_stage_rows, record_job_artifact, record_job_event, set_stage_state, utc_now
 from jobhunter.scoring.validator import (
@@ -28,11 +29,12 @@ log = logging.getLogger(__name__)
 
 # ── Prompt Builder (profile-driven) ──────────────────────────────────────
 
-def _build_cover_letter_prompt(profile: dict) -> str:
-    """Build the cover letter system prompt from the user's profile.
+def _build_cover_letter_prompt(snapshot: ProfileSnapshot) -> str:
+    """Build the cover letter system prompt from the snapshot.
 
-    All personal data, skills, and sign-off name come from the profile.
+    All personal data, skills, and sign-off name come from the snapshot.
     """
+    profile = snapshot.as_dict()
     personal = profile.get("personal", {})
     boundary = profile.get("skills_boundary", {})
     resume_facts = profile.get("resume_facts", {})
@@ -117,7 +119,7 @@ def _strip_preamble(text: str) -> str:
 # ── Core Generation ──────────────────────────────────────────────────────
 
 def generate_cover_letter(
-    resume_text: str, job: dict, profile: dict,
+    resume_text: str, job: dict, snapshot: ProfileSnapshot,
     max_retries: int = 3, validation_mode: str = "normal",
 ) -> str:
     """Generate a cover letter with fresh context on each retry + auto-sanitize.
@@ -128,7 +130,7 @@ def generate_cover_letter(
     Args:
         resume_text:      The candidate's resume text (base or tailored).
         job:              Job dict with title, site, location, full_description.
-        profile:          User profile dict.
+        snapshot:         Immutable ProfileSnapshot for prompt building.
         max_retries:      Maximum retry attempts.
         validation_mode:  "strict", "normal", or "lenient".
 
@@ -145,7 +147,7 @@ def generate_cover_letter(
     avoid_notes: list[str] = []
     letter = ""
     client = get_client()
-    cl_prompt_base = _build_cover_letter_prompt(profile)
+    cl_prompt_base = _build_cover_letter_prompt(snapshot)
 
     for attempt in range(max_retries + 1):
         # Fresh conversation every attempt
@@ -202,7 +204,8 @@ def _get_resume_text_for_job(job: dict, base_resume_text: str) -> str:
 
 
 def run_cover_letters(min_score: int = 7, limit: int = 0,
-                      validation_mode: str = "normal") -> dict:
+                      validation_mode: str = "normal",
+                      snapshot: ProfileSnapshot | None = None) -> dict:
     """Generate cover letters for high-scoring jobs.
 
     Args:
@@ -213,7 +216,10 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
     Returns:
         {"generated": int, "errors": int, "elapsed": float}
     """
-    profile = load_profile()
+    if snapshot is None:
+        from jobhunter.infrastructure.profile import get_profile_repository
+        from jobhunter.domain.tenant import LOCAL_TENANT
+        snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
     base_resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
@@ -250,7 +256,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
             letter = generate_cover_letter(
                 resume_text,
                 job,
-                profile,
+                snapshot,
                 validation_mode=validation_mode,
             )
 

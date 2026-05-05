@@ -17,8 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from jobhunter import config
-from jobhunter.config import RESUME_PATH, TAILORED_DIR, load_profile
+from jobhunter.config import RESUME_PATH, TAILORED_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.llm import get_client
 from jobhunter.state import ensure_job_stage_rows, record_job_artifact, record_job_event, set_stage_state, utc_now
 from jobhunter.resume_profile import (
@@ -50,10 +51,11 @@ log = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5  # max cross-run retries before giving up
 
 
-# ── Prompt Builders (profile-driven) ──────────────────────────────────────
+# ── Prompt Builders (snapshot-driven) ─────────────────────────────────────
 
-def _build_master_tailor_prompt(profile: dict) -> str:
+def _build_master_tailor_prompt(snapshot: ProfileSnapshot) -> str:
     """Build a tailoring prompt anchored to the canonical LaTeX resume schema."""
+    profile = snapshot.as_dict()
     require_resume_master(profile)
     resume = get_resume_master(profile)
     constraints = get_resume_constraints(profile)
@@ -195,13 +197,14 @@ OUTPUT ONLY VALID JSON:
 }}"""
 
 
-def _build_tailor_prompt(profile: dict) -> str:
-    """Build the resume tailoring system prompt from the canonical profile."""
-    return _build_master_tailor_prompt(profile)
+def _build_tailor_prompt(snapshot: ProfileSnapshot) -> str:
+    """Build the resume tailoring system prompt from the snapshot."""
+    return _build_master_tailor_prompt(snapshot)
 
 
-def _build_judge_prompt(profile: dict) -> str:
-    """Build the LLM judge prompt from the user's profile."""
+def _build_judge_prompt(snapshot: ProfileSnapshot) -> str:
+    """Build the LLM judge prompt from the snapshot."""
+    profile = snapshot.as_dict()
     boundary = profile.get("skills_boundary", {})
     resume_facts = profile.get("resume_facts", {})
 
@@ -302,8 +305,9 @@ def extract_json(raw: str) -> dict:
 
 # ── Resume Assembly (profile-driven header) ──────────────────────────────
 
-def assemble_resume_text(data: dict, profile: dict) -> str:
+def assemble_resume_text(data: dict, snapshot: ProfileSnapshot) -> str:
     """Assemble plain-text resume output from the canonical resume master."""
+    profile = snapshot.as_dict()
     require_resume_master(profile)
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
@@ -401,7 +405,7 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
 # ── LLM Judge ────────────────────────────────────────────────────────────
 
 def judge_tailored_resume(
-    original_text: str, tailored_text: str, job_title: str, profile: dict
+    original_text: str, tailored_text: str, job_title: str, snapshot: ProfileSnapshot
 ) -> dict:
     """LLM judge layer: catches subtle fabrication that programmatic checks miss.
 
@@ -409,12 +413,12 @@ def judge_tailored_resume(
         original_text: Base resume text.
         tailored_text: Tailored resume text.
         job_title: Target job title.
-        profile: User profile for building the judge prompt.
+        snapshot: ProfileSnapshot used to build the judge prompt.
 
     Returns:
         {"passed": bool, "verdict": str, "issues": str, "raw": str}
     """
-    judge_prompt = _build_judge_prompt(profile)
+    judge_prompt = _build_judge_prompt(snapshot)
 
     messages = [
         {"role": "system", "content": judge_prompt},
@@ -446,7 +450,7 @@ def judge_tailored_resume(
 # ── Core Tailoring ───────────────────────────────────────────────────────
 
 def tailor_resume(
-    resume_text: str, job: dict, profile: dict,
+    resume_text: str, job: dict, snapshot: ProfileSnapshot,
     max_retries: int = 3, validation_mode: str = "normal",
 ) -> tuple[str, dict]:
     """Generate a tailored resume via JSON output + fresh context on each retry.
@@ -460,7 +464,7 @@ def tailor_resume(
     Args:
         resume_text:      Base resume text.
         job:              Job dict with title, site, location, full_description.
-        profile:          User profile dict.
+        snapshot:         Immutable ProfileSnapshot for prompts/validation.
         max_retries:      Maximum retry attempts.
         validation_mode:  "strict", "normal", or "lenient".
                           strict  -- banned words trigger retries; judge must pass
@@ -470,6 +474,7 @@ def tailor_resume(
     Returns:
         (tailored_text, report) where report contains validation details.
     """
+    profile = snapshot.as_dict()
     job_text = (
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
@@ -477,7 +482,7 @@ def tailor_resume(
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
 
-    tailor_prompt_base = _build_tailor_prompt(profile)
+    tailor_prompt_base = _build_tailor_prompt(snapshot)
     report: dict = {
         "attempts": 0,
         "validator": None,
@@ -539,14 +544,14 @@ def tailor_resume(
                 report["attempt_history"].append(attempt_record)
                 continue
             # Last attempt — assemble whatever we got
-            tailored = assemble_resume_text(data, profile)
+            tailored = assemble_resume_text(data, snapshot)
             report["status"] = "failed_validation"
             attempt_record["tailored_text"] = tailored
             report["attempt_history"].append(attempt_record)
             return tailored, report
 
         # Assemble text (header injected by code, em dashes auto-fixed)
-        tailored = assemble_resume_text(data, profile)
+        tailored = assemble_resume_text(data, snapshot)
         attempt_record["tailored_text"] = tailored
 
         # Layer 2: LLM judge (catches subtle fabrication) — skipped in lenient mode
@@ -558,7 +563,7 @@ def tailor_resume(
             report["attempt_history"].append(attempt_record)
             return tailored, report
 
-        judge = judge_tailored_resume(resume_text, tailored, job.get("title", ""), profile)
+        judge = judge_tailored_resume(resume_text, tailored, job.get("title", ""), snapshot)
         report["judge"] = judge
         attempt_record["judge"] = judge
         log.info("Judge result: %s", judge)
@@ -591,14 +596,14 @@ def tailor_resume(
 def _tailor_one_job(
     job: dict,
     resume_text: str,
-    profile: dict,
+    snapshot: ProfileSnapshot,
     validation_mode: str,
 ) -> dict:
     """Tailor one job and write its output artifacts."""
     tailored, report = tailor_resume(
         resume_text,
         job,
-        profile,
+        snapshot,
         validation_mode=validation_mode,
     )
 
@@ -633,7 +638,7 @@ def _tailor_one_job(
             try:
                 from jobhunter.scoring.pdf import convert_resume_to_pdf
                 pdf_out = TAILORED_DIR / f"{prefix}.pdf"
-                convert_resume_to_pdf(parsed_json, profile, pdf_out)
+                convert_resume_to_pdf(parsed_json, snapshot.as_dict(), pdf_out)
                 pdf_path = str(pdf_out)
             except Exception:
                 log.error("LaTeX PDF generation failed for %s", txt_path, exc_info=True)
@@ -653,7 +658,8 @@ def _tailor_one_job(
 
 def run_tailoring(min_score: int = 7, limit: int = 0,
                   validation_mode: str = "normal", workers: int = 1,
-                  retailor: bool = False) -> dict:
+                  retailor: bool = False,
+                  snapshot: ProfileSnapshot | None = None) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
     Args:
@@ -666,7 +672,10 @@ def run_tailoring(min_score: int = 7, limit: int = 0,
     Returns:
         {"approved": int, "failed": int, "errors": int, "elapsed": float}
     """
-    profile = load_profile()
+    if snapshot is None:
+        from jobhunter.infrastructure.profile import get_profile_repository
+        from jobhunter.domain.tenant import LOCAL_TENANT
+        snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
@@ -710,7 +719,7 @@ def run_tailoring(min_score: int = 7, limit: int = 0,
                 _tailor_one_job,
                 job,
                 resume_text,
-                profile,
+                snapshot,
                 validation_mode,
             )
             future_to_job[future] = job

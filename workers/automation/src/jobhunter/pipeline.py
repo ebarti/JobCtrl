@@ -706,8 +706,10 @@ def run_single_job(
     import re
 
     from jobhunter.config import (
-        RESUME_PATH, TAILORED_DIR, COVER_LETTER_DIR, load_profile,
+        RESUME_PATH, TAILORED_DIR, COVER_LETTER_DIR,
     )
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.profile import get_profile_repository
 
     load_env()
     ensure_dirs()
@@ -818,7 +820,7 @@ def run_single_job(
             result["error"] = "Job still has no full description after enrichment"
             return result
 
-        profile = load_profile()
+        snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
         resume_text = RESUME_PATH.read_text(encoding="utf-8")
 
         # Score if not yet scored
@@ -848,7 +850,7 @@ def run_single_job(
             from jobhunter.scoring.tailor import _tailor_one_job
 
             TAILORED_DIR.mkdir(parents=True, exist_ok=True)
-            tailor_result = _tailor_one_job(job, resume_text, profile, validation_mode)
+            tailor_result = _tailor_one_job(job, resume_text, snapshot, validation_mode)
 
             now = datetime.now(timezone.utc).isoformat()
             _success = {"approved", "approved_with_judge_warning"}
@@ -897,7 +899,7 @@ def run_single_job(
 
             try:
                 letter = generate_cover_letter(
-                    cl_resume, job, profile,
+                    cl_resume, job, snapshot,
                     validation_mode=validation_mode,
                 )
                 safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")

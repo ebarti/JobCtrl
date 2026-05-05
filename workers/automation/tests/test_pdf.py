@@ -388,8 +388,9 @@ class TestRealProfile:
     @pytest.fixture
     def real_profile(self):
         try:
-            from jobhunter.config import load_profile
-            return load_profile()
+            from jobhunter.domain.tenant import LOCAL_TENANT
+            from jobhunter.infrastructure.profile import build_profile_repository
+            return build_profile_repository().load_snapshot(LOCAL_TENANT).as_dict()
         except Exception:
             pytest.skip("No profile.json available")
 

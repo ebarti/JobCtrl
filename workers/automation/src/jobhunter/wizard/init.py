@@ -9,7 +9,6 @@ Interactive flow that creates ~/.jobhunter/ with:
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from pathlib import Path
@@ -27,6 +26,9 @@ from jobhunter.config import (
     SEARCH_CONFIG_PATH,
     ensure_dirs,
 )
+from jobhunter.domain.profile.aggregate import Profile
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.profile import get_profile_repository
 
 console = Console()
 
@@ -310,8 +312,11 @@ def _setup_profile() -> dict:
         "earliest_start_date": Prompt.ask("Earliest start date", default="Immediately"),
     }
 
-    # Save
-    PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+    # Save through the typed repository so invariants are enforced and
+    # ProfileUpdated is published exactly once.
+    repository = get_profile_repository()
+    aggregate = Profile.from_dict(LOCAL_TENANT, profile)
+    repository.save(LOCAL_TENANT, aggregate)
     console.print(f"\n[green]Profile saved to {PROFILE_PATH}[/green]")
     return profile
 

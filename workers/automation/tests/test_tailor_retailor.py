@@ -6,6 +6,9 @@ from typer.testing import CliRunner
 
 from jobhunter.cli import app
 from jobhunter.database import close_connection, get_connection, get_jobs_by_stage, init_db
+from jobhunter.domain.profile.aggregate import Profile
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.pipeline import _count_pending
 from jobhunter.scoring.tailor import _build_master_tailor_prompt
 
@@ -140,7 +143,8 @@ def test_tailor_prompt_includes_writing_style_and_custom_guidance():
         "resume_constraints": {"real_metrics": ["35%"]},
     }
 
-    prompt = _build_master_tailor_prompt(profile)
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    prompt = _build_master_tailor_prompt(snapshot)
 
     assert "WRITING STYLE:" in prompt
     assert "- Tone: technical" in prompt

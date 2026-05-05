@@ -1,7 +1,7 @@
 """Resume and cover letter validation: banned words, fabrication detection, structural checks.
 
 All validation is profile-driven -- no hardcoded personal data. The validator receives
-a profile dict (from jobhunter.config.load_profile()) and validates against the user's
+a profile dict (typically ``ProfileSnapshot.as_dict()``) and validates against the user's
 actual skills, companies, projects, and school.
 
 Validation modes

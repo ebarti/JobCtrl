@@ -35,6 +35,8 @@ export {
 
 export * from "./events/index.js";
 
+export * from "./profile/index.js";
+
 export {
   StageTransitions,
   type StageTransition,

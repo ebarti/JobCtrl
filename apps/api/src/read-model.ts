@@ -13,12 +13,13 @@ import type {
   JobSummary,
   PaginatedResponse,
   ProfileConfigResponse,
+  ProfileShape,
   SettingsResponse,
   Stage,
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { STAGES } from "./contracts.js";
+import { ProfileSchema, STAGES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 
 type JobRow = Record<string, unknown> & {
@@ -282,10 +283,22 @@ export function readProfileConfig(paths: {
 }): ProfileConfigResponse {
   return {
     ok: true,
+    // Read returns the raw JSON so the web UI can edit even malformed
+    // profile.json files. Schema validation is enforced on PATCH (see
+    // ``writeProfileConfig``) — programmatic consumers should re-parse via
+    // ``ProfileSchema``.
     profile: readJson(paths.profilePath, {}),
     style: readJson(paths.resumeStylePath, {}),
     templateText: readText(paths.resumeTemplatePath),
   };
+}
+
+/** Validate a candidate profile JSON. Used by callers (e.g. tests, future
+ * SDK helpers) that want to assert canonical shape before posting. Stays
+ * unused by the GET path so corrupt profile.json files remain editable. */
+export function parseProfileShape(value: unknown): ProfileShape | null {
+  const parsed = ProfileSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function readSettingsConfig(paths: { settingsPath: string }): SettingsResponse {

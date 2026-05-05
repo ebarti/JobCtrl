@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { ActionCommandPayload, ActionRunResponse } from "./contracts.js";
+import { ProfileSchema } from "./contracts.js";
 
 const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
@@ -37,6 +38,10 @@ export interface ProfileImportInput {
 }
 
 export interface ProfileImportResult {
+  /** Draft profile JSON. Validated server-side against ``ProfileSchema`` in
+   * ``extractProfileImportDraft`` before being placed on this field; tests
+   * may inject partial drafts through the ``ProfileImporter`` injection
+   * point, so the static type stays ``unknown`` to keep that seam open. */
   profile?: unknown;
   style?: unknown;
   templateText?: string;
@@ -375,7 +380,13 @@ function extractProfileImportDraft(result: unknown): Omit<ProfileImportResult, "
   const draft = isRecord(record.result) && isRecord(record.result.draft) ? record.result.draft : {};
   const response: Omit<ProfileImportResult, "action"> = {};
   if ("profile" in draft) {
-    response.profile = draft.profile;
+    // Drafts often miss optional sections (the importer is best-effort) —
+    // surface a typed profile when validation succeeds, drop it otherwise so
+    // callers don't get back a half-shaped object that fails downstream.
+    const parsed = ProfileSchema.safeParse(draft.profile);
+    if (parsed.success) {
+      response.profile = parsed.data;
+    }
   }
   if ("style" in draft) {
     response.style = draft.style;

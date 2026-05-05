@@ -1,8 +1,18 @@
-"""Helpers for canonical resume data stored in profile.json."""
+"""Pure dict accessors for the canonical resume schema.
+
+These helpers operate on a profile dict in the canonical ``profile.json``
+shape. Modern call sites obtain that dict via ``ProfileSnapshot.as_dict()``
+from ``jobhunter.domain.profile``; the helpers themselves stay schema-only
+so legacy modules under ``scoring/{pdf,validator}.py`` keep working without
+needing to know about the aggregate.
+
+Historic ``augment_profile`` (which deep-copied + injected legacy
+``skills_boundary`` / ``resume_facts`` keys) has been removed in Phase 4 —
+``ProfileSnapshot.from_profile`` derives those fields directly from the
+aggregate now.
+"""
 
 from __future__ import annotations
-
-from copy import deepcopy
 
 
 def has_resume_master(profile: dict) -> bool:
@@ -210,49 +220,3 @@ def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> lis
     return (kept_required + kept_other)[:max_bullets]
 
 
-def build_legacy_skills_boundary(profile: dict) -> dict[str, list[str]]:
-    """Derive the legacy skills boundary shape from the canonical resume schema."""
-    boundary: dict[str, list[str]] = {}
-    for category in get_skill_categories(profile):
-        category_id = category.get("id")
-        items = category.get("items", [])
-        if category_id and isinstance(items, list):
-            boundary[category_id] = list(items)
-    return boundary
-
-
-def build_legacy_resume_facts(profile: dict) -> dict:
-    """Derive legacy resume facts from the canonical resume schema."""
-    education_lines = []
-    for entry in get_education_entries(profile):
-        line_parts = [
-            entry.get("degree", ""),
-            entry.get("institution", ""),
-            entry.get("location", ""),
-            entry.get("date", ""),
-        ]
-        line = " | ".join(part for part in line_parts if part)
-        if line:
-            education_lines.append(line)
-
-    return {
-        "preserved_companies": [
-            entry.get("company", "")
-            for entry in get_experience_entries(profile)
-            if entry.get("company")
-        ],
-        "preserved_projects": [],
-        "preserved_school": " ; ".join(education_lines),
-        "real_metrics": list(get_resume_constraints(profile).get("real_metrics", [])),
-    }
-
-
-def augment_profile(profile: dict) -> dict:
-    """Augment structured resume profiles with legacy compatibility fields."""
-    if not has_resume_master(profile):
-        return profile
-
-    augmented = deepcopy(profile)
-    augmented.setdefault("skills_boundary", build_legacy_skills_boundary(augmented))
-    augmented.setdefault("resume_facts", build_legacy_resume_facts(augmented))
-    return augmented

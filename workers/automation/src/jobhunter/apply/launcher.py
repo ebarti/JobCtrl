@@ -27,6 +27,8 @@ from rich.live import Live
 
 from jobhunter import config
 from jobhunter.database import get_connection
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 from jobhunter.apply import prompt as prompt_mod
 from jobhunter.apply.chrome import (
@@ -444,8 +446,20 @@ def release_lock(url: str, run_ctx: dict | None = None) -> None:
 # Utility modes (--gen, --mark-applied, --mark-failed, --reset-failed)
 # ---------------------------------------------------------------------------
 
+def _load_profile_snapshot() -> ProfileSnapshot:
+    """Load the active ProfileSnapshot via the local repository.
+
+    Centralised so each apply entry point can swap to a tenant-scoped lookup
+    without touching the call sites.
+    """
+    from jobhunter.infrastructure.profile import get_profile_repository
+
+    return get_profile_repository().load_snapshot(LOCAL_TENANT)
+
+
 def gen_prompt(target_url: str, min_score: int = 7,
-               model: str = "sonnet", worker_id: int = 0) -> Path | None:
+               model: str = "sonnet", worker_id: int = 0,
+               snapshot: ProfileSnapshot | None = None) -> Path | None:
     """Generate a prompt file and print the Claude CLI command for manual debugging.
 
     Returns:
@@ -455,6 +469,9 @@ def gen_prompt(target_url: str, min_score: int = 7,
     if not job:
         return None
 
+    if snapshot is None:
+        snapshot = _load_profile_snapshot()
+
     # Read resume text
     resume_path = job.get("tailored_resume_path")
     txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
@@ -462,7 +479,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
     if txt_path and txt_path.exists():
         resume_text = txt_path.read_text(encoding="utf-8")
 
-    prompt = prompt_mod.build_prompt(job=job, tailored_resume=resume_text)
+    prompt = prompt_mod.build_prompt(job=job, tailored_resume=resume_text, snapshot=snapshot)
 
     # Release the lock so the job stays available
     release_lock(job["url"])
@@ -530,7 +547,8 @@ def reset_failed() -> int:
 
 def run_job(job: dict, port: int, worker_id: int = 0,
             model: str = "sonnet", dry_run: bool = False,
-            run_ctx: dict | None = None) -> tuple[str, int]:
+            run_ctx: dict | None = None,
+            snapshot: ProfileSnapshot | None = None) -> tuple[str, int]:
     """Spawn a Claude Code session for one job application.
 
     Returns:
@@ -558,11 +576,15 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     if txt_path and txt_path.exists():
         resume_text = txt_path.read_text(encoding="utf-8")
 
+    if snapshot is None:
+        snapshot = _load_profile_snapshot()
+
     # Build the prompt
     agent_prompt = prompt_mod.build_prompt(
         job=job,
         tailored_resume=resume_text,
         dry_run=dry_run,
+        snapshot=snapshot,
     )
     run_ctx["prompt_chars"] = len(agent_prompt)
     run_ctx["prompt_preview"] = _compact_text(agent_prompt, 220)
@@ -951,7 +973,8 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
-                model: str = "sonnet", dry_run: bool = False) -> tuple[int, int]:
+                model: str = "sonnet", dry_run: bool = False,
+                snapshot: ProfileSnapshot | None = None) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
 
     Args:
@@ -1046,6 +1069,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 model=model,
                 dry_run=dry_run,
                 run_ctx=run_ctx,
+                snapshot=snapshot,
             )
 
             if result == "skipped":
@@ -1153,7 +1177,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False, model: str = "sonnet",
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> tuple[int, int]:
+         poll_interval: int = 60, workers: int = 1,
+         snapshot: ProfileSnapshot | None = None) -> tuple[int, int]:
     """Launch the apply pipeline.
 
     Args:
@@ -1173,6 +1198,15 @@ def main(limit: int = 1, target_url: str | None = None,
 
     config.ensure_dirs()
     console = Console()
+
+    # Load the profile snapshot ONCE at the orchestrator level so every
+    # worker sees the same version — avoids races where a wizard save
+    # mid-run gives different workers different profiles.
+    if snapshot is None:
+        try:
+            snapshot = _load_profile_snapshot()
+        except FileNotFoundError:
+            snapshot = None  # fall back to lazy load inside run_job
 
     if continuous:
         effective_limit = 0
@@ -1240,6 +1274,7 @@ def main(limit: int = 1, target_url: str | None = None,
                     headless=headless,
                     model=model,
                     dry_run=dry_run,
+                    snapshot=snapshot,
                 )
             else:
                 # Multi-worker — distribute limit across workers
@@ -1263,6 +1298,7 @@ def main(limit: int = 1, target_url: str | None = None,
                             headless=headless,
                             model=model,
                             dry_run=dry_run,
+                            snapshot=snapshot,
                         ): i
                         for i in range(workers)
                     }

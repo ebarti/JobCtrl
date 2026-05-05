@@ -14,7 +14,7 @@ import type {
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { STAGES } from "./contracts.js";
+import { ProfileSchema, STAGES } from "./contracts.js";
 import {
   isValidTransition,
   deserializeStageStateKind,
@@ -306,7 +306,14 @@ export function writeProfileConfig(paths: ProfilePaths, request: ProfileUpdateRe
   let templateText: string | undefined;
 
   if (request.profile !== undefined || request.profileText !== undefined) {
-    profile = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
+    const candidate = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
+    const validated = ProfileSchema.safeParse(candidate);
+    if (!validated.success) {
+      const issue = validated.error.issues[0];
+      const path = issue?.path.length ? issue.path.join(".") : "profile";
+      throw new InputError(`profile.json validation failed at ${path}: ${issue?.message ?? "invalid input"}`);
+    }
+    profile = validated.data as Record<string, unknown>;
     wrote = true;
   }
   if (request.style !== undefined || request.styleText !== undefined) {
