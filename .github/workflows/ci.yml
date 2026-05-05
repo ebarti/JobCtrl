@@ -3,7 +3,21 @@ name: CI
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".env.example"
+      - "profile.example.json"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+      - ".env.example"
+      - "profile.example.json"
   workflow_dispatch:
 
 jobs:
