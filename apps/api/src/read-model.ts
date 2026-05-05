@@ -37,6 +37,10 @@ type JobRow = Record<string, unknown> & {
   fit_score?: number | null;
   score_reasoning?: string | null;
   scored_at?: string | null;
+  // Phase 5 (S-18): joined-in fields from job_scores latest version.
+  js_fit_score?: number | null;
+  js_scored_at?: string | null;
+  js_breakdown_json?: string | null;
   tailored_resume_path?: string | null;
   tailored_at?: string | null;
   tailor_attempts?: number | null;
@@ -139,12 +143,52 @@ const JOB_COLUMNS = [
   "applied_at",
 ] as const;
 
+// Phase 5 (S-18): scoring fields are now sourced from the per-aggregate
+// ``job_scores`` table. The legacy ``jobs.fit_score`` columns remain in the
+// schema as a read-only fallback for historical rows that were never
+// re-scored after the one-shot backfill — but new writes only target
+// ``job_scores`` so the LEFT JOIN below carries the canonical value.
+//
+// SCORE_SUBQUERY pulls the latest version per job and exposes the score
+// fields under ``js_*`` aliases so they don't collide with the legacy
+// columns selected from ``jobs``.
+const SCORE_SUBQUERY = `(
+  SELECT s.job_url      AS js_job_url,
+         s.fit_score    AS js_fit_score,
+         s.scored_at    AS js_scored_at,
+         s.breakdown_json AS js_breakdown_json
+  FROM job_scores s
+  INNER JOIN (
+    SELECT job_url, MAX(version) AS max_version
+    FROM job_scores
+    GROUP BY job_url
+  ) latest
+    ON latest.job_url = s.job_url AND latest.max_version = s.version
+)`;
+
+function scoreJoin(db: SqliteDatabase): string {
+  return tableExists(db, "job_scores")
+    ? ` LEFT JOIN ${SCORE_SUBQUERY} js ON js.js_job_url = jobs.url`
+    : "";
+}
+
+function scoreSelect(db: SqliteDatabase): string {
+  return tableExists(db, "job_scores")
+    ? ", js.js_fit_score AS js_fit_score, js.js_scored_at AS js_scored_at, js.js_breakdown_json AS js_breakdown_json"
+    : ", NULL AS js_fit_score, NULL AS js_scored_at, NULL AS js_breakdown_json";
+}
+
+// Effective score: latest job_scores row (canonical) ⇒ fall back to legacy
+// ``jobs.fit_score`` for un-rescored historical rows. Used everywhere we
+// previously wrote bare ``fit_score`` — sort columns, filters, comparators.
+const EFFECTIVE_FIT_SCORE = "COALESCE(js.js_fit_score, jobs.fit_score)";
+
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   discovered_at: "discovered_at",
   title: "LOWER(COALESCE(title, ''))",
   company: "LOWER(COALESCE(site, ''))",
   location: "LOWER(COALESCE(location, ''))",
-  fit_score: "COALESCE(fit_score, -1)",
+  fit_score: `COALESCE(${EFFECTIVE_FIT_SCORE}, -1)`,
 };
 
 export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
@@ -221,7 +265,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     job: {
       ...buildJobSummary(job, stages, artifactCounts),
       descriptionPreview: previewText(asString(job.full_description) || asString(job.description), 6000),
-      scoreReasoning: asString(job.score_reasoning),
+      scoreReasoning: extractScoreReasoning(job),
     },
     stages,
     artifacts: artifactsForJobs(db, [job]),
@@ -339,7 +383,7 @@ function loadJobs(
   const filter = combineSqlFilters(sqlFilter, deletion);
   return allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)} FROM jobs${deletedJoin(db)}${filter.where}`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${filter.where}`,
     filter.params,
   );
 }
@@ -353,7 +397,7 @@ function loadJobPage(
     return { jobs: [], page: 1, total: 0 };
   }
   const filter = combineSqlFilters(jobSqlFilter(query), deletedSqlFilter(db, query.deleted));
-  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${filter.where}`, filter.params);
+  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${scoreJoin(db)}${filter.where}`, filter.params);
   const total = Number(totalRow?.count ?? 0);
   const pages = Math.max(1, Math.ceil(total / query.pageSize));
   const page = Math.min(query.page, pages);
@@ -361,7 +405,7 @@ function loadJobPage(
   const direction = query.dir === "asc" ? "ASC" : "DESC";
   const jobs = allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)} FROM jobs${deletedJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
     [...filter.params, query.pageSize, offset],
   );
   return { jobs, page, total };
@@ -413,11 +457,11 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     params.push(`%${query.company.toLowerCase()}%`);
   }
   if (query.minFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, -1) >= ?");
+    clauses.push(`COALESCE(${EFFECTIVE_FIT_SCORE}, -1) >= ?`);
     params.push(query.minFitScore);
   }
   if (query.maxFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, 999) <= ?");
+    clauses.push(`COALESCE(${EFFECTIVE_FIT_SCORE}, 999) <= ?`);
     params.push(query.maxFitScore);
   }
   return {
@@ -445,7 +489,7 @@ function findJob(db: SqliteDatabase, jobKey: string): JobRow | null {
   }
   const row = getRow<JobRow>(
     db,
-    `SELECT jobs.*${deletedSelect(db)} FROM jobs${deletedJoin(db)} WHERE jobs.url = ? OR jobs.application_url = ? LIMIT 1`,
+    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)} WHERE jobs.url = ? OR jobs.application_url = ? LIMIT 1`,
     [jobKey, jobKey],
   );
   return row ?? null;
@@ -495,7 +539,9 @@ function buildJobSummary(
     salary: asString(job.salary),
     discoveredAt: asNullableString(job.discovered_at),
     applicationUrl: asNullableString(job.application_url),
-    fitScore: asNullableNumber(job.fit_score),
+    // Phase 5 (S-18): prefer the joined ``job_scores.fit_score``, falling
+    // back to the legacy ``jobs.fit_score`` only for historical rows.
+    fitScore: asNullableNumber(job.js_fit_score) ?? asNullableNumber(job.fit_score),
     currentStage: current.stage,
     currentState: current.state,
     errorCode: current.errorCode,
@@ -506,6 +552,34 @@ function buildJobSummary(
     appliedAt: asNullableString(job.applied_at),
     deletedAt: asNullableString(job.deleted_at),
   };
+}
+
+/**
+ * Phase 5 (S-18): the canonical reasoning for a job's latest score now
+ * lives in ``job_scores.breakdown_json.reasoning``. We fall back to the
+ * legacy ``jobs.score_reasoning`` column for **pre-backfill** rows only
+ * — once ``ensure_score_tables`` has run on the database, every row that
+ * had a legacy reasoning is replicated into ``breakdown_json``, so the
+ * fallback below is unreachable in practice. It exists as a safety net
+ * for (a) databases where the migration hasn't run yet (read-only API
+ * processes pointed at an old file), and (b) a corrupt
+ * ``breakdown_json`` row whose JSON.parse fails. Don't delete it — it's
+ * defensive, not dead. (Round-1 review L2.)
+ */
+function extractScoreReasoning(job: JobRow): string {
+  const raw = job.js_breakdown_json;
+  if (typeof raw === "string" && raw.length > 0) {
+    try {
+      const parsed = JSON.parse(raw) as { reasoning?: unknown };
+      if (parsed && typeof parsed.reasoning === "string") {
+        return parsed.reasoning;
+      }
+    } catch {
+      // Fall through to the legacy column — broken JSON in job_scores
+      // shouldn't take down the dashboard.
+    }
+  }
+  return asString(job.score_reasoning);
 }
 
 function buildFunnelStage(
@@ -543,7 +617,13 @@ function buildFunnelStage(
 
 function deriveLegacyStates(job: JobRow): StageSummary[] {
   const discover = defaultStage("discover", "succeeded");
-  const hasScore = Boolean(job.scored_at) || asNullableNumber(job.fit_score) !== null;
+  // Phase 5 (S-18): a job has a score if either the joined ``job_scores``
+  // row exists or the legacy ``jobs.fit_score`` column has a value.
+  const hasScore =
+    Boolean(job.js_scored_at) ||
+    asNullableNumber(job.js_fit_score) !== null ||
+    Boolean(job.scored_at) ||
+    asNullableNumber(job.fit_score) !== null;
   const enrich = job.detail_error
     ? defaultStage("enrich", "failed", asString(job.detail_error))
     : job.detail_scraped_at || job.full_description

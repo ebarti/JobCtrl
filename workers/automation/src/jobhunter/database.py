@@ -8,6 +8,7 @@ This module also owns the apply-agent observability tables used for
 persistent run and event telemetry.
 """
 
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -141,6 +142,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_columns(conn)
     ensure_observability_tables(conn)
     ensure_state_tables(conn)
+    ensure_score_tables(conn)
 
     return conn
 
@@ -443,6 +445,129 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks"]
 
 
+def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the per-job ``job_scores`` table and run its one-shot backfill.
+
+    See ddd-target.md §7.2. The table is the persistence side of the
+    Phase-5 ``JobScore`` aggregate; the legacy ``jobs.fit_score`` /
+    ``jobs.score_reasoning`` / ``jobs.scored_at`` columns remain in the
+    schema as a read-only fallback for historical rows but new scoring
+    writes target this table only (no-strangler directive).
+
+    Backfill is **idempotent**: it only fires when ``job_scores`` is empty
+    AND ``jobs.fit_score`` has values. Each backfilled row becomes
+    ``version = 1`` with ``breakdown_json = {"reasoning":
+    jobs.score_reasoning, "legacy": true}`` so consumers can tell
+    machine-generated rows apart from migrated ones.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_scores (
+            job_url             TEXT NOT NULL,
+            version             INTEGER NOT NULL,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            fit_score           INTEGER NOT NULL CHECK(fit_score BETWEEN 1 AND 10),
+            breakdown_json      TEXT NOT NULL,
+            keywords_json       TEXT NOT NULL,
+            scored_at           TEXT NOT NULL,
+            correction_json     TEXT,
+            PRIMARY KEY (job_url, version),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_job_scores_tenant_score
+        ON job_scores(tenant_id, fit_score DESC, scored_at DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_job_scores_job_version
+        ON job_scores(job_url, version DESC)
+    """)
+
+    # One-shot backfill from the legacy columns. Only fires when
+    # job_scores has no rows AND there are jobs with a legacy fit_score.
+    backfill_count = conn.execute(
+        "SELECT COUNT(*) FROM job_scores"
+    ).fetchone()[0]
+    if backfill_count == 0:
+        legacy_rows = conn.execute(
+            """
+            SELECT url, fit_score, score_reasoning, scored_at
+            FROM jobs
+            WHERE fit_score IS NOT NULL
+              AND fit_score BETWEEN 1 AND 10
+            """
+        ).fetchall()
+        if legacy_rows:
+            now = datetime.now(timezone.utc).isoformat()
+            for row in legacy_rows:
+                url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
+                fit = row["fit_score"] if isinstance(row, sqlite3.Row) else row[1]
+                reasoning = (
+                    row["score_reasoning"]
+                    if isinstance(row, sqlite3.Row)
+                    else row[2]
+                )
+                scored_at = (
+                    row["scored_at"]
+                    if isinstance(row, sqlite3.Row)
+                    else row[3]
+                )
+                breakdown_json = json.dumps(
+                    {
+                        "technical_fit": 0,
+                        "experience_fit": 0,
+                        "role_fit": 0,
+                        "reasoning": reasoning or "",
+                        "legacy": True,
+                    },
+                    sort_keys=True,
+                )
+                # Sentinel keyword keeps the canonical "MatchedKeywords is
+                # non-empty" invariant (round-1 review M1) intact for
+                # backfilled rows that pre-date keyword extraction.
+                keywords_json = json.dumps(["legacy"])
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO job_scores (
+                        job_url, version, tenant_id, fit_score,
+                        breakdown_json, keywords_json, scored_at, correction_json
+                    ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL)
+                    """,
+                    (url, int(fit), breakdown_json, keywords_json, scored_at or now),
+                )
+
+    conn.commit()
+    return ["job_scores"]
+
+
+# ---------------------------------------------------------------------------
+# job_scores read fragments — used by every selector / stat that previously
+# read bare ``jobs.fit_score``. After Phase 5 the canonical fit score lives
+# in ``job_scores`` (latest version per ``job_url``); the legacy
+# ``jobs.fit_score`` column stays as a read-only fallback for historical
+# rows that were never re-scored. ``_EFFECTIVE_FIT_SCORE`` is the COALESCE
+# expression every WHERE / ORDER BY / aggregate query should use instead of
+# bare ``fit_score`` so the worker queue selectors see new scores
+# immediately and don't re-pick already-scored jobs forever (round-1
+# review B1).
+# ---------------------------------------------------------------------------
+
+_LATEST_SCORE_JOIN: str = (
+    "LEFT JOIN ("
+    "SELECT s.job_url AS js_job_url, s.fit_score AS js_fit_score "
+    "FROM job_scores s "
+    "INNER JOIN ("
+    "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
+    ") latest ON latest.job_url = s.job_url AND latest.max_version = s.version"
+    ") js ON js.js_job_url = jobs.url"
+)
+
+_EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
+
+
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     """Return job counts by pipeline stage.
 
@@ -485,21 +610,27 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         "SELECT COUNT(*) FROM jobs WHERE detail_error IS NOT NULL"
     ).fetchone()[0]
 
-    # Scoring stage
+    # Scoring stage — round-1 review B2: read through the same job_scores
+    # LEFT JOIN that the worker queue selectors use, so dashboard stats
+    # reflect new scores written through ScoreRepository (jobs.fit_score is
+    # now NULL on the new path).
     stats["scored"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} "
+        f"WHERE {_EFFECTIVE_FIT_SCORE} IS NOT NULL"
     ).fetchone()[0]
 
     stats["unscored"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE full_description IS NOT NULL AND fit_score IS NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} "
+        f"WHERE full_description IS NOT NULL AND {_EFFECTIVE_FIT_SCORE} IS NULL"
     ).fetchone()[0]
 
-    # Score distribution
+    # Score distribution — group by the effective score so legacy and new
+    # rows fold into the same buckets.
     dist_rows = conn.execute(
-        "SELECT fit_score, COUNT(*) as cnt FROM jobs "
-        "WHERE fit_score IS NOT NULL "
-        "GROUP BY fit_score ORDER BY fit_score DESC"
+        f"SELECT {_EFFECTIVE_FIT_SCORE} AS effective_score, COUNT(*) AS cnt "
+        f"FROM jobs {_LATEST_SCORE_JOIN} "
+        f"WHERE {_EFFECTIVE_FIT_SCORE} IS NOT NULL "
+        f"GROUP BY effective_score ORDER BY effective_score DESC"
     ).fetchall()
     stats["score_distribution"] = [(row[0], row[1]) for row in dist_rows]
 
@@ -509,9 +640,9 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["untailored_eligible"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE fit_score >= 7 AND full_description IS NOT NULL "
-        "AND tailored_resume_path IS NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} "
+        f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 AND full_description IS NOT NULL "
+        f"AND tailored_resume_path IS NULL"
     ).fetchone()[0]
 
     stats["tailor_exhausted"] = conn.execute(
@@ -629,11 +760,17 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     if conn is None:
         conn = get_connection()
 
+    # Round-1 review B1: every predicate that historically read bare
+    # ``fit_score`` now reads through ``_EFFECTIVE_FIT_SCORE`` (COALESCE
+    # over the latest job_scores row + legacy column). New scores written
+    # via ``ScoreRepository.save`` leave ``jobs.fit_score`` NULL, so without
+    # this LEFT JOIN ``pending_score`` would loop forever and
+    # ``pending_tailor`` / ``pending_cover`` would starve.
     pending_tailor_where = (
-        "fit_score >= ? AND full_description IS NOT NULL "
+        f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
         "AND (tailored_resume_path IS NOT NULL OR COALESCE(tailor_attempts, 0) < 5)"
         if retailor else
-        "fit_score >= ? AND full_description IS NOT NULL "
+        f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
         "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
     )
 
@@ -641,11 +778,11 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         "discovered": "1=1",
         "pending_detail": "detail_scraped_at IS NULL",
         "enriched": "full_description IS NOT NULL",
-        "pending_score": "full_description IS NOT NULL AND fit_score IS NULL",
-        "scored": "fit_score IS NOT NULL",
+        "pending_score": f"full_description IS NOT NULL AND {_EFFECTIVE_FIT_SCORE} IS NULL",
+        "scored": f"{_EFFECTIVE_FIT_SCORE} IS NOT NULL",
         "pending_tailor": pending_tailor_where,
         "pending_cover": (
-            "fit_score >= ? AND full_description IS NOT NULL "
+            f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
             "AND tailored_resume_path IS NOT NULL AND tailored_resume_path != '' "
             "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < 5"
@@ -666,19 +803,46 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     elif "?" in where:
         params.append(7)  # default min_score
 
-    if min_score is not None and "fit_score" not in where and stage in ("scored", "tailored", "applied"):
-        where += " AND fit_score >= ?"
+    # Optional post-filter — also routed through the join so it sees new
+    # rows. Triggered by callers passing ``min_score=N`` for the
+    # "scored / tailored / applied" stages.
+    if (
+        min_score is not None
+        and stage in ("scored", "tailored", "applied")
+        and _EFFECTIVE_FIT_SCORE not in where
+    ):
+        where += f" AND {_EFFECTIVE_FIT_SCORE} >= ?"
         params.append(min_score)
 
-    query = f"SELECT * FROM jobs WHERE {where} ORDER BY fit_score DESC NULLS LAST, discovered_at DESC"
+    # ``SELECT jobs.*`` keeps the legacy callers' "give me back a dict
+    # shaped like the jobs row" contract; we additionally surface
+    # ``js_fit_score`` so downstream readers (e.g. ``apply/launcher.py``)
+    # can prefer the canonical score over the legacy column without an
+    # extra round-trip.
+    query = (
+        f"SELECT jobs.*, js.js_fit_score AS js_fit_score "
+        f"FROM jobs {_LATEST_SCORE_JOIN} "
+        f"WHERE {where} "
+        f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
+    )
     if limit > 0:
         query += " LIMIT ?"
         params.append(limit)
 
     rows = conn.execute(query, params).fetchall()
 
-    # Convert sqlite3.Row objects to dicts
-    if rows:
-        columns = rows[0].keys()
-        return [dict(zip(columns, row)) for row in rows]
-    return []
+    # Convert sqlite3.Row objects to dicts. We promote ``js_fit_score``
+    # into the legacy ``fit_score`` slot so downstream consumers that
+    # haven't been ported yet (and read ``job["fit_score"]``) see the
+    # canonical value rather than NULL.
+    if not rows:
+        return []
+    columns = rows[0].keys()
+    out: list[dict] = []
+    for row in rows:
+        record = dict(zip(columns, row))
+        js_value = record.pop("js_fit_score", None)
+        if js_value is not None:
+            record["fit_score"] = js_value
+        out.append(record)
+    return out

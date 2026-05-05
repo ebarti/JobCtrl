@@ -1,126 +1,157 @@
-"""Job fit scoring: LLM-powered evaluation of candidate-job match quality.
+"""Job fit scoring runner — wires the Scoring use case into the worker.
 
-Scores jobs on a 1-10 scale by comparing the user's resume against each
-job description. All personal data is loaded at runtime from the user's
-profile and resume file.
+See ddd-target.md §3.4 / §4.4 / §5.4. After Phase 5 the scorer is a thin
+adapter around ``ScoreJobUseCase`` (`domain/scoring/use_cases.py`):
+
+  * Domain logic (parsing, aggregate construction, version bumping) lives
+    in the use case + ``ScoreParser`` / ``JobScore``.
+  * Persistence goes through ``ScoreRepository`` — the legacy
+    ``UPDATE jobs SET fit_score = …`` writes are GONE per the
+    no-strangler directive. Readers fall back to ``jobs.fit_score`` only
+    for historical rows that were never re-scored after the backfill.
+  * The LLM call is mediated by ``LlmPort`` so the cloud LLM gateway
+    swap-out (Phase 9) is a constructor-only change.
+
+The module preserves the public surface ``run_scoring`` and ``score_job``
+so existing callers (``pipeline.py``) continue to work; their internals
+now run on top of the new use case.
 """
 
+from __future__ import annotations
+
 import logging
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from typing import Any
 
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage
-from jobhunter.llm import get_client
-from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
+from jobhunter.domain.ports.events import EventPublisher
+from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.domain.scoring.use_cases import (
+    ScoreJobOutcome,
+    ScoreJobUseCase,
+)
+from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
+from jobhunter.infrastructure.llm import get_llm_adapter
+from jobhunter.infrastructure.profile.factory import get_profile_repository
+from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.state import (
+    ensure_job_stage_rows,
+    record_job_event,
+    set_stage_state,
+    utc_now,
+)
 
 log = logging.getLogger(__name__)
 
 
-# ── Scoring Prompt ────────────────────────────────────────────────────────
-
-SCORE_PROMPT = """You are a job fit evaluator. Given a candidate's resume and a job description, score how well the candidate fits the role.
-
-SCORING CRITERIA:
-- 9-10: Perfect match. Candidate has direct experience in nearly all required skills and qualifications.
-- 7-8: Strong match. Candidate has most required skills, minor gaps easily bridged.
-- 5-6: Moderate match. Candidate has some relevant skills but missing key requirements.
-- 3-4: Weak match. Significant skill gaps, would need substantial ramp-up.
-- 1-2: Poor match. Completely different field or experience level.
-
-IMPORTANT FACTORS:
-- Weight technical skills heavily (programming languages, frameworks, tools)
-- Consider transferable experience (automation, scripting, API work)
-- Factor in the candidate's project experience
-- Be realistic about experience level vs. job requirements (years of experience, seniority)
-
-RESPOND IN EXACTLY THIS FORMAT (no other text):
-SCORE: [1-10]
-KEYWORDS: [comma-separated ATS keywords from the job description that match or could match the candidate]
-REASONING: [2-3 sentences explaining the score]"""
+# ---------------------------------------------------------------------------
+# Use-case construction (DI seam)
+# ---------------------------------------------------------------------------
 
 
-def _parse_score_response(response: str) -> dict:
-    """Parse the LLM's score response into structured data.
+def _build_use_case(
+    *,
+    repository: ScoreRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+) -> ScoreJobUseCase:
+    """Construct a ``ScoreJobUseCase`` using local-mode defaults.
 
-    Args:
-        response: Raw LLM response text.
-
-    Returns:
-        {"score": int, "keywords": str, "reasoning": str}
+    The defaults are deliberately lazy — tests pass explicit fakes for
+    every argument, so production code avoids any module-level singletons
+    until first use.
     """
-    score = 0
-    keywords = ""
-    reasoning = response
-
-    for line in response.split("\n"):
-        line = line.strip()
-        if line.startswith("SCORE:"):
-            try:
-                score = int(re.search(r"\d+", line).group())
-                score = max(1, min(10, score))
-            except (AttributeError, ValueError):
-                score = 0
-        elif line.startswith("KEYWORDS:"):
-            keywords = line.replace("KEYWORDS:", "").strip()
-        elif line.startswith("REASONING:"):
-            reasoning = line.replace("REASONING:", "").strip()
-
-    return {"score": score, "keywords": keywords, "reasoning": reasoning}
+    if repository is None:
+        repository = SqliteScoreRepository(get_connection())
+    if llm_port is None:
+        llm_port = get_llm_adapter()
+    return ScoreJobUseCase(repository=repository, llm=llm_port, publisher=publisher)
 
 
-def score_job(resume_text: str, job: dict) -> dict:
-    """Score a single job against the resume.
+# ---------------------------------------------------------------------------
+# Public scoring helpers
+# ---------------------------------------------------------------------------
 
-    Args:
-        resume_text: The candidate's full resume text.
-        job: Job dict with keys: title, site, location, full_description.
 
-    Returns:
-        {"score": int, "keywords": str, "reasoning": str}
+def score_job(
+    profile_snapshot: ProfileSnapshot,
+    job: dict,
+    *,
+    use_case: ScoreJobUseCase | None = None,
+    repository: ScoreRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    resume_text: str | None = None,
+) -> ScoreJobOutcome:
+    """Score a single job and persist the result.
+
+    The signature changed in Phase 5: the first positional argument is now
+    a ``ProfileSnapshot`` (was ``resume_text: str``). Callers that still
+    have the raw resume text on hand can pass it via ``resume_text=…`` —
+    the use case will use it instead of the snapshot's baseline.
     """
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
+    if use_case is None:
+        use_case = _build_use_case(
+            repository=repository,
+            llm_port=llm_port,
+            publisher=publisher,
+        )
+    return use_case.score(
+        job=job,
+        profile_snapshot=profile_snapshot,
+        tenant_id=tenant_id,
+        resume_text=resume_text,
     )
 
-    messages = [
-        {"role": "system", "content": SCORE_PROMPT},
-        {"role": "user", "content": f"RESUME:\n{resume_text}\n\n---\n\nJOB POSTING:\n{job_text}"},
-    ]
 
-    try:
-        client = get_client()
-        response = client.chat(messages, max_tokens=512, temperature=0.2)
-        return _parse_score_response(response)
-    except Exception as e:
-        log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
-        return {"score": 0, "keywords": "", "reasoning": f"LLM error: {e}"}
-
-
-def run_scoring(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict:
+def run_scoring(
+    limit: int = 0,
+    rescore: bool = False,
+    workers: int = 1,
+    *,
+    repository: ScoreRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    profile_snapshot: ProfileSnapshot | None = None,
+    resume_text: str | None = None,
+) -> dict:
     """Score unscored jobs that have full descriptions.
 
-    Args:
-        limit: Maximum number of jobs to score in this run.
-        rescore: If True, re-score all jobs (not just unscored ones).
-        workers: Number of parallel LLM workers.
-
-    Returns:
-        {"scored": int, "errors": int, "elapsed": float, "distribution": list}
+    Each job is processed inside a ``ThreadPoolExecutor`` task; the LLM
+    call happens in the worker thread, then results are written back to
+    the repository on the main thread (sqlite connections are not
+    thread-safe across statements). Stage state and events still flow
+    through ``state.py`` so the dashboard observability remains intact.
     """
-    resume_text = RESUME_PATH.read_text(encoding="utf-8")
+    if profile_snapshot is None:
+        profile_snapshot = get_profile_repository().load_snapshot(tenant_id)
+    if resume_text is None:
+        try:
+            resume_text = RESUME_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            resume_text = ""
+
     conn = get_connection()
+    if repository is None:
+        repository = SqliteScoreRepository(conn)
+
+    use_case = _build_use_case(
+        repository=repository,
+        llm_port=llm_port,
+        publisher=publisher,
+    )
 
     if rescore:
         query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
         if limit > 0:
             query += f" LIMIT {limit}"
-        jobs = conn.execute(query).fetchall()
+        rows = conn.execute(query).fetchall()
+        jobs = [dict(zip(row.keys(), row)) for row in rows]
     else:
         jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=limit)
 
@@ -128,111 +159,151 @@ def run_scoring(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict
         log.info("No unscored jobs with descriptions found.")
         return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
 
-    # Convert sqlite3.Row to dicts if needed
-    if jobs and not isinstance(jobs[0], dict):
-        columns = jobs[0].keys()
-        jobs = [dict(zip(columns, row)) for row in jobs]
-
     worker_count = max(1, workers)
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
+
+    started_ats: dict[str, str] = {}
+    for job in jobs:
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
+        started_at = utc_now()
+        started_ats[job["url"]] = started_at
+        set_stage_state(conn, job["url"], "score", "running", started_at=started_at)
+        record_job_event(conn, job["url"], "score", "StageStarted", message="Scoring started")
+
     t0 = time.time()
+    results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     errors = 0
-    results: list[dict] = []
-    future_to_job: dict = {}
 
+    # Worker threads run the LLM step only — the SQLite connection is not
+    # safe to share across threads. Persistence happens below on the main
+    # thread once each parse comes back.
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        for job in jobs:
-            ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
-            started_at = utc_now()
-            job["_score_started_at"] = started_at
-            set_stage_state(conn, job["url"], "score", "running", started_at=started_at)
-            record_job_event(conn, job["url"], "score", "StageStarted", message="Scoring started")
-            future = executor.submit(score_job, resume_text, job)
-            future_to_job[future] = job
-
+        future_to_job = {
+            executor.submit(
+                use_case.compute,
+                job=job,
+                profile_snapshot=profile_snapshot,
+                resume_text=resume_text,
+            ): job
+            for job in jobs
+        }
         for completed, future in enumerate(as_completed(future_to_job), start=1):
             job = future_to_job[future]
             try:
-                result = future.result()
-            except Exception as e:
-                log.error("Unhandled scoring error for '%s': %s", job.get("title", "?"), e)
-                result = {"score": 0, "keywords": "", "reasoning": f"Unhandled error: {e}"}
+                parse = future.result()
+            except Exception as exc:  # noqa: BLE001 — recorded as a stage failure below
+                log.error("Unhandled scoring error for %r: %s", job.get("title", "?"), exc)
+                outcome = ScoreJobOutcome(ok=False, score=None, error=f"Unhandled error: {exc}")
+            else:
+                try:
+                    outcome = use_case.persist_outcome(
+                        job=job, parse=parse, tenant_id=tenant_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 — surface as a stage failure
+                    log.error("Score persistence failed for %r: %s", job.get("title", "?"), exc)
+                    outcome = ScoreJobOutcome(
+                        ok=False,
+                        score=None,
+                        error=f"Score persistence failed: {exc}",
+                    )
 
-            result["url"] = job["url"]
-            if result["score"] == 0:
+            results.append((job, outcome))
+            if not outcome.ok:
                 errors += 1
-
-            results.append(result)
-
+            score_value = outcome.score.fit_score.value if outcome.ok and outcome.score else 0
             log.info(
                 "[%d/%d] score=%d  %s",
-                completed, len(jobs), result["score"], job.get("title", "?")[:60],
+                completed, len(jobs), score_value, str(job.get("title", "?"))[:60],
             )
 
-    # Write scores to DB
-    now = datetime.now(timezone.utc).isoformat()
-    for r in results:
-        conn.execute(
-            "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
-            (r["score"], f"{r['keywords']}\n{r['reasoning']}", now, r["url"]),
-        )
-        job = next((item for item in jobs if item["url"] == r["url"]), {})
-        if r["score"] == 0:
+    finished_at = utc_now()
+    for job, outcome in results:
+        url = job["url"]
+        if outcome.ok and outcome.score is not None:
             set_stage_state(
                 conn,
-                r["url"],
+                url,
                 "score",
-                "failed",
+                "succeeded",
                 attempt_count=1,
-                started_at=job.get("_score_started_at"),
-                finished_at=now,
-                error_code="SCORE_FAILED",
-                error_message=r["reasoning"] or "Scoring failed",
-                retryable=True,
-                next_action=f"jobhunter retry score {r['url']}",
+                started_at=started_ats.get(url),
+                finished_at=finished_at,
             )
             record_job_event(
                 conn,
-                r["url"],
+                url,
                 "score",
-                "StageFailed",
-                level="error",
-                message=r["reasoning"] or "Scoring failed",
+                "StageCompleted",
+                message=f"Fit score {outcome.score.fit_score.value}/10",
+                payload={"keywords": list(outcome.score.matched_keywords)},
             )
         else:
             set_stage_state(
                 conn,
-                r["url"],
+                url,
                 "score",
-                "succeeded",
+                "failed",
                 attempt_count=1,
-                started_at=job.get("_score_started_at"),
-                finished_at=now,
+                started_at=started_ats.get(url),
+                finished_at=finished_at,
+                error_code="SCORE_FAILED",
+                error_message=outcome.error or "Scoring failed",
+                retryable=True,
+                next_action=f"jobhunter retry score {url}",
             )
             record_job_event(
                 conn,
-                r["url"],
+                url,
                 "score",
-                "StageCompleted",
-                message=f"Fit score {r['score']}/10",
-                payload={"keywords": r["keywords"]},
+                "StageFailed",
+                level="error",
+                message=outcome.error or "Scoring failed",
             )
     conn.commit()
 
     elapsed = time.time() - t0
-    log.info("Done: %d scored in %.1fs (%.1f jobs/sec)", len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0)
+    log.info(
+        "Done: %d scored in %.1fs (%.1f jobs/sec)",
+        len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0,
+    )
 
-    # Score distribution
-    dist = conn.execute("""
-        SELECT fit_score, COUNT(*) FROM jobs
-        WHERE fit_score IS NOT NULL
-        GROUP BY fit_score ORDER BY fit_score DESC
-    """).fetchall()
-    distribution = [(row[0], row[1]) for row in dist]
-
+    distribution = _score_distribution(repository, tenant_id)
     return {
         "scored": len(results),
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,
     }
+
+
+# ---------------------------------------------------------------------------
+# Internals
+# ---------------------------------------------------------------------------
+
+
+def _score_distribution(
+    repository: ScoreRepository,
+    tenant_id: TenantId,
+) -> list[tuple[int, int]]:
+    """Return a (fit_score, count) histogram from the repository.
+
+    Reads through the repository's ``list_by_score_range`` so the read
+    path stays portable between local and cloud adapters. Bucket-zero is
+    intentionally omitted — ``FitScore`` cannot be zero.
+    """
+    counts: dict[int, int] = {}
+    for score in repository.list_by_score_range(tenant_id, min_score=1, max_score=10):
+        counts[score.fit_score.value] = counts.get(score.fit_score.value, 0) + 1
+    # Match the legacy distribution shape: highest score first.
+    return sorted(counts.items(), key=lambda kv: kv[0], reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Re-exports for backwards-compatible imports
+# ---------------------------------------------------------------------------
+
+
+# Older test fixtures and pipeline modules may still import these symbols
+# directly; keep them visible so the refactor doesn't break unrelated
+# callers. The canonical home is the use case module.
+from jobhunter.domain.scoring.use_cases import SCORE_PROMPT  # noqa: E402,F401

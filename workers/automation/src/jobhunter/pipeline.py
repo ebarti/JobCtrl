@@ -23,6 +23,7 @@ from rich.table import Table
 
 from jobhunter import config
 from jobhunter.config import load_env, ensure_dirs
+from jobhunter import database as db_module
 from jobhunter.database import init_db, get_connection, get_stats
 
 log = logging.getLogger(__name__)
@@ -279,18 +280,27 @@ class _StageTracker:
             return dict(self._results)
 
 
-# SQL to count pending work for each stage
+# SQL to count pending work for each stage. Round-1 review B1: every
+# selector that previously read bare ``fit_score`` now goes through the
+# shared ``database._LATEST_SCORE_JOIN`` + ``_EFFECTIVE_FIT_SCORE``
+# expression so new scores written via ``ScoreRepository.save`` are
+# visible immediately (jobs.fit_score is NULL on the new write path).
 _PENDING_SQL: dict[str, str] = {
     "enrich": "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL",
-    "score":  "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL AND fit_score IS NULL",
+    "score": (
+        f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+        f"WHERE full_description IS NOT NULL AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL"
+    ),
     "tailor": (
-        "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
+        f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+        f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         "AND full_description IS NOT NULL "
         "AND tailored_resume_path IS NULL "
         "AND COALESCE(tailor_attempts, 0) < 5"
     ),
     "cover": (
-        "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
+        f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+        f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         "AND full_description IS NOT NULL "
         "AND tailored_resume_path IS NOT NULL AND tailored_resume_path != '' "
         "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
@@ -311,13 +321,16 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
     if stage == "tailor":
         conn = get_connection()
         where = (
-            "fit_score >= ? AND full_description IS NOT NULL "
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
             "AND (tailored_resume_path IS NOT NULL OR COALESCE(tailor_attempts, 0) < 5)"
             if retailor else
-            "fit_score >= ? AND full_description IS NOT NULL "
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
             "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
         )
-        return conn.execute(f"SELECT COUNT(*) FROM jobs WHERE {where}", (min_score,)).fetchone()[0]
+        return conn.execute(
+            f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} WHERE {where}",
+            (min_score,),
+        ).fetchone()[0]
 
     sql = _PENDING_SQL.get(stage)
     if sql is None:
@@ -823,26 +836,33 @@ def run_single_job(
         snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
         resume_text = RESUME_PATH.read_text(encoding="utf-8")
 
-        # Score if not yet scored
-        if job.get("fit_score") is None:
+        # Score if not yet scored. Phase 5 (S-18): scoring goes through the
+        # ScoreRepository — no more inline UPDATE jobs SET fit_score writes.
+        from jobhunter.domain.identifiers import JobId
+        from jobhunter.infrastructure.scoring import SqliteScoreRepository
+
+        score_repo = SqliteScoreRepository(conn)
+        existing_score = score_repo.load(LOCAL_TENANT, JobId(str(url)))
+        if existing_score is None:
             console.print("  [cyan]Scoring job...[/cyan]")
             if not dry_run:
                 from jobhunter.scoring.scorer import score_job
-                score_result = score_job(resume_text, job)
-                now = datetime.now(timezone.utc).isoformat()
-                reasoning = (
-                    f'{score_result.get("keywords", "")}\n'
-                    f'{score_result.get("reasoning", "")}'
+                outcome = score_job(
+                    snapshot,
+                    job,
+                    repository=score_repo,
+                    resume_text=resume_text,
                 )
-                conn.execute(
-                    "UPDATE jobs SET fit_score=?, score_reasoning=?, scored_at=? WHERE url=?",
-                    (score_result["score"], reasoning, now, url),
-                )
-                conn.commit()
-                job["fit_score"] = score_result["score"]
-                console.print(f"  Score: [bold]{score_result['score']}[/bold]/10")
+                if outcome.ok and outcome.score is not None:
+                    job["fit_score"] = outcome.score.fit_score.value
+                    console.print(f"  Score: [bold]{outcome.score.fit_score.value}[/bold]/10")
+                else:
+                    result["error"] = outcome.error or "Scoring failed"
+                    return result
             else:
                 console.print("  [dim]DRY RUN — would score job[/dim]")
+        else:
+            job["fit_score"] = existing_score.fit_score.value
 
         # Tailor resume
         console.print("  [cyan]Tailoring resume...[/cyan]")
