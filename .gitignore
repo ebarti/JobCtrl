@@ -49,5 +49,6 @@ Thumbs.db
 
 # Claude Code
 .claude/
+.codex/
 .venv/
 .worktrees/
