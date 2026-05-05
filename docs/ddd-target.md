@@ -70,12 +70,17 @@ This architecture follows **evolutionary architecture** as the meta-principle.
 The cloud target is non-negotiable, but the architecture lets us walk there one
 well-defined step at a time — it does not arrive on day one.
 
+> Evolutionary architecture means cloud adapters are named-not-built; it does
+> NOT mean preserving legacy code paths. Migrations within the codebase are
+> clean replacements: the new implementation lands in the same change that
+> deletes the old one.
+
 | Principle | How we apply it |
 |---|---|
 | **Name the evolution, do not pre-build it** | Every driven port names its cloud adapter and technology. No cloud adapter is implemented until the evolution trigger fires. Local adapters stay minimal. |
 | **Local-mode adapters stay simple** | Local adapters do not carry hosted concerns (auth context propagation, distributed tracing, tenant enforcement). They accept `TenantId` as a parameter but ignore it. Cloud machinery is absent from local code. |
 | **Fitness functions trigger evolution** | Every major design choice has a concrete, testable trigger (Section 9.4). "When concurrent users > 1" is a fitness function; "when we go to the cloud" is not. |
-| **Strangler-friendly migrations** | Each bounded context's adapters can be swapped independently. Discovery can migrate to Postgres while Scoring remains on SQLite. Section 9.5 describes context-by-context migration. |
+| **Independent context evolution** | Each bounded context's adapters can be swapped independently. Discovery can migrate to Postgres while Scoring remains on SQLite. Section 9.5 describes context-by-context cloud migration order. |
 | **Deliberate trade-offs** | Where we choose local simplicity over cloud-ready flexibility, we name it as a **Trade-off** with the upgrade path documented. We do not pretend the local choice IS the cloud choice. |
 
 ### Data-Orientation (Hickey / Wlaschin)
@@ -896,13 +901,6 @@ StageState =
   transition event, produces new state or rejects the transition. Pure function.
 - `PipelineScheduler` — given all job stage states and a pipeline run request,
   determines which jobs need processing at which stage. Pure function.
-- `LegacyStateDeriver` — (temporary, migration-period only) derives stage states
-  from legacy `jobs` table columns. **Removal criterion:** When a migration
-  query confirms zero jobs have legacy-only state (i.e.,
-  `SELECT COUNT(*) FROM jobs WHERE url NOT IN (SELECT DISTINCT job_url FROM job_stage_states)` returns 0),
-  AND the legacy enrichment/scoring/tailor/cover/apply columns have been dropped
-  from the `jobs` table, the `LegacyStateDeriver` can be deleted. Until then
-  it runs on read to fill gaps.
 
 **Orchestration guard against premature processing:** Processing contexts
 (Scoring, Materials, etc.) do not independently decide to process jobs. They
@@ -1482,10 +1480,9 @@ The current wide `jobs` table is narrowed in the target:
 | `cover_letter_path`, `cover_letter_at`, `cover_attempts` | Materials Generation | `job_materials` + `job_artifacts` |
 | `applied_at`, `apply_status`, `apply_error`, `apply_attempts`, `agent_id`, etc. | Apply Automation | `apply_runs` (existing) |
 
-The migration creates new tables and backfills them from the wide `jobs` table.
-The legacy columns are retained (read-only) during the transition period. The
-`LegacyStateDeriver` in Pipeline Orchestration handles backward compatibility
-until all data is migrated.
+The migration creates new tables, backfills them from the wide `jobs` table in
+the same change, and drops the legacy columns. Each context's extraction PR
+migrates its data and removes the corresponding `jobs` columns in one step.
 
 ### 7.4 Current Tables to Aggregates Mapping
 
@@ -1842,12 +1839,13 @@ cloud" (circular), but measurable conditions.
 | No audit log | Postgres `audit_events` + CloudWatch | First compliance requirement (SOC2, GDPR data access log) | The `AuditSink` port is a no-op locally. |
 | `pdflatex` subprocess | Tectonic / Typst in container | Rendering spike conclusion **OR** cloud deployment (TeX Live is 4 GB, too large for containers) | `PdfRendererPort` absorbs any engine. |
 
-### 9.5 Strangler-Friendly Context Migration
+### 9.5 Cloud Migration Order
 
-Each bounded context's adapters can be swapped **independently** without
-freezing the rest of the system. This is critical because the current
-architecture shares one SQLite file across all contexts — the migration must
-break this shared-state coupling context by context.
+When the cloud trigger fires (per §9.4), bounded contexts migrate to their
+cloud adapters in a defined order. Migration is **incremental for
+reviewability**, not for parallel-path safety: JobHunter is a single-user
+product, so each context cutover is "stop the worker, migrate data, restart
+on the new adapter." There is no parallel old/new traffic.
 
 **Migration order (recommended):**
 
@@ -1855,36 +1853,29 @@ break this shared-state coupling context by context.
    well-structured and maps cleanly to a standalone repository. Migrate this
    context to Postgres first to establish the RDS infrastructure.
 
-2. **Scoring** — Second: extract scoring columns from the wide `jobs` table
-   into `job_scores` (new table). Scoring context reads from its own repository;
-   Operations projection reads from both old and new tables during transition.
+2. **Scoring** — Second: move `job_scores` data into Postgres. Scoring context
+   reads and writes Postgres exclusively after the cutover.
 
-3. **Materials Generation** — Third: similar extraction of tailor/cover/pdf
-   columns into `job_materials` + enriched `job_artifacts`. Artifact storage
-   swaps from local filesystem to S3.
+3. **Materials Generation** — Third: move `job_materials` and `job_artifacts`
+   into Postgres. Artifact storage swaps from local filesystem to S3 in the
+   same change.
 
-4. **Job Enrichment** — Fourth: extract enrichment columns into
-   `job_enrichments`. Detail fetcher port swaps to Browserbase.
+4. **Job Enrichment** — Fourth: move `job_enrichments` into Postgres. Detail
+   fetcher port swaps to Browserbase.
 
-5. **Job Discovery** — Fifth: narrow the `jobs` table to discovery-only columns.
-   At this point the wide table is fully decomposed.
+5. **Job Discovery** — Fifth: move the narrowed `jobs` table into Postgres.
 
-6. **Apply Automation** — Sixth: `apply_runs` + `apply_run_events` are already
-   separate tables. Browser port and agent port swap to cloud adapters.
+6. **Apply Automation** — Sixth: move `apply_runs` + `apply_run_events` into
+   Postgres. Browser port and agent port swap to cloud adapters.
 
 7. **Operations** — Last: switches from SQLite read model to Postgres read
    replica once all write-side contexts are on Postgres.
 
-**During partial migration:** Contexts that have migrated to Postgres publish
-events to both the in-process bus (for local-mode contexts still on SQLite)
-and the SQS outbox (for cloud-mode consumers). This dual-publish pattern is
-temporary and removed once all contexts are migrated. The `EventPublisher`
-port's adapter handles this transparently.
-
-**Rollback safety:** Each context migration is a separate deployment. If
-Scoring on Postgres shows issues, it can be rolled back to SQLite by
-switching the adapter config. The repository port interface is unchanged;
-only the adapter binding changes.
+**Per-context cutover:** Each context migration is a single deployment that
+stops the worker process, migrates data with a one-shot script, and restarts
+on the new adapter. The repository port interface is unchanged; only the
+adapter binding changes. There is no dual-publish or dual-write — this is a
+single-user system.
 
 ---
 
@@ -1906,10 +1897,11 @@ only the adapter binding changes.
    Monitor for `SQLITE_BUSY` errors.
 
 3. **Legacy data migration complexity.** The wide `jobs` table has ~800+ days of
-   production data. Backfilling new tables from legacy columns will require
-   careful handling of NULL semantics, inconsistent timestamps, and partial
-   state. **Mitigation:** The `LegacyStateDeriver` serves as the migration
-   bridge; it can run incrementally and idempotently.
+   data. Backfilling new tables from legacy columns will require careful
+   handling of NULL semantics, inconsistent timestamps, and partial state.
+   **Mitigation:** Each context's extraction PR ships a one-shot, idempotent
+   backfill script that runs against a staging database first; the same script
+   then runs in the cutover PR before the legacy columns are dropped.
 
 4. **In-process event bus reliability.** The synchronous in-process event bus
    means a crash between "command succeeded" and "projection updated" leaves

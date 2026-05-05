@@ -7,7 +7,11 @@
 This plan describes the **canonical migration path** from JobHunter's current
 architecture to the target-state DDD + Hexagonal Architecture defined in
 `docs/ddd-target.md`. It sequences every structural change into independently
-shippable PRs that never break the local product.
+shippable PRs that ship green end-to-end after each merge.
+
+JobHunter has a single user; migrations are clean rip-and-replace. Steps remove
+the legacy code in the same PR that introduces the replacement. No dual-writes,
+no soak periods, no compatibility shims.
 
 The plan covers:
 
@@ -17,8 +21,9 @@ The plan covers:
   Automation, and Operations / Read-Side.
 - Domain event infrastructure and the in-process event bus.
 - Repository ports and SQLite adapters for every aggregate.
-- New normalized tables (`job_scores`, `job_materials`, `job_enrichments`) with
-  backfill from legacy `jobs` columns.
+- New normalized tables (`job_scores`, `job_materials`, `job_enrichments`)
+  populated from the legacy `jobs` columns, with the legacy columns dropped in
+  the same step.
 - The JSON-RPC 2.0 integration protocol between the TS API and Python worker.
 - TS API hosting simple state-transition commands directly (§6.8).
 - TS API read-model projection replacement.
@@ -28,7 +33,7 @@ The plan covers:
 - **Cloud adapter implementations.** No Postgres, S3, SQS, Browserbase,
   Temporal, Auth0, Stripe, or Secrets Manager code is written. Only port
   interfaces are defined; cloud adapters are named and documented for future
-  implementation (see Section 8).
+  implementation (see Section 7).
 - **Multi-tenant enforcement.** `TenantId` lands as a domain type with a
   `"local"` singleton. Isolation policies, RLS, and auth middleware are
   deferred.
@@ -36,7 +41,7 @@ The plan covers:
   uses Zod schemas (TS) and frozen dataclasses (Python) for the local-first
   phase. A CI compatibility check validates structural parity between the two.
   TypeSpec adoption is triggered when the CI check fails frequently enough to
-  justify single-source generation (see Section 8).
+  justify single-source generation (see Section 7).
 - **Resume rendering spike.** The `PdfRendererPort` is introduced, but the
   adapter stays `LatexPdfAdapter` (current `pdflatex`). The spike comparing
   Tectonic/Typst/HTML-CSS is a separate backlog item.
@@ -48,28 +53,32 @@ The plan covers:
 
 ## 2. Plan Principles
 
-1. **Evolutionary architecture.** The target document is the contract; this
-   plan walks there one PR at a time (§2, Evolutionary Architecture).
-2. **Strangler pattern.** Replace old code path by path while the old path
-   keeps serving. Legacy columns, legacy materialization, and legacy imports
-   remain readable until their explicit removal step.
-3. **Ship-each-PR-green.** Every step is independently shippable. The system
+JobHunter has a single user; migrations are clean rip-and-replace. Steps remove
+the legacy code in the same PR that introduces the replacement. No dual-writes,
+no soak periods, no compatibility shims.
+
+1. **Ship-each-PR-green.** Every step is independently shippable. The system
    works end-to-end after every merge. `pnpm test`, `pytest`, and the
    `docs/local-reliability-qa.md` matrix never regress.
-4. **No big-bang cutover.** No step requires coordinated changes across more
-   than one bounded context. New tables coexist with legacy columns.
-5. **Target as contract.** Every step cites the target section it advances.
+2. **One aggregate context per PR.** No step requires coordinated changes
+   across more than one bounded context. Each context's extraction lands in a
+   single PR that introduces the new aggregate, repository, ports, and removes
+   the legacy code path it supersedes.
+3. **Evolutionary architecture (cloud).** Cloud adapters are named and
+   documented per `docs/ddd-target.md` §9.4 evolution triggers, but not built
+   in this plan. The architecture supports later substitution without churn.
+4. **Target as contract.** Every step cites the target section it advances.
    Steps that supersede existing decisions in `docs/decisions.md` call it out.
-6. **Local-first value.** Each step is justified by today's value (correctness,
-   simplicity, testability, parity with target). Cloud machinery is not imported.
-7. **Compatibility preservation.** Per AGENTS.md, existing compatibility
-   behavior is preserved unless explicitly authorized. The legacy `jobs` table,
-   CLI surface, API, and UI keep working through every step.
-8. **One aggregate per transaction.** Per §8.1, each command modifies exactly
+5. **AGENTS.md PR conventions still in force.** Small reviewable PRs,
+   conventional commits, doc updates per surface, dedicated worktrees per
+   step. The "no compatibility removal" rule from AGENTS.md is waived for
+   this plan: every step is explicitly authorized to delete the code it
+   replaces.
+6. **One aggregate per transaction.** Per §8.1, each command modifies exactly
    one aggregate in a single DB transaction. Cross-aggregate consistency uses
    domain events dispatched after the transaction commits. Every step that
    introduces new write paths must honor this rule.
-9. **Idempotent command handlers.** Per §8.2, every stage command, event
+7. **Idempotent command handlers.** Per §8.2, every stage command, event
    handler, and apply run is idempotent. Steps that add new handlers must
    include deduplication logic (attempt number, event ID, or run ID).
 
@@ -108,7 +117,7 @@ Before Step S-01 begins:
 |---|---|
 | **Theme** | Formalize the stage state machine as a pure function and extract the first repository port. Pipeline Orchestration is the "spine" every other context depends on. |
 | **Target sections** | §3.7, §4.7, §5.7, §8.5, §7.4. |
-| **Exit criteria** | `StageStateMachine` has dedicated unit tests covering all transitions from §8.5. `PipelineStateRepository` port + SQLite adapter extracted. `Queued` and `Canceled` states added. Legacy derivation still works. All existing state tests pass. |
+| **Exit criteria** | `StageStateMachine` has dedicated unit tests covering all transitions from §8.5. `PipelineStateRepository` port + SQLite adapter extracted. `Queued` and `Canceled` states added. All existing state tests pass. |
 | **Effort** | Medium — refactors `state.py` (~815 LOC) into domain types + repository + ACL. |
 | **Dependencies** | Phase 1 (shared types). |
 
@@ -118,7 +127,7 @@ Before Step S-01 begins:
 |---|---|
 | **Theme** | Stand up the three infrastructure pillars that all subsequent context extraction depends on: (1) the in-process event bus, (2) the JSON-RPC typed protocol between TS and Python, (3) TS API hosting simple commands directly via the shared state machine. This front-loads the cross-process integration contract so that context-specific phases can wire into an established backbone. |
 | **Target sections** | §6.1–§6.4 (event bus), §6.5 (JSON-RPC protocol), §6.8 (TS-hosted commands). |
-| **Exit criteria** | Events published through `EventPublisher` port. `job_events.event_type` standardized to domain event names (strangler dual-write with old names). Event watermark stub for projection replay. `jobhunter rpc` subcommand reads JSON-RPC from stdin/stdout. TS API performs `resetJobStage`, `markJobApplied`, `markJobSkipped` via `StageStateMachine` from `@jobhunter/domain-types` — no Python roundtrip. |
+| **Exit criteria** | Events published through `EventPublisher` port. `job_events.event_type` migrated in-place to PascalCase domain event names. Event watermark stub for projection replay. `jobhunter rpc` subcommand reads JSON-RPC from stdin/stdout. TS API performs `resetJobStage`, `markJobApplied`, `markJobSkipped` via `StageStateMachine` from `@jobhunter/domain-types` — no Python roundtrip. |
 | **Effort** | Medium — new infrastructure code, JSON-RPC server, TS write-model rewiring. |
 | **Dependencies** | Phase 1 (event base types), Phase 2 (stage event types, state machine). |
 
@@ -138,7 +147,7 @@ Before Step S-01 begins:
 |---|---|
 | **Theme** | Separate scoring into its own bounded context with typed value objects, a repository port, and an LLM port. |
 | **Target sections** | §3.4, §4.4, §5.4, §7.1 (`job_scores` table), §7.3. |
-| **Exit criteria** | Scoring writes to `job_scores` table. `LlmPort` for scoring extracted. Legacy `jobs` scoring columns read-only. Backfill migration works. All scoring tests pass. |
+| **Exit criteria** | Scoring writes to `job_scores` table. `LlmPort` for scoring extracted. Legacy `jobs` scoring columns dropped after backfill. All scoring tests pass. |
 | **Effort** | Medium — new table, backfill, refactor `scorer.py`. |
 | **Dependencies** | Phase 1, Phase 4 (ProfileSnapshot consumed by scoring). |
 
@@ -148,7 +157,7 @@ Before Step S-01 begins:
 |---|---|
 | **Theme** | Extract the most painful context — tailor/cover/pdf — into a cohesive aggregate with proper port boundaries. |
 | **Target sections** | §3.5, §4.5, §5.5, §7.1 (`job_materials` table), §7.3. |
-| **Exit criteria** | `MaterialsSet` aggregate with `Artifact` entity. `ContentValidator`, `ResumeAssembler` as pure domain services. `PdfRendererPort`, `ArtifactStoragePort`, `LlmPort` extracted. New `job_materials` table with backfill. Legacy tailor/cover/pdf columns read-only. |
+| **Exit criteria** | `MaterialsSet` aggregate with `Artifact` entity. `ContentValidator`, `ResumeAssembler` as pure domain services. `PdfRendererPort`, `ArtifactStoragePort`, `LlmPort` extracted. New `job_materials` table with backfill. Legacy tailor/cover/pdf columns dropped after backfill. |
 | **Effort** | Large — the biggest extraction. `tailor.py` (820 LOC), `cover_letter.py`, `pdf.py` all refactored. |
 | **Dependencies** | Phase 1, Phase 3 (event bus), Phase 4 (ProfileSnapshot), Phase 5 (FitScore for eligibility). |
 
@@ -223,8 +232,6 @@ no runtime behavior. The existing `packages/contracts/src/schemas.ts` `STAGES`
 and `STAGE_STATES` arrays remain for Zod validation; `packages/domain-types`
 provides the domain-layer types that processing code imports.
 
-**Backward compatibility:** No existing code changes. Pure addition.
-
 **Tenancy implications:** Introduces `TenantId` as a domain type with
 `LOCAL_TENANT = "local"` default. No enforcement code.
 
@@ -281,8 +288,6 @@ Skipped, Exhausted, Stale, Canceled) following the data-orientation principle
 from §2. `DomainEvent` is a frozen dataclass base with `event_type`,
 `tenant_id`, `occurred_at`, and `payload`. These types are pure data — no I/O
 imports, no database imports.
-
-**Backward compatibility:** No existing code changes. Pure addition.
 
 **Tenancy implications:** Same as S-01 — introduces `TenantId` with
 `LOCAL_TENANT = "local"`.
@@ -342,12 +347,8 @@ parallel; CI will validate they match in a future step.
 `.ts`/`.py`) that verifies TS `packages/domain-types` exports and Python
 `jobhunter.domain` exports have matching type names and event field sets.
 Fails CI if a type exists in one language but not the other. This serves as
-the sensor for the TypeSpec evolution trigger in §8 — without it, two-language
+the sensor for the TypeSpec evolution trigger in §7 — without it, two-language
 drift (Risk §10.5) can happen silently.
-
-**Backward compatibility:** Pure addition. Existing `record_job_event()` calls
-in `state.py` continue using string `event_type` values. Phase 3 will wire
-them to the new typed events.
 
 **Tenancy implications:** Every event type includes `tenantId` field.
 
@@ -402,8 +403,6 @@ Implement every row from the §8.5 transition table. Add `Queued` and `Canceled`
 to the valid state set. The function has zero I/O. Existing `set_stage_state()`
 in `state.py` is NOT changed in this step.
 
-**Backward compatibility:** Pure addition. No behavioral change.
-
 **Tenancy implications:** None — pure logic.
 
 **Tests added:**
@@ -448,11 +447,9 @@ Define `PipelineStateRepository` as a Python `Protocol` with methods:
 `get(tenant_id, job_id) -> JobPipelineState | None`,
 `save(tenant_id, state: JobPipelineState)`,
 `list_by_stage(tenant_id, stage, state_filter?) -> list[JobPipelineState]`.
-The port wraps CRUD operations only — state derivation logic stays in
-`LegacyStateDeriver` (S-07). The `SqlitePipelineStateRepository` adapter
-reads/writes the existing `job_stage_states` table without schema changes.
-
-**Backward compatibility:** Pure addition. Existing `state.py` functions unchanged.
+The port wraps CRUD operations against `job_stage_states`. The
+`SqlitePipelineStateRepository` adapter reads/writes the existing
+`job_stage_states` table without schema changes.
 
 **Tenancy implications:** Repository accepts `TenantId` but ignores it locally.
 
@@ -470,7 +467,7 @@ uv --project workers/automation run --extra dev pytest tests/test_pipeline_state
 
 **Dependencies:** S-02 (Python domain types), S-04 (StageState types).
 
-**Out of scope:** Wiring into `state.py` (S-06). `LegacyStateDeriver` (S-07).
+**Out of scope:** Wiring into `state.py` (S-06).
 
 ---
 
@@ -496,9 +493,6 @@ raise descriptive errors. Default `SqlitePipelineStateRepository` created if
 none provided (dependency injection via optional parameter). Per §8.1, each
 call modifies only the `JobPipelineState` aggregate in its own transaction.
 
-**Backward compatibility:** External signature unchanged. Invalid transition
-rejection is a correctness improvement.
-
 **Tenancy implications:** `TenantId` parameter added internally with default
 `LOCAL_TENANT`.
 
@@ -513,60 +507,19 @@ uv --project workers/automation run --extra dev pytest -q
 pnpm test
 ```
 
-**Risk:** Medium-high. `state.py` is called by every stage module. Mitigation:
-external signature unchanged; full test suite.
+**Risk:** Medium-high. `state.py` is called by every stage module — if the new
+machine rejects a transition that the old code silently allowed, every caller
+that depends on that path breaks. Mitigation: the parity test in S-04 covers
+the §8.5 transition table; if a regression slips through, revert this PR — the
+domain types from S-04 stay in place and the next attempt can adjust.
 
 **Dependencies:** S-04 (state machine), S-05 (repository).
 
-**Out of scope:** Refactoring callers. Legacy state derivation (S-07).
+**Out of scope:** Refactoring callers.
 
 ---
 
-#### S-07: refactor: formalize `LegacyStateDeriver` as an ACL with explicit removal criteria
-
-| Attribute | Detail |
-|---|---|
-| **Phase** | 2 — Pipeline Orchestration |
-| **Bounded context** | Pipeline Orchestration |
-| **Target sections** | §4.7 (`LegacyStateDeriver` service, removal criterion). |
-| **Pain points** | Briefing #1 (legacy materialization logic), #11 (duplicated state derivation). |
-
-**Files touched:**
-
-- `workers/automation/src/jobhunter/domain/orchestration/legacy_deriver.py` — **new** `LegacyStateDeriver`.
-- `workers/automation/src/jobhunter/state.py` — **refactor** move `derive_legacy_stage_states`, `_materialize_legacy_stage_rows`, `_is_placeholder_state` to new module.
-- `apps/api/src/read-model.ts` — **refactor** add removal criterion comment.
-
-**Approach:**
-Move legacy state derivation into a dedicated `LegacyStateDeriver` class,
-documented as an Anti-Corruption Layer. Removal criterion from §4.7:
-`SELECT COUNT(*) FROM jobs WHERE url NOT IN (SELECT DISTINCT job_url FROM job_stage_states)` returns 0 AND legacy columns dropped. Called by the
-`SqlitePipelineStateRepository` to fill gaps on read. TS `read-model.ts`
-annotated with same criterion; actual TS replacement is Phase 9.
-
-**Backward compatibility:** Same behavior, different module structure.
-
-**Tenancy implications:** None.
-
-**Tests added:**
-- Unit: `tests/test_legacy_deriver.py` — column combinations → correct `StageState` variants.
-
-**Verification commands:**
-
-```bash
-uv --project workers/automation run --extra dev pytest -q
-pnpm test
-```
-
-**Risk:** Low. Pure extraction, no behavior change.
-
-**Dependencies:** S-06 (state.py refactored).
-
-**Out of scope:** Removing the deriver (future). TS-side replacement (Phase 9).
-
----
-
-#### S-08: feat: add `Queued` and `Canceled` states to pipeline state model
+#### S-07: feat: add `Queued` and `Canceled` states to pipeline state model
 
 | Attribute | Detail |
 |---|---|
@@ -591,9 +544,6 @@ Add `"queued"` and `"canceled"` to `STATE_VALUES` in `state.py`. The
 actively used yet (no queue infrastructure locally) but must exist for state
 machine completeness. `Canceled` enables the cancel action path. Verify
 `packages/contracts/src/schemas.ts` already includes both.
-
-**Backward compatibility:** Adding new state values is backward-compatible.
-No existing code writes them yet.
 
 **Tenancy implications:** None.
 
@@ -620,7 +570,7 @@ pnpm test
 
 ---
 
-#### S-09: feat: define `EventPublisher` port and `InProcessEventBus` adapter
+#### S-08: feat: define `EventPublisher` port and `InProcessEventBus` adapter
 
 | Attribute | Detail |
 |---|---|
@@ -644,8 +594,6 @@ the transaction. This upholds the one-aggregate-per-transaction rule (§8.1):
 each handler runs its own transaction. Handler errors are caught and logged
 without breaking other handlers. Per §8.2, handlers must be idempotent.
 
-**Backward compatibility:** Pure addition. Existing event recording unchanged.
-
 **Tenancy implications:** Events carry `tenantId` from `DomainEvent` base.
 
 **Tests added:**
@@ -662,11 +610,11 @@ uv --project workers/automation run --extra dev pytest tests/test_event_bus.py -
 
 **Dependencies:** S-02 (DomainEvent base), S-03 (event schemas).
 
-**Out of scope:** Wiring existing code (S-10). Cloud event bus adapter.
+**Out of scope:** Wiring existing code (S-09). Cloud event bus adapter.
 
 ---
 
-#### S-10: refactor: wire `record_job_event` through `EventPublisher` and standardize event types
+#### S-09: refactor: wire `record_job_event` through `EventPublisher` and standardize event types
 
 | Attribute | Detail |
 |---|---|
@@ -683,23 +631,17 @@ uv --project workers/automation run --extra dev pytest tests/test_event_bus.py -
 **Approach:**
 Refactor `record_job_event()` to construct typed `DomainEvent` instances and
 publish through `InProcessEventBus`. Register a default handler that persists
-to `job_events`. Event type standardization uses a **strangler dual-write**:
-new events are written with PascalCase domain event names (`StageStarted`,
-`StageCompleted`), while the existing snake_case values (`stage_started`,
-`stage_completed`) are also written to a `legacy_event_type` column (added via
-ALTER TABLE) for backward compatibility. Code that reads `event_type` is
-updated to use the new names; legacy queries can use `legacy_event_type` during
-the transition. External `record_job_event` signature unchanged.
-
-**Backward compatibility:** Signature unchanged. Event type values change from
-snake_case to PascalCase. Legacy column preserves old names during transition.
+to `job_events`. Event type values are migrated in-place from snake_case
+(`stage_started`) to PascalCase domain event names (`StageStarted`); the same
+PR runs a one-shot `UPDATE job_events SET event_type = ...` migration over
+existing rows and updates every reader to expect the PascalCase names.
+External `record_job_event` signature unchanged.
 
 **Tenancy implications:** Events carry `tenant_id = LOCAL_TENANT`.
 
 **Tests added:**
 - Unit: verify `record_job_event` publishes through bus.
-- Unit: verify dual-write of old and new event type names.
-- Integration: existing event queries work with new type names.
+- Integration: existing event queries return rows after the rename migration.
 
 **Verification commands:**
 
@@ -708,16 +650,21 @@ uv --project workers/automation run --extra dev pytest -q
 pnpm test
 ```
 
-**Risk:** Medium. Changing event type strings; mitigated by dual-write.
+**Risk:** Medium. The rename touches every reader of `job_events.event_type`;
+if a query is missed, that view goes empty. Mitigation: grep audit for the
+old snake_case strings as part of the PR; the migration script is idempotent
+so re-running is safe. If a reader is missed in production data, revert the
+PR and the migration script is reversible (PascalCase → snake_case is a pure
+mapping).
 
-**Dependencies:** S-09 (event bus).
+**Dependencies:** S-08 (event bus).
 
 **Out of scope:** Wiring all stage modules to publish typed events directly
 (per-context phases).
 
 ---
 
-#### S-11: feat: add event watermark tracking for projection reconciliation
+#### S-10: feat: add event watermark tracking for projection reconciliation
 
 | Attribute | Detail |
 |---|---|
@@ -737,8 +684,6 @@ Projections (Phase 9) will track their last processed event ID. On startup,
 reconciliation replays events with `event_id > last_event_id`. This step only
 creates the table and tracker; projection wiring happens in Phase 9.
 
-**Backward compatibility:** New table, no existing behavior changed.
-
 **Tenancy implications:** None (watermarks are per-projection, not per-tenant locally).
 
 **Tests added:**
@@ -752,13 +697,13 @@ uv --project workers/automation run --extra dev pytest tests/test_watermark.py -
 
 **Risk:** Low. New table, no behavioral change.
 
-**Dependencies:** S-10 (event store wiring).
+**Dependencies:** S-09 (event store wiring).
 
 **Out of scope:** Projection builders (Phase 9). Startup reconciliation loop.
 
 ---
 
-#### S-12: feat: define JSON-RPC 2.0 protocol and `jobhunter rpc` subcommand
+#### S-11: feat: define JSON-RPC 2.0 protocol and `jobhunter rpc` subcommand
 
 | Attribute | Detail |
 |---|---|
@@ -786,10 +731,8 @@ envelopes and method-specific params/results. Python implements a
 stdout (local subprocess transport per §6.5). Three dispatch modes from §6.5:
 synchronous (profile_import), fire-and-forget (apply, discover), streaming
 (pipeline run). This step does NOT change `local-actions.ts` — that happens
-in Phase 9 (S-36). The protocol is front-loaded here so context extraction
+in Phase 9 (S-34). The protocol is front-loaded here so context extraction
 phases can define their RPC methods alongside their domain logic.
-
-**Backward compatibility:** Pure addition. `jobhunter rpc` is new.
 
 **Tenancy implications:** All RPC methods accept `tenantId` in params.
 
@@ -809,12 +752,12 @@ pnpm test
 
 **Dependencies:** S-01 (TS types), S-02 (Python types).
 
-**Out of scope:** Replacing `local-actions.ts` (S-36, Phase 9). HTTP transport.
+**Out of scope:** Replacing `local-actions.ts` (S-34, Phase 9). HTTP transport.
 Temporal transport.
 
 ---
 
-#### S-13: refactor: TS API hosts simple state-transition commands directly
+#### S-12: refactor: TS API hosts simple state-transition commands directly
 
 | Attribute | Detail |
 |---|---|
@@ -840,9 +783,6 @@ front-loaded alongside JSON-RPC because it establishes the TS↔Python boundary:
 simple = TS, complex = Python (via JSON-RPC). The `StageStateMachine` exists
 in both TS and Python (hand-mirrored); a CI compatibility check validates they
 produce identical transitions for the same inputs.
-
-**Backward compatibility:** Same API behavior. Transition validation may reject
-previously-silent invalid transitions (correctness improvement).
 
 **Tenancy implications:** State machine accepts `TenantId` (ignored locally).
 
@@ -873,7 +813,7 @@ Mitigation: review current `write-model.ts` tests for edge cases.
 
 ---
 
-#### S-14: feat: define `Profile` aggregate with value objects
+#### S-13: feat: define `Profile` aggregate with value objects
 
 | Attribute | Detail |
 |---|---|
@@ -898,8 +838,6 @@ Python (frozen dataclass) and TS (readonly interface in `packages/domain-types`)
 a CI check validates structural compatibility. Value objects are designed to
 map cleanly to/from `profile.json` schema.
 
-**Backward compatibility:** Pure addition. No existing code changed.
-
 **Tenancy implications:** Profile identity is `(TenantId, ProfileId)`.
 `ProfileId = "default"` locally.
 
@@ -917,17 +855,17 @@ uv --project workers/automation run --extra dev pytest tests/test_profile_aggreg
 
 **Dependencies:** S-02 (Python domain types, TenantId).
 
-**Out of scope:** Repository port (S-15). Replacing dict-passing (S-16).
+**Out of scope:** Repository port and consumer migration (S-14).
 
 ---
 
-#### S-15: feat: define `ProfileRepository` port and `JsonFileProfileRepository` adapter
+#### S-14: feat: introduce `ProfileRepository` and switch all consumers to `ProfileSnapshot`
 
 | Attribute | Detail |
 |---|---|
 | **Phase** | 4 — Candidate Profile |
-| **Bounded context** | Candidate Profile |
-| **Target sections** | §5.3 (`ProfileRepository` port, `JsonFileProfileRepository` adapter). |
+| **Bounded context** | Candidate Profile (and consumers: Scoring, Materials, Apply) |
+| **Target sections** | §3.3 (Conformist relationships), §4.3 (ProfileSnapshot published language), §5.3 (`ProfileRepository` port, `JsonFileProfileRepository` adapter). |
 | **Pain points** | Briefing #8 (profile dict-passing), #5 (implicit filesystem I/O). |
 
 **Files touched:**
@@ -936,74 +874,36 @@ uv --project workers/automation run --extra dev pytest tests/test_profile_aggreg
 - `workers/automation/src/jobhunter/infrastructure/profile/` — **new** directory.
 - `workers/automation/src/jobhunter/infrastructure/profile/__init__.py` — **new**.
 - `workers/automation/src/jobhunter/infrastructure/profile/json_file.py` — **new** `JsonFileProfileRepository`.
+- `workers/automation/src/jobhunter/scoring/scorer.py` — **refactor** receive `ProfileSnapshot` only.
+- `workers/automation/src/jobhunter/scoring/tailor.py` — **refactor** receive `ProfileSnapshot` only.
+- `workers/automation/src/jobhunter/scoring/cover_letter.py` — **refactor** receive `ProfileSnapshot` only.
+- `workers/automation/src/jobhunter/apply/launcher.py` — **refactor** receive `ProfileSnapshot` only.
+- `workers/automation/src/jobhunter/resume_profile.py` — **refactor** accessors operate on `ProfileSnapshot` (dict path removed).
+- `workers/automation/src/jobhunter/profile_import.py` — **refactor** return `Profile` aggregate.
+- `workers/automation/src/jobhunter/config.py` — **refactor** `load_profile()` removed; callers go through `ProfileRepository.get_snapshot()`.
 
 **Approach:**
-Define `ProfileRepository` Protocol: `get()`, `save()`, `get_snapshot()`.
-The `JsonFileProfileRepository` reads/writes `profile.json` (and
+Define `ProfileRepository` Protocol: `get()`, `save()`, `get_snapshot()`. The
+`JsonFileProfileRepository` reads/writes `profile.json` (and
 `resume_style.json`, `resume_template.tex`). Extra fields not modeled in the
 aggregate are preserved on write (forward compatibility). `get_snapshot()`
-creates an immutable `ProfileSnapshot`. This replaces `config.load_profile()`
-for new code.
+creates an immutable `ProfileSnapshot`. In the same PR, every caller of the
+old `config.load_profile()` raw-dict accessor is converted to receive a
+`ProfileSnapshot` from the repository, and `config.load_profile()` is deleted.
+Pipeline entry points create the `ProfileSnapshot` once and pass it through.
 
-**Backward compatibility:** Pure addition. `config.load_profile()` unchanged.
+**Important:** The consumer files modified here (`scorer.py`, `tailor.py`,
+`cover_letter.py`, `launcher.py`) will be restructured further in their
+respective context phases (5, 6, 8). This step only changes how they receive
+profile data — it does not refactor their internal wiring. The dict-passing
+path is fully removed in this PR.
 
 **Tenancy implications:** Repository accepts `TenantId` but ignores it locally.
+`ProfileSnapshot` carries `tenant_id` (ignored by consumers).
 
 **Tests added:**
 - Unit: `tests/test_profile_repository.py` — round-trip, snapshot creation,
   extra fields preserved.
-
-**Verification commands:**
-
-```bash
-uv --project workers/automation run --extra dev pytest tests/test_profile_repository.py -q
-```
-
-**Risk:** Low-medium. `profile.json` schema is complex.
-
-**Dependencies:** S-14 (Profile aggregate).
-
-**Out of scope:** Migrating existing callers (S-16). TS-side profile operations.
-
----
-
-#### S-16: refactor: replace profile dict-passing with `ProfileSnapshot` in consumers
-
-| Attribute | Detail |
-|---|---|
-| **Phase** | 4 — Candidate Profile |
-| **Bounded context** | Cross-cutting (Profile → Scoring, Materials, Apply) |
-| **Target sections** | §3.3 (Conformist relationships), §4.3 (ProfileSnapshot published language). |
-| **Pain points** | Briefing #8 (profile is dict-passing — this closes it). |
-
-**Files touched:**
-
-- `workers/automation/src/jobhunter/scoring/scorer.py` — **refactor** replace dict with `ProfileSnapshot`.
-- `workers/automation/src/jobhunter/scoring/tailor.py` — **refactor** replace `config.load_profile()` with `ProfileSnapshot`.
-- `workers/automation/src/jobhunter/scoring/cover_letter.py` — **refactor** replace `config.load_profile()` with `ProfileSnapshot`.
-- `workers/automation/src/jobhunter/apply/launcher.py` — **refactor** replace profile dict with `ProfileSnapshot`.
-- `workers/automation/src/jobhunter/resume_profile.py` — **refactor** dual-path accessors (dict + `ProfileSnapshot`).
-- `workers/automation/src/jobhunter/profile_import.py` — **refactor** return `Profile` aggregate alongside raw dict.
-
-**Approach:**
-Every module that calls `config.load_profile()` now receives a `ProfileSnapshot`
-from `ProfileRepository`. Dual-path accessors in `resume_profile.py` accept
-both dict and `ProfileSnapshot` for incremental migration. Pipeline entry
-points create the `ProfileSnapshot` once and pass it through.
-
-**Important:** The files modified here (`scorer.py`, `tailor.py`,
-`cover_letter.py`, `launcher.py`) will be restructured again in their
-respective context phases (5, 6, 8). This step only changes how they receive
-profile data — it does not refactor their internal wiring. This is intentional:
-decoupling the profile dependency first enables each context phase to proceed
-independently.
-
-**Backward compatibility:** Dict path continues to work. `profile.json` format
-unchanged.
-
-**Tenancy implications:** `ProfileSnapshot` carries `tenant_id` (ignored by consumers).
-
-**Tests added:**
 - Unit: update tailor, cover, scorer tests with `ProfileSnapshot` input.
 - Integration: profile import → `ProfileSnapshot` → tailor flow.
 
@@ -1013,12 +913,14 @@ unchanged.
 uv --project workers/automation run --extra dev pytest -q
 ```
 
-**Risk:** Medium-high. Touches many modules. Mitigation: dual-path accessors,
-full test suite.
+**Risk:** Medium-high. Touches every profile consumer in one PR — if any caller
+is missed, it will fail to import. Mitigation: grep audit for the old
+`config.load_profile` symbol in CI; the test suite exercises every consumer
+path. Roll back the PR if a hidden caller is discovered after merge.
 
-**Dependencies:** S-14 (Profile aggregate), S-15 (ProfileRepository).
+**Dependencies:** S-13 (Profile aggregate).
 
-**Out of scope:** Removing dual-path accessors (future decommissioning).
+**Out of scope:** TS-side profile operations.
 
 ---
 
@@ -1026,7 +928,7 @@ full test suite.
 
 ---
 
-#### S-17: feat: define `JobScore` aggregate and scoring value objects
+#### S-15: feat: define `JobScore` aggregate and scoring value objects
 
 | Attribute | Detail |
 |---|---|
@@ -1049,8 +951,6 @@ replaces raw reasoning strings with `technicalFit`, `experienceFit`,
 `reasoning` fields. Extract `_parse_score_response()` from `scorer.py` into
 `ScoreParser` domain service. Define `EligibilityChecker` per §4.4.
 
-**Backward compatibility:** Pure addition. `scorer.py` unchanged.
-
 **Tenancy implications:** `JobScore` identity includes `TenantId`.
 
 **Tests added:**
@@ -1067,11 +967,11 @@ uv --project workers/automation run --extra dev pytest tests/test_scoring_domain
 
 **Dependencies:** S-02 (domain types).
 
-**Out of scope:** Repository (S-18). LLM port (S-19). Scorer refactor (S-20).
+**Out of scope:** Repository (S-16). LLM port (S-17). Scorer refactor (S-18).
 
 ---
 
-#### S-18: feat: add `job_scores` table, `ScoreRepository` port, and SQLite adapter with backfill
+#### S-16: feat: add `job_scores` table, `ScoreRepository` port, and SQLite adapter with backfill
 
 | Attribute | Detail |
 |---|---|
@@ -1085,21 +985,19 @@ uv --project workers/automation run --extra dev pytest tests/test_scoring_domain
 - `workers/automation/src/jobhunter/domain/scoring/ports.py` — **new** `ScoreRepository` protocol.
 - `workers/automation/src/jobhunter/infrastructure/scoring/` — **new** directory.
 - `workers/automation/src/jobhunter/infrastructure/scoring/sqlite_score.py` — **new** adapter.
-- `workers/automation/src/jobhunter/database.py` — **refactor** add `job_scores` table + backfill migration.
+- `workers/automation/src/jobhunter/database.py` — **refactor** add `job_scores` table + one-shot backfill migration.
 
 **Approach:**
-Add `job_scores` table per §7.2. Idempotent backfill from legacy columns:
-`INSERT OR IGNORE INTO job_scores SELECT url, 1, fit_score, ... FROM jobs WHERE fit_score IS NOT NULL`. Legacy columns remain readable during transition.
-
-**Backward compatibility:** Legacy scoring columns untouched. `read-model.ts`
-still reads from `jobs`.
+Add `job_scores` table per §7.2. Idempotent one-shot backfill from the legacy
+columns: `INSERT OR IGNORE INTO job_scores SELECT url, 1, fit_score, ... FROM jobs WHERE fit_score IS NOT NULL`. The legacy columns are dropped in S-18
+when the scorer is rewired to write only to `job_scores`.
 
 **Tenancy implications:** No `tenant_id` column yet. Port accepts `TenantId`
 but adapter ignores it.
 
 **Tests added:**
 - Unit: `tests/test_score_repository.py` — save, get, version incrementing,
-  backfill from legacy.
+  backfill from legacy data fixtures.
 
 **Verification commands:**
 
@@ -1109,13 +1007,13 @@ uv --project workers/automation run --extra dev pytest tests/test_score_reposito
 
 **Risk:** Medium. Backfill must handle NULL rows.
 
-**Dependencies:** S-17 (JobScore aggregate).
+**Dependencies:** S-15 (JobScore aggregate).
 
-**Out of scope:** Updating `scorer.py` (S-20). TS read-model changes (Phase 9).
+**Out of scope:** Updating `scorer.py` (S-18). TS read-model changes (Phase 9).
 
 ---
 
-#### S-19: feat: define `LlmPort` protocol for scoring context
+#### S-17: feat: define `LlmPort` protocol for scoring context
 
 | Attribute | Detail |
 |---|---|
@@ -1133,9 +1031,9 @@ uv --project workers/automation run --extra dev pytest tests/test_score_reposito
 **Approach:**
 Define `LlmPort` as Protocol: `complete(prompt, system, schema) -> str`.
 Shared across scoring, materials, and enrichment contexts. `CurrentLlmAdapter`
-wraps existing unified LLM client.
-
-**Backward compatibility:** Pure addition. `llm.py` unchanged.
+wraps existing unified LLM client. `llm.py` is left in place because every
+adapter currently delegates to it; subsequent context PRs replace direct
+`llm.get_client()` callers with `LlmPort` injection.
 
 **Tenancy implications:** None locally. Cloud: LLM gateway accepts `TenantId`.
 
@@ -1156,7 +1054,7 @@ uv --project workers/automation run --extra dev pytest tests/test_llm_port.py -q
 
 ---
 
-#### S-20: refactor: update `scorer.py` to use scoring domain types, `ScoreRepository`, and `LlmPort`
+#### S-18: refactor: update `scorer.py` to use scoring domain types, `ScoreRepository`, and `LlmPort`
 
 | Attribute | Detail |
 |---|---|
@@ -1167,23 +1065,27 @@ uv --project workers/automation run --extra dev pytest tests/test_llm_port.py -q
 
 **Files touched:**
 
-- `workers/automation/src/jobhunter/scoring/scorer.py` — **refactor**.
+- `workers/automation/src/jobhunter/scoring/scorer.py` — **refactor** to write `job_scores` only.
+- `workers/automation/src/jobhunter/database.py` — **refactor** drop legacy `fit_score`, `score_reasoning`, `scored_at` columns from `jobs`.
+- `apps/api/src/read-model.ts` — **refactor** read scoring fields from `job_scores`.
 
 **Approach:**
-Refactor to use `ProfileSnapshot` (from S-16), `LlmPort` (S-19),
-`ScoreParser` (S-17), `ScoreRepository` (S-18), and publish `JobScored` events
-via `EventPublisher` (S-09). Dual-write to both `job_scores` and legacy
-`jobs.fit_score` / `jobs.score_reasoning` / `jobs.scored_at` columns.
-Dependency injection via optional parameters with local defaults. Per §8.2,
-scoring is idempotent: rescoring the same job creates a new version.
-
-**Backward compatibility:** Dual-write. `pipeline.py` callers work unchanged.
+Refactor `scorer.py` to use `ProfileSnapshot` (from S-14), `LlmPort` (S-17),
+`ScoreParser` (S-15), `ScoreRepository` (S-16), and publish `JobScored` events
+via `EventPublisher` (S-08). The scorer writes only to `job_scores`. In the
+same PR, drop the legacy `jobs.fit_score`, `jobs.score_reasoning`,
+`jobs.scored_at` columns and update `read-model.ts` to read scoring fields
+from `job_scores`. Dependency injection via optional parameters with local
+defaults. Per §8.2, scoring is idempotent: rescoring the same job creates a
+new version.
 
 **Tenancy implications:** Uses `LOCAL_TENANT`.
 
 **Tests added:**
 - Unit: update scorer tests to verify `job_scores` populated.
 - Integration: mock LLM, verify score → domain → repository flow.
+- Integration: read-model returns scoring fields from `job_scores` after the
+  column drop.
 
 **Verification commands:**
 
@@ -1192,11 +1094,15 @@ uv --project workers/automation run --extra dev pytest -q
 pnpm test
 ```
 
-**Risk:** Medium. Mitigation: dual-write, dependency injection with defaults.
+**Risk:** Medium. The column drop is irreversible without a fresh migration —
+if the new repository or read-model query has a bug, scoring values disappear
+from the dashboard. Mitigation: the `test_score_repository.py` parity test
+from S-16 validates the new repository against the same fixtures the legacy
+columns held; if a bug is found post-merge, revert and re-attempt.
 
-**Dependencies:** S-16 (ProfileSnapshot), S-17, S-18, S-19.
+**Dependencies:** S-14 (ProfileSnapshot), S-15, S-16, S-17.
 
-**Out of scope:** Removing legacy writes (decommissioning). Score corrections.
+**Out of scope:** Score corrections.
 
 ---
 
@@ -1204,7 +1110,7 @@ pnpm test
 
 ---
 
-#### S-21: feat: define `MaterialsSet` aggregate and materials value objects
+#### S-19: feat: define `MaterialsSet` aggregate and materials value objects
 
 | Attribute | Detail |
 |---|---|
@@ -1228,8 +1134,6 @@ Invariants from §4.5 enforced: resume before cover, docs before PDF, no banned
 words, no fabrication. Generation lifecycle per §4.5: new `MaterialsSet` for
 re-tailoring, previous artifacts marked `superseded`.
 
-**Backward compatibility:** Pure addition.
-
 **Tenancy implications:** Aggregate identity includes `TenantId`.
 
 **Tests added:**
@@ -1245,11 +1149,11 @@ uv --project workers/automation run --extra dev pytest tests/test_materials_doma
 
 **Dependencies:** S-02 (domain types).
 
-**Out of scope:** Repository (S-22). Ports (S-23, S-24). Tailor refactor (S-25).
+**Out of scope:** Repository (S-20). Ports (S-21, S-22). Tailor refactor (S-23).
 
 ---
 
-#### S-22: feat: add `job_materials` table, `MaterialsRepository` port, and SQLite adapter with backfill
+#### S-20: feat: add `job_materials` table, `MaterialsRepository` port, and SQLite adapter with backfill
 
 | Attribute | Detail |
 |---|---|
@@ -1267,13 +1171,12 @@ uv --project workers/automation run --extra dev pytest tests/test_materials_doma
 - `workers/automation/src/jobhunter/database.py` — **refactor** add `job_materials` table + `generation` column on `job_artifacts` + backfill.
 
 **Approach:**
-Add `job_materials` and backfill from legacy columns. Add `generation` column
-to `job_artifacts` (ALTER TABLE, default 1). Define repository, artifact
-storage, and PDF renderer port protocols. `LocalFilesystemAdapter` wraps
-current writes to `~/.jobhunter/tailored_resumes/` etc.
-
-**Backward compatibility:** Legacy columns untouched. Existing `job_artifacts`
-rows gain `generation = 1`.
+Add `job_materials` and one-shot backfill from legacy columns. Add `generation`
+column to `job_artifacts` (ALTER TABLE, default 1). Define repository,
+artifact storage, and PDF renderer port protocols. `LocalFilesystemAdapter`
+wraps current writes to `~/.jobhunter/tailored_resumes/` etc. Legacy
+tailor/cover/pdf columns are dropped in S-23 when the tailor pipeline is
+rewired to write only to `job_materials`.
 
 **Tenancy implications:** No `tenant_id` column locally.
 
@@ -1289,13 +1192,13 @@ uv --project workers/automation run --extra dev pytest -q
 
 **Risk:** Medium. Backfill NULLs, ALTER TABLE idempotency.
 
-**Dependencies:** S-21 (MaterialsSet aggregate).
+**Dependencies:** S-19 (MaterialsSet aggregate).
 
-**Out of scope:** Tailor/cover/pdf refactoring (S-25, S-26).
+**Out of scope:** Tailor/cover/pdf refactoring (S-23, S-24).
 
 ---
 
-#### S-23: feat: extract `ContentValidator` and `ResumeAssembler` as pure domain services
+#### S-21: feat: extract `ContentValidator` and `ResumeAssembler` as pure domain services
 
 | Attribute | Detail |
 |---|---|
@@ -1307,15 +1210,14 @@ uv --project workers/automation run --extra dev pytest -q
 **Files touched:**
 
 - `workers/automation/src/jobhunter/domain/materials/services.py` — **new** `ContentValidator`, `ResumeAssembler`.
-- `workers/automation/src/jobhunter/scoring/validator.py` — unchanged (source of extraction).
+- `workers/automation/src/jobhunter/scoring/validator.py` — **deleted** (logic moved to `ContentValidator`).
+- All callers of `scoring/validator.py` — **refactor** to import `ContentValidator` from the materials domain service.
 
 **Approach:**
-Extract pure validation functions from `scoring/validator.py` into
-`ContentValidator` domain service (zero I/O). Extract resume assembly logic
-from `tailor.py` into `ResumeAssembler`. `scoring/validator.py` preserved as
-compatibility shim delegating to `ContentValidator`.
-
-**Backward compatibility:** `scoring/validator.py` preserved as delegation layer.
+Move pure validation functions from `scoring/validator.py` into
+`ContentValidator` domain service (zero I/O). Move resume assembly logic from
+`tailor.py` into `ResumeAssembler`. Delete `scoring/validator.py` and update
+every importer in the same PR.
 
 **Tenancy implications:** None.
 
@@ -1331,13 +1233,13 @@ uv --project workers/automation run --extra dev pytest -q
 
 **Risk:** Low-medium. Pure extraction.
 
-**Dependencies:** S-21 (value objects for ValidationResult).
+**Dependencies:** S-19 (value objects for ValidationResult).
 
 **Out of scope:** Removing `scoring/validator.py` shim.
 
 ---
 
-#### S-24: feat: extract `LatexPdfAdapter` and `PlaywrightHtmlPdfAdapter` behind `PdfRendererPort`
+#### S-22: feat: extract `LatexPdfAdapter` and `PlaywrightHtmlPdfAdapter` behind `PdfRendererPort`
 
 | Attribute | Detail |
 |---|---|
@@ -1350,14 +1252,18 @@ uv --project workers/automation run --extra dev pytest -q
 
 - `workers/automation/src/jobhunter/infrastructure/materials/latex_pdf.py` — **new** `LatexPdfAdapter`.
 - `workers/automation/src/jobhunter/infrastructure/materials/playwright_html_pdf.py` — **new** `PlaywrightHtmlPdfAdapter`.
-- `workers/automation/src/jobhunter/scoring/pdf.py` — unchanged (source).
+- `workers/automation/src/jobhunter/scoring/pdf.py` — **deleted** (logic lives in adapters).
+- `workers/automation/src/jobhunter/scoring/tailor.py` — **refactor** swap `from .pdf import …` for `PdfRendererPort` injection (rest of the tailor rewrite is S-23).
+- `workers/automation/src/jobhunter/scoring/cover_letter.py` — **refactor** swap `from .pdf import …` for `PdfRendererPort` injection (rest is S-24).
 
 **Approach:**
-Extract `pdflatex` subprocess logic into `LatexPdfAdapter` and Playwright
-HTML-to-PDF into `PlaywrightHtmlPdfAdapter`. `scoring/pdf.py` remains as
-compatibility module. `PdfRendererPort` absorbs future rendering spike.
-
-**Backward compatibility:** `scoring/pdf.py` preserved.
+Move `pdflatex` subprocess logic into `LatexPdfAdapter` and Playwright
+HTML-to-PDF into `PlaywrightHtmlPdfAdapter`. Delete `scoring/pdf.py` and
+update the two callers (`tailor.py`, `cover_letter.py`) to take a
+`PdfRendererPort` parameter (default-injected to the appropriate adapter)
+instead of importing `scoring/pdf.py`. The rest of the tailor and cover
+rewrites — domain types, repository, event publication — stay in S-23 and
+S-24 respectively. `PdfRendererPort` absorbs any future rendering spike.
 
 **Tenancy implications:** None.
 
@@ -1372,13 +1278,13 @@ uv --project workers/automation run --extra dev pytest tests/test_pdf_adapters.p
 
 **Risk:** Medium. Subprocess and temp file management.
 
-**Dependencies:** S-22 (PdfRendererPort protocol).
+**Dependencies:** S-20 (PdfRendererPort protocol).
 
 **Out of scope:** Rendering spike. Tectonic/Typst adapters.
 
 ---
 
-#### S-25: refactor: update `tailor.py` to use materials domain types, repository, and ports
+#### S-23: refactor: update `tailor.py` to use materials domain types, repository, and ports
 
 | Attribute | Detail |
 |---|---|
@@ -1390,23 +1296,27 @@ uv --project workers/automation run --extra dev pytest tests/test_pdf_adapters.p
 **Files touched:**
 
 - `workers/automation/src/jobhunter/scoring/tailor.py` — **refactor**.
+- `workers/automation/src/jobhunter/database.py` — **refactor** drop legacy `tailored_resume_path`, `tailored_at`, `tailor_attempts` columns from `jobs`.
+- `apps/api/src/read-model.ts` — **refactor** read tailor fields from `job_materials` + `job_artifacts`.
 
 **Approach:**
-Restructure to use `MaterialsSet` aggregate, `MaterialsRepository`, `LlmPort`,
-`PdfRendererPort`, `ArtifactStoragePort`, `ProfileSnapshot`, `ContentValidator`,
-`ResumeAssembler`. Dual-write to both `job_materials` and legacy `jobs`
-columns. Per §8.1, each tailor invocation modifies only its `MaterialsSet`
-aggregate; the pipeline state update happens via a `ResumeApproved` event
-handler in its own transaction. Per §8.2, re-tailoring creates a new
-generation (idempotent for the same generation).
-
-**Backward compatibility:** Dual-write. `pipeline.py` callers unchanged.
+Restructure `tailor.py` to use `MaterialsSet` aggregate, `MaterialsRepository`,
+`LlmPort`, `PdfRendererPort`, `ArtifactStoragePort`, `ProfileSnapshot`,
+`ContentValidator`, `ResumeAssembler`. The tailor writes only to
+`job_materials` + `job_artifacts`. In the same PR, drop the legacy
+`tailored_resume_path`, `tailored_at`, `tailor_attempts` columns and update
+`read-model.ts` to read tailor fields from `job_materials`. Per §8.1, each
+tailor invocation modifies only its `MaterialsSet` aggregate; the pipeline
+state update happens via a `ResumeApproved` event handler in its own
+transaction. Per §8.2, re-tailoring creates a new generation (idempotent for
+the same generation).
 
 **Tenancy implications:** Uses `LOCAL_TENANT`.
 
 **Tests added:**
 - Integration: mock LLM, verify tailor → validate → store → repository.
 - Regression: `test_cover_requirements.py`, `test_pdf_targets.py` must pass.
+- Integration: read-model returns tailor metadata from the new tables.
 
 **Verification commands:**
 
@@ -1415,16 +1325,21 @@ uv --project workers/automation run --extra dev pytest -q
 pnpm test
 ```
 
-**Risk:** High. Most complex module. Mitigation: dual-write, DI with defaults,
-full regression suite.
+**Risk:** High. Most complex module — and the column drop is irreversible. If
+the new aggregate, repository, or read-model query has a bug, tailor metadata
+disappears from the dashboard and re-tailoring may produce inconsistent
+artifacts. Mitigation: the `test_materials_repository.py` parity test from
+S-20 validates round-trip against legacy fixtures; full
+`test_cover_requirements.py` and `test_pdf_targets.py` regression suites must
+stay green. Revert the PR if a bug is found post-merge.
 
-**Dependencies:** S-16, S-21–S-24.
+**Dependencies:** S-14 (ProfileSnapshot), S-19–S-22.
 
-**Out of scope:** Removing legacy writes. Changing prompt logic.
+**Out of scope:** Changing prompt logic.
 
 ---
 
-#### S-26: refactor: update `cover_letter.py` and `pdf.py` to use materials domain types and ports
+#### S-24: refactor: update `cover_letter.py` to use materials domain types and ports
 
 | Attribute | Detail |
 |---|---|
@@ -1436,16 +1351,17 @@ full regression suite.
 **Files touched:**
 
 - `workers/automation/src/jobhunter/scoring/cover_letter.py` — **refactor**.
-- `workers/automation/src/jobhunter/scoring/pdf.py` — **refactor** to delegate to adapters.
+- `workers/automation/src/jobhunter/database.py` — **refactor** drop legacy `cover_letter_path`, `cover_letter_at`, `cover_attempts` columns from `jobs`.
+- `apps/api/src/read-model.ts` — **refactor** read cover-letter fields from `job_materials` + `job_artifacts`.
 
 **Approach:**
-Same pattern as S-25: `cover_letter.py` receives `ProfileSnapshot`, uses
-`LlmPort`, validates with `ContentValidator`, stores via `ArtifactStoragePort`,
-updates `MaterialsSet`, publishes events. `pdf.py` becomes thin orchestrator
-calling `PdfRendererPort`. Direct import of `pdf.py` from `tailor.py` is
-eliminated — called by orchestrator, not by tailor. Dual-write.
-
-**Backward compatibility:** Dual-write. `scoring/pdf.py` importable.
+Same pattern as S-23: `cover_letter.py` receives `ProfileSnapshot`, uses
+`LlmPort`, validates with `ContentValidator`, stores via
+`ArtifactStoragePort`, updates `MaterialsSet`, publishes events. PDF
+rendering is delegated to `PdfRendererPort` (the implementation lives in the
+adapters introduced in S-22). In the same PR, drop the legacy
+`cover_letter_path`, `cover_letter_at`, `cover_attempts` columns and update
+`read-model.ts` to read cover-letter fields from `job_materials`.
 
 **Tenancy implications:** Uses `LOCAL_TENANT`.
 
@@ -1460,11 +1376,13 @@ uv --project workers/automation run --extra dev pytest -q
 pnpm test
 ```
 
-**Risk:** Medium. Cover and PDF are simpler than tailor.
+**Risk:** Medium. Cover and PDF are simpler than tailor, but the column drop
+is irreversible. Mitigation: same fixture-based parity tests as S-23; revert
+the PR if dashboard cover metadata regresses.
 
-**Dependencies:** S-25 (tailor refactored first).
+**Dependencies:** S-23 (tailor refactored first; same column-drop pattern).
 
-**Out of scope:** Removing legacy writes. Rendering spike.
+**Out of scope:** Rendering spike.
 
 ---
 
@@ -1472,7 +1390,7 @@ pnpm test
 
 ---
 
-#### S-27: feat: define `Job` aggregate and discovery value objects
+#### S-25: feat: define `Job` aggregate and discovery value objects
 
 | Attribute | Detail |
 |---|---|
@@ -1494,8 +1412,6 @@ separated from `Source` (maps `jobs.company` to `Employer.name`, `jobs.site`
 to `Source.board`). URL remains temporary `JobId` (stable `jobKey` deferred).
 `JobBoardScraperPort` defined for future adapter extraction.
 
-**Backward compatibility:** Pure addition. `jobs` table unchanged.
-
 **Tenancy implications:** Aggregate includes `TenantId`.
 
 **Tests added:**
@@ -1515,11 +1431,11 @@ uv --project workers/automation run --extra dev pytest tests/test_discovery_doma
 **Out of scope:** `JobId` migration. Discovery module refactoring. The
 `SqliteJobRepository` adapter is deferred — the existing `jobs` table and
 `database.py` queries serve as the implicit adapter until Discovery is fully
-extracted. See §8 Out-of-Scope.
+extracted. See §7 Out-of-Scope.
 
 ---
 
-#### S-28: feat: define `JobEnrichment` aggregate, `job_enrichments` table, and adapter with backfill
+#### S-26: feat: define `JobEnrichment` aggregate, `job_enrichments` table, and adapter with backfill
 
 | Attribute | Detail |
 |---|---|
@@ -1538,11 +1454,12 @@ extracted. See §8 Out-of-Scope.
 - `workers/automation/src/jobhunter/database.py` — **refactor** add `job_enrichments` table + backfill.
 
 **Approach:**
-Add `job_enrichments` table and backfill from legacy columns.
+Add `job_enrichments` table and one-shot backfill from legacy columns.
 `JobEnrichment` aggregate per §4.2 with `EnrichmentAttempt` child entities.
-`DetailPageFetcherPort` abstracts the three-tier extraction cascade.
-
-**Backward compatibility:** Legacy enrichment columns untouched.
+`DetailPageFetcherPort` abstracts the three-tier extraction cascade. The
+legacy `full_description`, `application_url`, `detail_scraped_at`,
+`detail_error` columns on `jobs` are dropped in S-27 when `enrichment/detail.py`
+is rewired to write only to `job_enrichments`.
 
 **Tenancy implications:** Aggregate includes `TenantId`.
 
@@ -1559,11 +1476,11 @@ uv --project workers/automation run --extra dev pytest tests/test_enrichment_dom
 
 **Dependencies:** S-02.
 
-**Out of scope:** Refactoring `detail.py` (S-29). Decoupling discovery imports.
+**Out of scope:** Refactoring `detail.py` (S-27). Decoupling discovery imports.
 
 ---
 
-#### S-29: refactor: decouple `enrichment/detail.py` from `discovery/` imports and wire ports
+#### S-27: refactor: decouple `enrichment/detail.py` from `discovery/` imports and wire ports
 
 | Attribute | Detail |
 |---|---|
@@ -1581,26 +1498,35 @@ uv --project workers/automation run --extra dev pytest tests/test_enrichment_dom
 Extract shared functionality into `DetailPageFetcherPort` adapter. Proxy
 parsing moves to adapter internals. After this step, `detail.py` imports only
 from `jobhunter.domain/` and `jobhunter.infrastructure/enrichment/`. Writes
-to `job_enrichments` via repository, publishes events. Dual-write to legacy.
-
-**Backward compatibility:** Dual-write. `pipeline.py` callers unchanged.
+go only to `job_enrichments` via repository; events published via
+`EventPublisher`. In the same PR, drop the legacy `full_description`,
+`application_url`, `detail_scraped_at`, `detail_error` columns from `jobs`,
+and update `apps/api/src/read-model.ts` to read enrichment fields from
+`job_enrichments`.
 
 **Tenancy implications:** Uses `LOCAL_TENANT`.
 
 **Tests added:**
 - Unit: verify no imports from `jobhunter.discovery.*`.
 - Regression: enrichment state tests pass.
+- Integration: read-model returns enrichment fields from `job_enrichments`
+  after the column drop.
 
 **Verification commands:**
 
 ```bash
 uv --project workers/automation run --extra dev pytest -q
+pnpm test
 python -c "import ast; tree = ast.parse(open('workers/automation/src/jobhunter/enrichment/detail.py').read()); imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]; assert not any('discovery' in (getattr(n, 'module', '') or '') for n in imports), 'Cross-context import found'"
 ```
 
-**Risk:** Medium. `detail.py` is 950 LOC.
+**Risk:** Medium. `detail.py` is 950 LOC and the column drop is irreversible.
+If the new `EnrichmentRepository` or read-model query has a bug, enrichment
+metadata disappears from the dashboard. Mitigation: the
+`test_enrichment_repository.py` parity test from S-26 covers round-trip
+against legacy fixtures; revert the PR if regression is observed.
 
-**Dependencies:** S-28 (enrichment domain types and repository).
+**Dependencies:** S-26 (enrichment domain types and repository).
 
 **Out of scope:** Refactoring discovery modules. Extraction algorithm changes.
 
@@ -1610,7 +1536,7 @@ python -c "import ast; tree = ast.parse(open('workers/automation/src/jobhunter/e
 
 ---
 
-#### S-30: feat: define `ApplyRun` aggregate and apply domain types
+#### S-28: feat: define `ApplyRun` aggregate and apply domain types
 
 | Attribute | Detail |
 |---|---|
@@ -1633,8 +1559,6 @@ union. Enforce invariants: valid `JobId`, materials present, one `in_progress`
 per job, dry run never marks applied. Per §8.2, apply runs use `run_id` as
 idempotency key with upsert semantics.
 
-**Backward compatibility:** Pure addition.
-
 **Tenancy implications:** Aggregate includes `TenantId`.
 
 **Tests added:**
@@ -1651,11 +1575,11 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_domain.p
 
 **Dependencies:** S-02.
 
-**Out of scope:** Launcher refactoring (S-32). Process manager (S-33).
+**Out of scope:** Launcher refactoring (S-30). Process manager (S-31).
 
 ---
 
-#### S-31: feat: extract `LocalChromeAdapter` and `ClaudeCodeCliAdapter` behind ports
+#### S-29: feat: extract `LocalChromeAdapter` and `ClaudeCodeCliAdapter` behind ports
 
 | Attribute | Detail |
 |---|---|
@@ -1670,15 +1594,16 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_domain.p
 - `workers/automation/src/jobhunter/infrastructure/apply/local_chrome.py` — **new** `LocalChromeAdapter`.
 - `workers/automation/src/jobhunter/infrastructure/apply/claude_code_cli.py` — **new** `ClaudeCodeCliAdapter`.
 - `workers/automation/src/jobhunter/infrastructure/apply/sqlite_apply_run.py` — **new** `SqliteApplyRunRepository`.
+- `workers/automation/src/jobhunter/apply/chrome.py` — **deleted** (Chrome lifecycle moved to `LocalChromeAdapter`).
+- `workers/automation/src/jobhunter/apply/launcher.py` — **refactor** swap `from .chrome import …` for `BrowserPort` / `AutonomousAgentPort` injection (the rest of the launcher rewrite is S-30).
 
 **Approach:**
-Extract Chrome lifecycle from `apply/chrome.py` into `LocalChromeAdapter`.
-Extract Claude Code subprocess logic into `ClaudeCodeCliAdapter`.
-`SqliteApplyRunRepository` wraps existing `apply_runs` + `apply_run_events`
-tables (already well-structured per §7.4). Existing modules preserved as
-compatibility imports.
-
-**Backward compatibility:** `apply/chrome.py` preserved as compatibility shim.
+Move Chrome lifecycle from `apply/chrome.py` into `LocalChromeAdapter`. Move
+Claude Code subprocess logic into `ClaudeCodeCliAdapter`. Delete
+`apply/chrome.py` and update `launcher.py` to receive injected
+`BrowserPort` / `AutonomousAgentPort` instances (default-bound to the local
+adapters). `SqliteApplyRunRepository` wraps existing `apply_runs` +
+`apply_run_events` tables (already well-structured per §7.4).
 
 **Tenancy implications:** None locally.
 
@@ -1694,13 +1619,13 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_adapters
 
 **Risk:** Medium. Chrome and subprocess management are complex.
 
-**Dependencies:** S-30 (apply domain types).
+**Dependencies:** S-28 (apply domain types).
 
-**Out of scope:** Launcher refactoring (S-32). Cloud adapters.
+**Out of scope:** Launcher refactoring (S-30). Cloud adapters.
 
 ---
 
-#### S-32: refactor: update `launcher.py` to use apply domain types, repository, and ports
+#### S-30: refactor: update `launcher.py` to use apply domain types, repository, and ports
 
 | Attribute | Detail |
 |---|---|
@@ -1714,21 +1639,23 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_adapters
 - `workers/automation/src/jobhunter/apply/launcher.py` — **refactor**.
 
 **Approach:**
-Refactor to use `ApplyRun` aggregate, `BrowserPort`, `AutonomousAgentPort`,
-`ApplyRunRepository`, `ProfileSnapshot`, `EventPublisher`. Rich dashboard
-continues working (presentation adapter). Telemetry writes go through
-`ApplyRunRepository`. Per §8.1, launcher modifies only the `ApplyRun` aggregate;
-pipeline state updated via `ApplicationSubmitted` event handler. Dual-write
-legacy columns. DI with defaults.
-
-**Backward compatibility:** Public API (`run_apply`, `run_job`) unchanged.
-Dual-write.
+Refactor `launcher.py` to use `ApplyRun` aggregate, `BrowserPort`,
+`AutonomousAgentPort`, `ApplyRunRepository`, `ProfileSnapshot`,
+`EventPublisher`. Rich dashboard continues working (presentation adapter).
+Telemetry writes go through `ApplyRunRepository`. Per §8.1, launcher modifies
+only the `ApplyRun` aggregate; pipeline state updated via
+`ApplicationSubmitted` event handler. In the same PR, drop the legacy
+`applied_at`, `apply_status`, `apply_error`, `apply_attempts`, `agent_id`
+columns from `jobs` and update `apps/api/src/read-model.ts` to read apply
+fields from `apply_runs`. DI with defaults.
 
 **Tenancy implications:** Uses `LOCAL_TENANT`.
 
 **Tests added:**
 - Regression: `test_apply_regressions.py`.
 - Unit: mock ports, verify apply flow with domain types.
+- Integration: read-model returns apply fields from `apply_runs` after the
+  column drop.
 
 **Verification commands:**
 
@@ -1737,16 +1664,21 @@ uv --project workers/automation run --extra dev pytest -q
 pnpm test
 ```
 
-**Risk:** High. Most complex module. Mitigation: DI with defaults, dual-write,
-full regression.
+**Risk:** High. Most complex module — Chrome lifecycle, Claude Code subprocess,
+and telemetry all change in one PR, plus the column drop is irreversible. If
+the new repository or read-model query has a bug, apply status disappears
+from the dashboard or the launcher fails to start a run. Mitigation: full
+`test_apply_regressions.py` must stay green; the apply-run repository
+fixtures from S-29 cover round-trip parity. Revert the PR if a regression is
+observed.
 
-**Dependencies:** S-16, S-30, S-31.
+**Dependencies:** S-14 (ProfileSnapshot), S-28, S-29.
 
-**Out of scope:** Removing legacy writes. Process manager (S-33). Dashboard refactoring.
+**Out of scope:** Process manager (S-31). Dashboard refactoring.
 
 ---
 
-#### S-33: feat: formalize apply process manager with compensation actions
+#### S-31: feat: formalize apply process manager with compensation actions
 
 | Attribute | Detail |
 |---|---|
@@ -1764,9 +1696,8 @@ Formalize the apply flow from §8.3 as `ApplyProcessManager`: AcquireJob →
 LaunchBrowser → StartAgent → Monitoring → ParseResult → Cleanup → Report.
 Compensation actions: Chrome failure → cleanup + report; timeout → kill + cleanup;
 crash recovery → detect orphaned `in_progress` runs → transition to `failed`
-with `ORPHANED` error. Pure addition — `launcher.py` can optionally delegate.
-
-**Backward compatibility:** Pure addition.
+with `ORPHANED` error. `launcher.py` from S-30 is updated in the same PR to
+delegate to the new process manager.
 
 **Tenancy implications:** None.
 
@@ -1782,7 +1713,7 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_process_
 
 **Risk:** Low. Pure addition.
 
-**Dependencies:** S-30, S-31.
+**Dependencies:** S-28, S-29.
 
 **Out of scope:** Full `launcher.py` rewrite. Temporal workflow.
 
@@ -1792,7 +1723,7 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_process_
 
 ---
 
-#### S-34: feat: define read-model projections and `ProjectionBuilder`
+#### S-32: feat: define read-model projections and `ProjectionBuilder`
 
 | Attribute | Detail |
 |---|---|
@@ -1812,10 +1743,9 @@ uv --project workers/automation run --extra dev pytest tests/test_apply_process_
 Add `job_list_view` and `dashboard_stats` projection tables.
 `ProjectionBuilder` subscribes to domain events from `InProcessEventBus` and
 updates projections. One-time backfill populates from existing data. On
-startup, replays from watermark (S-11). Per §8.2, projection updates are
-idempotent (check `eventId` watermark).
-
-**Backward compatibility:** New tables. `read-model.ts` unchanged in this step.
+startup, replays from watermark (S-10). Per §8.2, projection updates are
+idempotent (check `eventId` watermark). The TS read-model swap to query the
+projections is S-33.
 
 **Tenancy implications:** Not tenant-scoped locally.
 
@@ -1830,13 +1760,13 @@ uv --project workers/automation run --extra dev pytest tests/test_projection_bui
 
 **Risk:** Medium. Projection correctness depends on all events handled.
 
-**Dependencies:** S-09, S-10, S-11, all event publishers from Phases 5–8.
+**Dependencies:** S-08, S-09, S-10, all event publishers from Phases 5–8.
 
-**Out of scope:** TS read-model changes (S-35). Event streaming to frontend.
+**Out of scope:** TS read-model changes (S-33). Event streaming to frontend.
 
 ---
 
-#### S-35: refactor: update TS `read-model.ts` to query projections and use shared domain types
+#### S-33: refactor: update TS `read-model.ts` to query projections and use shared domain types
 
 | Attribute | Detail |
 |---|---|
@@ -1852,17 +1782,16 @@ uv --project workers/automation run --extra dev pytest tests/test_projection_bui
 
 **Approach:**
 Rewrite `read-model.ts` queries to use `job_list_view` and `dashboard_stats`
-projections. Replace legacy state derivation with simple SELECTs. Import
-`Stage`, `StageState` from `@jobhunter/domain-types`. Fallback to legacy
-query path if projections are empty (transition safety net).
-
-**Backward compatibility:** API response shapes unchanged. Fallback to legacy.
+projections. Replace the legacy state-derivation code path with simple
+SELECTs against the projection tables. Import `Stage`, `StageState` from
+`@jobhunter/domain-types`. The legacy derivation code is deleted in this PR.
+The S-32 backfill ensures projections are non-empty on first deploy.
 
 **Tenancy implications:** Types include `TenantId` for future use.
 
 **Tests added:**
 - Integration: existing read-model tests pass with projection-backed queries.
-- Unit: fallback to legacy when projections empty.
+- Unit: assert legacy derivation helpers are removed (`grep` check in CI).
 
 **Verification commands:**
 
@@ -1871,15 +1800,19 @@ pnpm test
 pnpm api:test
 ```
 
-**Risk:** High. Core read path. Mitigation: fallback + full test suite.
+**Risk:** High. Core read path — if a projection is missing data the S-32
+backfill should have populated, the dashboard goes blank. Mitigation: the
+S-32 step ships its own backfill verification; this PR includes a smoke test
+that compares row counts in `job_list_view` against expected values from
+`jobs` joined with `job_stage_states`. Revert if mismatch is found.
 
-**Dependencies:** S-34 (projections), S-01 (shared types).
+**Dependencies:** S-32 (projections), S-01 (shared types).
 
-**Out of scope:** Removing legacy fallback. Event streaming.
+**Out of scope:** Event streaming.
 
 ---
 
-#### S-36: refactor: replace `local-actions.ts` subprocess spawning with JSON-RPC adapter
+#### S-34: refactor: replace `local-actions.ts` subprocess spawning with JSON-RPC adapter
 
 | Attribute | Detail |
 |---|---|
@@ -1894,14 +1827,12 @@ pnpm api:test
 - `apps/api/src/json-rpc-adapter.ts` — **new** `SubprocessJsonRpcAdapter`.
 
 **Approach:**
-Create `SubprocessJsonRpcAdapter` that spawns `uv run jobhunter rpc` (S-12),
+Create `SubprocessJsonRpcAdapter` that spawns `uv run jobhunter rpc` (S-11),
 writes JSON-RPC request to stdin, reads response from stdout. Replace
-`defaultActionDispatcher`. For fire-and-forget (apply, retry-stage), spawn
-detached and return `runId`. For synchronous (profile_import), wait for
-response. `buildActionResponse` compatibility shim wraps JSON-RPC response.
-Fallback to old dispatcher if JSON-RPC fails (transition safety).
-
-**Backward compatibility:** Same API endpoints, same response shapes.
+`defaultActionDispatcher` outright; the old ad-hoc subprocess dispatcher is
+deleted in this PR. For fire-and-forget (apply, retry-stage), spawn detached
+and return `runId`. For synchronous (profile_import), wait for response.
+`buildActionResponse` is updated to consume the JSON-RPC response shape.
 
 **Tenancy implications:** JSON-RPC requests include `tenantId: "local"`.
 
@@ -1916,15 +1847,19 @@ pnpm test
 pnpm api:test
 ```
 
-**Risk:** Medium-high. Mitigation: fallback to old dispatcher.
+**Risk:** Medium-high. Every action endpoint switches transport in one PR; if
+the JSON-RPC adapter has a bug, every action button fails. Mitigation: the
+S-11 RPC server has its own integration tests; this PR covers each method via
+`apps/api/test/json-rpc-adapter.test.ts`. Revert the PR if any action
+regresses.
 
-**Dependencies:** S-12 (JSON-RPC server).
+**Dependencies:** S-11 (JSON-RPC server).
 
 **Out of scope:** HTTP JSON-RPC transport. Temporal transport.
 
 ---
 
-#### S-37: docs: update architecture, domain-model, and decisions for DDD migration
+#### S-35: docs: update architecture, domain-model, and decisions for DDD migration
 
 | Attribute | Detail |
 |---|---|
@@ -1946,8 +1881,6 @@ pnpm api:test
 Comprehensive documentation update per AGENTS.md requirements. New ADR
 entries: DDD + Hexagonal adopted, TenantId introduced, domain events as
 integration backbone, JSON-RPC protocol, projection-based read model.
-
-**Backward compatibility:** N/A — documentation only.
 
 **Tests added:** None.
 
@@ -1976,39 +1909,39 @@ all steps are delivered.
 | S-02 | Introduces `TenantId` type in Python with `LOCAL_TENANT`. |
 | S-03 | All domain events carry `tenantId`. |
 | S-05 | `PipelineStateRepository` port accepts `TenantId`. |
-| S-12 | JSON-RPC methods accept `tenantId` in params. |
-| S-13 | TS write-model passes `TenantId` to state machine. |
-| S-15 | `ProfileRepository` port accepts `TenantId`. |
-| S-18 | `ScoreRepository` port accepts `TenantId`. |
-| S-22 | `MaterialsRepository` port accepts `TenantId`. |
-| S-28 | `EnrichmentRepository` port accepts `TenantId`. |
-| S-31 | `ApplyRunRepository` port accepts `TenantId`. |
+| S-11 | JSON-RPC methods accept `tenantId` in params. |
+| S-12 | TS write-model passes `TenantId` to state machine. |
+| S-14 | `ProfileRepository` port accepts `TenantId`. |
+| S-16 | `ScoreRepository` port accepts `TenantId`. |
+| S-20 | `MaterialsRepository` port accepts `TenantId`. |
+| S-26 | `EnrichmentRepository` port accepts `TenantId`. |
+| S-29 | `ApplyRunRepository` port accepts `TenantId`. |
 
 ### 6.2 Domain Event Bus Introduction
 
 | Step | What it does |
 |---|---|
-| S-09 | Defines `EventPublisher` port and `InProcessEventBus`. |
-| S-10 | Wires `record_job_event` through the bus. Standardizes event types (strangler dual-write). |
-| S-11 | Adds event watermark tracking for projection reconciliation. |
-| S-20 | Scoring publishes `JobScored` events. |
-| S-25 | Materials publishes `ResumeApproved`, `ResumeFailed` events. |
-| S-26 | Materials publishes `CoverLetterGenerated`, `PdfRendered` events. |
-| S-29 | Enrichment publishes `JobEnriched`, `EnrichmentFailed` events. |
-| S-32 | Apply publishes `ApplicationSubmitted`, `ApplicationFailed` events. |
-| S-34 | `ProjectionBuilder` subscribes to all events. |
+| S-08 | Defines `EventPublisher` port and `InProcessEventBus`. |
+| S-09 | Wires `record_job_event` through the bus. Standardizes event types (snake_case → PascalCase rename migration). |
+| S-10 | Adds event watermark tracking for projection reconciliation. |
+| S-18 | Scoring publishes `JobScored` events. |
+| S-23 | Materials publishes `ResumeApproved`, `ResumeFailed` events. |
+| S-24 | Materials publishes `CoverLetterGenerated`, `PdfRendered` events. |
+| S-27 | Enrichment publishes `JobEnriched`, `EnrichmentFailed` events. |
+| S-30 | Apply publishes `ApplicationSubmitted`, `ApplicationFailed` events. |
+| S-32 | `ProjectionBuilder` subscribes to all events. |
 
 ### 6.3 Repository Extraction Per Aggregate
 
 | Aggregate | Port Step | Adapter Step | Table |
 |---|---|---|---|
 | `JobPipelineState` | S-05 | S-05 | `job_stage_states` (existing) |
-| `Profile` | S-15 | S-15 | `profile.json` (existing) |
-| `JobScore` | S-18 | S-18 | `job_scores` (new) |
-| `MaterialsSet` | S-22 | S-22 | `job_materials` (new) + `job_artifacts` (existing) |
-| `JobEnrichment` | S-28 | S-28 | `job_enrichments` (new) |
-| `ApplyRun` | S-31 | S-31 | `apply_runs` + `apply_run_events` (existing) |
-| `Job` (Discovery) | S-27 | Deferred | `jobs` (existing, narrowed) |
+| `Profile` | S-14 | S-14 | `profile.json` (existing) |
+| `JobScore` | S-16 | S-16 | `job_scores` (new) |
+| `MaterialsSet` | S-20 | S-20 | `job_materials` (new) + `job_artifacts` (existing) |
+| `JobEnrichment` | S-26 | S-26 | `job_enrichments` (new) |
+| `ApplyRun` | S-29 | S-29 | `apply_runs` + `apply_run_events` (existing) |
+| `Job` (Discovery) | S-25 | Deferred | `jobs` (existing, narrowed) |
 
 ### 6.4 Stage State Machine Consolidation
 
@@ -2016,93 +1949,39 @@ all steps are delivered.
 |---|---|
 | S-04 | Defines `StageStateMachine` as pure function in Python and TS. |
 | S-06 | Wires `state.py` to use the state machine internally. |
-| S-08 | Adds `Queued` and `Canceled` states. |
-| S-13 | TS write-model uses TS state machine for transition validation. |
+| S-07 | Adds `Queued` and `Canceled` states. |
+| S-12 | TS write-model uses TS state machine for transition validation. |
 
 ### 6.5 TS↔Python Typed Application Protocol
 
 | Step | What it does |
 |---|---|
-| S-12 | Defines JSON-RPC 2.0 protocol and `jobhunter rpc` subcommand. |
-| S-13 | TS API hosts simple commands directly (no Python roundtrip). |
-| S-36 | Replaces `local-actions.ts` with `SubprocessJsonRpcAdapter`. |
+| S-11 | Defines JSON-RPC 2.0 protocol and `jobhunter rpc` subcommand. |
+| S-12 | TS API hosts simple commands directly (no Python roundtrip). |
+| S-34 | Replaces `local-actions.ts` with `SubprocessJsonRpcAdapter`. |
 
 ### 6.6 Apply Saga / Process Manager
 
 | Step | What it does |
 |---|---|
-| S-30 | Defines `ApplyRun` aggregate with `SubmissionResult`. |
-| S-31 | Extracts `BrowserPort` and `AutonomousAgentPort`. |
-| S-32 | Wires `launcher.py` to use domain types and ports. |
-| S-33 | Formalizes apply process manager with compensation actions. |
+| S-28 | Defines `ApplyRun` aggregate with `SubmissionResult`. |
+| S-29 | Extracts `BrowserPort` and `AutonomousAgentPort`. |
+| S-30 | Wires `launcher.py` to use domain types and ports. |
+| S-31 | Formalizes apply process manager with compensation actions. |
 
 ### 6.7 Documentation and ADR Updates
 
 | Step | What it does |
 |---|---|
-| S-37 | Comprehensive documentation update. New ADR entries. |
+| S-35 | Comprehensive documentation update. New ADR entries. |
 
-Note: Per AGENTS.md, individual PRs for steps S-04 through S-36 should include
-narrow doc updates for the specific surfaces they change. S-37 is the final
+Note: Per AGENTS.md, individual PRs for steps S-04 through S-34 should include
+narrow doc updates for the specific surfaces they change. S-35 is the final
 sweep that ensures consistency across all docs.
 
 ---
 
-## 7. Strangler Decommissioning Plan
-
-### 7.1 Legacy State Materialization (`state.py`)
-
-| What | Current location | Replacement step | Soak period | Removal step |
-|---|---|---|---|---|
-| `derive_legacy_stage_states()` | `state.py` → `legacy_deriver.py` (S-07) | S-06, S-07 | Until removal criterion met (§4.7). | Future step. |
-| TS `read-model.ts` legacy derivation | `read-model.ts` | S-35 (projection-based read model) | Until projections stable for 1 week. | Future step. |
-
-### 7.2 Wide Nullable `jobs` Columns
-
-| Column group | Replacement step | Soak period | Removal step |
-|---|---|---|---|
-| `fit_score`, `score_reasoning`, `scored_at` | S-18, S-20 | Until all queries read `job_scores`. | Future step. |
-| `tailored_resume_path`, `tailored_at`, `tailor_attempts` | S-22, S-25 | Until all queries read `job_materials`. | Future step. |
-| `cover_letter_path`, `cover_letter_at`, `cover_attempts` | S-22, S-26 | Same as above. | Future step. |
-| `full_description`, `application_url`, `detail_scraped_at`, `detail_error` | S-28, S-29 | Until all queries read `job_enrichments`. | Future step. |
-| `applied_at`, `apply_status`, `apply_error`, `apply_attempts`, etc. | S-32 | Until all queries read `apply_runs`. | Future step. |
-
-### 7.3 Dict-Passing of Profile Data
-
-| What | Replacement step | Soak period | Removal step |
-|---|---|---|---|
-| `resume_profile.py` dual-path accessors | S-16 | Until all consumers use `ProfileSnapshot`. | Future step. |
-| `config.load_profile()` raw dict | S-16 | Same. | Future step. |
-
-### 7.4 Procedural `pipeline.py`
-
-| What | Replacement step | Soak period | Removal step |
-|---|---|---|---|
-| Direct stage function calls | S-06 + Phase 5–8 ports | Until all stages dispatch through ports. | Future step. |
-
-### 7.5 Cross-Context Imports
-
-| Import | Replacement step | Removal step |
-|---|---|---|
-| `enrichment/detail.py` → `discovery/smartextract.extract_json` | S-29 | S-29. |
-| `enrichment/detail.py` → `discovery/jobspy.parse_proxy` | S-29 | S-29. |
-| `scoring/tailor.py` → `scoring/pdf.py` | S-25 | S-25. |
-
-### 7.6 `local-actions.ts` Ad-Hoc Subprocess Spawning
-
-| What | Replacement step | Soak period | Removal step |
-|---|---|---|---|
-| `defaultActionDispatcher` | S-36 | Until all action endpoints use JSON-RPC. | Future step. |
-
-### 7.7 Event Type Naming (snake_case → PascalCase)
-
-| What | Replacement step | Soak period | Removal step |
-|---|---|---|---|
-| `legacy_event_type` column in `job_events` | S-10 (strangler dual-write) | Until no code reads `legacy_event_type`. | Future step. Drop column. |
-
----
-
-## 8. Out-of-Scope (Deferred)
+## 7. Out-of-Scope (Deferred)
 
 Each item below is explicitly deferred. The evolution trigger from §9.4 is
 cited where applicable.
@@ -2110,10 +1989,10 @@ cited where applicable.
 | Deferred item | Target section | Evolution trigger (§9.4) | Notes |
 |---|---|---|---|
 | `PostgresJobRepository` and all Postgres adapters | §5.1–5.8 | Concurrent users > 1 OR DB > 10 GB OR multi-process writes | Ports defined; only SQLite adapters implemented. |
-| `S3ArtifactAdapter` | §5.5 | Multi-node deployment OR artifact > 1 GB/tenant | `ArtifactStoragePort` defined in S-22. |
-| `SqsEventPublisher` + transactional outbox | §6.3 | Multi-process deployment (> 1 API or worker) | `EventPublisher` defined in S-09. |
-| `BrowserbaseAdapter` | §5.6 | Any cloud deployment (day-1 blocker) | `BrowserPort` defined in S-30. |
-| `ClaudeApiAgentAdapter` | §5.6 | Worker fleet > 1 machine | `AutonomousAgentPort` defined in S-30. |
+| `S3ArtifactAdapter` | §5.5 | Multi-node deployment OR artifact > 1 GB/tenant | `ArtifactStoragePort` defined in S-20. |
+| `SqsEventPublisher` + transactional outbox | §6.3 | Multi-process deployment (> 1 API or worker) | `EventPublisher` defined in S-08. |
+| `BrowserbaseAdapter` | §5.6 | Any cloud deployment (day-1 blocker) | `BrowserPort` defined in S-28. |
+| `ClaudeApiAgentAdapter` | §5.6 | Worker fleet > 1 machine | `AutonomousAgentPort` defined in S-28. |
 | `TemporalWorkflowAdapter` | §5.7 | Worker fleet > 1 machine OR pipeline > 30 min | `StageCommandDispatcher` port deferred; pipeline.py remains procedural. |
 | Auth0 / Cognito JWT | §9 | Any public-facing deployment | `TenantId` seam in place from Phase 1. |
 | Stripe billing / `EntitlementPort` | §9 | First paying customer | No-op adapter not yet created. |
@@ -2125,14 +2004,14 @@ cited where applicable.
 | Resume rendering spike | §5.5 | Blocked on spike results OR cloud (TeX Live 4 GB) | `PdfRendererPort` defined; `LatexPdfAdapter` stays. |
 | Event streaming to frontend (SSE/WS) | §3.8 | Product decision on UX approach | Open question in §10. |
 | `StageCommandDispatcher` port | §5.7 | Pipeline refactoring beyond scope | `pipeline.py` remains procedural. |
-| Materialized `job_list_view` replacing all `jobs` reads | §4.8, §6.6 | All contexts publishing events reliably | Projections in S-34; full replacement deferred. |
+| Materialized `job_list_view` replacing all `jobs` reads | §4.8, §6.6 | All contexts publishing events reliably | Projections in S-32; full replacement deferred. |
 | `pdflatex` → Tectonic/Typst | §5.5 | Rendering spike conclusion OR cloud deployment | `PdfRendererPort` absorbs any engine. |
 | `TenantId` from JWT (multi-tenant) | §9 | Multi-tenant deployment | Domain types carry TenantId; only source changes (constant → JWT). |
 | No-op `EntitlementPort` adapter | §9 (Billing) | Feature gate before first paying customer | All entitlements return `Allowed` locally. |
 
 ---
 
-## 9. QA & Reliability Gates
+## 8. QA & Reliability Gates
 
 ### Phase 1: Foundation
 
@@ -2168,7 +2047,7 @@ cited where applicable.
 ### Phase 5: Scoring
 
 - **QA addition:** `test_scoring_domain.py`, `test_score_repository.py`. Add:
-  "Scores written to job_scores and legacy columns" → `test_score_repository.py`.
+  "Scores written to and read from `job_scores`" → `test_score_repository.py`.
 - **Verification:** `pnpm test`, `pytest -q`.
 
 ### Phase 6: Materials
@@ -2176,14 +2055,14 @@ cited where applicable.
 - **QA addition:** `test_materials_domain.py`, `test_materials_repository.py`,
   `test_content_validator.py`, `test_resume_assembler.py`,
   `test_pdf_adapters.py`. Existing `test_cover_requirements.py` and
-  `test_pdf_targets.py` must pass. Add: "Materials written to job_materials
-  and legacy columns" → `test_materials_repository.py`.
+  `test_pdf_targets.py` must pass. Add: "Materials written to and read from
+  `job_materials`" → `test_materials_repository.py`.
 - **Verification:** `pnpm test`, `pytest -q`.
 
 ### Phase 7: Discovery & Enrichment
 
 - **QA addition:** `test_discovery_domain.py`, `test_enrichment_domain.py`,
-  `test_enrichment_repository.py`. Add: "No cross-context imports" → S-29 import audit.
+  `test_enrichment_repository.py`. Add: "No cross-context imports" → S-27 import audit.
 - **Verification:** `pnpm test`, `pytest -q`.
 
 ### Phase 8: Apply
@@ -2204,45 +2083,45 @@ cited where applicable.
 
 ---
 
-## 10. Documentation Plan
+## 9. Documentation Plan
 
 | Step | Docs updated | What changes |
 |---|---|---|
 | S-01 | None | Pure addition. |
 | S-04 | None | Internal domain logic. |
 | S-06 | `docs/architecture.md` | Note state machine formalization. |
-| S-08 | `docs/domain-model.md` | Add `Queued` and `Canceled` to canonical states. |
-| S-09 | `docs/architecture.md` | Note event bus introduction. |
-| S-12 | `docs/architecture.md`, `docs/decisions.md` | JSON-RPC protocol ADR. |
-| S-13 | `docs/decisions.md` | TS-hosted commands ADR. |
-| S-16 | None | Internal refactor. |
-| S-18 | `docs/architecture.md` | Note `job_scores` table. |
-| S-20 | `docs/decisions.md` | New ADR: "Scoring context with repository port." |
-| S-22 | `docs/architecture.md` | Note `job_materials` table. |
-| S-28 | `docs/architecture.md` | Note `job_enrichments` table. |
-| S-35 | `docs/architecture.md` | Projection-based read model. |
-| S-37 | All docs | Comprehensive final sweep. |
+| S-07 | `docs/domain-model.md` | Add `Queued` and `Canceled` to canonical states. |
+| S-08 | `docs/architecture.md` | Note event bus introduction. |
+| S-11 | `docs/architecture.md`, `docs/decisions.md` | JSON-RPC protocol ADR. |
+| S-12 | `docs/decisions.md` | TS-hosted commands ADR. |
+| S-14 | None | Internal refactor. |
+| S-16 | `docs/architecture.md` | Note `job_scores` table. |
+| S-18 | `docs/decisions.md` | New ADR: "Scoring context with repository port." |
+| S-20 | `docs/architecture.md` | Note `job_materials` table. |
+| S-26 | `docs/architecture.md` | Note `job_enrichments` table. |
+| S-33 | `docs/architecture.md` | Projection-based read model. |
+| S-35 | All docs | Comprehensive final sweep. |
 
 **New ADR entries** (in `docs/decisions.md`):
 
-1. "DDD + Hexagonal Architecture adopted" — date of S-37 merge.
+1. "DDD + Hexagonal Architecture adopted" — date of S-35 merge.
 2. "TenantId introduced as domain type" — date of S-01 merge.
-3. "Domain events as integration backbone" — date of S-09 merge.
-4. "JSON-RPC 2.0 as TS↔Python protocol" — date of S-12 merge.
-5. "TS API hosts simple state-transition commands" — date of S-13 merge.
-6. "Projection-based read model" — date of S-35 merge.
+3. "Domain events as integration backbone" — date of S-08 merge.
+4. "JSON-RPC 2.0 as TS↔Python protocol" — date of S-11 merge.
+5. "TS API hosts simple state-transition commands" — date of S-12 merge.
+6. "Projection-based read model" — date of S-33 merge.
 
 **Superseded decisions:**
 - "Stage State Is The Operational Source Of Truth" (2026-05-02) is **advanced,
-  not superseded** — state machine formalization (S-04–S-08) strengthens it.
+  not superseded** — state machine formalization (S-04–S-07) strengthens it.
 
 ---
 
-## 11. Worktree & Branching Convention
+## 10. Worktree & Branching Convention
 
 Per AGENTS.md:
 
-- **Every step = one worktree = one PR.** S-01 through S-37 each get a dedicated
+- **Every step = one worktree = one PR.** S-01 through S-35 each get a dedicated
   worktree on their own branch.
 - Branch naming: `ddd/s-{step_number}-{short-description}` (e.g.,
   `ddd/s-01-domain-types`, `ddd/s-04-state-machine`).
@@ -2256,15 +2135,15 @@ Per AGENTS.md:
 **Parallel execution opportunities:**
 
 - S-01 and S-02 (TS and Python types are independent).
-- S-14 and S-17 (Profile and Scoring aggregates depend only on S-02).
-- S-27, S-28, and S-30 (Discovery, Enrichment, and Apply aggregates are
+- S-13 and S-15 (Profile and Scoring aggregates depend only on S-02).
+- S-25, S-26, and S-28 (Discovery, Enrichment, and Apply aggregates are
   independent, all depend only on S-02).
 
-The canonical execution order is the step numbering (S-01 → S-37).
+The canonical execution order is the step numbering (S-01 → S-35).
 
 ---
 
-## 12. Glossary Diff
+## 11. Glossary Diff
 
 **Terms introduced by this plan:**
 
@@ -2280,9 +2159,6 @@ The canonical execution order is the step numbering (S-01 → S-37).
 | `ProjectionBuilder` | Infrastructure component subscribing to events and updating read-model projections. |
 | `SubprocessJsonRpcAdapter` | TS adapter that spawns `jobhunter rpc` and communicates via JSON-RPC over stdin/stdout. |
 | `CurrentLlmAdapter` | Thin adapter wrapping `jobhunter.llm.get_client()` behind `LlmPort`. |
-| `dual-write` | Transition pattern: new code writes to both new table and legacy columns simultaneously. |
-| `compatibility shim` | Thin delegation layer preserving old import path while delegating to new code. |
-| `strangler dual-write` | Variant of dual-write for renaming: new format is canonical, old format preserved in a transition column. |
 
 **Renaming from current code:**
 
@@ -2290,7 +2166,7 @@ The canonical execution order is the step numbering (S-01 → S-37).
 |---|---|---|
 | `state.STATE_VALUES` tuple | `Stage` enum + `StageState` discriminated union | S-02, S-04 |
 | `state.STAGE_ORDER` tuple | `Stage` enum with canonical order | S-02 |
-| `config.load_profile()` → raw dict | `ProfileRepository.get_snapshot()` → `ProfileSnapshot` | S-15, S-16 |
-| `record_job_event()` with string event_type | `EventPublisher.publish()` with typed `DomainEvent` | S-09, S-10 |
-| `_parse_score_response()` in scorer.py | `ScoreParser` domain service | S-17 |
-| `defaultActionDispatcher` in local-actions.ts | `SubprocessJsonRpcAdapter` | S-36 |
+| `config.load_profile()` → raw dict | `ProfileRepository.get_snapshot()` → `ProfileSnapshot` | S-14 |
+| `record_job_event()` with string event_type | `EventPublisher.publish()` with typed `DomainEvent` | S-08, S-09 |
+| `_parse_score_response()` in scorer.py | `ScoreParser` domain service | S-15 |
+| `defaultActionDispatcher` in local-actions.ts | `SubprocessJsonRpcAdapter` | S-34 |
