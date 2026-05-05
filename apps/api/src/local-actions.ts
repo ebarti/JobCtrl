@@ -326,7 +326,7 @@ import json
 import sys
 from pathlib import Path
 
-from jobhunter.scoring.pdf import build_latex, render_pdf_latex
+from jobhunter.infrastructure.materials.latex_pdf import build_latex, render_pdf_latex
 
 profile_path = Path(sys.argv[1])
 template_path = Path(sys.argv[2])

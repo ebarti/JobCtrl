@@ -1,9 +1,25 @@
-"""PDF generation for tailored resumes and cover letters.
+"""LatexPdfAdapter — moderncv LaTeX template + ``pdflatex`` adapter.
 
-Tailored resumes are rendered through the built-in moderncv LaTeX template and
-compiled with pdflatex. Cover letters fall back to HTML/Playwright because they
-do not use the resume template.
+See ddd-target.md §5.5. Implements the resume-rendering half of
+:class:`PdfRendererPort` by wrapping the existing pdflatex subprocess
+logic that previously lived in ``scoring/pdf.py``. The cover-letter
+half lives in :class:`PlaywrightHtmlPdfAdapter`.
+
+This module owns:
+
+  * The default moderncv template + style schema.
+  * Resume-style normalisation (font size, paper size, alignment).
+  * LaTeX escaping helpers (``_escape_latex`` / ``_escape_latex_light``).
+  * ``build_latex`` — assembles a complete LaTeX document from the
+    tailored payload + canonical profile dict.
+  * ``render_pdf_latex`` — compiles a LaTeX source string to PDF.
+
+The adapter exposes the port-shaped :meth:`render_resume_to_pdf` entry
+point that returns a typed :class:`Artifact`. Callers (tailor use case)
+rely on the value object — never on the raw subprocess.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -11,12 +27,24 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
+from typing import Any
 
-from jobhunter.database import get_connection
-from jobhunter.state import record_job_artifact, record_job_event, set_stage_state, utc_now
+from jobhunter.domain.materials.entities import Artifact
+from jobhunter.domain.materials.value_objects import (
+    ArtifactStatus,
+    ArtifactType,
+    RenderFormat,
+)
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Template + style schema
+# ---------------------------------------------------------------------------
+
 
 DEFAULT_RESUME_LATEX_TEMPLATE = r"""\documentclass[11pt,a4paper,sans]{moderncv}
 
@@ -71,21 +99,21 @@ _STYLE_CHOICES = {
 }
 
 
-# ── LaTeX Utilities ──────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Subprocess discovery
+# ---------------------------------------------------------------------------
+
 
 def _find_pdflatex() -> str:
     """Locate the pdflatex binary, checking common MacTeX/TeX Live paths."""
-    # Check env override first
     env = os.environ.get("PDFLATEX_PATH")
     if env and Path(env).exists():
         return env
 
-    # Check PATH
     found = shutil.which("pdflatex")
     if found:
         return found
 
-    # Common MacTeX / TeX Live locations
     candidates = [
         "/Library/TeX/texbin/pdflatex",
         "/usr/local/bin/pdflatex",
@@ -101,9 +129,13 @@ def _find_pdflatex() -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# LaTeX escaping
+# ---------------------------------------------------------------------------
+
+
 def _escape_latex(text: str) -> str:
     """Escape special LaTeX characters in user/LLM-generated text."""
-    # Order matters: & must come before others that might create &
     replacements = [
         ("\\", "\\textbackslash{}"),
         ("&", "\\&"),
@@ -118,39 +150,31 @@ def _escape_latex(text: str) -> str:
     ]
     for old, new in replacements:
         text = text.replace(old, new)
-    # Fix euro sign — common in this resume
     text = text.replace("€", "\\texteuro ")
-    # Fix em/en dashes
-    text = text.replace("\u2014", "---")
-    text = text.replace("\u2013", "--")
-    # Smart quotes → straight quotes
-    text = text.replace("\u201c", "``").replace("\u201d", "''")
-    text = text.replace("\u2018", "`").replace("\u2019", "'")
+    text = text.replace("—", "---")
+    text = text.replace("–", "--")
+    text = text.replace("“", "``").replace("”", "''")
+    text = text.replace("‘", "`").replace("’", "'")
     return text
 
 
 def _escape_latex_light(text: str) -> str:
-    """Escape LaTeX specials but preserve intentional LaTeX commands.
-
-    For fields that may contain intentional LaTeX like \\texteuro, \\`{e}, etc.
-    Only escapes the dangerous characters that are unlikely in authored content.
-    """
-    # Only escape truly dangerous chars that appear in LLM output
+    """Escape LaTeX specials but preserve intentional LaTeX commands."""
     text = text.replace("&", "\\&")
     text = text.replace("%", "\\%")
     text = text.replace("#", "\\#")
-    # Fix euro sign if raw €
     text = text.replace("€", "\\texteuro ")
-    # Fix em/en dashes
-    text = text.replace("\u2014", "---")
-    text = text.replace("\u2013", "--")
-    # Smart quotes → straight quotes
-    text = text.replace("\u201c", "``").replace("\u201d", "''")
-    text = text.replace("\u2018", "`").replace("\u2019", "'")
+    text = text.replace("—", "---")
+    text = text.replace("–", "--")
+    text = text.replace("“", "``").replace("”", "''")
+    text = text.replace("‘", "`").replace("’", "'")
     return text
 
 
-# ── LaTeX Resume Builder ─────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Style schema
+# ---------------------------------------------------------------------------
+
 
 def validate_latex_template(template: str) -> None:
     """Validate that a resume template can receive generated resume fragments."""
@@ -304,6 +328,11 @@ def _apply_latex_template(template: str, fragments: dict[str, str]) -> str:
     return rendered
 
 
+# ---------------------------------------------------------------------------
+# LaTeX builder
+# ---------------------------------------------------------------------------
+
+
 def build_latex(
     data: dict,
     profile: dict,
@@ -333,7 +362,7 @@ def build_latex(
         tailored_experience_bullets,
         tailored_experience_title,
     )
-    from jobhunter.scoring.validator import sanitize_text
+    from jobhunter.domain.materials.services import sanitize_text
 
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
@@ -370,7 +399,6 @@ def build_latex(
     }
 
     # ── Personal Data ──
-    # Split full_name into first + last for moderncv \name{first}{last}
     full_name = personal.get("full_name", "")
     name_parts = full_name.strip().split(None, 1)
     first_name = name_parts[0] if name_parts else ""
@@ -400,7 +428,6 @@ def build_latex(
 
     linkedin = personal.get("linkedin_url", "")
     if linkedin:
-        # Extract handle from URL
         handle = linkedin.rstrip("/").rsplit("/", 1)[-1]
         personal_lines.append(f"\\social[linkedin]{{{handle}}}")
 
@@ -421,7 +448,6 @@ def build_latex(
         company = _escape_latex_light(entry.get("company", ""))
         location = _escape_latex_light(entry.get("location", ""))
 
-        # Get bullets: LLM update if available, else master bullets
         update = experience_updates.get(entry.get("id"), {})
         title = _escape_latex_light(tailored_experience_title(entry, update, profile))
         bullets = tailored_experience_bullets(entry, update, profile)
@@ -487,19 +513,13 @@ def build_latex(
 
 
 def render_pdf_latex(latex_source: str, output_path: str) -> None:
-    """Compile LaTeX source to PDF using pdflatex.
-
-    Args:
-        latex_source: Complete LaTeX document string.
-        output_path: Path to write the final PDF.
-    """
+    """Compile LaTeX source to PDF using pdflatex."""
     pdflatex = _find_pdflatex()
 
     with tempfile.TemporaryDirectory(prefix="jobhunter_latex_") as tmpdir:
         tex_path = Path(tmpdir) / "resume.tex"
         tex_path.write_text(latex_source, encoding="utf-8")
 
-        # Run pdflatex twice for cross-references (moderncv needs it)
         for run in range(2):
             result = subprocess.run(
                 [pdflatex, "-interaction=nonstopmode", "-halt-on-error", "resume.tex"],
@@ -522,184 +542,69 @@ def render_pdf_latex(latex_source: str, output_path: str) -> None:
         shutil.copy2(str(pdf_result), output_path)
 
 
-# ── Cover Letter PDF (HTML/Playwright fallback) ─────────────────────────
-
-def _build_letter_html(text: str) -> str:
-    """Build simple HTML for a plain-text cover letter."""
-    import html as html_mod
-
-    paragraphs: list[str] = []
-    for block in text.strip().split("\n\n"):
-        block_lines = [html_mod.escape(line.strip()) for line in block.splitlines() if line.strip()]
-        if block_lines:
-            paragraphs.append(f"<p>{'<br>'.join(block_lines)}</p>")
-
-    body_html = "\n".join(paragraphs) or f"<p>{html_mod.escape(text.strip())}</p>"
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-@page {{
-    size: letter;
-    margin: 0.7in;
-}}
-* {{
-    box-sizing: border-box;
-}}
-body {{
-    font-family: 'Georgia', 'Times New Roman', serif;
-    font-size: 11pt;
-    line-height: 1.6;
-    color: #1f1f1f;
-}}
-.letter {{
-    width: 100%;
-}}
-p {{
-    margin: 0 0 14px;
-    white-space: normal;
-}}
-</style>
-</head>
-<body>
-<div class="letter">
-{body_html}
-</div>
-</body>
-</html>"""
+# ---------------------------------------------------------------------------
+# Adapter
+# ---------------------------------------------------------------------------
 
 
-def _render_pdf_playwright(html_content: str, output_path: str) -> None:
-    """Render HTML to PDF using Playwright's headless Chromium (cover letters only)."""
-    from playwright.sync_api import sync_playwright
+class LatexPdfAdapter:
+    """Concrete :class:`PdfRendererPort` that compiles tailored resumes via pdflatex.
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.set_content(html_content, wait_until="networkidle")
-        page.pdf(
-            path=output_path,
-            format="Letter",
-            margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
-            print_background=True,
-        )
-        browser.close()
-
-
-# ── Public API ───────────────────────────────────────────────────────────
-
-def convert_resume_to_pdf(data: dict, profile: dict, output_path: Path) -> Path:
-    """Convert tailored resume JSON to PDF via LaTeX.
-
-    Args:
-        data: Parsed LLM tailoring JSON.
-        profile: User profile dict.
-        output_path: Where to write the PDF.
-
-    Returns:
-        Path to the generated PDF.
+    Cover letters fall back to :class:`PlaywrightHtmlPdfAdapter`; this
+    adapter raises :class:`NotImplementedError` from
+    :meth:`render_cover_letter_to_pdf` so a misconfigured wiring fails
+    loudly instead of silently producing nothing.
     """
-    output_path = Path(output_path)
-    latex_source = build_latex(data, profile)
 
-    # Also save the .tex source for debugging/manual editing
-    tex_path = output_path.with_suffix(".tex")
-    tex_path.write_text(latex_source, encoding="utf-8")
-    log.info("LaTeX source saved: %s", tex_path)
+    def render_resume_to_pdf(
+        self,
+        *,
+        tailored_payload: dict,
+        profile_dict: dict,
+        output_path: str,
+        created_at: str,
+    ) -> Artifact:
+        latex_source = build_latex(tailored_payload, profile_dict)
 
-    render_pdf_latex(latex_source, str(output_path))
-    log.info("PDF generated: %s", output_path)
-    return output_path
+        # Save the .tex source for debugging/manual editing alongside the PDF.
+        tex_path = Path(output_path).with_suffix(".tex")
+        tex_path.write_text(latex_source, encoding="utf-8")
+        log.info("LaTeX source saved: %s", tex_path)
 
+        render_pdf_latex(latex_source, str(output_path))
+        log.info("PDF generated: %s", output_path)
 
-def convert_cover_letter_to_pdf(text_path: Path, output_path: Path | None = None) -> Path:
-    """Convert a plain-text cover letter to PDF via HTML/Playwright.
-
-    Args:
-        text_path: Path to the .txt cover letter.
-        output_path: Optional override for the output path.
-
-    Returns:
-        Path to the generated PDF.
-    """
-    text_path = Path(text_path)
-    text = text_path.read_text(encoding="utf-8")
-    html_content = _build_letter_html(text)
-
-    out = Path(output_path) if output_path else text_path.with_suffix(".pdf")
-    _render_pdf_playwright(html_content, str(out))
-    log.info("Cover letter PDF generated: %s", out)
-    return out
-
-
-def get_pending_conversion_targets(limit: int = 0) -> list[Path]:
-    """Return approved cover-letter text artifacts that still need PDF conversion."""
-    candidates: list[Path] = []
-    conn = get_connection()
-    rows = conn.execute(
-        """
-        SELECT cover_letter_path
-        FROM jobs
-        WHERE cover_letter_path IS NOT NULL
-          AND cover_letter_path != ''
-        ORDER BY cover_letter_at DESC NULLS LAST
-        """
-    ).fetchall()
-    for row in rows:
-        path = Path(row["cover_letter_path"])
-        if path.exists() and not path.with_suffix(".pdf").exists():
-            candidates.append(path)
-
-    if limit > 0:
-        return candidates[:limit]
-    return candidates
-
-
-def count_pending_conversions() -> int:
-    """Count text artifacts that do not yet have sibling PDFs."""
-    return len(get_pending_conversion_targets())
-
-
-def batch_convert(limit: int = 0) -> int:
-    """Convert pending cover letter text artifacts to PDF.
-
-    Resume PDFs are now generated directly during tailoring (LaTeX path).
-    This batch function handles cover letters that were generated without
-    a PDF, using the HTML/Playwright fallback.
-
-    Args:
-        limit: Maximum number of files to convert. 0 means no limit.
-
-    Returns:
-        Number of PDFs generated.
-    """
-    to_convert = get_pending_conversion_targets(limit=limit)
-
-    if not to_convert:
-        log.info("All text artifacts already have PDFs.")
-        return 0
-
-    log.info("Converting %d files to PDF...", len(to_convert))
-    converted = 0
-    for f in to_convert:
+        size = None
         try:
-            pdf_path = convert_cover_letter_to_pdf(f)
-            converted += 1
-            conn = get_connection()
-            row = conn.execute(
-                "SELECT url FROM jobs WHERE cover_letter_path = ?",
-                (str(f),),
-            ).fetchone()
-            if row:
-                now = utc_now()
-                set_stage_state(conn, row["url"], "pdf", "succeeded", attempt_count=1, finished_at=now)
-                record_job_artifact(conn, row["url"], "pdf", "cover_letter_pdf", pdf_path, status="active", created_at=now)
-                record_job_event(conn, row["url"], "pdf", "StageCompleted", message="Cover letter PDF generated")
-                conn.commit()
-        except Exception as e:
-            log.error("Failed to convert %s: %s", f.name, e)
+            size = os.path.getsize(output_path)
+        except OSError:
+            pass
 
-    log.info("Done: %d/%d PDFs generated", converted, len(to_convert))
-    return converted
+        return Artifact(
+            artifact_id=uuid.uuid4().hex,
+            type=ArtifactType.RESUME_PDF,
+            status=ArtifactStatus.CANDIDATE,
+            path=str(output_path),
+            render_format=RenderFormat.LATEX_PDF,
+            created_at=created_at,
+            size_bytes=size,
+            metadata={"latex_path": str(tex_path)},
+            superseded_at=None,
+        )
+
+    def render_cover_letter_to_pdf(
+        self,
+        *,
+        cover_letter_text: str,
+        output_path: str,
+        created_at: str,
+    ) -> Artifact:
+        raise NotImplementedError(
+            "LatexPdfAdapter does not render cover letters; use PlaywrightHtmlPdfAdapter."
+        )
+
+
+# Module-level helpers re-exported for callers that previously imported
+# them from ``scoring.pdf``. They stay attached to the adapter module so
+# tests can keep targeting the LaTeX/escaping functions directly.
+_ = Any  # keep typing import live for downstream tooling

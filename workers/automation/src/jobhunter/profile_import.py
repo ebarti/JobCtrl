@@ -11,7 +11,7 @@ from statistics import median
 from typing import Any
 
 from jobhunter.resume_profile import DEFAULT_TAILORING_POLICY, DEFAULT_WRITING_STYLE
-from jobhunter.scoring.pdf import normalize_resume_style
+from jobhunter.infrastructure.materials.latex_pdf import normalize_resume_style
 
 MAX_IMPORT_BYTES = 12 * 1024 * 1024
 

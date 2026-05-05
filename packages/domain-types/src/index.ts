@@ -39,6 +39,8 @@ export * from "./profile/index.js";
 
 export * from "./scoring/index.js";
 
+export * from "./materials/index.js";
+
 export {
   StageTransitions,
   type StageTransition,

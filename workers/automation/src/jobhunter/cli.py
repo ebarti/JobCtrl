@@ -1146,7 +1146,7 @@ def doctor() -> None:
 
     # LaTeX is mandatory for tailored resume PDFs.
     try:
-        from jobhunter.scoring.pdf import _find_pdflatex
+        from jobhunter.infrastructure.materials.latex_pdf import _find_pdflatex
 
         results.append(("pdflatex", ok_mark, _find_pdflatex()))
     except FileNotFoundError:

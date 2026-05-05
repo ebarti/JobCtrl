@@ -1,194 +1,95 @@
-"""Cover letter generation: LLM-powered, profile-driven, with validation.
+"""Cover letter generation runner — wires the Materials use case into the worker.
 
-Generates concise, engineering-voice cover letters tailored to specific job
-postings. All personal data (name, skills, achievements) comes from the user's
-profile at runtime. No hardcoded personal information.
+See ddd-target.md §3.5 / §4.5 / §5.5. After Phase 6 the cover-letter
+module is a thin adapter around :class:`GenerateCoverLetterUseCase`
+(``domain/materials/use_cases.py``):
+
+  * Domain logic (prompt assembly, validation, MaterialsSet composition)
+    lives in the use case + ``ContentValidator`` / ``MaterialsSet``.
+  * Persistence goes through :class:`MaterialsRepository` — the legacy
+    ``UPDATE jobs SET cover_letter_path = …`` writes are GONE per the
+    no-strangler directive. Readers fall back to
+    ``jobs.cover_letter_path`` only for historical rows.
+  * The LLM call is mediated by :class:`LlmPort`; the cloud LLM gateway
+    swap-out is a constructor-only change.
 """
 
+from __future__ import annotations
+
 import logging
-import re
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-from jobhunter.config import COVER_LETTER_DIR, RESUME_PATH
+from jobhunter.config import COVER_LETTER_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.domain.materials.services import ContentValidator
+from jobhunter.domain.materials.use_cases import (
+    CoverLetterOutcome,
+    GenerateCoverLetterUseCase,
+)
+from jobhunter.domain.ports.events import EventPublisher
+from jobhunter.domain.ports.llm import LlmPort
+from jobhunter.domain.ports.materials import MaterialsRepository, PdfRendererPort
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.llm import get_client
-from jobhunter.state import ensure_job_stage_rows, record_job_artifact, record_job_event, set_stage_state, utc_now
-from jobhunter.scoring.validator import (
-    BANNED_WORDS,
-    LLM_LEAK_PHRASES,
-    normalize_profile_list,
-    sanitize_text,
-    validate_cover_letter,
+from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
+from jobhunter.infrastructure.llm import get_llm_adapter
+from jobhunter.infrastructure.materials import (
+    PlaywrightHtmlPdfAdapter,
+    SqliteMaterialsRepository,
+)
+from jobhunter.state import (
+    ensure_job_stage_rows,
+    record_job_event,
+    set_stage_state,
+    utc_now,
 )
 
 log = logging.getLogger(__name__)
 
 
-# ── Prompt Builder (profile-driven) ──────────────────────────────────────
-
-def _build_cover_letter_prompt(snapshot: ProfileSnapshot) -> str:
-    """Build the cover letter system prompt from the snapshot.
-
-    All personal data, skills, and sign-off name come from the snapshot.
-    """
-    profile = snapshot.as_dict()
-    personal = profile.get("personal", {})
-    boundary = profile.get("skills_boundary", {})
-    resume_facts = profile.get("resume_facts", {})
-
-    # Preferred name for the sign-off (falls back to full name)
-    sign_off_name = personal.get("preferred_name") or personal.get("full_name", "")
-
-    # Flatten all allowed skills
-    all_skills: list[str] = []
-    for items in boundary.values():
-        all_skills.extend(normalize_profile_list(items))
-    skills_str = ", ".join(all_skills) if all_skills else "the tools listed in the resume"
-
-    # Real metrics from resume_facts
-    real_metrics = normalize_profile_list(resume_facts.get("real_metrics", []))
-    preserved_projects = normalize_profile_list(resume_facts.get("preserved_projects", []))
-
-    # Build achievement examples for the prompt
-    projects_hint = ""
-    if preserved_projects:
-        projects_hint = f"\nKnown projects to reference: {', '.join(preserved_projects)}"
-
-    metrics_hint = ""
-    if real_metrics:
-        metrics_hint = f"\nReal metrics to use: {', '.join(real_metrics)}"
-
-    # Build the full banned list from the validator so the prompt stays in sync
-    # with what will actually be rejected — the validator checks all of these.
-    all_banned = ", ".join(f'"{w}"' for w in BANNED_WORDS)
-    leak_banned = ", ".join(f'"{p}"' for p in LLM_LEAK_PHRASES)
-
-    return f"""Write a cover letter for {sign_off_name}. The goal is to get an interview.
-
-STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
-
-PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
-
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
-
-PARAGRAPH 3 (1-2 sentences): One specific thing about the company from the job description (a product, a technical challenge, a team structure). Then close. "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
-
-BANNED WORDS AND PHRASES (automated validator rejects ANY of these — do not use even once):
-{all_banned}
-
-ALSO BANNED (meta-commentary the validator catches):
-{leak_banned}
-
-BANNED PUNCTUATION: No em dashes (—) or en dashes (–). Use commas or periods.
-
-VOICE:
-- Write like a real engineer emailing someone they respect. Not formal, not casual. Just direct.
-- NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact and move on.
-- NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem your team is facing."
-- Every sentence should contain either a number, a tool name, or a specific outcome. If it doesn't, cut it.
-- Read it out loud. If it sounds like a robot wrote it, rewrite it.
-
-FABRICATION = INSTANT REJECTION:
-The candidate's real tools are ONLY: {skills_str}.
-Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work you did, not the tools.
-
-Sign off: just "{sign_off_name}"
-
-Output ONLY the letter text. No subject lines. No "Here is the cover letter:" preamble. No notes after the sign-off.
-Start DIRECTLY with "Dear Hiring Manager," and end with the name."""
+# ---------------------------------------------------------------------------
+# Use-case construction (DI seam)
+# ---------------------------------------------------------------------------
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-def _strip_preamble(text: str) -> str:
-    """Remove LLM preamble before 'Dear Hiring Manager,' if present.
-
-    Gemini and other models sometimes output "Here is the cover letter:" or
-    similar meta-commentary before the actual letter text. Strip everything
-    before the first occurrence of "Dear" so the validator's start-check passes.
-    """
-    dear_idx = text.lower().find("dear")
-    if dear_idx > 0:
-        return text[dear_idx:]
-    return text
-
-
-# ── Core Generation ──────────────────────────────────────────────────────
-
-def generate_cover_letter(
-    resume_text: str, job: dict, snapshot: ProfileSnapshot,
-    max_retries: int = 3, validation_mode: str = "normal",
-) -> str:
-    """Generate a cover letter with fresh context on each retry + auto-sanitize.
-
-    Same design as tailor_resume: fresh conversation per attempt, issues noted
-    in the prompt, no conversation history stacking.
-
-    Args:
-        resume_text:      The candidate's resume text (base or tailored).
-        job:              Job dict with title, site, location, full_description.
-        snapshot:         Immutable ProfileSnapshot for prompt building.
-        max_retries:      Maximum retry attempts.
-        validation_mode:  "strict", "normal", or "lenient".
-
-    Returns:
-        The cover letter text (best attempt even if validation failed).
-    """
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
+def _build_use_case(
+    *,
+    repository: MaterialsRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+    validator: ContentValidator | None = None,
+) -> GenerateCoverLetterUseCase:
+    if repository is None:
+        repository = SqliteMaterialsRepository(get_connection())
+    if llm_port is None:
+        llm_port = get_llm_adapter()
+    if validator is None:
+        validator = ContentValidator()
+    return GenerateCoverLetterUseCase(
+        repository=repository,
+        llm=llm_port,
+        validator=validator,
+        publisher=publisher,
     )
 
-    avoid_notes: list[str] = []
-    letter = ""
-    client = get_client()
-    cl_prompt_base = _build_cover_letter_prompt(snapshot)
 
-    for attempt in range(max_retries + 1):
-        # Fresh conversation every attempt
-        prompt = cl_prompt_base
-        if avoid_notes:
-            prompt += "\n\n## AVOID THESE ISSUES:\n" + "\n".join(
-                f"- {n}" for n in avoid_notes[-5:]
-            )
-
-        messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": (
-                f"RESUME:\n{resume_text}\n\n---\n\n"
-                f"TARGET JOB:\n{job_text}\n\n"
-                "Write the cover letter:"
-            )},
-        ]
-
-        letter = client.chat(messages, max_tokens=1024, temperature=0.7)
-        letter = sanitize_text(letter)  # auto-fix em dashes, smart quotes
-        letter = _strip_preamble(letter)  # remove any "Here is the letter:" prefix
-
-        validation = validate_cover_letter(letter, mode=validation_mode)
-        if validation["passed"]:
-            return letter
-
-        avoid_notes.extend(validation["errors"])
-        # Warnings never block — only hard errors trigger a retry
-        log.debug(
-            "Cover letter attempt %d/%d failed: %s",
-            attempt + 1, max_retries + 1, validation["errors"],
-        )
-
-    return letter  # last attempt even if failed
+def _build_pdf_renderer() -> PdfRendererPort:
+    return PlaywrightHtmlPdfAdapter()
 
 
-# ── Batch Entry Point ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Backward-compatible helpers — preserved so callers / tests keep working
+# ---------------------------------------------------------------------------
+
 
 def _get_resume_text_for_job(job: dict, base_resume_text: str) -> str:
-    """Read the tailored resume required for cover generation."""
-    _ = base_resume_text  # kept for API compatibility with older callers
+    """Read the tailored resume required for cover generation.
+
+    Kept for backward compatibility (a regression test asserts the
+    behaviour). ``base_resume_text`` is unused and retained for the
+    legacy signature.
+    """
+    _ = base_resume_text
     tailored_path = job.get("tailored_resume_path")
     if not tailored_path:
         raise FileNotFoundError("Cover letter generation requires a tailored resume.")
@@ -203,25 +104,61 @@ def _get_resume_text_for_job(job: dict, base_resume_text: str) -> str:
         raise FileNotFoundError(f"Could not read tailored resume {path}: {e}") from e
 
 
-def run_cover_letters(min_score: int = 7, limit: int = 0,
-                      validation_mode: str = "normal",
-                      snapshot: ProfileSnapshot | None = None) -> dict:
-    """Generate cover letters for high-scoring jobs.
+def generate_cover_letter(
+    resume_text: str,
+    job: dict,
+    snapshot: ProfileSnapshot,
+    max_retries: int = 3,
+    validation_mode: str = "normal",
+) -> str:
+    """Generate a cover letter — kept for callers that want raw text out.
 
-    Args:
-        min_score:       Minimum fit_score threshold.
-        limit:           Maximum jobs to process. 0 means no limit.
-        validation_mode: "strict", "normal", or "lenient".
-
-    Returns:
-        {"generated": int, "errors": int, "elapsed": float}
+    Single-job entry point preserved so the manual ``apply_jobs`` flow
+    keeps its single-call ergonomics. New callers should construct
+    :class:`GenerateCoverLetterUseCase` directly.
     """
+    _ = resume_text  # use case reads the tailored resume from the repo
+    use_case = _build_use_case()
+    use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        cover_letter_dir=COVER_LETTER_DIR,
+        validation_mode=validation_mode,
+    )
+    if outcome.text_path:
+        try:
+            return Path(outcome.text_path).read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Batch entry point
+# ---------------------------------------------------------------------------
+
+
+def run_cover_letters(
+    min_score: int = 7,
+    limit: int = 0,
+    validation_mode: str = "normal",
+    snapshot: ProfileSnapshot | None = None,
+    *,
+    repository: MaterialsRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+    pdf_renderer: PdfRendererPort | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+) -> dict:
+    """Generate cover letters for jobs whose tailored resume is approved."""
     if snapshot is None:
         from jobhunter.infrastructure.profile import get_profile_repository
-        from jobhunter.domain.tenant import LOCAL_TENANT
-        snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
-    base_resume_text = RESUME_PATH.read_text(encoding="utf-8")
+        snapshot = get_profile_repository().load_snapshot(tenant_id)
+
     conn = get_connection()
+    if repository is None:
+        repository = SqliteMaterialsRepository(conn)
 
     jobs = get_jobs_by_stage(
         conn=conn,
@@ -241,124 +178,123 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
     )
     t0 = time.time()
     completed = 0
-    results: list[dict] = []
     error_count = 0
+    saved = 0
+    use_case = _build_use_case(
+        repository=repository,
+        llm_port=llm_port,
+        publisher=publisher,
+    )
+    if pdf_renderer is None:
+        pdf_renderer = _build_pdf_renderer()
 
     for job in jobs:
         completed += 1
-        started_at = None
+        url = job["url"]
+        ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
+        started_at = utc_now()
+        set_stage_state(conn, url, "cover", "running", started_at=started_at)
+        record_job_event(conn, url, "cover", "StageStarted", message="Cover letter generation started")
+
         try:
-            ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
-            started_at = utc_now()
-            set_stage_state(conn, job["url"], "cover", "running", started_at=started_at)
-            record_job_event(conn, job["url"], "cover", "StageStarted", message="Cover letter generation started")
-            resume_text = _get_resume_text_for_job(job, base_resume_text)
-            letter = generate_cover_letter(
-                resume_text,
-                job,
-                snapshot,
+            outcome = use_case.execute(
+                job=job,
+                profile_snapshot=snapshot,
+                cover_letter_dir=COVER_LETTER_DIR,
                 validation_mode=validation_mode,
+                tenant_id=tenant_id,
             )
+        except Exception as exc:  # noqa: BLE001
+            error_count += 1
+            outcome = CoverLetterOutcome(
+                materials=None,
+                status="error",
+                error=str(exc),
+            )
+            log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), str(job.get("title", ""))[:40], exc)
 
-            # Build safe filename prefix
-            safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
-            safe_site = re.sub(r"[^\w\s-]", "", job["site"])[:20].strip().replace(" ", "_")
-            prefix = f"{safe_site}_{safe_title}"
+        finished_at = utc_now()
+        if outcome.status == "ok":
+            # Best-effort PDF render. Failure is non-fatal — the cover
+            # letter text is the canonical artifact; the PDF is a sibling.
+            if outcome.text_path and outcome.materials is not None:
+                try:
+                    text_path = Path(outcome.text_path)
+                    pdf_path = text_path.with_suffix(".pdf")
+                    pdf_artifact = pdf_renderer.render_cover_letter_to_pdf(
+                        cover_letter_text=text_path.read_text(encoding="utf-8"),
+                        output_path=str(pdf_path),
+                        created_at=utc_now(),
+                    )
+                    materials = outcome.materials.with_cover_letter_pdf(
+                        pdf_artifact, updated_at=utc_now()
+                    )
+                    repository.save(materials)
+                except Exception:
+                    log.debug("PDF generation failed for cover letter", exc_info=True)
 
-            cl_path = COVER_LETTER_DIR / f"{prefix}_CL.txt"
-            cl_path.write_text(letter, encoding="utf-8")
-
-            # Generate PDF (best-effort)
-            pdf_path = None
-            try:
-                from jobhunter.scoring.pdf import convert_cover_letter_to_pdf
-                pdf_path = str(convert_cover_letter_to_pdf(cl_path))
-            except Exception:
-                log.debug("PDF generation failed for %s", cl_path, exc_info=True)
-
-            result = {
-                "url": job["url"],
-                "path": str(cl_path),
-                "pdf_path": pdf_path,
-                "title": job["title"],
-                "site": job["site"],
-                "started_at": started_at,
-            }
-            results.append(result)
-
+            set_stage_state(
+                conn,
+                url,
+                "cover",
+                "succeeded",
+                attempt_count=1,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            record_job_event(
+                conn,
+                url,
+                "cover",
+                "StageCompleted",
+                message="Cover letter generated",
+            )
+            saved += 1
             elapsed = time.time() - t0
             rate = completed / elapsed if elapsed > 0 else 0
             log.info(
                 "%d/%d [OK] | %.1f jobs/min | %s",
-                completed, len(jobs), rate * 60, result["title"][:40],
+                completed, len(jobs), rate * 60, str(job.get("title", ""))[:40],
             )
-        except Exception as e:
-            result = {
-                "url": job["url"], "title": job["title"], "site": job["site"],
-                "path": None, "pdf_path": None, "error": str(e),
-                "started_at": started_at,
-            }
-            error_count += 1
-            results.append(result)
-            log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
-
-    # Persist to DB: increment attempt counter for ALL, save path only for successes
-    now = datetime.now(timezone.utc).isoformat()
-    saved = 0
-    for r in results:
-        if r.get("path"):
-            conn.execute(
-                "UPDATE jobs SET cover_letter_path=?, cover_letter_at=?, "
-                "cover_attempts=COALESCE(cover_attempts,0)+1 WHERE url=?",
-                (r["path"], now, r["url"]),
-            )
-            set_stage_state(
-                conn,
-                r["url"],
-                "cover",
-                "succeeded",
-                attempt_count=1,
-                started_at=r.get("started_at"),
-                finished_at=now,
-            )
-            record_job_artifact(conn, r["url"], "cover", "cover_letter_txt", r["path"], status="active", created_at=now)
-            if r.get("pdf_path"):
-                record_job_artifact(conn, r["url"], "pdf", "cover_letter_pdf", r["pdf_path"], status="active", created_at=now)
-            record_job_event(conn, r["url"], "cover", "StageCompleted", message="Cover letter generated")
-            saved += 1
         else:
-            conn.execute(
-                "UPDATE jobs SET cover_attempts=COALESCE(cover_attempts,0)+1 WHERE url=?",
-                (r["url"],),
-            )
+            error_count += 1 if outcome.status == "error" else 0
             set_stage_state(
                 conn,
-                r["url"],
+                url,
                 "cover",
                 "failed",
                 attempt_count=1,
-                started_at=r.get("started_at"),
-                finished_at=now,
+                started_at=started_at,
+                finished_at=finished_at,
                 error_code="COVER_FAILED",
-                error_message=r.get("error") or "Cover letter generation failed",
+                error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
                 retryable=True,
-                next_action=f"jobhunter retry cover {r['url']}",
+                next_action=f"jobhunter retry cover {url}",
             )
             record_job_event(
                 conn,
-                r["url"],
+                url,
                 "cover",
                 "StageFailed",
                 level="error",
-                message=r.get("error") or "Cover letter generation failed",
+                message=outcome.error or f"Cover letter generation failed ({outcome.status})",
             )
-    conn.commit()
 
+    conn.commit()
     elapsed = time.time() - t0
-    log.info("Cover letters done in %.1fs: %d generated, %d errors", elapsed, saved, error_count)
+    log.info(
+        "Cover letters done in %.1fs: %d generated, %d errors", elapsed, saved, error_count
+    )
 
     return {
         "generated": saved,
         "errors": error_count,
         "elapsed": elapsed,
     }
+
+
+__all__ = [
+    "_get_resume_text_for_job",
+    "generate_cover_letter",
+    "run_cover_letters",
+]

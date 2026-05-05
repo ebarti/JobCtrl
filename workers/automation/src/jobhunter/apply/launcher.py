@@ -241,19 +241,39 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
         Job dict or None if the queue is empty.
     """
     conn = get_connection()
+    # Phase 6 (round-2 H2): the new tailor / cover use cases write to
+    # ``job_materials_artifacts`` only — ``jobs.tailored_resume_path`` /
+    # ``cover_letter_path`` stay NULL on the new path. Without joining
+    # ``job_materials`` here, ``jobhunter apply`` silently no-ops for every
+    # post-Phase-6 tailored job. We import the shared SQL fragments + score
+    # join from ``database`` so the behaviour matches ``get_jobs_by_stage``
+    # exactly. The SELECT promotes the materials path / score into the
+    # legacy column slots so downstream code (``run_job``, ``_job_snapshot``)
+    # keeps reading via the existing keys.
+    from jobhunter.database import (
+        _LATEST_MATERIALS_JOIN,
+        _LATEST_SCORE_JOIN,
+        _EFFECTIVE_COVER_PATH,
+        _EFFECTIVE_FIT_SCORE,
+        _EFFECTIVE_TAILOR_PATH,
+    )
     try:
         conn.execute("BEGIN IMMEDIATE")
 
         if target_url:
             like = f"%{target_url.split('?')[0].rstrip('/')}%"
-            row = conn.execute("""
-                SELECT url, title, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path,
-                       apply_attempts
-                FROM jobs
-                WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
-                  AND tailored_resume_path IS NOT NULL
-                  AND (apply_status IS NULL OR apply_status != 'in_progress')
+            row = conn.execute(f"""
+                SELECT jobs.url AS url, jobs.title AS title, jobs.site AS site,
+                       jobs.application_url AS application_url,
+                       {_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path,
+                       {_EFFECTIVE_FIT_SCORE} AS fit_score,
+                       jobs.location AS location, jobs.full_description AS full_description,
+                       {_EFFECTIVE_COVER_PATH} AS cover_letter_path,
+                       jobs.apply_attempts AS apply_attempts
+                FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN}
+                WHERE (jobs.url = ? OR jobs.application_url = ? OR jobs.application_url LIKE ? OR jobs.url LIKE ?)
+                  AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
+                  AND (jobs.apply_status IS NULL OR jobs.apply_status != 'in_progress')
                 LIMIT 1
             """, (target_url, target_url, like, like)).fetchone()
         else:
@@ -263,25 +283,29 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             site_clause = ""
             if blocked_sites:
                 placeholders = ",".join("?" * len(blocked_sites))
-                site_clause = f"AND site NOT IN ({placeholders})"
+                site_clause = f"AND jobs.site NOT IN ({placeholders})"
                 params.extend(blocked_sites)
             url_clauses = ""
             if blocked_patterns:
-                url_clauses = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
+                url_clauses = " ".join("AND jobs.url NOT LIKE ?" for _ in blocked_patterns)
                 params.extend(blocked_patterns)
             row = conn.execute(f"""
-                SELECT url, title, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path,
-                       apply_attempts
-                FROM jobs
-                WHERE tailored_resume_path IS NOT NULL
-                  AND application_url IS NOT NULL AND application_url != ''
-                  AND (apply_status IS NULL OR apply_status = 'failed')
-                  AND (apply_attempts IS NULL OR apply_attempts < ?)
-                  AND fit_score >= ?
+                SELECT jobs.url AS url, jobs.title AS title, jobs.site AS site,
+                       jobs.application_url AS application_url,
+                       {_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path,
+                       {_EFFECTIVE_FIT_SCORE} AS fit_score,
+                       jobs.location AS location, jobs.full_description AS full_description,
+                       {_EFFECTIVE_COVER_PATH} AS cover_letter_path,
+                       jobs.apply_attempts AS apply_attempts
+                FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN}
+                WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
+                  AND jobs.application_url IS NOT NULL AND jobs.application_url != ''
+                  AND (jobs.apply_status IS NULL OR jobs.apply_status = 'failed')
+                  AND (jobs.apply_attempts IS NULL OR jobs.apply_attempts < ?)
+                  AND {_EFFECTIVE_FIT_SCORE} >= ?
                   {site_clause}
                   {url_clauses}
-                ORDER BY fit_score DESC, url
+                ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url
                 LIMIT 1
             """, [config.DEFAULTS["max_apply_attempts"]] + params).fetchone()
 

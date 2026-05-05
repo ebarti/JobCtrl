@@ -398,6 +398,58 @@ def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> li
     return states
 
 
+def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
+    """Clear the latest generation's affected artifact rows after a stage reset.
+
+    Round-2 review B3. Maps stage → artifact_type subset:
+
+      * ``tailor`` resets EVERYTHING in the latest generation (resume,
+        cover, both PDFs) and resets the parent row's status back to
+        ``resume_in_progress`` — re-tailoring will start a fresh attempt
+        within the same generation; downstream artifacts are stale and
+        must be regenerated. (Use the ``MaterialsSetFactory.next_generation``
+        primitive when explicit re-tailoring with audit-trail is wanted —
+        ``reset_job_stage`` is the in-place reset path.)
+      * ``cover`` resets the cover-letter text + cover-letter PDF only;
+        tailored resume + resume PDF stay intact.
+      * ``pdf`` resets only the two PDFs; text artifacts stay.
+
+    Status is rolled back to the appropriate lifecycle state so the
+    aggregate's invariants stay consistent.
+    """
+    latest_row = conn.execute(
+        "SELECT generation FROM job_materials WHERE job_url = ? "
+        "ORDER BY generation DESC LIMIT 1",
+        (job_url,),
+    ).fetchone()
+    if latest_row is None:
+        return
+
+    generation = int(latest_row[0])
+    if stage == "tailor":
+        targets = ("tailored_resume", "cover_letter", "resume_pdf", "cover_letter_pdf")
+        new_status = "resume_in_progress"
+    elif stage == "cover":
+        targets = ("cover_letter", "cover_letter_pdf")
+        new_status = "resume_approved"
+    else:  # stage == "pdf"
+        targets = ("resume_pdf", "cover_letter_pdf")
+        new_status = None  # status doesn't change — PDFs were never gating
+
+    placeholders = ", ".join("?" for _ in targets)
+    conn.execute(
+        f"DELETE FROM job_materials_artifacts "
+        f"WHERE job_url = ? AND generation = ? AND artifact_type IN ({placeholders})",
+        (job_url, generation, *targets),
+    )
+    if new_status is not None:
+        conn.execute(
+            "UPDATE job_materials SET status = ?, updated_at = ? "
+            "WHERE job_url = ? AND generation = ?",
+            (new_status, utc_now(), job_url, generation),
+        )
+
+
 def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_attempts: bool = False) -> str:
     """Reset one job/stage to pending and clear legacy fields that block retry.
 
@@ -424,6 +476,14 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         raise ValueError(f"no matching job found: {job_url_or_application_url}")
 
     job_url = row["url"]
+    # Round-2 review B3: tailor / cover / pdf resets MUST clear the
+    # ``job_materials_artifacts`` row(s) for the LATEST generation —
+    # otherwise the new ``_LATEST_MATERIALS_JOIN`` queue selectors keep
+    # the existing approved tailored_resume / cover_letter visible and
+    # re-tailoring is impossible. The legacy ``UPDATE jobs SET *_path =
+    # NULL`` statements are dead writes (new code never populated those
+    # columns); for un-migrated rows they still NULL the legacy columns
+    # so consumers reading the legacy fallback also see the reset.
     updates = {
         "discover": "UPDATE jobs SET discovered_at = discovered_at WHERE url = ?",
         "enrich": "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
@@ -446,6 +506,11 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         ),
     }
     conn.execute(updates[stage], (job_url,))
+
+    # Materials-side reset (Phase 6, round-2 B3). Idempotent — safe when
+    # job_materials hasn't been populated yet.
+    if stage in ("tailor", "cover", "pdf"):
+        _reset_materials_artifacts(conn, job_url, stage)
     set_stage_state(
         conn, job_url, stage, "pending",
         attempt_count=0 if reset_attempts else None,

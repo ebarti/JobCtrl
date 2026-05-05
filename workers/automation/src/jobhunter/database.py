@@ -143,6 +143,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_observability_tables(conn)
     ensure_state_tables(conn)
     ensure_score_tables(conn)
+    ensure_materials_tables(conn)
 
     return conn
 
@@ -543,6 +544,293 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     return ["job_scores"]
 
 
+def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the per-job ``job_materials`` tables and run their backfill.
+
+    See ddd-target.md §4.5 / §7.2. Two tables form the persistence side
+    of the Phase-6 :class:`MaterialsSet` aggregate:
+
+      * ``job_materials`` — one row per ``(job_url, generation)`` aggregate.
+      * ``job_materials_artifacts`` — one row per artifact slot per
+        aggregate (``tailored_resume``, ``cover_letter``, ``resume_pdf``,
+        ``cover_letter_pdf``).
+
+    The legacy ``jobs.tailored_resume_path`` / ``jobs.cover_letter_path``
+    columns remain in the schema as a read-only fallback for historical
+    rows, but new tailoring/cover writes target these tables only
+    (no-strangler directive).
+
+    Backfill is **idempotent**: it only fires when ``job_materials`` is
+    empty AND ``jobs.tailored_resume_path`` has values. Each backfilled
+    row becomes ``generation = 1`` with status ``cover_letter_ready`` (or
+    ``resume_approved`` if no cover letter exists) so consumers see the
+    expected lifecycle. ``size_bytes`` is captured from ``os.stat`` if
+    the on-disk file is still present.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_materials (
+            job_url             TEXT NOT NULL,
+            generation          INTEGER NOT NULL,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            status              TEXT NOT NULL,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            last_validation_json TEXT,
+            last_verdict_json    TEXT,
+            metadata_json       TEXT,
+            PRIMARY KEY (job_url, generation),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_materials_artifacts (
+            job_url             TEXT NOT NULL,
+            generation          INTEGER NOT NULL,
+            artifact_type       TEXT NOT NULL,
+            artifact_id         TEXT NOT NULL,
+            status              TEXT NOT NULL,
+            path                TEXT NOT NULL,
+            render_format       TEXT NOT NULL,
+            size_bytes          INTEGER,
+            metadata_json       TEXT,
+            created_at          TEXT NOT NULL,
+            superseded_at       TEXT,
+            PRIMARY KEY (job_url, generation, artifact_type),
+            FOREIGN KEY (job_url, generation) REFERENCES job_materials(job_url, generation)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    # Indexes for the queue selectors (mirror the §7.2 read fragments).
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_materials_tenant_job_gen
+        ON job_materials(tenant_id, job_url, generation DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_materials_artifacts_status
+        ON job_materials_artifacts(artifact_type, status, created_at DESC)
+        """
+    )
+
+    # Idempotent backfill from the legacy ``jobs`` columns. Fires only
+    # when ``job_materials`` is empty.
+    backfill_count = conn.execute(
+        "SELECT COUNT(*) FROM job_materials"
+    ).fetchone()[0]
+    if backfill_count == 0:
+        legacy_rows = conn.execute(
+            """
+            SELECT url, tailored_resume_path, tailored_at,
+                   cover_letter_path, cover_letter_at
+            FROM jobs
+            WHERE tailored_resume_path IS NOT NULL
+              AND tailored_resume_path != ''
+            """
+        ).fetchall()
+        if legacy_rows:
+            now = datetime.now(timezone.utc).isoformat()
+            for row in legacy_rows:
+                _backfill_one_materials_row(conn, row, now)
+
+    conn.commit()
+    return ["job_materials", "job_materials_artifacts"]
+
+
+def _backfill_one_materials_row(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    now: str,
+) -> None:
+    """Backfill one legacy job into the new ``job_materials`` shape.
+
+    The lifecycle status is derived from which legacy artifacts exist:
+    ``resume_approved`` if only a tailored resume, ``cover_letter_ready``
+    if a cover letter exists too, ``complete`` if a sibling PDF exists
+    for both. Backfilled artifacts carry ``status = approved`` (the
+    legacy column was never populated unless the artifact was accepted).
+    """
+    import os
+    import uuid as _uuid
+
+    url = row["url"]
+    tailor_path = row["tailored_resume_path"]
+    tailor_at = row["tailored_at"] or now
+    cover_path = row["cover_letter_path"]
+    cover_at = row["cover_letter_at"] or now
+
+    status = "resume_approved"
+    if cover_path:
+        status = "cover_letter_ready"
+
+    # Detect sibling PDFs from the legacy convention (foo.txt → foo.pdf).
+    def _sibling_pdf(path: str | None) -> str | None:
+        if not path:
+            return None
+        if "." in path.rsplit("/", 1)[-1]:
+            base = path.rsplit(".", 1)[0]
+        else:
+            base = path
+        candidate = f"{base}.pdf"
+        return candidate if os.path.exists(candidate) else None
+
+    resume_pdf = _sibling_pdf(tailor_path)
+    cover_pdf = _sibling_pdf(cover_path)
+
+    if resume_pdf and cover_pdf and cover_path:
+        status = "complete"
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO job_materials (
+            job_url, generation, tenant_id, status,
+            created_at, updated_at,
+            last_validation_json, last_verdict_json, metadata_json
+        ) VALUES (?, 1, 'local', ?, ?, ?, NULL, NULL, ?)
+        """,
+        (
+            url,
+            status,
+            tailor_at,
+            cover_at if cover_path else tailor_at,
+            json.dumps({"backfilled": True}, sort_keys=True),
+        ),
+    )
+
+    def _size(path: str | None) -> int | None:
+        if not path:
+            return None
+        try:
+            return os.path.getsize(path) if os.path.exists(path) else None
+        except OSError:
+            return None
+
+    artifacts: list[tuple[str, str, str, int | None, str]] = []
+    if tailor_path:
+        artifacts.append(
+            ("tailored_resume", tailor_path, "text", _size(tailor_path), tailor_at)
+        )
+    if resume_pdf:
+        artifacts.append(
+            ("resume_pdf", resume_pdf, "latex_pdf", _size(resume_pdf), tailor_at)
+        )
+    if cover_path:
+        artifacts.append(
+            ("cover_letter", cover_path, "text", _size(cover_path), cover_at)
+        )
+    if cover_pdf:
+        artifacts.append(
+            ("cover_letter_pdf", cover_pdf, "html_pdf", _size(cover_pdf), cover_at)
+        )
+
+    for artifact_type, path, render_format, size, created in artifacts:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO job_materials_artifacts (
+                job_url, generation, artifact_type, artifact_id,
+                status, path, render_format, size_bytes,
+                metadata_json, created_at, superseded_at
+            ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, ?, NULL)
+            """,
+            (
+                url,
+                artifact_type,
+                _uuid.uuid4().hex,
+                path,
+                render_format,
+                size,
+                json.dumps({"backfilled": True}, sort_keys=True),
+                created,
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# job_materials read fragments — used by the queue selectors that
+# previously read bare ``jobs.tailored_resume_path`` / ``cover_letter_path``.
+# After Phase 6 the canonical artifact paths live in ``job_materials_artifacts``
+# (latest generation per ``job_url``); the legacy ``jobs.*_path`` columns
+# stay as read-only fallback for historical rows. ``_EFFECTIVE_TAILOR_PATH``
+# / ``_EFFECTIVE_COVER_PATH`` are the COALESCE expressions every WHERE /
+# ORDER BY query should use instead of bare column reads so the worker
+# queue selectors see new materials immediately and don't re-pick already-
+# tailored jobs forever (mirrors Phase-5 round-1 review B1).
+# ---------------------------------------------------------------------------
+
+# LEFT JOIN that surfaces the latest generation's tailored-resume and
+# cover-letter artifact paths under fixed aliases.
+_LATEST_MATERIALS_JOIN: str = (
+    "LEFT JOIN ("
+    "SELECT m.job_url AS jm_job_url, m.generation AS jm_generation, m.status AS jm_status, "
+    "tr.path AS jm_tailored_path, tr.created_at AS jm_tailored_at, "
+    "cl.path AS jm_cover_path, cl.created_at AS jm_cover_at, "
+    "rpdf.path AS jm_resume_pdf_path, "
+    "cpdf.path AS jm_cover_pdf_path "
+    "FROM job_materials m "
+    "INNER JOIN ("
+    "SELECT job_url, MAX(generation) AS max_generation "
+    "FROM job_materials GROUP BY job_url"
+    ") latest ON latest.job_url = m.job_url AND latest.max_generation = m.generation "
+    "LEFT JOIN job_materials_artifacts tr "
+    "ON tr.job_url = m.job_url AND tr.generation = m.generation "
+    "AND tr.artifact_type = 'tailored_resume' AND tr.status = 'approved' "
+    "LEFT JOIN job_materials_artifacts cl "
+    "ON cl.job_url = m.job_url AND cl.generation = m.generation "
+    "AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved' "
+    "LEFT JOIN job_materials_artifacts rpdf "
+    "ON rpdf.job_url = m.job_url AND rpdf.generation = m.generation "
+    "AND rpdf.artifact_type = 'resume_pdf' AND rpdf.status = 'approved' "
+    "LEFT JOIN job_materials_artifacts cpdf "
+    "ON cpdf.job_url = m.job_url AND cpdf.generation = m.generation "
+    "AND cpdf.artifact_type = 'cover_letter_pdf' AND cpdf.status = 'approved'"
+    ") jm ON jm.jm_job_url = jobs.url"
+)
+
+_EFFECTIVE_TAILOR_PATH: str = "COALESCE(jm.jm_tailored_path, jobs.tailored_resume_path)"
+_EFFECTIVE_COVER_PATH: str = "COALESCE(jm.jm_cover_path, jobs.cover_letter_path)"
+
+
+# ---------------------------------------------------------------------------
+# job_stage_states attempt-counter read fragments — round-2 review H1.
+# After Phase 6 the new tailor / cover use cases never bump
+# ``jobs.tailor_attempts`` / ``jobs.cover_attempts``; the canonical attempt
+# counter advances on ``job_stage_states.attempt_count``. The bare-column
+# ``< 5`` predicate the queue selectors used would let exhausted jobs back
+# in indefinitely. ``_LATEST_STAGE_ATTEMPTS_JOIN`` surfaces the per-stage
+# attempt count + state so selectors can:
+#   * exclude tailor/cover jobs whose stage state is ``exhausted``
+#   * fall back to the legacy ``jobs.tailor_attempts`` / ``cover_attempts``
+#     for un-migrated rows.
+# ---------------------------------------------------------------------------
+
+_LATEST_STAGE_ATTEMPTS_JOIN: str = (
+    "LEFT JOIN ("
+    "SELECT job_url AS jss_t_job_url, attempt_count AS jss_t_attempts, state AS jss_t_state "
+    "FROM job_stage_states WHERE stage = 'tailor'"
+    ") jss_t ON jss_t.jss_t_job_url = jobs.url "
+    "LEFT JOIN ("
+    "SELECT job_url AS jss_c_job_url, attempt_count AS jss_c_attempts, state AS jss_c_state "
+    "FROM job_stage_states WHERE stage = 'cover'"
+    ") jss_c ON jss_c.jss_c_job_url = jobs.url"
+)
+
+# COALESCE picks the canonical (job_stage_states) counter first, falling
+# back to the legacy column for un-migrated rows. ``state = 'exhausted'``
+# is the new exhaustion signal — tested separately below.
+_EFFECTIVE_TAILOR_ATTEMPTS: str = "COALESCE(jss_t.jss_t_attempts, jobs.tailor_attempts, 0)"
+_EFFECTIVE_COVER_ATTEMPTS: str = "COALESCE(jss_c.jss_c_attempts, jobs.cover_attempts, 0)"
+_TAILOR_NOT_EXHAUSTED: str = "(jss_t.jss_t_state IS NULL OR jss_t.jss_t_state != 'exhausted')"
+_COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 'exhausted')"
+
+
 # ---------------------------------------------------------------------------
 # job_scores read fragments — used by every selector / stat that previously
 # read bare ``jobs.fit_score``. After Phase 5 the canonical fit score lives
@@ -634,32 +922,38 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchall()
     stats["score_distribution"] = [(row[0], row[1]) for row in dist_rows]
 
-    # Tailoring stage
+    # Tailoring + cover letter stages — round-2 review B2: read through the
+    # same materials + stage-attempts joins the worker queue selectors use,
+    # so dashboard counts reflect new MaterialsSet writes (jobs.*_path is
+    # NULL on the new path) AND honour the new attempt-counter / exhaustion
+    # signal that lives in ``job_stage_states``. Without these joins the
+    # dashboard would freeze at the backfill snapshot value.
     stats["tailored"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} "
+        f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL"
     ).fetchone()[0]
 
     stats["untailored_eligible"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} "
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
         f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 AND full_description IS NOT NULL "
-        f"AND tailored_resume_path IS NULL"
+        f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL"
     ).fetchone()[0]
 
     stats["tailor_exhausted"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE COALESCE(tailor_attempts, 0) >= 5 "
-        "AND tailored_resume_path IS NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} {_LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NULL "
+        f"AND ({_EFFECTIVE_TAILOR_ATTEMPTS} >= 5 OR jss_t.jss_t_state = 'exhausted')"
     ).fetchone()[0]
 
-    # Cover letter stage
     stats["with_cover_letter"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE cover_letter_path IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} "
+        f"WHERE {_EFFECTIVE_COVER_PATH} IS NOT NULL"
     ).fetchone()[0]
 
     stats["cover_exhausted"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE COALESCE(cover_attempts, 0) >= 5 "
-        "AND (cover_letter_path IS NULL OR cover_letter_path = '')"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} {_LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"WHERE ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
+        f"AND ({_EFFECTIVE_COVER_ATTEMPTS} >= 5 OR jss_c.jss_c_state = 'exhausted')"
     ).fetchone()[0]
 
     # Application stage
@@ -672,8 +966,8 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["ready_to_apply"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE tailored_resume_path IS NOT NULL "
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} "
+        f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
         "AND applied_at IS NULL "
         "AND application_url IS NOT NULL AND application_url != ''"
     ).fetchone()[0]
@@ -766,12 +1060,32 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     # via ``ScoreRepository.save`` leave ``jobs.fit_score`` NULL, so without
     # this LEFT JOIN ``pending_score`` would loop forever and
     # ``pending_tailor`` / ``pending_cover`` would starve.
+    #
+    # Phase 6 (S-20) extends the same pattern to the Materials Generation
+    # context: ``_EFFECTIVE_TAILOR_PATH`` / ``_EFFECTIVE_COVER_PATH`` read
+    # through the latest ``job_materials_artifacts`` generation, with the
+    # legacy ``jobs.tailored_resume_path`` / ``jobs.cover_letter_path``
+    # columns as a read-only fallback for un-backfilled rows. New tailor
+    # / cover writes go ONLY to ``job_materials`` (no-strangler) so this
+    # join is what keeps the pipeline observable.
+    # Round-2 review H1: drop the bare ``tailor_attempts < 5`` /
+    # ``cover_attempts < 5`` predicates. New code never bumps those columns;
+    # the canonical attempt + exhaustion signals live in
+    # ``job_stage_states`` (state='exhausted' when the runner gives up).
+    # We exclude exhausted jobs via ``_TAILOR_NOT_EXHAUSTED`` /
+    # ``_COVER_NOT_EXHAUSTED`` and fold the legacy ``tailor_attempts`` /
+    # ``cover_attempts`` columns through ``_EFFECTIVE_*_ATTEMPTS`` so
+    # un-migrated rows that never got a ``job_stage_states`` row still
+    # honour the legacy ≥ 5 cap.
     pending_tailor_where = (
         f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
-        "AND (tailored_resume_path IS NOT NULL OR COALESCE(tailor_attempts, 0) < 5)"
+        f"AND {_TAILOR_NOT_EXHAUSTED} "
+        f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
         if retailor else
         f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
-        "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
+        f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
+        f"AND {_TAILOR_NOT_EXHAUSTED} "
+        f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5"
     )
 
     conditions = {
@@ -783,13 +1097,18 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         "pending_tailor": pending_tailor_where,
         "pending_cover": (
             f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
-            "AND tailored_resume_path IS NOT NULL AND tailored_resume_path != '' "
-            "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
-            "AND COALESCE(cover_attempts, 0) < 5"
+            f"AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {_EFFECTIVE_TAILOR_PATH} != '' "
+            f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
+            f"AND {_COVER_NOT_EXHAUSTED} "
+            f"AND {_EFFECTIVE_COVER_ATTEMPTS} < 5"
         ),
-        "tailored": "tailored_resume_path IS NOT NULL",
+        "pending_pdf": (
+            f"({_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND jm.jm_resume_pdf_path IS NULL) "
+            f"OR ({_EFFECTIVE_COVER_PATH} IS NOT NULL AND jm.jm_cover_pdf_path IS NULL)"
+        ),
+        "tailored": f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
         "pending_apply": (
-            "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
+            f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND applied_at IS NULL "
             "AND application_url IS NOT NULL"
         ),
         "applied": "applied_at IS NOT NULL",
@@ -819,9 +1138,24 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     # ``js_fit_score`` so downstream readers (e.g. ``apply/launcher.py``)
     # can prefer the canonical score over the legacy column without an
     # extra round-trip.
+    #
+    # Phase 6 (S-20) does the same for materials artifact paths: the
+    # ``jm_*`` aliases are promoted into the legacy
+    # ``tailored_resume_path`` / ``cover_letter_path`` slots so untouched
+    # consumers (apply launcher, pipeline.apply_jobs single-job flow) keep
+    # picking up the latest generation's artifacts without an extra
+    # round-trip through the repository.
     query = (
-        f"SELECT jobs.*, js.js_fit_score AS js_fit_score "
-        f"FROM jobs {_LATEST_SCORE_JOIN} "
+        f"SELECT jobs.*, js.js_fit_score AS js_fit_score, "
+        f"jm.jm_tailored_path AS jm_tailored_path, "
+        f"jm.jm_tailored_at AS jm_tailored_at, "
+        f"jm.jm_cover_path AS jm_cover_path, "
+        f"jm.jm_cover_at AS jm_cover_at, "
+        f"jm.jm_resume_pdf_path AS jm_resume_pdf_path, "
+        f"jm.jm_cover_pdf_path AS jm_cover_pdf_path, "
+        f"jm.jm_generation AS jm_generation, "
+        f"jm.jm_status AS jm_status "
+        f"FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} {_LATEST_STAGE_ATTEMPTS_JOIN} "
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )
@@ -832,9 +1166,10 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     rows = conn.execute(query, params).fetchall()
 
     # Convert sqlite3.Row objects to dicts. We promote ``js_fit_score``
-    # into the legacy ``fit_score`` slot so downstream consumers that
-    # haven't been ported yet (and read ``job["fit_score"]``) see the
-    # canonical value rather than NULL.
+    # into the legacy ``fit_score`` slot and ``jm_*_path`` into the
+    # legacy ``tailored_resume_path`` / ``cover_letter_path`` slots so
+    # downstream consumers that haven't been ported yet see the canonical
+    # values rather than NULL.
     if not rows:
         return []
     columns = rows[0].keys()
@@ -844,5 +1179,17 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         js_value = record.pop("js_fit_score", None)
         if js_value is not None:
             record["fit_score"] = js_value
+        jm_tailored = record.pop("jm_tailored_path", None)
+        jm_tailored_at = record.pop("jm_tailored_at", None)
+        jm_cover = record.pop("jm_cover_path", None)
+        jm_cover_at = record.pop("jm_cover_at", None)
+        if jm_tailored is not None:
+            record["tailored_resume_path"] = jm_tailored
+            if jm_tailored_at is not None:
+                record["tailored_at"] = jm_tailored_at
+        if jm_cover is not None:
+            record["cover_letter_path"] = jm_cover
+            if jm_cover_at is not None:
+                record["cover_letter_at"] = jm_cover_at
         out.append(record)
     return out

@@ -1,19 +1,39 @@
-"""Resume and cover letter validation: banned words, fabrication detection, structural checks.
+"""Materials Generation domain services — pure functions.
 
-All validation is profile-driven -- no hardcoded personal data. The validator receives
-a profile dict (typically ``ProfileSnapshot.as_dict()``) and validates against the user's
-actual skills, companies, projects, and school.
+See ddd-target.md §4.5. Two services live here:
 
-Validation modes
-----------------
-strict  -- banned words = hard errors that trigger retries (original behavior)
-normal  -- banned words = warnings only; fabrication/structure = errors (default)
-lenient -- banned words ignored; only fabrication and required structure checked
+  :class:`ContentValidator` — banned-word / fabrication / structural
+                              validation rules for tailored resumes and
+                              cover letters. Replaces the legacy
+                              ``scoring/validator.py`` module wholesale
+                              (no-strangler directive: the old module is
+                              deleted in the same PR).
+  :class:`ResumeAssembler`  — assembles plain-text resume output from the
+                              tailored JSON payload + ProfileSnapshot.
+                              Replaces ``tailor.assemble_resume_text``.
+
+Both services are pure: zero I/O, zero side effects. They consume
+``ProfileSnapshot.as_dict()`` (or any equivalent profile-shaped dict)
+and return value objects (:class:`ValidationResult`) or strings. Use
+cases are responsible for plumbing the snapshot in and the artifact
+out.
+
+Module-level helpers exposed for callers that previously imported them
+from ``scoring/validator.py`` (constants ``BANNED_WORDS`` /
+``LLM_LEAK_PHRASES`` / ``FABRICATION_WATCHLIST``, the
+``sanitize_text`` and ``normalize_profile_list`` functions). The legacy
+module is deleted; importers must update to this canonical home.
 """
 
-import re
-import logging
+from __future__ import annotations
 
+import logging
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from jobhunter.domain.materials.value_objects import ValidationResult
+from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.resume_profile import (
     get_education_entries,
     get_experience_entries,
@@ -21,13 +41,21 @@ from jobhunter.resume_profile import (
     get_required_education_entry_ids,
     get_required_experience_entry_ids,
     get_required_skill_category_ids,
+    get_resume_master,
     get_skill_categories,
+    get_tailoring_policy,
+    require_resume_master,
+    tailored_experience_bullets,
+    tailored_experience_title,
 )
 
 log = logging.getLogger(__name__)
 
 
-# ── Universal Constants (not personal data) ───────────────────────────────
+# ---------------------------------------------------------------------------
+# Universal constants (not personal data — moved verbatim from validator.py)
+# ---------------------------------------------------------------------------
+
 
 BANNED_WORDS: list[str] = [
     "passionate", "dedicated", "committed to",
@@ -66,37 +94,32 @@ LLM_LEAK_PHRASES: list[str] = [
     "the following cover letter", "the letter below",
 ]
 
-# Known fabrication markers: completely unrelated tools/languages.
-# Reasonable stretches (K8s, Terraform, Redis, Kafka etc.) are ALLOWED.
 FABRICATION_WATCHLIST: set[str] = {
-    # Languages with zero relation to the candidate's stack
     "c#", "c++", "golang", "rust", "ruby",
     "kotlin", "swift", "scala", "matlab",
-    # Frameworks for wrong languages
     "spring", "django", "rails", "angular", "vue", "svelte",
-    # Hard lies: certifications can't be stretched
     "certified", "pmp", "scrum master", "aws certified",
 }
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+
+# ---------------------------------------------------------------------------
+# Pure helpers (formerly module-private in scoring/validator.py)
+# ---------------------------------------------------------------------------
+
 
 def _stringify_profile_item(item: object) -> str:
     """Convert a profile list item to a stable string representation."""
     if isinstance(item, str):
         return item.strip()
-
     if isinstance(item, dict):
         for key in ("name", "label", "value", "language", "skill", "tool", "title"):
             value = item.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-
         parts = [str(value).strip() for value in item.values() if str(value).strip()]
         return " ".join(parts).strip()
-
     if item is None:
         return ""
-
     return str(item).strip()
 
 
@@ -104,7 +127,6 @@ def normalize_profile_list(items: object) -> list[str]:
     """Normalize profile list fields so prompt builders can safely join them."""
     if not isinstance(items, (list, tuple, set)):
         return []
-
     normalized: list[str] = []
     for item in items:
         value = _stringify_profile_item(item)
@@ -130,14 +152,21 @@ def _contains_watch_term(text: str, term: str) -> bool:
 
 def sanitize_text(text: str) -> str:
     """Auto-fix common LLM output issues instead of rejecting."""
-    text = text.replace(" \u2014 ", ", ").replace("\u2014", ", ")   # em dash -> comma
-    text = text.replace("\u2013", "-")    # en dash -> hyphen
-    text = text.replace("\u201c", '"').replace("\u201d", '"')   # smart double quotes
-    text = text.replace("\u2018", "'").replace("\u2019", "'")   # smart single quotes
+    text = text.replace(" — ", ", ").replace("—", ", ")
+    text = text.replace("–", "-")
+    text = text.replace("“", '"').replace("”", '"')
+    text = text.replace("‘", "'").replace("’", "'")
     return text.strip()
 
 
-def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal") -> dict:
+# ---------------------------------------------------------------------------
+# JSON-side validation (formerly _validate_master_json_fields)
+# ---------------------------------------------------------------------------
+
+
+def _validate_master_json_fields(
+    data: dict, profile: dict, mode: str = "normal"
+) -> ValidationResult:
     """Validate tailoring output against the canonical resume master schema."""
     errors: list[str] = []
     warnings: list[str] = []
@@ -155,7 +184,7 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
         errors.append("Missing required field: skill_category_updates")
 
     if errors:
-        return {"passed": False, "errors": errors, "warnings": warnings}
+        return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
 
     all_experience_ids = {entry.get("id") for entry in get_experience_entries(profile)}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
@@ -243,10 +272,17 @@ def _validate_master_json_fields(data: dict, profile: dict, mode: str = "normal"
             else:
                 warnings.append(msg)
 
-    return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
+    if errors:
+        return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
+    return ValidationResult.success(warnings=tuple(warnings))
 
 
-def _validate_master_tailored_resume(text: str, profile: dict) -> dict:
+# ---------------------------------------------------------------------------
+# Rendered resume text validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_master_tailored_resume(text: str, profile: dict) -> ValidationResult:
     """Validate rendered tailored resume text against the canonical master schema."""
     errors: list[str] = []
     warnings: list[str] = []
@@ -288,72 +324,239 @@ def _validate_master_tailored_resume(text: str, profile: dict) -> dict:
         if label and label.lower() not in text_lower:
             errors.append(f"Skill category '{label}' missing")
 
-    return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
+    if errors:
+        return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
+    return ValidationResult.success(warnings=tuple(warnings))
 
 
-# ── JSON Field Validation ─────────────────────────────────────────────────
-
-def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dict:
-    """Validate the canonical tailoring JSON for the master resume schema."""
-    return _validate_master_json_fields(data, profile, mode=mode)
+# ---------------------------------------------------------------------------
+# Cover letter validation
+# ---------------------------------------------------------------------------
 
 
-# ── Full Resume Text Validation ───────────────────────────────────────────
-
-def validate_tailored_resume(text: str, profile: dict, original_text: str = "") -> dict:
-    """Validate the rendered tailored resume against the canonical master schema."""
-    return _validate_master_tailored_resume(text, profile)
-
-
-# ── Cover Letter Validation ──────────────────────────────────────────────
-
-def validate_cover_letter(text: str, mode: str = "normal") -> dict:
-    """Programmatic validation of a cover letter.
-
-    Args:
-        text: The cover letter text to validate.
-        mode: Validation strictness — "strict", "normal", or "lenient".
-              strict  → banned words are errors (trigger retries); word limit enforced
-              normal  → banned words are warnings; word limit is soft (+25 words)
-              lenient → banned words ignored; word count not checked
-
-    Returns:
-        {"passed": bool, "errors": list[str], "warnings": list[str]}
-    """
+def _validate_cover_letter(text: str, mode: str = "normal") -> ValidationResult:
+    """Programmatic validation of a cover letter."""
     errors: list[str] = []
     warnings: list[str] = []
     text_lower = text.lower()
 
-    # 1. Em dashes — always an error (sanitize_text should have caught these)
-    if "\u2014" in text or "\u2013" in text:
+    # 1. Em / en dashes — always an error (sanitize_text should have caught these).
+    if "—" in text or "–" in text:
         errors.append("Contains em dash or en dash.")
 
-    # 2. Banned words — severity depends on mode
+    # 2. Banned words — severity depends on mode.
     if mode != "lenient":
         found = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
         if found:
             msg = f"Banned words: {', '.join(found[:5])}"
             if mode == "strict":
                 errors.append(msg)
-            else:  # normal
+            else:
                 warnings.append(msg)
 
-    # 3. Word count
+    # 3. Word count.
     words = len(text.split())
     if mode == "strict" and words > 250:
         errors.append(f"Too long ({words} words). Max 250.")
     elif mode == "normal" and words > 275:
         warnings.append(f"Long ({words} words). Target 250.")
-    # lenient: no word count check
 
-    # 4. LLM self-talk — always an error regardless of mode
+    # 4. LLM self-talk — always an error regardless of mode.
     found_leaks = [p for p in LLM_LEAK_PHRASES if p in text_lower]
     if found_leaks:
         errors.append(f"LLM self-talk: '{found_leaks[0]}'")
 
-    # 5. Must start with "Dear" — always checked (preamble should have been stripped)
+    # 5. Must start with "Dear" — always checked.
     stripped = text.strip()
     if not stripped.lower().startswith("dear"):
         errors.append("Must start with 'Dear Hiring Manager,'")
 
-    return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
+    if errors:
+        return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
+    return ValidationResult.success(warnings=tuple(warnings))
+
+
+# ---------------------------------------------------------------------------
+# ContentValidator — pure, port-shaped facade
+# ---------------------------------------------------------------------------
+
+
+def _profile_dict(profile_or_snapshot: ProfileSnapshot | dict) -> dict:
+    """Accept both a snapshot and a raw dict; return the canonical dict."""
+    if isinstance(profile_or_snapshot, ProfileSnapshot):
+        return profile_or_snapshot.as_dict()
+    return profile_or_snapshot
+
+
+@dataclass(frozen=True)
+class ContentValidator:
+    """Pure, profile-driven validation facade for the Materials context.
+
+    All methods accept either a :class:`ProfileSnapshot` or a raw dict so
+    legacy callers can be ported incrementally. Returns
+    :class:`ValidationResult` value objects — never raises for validation
+    failures (those go on the result).
+    """
+
+    def validate_json_fields(
+        self,
+        data: dict,
+        profile: ProfileSnapshot | dict,
+        *,
+        mode: str = "normal",
+    ) -> ValidationResult:
+        """Validate the canonical tailoring JSON for the master resume schema."""
+        return _validate_master_json_fields(data, _profile_dict(profile), mode=mode)
+
+    def validate_tailored_resume(
+        self,
+        text: str,
+        profile: ProfileSnapshot | dict,
+    ) -> ValidationResult:
+        """Validate rendered tailored resume text against the master schema."""
+        return _validate_master_tailored_resume(text, _profile_dict(profile))
+
+    def validate_cover_letter(
+        self,
+        text: str,
+        *,
+        mode: str = "normal",
+    ) -> ValidationResult:
+        """Programmatic validation of a cover letter."""
+        return _validate_cover_letter(text, mode)
+
+
+# ---------------------------------------------------------------------------
+# ResumeAssembler — pure text assembler
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ResumeAssembler:
+    """Assemble plain-text resume output from the tailored JSON payload.
+
+    Pure function — takes the canonical profile dict + LLM JSON,
+    returns the final resume text. The header (name, contact) is always
+    code-injected, never LLM-generated.
+    """
+
+    def assemble_resume_text(
+        self,
+        data: dict,
+        profile: ProfileSnapshot | dict,
+    ) -> str:
+        return _assemble_resume_text(data, _profile_dict(profile))
+
+
+def _assemble_resume_text(data: dict, profile: dict) -> str:
+    """Pure resume text assembler — mirror of the legacy
+    ``tailor.assemble_resume_text``."""
+    require_resume_master(profile)
+    personal = profile.get("personal", {})
+    tailoring_policy = get_tailoring_policy(profile)
+    resume = get_resume_master(profile)
+    required_experience_ids = get_required_experience_entry_ids(profile)
+    required_skill_ids = get_required_skill_category_ids(profile)
+    required_education_ids = set(
+        get_resume_master(profile).get("tailoring_rules", {}).get("required_education_entry_ids", [])
+    )
+    all_experience_entries = get_experience_entries(profile)
+    all_education_entries = get_education_entries(profile)
+    all_skill_categories = get_skill_categories(profile)
+    experience_entries = [
+        entry for entry in all_experience_entries
+        if not required_experience_ids or entry.get("id") in required_experience_ids
+    ] or all_experience_entries
+    education_entries = [
+        entry for entry in all_education_entries
+        if not required_education_ids or entry.get("id") in required_education_ids
+    ] or all_education_entries
+    skill_categories = [
+        category for category in all_skill_categories
+        if not required_skill_ids or category.get("id") in required_skill_ids
+    ] or all_skill_categories
+
+    experience_updates = {
+        entry.get("id"): entry
+        for entry in data.get("experience_updates", [])
+        if isinstance(entry, dict) and entry.get("id")
+    }
+    skill_updates = {
+        entry.get("id"): entry
+        for entry in data.get("skill_category_updates", [])
+        if isinstance(entry, dict) and entry.get("id")
+    }
+
+    lines: list[str] = []
+    lines.append(personal.get("full_name", ""))
+
+    contact_parts: list[str] = []
+    if personal.get("email"):
+        contact_parts.append(personal["email"])
+    if personal.get("phone"):
+        contact_parts.append(personal["phone"])
+    if personal.get("website_url"):
+        contact_parts.append(personal["website_url"])
+    if personal.get("linkedin_url"):
+        contact_parts.append(personal["linkedin_url"])
+    if contact_parts:
+        lines.append(" | ".join(contact_parts))
+    lines.append("")
+
+    lines.append("EXECUTIVE PROFILE")
+    if tailoring_policy["allow_summary_rewrite"]:
+        executive_profile = data.get("executive_profile", "")
+    else:
+        executive_profile = resume.get("executive_profile", {}).get("baseline_text", "")
+    lines.append(sanitize_text(executive_profile))
+    lines.append("")
+
+    lines.append("EXPERIENCE")
+    for entry in experience_entries:
+        update = experience_updates.get(entry.get("id"), {})
+        title = tailored_experience_title(entry, update, profile)
+        lines.append(sanitize_text(f"{title} | {entry.get('company', '')}"))
+        subtitle_parts = [entry.get("location", ""), entry.get("date_range", "")]
+        subtitle = " | ".join(part for part in subtitle_parts if part)
+        if subtitle:
+            lines.append(sanitize_text(subtitle))
+
+        bullets = tailored_experience_bullets(entry, update, profile)
+        for bullet in bullets:
+            lines.append(f"- {sanitize_text(str(bullet))}")
+        lines.append("")
+
+    lines.append("EDUCATION")
+    for entry in education_entries:
+        lines.append(sanitize_text(str(entry.get("degree", ""))))
+        subtitle_parts = [entry.get("institution", ""), entry.get("location", ""), entry.get("date", "")]
+        subtitle = " | ".join(part for part in subtitle_parts if part)
+        if subtitle:
+            lines.append(sanitize_text(subtitle))
+        if entry.get("details"):
+            lines.append(sanitize_text(str(entry["details"])))
+        lines.append("")
+
+    lines.append("SKILLS")
+    for category in skill_categories:
+        update = skill_updates.get(category.get("id"), {})
+        items = update.get("items", category.get("items", [])) if tailoring_policy["allow_skill_reordering"] else category.get("items", [])
+        sanitized_items = [sanitize_text(str(item)) for item in items if str(item).strip()]
+        lines.append(f"{category.get('label', 'Skills')}: {', '.join(sanitized_items)}")
+
+    return "\n".join(lines)
+
+
+__all__ = [
+    "BANNED_WORDS",
+    "ContentValidator",
+    "FABRICATION_WATCHLIST",
+    "LLM_LEAK_PHRASES",
+    "ResumeAssembler",
+    "normalize_profile_list",
+    "sanitize_text",
+]
+
+
+# Suppress unused-import warning for ``Any``.
+_ = Any

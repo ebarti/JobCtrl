@@ -47,6 +47,15 @@ type JobRow = Record<string, unknown> & {
   cover_letter_path?: string | null;
   cover_letter_at?: string | null;
   cover_attempts?: number | null;
+  // Phase 6 (S-20): joined-in fields from job_materials latest generation.
+  jm_generation?: number | null;
+  jm_status?: string | null;
+  jm_tailored_path?: string | null;
+  jm_tailored_at?: string | null;
+  jm_cover_path?: string | null;
+  jm_cover_at?: string | null;
+  jm_resume_pdf_path?: string | null;
+  jm_cover_pdf_path?: string | null;
   apply_status?: string | null;
   apply_error?: string | null;
   apply_attempts?: number | null;
@@ -178,10 +187,87 @@ function scoreSelect(db: SqliteDatabase): string {
     : ", NULL AS js_fit_score, NULL AS js_scored_at, NULL AS js_breakdown_json";
 }
 
+// Phase 6 (S-20): the canonical artifact paths for tailored resumes,
+// cover letters, and their PDFs now live in
+// ``job_materials_artifacts``. The legacy ``jobs.tailored_resume_path``
+// / ``jobs.cover_letter_path`` columns remain in the schema as a
+// read-only fallback for un-backfilled rows. ``MATERIALS_SUBQUERY``
+// pulls the latest generation per job and surfaces the per-type artifact
+// paths under ``jm_*`` aliases that don't collide with the legacy
+// columns.
+const MATERIALS_SUBQUERY = `(
+  SELECT m.job_url AS jm_job_url,
+         m.generation AS jm_generation,
+         m.status AS jm_status,
+         tr.path AS jm_tailored_path,
+         tr.created_at AS jm_tailored_at,
+         cl.path AS jm_cover_path,
+         cl.created_at AS jm_cover_at,
+         rpdf.path AS jm_resume_pdf_path,
+         cpdf.path AS jm_cover_pdf_path
+  FROM job_materials m
+  INNER JOIN (
+    SELECT job_url, MAX(generation) AS max_generation
+    FROM job_materials
+    GROUP BY job_url
+  ) latest ON latest.job_url = m.job_url AND latest.max_generation = m.generation
+  LEFT JOIN job_materials_artifacts tr
+    ON tr.job_url = m.job_url AND tr.generation = m.generation
+    AND tr.artifact_type = 'tailored_resume' AND tr.status = 'approved'
+  LEFT JOIN job_materials_artifacts cl
+    ON cl.job_url = m.job_url AND cl.generation = m.generation
+    AND cl.artifact_type = 'cover_letter' AND cl.status = 'approved'
+  LEFT JOIN job_materials_artifacts rpdf
+    ON rpdf.job_url = m.job_url AND rpdf.generation = m.generation
+    AND rpdf.artifact_type = 'resume_pdf' AND rpdf.status = 'approved'
+  LEFT JOIN job_materials_artifacts cpdf
+    ON cpdf.job_url = m.job_url AND cpdf.generation = m.generation
+    AND cpdf.artifact_type = 'cover_letter_pdf' AND cpdf.status = 'approved'
+)`;
+
+function materialsJoin(db: SqliteDatabase): string {
+  return tableExists(db, "job_materials")
+    ? ` LEFT JOIN ${MATERIALS_SUBQUERY} jm ON jm.jm_job_url = jobs.url`
+    : "";
+}
+
+function materialsSelect(db: SqliteDatabase): string {
+  return tableExists(db, "job_materials")
+    ? (
+        ", jm.jm_generation AS jm_generation" +
+        ", jm.jm_status AS jm_status" +
+        ", jm.jm_tailored_path AS jm_tailored_path" +
+        ", jm.jm_tailored_at AS jm_tailored_at" +
+        ", jm.jm_cover_path AS jm_cover_path" +
+        ", jm.jm_cover_at AS jm_cover_at" +
+        ", jm.jm_resume_pdf_path AS jm_resume_pdf_path" +
+        ", jm.jm_cover_pdf_path AS jm_cover_pdf_path"
+      )
+    : (
+        ", NULL AS jm_generation" +
+        ", NULL AS jm_status" +
+        ", NULL AS jm_tailored_path" +
+        ", NULL AS jm_tailored_at" +
+        ", NULL AS jm_cover_path" +
+        ", NULL AS jm_cover_at" +
+        ", NULL AS jm_resume_pdf_path" +
+        ", NULL AS jm_cover_pdf_path"
+      );
+}
+
 // Effective score: latest job_scores row (canonical) ⇒ fall back to legacy
 // ``jobs.fit_score`` for un-rescored historical rows. Used everywhere we
 // previously wrote bare ``fit_score`` — sort columns, filters, comparators.
 const EFFECTIVE_FIT_SCORE = "COALESCE(js.js_fit_score, jobs.fit_score)";
+
+// Phase 6 (S-20) effective-path expressions. New tailor + cover writes
+// land in ``job_materials_artifacts``; the legacy columns are a read-only
+// fallback. Use everywhere the prior code read bare
+// ``tailored_resume_path`` / ``cover_letter_path``.
+const EFFECTIVE_TAILOR_PATH = "COALESCE(jm.jm_tailored_path, jobs.tailored_resume_path)";
+const EFFECTIVE_TAILOR_AT = "COALESCE(jm.jm_tailored_at, jobs.tailored_at)";
+const EFFECTIVE_COVER_PATH = "COALESCE(jm.jm_cover_path, jobs.cover_letter_path)";
+const EFFECTIVE_COVER_AT = "COALESCE(jm.jm_cover_at, jobs.cover_letter_at)";
 
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   discovered_at: "discovered_at",
@@ -383,7 +469,7 @@ function loadJobs(
   const filter = combineSqlFilters(sqlFilter, deletion);
   return allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${filter.where}`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${filter.where}`,
     filter.params,
   );
 }
@@ -397,7 +483,7 @@ function loadJobPage(
     return { jobs: [], page: 1, total: 0 };
   }
   const filter = combineSqlFilters(jobSqlFilter(query), deletedSqlFilter(db, query.deleted));
-  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${scoreJoin(db)}${filter.where}`, filter.params);
+  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${filter.where}`, filter.params);
   const total = Number(totalRow?.count ?? 0);
   const pages = Math.max(1, Math.ceil(total / query.pageSize));
   const page = Math.min(query.page, pages);
@@ -405,7 +491,7 @@ function loadJobPage(
   const direction = query.dir === "asc" ? "ASC" : "DESC";
   const jobs = allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
     [...filter.params, query.pageSize, offset],
   );
   return { jobs, page, total };
@@ -489,7 +575,7 @@ function findJob(db: SqliteDatabase, jobKey: string): JobRow | null {
   }
   const row = getRow<JobRow>(
     db,
-    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)} WHERE jobs.url = ? OR jobs.application_url = ? LIMIT 1`,
+    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)} WHERE jobs.url = ? OR jobs.application_url = ? LIMIT 1`,
     [jobKey, jobKey],
   );
   return row ?? null;
@@ -635,8 +721,13 @@ function deriveLegacyStates(job: JobRow): StageSummary[] {
       : hasScore
         ? defaultStage("score", "succeeded")
         : defaultStage("score", "pending");
-  const tailor = deriveArtifactStage("tailor", score, job.tailored_resume_path, job.tailor_attempts);
-  const cover = deriveArtifactStage("cover", tailor, job.cover_letter_path, job.cover_attempts);
+  // Phase 6 (S-20): tailored-resume / cover-letter presence reads through
+  // the joined ``job_materials`` artifact paths, falling back to the
+  // legacy columns for un-backfilled rows.
+  const tailorPath = (job.jm_tailored_path ?? job.tailored_resume_path) as string | null | undefined;
+  const coverPath = (job.jm_cover_path ?? job.cover_letter_path) as string | null | undefined;
+  const tailor = deriveArtifactStage("tailor", score, tailorPath, job.tailor_attempts);
+  const cover = deriveArtifactStage("cover", tailor, coverPath, job.cover_attempts);
   const pdf = tailor.state === "succeeded" ? defaultStage("pdf", "succeeded") : defaultStage("pdf", "blocked");
   const apply = deriveApplyStage(job, pdf);
   return [discover, enrich, score, tailor, cover, pdf, apply];
@@ -731,6 +822,21 @@ function artifactCountByJob(db: SqliteDatabase, jobs: JobRow[]): Map<string, num
 function artifactsForJobs(db: SqliteDatabase, jobs: JobRow[]): ArtifactSummary[] {
   const jobByUrl = new Map(jobs.map((job) => [job.url ?? "", job]));
   const artifacts: ArtifactSummary[] = [];
+  // Phase 6 (S-20): the canonical artifact rows come from
+  // ``job_materials_artifacts``. The legacy ``job_artifacts`` table is
+  // still read for non-materials artifacts (apply logs, etc.).
+  if (tableExists(db, "job_materials_artifacts")) {
+    for (const row of allRows<ArtifactRow & { artifact_id?: string; generation?: number }>(
+      db,
+      "SELECT job_url, generation, artifact_type, artifact_id, status, path, created_at, size_bytes FROM job_materials_artifacts",
+    )) {
+      const job = jobByUrl.get(asString(row.job_url));
+      if (!job || !row.path) {
+        continue;
+      }
+      artifacts.push(formatArtifact({ ...row, row_id: row.artifact_id ?? `${row.job_url}:${row.generation}:${row.artifact_type}` }, job));
+    }
+  }
   if (tableExists(db, "job_artifacts")) {
     for (const row of allRows<ArtifactRow>(db, "SELECT rowid AS row_id, * FROM job_artifacts")) {
       const job = jobByUrl.get(asString(row.job_url));
@@ -782,11 +888,21 @@ function findLegacyArtifact(db: SqliteDatabase, artifactId: string): ArtifactSum
 }
 
 function legacyArtifacts(job: JobRow, existing: ArtifactSummary[]): ArtifactSummary[] {
+  // Phase 6 (S-20) artifact derivation: prefer the joined materials
+  // artifact paths over the legacy ``jobs.*_path`` columns. The PDF
+  // siblings come straight from the materials join (no longer guessed
+  // by suffix-swapping) when they exist.
+  const tailorPath = (job.jm_tailored_path ?? job.tailored_resume_path) as string | null | undefined;
+  const tailorAt = (job.jm_tailored_at ?? job.tailored_at) as string | null | undefined;
+  const coverPath = (job.jm_cover_path ?? job.cover_letter_path) as string | null | undefined;
+  const coverAt = (job.jm_cover_at ?? job.cover_letter_at) as string | null | undefined;
+  const resumePdfPath = (job.jm_resume_pdf_path ?? pdfSibling(tailorPath)) as string | null | undefined;
+  const coverPdfPath = (job.jm_cover_pdf_path ?? pdfSibling(coverPath)) as string | null | undefined;
   const candidates = [
-    ["tailored_resume_txt", job.tailored_resume_path, job.tailored_at],
-    ["tailored_resume_pdf", pdfSibling(job.tailored_resume_path), job.tailored_at],
-    ["cover_letter_txt", job.cover_letter_path, job.cover_letter_at],
-    ["cover_letter_pdf", pdfSibling(job.cover_letter_path), job.cover_letter_at],
+    ["tailored_resume_txt", tailorPath, tailorAt],
+    ["tailored_resume_pdf", resumePdfPath, tailorAt],
+    ["cover_letter_txt", coverPath, coverAt],
+    ["cover_letter_pdf", coverPdfPath, coverAt],
   ] as const;
   const seen = new Set(existing.filter((artifact) => artifact.jobKey === job.url).map((artifact) => `${artifact.type}:${artifact.localPath}`));
   return candidates.flatMap(([type, localPath, createdAt]) => {
