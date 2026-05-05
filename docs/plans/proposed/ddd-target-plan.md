@@ -324,11 +324,11 @@ uv --project workers/automation run --extra dev ruff check workers/automation/sr
 **Files touched:**
 
 - `packages/domain-types/src/events/` — **new** subdirectory.
-- `packages/domain-types/src/events/discovery.ts` — **new** `JobDiscovered`, `JobUpdated`, `JobDeleted`.
+- `packages/domain-types/src/events/discovery.ts` — **new** `JobDiscovered`, `JobUpdated`, `JobDeleted`, `JobRestored`.
 - `packages/domain-types/src/events/enrichment.ts` — **new** `JobEnriched`, `EnrichmentFailed`.
 - `packages/domain-types/src/events/scoring.ts` — **new** `JobScored`, `ScoreCorrected`.
-- `packages/domain-types/src/events/materials.ts` — **new** `ResumeApproved`, `CoverLetterGenerated`, `PdfRendered`, `MaterialsExhausted`.
-- `packages/domain-types/src/events/apply.ts` — **new** `ApplicationSubmitted`, `ApplicationFailed`, `ApplyRunStarted`.
+- `packages/domain-types/src/events/materials.ts` — **new** `ResumeApproved`, `ResumeFailed`, `CoverLetterGenerated`, `PdfRendered`, `MaterialsExhausted`.
+- `packages/domain-types/src/events/apply.ts` — **new** `ApplicationSubmitted`, `ApplicationFailed`, `ApplyRunStarted`, `ApplyRunEventRecorded`.
 - `packages/domain-types/src/events/orchestration.ts` — **new** `StageStarted`, `StageCompleted`, `StageFailed`, `StageExhausted`, `StageReset`, `StageBlocked`, `StageSkipped`.
 - `packages/domain-types/src/events/profile.ts` — **new** `ProfileUpdated`, `ProfileImported`.
 - `packages/domain-types/src/events/index.ts` — **new** barrel.
@@ -1231,11 +1231,11 @@ every importer in the same PR.
 uv --project workers/automation run --extra dev pytest -q
 ```
 
-**Risk:** Low-medium. Pure extraction.
+**Risk:** Low-medium. Pure extraction. `scoring/validator.py` deletion in this PR is a hard cut-over — every importer is updated in the same PR, so no shim remains.
 
 **Dependencies:** S-19 (value objects for ValidationResult).
 
-**Out of scope:** Removing `scoring/validator.py` shim.
+**Out of scope:** None — this is a self-contained extraction.
 
 ---
 

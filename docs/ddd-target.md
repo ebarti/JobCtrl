@@ -548,6 +548,7 @@ Identity: (TenantId, JobId)
   — Consumed by: Pipeline Orchestration (to initialize stage states), Operations (to update job list).
 - `JobUpdated { tenantId, jobId, changedFields }` — Consumed by: Operations.
 - `JobDeleted { tenantId, jobId, reason, deletedAt }` — Consumed by: Operations.
+- `JobRestored { tenantId, jobId, restoredAt }` — Consumed by: Operations.
 
 **Domain Services:** None. Discovery logic (scraping, dedup) lives in adapters
 behind ports; the aggregate is purely data.
@@ -1335,42 +1336,6 @@ generating JSON Schema, TypeScript types, and Python dataclasses). TypeSpec is
 chosen over raw JSON Schema because it supports discriminated unions, which
 map directly to the domain event and StageState sum types.
 
-### 6.8 TS API Write Operations — Domain Logic Hosting
-
-The current TS API (`write-model.ts`) performs several write operations
-directly against SQLite. In the target, each operation maps to a driving port
-on the appropriate bounded context. The question is: which runtime *hosts*
-the domain logic?
-
-**Principle:** Simple state-transition commands that require no LLM, browser,
-or scraping infrastructure are hosted **in the TS API process** directly,
-using shared domain types from `packages/domain-types`. Complex processing
-commands are dispatched to the Python worker via JSON-RPC.
-
-| Current `write-model.ts` operation | Target driving port | Hosted in | Rationale |
-|---|---|---|---|
-| `resetJobStage` | `RetryStageUseCase` (Pipeline Orchestration) | **TS API** | Pure state machine transition — `StageStateMachine` is a shared domain type. No Python needed. |
-| `markJobApplied` | `MarkAppliedUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. No browser/LLM. |
-| `markJobSkipped` | `SkipJobUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. |
-| `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TS API** | Tombstone write. No Python needed. |
-| `restoreJob` | `RestoreJobUseCase` (Discovery) | **TS API** | Tombstone removal. |
-| `updateProfile` | `UpdateProfileUseCase` (Profile) | **TS API** | JSON validation and file write. |
-| pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands via `StageCommandDispatcher` | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
-| profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
-
-**Trade-off:** The TS API hosting simple commands means the `StageStateMachine`
-logic exists in both TypeScript (via `packages/domain-types`) and Python. This
-is acceptable because: (a) the state machine is a small, pure function with
-well-defined transitions; (b) it is generated from the shared TypeSpec IDL, so
-both implementations are derived from one source; (c) the alternative —
-routing every button click through a Python subprocess — adds unacceptable
-latency for simple UI operations.
-
-**Cloud evolution:** In cloud mode, both TS and Python import the same
-`StageStateMachine` from a shared package. The TS API continues to host simple
-commands directly (now against Postgres via the repository adapter). Complex
-commands go through Temporal instead of subprocess.
-
 ### 6.6 Operations Read-Model Projection Strategy
 
 The Operations context builds its projections by:
@@ -1410,6 +1375,42 @@ This eliminates the current coupling where `launcher.py` directly writes to
 the `jobs` table, `apply_runs` table, `apply_run_events` table, `job_events`
 table, and `job_stage_states` table while also updating the in-memory Rich
 dashboard — all in the same function.
+
+### 6.8 TS API Write Operations — Domain Logic Hosting
+
+The current TS API (`write-model.ts`) performs several write operations
+directly against SQLite. In the target, each operation maps to a driving port
+on the appropriate bounded context. The question is: which runtime *hosts*
+the domain logic?
+
+**Principle:** Simple state-transition commands that require no LLM, browser,
+or scraping infrastructure are hosted **in the TS API process** directly,
+using shared domain types from `packages/domain-types`. Complex processing
+commands are dispatched to the Python worker via JSON-RPC.
+
+| Current `write-model.ts` operation | Target driving port | Hosted in | Rationale |
+|---|---|---|---|
+| `resetJobStage` | `RetryStageUseCase` (Pipeline Orchestration) | **TS API** | Pure state machine transition — `StageStateMachine` is a shared domain type. No Python needed. |
+| `markJobApplied` | `MarkAppliedUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. No browser/LLM. |
+| `markJobSkipped` | `SkipJobUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. |
+| `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TS API** | Tombstone write. No Python needed. |
+| `restoreJob` | `RestoreJobUseCase` (Discovery) | **TS API** | Tombstone removal. |
+| `updateProfile` | `UpdateProfileUseCase` (Profile) | **TS API** | JSON validation and file write. |
+| pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands via `StageCommandDispatcher` | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
+| profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
+
+**Trade-off:** The TS API hosting simple commands means the `StageStateMachine`
+logic exists in both TypeScript (via `packages/domain-types`) and Python. This
+is acceptable because: (a) the state machine is a small, pure function with
+well-defined transitions; (b) it is generated from the shared TypeSpec IDL, so
+both implementations are derived from one source; (c) the alternative —
+routing every button click through a Python subprocess — adds unacceptable
+latency for simple UI operations.
+
+**Cloud evolution:** In cloud mode, both TS and Python import the same
+`StageStateMachine` from a shared package. The TS API continues to host simple
+commands directly (now against Postgres via the repository adapter). Complex
+commands go through Temporal instead of subprocess.
 
 ---
 
@@ -2057,7 +2058,7 @@ single-user system.
 | **SearchStrategy** | Discovery | The extraction method used to find jobs: `jobspy`, `workday_api`, `smart_extract`, `manual`. |
 | **Source** | Discovery | The origin board or career site where a job was found (e.g., LinkedIn, Greenhouse). |
 | **Stage** | Pipeline Orchestration | A named step in the pipeline: `discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`. |
-| **StageState** | Pipeline Orchestration | The current status of a job within a stage: `pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `stale`, `canceled`. |
+| **StageState** | Pipeline Orchestration | The current status of a job within a stage. The domain model represents each variant as a typed value (PascalCase: `Pending`, `Queued`, `Running`, `Succeeded`, `Failed`, `Blocked`, `Skipped`, `Exhausted`, `Stale`, `Canceled` — see §4.7). The lowercase forms (`pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `stale`, `canceled`) are the serialized representation written to `job_stage_states.state`, emitted in event payloads, and exposed through the API DTOs. |
 | **SubmissionResult** | Apply Automation | The outcome of an apply attempt: `applied`, `failed`, `captcha`, `login_issue`, `expired`, `manual`, `dry_run`. |
 | **TailoredResume** | Materials Generation | A resume customized for a specific job, derived from the master baseline via LLM. |
 | **TenantContext** | Platform (Identity) | A request-scoped value object containing `tenantId`, `userId`, and `roles`, injected by the API gateway / auth middleware into every use case call. |
