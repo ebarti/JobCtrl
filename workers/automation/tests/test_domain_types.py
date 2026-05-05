@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from jobhunter.domain.tenant import TenantId, LOCAL_TENANT
 from jobhunter.domain.identifiers import JobId, generate_job_id
-from jobhunter.domain.pipeline import (
+from jobhunter.domain.pipeline_types import (
     Stage,
     STAGES,
     STAGE_STATE_KINDS,

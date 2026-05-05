@@ -334,10 +334,15 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             blocked_by_json     TEXT,
             next_action         TEXT,
             metadata_json       TEXT,
+            version             INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (job_url, stage),
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
+    # Forward-migrate: add version column if missing (existing databases)
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_stage_states)").fetchall()}
+    if "version" not in existing_cols:
+        conn.execute("ALTER TABLE job_stage_states ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS job_events (
             event_id            INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -24,7 +24,7 @@ TS_EVENTS_DIR = REPO_ROOT / "packages" / "domain-types" / "src" / "events"
 PY_EVENTS_DIR = REPO_ROOT / "workers" / "automation" / "src" / "jobhunter" / "domain" / "events"
 
 TS_PIPELINE = REPO_ROOT / "packages" / "domain-types" / "src" / "pipeline.ts"
-PY_PIPELINE = REPO_ROOT / "workers" / "automation" / "src" / "jobhunter" / "domain" / "pipeline.py"
+PY_PIPELINE = REPO_ROOT / "workers" / "automation" / "src" / "jobhunter" / "domain" / "pipeline_types.py"
 
 # Files that contain bounded-context events (exclude base and index)
 EVENT_MODULES = ["discovery", "enrichment", "scoring", "materials", "apply", "orchestration", "profile"]

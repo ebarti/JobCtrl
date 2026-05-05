@@ -5,7 +5,7 @@ Pure data types and value objects — no I/O imports.
 
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.pipeline import (
+from jobhunter.domain.pipeline_types import (
     STAGES,
     STAGE_STATE_KINDS,
     Stage,
