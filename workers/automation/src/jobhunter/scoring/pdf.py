@@ -696,7 +696,7 @@ def batch_convert(limit: int = 0) -> int:
                 now = utc_now()
                 set_stage_state(conn, row["url"], "pdf", "succeeded", attempt_count=1, finished_at=now)
                 record_job_artifact(conn, row["url"], "pdf", "cover_letter_pdf", pdf_path, status="active", created_at=now)
-                record_job_event(conn, row["url"], "pdf", "stage_succeeded", message="Cover letter PDF generated")
+                record_job_event(conn, row["url"], "pdf", "StageCompleted", message="Cover letter PDF generated")
                 conn.commit()
         except Exception as e:
             log.error("Failed to convert %s: %s", f.name, e)

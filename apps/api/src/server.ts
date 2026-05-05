@@ -15,6 +15,8 @@ import {
   DeleteJobRequestSchema,
   GenerateMaterialsRequestSchema,
   JobListQuerySchema,
+  JsonRpcErrorCodes,
+  JsonRpcRequestSchema,
   MarkJobActionRequestSchema,
   ProfileImportRequestSchema,
   ProfileUpdateRequestSchema,
@@ -283,6 +285,47 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       return buildActionResponse(command, { status: "skipped" }, { stage: marked.stage });
     });
+  });
+
+  /**
+   * Internal JSON-RPC 2.0 envelope endpoint (target §6.5).
+   *
+   * Stub for Phase 9 — proxies a JSON-RPC request body into the existing
+   * action dispatcher.  Body must be a valid {@link JsonRpcRequest}; the
+   * response is the matching {@link JsonRpcResponse}.  Method routing into
+   * the Python worker subprocess happens in Phase 9 (S-34); for now the
+   * endpoint validates the envelope shape and returns a placeholder.
+   */
+  app.post("/v1/_internal/rpc", async (request, reply) => {
+    const parsed = JsonRpcRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      void reply.code(400);
+      const id =
+        typeof request.body === "object" && request.body !== null && "id" in request.body
+          ? ((request.body as { id?: unknown }).id ?? null)
+          : null;
+      return {
+        jsonrpc: "2.0",
+        id: typeof id === "string" || typeof id === "number" || id === null ? id : null,
+        error: {
+          code: JsonRpcErrorCodes.InvalidRequest,
+          message: "Invalid JSON-RPC envelope",
+          data: parsed.error.message,
+        },
+      };
+    }
+    return {
+      jsonrpc: "2.0",
+      id: parsed.data.id ?? null,
+      result: {
+        method: parsed.data.method,
+        params: parsed.data.params,
+        // Phase 9 will swap this stub for a real subprocess dispatch via
+        // `defaultActionDispatcher`; for now the endpoint surface is in
+        // place so consumers can compile against it.
+        status: "accepted",
+      },
+    };
   });
 
   app.get("/v1/artifacts", async (request, reply) =>

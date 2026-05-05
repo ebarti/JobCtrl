@@ -705,7 +705,7 @@ def run_tailoring(min_score: int = 7, limit: int = 0,
             started_at = utc_now()
             job["_tailor_started_at"] = started_at
             set_stage_state(conn, job["url"], "tailor", "running", started_at=started_at)
-            record_job_event(conn, job["url"], "tailor", "stage_started", message="Tailoring started")
+            record_job_event(conn, job["url"], "tailor", "StageStarted", message="Tailoring started")
             future = executor.submit(
                 _tailor_one_job,
                 job,
@@ -767,7 +767,7 @@ def run_tailoring(min_score: int = 7, limit: int = 0,
                 conn,
                 r["url"],
                 "tailor",
-                "stage_succeeded",
+                "StageCompleted",
                 message=f"Tailoring {r['status']}",
                 payload={"attempts": r.get("attempts")},
             )
@@ -796,7 +796,7 @@ def run_tailoring(min_score: int = 7, limit: int = 0,
                 conn,
                 r["url"],
                 "tailor",
-                "stage_failed",
+                "StageFailed",
                 level="error",
                 message=f"Tailoring ended with status {r['status']}",
             )

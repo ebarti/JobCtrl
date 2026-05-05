@@ -660,7 +660,7 @@ def scrape_site_batch(
                 started_at = utc_now()
                 ensure_job_stage_rows(conn, url)
                 set_stage_state(conn, url, "enrich", "running", started_at=started_at)
-                record_job_event(conn, url, "enrich", "stage_started", message="Enrichment started")
+                record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
 
                 result = scrape_detail_page(page, url)
                 stats["processed"] += 1
@@ -701,7 +701,7 @@ def scrape_site_batch(
                         conn,
                         url,
                         "enrich",
-                        "stage_succeeded",
+                        "StageCompleted",
                         message=f"Enrichment {status}: {desc_len} description chars",
                         payload={"tier": tier, "elapsed": elapsed},
                     )
@@ -728,7 +728,7 @@ def scrape_site_batch(
                         conn,
                         url,
                         "enrich",
-                        "stage_failed",
+                        "StageFailed",
                         level="error",
                         message=result.get("error", "unknown"),
                     )

@@ -92,6 +92,9 @@ export {
   type StageSkippedPayload,
   type StageSkipped,
   createStageSkipped,
+  type StageCanceledPayload,
+  type StageCanceled,
+  createStageCanceled,
 } from "./orchestration.js";
 
 export {

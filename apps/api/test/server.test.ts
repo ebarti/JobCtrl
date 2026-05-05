@@ -1050,6 +1050,84 @@ describe("local TypeScript API", () => {
 
     await app.close();
   });
+
+  // -------------------------------------------------------------------------
+  // S-12: §8.5 state-machine gate + JSON-RPC envelope endpoint
+  // -------------------------------------------------------------------------
+
+  it("rejects illegal stage transitions through validateStageTransition", async () => {
+    const { validateStageTransition, InputError } = await import("../src/write-model.js");
+    const db = new Database(options.dbPath);
+    try {
+      // Pending → Succeeded is not a row in §8.5.
+      expect(() =>
+        validateStageTransition(db, "https://example.com/jobs/ready", "apply", "succeeded"),
+      ).toThrow(InputError);
+      // Succeeded → Pending is not allowed (only Stale → Pending).
+      expect(() =>
+        validateStageTransition(db, "https://example.com/jobs/ready", "score", "pending"),
+      ).toThrow(InputError);
+      // Failed → Pending IS allowed (row 10).
+      expect(() =>
+        validateStageTransition(db, "https://example.com/jobs/failed-score", "score", "pending"),
+      ).not.toThrow();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("admin-override commands bypass the §8.5 gate to mirror Python parity", async () => {
+    // The seed has apply=pending; markJobApplied is an admin override and
+    // must succeed even though Pending → Succeeded is not in the §8.5 table.
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+      payload: { reason: "external" },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().stage.state).toBe("succeeded");
+    await app.close();
+  });
+
+  it("/v1/_internal/rpc accepts a JSON-RPC envelope and returns a valid response", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/_internal/rpc",
+      payload: {
+        jsonrpc: "2.0",
+        method: "reset_stage",
+        params: { tenantId: "local", jobUrl: "https://example.com/job/1", stage: "score" },
+        id: 7,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body).toMatchObject({ jsonrpc: "2.0", id: 7 });
+    expect(body.result).toMatchObject({ method: "reset_stage", status: "accepted" });
+    expect(body.error).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("/v1/_internal/rpc rejects malformed JSON-RPC envelopes with code -32600", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/_internal/rpc",
+      payload: { not: "json-rpc", id: 9 },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    const body = response.json();
+    expect(body).toMatchObject({ jsonrpc: "2.0", id: 9 });
+    expect(body.error.code).toBe(-32600);
+
+    await app.close();
+  });
 });
 
 function seedDatabase(dbPath: string): void {

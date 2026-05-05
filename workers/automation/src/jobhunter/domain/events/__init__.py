@@ -60,6 +60,8 @@ from jobhunter.domain.events.orchestration import (
     create_stage_blocked,
     StageSkippedPayload,
     create_stage_skipped,
+    StageCanceledPayload,
+    create_stage_canceled,
 )
 from jobhunter.domain.events.profile import (
     ProfileUpdatedPayload,
@@ -126,6 +128,8 @@ __all__ = [
     "create_stage_blocked",
     "StageSkippedPayload",
     "create_stage_skipped",
+    "StageCanceledPayload",
+    "create_stage_canceled",
     # Profile
     "ProfileUpdatedPayload",
     "create_profile_updated",

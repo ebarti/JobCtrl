@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from jobhunter import config
+from jobhunter.domain.events.base import create_domain_event
 from jobhunter.domain.pipeline.state_machine import is_valid_transition
+from jobhunter.domain.ports.events import EventPublisher
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.domain.pipeline_types import deserialize_stage_state_kind
 
 log = logging.getLogger(__name__)
@@ -251,16 +254,51 @@ def record_job_event(
     message: str | None = None,
     payload: dict[str, Any] | None = None,
     occurred_at: str | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
-    """Append a durable per-job event."""
+    """Append a durable per-job event and optionally publish through the bus.
+
+    **Phase-3 deviation from §6.3** (round-1 review M2): the canonical §6.3
+    pattern is "dispatch happens AFTER the producing transaction commits",
+    implemented as a wildcard ``JobEventStoreHandler`` subscribed to the bus.
+    Phase 3 ships the simpler shape — INSERT inline, then call
+    ``publisher.publish`` as fan-out — because the bus is purely additive at
+    this stage.  Consequences a cloud cutover (Phase 9+) must address:
+
+    1. Dispatch fires *before* commit; subscribers reading via a fresh
+       connection won't see the row yet.
+    2. Swapping ``InProcessEventBus`` for an outbox publisher is *not* an
+       adapter-only change — every ``record_job_event`` caller is a
+       de-facto producer.
+
+    Note on payload composition: caller-supplied ``payload`` keys override
+    the envelope keys (``job_url``, ``stage``, ``level``, ``message``).  This
+    is intentional but worth knowing — don't shadow envelope keys
+    accidentally (round-1 review L3).
+    """
+    ts = occurred_at or utc_now()
     conn.execute(
         """
         INSERT INTO job_events (
             job_url, stage, event_type, level, message, occurred_at, payload_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (job_url, stage, event_type, level, message, occurred_at or utc_now(), _json_dumps(payload)),
+        (job_url, stage, event_type, level, message, ts, _json_dumps(payload)),
     )
+    if publisher is not None:
+        event = create_domain_event(
+            event_type=event_type,
+            tenant_id=LOCAL_TENANT,
+            payload={
+                "job_url": job_url,
+                "stage": stage,
+                "level": level,
+                "message": message or "",
+                **(payload or {}),
+            },
+            occurred_at=ts,
+        )
+        publisher.publish(event)
 
 
 def record_job_artifact(
@@ -417,7 +455,9 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         conn,
         job_url,
         stage,
-        "retry_requested",
+        # H1 (round-1 review): align with the domain catalog
+        # (`domain/events/orchestration.py::create_stage_reset`).
+        "StageReset",
         message=f"Retry reset requested for {stage}",
         payload={"reset_attempts": reset_attempts},
     )

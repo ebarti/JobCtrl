@@ -132,3 +132,21 @@ export function createStageSkipped(
 ): StageSkipped {
   return createDomainEvent("StageSkipped", tenantId, payload);
 }
+
+// -- StageCanceled ----------------------------------------------------------
+
+export interface StageCanceledPayload {
+  readonly jobId: string;
+  readonly stage: string;
+  readonly canceledAt: string;
+  readonly reason?: string;
+}
+
+export type StageCanceled = DomainEvent<"StageCanceled", StageCanceledPayload>;
+
+export function createStageCanceled(
+  tenantId: TenantId,
+  payload: StageCanceledPayload,
+): StageCanceled {
+  return createDomainEvent("StageCanceled", tenantId, payload);
+}

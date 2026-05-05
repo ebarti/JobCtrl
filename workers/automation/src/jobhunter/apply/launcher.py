@@ -316,7 +316,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             started_at=now,
             attempt_count=int(row["apply_attempts"] or 0),
         )
-        record_job_event(conn, row["url"], "apply", "stage_started", message="Apply agent acquired job")
+        record_job_event(conn, row["url"], "apply", "StageStarted", message="Apply agent acquired job")
         conn.execute("""
             UPDATE jobs SET apply_status = 'in_progress',
                            agent_id = ?,
@@ -365,7 +365,7 @@ def mark_result(url: str, status: str, error: str | None = None,
             WHERE url = ?
         """, (now, duration_ms, task_id, url))
         set_stage_state(conn, url, "apply", "succeeded", finished_at=now, duration_ms=duration_ms)
-        record_job_event(conn, url, "apply", "stage_succeeded", message="Application submitted")
+        record_job_event(conn, url, "apply", "StageCompleted", message="Application submitted")
     elif status == "dry_run":
         conn.execute("""
             UPDATE jobs SET apply_status = 'dry_run', apply_error = NULL,
@@ -385,7 +385,7 @@ def mark_result(url: str, status: str, error: str | None = None,
             retryable=True,
             next_action=f"jobhunter apply --url {url}",
         )
-        record_job_event(conn, url, "apply", "dry_run_completed", message="Dry run completed without submitting")
+        record_job_event(conn, url, "apply", "DryRunCompleted", message="Dry run completed without submitting")
     else:
         attempts = 99 if permanent else "COALESCE(apply_attempts, 0) + 1"
         conn.execute(f"""
@@ -410,7 +410,7 @@ def mark_result(url: str, status: str, error: str | None = None,
             conn,
             url,
             "apply",
-            "stage_failed",
+            "StageFailed",
             level="error",
             message=error or "unknown",
         )
@@ -435,7 +435,7 @@ def release_lock(url: str, run_ctx: dict | None = None) -> None:
         (url,),
     )
     set_stage_state(conn, url, "apply", "pending", next_action=f"jobhunter apply --url {url}")
-    record_job_event(conn, url, "apply", "lock_released", message="Apply lock released")
+    record_job_event(conn, url, "apply", "LockReleased", message="Apply lock released")
     conn.commit()
     _telemetry_emit("lock_released", run_ctx, job_url=url)
 

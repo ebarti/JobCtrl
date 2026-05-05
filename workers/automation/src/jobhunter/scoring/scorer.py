@@ -146,7 +146,7 @@ def run_scoring(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict
             started_at = utc_now()
             job["_score_started_at"] = started_at
             set_stage_state(conn, job["url"], "score", "running", started_at=started_at)
-            record_job_event(conn, job["url"], "score", "stage_started", message="Scoring started")
+            record_job_event(conn, job["url"], "score", "StageStarted", message="Scoring started")
             future = executor.submit(score_job, resume_text, job)
             future_to_job[future] = job
 
@@ -195,7 +195,7 @@ def run_scoring(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict
                 conn,
                 r["url"],
                 "score",
-                "stage_failed",
+                "StageFailed",
                 level="error",
                 message=r["reasoning"] or "Scoring failed",
             )
@@ -213,7 +213,7 @@ def run_scoring(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict
                 conn,
                 r["url"],
                 "score",
-                "stage_succeeded",
+                "StageCompleted",
                 message=f"Fit score {r['score']}/10",
                 payload={"keywords": r["keywords"]},
             )

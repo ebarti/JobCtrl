@@ -1,0 +1,242 @@
+{
+  "description": "Shared TS↔Python parity fixture for the §8.5 state machine. Every row of VALID_KIND_TRANSITIONS is exercised, plus a sampling of rejections. Both the TS and Python parity tests load this file and assert identical outputs.",
+  "validTransitions": [
+    {
+      "name": "row1_pending_to_queued",
+      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 5 },
+      "trigger": "Enqueue",
+      "inputs": { "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "expected": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" }
+    },
+    {
+      "name": "row2_pending_to_running",
+      "from": { "kind": "Pending", "attemptCount": 1, "maxAttempts": 5 },
+      "trigger": "Start",
+      "inputs": { "startedAt": "2026-05-05T10:01:00+00:00" },
+      "expected": { "kind": "Running", "attemptCount": 2, "startedAt": "2026-05-05T10:01:00+00:00" }
+    },
+    {
+      "name": "row3_pending_to_blocked",
+      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 },
+      "trigger": "Block",
+      "inputs": { "blockedBy": ["enrich"], "errorCode": "MISSING_SCORE", "errorMessage": "no fit_score" },
+      "expected": {
+        "kind": "Blocked",
+        "blockedBy": ["enrich"],
+        "errorCode": "MISSING_SCORE",
+        "errorMessage": "no fit_score"
+      }
+    },
+    {
+      "name": "row4_pending_to_skipped",
+      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 },
+      "trigger": "Skip",
+      "inputs": { "reason": "low_score" },
+      "expected": { "kind": "Skipped", "reason": "low_score" }
+    },
+    {
+      "name": "row5_queued_to_running",
+      "from": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Start",
+      "inputs": { "attemptCount": 1, "startedAt": "2026-05-05T10:00:01+00:00" },
+      "expected": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:01+00:00" }
+    },
+    {
+      "name": "row6_queued_to_canceled",
+      "from": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Cancel",
+      "inputs": { "canceledAt": "2026-05-05T10:00:30+00:00", "reason": "user_aborted" },
+      "expected": {
+        "kind": "Canceled",
+        "canceledAt": "2026-05-05T10:00:30+00:00",
+        "reason": "user_aborted"
+      }
+    },
+    {
+      "name": "row7_running_to_succeeded",
+      "from": { "kind": "Running", "attemptCount": 2, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Complete",
+      "inputs": { "finishedAt": "2026-05-05T10:00:30+00:00", "durationMs": 30000 },
+      "expected": {
+        "kind": "Succeeded",
+        "attemptCount": 2,
+        "finishedAt": "2026-05-05T10:00:30+00:00",
+        "durationMs": 30000
+      }
+    },
+    {
+      "name": "row8_running_to_failed",
+      "from": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Fail",
+      "inputs": {
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "stage timed out",
+        "retryable": true,
+        "nextAction": "jobhunter retry score"
+      },
+      "expected": {
+        "kind": "Failed",
+        "attemptCount": 1,
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "stage timed out",
+        "retryable": true,
+        "nextAction": "jobhunter retry score"
+      }
+    },
+    {
+      "name": "row9_running_to_canceled",
+      "from": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Cancel",
+      "inputs": { "canceledAt": "2026-05-05T10:00:05+00:00", "reason": "shutdown" },
+      "expected": {
+        "kind": "Canceled",
+        "canceledAt": "2026-05-05T10:00:05+00:00",
+        "reason": "shutdown"
+      }
+    },
+    {
+      "name": "row10a_failed_to_pending_keep_attempts",
+      "from": {
+        "kind": "Failed",
+        "attemptCount": 2,
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "boom",
+        "retryable": true
+      },
+      "trigger": "Reset",
+      "inputs": { "resetAttempts": false, "nextAction": "jobhunter retry tailor" },
+      "expected": {
+        "kind": "Pending",
+        "attemptCount": 2,
+        "maxAttempts": 5,
+        "nextAction": "jobhunter retry tailor"
+      }
+    },
+    {
+      "name": "row10b_failed_to_pending_reset_attempts",
+      "from": {
+        "kind": "Failed",
+        "attemptCount": 4,
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "boom",
+        "retryable": true
+      },
+      "trigger": "Reset",
+      "inputs": { "resetAttempts": true },
+      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 5 }
+    },
+    {
+      "name": "row11_failed_to_exhausted",
+      "from": {
+        "kind": "Failed",
+        "attemptCount": 5,
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "out of attempts",
+        "retryable": false
+      },
+      "trigger": "Exhaust",
+      "inputs": { "nextAction": "investigate" },
+      "expected": {
+        "kind": "Exhausted",
+        "attemptCount": 5,
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "out of attempts",
+        "nextAction": "investigate"
+      }
+    },
+    {
+      "name": "row12_blocked_to_pending",
+      "from": {
+        "kind": "Blocked",
+        "blockedBy": ["enrich"],
+        "errorCode": "MISSING_SCORE",
+        "errorMessage": "no fit_score"
+      },
+      "trigger": "Unblock",
+      "inputs": { "attemptCount": 0, "maxAttempts": 3 },
+      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 }
+    },
+    {
+      "name": "row13_exhausted_to_pending",
+      "from": {
+        "kind": "Exhausted",
+        "attemptCount": 5,
+        "maxAttempts": 5,
+        "errorCode": "TIMEOUT",
+        "errorMessage": "boom"
+      },
+      "trigger": "Reset",
+      "inputs": { "nextAction": "manual" },
+      "expected": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 5,
+        "nextAction": "manual"
+      }
+    },
+    {
+      "name": "row14_canceled_to_pending",
+      "from": { "kind": "Canceled", "canceledAt": "2026-05-05T10:00:00+00:00", "reason": "user" },
+      "trigger": "Reset",
+      "inputs": { "attemptCount": 0, "maxAttempts": 3 },
+      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 }
+    },
+    {
+      "name": "row15_succeeded_to_stale",
+      "from": {
+        "kind": "Succeeded",
+        "attemptCount": 1,
+        "finishedAt": "2026-05-05T10:00:00+00:00",
+        "durationMs": 1000
+      },
+      "trigger": "MarkStale",
+      "inputs": { "reason": "profile_changed" },
+      "expected": { "kind": "Stale", "reason": "profile_changed" }
+    },
+    {
+      "name": "row16_stale_to_pending",
+      "from": { "kind": "Stale", "reason": "profile_changed" },
+      "trigger": "Reset",
+      "inputs": { "attemptCount": 0, "maxAttempts": 3 },
+      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 }
+    }
+  ],
+  "rejections": [
+    {
+      "name": "succeeded_cannot_reset_directly",
+      "from": {
+        "kind": "Succeeded",
+        "attemptCount": 1,
+        "finishedAt": "2026-05-05T10:00:00+00:00",
+        "durationMs": 1000
+      },
+      "trigger": "Reset"
+    },
+    {
+      "name": "pending_cannot_complete",
+      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 },
+      "trigger": "Complete"
+    },
+    {
+      "name": "running_cannot_block",
+      "from": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Block"
+    },
+    {
+      "name": "skipped_cannot_reset",
+      "from": { "kind": "Skipped", "reason": "low_score" },
+      "trigger": "Reset"
+    },
+    {
+      "name": "queued_cannot_complete",
+      "from": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "trigger": "Complete"
+    }
+  ]
+}

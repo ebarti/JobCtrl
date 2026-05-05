@@ -1094,6 +1094,25 @@ def runs(
 
 
 @app.command()
+def rpc() -> None:
+    """Run the JSON-RPC 2.0 server on stdin/stdout (target §6.5).
+
+    Each line on stdin must be a single JSON-RPC request envelope; each
+    response is written as a single line on stdout.  Used by the TS API to
+    drive complex commands (Phase 9 onward) — Phase 3 ships a small handler
+    set: ``reset_stage``, ``mark_applied``, ``mark_skipped``, ``cancel_stage``,
+    ``run_stage``, ``apply``, ``profile_import``.
+    """
+    _bootstrap()
+    from jobhunter.infrastructure.rpc.handlers import register_default_handlers
+    from jobhunter.infrastructure.rpc.server import JsonRpcServer
+
+    server = JsonRpcServer()
+    register_default_handlers(server)
+    server.serve()
+
+
+@app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil

@@ -245,7 +245,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
             ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
             started_at = utc_now()
             set_stage_state(conn, job["url"], "cover", "running", started_at=started_at)
-            record_job_event(conn, job["url"], "cover", "stage_started", message="Cover letter generation started")
+            record_job_event(conn, job["url"], "cover", "StageStarted", message="Cover letter generation started")
             resume_text = _get_resume_text_for_job(job, base_resume_text)
             letter = generate_cover_letter(
                 resume_text,
@@ -318,7 +318,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
             record_job_artifact(conn, r["url"], "cover", "cover_letter_txt", r["path"], status="active", created_at=now)
             if r.get("pdf_path"):
                 record_job_artifact(conn, r["url"], "pdf", "cover_letter_pdf", r["pdf_path"], status="active", created_at=now)
-            record_job_event(conn, r["url"], "cover", "stage_succeeded", message="Cover letter generated")
+            record_job_event(conn, r["url"], "cover", "StageCompleted", message="Cover letter generated")
             saved += 1
         else:
             conn.execute(
@@ -342,7 +342,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
                 conn,
                 r["url"],
                 "cover",
-                "stage_failed",
+                "StageFailed",
                 level="error",
                 message=r.get("error") or "Cover letter generation failed",
             )

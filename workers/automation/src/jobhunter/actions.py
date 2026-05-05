@@ -89,7 +89,7 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
         _bootstrap_runtime()
         _record_action_event(
             request,
-            "action_started",
+            "ActionStarted",
             "info",
             f"{request.stage} action started",
             {"action_id": action_id, "dry_run": request.dry_run},
@@ -235,7 +235,7 @@ def _finish_action(
     try:
         _record_action_event(
             request,
-            "action_succeeded" if ok else "action_failed",
+            "ActionSucceeded" if ok else "ActionFailed",
             "info" if ok else "error",
             f"{request.stage} action {status}",
             {

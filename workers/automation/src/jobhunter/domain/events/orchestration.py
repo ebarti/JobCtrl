@@ -93,3 +93,15 @@ class StageSkippedPayload:
 
 def create_stage_skipped(tenant_id: TenantId, payload: StageSkippedPayload) -> DomainEvent:
     return create_domain_event("StageSkipped", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class StageCanceledPayload:
+    job_id: str
+    stage: str
+    canceled_at: str
+    reason: str | None = None
+
+
+def create_stage_canceled(tenant_id: TenantId, payload: StageCanceledPayload) -> DomainEvent:
+    return create_domain_event("StageCanceled", tenant_id, asdict(payload))

@@ -34,8 +34,8 @@ def test_local_stage_action_records_events(tmp_path, monkeypatch):
         assert calls[0]["limit"] == 3
         assert calls[0]["workers"] == 2
         assert [(row["event_type"], row["stage"], row["level"]) for row in rows] == [
-            ("action_started", "score", "info"),
-            ("action_succeeded", "score", "info"),
+            ("ActionStarted", "score", "info"),
+            ("ActionSucceeded", "score", "info"),
         ]
     finally:
         close_connection(db_path)
@@ -60,7 +60,7 @@ def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
         assert result.status == "failed"
         assert result.error == "boom"
         assert "RuntimeError" in (result.traceback or "")
-        assert failure["event_type"] == "action_failed"
+        assert failure["event_type"] == "ActionFailed"
         assert failure["level"] == "error"
     finally:
         close_connection(db_path)

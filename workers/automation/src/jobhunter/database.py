@@ -391,8 +391,56 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_job_artifacts_job_stage
         ON job_artifacts(job_url, stage, status)
     """)
+    # Event-watermark tracking — used by Phase 9 projection builders to
+    # remember the last event_id they consumed.  The row exists per
+    # projection name and is updated atomically as events are processed.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_watermarks (
+            projection_name     TEXT PRIMARY KEY,
+            last_event_id       INTEGER NOT NULL DEFAULT 0,
+            updated_at          TEXT NOT NULL
+        )
+    """)
+    # S-09 / round-1 review M1: one-shot snake_case → PascalCase rename
+    # over historical `job_events` rows.  The CASE expression is exhaustive
+    # for every snake_case event_type the worker has emitted; rows that
+    # are already PascalCase fall through the ELSE branch unchanged, so
+    # this is idempotent and safe to re-run on every startup.
+    conn.execute("""
+        UPDATE job_events SET event_type = CASE event_type
+            WHEN 'stage_started'      THEN 'StageStarted'
+            WHEN 'stage_succeeded'    THEN 'StageCompleted'
+            WHEN 'stage_completed'    THEN 'StageCompleted'
+            WHEN 'stage_failed'       THEN 'StageFailed'
+            WHEN 'stage_exhausted'    THEN 'StageExhausted'
+            WHEN 'stage_blocked'      THEN 'StageBlocked'
+            WHEN 'stage_skipped'      THEN 'StageSkipped'
+            WHEN 'stage_reset'        THEN 'StageReset'
+            WHEN 'stage_canceled'     THEN 'StageCanceled'
+            WHEN 'retry_requested'    THEN 'StageReset'
+            WHEN 'mark_applied'       THEN 'ApplicationManuallyMarked'
+            WHEN 'mark_skipped'       THEN 'StageSkipped'
+            WHEN 'cancel_requested'   THEN 'StageCanceled'
+            WHEN 'dry_run_completed'  THEN 'DryRunCompleted'
+            WHEN 'lock_released'      THEN 'LockReleased'
+            WHEN 'job_deleted'        THEN 'JobDeleted'
+            WHEN 'job_restored'       THEN 'JobRestored'
+            WHEN 'action_started'     THEN 'ActionStarted'
+            WHEN 'action_succeeded'   THEN 'ActionSucceeded'
+            WHEN 'action_failed'      THEN 'ActionFailed'
+            ELSE event_type
+        END
+        WHERE event_type IN (
+            'stage_started','stage_succeeded','stage_completed','stage_failed',
+            'stage_exhausted','stage_blocked','stage_skipped','stage_reset',
+            'stage_canceled','retry_requested','mark_applied','mark_skipped',
+            'cancel_requested','dry_run_completed','lock_released',
+            'job_deleted','job_restored',
+            'action_started','action_succeeded','action_failed'
+        )
+    """)
     conn.commit()
-    return ["job_stage_states", "job_events", "job_artifacts"]
+    return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks"]
 
 
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
@@ -546,7 +594,7 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
                 conn,
                 url,
                 "discover",
-                "stage_succeeded",
+                "StageCompleted",
                 message=f"Discovered via {site}:{strategy}",
                 occurred_at=now,
             )

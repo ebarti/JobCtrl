@@ -34,3 +34,21 @@ export {
 } from "./pipeline.js";
 
 export * from "./events/index.js";
+
+export {
+  StageTransitions,
+  type StageTransition,
+  type TransitionInputs,
+  type TransitionRejected,
+  type TransitionResult,
+  VALID_KIND_TRANSITIONS,
+  isValidTransition,
+  isRejected,
+  applyTransition,
+} from "./pipeline/state_machine.js";
+
+export {
+  type StageTransitionOutcome,
+  transitionStage,
+  canTransitionTo,
+} from "./pipeline/use_cases.js";
