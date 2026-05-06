@@ -1565,7 +1565,7 @@ in `contexts/operations/invalidation-router.ts`. Each backend event type
 has a registered handler:
 
 ```ts
-const handlers: Record<DomainEvent["type"], InvalidationHandler> = {
+const handlers: Record<DomainEvent["eventType"], InvalidationHandler> = {
   JobDiscovered: ({ tenantId }) => [
     jobsKeys.lists(tenantId),
     dashboardKeys.summary(tenantId),
@@ -1589,7 +1589,7 @@ const handlers: Record<DomainEvent["type"], InvalidationHandler> = {
 };
 
 export function handleEvent(event: DomainEvent, qc: QueryClient): void {
-  const out = handlers[event.type](event.payload);
+  const out = handlers[event.eventType](event.payload);
   for (const item of out) {
     if ("kind" in item && item.kind === "apply-run-event") {
       qc.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (old) =>
@@ -1616,13 +1616,13 @@ export function handleEvent(event: DomainEvent, qc: QueryClient): void {
 Two layers, both required:
 
 1. **Compile-time:** the `handlers` map is typed
-   `Record<DomainEvent["type"], InvalidationHandler>`. Adding a new
+   `Record<DomainEvent["eventType"], InvalidationHandler>`. Adding a new
    variant to the discriminated union in
    `@jobhunter/domain-types/events/` (mirroring a new backend event type)
    is a TypeScript compile error in `apps/web` until a handler is wired.
    This is the *primary* guard.
 2. **Runtime parity test:** `test/every-event-has-handler.test.ts`
-   iterates the `DomainEvent["type"]` union (extracted via a `tsd`-style
+   iterates the `DomainEvent["eventType"]` union (extracted via a `tsd`-style
    compile-time list or via the Zod discriminated-union schema's
    `.options` array) and asserts a handler is registered. This is the
    *backstop* that catches the case where a developer adds a stub
@@ -2059,9 +2059,9 @@ graph TB
   — it is the contract surface between the backend's events and the
   frontend's cache.
 - **Event-handler parity** (`test/every-event-has-handler.test.ts`) —
-  iterates the `DomainEvent["type"]` union and asserts a handler is
+  iterates the `DomainEvent["eventType"]` union and asserts a handler is
   registered for every variant; flags obvious empty stubs. Backstop to
-  the `Record<DomainEvent["type"], InvalidationHandler>` compile-time
+  the `Record<DomainEvent["eventType"], InvalidationHandler>` compile-time
   check (§7.4). Mirrors the backend's `scripts/check-domain-type-parity.py`
   pattern.
 - **Stage-state parity** (`test/every-stage-state-has-badge.test.ts`) —
@@ -2178,7 +2178,7 @@ This sits in the migration plan's CI gates section, but the architecture
 implies the pipeline:
 
 1. `pnpm -r check` (typecheck, including `apps/web`). Compile-time
-   guards (`Record<DomainEvent["type"], InvalidationHandler>` etc.) fire
+   guards (`Record<DomainEvent["eventType"], InvalidationHandler>` etc.) fire
    here.
 2. `pnpm -r lint` (ESLint).
 3. `pnpm web:test` (Vitest unit + integration). Includes the event-handler
@@ -2554,7 +2554,7 @@ event and every frontend cache key. A missed handler silently breaks a
 context's freshness; a wrong handler can over- or under-invalidate.
 
 **Mitigations:**
-- Compile-time `Record<DomainEvent["type"], InvalidationHandler>` typing
+- Compile-time `Record<DomainEvent["eventType"], InvalidationHandler>` typing
   forces a handler entry for every event variant (§7.4 fitness function).
 - Runtime parity test (`every-event-has-handler.test.ts`, §10.2) catches
   obvious empty stubs that pass TypeScript.
@@ -2806,7 +2806,7 @@ first's reconciliation.
 | **Enrichment (Frontend)** | Frontend (Bounded Context) | The frontend folder mirroring backend Job Enrichment. Owns the enrichment-event invalidation handlers and the future `useEnrichmentRetryMutation`. Has minimal UI today; the folder exists so its hooks have an unambiguous home as the surface grows. |
 | **EventStreamPort** | Frontend (Hexagonal) | Port abstracting the SSE connection. Local adapter is `SseEventStreamAdapter`; hosted alternative is `WebSocketEventStreamAdapter`. |
 | **EventStreamProvider** | Frontend (Provider) | Component mounted in `__root.tsx` that opens the event-stream subscription, wires it to the invalidation router, and exposes connection status. |
-| **Event-Handler Parity Test** | Frontend (Testing) | The CI test that iterates the `DomainEvent["type"]` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEvent["type"], InvalidationHandler>` typing. Mirrors backend `scripts/check-domain-type-parity.py`. |
+| **Event-Handler Parity Test** | Frontend (Testing) | The CI test that iterates the `DomainEvent["eventType"]` union and asserts a handler is registered for every variant in `contexts/operations/invalidation-router.ts`. Backstops the compile-time `Record<DomainEvent["eventType"], InvalidationHandler>` typing. Mirrors backend `scripts/check-domain-type-parity.py`. |
 | **FeatureFlagPort** | Frontend (Hexagonal) | Port for feature gating. Local adapter is `StaticFeatureFlagAdapter` (always returns defaults); hosted adapter is backend-served via `apiClient.featureFlags()` and cached in Query. The seam exists today; no flags ship now. |
 | **Frontend Bounded Context** | Architecture | See "Bounded Context (Frontend)." |
 | **InvalidationRouter** | Frontend (Operations) | Pure function mapping `DomainEvent` to a list of cache operations (`invalidateQueries` / `setQueryData`). The single contract surface between the backend's event taxonomy and the frontend's query cache. |

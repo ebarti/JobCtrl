@@ -379,7 +379,7 @@ contains no code changes; this is a gate, not a deliverable.
 |---|---|
 | **Theme** | Build the test pyramid from target §10. Vitest + React Testing Library + MSW for unit, hook, and component tests; Playwright for end-to-end smoke flows; the **two parity tests** (`every-event-has-handler.test.ts` and `every-stage-state-has-badge.test.ts`) per target §7.4 / §10.2; `tsd` for type-level assertions on hook return shapes; `axe-core` for form/dialog a11y spot-checks. |
 | **Target sections** | §10 (entire testing strategy), §7.4 (event-handler parity test), §2.4 (exhaustive `switch` → stage-state parity test). |
-| **Exit criteria** | `pnpm web:test` runs Vitest unit + integration; the invalidation-router unit test asserts the exact `invalidateQueries` / `setQueryData` set per backend event (target §10.2 "the most important unit test in the app"); the `every-event-has-handler.test.ts` parity test fails CI if any `DomainEvent["type"]` variant lacks a registered handler or registers an obvious empty stub; the `every-stage-state-has-badge.test.ts` parity test fails CI if any `STAGE_STATE_KINDS` value lacks a `<StageBadge>` arm; one MSW-backed hook test exists per query and per mutation hook; one Playwright spec exists per critical flow (target §10.4 — eight flows); `tsd` type tests cover the eight Operations read hooks; `axe-core` runs on form / dialog component tests; CI runs all three layers. |
+| **Exit criteria** | `pnpm web:test` runs Vitest unit + integration; the invalidation-router unit test asserts the exact `invalidateQueries` / `setQueryData` set per backend event (target §10.2 "the most important unit test in the app"); the `every-event-has-handler.test.ts` parity test fails CI if any `DomainEvent["eventType"]` variant lacks a registered handler or registers an obvious empty stub; the `every-stage-state-has-badge.test.ts` parity test fails CI if any `STAGE_STATE_KINDS` value lacks a `<StageBadge>` arm; one MSW-backed hook test exists per query and per mutation hook; one Playwright spec exists per critical flow (target §10.4 — eight flows); `tsd` type tests cover the eight Operations read hooks; `axe-core` runs on form / dialog component tests; CI runs all three layers. |
 | **Effort** | Large — 0 → comprehensive test pyramid. |
 | **Dependencies** | Phase 5 (the SSE consumer is the most important thing to test; without it, the parity tests cannot fully assert). |
 | **PRs** | Five PRs (one per step) — see §10 Branching Convention. No cut-over steps in this phase (all preparation: tests are pure additions). |
@@ -1781,10 +1781,15 @@ is tenant-prefixed.
 - `useCorrectScoreMutation.ts` — **placeholder** per target §3.5 / §4.4.5.
 
 `materials/`:
-- `useGenerateMaterialsMutation.ts` — async (202) per target §4.4.6 /
-  §8.3: optimistic "queued" patch on `jobsKeys.detail(tid, jobId)`;
-  the real result arrives via SSE in Phase 5. Records `runId` in the
-  cache entry per target R14.
+- `useGenerateMaterialsMutation.ts` — **placeholder** per target §4.4.6
+  / §3.6: the backend `/v1/jobs/:jobKey/actions/generate-materials`
+  endpoint currently returns 400 `unsupported_per_job_material_action`
+  (`apps/api/src/server.ts:200-209`). Hook ships in S-14 throwing
+  `NotImplementedError` like the other placeholder hooks (see §7
+  Out-of-Scope). When backend support lands in a future PR, the hook
+  becomes async (202) per target §8.3: optimistic "queued" patch on
+  `jobsKeys.detail(tid, jobId)`; real result arrives via SSE; records
+  `runId` in the cache entry per target R14.
 - `useOpenArtifactMutation.ts` — calls `usePorts().openInOs.open(artifactId)`;
   no cache invalidation per target §4.4.6.
 
@@ -1824,20 +1829,24 @@ strategy:
   cancel-stage / cancel-apply / retry-stage with `runAfter: false` /
   update-profile / update-settings / update-credential): optimistic
   via `createOptimisticMutation`; settle invalidation per target §8.2.
-- **Async mutations** (generate-materials / apply / dry-run / retry-stage
-  with `runAfter: true`): no eager invalidation of the *result*; small
+- **Async mutations** (apply / dry-run / retry-stage with
+  `runAfter: true`): no eager invalidation of the *result*; small
   immediate invalidation of "the request queued" view; real
   invalidation via the SSE invalidation router in Phase 5.
+  Generate-materials would belong here too but its backend endpoint
+  is not yet enabled — see §7 Out-of-Scope and the placeholder hook
+  note in `materials/`.
 
 The R12 / R14 `runId` correlation pattern applies symmetrically to
-**every** async (202) mutation — Materials AND Apply AND
-retry-stage-with-runAfter. Every async mutation hook records the
-returned `runId` in the optimistic in-flight cache entry inside
-`onMutate`, *before* the network call. The SSE handler matches by
-`runId` before applying the invalidation/setQueryData. The
-`<GenerateMaterialsButton>` and `<ApplyButton>` both read a
-`useIsXxxRunInFlight(jobId)` selector to disable themselves while a
-run is active.
+**every** async (202) mutation — Apply AND retry-stage-with-runAfter
+today, plus Materials when its backend endpoint lands. Every async
+mutation hook records the returned `runId` in the optimistic in-flight
+cache entry inside `onMutate`, *before* the network call. The SSE
+handler matches by `runId` before applying the invalidation/setQueryData.
+The `<ApplyButton>` reads a `useIsApplyRunInFlight(jobId)` selector
+to disable itself while a run is active; `<GenerateMaterialsButton>`
+is rendered disabled (with a tooltip explaining the backend gap) until
+the enablement step in §7 Out-of-Scope ships.
 
 The mutation hooks are owned by the aggregate context (Discovery,
 Profile, Materials, Apply, Pipeline) per target §3 / §4.4. The view
@@ -1845,8 +1854,9 @@ files in S-15 import them; the views never import
 `@jobhunter/api-client` directly.
 
 The placeholder hooks (`useImportJobMutation`,
-`useCorrectScoreMutation`, `useEnrichmentRetryMutation`) ship as
-files that throw `NotImplementedError`; their existence makes the
+`useCorrectScoreMutation`, `useEnrichmentRetryMutation`,
+`useGenerateMaterialsMutation`) ship as files that throw
+`NotImplementedError`; their existence makes the
 context folders complete per target §3.2 / §3.3 / §3.5 / §11
 ("Eight folders, no inventions, no omissions").
 
@@ -2129,7 +2139,7 @@ no-strangler discipline:
   guarantees the effect does not re-run on every render.
 - `apps/web/src/contexts/operations/invalidation-router.ts` — **new**
   the pure function per target §7.4. The handler map is typed
-  `Record<DomainEvent["type"], InvalidationHandler>` and is
+  `Record<DomainEvent["eventType"], InvalidationHandler>` and is
   **populated empty in Phase 3** with each event type mapped to
   `() => []`. Phase 5 (S-20) populates the real handlers.
 - `apps/web/src/contexts/discovery/handlers.ts` — **new** placeholder
@@ -2156,7 +2166,7 @@ no-strangler discipline:
 
 **Approach.** Per target §7.4, the router is a pure function and a
 single point to reason about cross-context invalidation. The
-compile-time typing (`Record<DomainEvent["type"], InvalidationHandler>`)
+compile-time typing (`Record<DomainEvent["eventType"], InvalidationHandler>`)
 is the primary guard that every event variant has a handler entry;
 the runtime parity test (Phase 6 S-22) is the backstop that catches
 stub bodies. Shipping the empty handlers in Phase 3 means: (a) the
@@ -2173,7 +2183,7 @@ operations are tenant-scoped via the §4.1 factories.
 - `pnpm web:check` passes.
 - `<EventStreamProvider>` mounts; `<ConnectionStatusPill>` shows
   "stub mode".
-- The empty handler map covers every `DomainEvent["type"]` variant
+- The empty handler map covers every `DomainEvent["eventType"]` variant
   (compile-time enforced).
 
 **QA checklist:** confirm pill shows "stub mode"; no console errors.
@@ -2291,8 +2301,15 @@ delete `useState`-per-field draft trees.
 - `apps/web/src/contexts/apply/selectors/applyRunSelectors.ts` —
   **new** the `appendApplyRunEvent(old, event)` helper used by the
   invalidation router's `setQueryData` path per target §7.4.
-- `apps/web/src/contexts/materials/components/GenerateMaterialsButton.tsx`,
-  `OpenArtifactButton.tsx` — **new** per target §4.4.6.
+- `apps/web/src/contexts/materials/components/GenerateMaterialsButton.tsx`
+  — **new** per target §4.4.6 but **disabled by default** (binds to
+  the placeholder `useGenerateMaterialsMutation`; renders with a
+  tooltip explaining the backend gap, per §7 Out-of-Scope). When the
+  backend enablement lands, the button activates and follows the §7.4
+  R12/R14 in-flight pattern with no further frontend change.
+- `apps/web/src/contexts/materials/components/OpenArtifactButton.tsx`
+  — **new** per target §4.4.6 (active; uses `useOpenArtifactMutation`
+  which works via the OS adapter today).
 - `apps/web/src/contexts/discovery/components/JobBulkActions.tsx` —
   the `JobBulkActions` from S-09 stays in `views/jobs/`; the
   *button labels* here are unchanged. (Discovery does not own a
@@ -2428,8 +2445,9 @@ lose the upload").
 ### Phase 5: Realtime — Backend SSE Endpoint + Frontend Consumer
 
 **Motivation.** Several POST actions (apply, retry-stage with
-`runAfter: true`, generate-materials) return `202 Accepted` and
-complete asynchronously in the worker. The UI today has no way to
+`runAfter: true`; plus generate-materials when its backend endpoint
+lands per §7 Out-of-Scope) return `202 Accepted` and complete
+asynchronously in the worker. The UI today has no way to
 observe completion other than the user manually refreshing. The
 backend already records `JobEvent` rows via `EventPublisher`
 (PR #21 / `decisions.md` 2026-05-06 In-Process EventPublisher +
@@ -2469,7 +2487,7 @@ target §7.5; implement the connection-status pill / 30s
   retry: 5000
   : keepalive (every 15s)
   event: heartbeat (every 30s with current watermark)
-  event: <DomainEvent["type"]>
+  event: <DomainEvent["eventType"]>
   data: <DomainEvent["payload"] as JSON>
   id: <event_id>
   ```
@@ -2478,36 +2496,58 @@ target §7.5; implement the connection-status pill / 30s
   `tenant_id` column on `job_events`** — the column does not exist
   in the current schema (`workers/automation/src/jobhunter/database.py:370-381`).
   The plan picks **option (b)**: filter via
-  `JSON_EXTRACT(payload_json, '$.tenantId') = :tenantId`, with a
-  supporting expression index added in this step:
+  `COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local') = :tenantId`,
+  with a supporting expression index added in this step:
   ```sql
   CREATE INDEX IF NOT EXISTS idx_job_events_tenant_eid
-    ON job_events(JSON_EXTRACT(payload_json, '$.tenantId'), event_id);
+    ON job_events(
+      COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local'),
+      event_id
+    );
   ```
   The full tail query is:
   ```sql
   SELECT event_id, event_type, payload_json, occurred_at
   FROM job_events
   WHERE event_id > :resumeFrom
-    AND JSON_EXTRACT(payload_json, '$.tenantId') = :tenantId
+    AND COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local')
+        = :tenantId
   ORDER BY event_id ASC
   LIMIT 1000;
   ```
   `resumeFrom` resolves from `Last-Event-ID` header (preferred) →
   `?since` query string (fallback) → `current_max(event_id)`
-  (default if neither). Rows whose `payload_json.tenantId` is
-  `NULL` (legacy rows pre-DDD migration) are filtered out — local
-  mode has only `LOCAL_TENANT` so this is a no-op today.
+  (default if neither).
 
-  **Why not the column-add approach (option a):** adding
+  The `COALESCE(..., 'local')` guard handles **all three** classes
+  of rows that lack an explicit tenant in `payload_json`:
+  legacy rows pre-DDD-migration; rows where `payload_json` is
+  `NULL` entirely (some test/seed paths); and **post-migration
+  writers that do not consistently emit `tenantId`** in the
+  payload — current callers in
+  `workers/automation/src/jobhunter/state.py` (`record_job_event`
+  at line 247 and call sites such as `database.py:1510`) and
+  `apps/api/src/write-model.ts` (`recordActionEvent` at line 638
+  and its six call sites) do not always thread tenant through.
+  In local mode every event therefore resolves to `LOCAL_TENANT`
+  regardless of emitter discipline; the SSE stream sees every row.
+
+  **Why not the column-add approach (option a) today:** adding
   `tenant_id` to `job_events` requires a worker-side change to
   `record_job_event` plus a backfill, expanding S-19 scope from
-  "ship the SSE endpoint" to "migrate `job_events` schema." The
-  tenant scope is already in `payload_json.tenantId` for every
-  event written post-DDD-migration (per the
-  `EventPublisher` contract in `decisions.md` 2026-05-06
-  In-Process EventPublisher), so JSON_EXTRACT is the right
-  local-mode answer.
+  "ship the SSE endpoint" to "migrate `job_events` schema." With
+  the COALESCE guard, every local-mode event is correctly
+  attributed to `LOCAL_TENANT` without that schema migration.
+
+  **Cloud-mode evolution trigger** (target §9.4 fitness function):
+  when more than one tenant exists in `job_events` rows (i.e.,
+  when `JwtSessionAdapter` lands and writers start emitting
+  non-`local` tenants), the `record_job_event` /
+  `recordActionEvent` writers are tightened to **require**
+  explicit `tenantId` in payload (a one-line change in each
+  writer), and a column-add migration on `job_events` becomes the
+  right move (option (a)). Until that trigger fires, the COALESCE
+  guard is correct and complete.
 
   **Why not defer entirely (option c):** target §7.1 marks
   tenant scope as **mandatory** ("the server enforces that
@@ -2656,7 +2696,7 @@ server enforces match.
 **Approach.** Per target §7.4, each new backend `DomainEvent`
 variant must produce a TypeScript compile error in `apps/web` until
 a handler is wired (the
-`Record<DomainEvent["type"], InvalidationHandler>` typing). Phase 3
+`Record<DomainEvent["eventType"], InvalidationHandler>` typing). Phase 3
 already shipped the empty handler shape; this step fills it. Phase 6's
 `every-event-has-handler.test.ts` parity test guards against stub
 bodies surviving CI.
@@ -2817,7 +2857,7 @@ test cases land when the hosted adapter does.
   `QueryClient` and assert against its received calls.
 - `apps/web/src/contexts/operations/every-event-has-handler.test.ts`
   — the **first parity test** per target §7.4 / §10.2. Iterates
-  the `DomainEvent["type"]` union (extracted via the Zod
+  the `DomainEvent["eventType"]` union (extracted via the Zod
   discriminated-union schema's `.options` array) and asserts a
   handler is registered. Inspects the source of `handlers` for the
   new event and fails CI if the body is the obvious empty stub
@@ -2905,7 +2945,7 @@ tests cover the pure helpers used by views and the
     keys for one event of each variant.
   - **(b) In-memory Fastify boot** — boot the real `apps/api`
     Fastify app against a temp SQLite DB; insert one
-    `job_events` row per `DomainEvent["type"]` variant; open the
+    `job_events` row per `DomainEvent["eventType"]` variant; open the
     real `SseEventStreamAdapter` against the booted endpoint;
     assert the invalidation router fires for each.
 
@@ -2981,10 +3021,14 @@ assertions to avoid flakiness.
 cannot. Per-test isolated SQLite avoids cross-test interference and
 keeps the suite hermetic.
 
-For SSE-dependent flows (#6 generate-materials, #7 dry-run), the
-test seeds the `job_events` table directly via SQLite to inject
-`ResumeApproved` / `DryRunComplete` events; the SSE endpoint streams
-them; the UI updates; the test asserts the updated state.
+For SSE-dependent flows, the test seeds the `job_events` table
+directly via SQLite to inject the relevant event(s); the SSE
+endpoint streams them; the UI updates; the test asserts the updated
+state. **Today** this exercises flow #7 (dry-run) by injecting
+`DryRunComplete`. Flow #6 (generate-materials) is deferred per §7
+Out-of-Scope until the backend `/v1/jobs/:jobKey/actions/generate-materials`
+endpoint stops returning 400; once it does, the same scaffolding
+extends to inject `ResumeApproved` events.
 
 **Tenancy implications.** Tests use `LOCAL_TENANT`.
 
@@ -3345,7 +3389,7 @@ for a future plan.
 | Phase | What lands |
 |---|---|
 | Phase 1 (S-04) | `EventStreamPort` interface + stub adapter (`status: "stub"`). |
-| Phase 3 (S-16) | `EventStreamProvider` mounted; invalidation router scaffolded with empty handler map (compile-time `Record<DomainEvent["type"], InvalidationHandler>` typing); per-context `handlers.ts` files with placeholder bodies. |
+| Phase 3 (S-16) | `EventStreamProvider` mounted; invalidation router scaffolded with empty handler map (compile-time `Record<DomainEvent["eventType"], InvalidationHandler>` typing); per-context `handlers.ts` files with placeholder bodies. |
 | Phase 5 (S-19) | `GET /v1/events/stream` endpoint shipped on `apps/api/`. |
 | Phase 5 (S-20) | Real `SseEventStreamAdapter` replaces the stub; handler bodies populated per target §8.4; `setQueryData` path for `ApplyRunEventRecorded`; 30s "connection lost" banner; one-shot full `invalidateQueries()` backstop on reconnect. |
 | Phase 6 (S-22) | Per-event invalidation-router unit tests; the `every-event-has-handler.test.ts` parity test. |
@@ -3437,6 +3481,7 @@ path / fitness function (target §9) where applicable.
 | **`useImportJobMutation`** (Discovery: manual job add) | §3.2 | `ImportJobUseCase` exposed in the API. |
 | **`useEnrichmentRetryMutation`** | §3.3 | `EnrichJobUseCase` exposed as a manual trigger in the API. |
 | **`useCorrectScoreMutation`** | §3.5 | `CorrectScoreUseCase` exposed in the API. |
+| **`useGenerateMaterialsMutation`** (Materials: per-job targeted generation) | §3.6 / §4.4.6 | Backend `/v1/jobs/:jobKey/actions/generate-materials` returns 400 `unsupported_per_job_material_action` today (`apps/api/src/server.ts:200-209`). Trigger: targeted material-generation use case exposed as a 202 endpoint. Frontend ships the placeholder hook + disabled button so the wiring is in place when the backend enables it. |
 | **Visual regression** (Chromatic / Loki) | §10.5 | Design changes start producing un-noticed regressions; or design opts in. |
 | **Broader a11y audit** (beyond axe critical violations on forms / dialogs) | §1 Non-Goals | Dedicated phase; this plan covers the named "no critical violations" bar only. |
 | **i18n** | §1 Non-Goals | Multi-locale becomes a product requirement. |
@@ -3690,7 +3735,7 @@ the risk is being addressed.
 
 | Risk (target §12) | Mitigation step(s) | Notes |
 |---|---|---|
-| **R1 — Cache-invalidation correctness (router as single point of failure)** | S-16 (router scaffold with compile-time `Record<DomainEvent["type"], InvalidationHandler>` typing); S-20 (handlers populated); S-22 (per-event unit tests + `every-event-has-handler.test.ts` parity test). | Compile-time typing is the primary guard; parity test is the runtime backstop per target §7.4. |
+| **R1 — Cache-invalidation correctness (router as single point of failure)** | S-16 (router scaffold with compile-time `Record<DomainEvent["eventType"], InvalidationHandler>` typing); S-20 (handlers populated); S-22 (per-event unit tests + `every-event-has-handler.test.ts` parity test). | Compile-time typing is the primary guard; parity test is the runtime backstop per target §7.4. |
 | **R2 — Optimistic-update rollback bugs** | S-14 (`createOptimisticMutation` helper encodes snapshot → patch → rollback → invalidate); S-22 (helper unit test); S-23 (per-mutation hook tests assert rollback). | Helper is a pure function; mutation hooks supply only the patcher and key set. |
 | **R3 — SSE delivery gaps under reverse-proxy / CDN buffering** | S-19 (server sets `X-Accel-Buffering: no` + 30s heartbeat); S-20 (frontend 30s "connection lost" banner + one-shot full-cache invalidation backstop on reconnect). | Heartbeat + reconnect backstop together cover proxy buffering. |
 | **R4 — Route-loader prefetch racing with mutations** | S-13 (loaders use `ensureQueryData`, not `fetchQuery`); S-14 (mutations declare `meta.affectsRoutes` consumed by a small middleware that calls `router.invalidate()` for affected routes). | `ensureQueryData` honors stale state and triggers background refetch. |
@@ -3703,7 +3748,7 @@ the risk is being addressed.
 | **R11 — Wizard-store persistence corruption** | S-03 (Zustand `persist` middleware with `version` field; migration function discards on schema change); S-09 (wizard upload step clears stale store on entry); the store's read path narrows the parsed shape with Zod. | Discard-on-version-change is the no-strangler-discipline answer for a single-user wizard. |
 | **R12 — JSON-RPC `runId` correlation gaps (SSE arrives before mutation resolves)** | S-14 (mutations write the optimistic "in-flight" cache entry in `onMutate`, *before* the network call; `runId` is included in the request payload as idempotency key and echoed in events; the frontend correlates by `runId`, not request-response timing). | Applies symmetrically to Materials AND Apply per minor finding. |
 | **R13 — `JobId` migration window — `apps/api` still accepts `jobKey: string`** | S-11 (frontend ACL at `contexts/operations/types.ts` is the single mapping site; `JobId` is brand-typed; `apiClient.deleteJob(jobId, ...)` passes the `JobId` value as the API's currently-named `jobKey` parameter). | When the backend rename lands, only the ACL changes; every call site is already on `jobId: JobId`. |
-| **R14 — Materials-set generation invalidation under concurrent re-tailoring** | S-14 (the optimistic patcher records `runId` in the cache entry; the SSE handler matches by `runId` before applying; `<GenerateMaterialsButton>` is `disabled` while in-flight via a `useIsMaterialsRunInFlight(jobId)` selector); S-23 (mutation tests assert correct `runId` correlation). | Same `runId`-keyed pattern applies to all async (202) mutations including Apply (per minor finding). |
+| **R14 — Materials-set generation invalidation under concurrent re-tailoring** | S-14 (the optimistic patcher / `runId`-keyed in-flight pattern lands in shape but is exercised today only by Apply because `useGenerateMaterialsMutation` is a placeholder per §7 Out-of-Scope; the wiring is in place for when the backend enablement lands); S-23 (mutation tests assert correct `runId` correlation for Apply; same tests parameterized for Materials when the backend lands). | Same `runId`-keyed pattern applies to all async (202) mutations. The pattern's correctness is proven via Apply today; Materials inherits it for free when its backend endpoint ships. |
 
 ---
 
@@ -3765,7 +3810,7 @@ appear in §7 Out-of-Scope).
 | §3.3 Enrichment (Frontend) | Phase 3 (S-14 placeholder `useEnrichmentRetryMutation`, S-16 handlers placeholder); Phase 5 (S-20 handlers). |
 | §3.4 Candidate Profile | Phase 2 (S-08, S-09: profile + import + settings routes); Phase 3 (S-13, S-14); Phase 4 (S-18: forms). |
 | §3.5 Scoring | Phase 3 (S-14 placeholder `useCorrectScoreMutation`); Phase 4 (S-17 `<ScoreBadge>`, `<ScoreBreakdown>`); Phase 5 (S-20 handlers). |
-| §3.6 Materials Generation | Phase 3 (S-14 mutations); Phase 4 (S-17 `<GenerateMaterialsButton>`, `<OpenArtifactButton>`); Phase 5 (S-20). |
+| §3.6 Materials Generation | Phase 3 (S-14 mutations: `useOpenArtifactMutation` active; `useGenerateMaterialsMutation` placeholder per §7); Phase 4 (S-17 `<GenerateMaterialsButton>` disabled placeholder; `<OpenArtifactButton>` active); Phase 5 (S-20 SSE handlers for `ResumeApproved` etc. activate when backend enablement lands). |
 | §3.7 Apply Automation | Phase 3 (S-14); Phase 4 (S-17 `<ApplyButton>`, `<ApplyRunBadge>`, `<ApplyRunTimeline>`, `<ApplyHistory>`); Phase 5 (S-20 handlers + `setQueryData`). |
 | §3.8 Pipeline Orchestration | Phase 3 (S-14); Phase 4 (S-17 `<StageBadge>`, `<StageTimeline>`, `<JobActions>`, `<RetryStageButton>`, `<CancelStageButton>`, `<MarkAppliedButton>`, `<MarkSkippedButton>`); Phase 5 (S-20 handlers); plus `<CopyableCommand>` (Phase 1 S-02). |
 | §3.9 Operations / Read-Side | Phase 3 (S-12 keys, S-13 hooks, S-16 router scaffold); Phase 5 (S-20 router populated). |
