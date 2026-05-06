@@ -3,6 +3,100 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-05-06: Frontend TanStack Migration (8 phases)
+
+Plan: `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`
+
+Delivered (Phases 1–8):
+
+- **Phase 1 — Foundation (PR #24):** New `apps/web` shell — Vite + React 19,
+  Tailwind 4 + design tokens, shadcn/ui primitives in `shared/ui/`,
+  TanStack Router file-based routes, ports inventory in `shared/ports/`
+  with the local-mode adapters (`FetchApiClientAdapter`,
+  `LocalStorageAdapter`, `LocalSessionAdapter`, …) wired through
+  `<PortsProvider />`. `EventStreamPort` lands as a stub
+  (`status: "stub"`).
+- **Phase 2 — Routes + View Composers (PR #25):** Route tree
+  (`/dashboard`, `/jobs(/$jobId)`, `/artifacts(/$artifactId)`, `/profile`,
+  `/settings`) with route-level Zod search-param schemas. The three view
+  folders (`views/dashboard/`, `views/jobs/`, `views/artifacts/`)
+  populated with extracted view bodies; cross-context coordination
+  forced through the URL (no `window.dispatchEvent`).
+- **Phase 3 — Operations Read-Side + Per-Context Mutations (PR #26):**
+  `contexts/operations/` ships with the projection-typed read hooks
+  (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`,
+  `useArtifactsListQuery`, `useArtifactDetailQuery`,
+  `useApplyRunsListQuery`, `useApplyRunQuery`, `useHealthQuery`); the
+  per-context query-key factories (`jobsKeys`, `dashboardKeys`,
+  `artifactsKeys`, `applyRunsKeys`, `healthKeys`, `profileKeys`) live
+  with their owning context and re-export through
+  `contexts/operations/queryKeys.ts`. Per-aggregate mutation hooks for
+  Discovery, Profile, Materials, Apply, and Pipeline. Invalidation router
+  scaffolded with empty handler bodies and a compile-time
+  `Record<DomainEvent["eventType"], InvalidationHandler>` typing.
+  `EventStreamProvider` mounted but consumes the stub adapter.
+- **Phase 4 — Forms + Tables + Drawers (PR #27):** TanStack Form + Zod
+  `safeParse` for the profile editor, settings form, credential form,
+  and the resume-import wizard (nested routes with a Zustand+persist
+  draft store). TanStack Table v8 powers `JobsTable` and `ArtifactsTable`
+  with column models in `views/<view>/columns.tsx` and cell renderers
+  composed from context-owned components.
+- **Phase 5 — SSE Endpoint + Real EventStream Adapter + Populated Router
+  (PR #28):** `GET /v1/events/stream` ships on `apps/api/` with the
+  COALESCE tenant filter, `Last-Event-ID` resume, `retry: 5000`,
+  15 s keepalive, and 30 s heartbeat. Real `SseEventStreamAdapter`
+  replaces the stub. Invalidation-router handler bodies populated per
+  target §8.4; `setQueryData` path for `ApplyRunEventRecorded`. 30 s
+  "connection lost" banner; one-shot full `invalidateQueries()`
+  backstop on reconnect.
+- **Phase 6 — Test Pyramid (PR #29):** Vitest + React Testing Library +
+  MSW handlers; per-event invalidation-router unit tests; the two
+  parity tests (`every-event-has-handler.test.ts` in
+  `contexts/operations/` and `every-stage-state-has-badge.test.tsx` in
+  `contexts/pipeline/components/`); type-level tests for the Operations
+  read hooks via Vitest's `typecheck` mode (under `apps/web/test/types/`,
+  `vitest.types.config.ts`) — superseding the original `tsd` plan;
+  `axe-core` / `jest-axe` for form / dialog components; Playwright
+  headless specs for the eight critical flows (dashboard, dry-run,
+  jobs-bulk, jobs-drawer, materials, profile-edit, settings, wizard;
+  `materials.spec.ts` is `fixme`'d pending the
+  `GenerateMaterialsUseCase` backend exposure).
+- **Phase 7 — Storybook + a11y Baseline (PR #30):** Storybook with
+  `addon-msw` and `addon-a11y` (critical+serious axe violations fail
+  CI). Per-primitive stories for every shadcn primitive in `shared/ui/`,
+  per-context stories for every domain component, per-view stories for
+  the dashboard / jobs / artifacts / profile composers. 17 stories
+  carry an explicit `a11y: { test: "off" }` deferral with attribution
+  to the underlying production a11y defect; each deferral is tracked
+  in `docs/backlog.md`.
+- **Phase 8 — Documentation (this PR):** Frontend architecture
+  codified in `docs/architecture.md`, four ADRs appended to
+  `docs/decisions.md` (TanStack adoption, frontend hexagonal ports,
+  SSE realtime contract + invalidation router, view-vs-context
+  dichotomy), `docs/local-development.md` and `docs/local-ts-api.md`
+  and `docs/local-reliability-qa.md` updated with the frontend
+  commands / SSE contract / test pyramid, `docs/INDEX.md` and
+  `docs/backlog.md` updated, `AGENTS.md` extended with a Frontend
+  Conventions section, and the migration plan moved from `proposed/`
+  to `implemented/`.
+
+Cross-cutting outcomes:
+
+- Three-layer state separation (server / URL / client) enforced by
+  construction; the pre-migration 2,527-line `App.tsx` with
+  `useState<View>` switching, manual `requestSeq` ref dedup, and
+  `window.dispatchEvent` cross-component coordination is gone.
+- Eight frontend bounded contexts mirror the backend's eight 1:1; views
+  are composers, not contexts; ubiquitous language matches end-to-end.
+- Hexagonal ports in place from day one; cloud-mode adapters named in
+  `docs/backlog.md` ("Frontend Cloud-Mode Adapters") with fitness
+  functions per `docs/frontend-target.md` §9.
+- Realtime via SSE + pure-function invalidation router; new backend
+  events are a one-row schema addition + a one-row router handler.
+- Test counts: 70 vitest files (≈291 tests), 9 type tests, 8 Playwright
+  specs, 9 a11y suites; Storybook test runner is the gate for stories
+  + critical a11y bar.
+
 ## 2026-05-06: DDD + Hexagonal Migration (9 phases)
 
 Plan: `docs/plans/implemented/2026-05-06-ddd-migration.md`
