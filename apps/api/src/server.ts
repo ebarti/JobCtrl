@@ -557,16 +557,22 @@ function unsupportedPerJobMaterialAction(jobKey?: string): {
 function withDb<T>(
   reply: { code: (statusCode: number) => unknown },
   dbPath: string,
-  read: (db: ReturnType<typeof openReadOnlyDatabase>) => T,
+  read: (db: ReturnType<typeof openDatabase>) => T,
 ): T | { ok: false; error: string; message: string } {
   if (!databaseExists(dbPath)) {
     void reply.code(503);
     return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${dbPath}` };
   }
 
-  let db: ReturnType<typeof openReadOnlyDatabase> | null = null;
+  // Phase 9 (S-33): read endpoints maintain the projection tables
+  // (refreshProjections runs at the top of every read-model call), so
+  // they need a writable connection.  Read-only mode is preserved for
+  // explicitly read-only callers via openReadOnlyDatabase, but the
+  // read-model uses the writable path so the canonical projections
+  // stay current with new ``job_events`` rows from the worker.
+  let db: ReturnType<typeof openDatabase> | null = null;
   try {
-    db = openReadOnlyDatabase(dbPath);
+    db = openDatabase(dbPath);
     return read(db);
   } catch (error) {
     const opened = db !== null;

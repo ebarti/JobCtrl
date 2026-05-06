@@ -12,6 +12,7 @@
     "check": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
+    "@jobhunter/domain-types": "workspace:*",
     "zod": "^4.4.1"
   },
   "devDependencies": {

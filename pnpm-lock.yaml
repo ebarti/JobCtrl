@@ -20,6 +20,9 @@ importers:
       '@jobhunter/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@jobhunter/domain-types':
+        specifier: workspace:*
+        version: link:../../packages/domain-types
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.9.0
@@ -101,6 +104,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@jobhunter/domain-types':
+        specifier: workspace:*
+        version: link:../domain-types
       zod:
         specifier: ^4.4.1
         version: 4.4.3

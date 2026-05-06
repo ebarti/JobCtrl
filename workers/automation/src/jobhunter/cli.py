@@ -38,14 +38,41 @@ VALID_STAGES = STAGE_ORDER
 # Helpers
 # ---------------------------------------------------------------------------
 
+_projection_subscription = None
+
+
 def _bootstrap() -> None:
-    """Common setup: load env, create dirs, init DB."""
+    """Common setup: load env, create dirs, init DB, refresh projections.
+
+    Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
+    every CLI invocation so the read-model projections reflect the
+    current canonical state before any stage logic runs.  This is
+    cheap (incremental from the watermark) and ensures the dashboards
+    don't go blank after a fresh DB or a schema migration.
+
+    The same builder also subscribes (idempotently) to the process-wide
+    ``InProcessEventBus`` so events emitted later in the worker run
+    drive live projection refreshes.
+    """
+    global _projection_subscription
     from jobhunter.config import load_env, ensure_dirs
     from jobhunter.database import init_db
+    from jobhunter.infrastructure.projections.projection_builder import (
+        ProjectionBuilder,
+    )
 
     load_env()
     ensure_dirs()
-    init_db()
+    conn = init_db()
+    try:
+        builder = ProjectionBuilder(conn)
+        builder.refresh()
+        if _projection_subscription is None:
+            from jobhunter.infrastructure.profile.factory import _get_default_publisher
+
+            _projection_subscription = builder.subscribe_to(_get_default_publisher())
+    except Exception:  # noqa: BLE001 — projection refresh failure must not break boot
+        log.exception("ProjectionBuilder backfill on bootstrap failed")
 
 
 def _version_callback(value: bool) -> None:

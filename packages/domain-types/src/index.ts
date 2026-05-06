@@ -64,3 +64,5 @@ export {
   transitionStage,
   canTransitionTo,
 } from "./pipeline/use_cases.js";
+
+export * from "./operations/index.js";
