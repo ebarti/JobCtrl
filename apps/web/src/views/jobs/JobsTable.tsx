@@ -1,6 +1,7 @@
-import type { JobSortField, JobSummary, PaginatedResponse } from "@jobhunter/contracts";
+import type { JobSortField } from "@jobhunter/contracts";
 
 import { stateTone } from "../../contexts/pipeline/lib/state-tone.js";
+import type { JobSummary, PaginatedResponse } from "../../contexts/operations/types.js";
 import { scoreTier } from "../../contexts/scoring/lib/score-tier.js";
 import { formatCompanySource } from "../../shared/lib/formatters.js";
 import { Empty } from "../../shared/ui/empty.js";

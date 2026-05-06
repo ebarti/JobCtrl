@@ -1,4 +1,4 @@
-import type { ArtifactSummary } from "@jobhunter/contracts";
+import type { ArtifactSummary } from "../../../contexts/operations/types.js";
 
 export interface ArtifactGroup {
   groupKey: string;

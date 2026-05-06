@@ -1,13 +1,10 @@
-import {
-  type BulkJobMutationRequest,
-  type JobSortField,
-  type JobSummary,
-  type PaginatedResponse,
-} from "@jobhunter/contracts";
+import { type BulkJobMutationRequest, type JobSortField } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
+import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
+import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Pager } from "../../shared/ui/pager.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
@@ -15,62 +12,30 @@ import { JobBulkActions } from "./JobBulkActions.js";
 import { JobFilterBar } from "./JobFilterBar.js";
 import { JobsTable, type JobSortColumn } from "./JobsTable.js";
 
+function jobsListInput(search: JobsSearch) {
+  return {
+    page: search.page,
+    pageSize: search.pageSize,
+    q: search.q,
+    sort: search.sort,
+    dir: search.dir,
+    deleted: search.deleted,
+    ...(search.stage !== "all" ? { stage: search.stage } : {}),
+    ...(search.state !== "all" ? { state: search.state } : {}),
+  };
+}
+
 export function JobsView() {
-  const ports = usePorts();
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
 
-  const [data, setData] = useState<PaginatedResponse<JobSummary> | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { data, isFetching, error } = useJobsListQuery(jobsListInput(search));
+  const deleteJobs = useDeleteJobsBulkMutation();
+  const restoreJobs = useRestoreJobsBulkMutation();
+  const message = error instanceof Error ? error.message : null;
+
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(() => new Set());
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
-  const requestSeq = useRef(0);
-
-  const load = useCallback(async () => {
-    const requestId = requestSeq.current + 1;
-    requestSeq.current = requestId;
-    setLoading(true);
-    setError("");
-    try {
-      const nextData = await ports.api.jobs({
-        page: search.page,
-        pageSize: search.pageSize,
-        q: search.q,
-        sort: search.sort,
-        dir: search.dir,
-        deleted: search.deleted,
-        ...(search.stage !== "all" ? { stage: search.stage } : {}),
-        ...(search.state !== "all" ? { state: search.state } : {}),
-      });
-      if (requestId === requestSeq.current) {
-        setData(nextData);
-      }
-    } catch (requestError) {
-      if (requestId === requestSeq.current) {
-        setData(null);
-        setError(requestError instanceof Error ? requestError.message : "Unable to load jobs.");
-      }
-    } finally {
-      if (requestId === requestSeq.current) {
-        setLoading(false);
-      }
-    }
-  }, [
-    ports.api,
-    search.deleted,
-    search.dir,
-    search.page,
-    search.pageSize,
-    search.q,
-    search.sort,
-    search.stage,
-    search.state,
-  ]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   useEffect(() => {
     setSelectedJobs(new Set());
@@ -146,14 +111,16 @@ export function JobsView() {
     });
   };
 
-  const mutateSelected = async () => {
+  const restoring = search.deleted === "deleted";
+  const mutation = restoring ? restoreJobs : deleteJobs;
+  const mutateBusy = mutation.isPending;
+
+  const mutateSelected = () => {
     const jobKeys = Array.from(selectedJobs);
     const count = allMatchingSelected ? (data?.pagination.total ?? 0) : jobKeys.length;
     if (!count) {
       return;
     }
-    const restoring = search.deleted === "deleted";
-    const action = restoring ? "restore" : "delete";
     if (
       !window.confirm(
         `${restoring ? "Restore" : "Soft delete"} ${count} selected job${
@@ -163,28 +130,12 @@ export function JobsView() {
     ) {
       return;
     }
-    setLoading(true);
-    setError("");
-    try {
-      const payload: BulkJobMutationRequest = allMatchingSelected
-        ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
-        : { allMatching: false, jobKeys };
-      if (restoring) {
-        await ports.api.restoreJobs(payload);
-      } else {
-        await ports.api.deleteJobs(payload);
-      }
-      clearSelection();
-      await load();
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : `Unable to ${action} selected jobs.`,
-      );
-    } finally {
-      setLoading(false);
-    }
+    const payload: BulkJobMutationRequest = allMatchingSelected
+      ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
+      : { allMatching: false, jobKeys };
+    mutation.mutate(payload, {
+      onSuccess: () => clearSelection(),
+    });
   };
 
   const selectedCount = allMatchingSelected
@@ -203,23 +154,23 @@ export function JobsView() {
     <>
       <section className="card full">
         <CardHeader title="Jobs" meta={data ? `${data.pagination.total} total` : "loading"} />
-        {error ? <div className="banner inline">{error}</div> : null}
-        <JobFilterBar search={search} onRefresh={() => void load()} />
+        {message ? <div className="banner inline">{message}</div> : null}
+        <JobFilterBar search={search} />
         <JobBulkActions
           search={search}
           selectedCount={selectedCount}
           hasItems={Boolean(data?.items.length)}
           hasAnyMatching={Boolean(data?.pagination.total)}
-          loading={loading}
+          loading={mutateBusy || isFetching}
           onSetDeleted={(deleted) => setSearch({ deleted, page: 1 })}
           onSelectPage={selectPage}
           onSelectAllMatching={selectAllMatching}
           onClearSelection={clearSelection}
-          onMutateSelected={() => void mutateSelected()}
+          onMutateSelected={mutateSelected}
         />
         <JobsTable
-          data={data}
-          loading={loading}
+          data={data ?? null}
+          loading={isFetching}
           sort={search.sort}
           dir={search.dir}
           selectedJobs={selectedJobs}

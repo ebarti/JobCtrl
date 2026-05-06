@@ -1,6 +1,6 @@
-import type { DashboardSummary } from "@jobhunter/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
+import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { SegmentBar } from "../../shared/ui/segment-bar.js";
 import { kpiSearchFor } from "./KpiGrid.js";

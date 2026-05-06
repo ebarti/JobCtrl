@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 
+import { useOpenArtifactMutation } from "../../contexts/materials/hooks/useOpenArtifactMutation.js";
 import { artifactStatusTone } from "../../contexts/materials/lib/artifact-status-tone.js";
-import { usePorts } from "../../shared/providers/PortsProvider.js";
 import {
   artifactKind,
   artifactVersionLabel,
@@ -10,23 +10,11 @@ import {
 
 export interface ArtifactGroupProps {
   group: ArtifactGroupShape;
-  onError: (message: string) => void;
-  onStatus: (message: string) => void;
 }
 
-export function ArtifactGroup({ group, onError, onStatus }: ArtifactGroupProps) {
-  const ports = usePorts();
+export function ArtifactGroup({ group }: ArtifactGroupProps) {
   const navigate = useNavigate();
-  const openArtifact = async (artifactId: string, type: string) => {
-    onError("");
-    onStatus("");
-    try {
-      await ports.api.openArtifact(artifactId);
-      onStatus(`opened ${type}`);
-    } catch (requestError) {
-      onError(requestError instanceof Error ? requestError.message : "Unable to open artifact.");
-    }
-  };
+  const openArtifact = useOpenArtifactMutation();
   return (
     <div className="data-row artifact-group">
       <span className="title-stack">
@@ -39,13 +27,13 @@ export function ArtifactGroup({ group, onError, onStatus }: ArtifactGroupProps) 
             key={artifact.artifactId}
             type="button"
             className="artifact-variant"
-            disabled={artifact.status === "missing"}
+            disabled={artifact.status === "missing" || openArtifact.isPending}
             title={
               artifact.status === "missing"
                 ? "Local file is missing; regenerate this artifact before opening it."
                 : artifact.localPath
             }
-            onClick={() => void openArtifact(artifact.artifactId, artifact.type)}
+            onClick={() => openArtifact.mutate({ artifactId: artifact.artifactId })}
           >
             <span className={`tag ${artifactStatusTone(artifact.status)}`}>
               {artifactKind(artifact.type)}

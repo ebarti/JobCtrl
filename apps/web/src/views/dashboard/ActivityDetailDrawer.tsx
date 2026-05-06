@@ -1,25 +1,24 @@
-import type { DashboardSummary } from "@jobhunter/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
+import { useActivityEventQuery } from "../../contexts/operations/hooks/useActivityEventQuery.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 
-type ActivityEvent = DashboardSummary["activity"][number];
-
 export interface ActivityDetailDrawerProps {
   eventId: string;
-  activity: ActivityEvent | null;
 }
 
-export function ActivityDetailDrawer({ eventId, activity }: ActivityDetailDrawerProps) {
+export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
   const navigate = useNavigate();
   const close = useCallback(() => {
     void navigate({ to: "/dashboard" });
   }, [navigate]);
   useEscapeKey(true, close);
+
+  const { data: activity } = useActivityEventQuery(eventId);
 
   return (
     <div className="drawer-backdrop">

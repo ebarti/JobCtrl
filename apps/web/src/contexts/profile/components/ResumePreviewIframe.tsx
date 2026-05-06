@@ -1,16 +1,12 @@
-import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useProfilePdfPreviewUrl } from "../hooks/useProfilePdfPreviewUrl.js";
 
-export interface ResumePreviewIframeProps {
-  cacheKey: number | string;
-}
-
-export function ResumePreviewIframe({ cacheKey }: ResumePreviewIframeProps) {
-  const ports = usePorts();
+export function ResumePreviewIframe() {
+  const { url, cacheKey } = useProfilePdfPreviewUrl();
   return (
     <iframe
       className="pdf-preview-frame"
       key={cacheKey}
-      src={ports.api.profilePreviewPdfUrl(cacheKey)}
+      src={url}
       title="Rendered resume PDF preview"
     />
   );

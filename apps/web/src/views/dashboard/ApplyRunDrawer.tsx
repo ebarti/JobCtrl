@@ -1,16 +1,13 @@
-import type { DashboardSummary } from "@jobhunter/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
 
+import { useApplyRunQuery } from "../../contexts/operations/hooks/useApplyRunQuery.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
-import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
 import { ApplyRunTimeline } from "./ApplyRunTimeline.js";
-
-type ApplyRunSummary = DashboardSummary["applyRuns"][number];
 
 function applyRunDotState(status: string): string {
   if (status === "running") {
@@ -27,43 +24,15 @@ export interface ApplyRunDrawerProps {
 }
 
 export function ApplyRunDrawer({ runId }: ApplyRunDrawerProps) {
-  const ports = usePorts();
   const navigate = useNavigate();
   const close = useCallback(() => {
     void navigate({ to: "/dashboard" });
   }, [navigate]);
   useEscapeKey(true, close);
 
-  const [run, setRun] = useState<ApplyRunSummary | null>(null);
-  const [error, setError] = useState("");
-  const requestSeq = useRef(0);
-
-  useEffect(() => {
-    const requestId = requestSeq.current + 1;
-    requestSeq.current = requestId;
-    setRun(null);
-    setError("");
-    ports.api
-      .dashboardSummary()
-      .then((summary) => {
-        if (requestId !== requestSeq.current) {
-          return;
-        }
-        const match = summary.applyRuns.find((entry) => entry.runId === runId) ?? null;
-        if (!match) {
-          setError("Apply run is no longer in the recent list.");
-        }
-        setRun(match);
-      })
-      .catch((requestError: unknown) => {
-        if (requestId !== requestSeq.current) {
-          return;
-        }
-        setError(
-          requestError instanceof Error ? requestError.message : "Unable to load apply run.",
-        );
-      });
-  }, [ports.api, runId]);
+  const { data: run, isLoading, error } = useApplyRunQuery(runId);
+  const message = error instanceof Error ? error.message : null;
+  const notFound = !isLoading && !message && run === null;
 
   return (
     <div className="drawer-backdrop">
@@ -76,8 +45,9 @@ export function ApplyRunDrawer({ runId }: ApplyRunDrawerProps) {
         >
           x
         </button>
-        {error && !run ? <Empty title={error} /> : null}
-        {!run && !error ? <Empty title="Loading apply run." /> : null}
+        {message ? <Empty title={message} /> : null}
+        {!message && isLoading ? <Empty title="Loading apply run." /> : null}
+        {notFound ? <Empty title="Apply run is no longer in the recent list." /> : null}
         {run ? (
           <>
             <div className="drawer-head">

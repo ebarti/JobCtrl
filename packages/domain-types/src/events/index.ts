@@ -105,3 +105,67 @@ export {
   type ProfileImported,
   createProfileImported,
 } from "./profile.js";
+
+import type {
+  JobDeleted,
+  JobDiscovered,
+  JobRestored,
+  JobUpdated,
+} from "./discovery.js";
+import type { EnrichmentFailed, JobEnriched } from "./enrichment.js";
+import type { JobScored, ScoreCorrected } from "./scoring.js";
+import type {
+  CoverLetterGenerated,
+  MaterialsExhausted,
+  PdfRendered,
+  ResumeApproved,
+  ResumeFailed,
+} from "./materials.js";
+import type {
+  ApplicationFailed,
+  ApplicationSubmitted,
+  ApplyRunEventRecorded,
+  ApplyRunStarted,
+} from "./apply.js";
+import type {
+  StageBlocked,
+  StageCanceled,
+  StageCompleted,
+  StageExhausted,
+  StageFailed,
+  StageReset,
+  StageSkipped,
+  StageStarted,
+} from "./orchestration.js";
+import type { ProfileImported, ProfileUpdated } from "./profile.js";
+
+export type DomainEventUnion =
+  | JobDiscovered
+  | JobUpdated
+  | JobDeleted
+  | JobRestored
+  | JobEnriched
+  | EnrichmentFailed
+  | JobScored
+  | ScoreCorrected
+  | ResumeApproved
+  | ResumeFailed
+  | CoverLetterGenerated
+  | PdfRendered
+  | MaterialsExhausted
+  | ApplyRunStarted
+  | ApplyRunEventRecorded
+  | ApplicationSubmitted
+  | ApplicationFailed
+  | StageStarted
+  | StageCompleted
+  | StageFailed
+  | StageExhausted
+  | StageReset
+  | StageBlocked
+  | StageSkipped
+  | StageCanceled
+  | ProfileUpdated
+  | ProfileImported;
+
+export type DomainEventType = DomainEventUnion["eventType"];
