@@ -1,0 +1,188 @@
+import { LOCAL_TENANT, type DomainEventUnion } from "@jobhunter/domain-types";
+import { QueryClient, type QueryKey } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { eventByType } from "../../test/fixtures/events.js";
+import { applyRunsKeys } from "./applyRunsKeys.js";
+import { artifactsKeys } from "./artifactsKeys.js";
+import { dashboardKeys } from "./dashboardKeys.js";
+import { invalidationRouter } from "./invalidation-router.js";
+import { jobsKeys } from "./jobsKeys.js";
+import { profileKeys } from "../profile/queryKeys.js";
+
+type ExpectedKeys = readonly QueryKey[];
+
+const JOB_ID = "job-1";
+const RUN_ID = "run-1";
+
+const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys> = {
+  JobDiscovered: [jobsKeys.lists(LOCAL_TENANT), dashboardKeys.summary(LOCAL_TENANT)],
+  JobUpdated: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  JobDeleted: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  JobRestored: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  JobEnriched: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  EnrichmentFailed: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  JobScored: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ScoreCorrected: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ResumeApproved: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ResumeFailed: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  CoverLetterGenerated: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  PdfRendered: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  MaterialsExhausted: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ApplyRunStarted: [
+    applyRunsKeys.lists(LOCAL_TENANT),
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ApplyRunEventRecorded: [],
+  ApplicationSubmitted: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ApplicationFailed: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  StageStarted: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  StageCompleted: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  StageFailed: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  StageExhausted: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  StageReset: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  StageBlocked: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  StageSkipped: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  StageCanceled: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT)],
+  ProfileImported: [profileKeys.profile(LOCAL_TENANT)],
+};
+
+describe("invalidationRouter", () => {
+  let queryClient: QueryClient;
+  let invalidateSpy: ReturnType<typeof vi.spyOn>;
+  let setQueryDataSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    queryClient = new QueryClient();
+    invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
+  });
+
+  for (const [eventType, expected] of Object.entries(expectedInvalidations) as [
+    DomainEventUnion["eventType"],
+    ExpectedKeys,
+  ][]) {
+    it(`fires the expected invalidation set for ${eventType} (exact match)`, () => {
+      const event = eventByType[eventType];
+      invalidationRouter.handle(event, queryClient);
+
+      const invalidatedKeys = invalidateSpy.mock.calls.map((call: unknown[]) => {
+        const args = call[0] as { queryKey?: QueryKey };
+        return args.queryKey;
+      });
+
+      expect(invalidatedKeys).toHaveLength(expected.length);
+      for (const key of expected) {
+        expect(invalidatedKeys).toContainEqual(key);
+      }
+      for (const actual of invalidatedKeys) {
+        const matched = expected.some(
+          (expectedKey) => JSON.stringify(expectedKey) === JSON.stringify(actual),
+        );
+        expect(
+          matched,
+          `${eventType} invalidated unexpected key: ${JSON.stringify(actual)}`,
+        ).toBe(true);
+      }
+    });
+  }
+
+  it("appends the apply-run event in place rather than invalidating", () => {
+    queryClient.setQueryData(applyRunsKeys.detail(LOCAL_TENANT, RUN_ID), {
+      events: [],
+    });
+    invalidationRouter.handle(eventByType.ApplyRunEventRecorded, queryClient);
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    expect(setQueryDataSpy).toHaveBeenCalledWith(
+      applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+      expect.any(Function),
+    );
+    const cached = queryClient.getQueryData(applyRunsKeys.detail(LOCAL_TENANT, RUN_ID)) as {
+      events: unknown[];
+    };
+    expect(cached.events).toHaveLength(1);
+  });
+});

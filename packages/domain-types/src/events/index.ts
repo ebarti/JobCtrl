@@ -169,3 +169,44 @@ export type DomainEventUnion =
   | ProfileImported;
 
 export type DomainEventType = DomainEventUnion["eventType"];
+
+export const DOMAIN_EVENT_TYPES = [
+  "JobDiscovered",
+  "JobUpdated",
+  "JobDeleted",
+  "JobRestored",
+  "JobEnriched",
+  "EnrichmentFailed",
+  "JobScored",
+  "ScoreCorrected",
+  "ResumeApproved",
+  "ResumeFailed",
+  "CoverLetterGenerated",
+  "PdfRendered",
+  "MaterialsExhausted",
+  "ApplyRunStarted",
+  "ApplyRunEventRecorded",
+  "ApplicationSubmitted",
+  "ApplicationFailed",
+  "StageStarted",
+  "StageCompleted",
+  "StageFailed",
+  "StageExhausted",
+  "StageReset",
+  "StageBlocked",
+  "StageSkipped",
+  "StageCanceled",
+  "ProfileUpdated",
+  "ProfileImported",
+] as const satisfies readonly DomainEventType[];
+
+type EnumeratedDomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
+
+type AssertEnumExhaustive = [DomainEventType] extends [EnumeratedDomainEventType]
+  ? [EnumeratedDomainEventType] extends [DomainEventType]
+    ? true
+    : never
+  : never;
+
+const _assertExhaustive: AssertEnumExhaustive = true;
+void _assertExhaustive;

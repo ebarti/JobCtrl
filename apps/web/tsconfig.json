@@ -4,5 +4,16 @@
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "tailwind.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "test/**/*.ts",
+    "test/**/*.tsx",
+    "e2e/**/*.ts",
+    "e2e/**/*.tsx",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "vitest.types.config.ts",
+    "tailwind.config.ts"
+  ]
 }

@@ -1,3 +1,4 @@
+import { DOMAIN_EVENT_TYPES } from "@jobhunter/domain-types";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
@@ -21,35 +22,9 @@ interface EventStreamContextValue {
 
 const EventStreamContext = createContext<EventStreamContextValue | null>(null);
 
-const KNOWN_EVENT_TYPES: ReadonlySet<KnownDomainEventType> = new Set<KnownDomainEventType>([
-  "JobDiscovered",
-  "JobUpdated",
-  "JobDeleted",
-  "JobRestored",
-  "JobEnriched",
-  "EnrichmentFailed",
-  "JobScored",
-  "ScoreCorrected",
-  "ResumeApproved",
-  "ResumeFailed",
-  "CoverLetterGenerated",
-  "PdfRendered",
-  "MaterialsExhausted",
-  "ApplyRunStarted",
-  "ApplyRunEventRecorded",
-  "ApplicationSubmitted",
-  "ApplicationFailed",
-  "StageStarted",
-  "StageCompleted",
-  "StageFailed",
-  "StageExhausted",
-  "StageReset",
-  "StageBlocked",
-  "StageSkipped",
-  "StageCanceled",
-  "ProfileUpdated",
-  "ProfileImported",
-]);
+const KNOWN_EVENT_TYPES: ReadonlySet<KnownDomainEventType> = new Set<KnownDomainEventType>(
+  DOMAIN_EVENT_TYPES,
+);
 
 function isKnownDomainEvent(envelope: DomainEventEnvelope): envelope is DomainEventEnvelope & {
   eventType: KnownDomainEventType;

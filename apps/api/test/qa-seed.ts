@@ -217,9 +217,11 @@ export function seedQaDatabase(dbPath: string): void {
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
       job_url TEXT,
       stage TEXT,
-      level TEXT,
+      event_type TEXT NOT NULL DEFAULT '',
+      level TEXT NOT NULL DEFAULT 'info',
       message TEXT,
-      occurred_at TEXT
+      occurred_at TEXT NOT NULL,
+      payload_json TEXT
     );
     CREATE TABLE apply_runs (
       run_id TEXT,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { LOCAL_TENANT } from "../src/tenant.js";
 import { createDomainEvent } from "../src/events/base.js";
+import { DOMAIN_EVENT_TYPES } from "../src/events/index.js";
 import { createJobDiscovered } from "../src/events/discovery.js";
 import { createJobEnriched } from "../src/events/enrichment.js";
 import { createJobScored } from "../src/events/scoring.js";
@@ -234,4 +235,89 @@ describe("All events carry tenantId", () => {
       expect(event.tenantId).toBe("local");
     });
   }
+});
+
+describe("DOMAIN_EVENT_TYPES enumeration", () => {
+  it("lists every variant of DomainEventUnion exactly once", () => {
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(27);
+    expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
+  });
+
+  it("matches the names emitted by every event creator factory", () => {
+    const fromFactories = new Set([
+      createJobDiscovered(LOCAL_TENANT, {
+        jobId: "j",
+        postingUrl: "u",
+        source: "s",
+        employer: "e",
+        metadata: {},
+        discoveredAt: "t",
+      }).eventType,
+      createJobEnriched(LOCAL_TENANT, {
+        jobId: "j",
+        fullDescription: "d",
+        applicationUrl: "u",
+        extractionTier: "t",
+        enrichedAt: "t",
+      }).eventType,
+      createJobScored(LOCAL_TENANT, {
+        jobId: "j",
+        fitScore: 1,
+        breakdown: {},
+        keywords: [],
+        version: 1,
+        scoredAt: "t",
+      }).eventType,
+      createResumeApproved(LOCAL_TENANT, {
+        jobId: "j",
+        artifactId: "a",
+        generation: 1,
+        approvedAt: "t",
+      }).eventType,
+      createMaterialsExhausted(LOCAL_TENANT, {
+        jobId: "j",
+        stage: "tailor",
+        attemptCount: 1,
+        maxAttempts: 1,
+      }).eventType,
+      createApplicationSubmitted(LOCAL_TENANT, {
+        jobId: "j",
+        runId: "r",
+        appliedAt: "t",
+        verificationConfidence: 0.5,
+      }).eventType,
+      createApplyRunStarted(LOCAL_TENANT, {
+        jobId: "j",
+        runId: "r",
+        workerId: "w",
+        model: "m",
+        dryRun: false,
+        startedAt: "t",
+      }).eventType,
+      createStageStarted(LOCAL_TENANT, {
+        jobId: "j",
+        stage: "enrich",
+        attemptNumber: 1,
+        startedAt: "t",
+      }).eventType,
+      createStageCompleted(LOCAL_TENANT, {
+        jobId: "j",
+        stage: "enrich",
+        finishedAt: "t",
+        durationMs: 1,
+      }).eventType,
+      createProfileUpdated(LOCAL_TENANT, {
+        changedSections: [],
+        updatedAt: "t",
+      }).eventType,
+      createProfileImported(LOCAL_TENANT, {
+        source: "x",
+        importedSections: [],
+        importedAt: "t",
+      }).eventType,
+    ]);
+    for (const eventType of fromFactories) {
+      expect(DOMAIN_EVENT_TYPES).toContain(eventType);
+    }
+  });
 });

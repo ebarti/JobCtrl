@@ -1,4 +1,4 @@
-import type { TenantId } from "@jobhunter/domain-types";
+import { DOMAIN_EVENT_TYPES, type TenantId } from "@jobhunter/domain-types";
 
 import type {
   DomainEventEnvelope,
@@ -6,37 +6,9 @@ import type {
   EventStreamStatus,
   EventStreamSubscription,
 } from "../../ports/EventStreamPort.js";
+import { parseDomainEvent } from "../../ports/lib/parseDomainEvent.js";
 
 const STREAM_PATH = "/v1/events/stream";
-const KNOWN_EVENT_TYPES: ReadonlyArray<string> = [
-  "JobDiscovered",
-  "JobUpdated",
-  "JobDeleted",
-  "JobRestored",
-  "JobEnriched",
-  "EnrichmentFailed",
-  "JobScored",
-  "ScoreCorrected",
-  "ResumeApproved",
-  "ResumeFailed",
-  "CoverLetterGenerated",
-  "PdfRendered",
-  "MaterialsExhausted",
-  "ApplyRunStarted",
-  "ApplyRunEventRecorded",
-  "ApplicationSubmitted",
-  "ApplicationFailed",
-  "StageStarted",
-  "StageCompleted",
-  "StageFailed",
-  "StageExhausted",
-  "StageReset",
-  "StageBlocked",
-  "StageSkipped",
-  "StageCanceled",
-  "ProfileUpdated",
-  "ProfileImported",
-];
 
 export class SseEventStreamAdapter implements EventStreamPort {
   private readonly baseUrl: string;
@@ -133,7 +105,7 @@ class SseSubscription implements EventStreamSubscription {
     this.listenerCleanup.push(() => source.removeEventListener("open", onOpen));
     this.listenerCleanup.push(() => source.removeEventListener("error", onError));
 
-    for (const eventType of KNOWN_EVENT_TYPES) {
+    for (const eventType of DOMAIN_EVENT_TYPES) {
       const listener = (raw: MessageEvent) => this.handleEvent(eventType, raw);
       source.addEventListener(eventType, listener);
       this.listenerCleanup.push(() => source.removeEventListener(eventType, listener));
@@ -148,18 +120,15 @@ class SseSubscription implements EventStreamSubscription {
     if (this.closed) {
       return;
     }
-    const payload = parsePayload(raw.data);
-    if (!payload) {
+    const result = parseDomainEvent({
+      eventType,
+      data: typeof raw.data === "string" ? raw.data : null,
+    });
+    if (!result.ok) {
       return;
     }
-    const tenantId = readTenantId(payload);
-    const envelope: DomainEventEnvelope = {
-      eventType,
-      tenantId,
-      payload,
-    };
     for (const handler of this.eventHandlers) {
-      handler(envelope);
+      handler(result.envelope);
     }
   }
 
@@ -175,25 +144,3 @@ class SseSubscription implements EventStreamSubscription {
   }
 }
 
-function parsePayload(raw: unknown): Record<string, unknown> | null {
-  if (typeof raw !== "string" || raw.length === 0) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function readTenantId(payload: Record<string, unknown>): TenantId {
-  const candidate = payload["tenantId"];
-  return typeof candidate === "string" && candidate.length > 0
-    ? (candidate as TenantId)
-    : ("local" as TenantId);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
