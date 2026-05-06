@@ -3,6 +3,57 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-05-06: DDD + Hexagonal Migration (9 phases)
+
+Plan: `docs/plans/implemented/2026-05-06-ddd-migration.md`
+
+Delivered (Phases 1–9):
+
+- **Phase 1 (S-01..S-04):** shared `TenantId`, `JobId`, `Stage`, and
+  `StageState` value objects in `packages/domain-types` (TS) and
+  `workers/automation/src/jobhunter/domain/` (Python); domain event base
+  type + per-context catalog (`domain/events/`).
+- **Phase 2 (S-05..S-07):** `JobPipelineState` aggregate, `StageStateMachine`
+  shared between TS and Python via the parity check, and
+  `PipelineStateRepository` port + SQLite adapter.
+- **Phase 3 (S-08..S-13):** `EventPublisher` port + `InProcessEventBus`,
+  `event_watermarks` table, JSON-RPC 2.0 message types + server +
+  default handler set (`reset_stage`, `mark_applied`, `mark_skipped`,
+  `cancel_stage`, `run_stage`, `apply`, `profile_import`), TS-side
+  state-machine mirror, and the `jobhunter rpc` CLI command.
+- **Phase 4 (S-14..S-15):** `Profile` aggregate, `ProfileRepository` port,
+  `JsonFileProfileRepository` adapter, and `ProfileSnapshotPort`.
+- **Phase 5 (S-16..S-19):** `JobScore` aggregate, `ScoreRepository`,
+  `LlmPort`, scorer refactor through use cases.
+- **Phase 6 (S-20..S-25):** `MaterialsSet` aggregate, `MaterialsRepository`,
+  `PdfRendererPort`, `ArtifactStoragePort`, tailor + cover refactors.
+- **Phase 7 (S-26..S-27):** `Job` discovery aggregate (separating
+  `Source.board` from `Employer`), `JobEnrichment` aggregate,
+  `EnrichmentRepository`, decoupled `enrichment/detail.py`.
+- **Phase 8 (S-28..S-31):** `ApplyRun` aggregate, `ApplyRunRepository`,
+  `BrowserPort`, `AutonomousAgentPort`, apply saga / process manager,
+  `LocalChromeAdapter`, `ClaudeCodeCliAdapter`, launcher refactor.
+- **Phase 9 (S-32..S-35):** Operations / Read-Side projections
+  (`JobListProjection`, `DashboardProjection`, `JobDetailProjection`,
+  `ArtifactListProjection`, `ApplyRunProjection`); Python
+  `ProjectionBuilder` + TS `refreshProjections` mirror; `read-model.ts`
+  refactored to flat SELECTs against `*_projections` tables (legacy
+  LEFT-JOIN-with-COALESCE helpers deleted); `SubprocessJsonRpcAdapter`
+  replacing per-call `uv run jobhunter action ...` subprocess spawning;
+  full architecture / domain-model / decisions / AGENTS.md doc sweep.
+
+Cross-cutting outcomes:
+
+- 8 bounded contexts named, with aggregates / repositories / ports /
+  adapters per the target spec.
+- TenantId carried through every aggregate identity and every event payload.
+- Domain events are the integration backbone; both processes refresh
+  projections idempotently via the shared
+  `event_watermarks.operations_projections` watermark.
+- TS↔Python protocol is JSON-RPC 2.0 over a long-lived subprocess
+  (`jobhunter rpc`); no per-call subprocess spawning remains.
+- Test coverage: 588 Python tests + 55 TS tests (was 564 + 48 baseline).
+
 ## 2026-04-29: Job State Dashboard
 
 Plan: `docs/plans/implemented/2026-04-29-job-state-dashboard.md`

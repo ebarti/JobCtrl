@@ -1,24 +1,34 @@
 """Per-job pipeline state helpers.
 
-This module gives JobHunter an explicit state model without breaking the
-legacy ``jobs`` table. Stage runners can write durable state/events here, and
-readers can still synthesize useful state from older databases where the new
-tables are empty.
+This module provides the public API for pipeline state management.
+``job_stage_states`` is the canonical source of truth for stage state —
+the legacy ``jobs``-table derivation has been removed (no-strangler directive).
+
+Stage runners write durable state/events here via ``set_stage_state``,
+``record_job_event``, and ``record_job_artifact``.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from jobhunter import config
-from jobhunter.database import get_connection
+from jobhunter.domain.events.base import create_domain_event
+from jobhunter.domain.pipeline.state_machine import is_valid_transition
+from jobhunter.domain.ports.events import EventPublisher
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.domain.pipeline_types import deserialize_stage_state_kind
+
+log = logging.getLogger(__name__)
 
 STAGE_ORDER: tuple[str, ...] = ("discover", "enrich", "score", "tailor", "cover", "pdf", "apply")
 STATE_VALUES: tuple[str, ...] = (
     "pending",
+    "queued",
     "running",
     "succeeded",
     "failed",
@@ -26,6 +36,7 @@ STATE_VALUES: tuple[str, ...] = (
     "skipped",
     "exhausted",
     "stale",
+    "canceled",
 )
 
 MAX_ATTEMPTS: dict[str, int | None] = {
@@ -67,10 +78,6 @@ def _row_to_dict(row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 
-def _path_exists(value: str | None) -> bool:
-    return bool(value and Path(value).expanduser().exists())
-
-
 def _path_size(value: str | None) -> int | None:
     if not value:
         return None
@@ -79,12 +86,6 @@ def _path_size(value: str | None) -> int | None:
         return path.stat().st_size if path.exists() else None
     except OSError:
         return None
-
-
-def _pdf_sibling(value: str | None) -> str | None:
-    if not value:
-        return None
-    return str(Path(value).with_suffix(".pdf"))
 
 
 def _duration_ms(started_at: str | None, finished_at: str | None) -> int | None:
@@ -96,6 +97,51 @@ def _duration_ms(started_at: str | None, finished_at: str | None) -> int | None:
     except ValueError:
         return None
     return max(0, int((finish - start).total_seconds() * 1000))
+
+
+# ---------------------------------------------------------------------------
+# Transition validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_stage_transition(conn, job_url: str, stage: str, target_state: str) -> None:
+    """Check the §8.5 state machine allows the transition.
+
+    Reads the current state from DB. If no row exists yet (INSERT path),
+    the transition is always allowed. If a row exists and the state is
+    already the target, the call is idempotent — also allowed.
+    """
+    row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
+        (job_url, stage),
+    ).fetchone()
+    if row is None:
+        # No existing row — this is an INSERT, always valid.
+        return
+
+    current_state_str: str = row[0] if not isinstance(row, dict) else row["state"]
+    if current_state_str == target_state:
+        # Idempotent write — same state, always allowed.
+        return
+
+    try:
+        from_kind = deserialize_stage_state_kind(current_state_str)
+        to_kind = deserialize_stage_state_kind(target_state)
+    except ValueError:
+        # Unknown state strings — skip validation rather than crash.
+        return
+
+    if not is_valid_transition(from_kind, to_kind):
+        raise ValueError(
+            f"Invalid state transition for {stage}: "
+            f"{current_state_str} -> {target_state} "
+            f"(not allowed by the stage state machine)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Public state API — signatures preserved for backward compatibility
+# ---------------------------------------------------------------------------
 
 
 def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = None) -> None:
@@ -116,60 +162,6 @@ def ensure_job_stage_rows(conn, job_url: str, *, discovered_at: str | None = Non
         )
 
 
-def initialize_missing_state_rows(conn=None, limit: int = 0, *, min_score: int = 7) -> int:
-    """Backfill missing stage rows for existing jobs.
-
-    Existing non-placeholder explicit rows are not overwritten. Missing rows and
-    old auto-created placeholder rows are materialized from the legacy ``jobs``
-    columns once, after which readers can treat ``job_stage_states`` as the
-    canonical source of pipeline truth.
-    """
-    if conn is None:
-        conn = get_connection()
-    query = """
-        SELECT jobs.*
-        FROM jobs
-        LEFT JOIN job_stage_states states ON states.job_url = jobs.url
-        GROUP BY jobs.url
-        HAVING
-            COUNT(states.stage) < ?
-            OR SUM(
-                CASE
-                    WHEN states.stage IS NULL THEN 1
-                    WHEN states.state = 'pending'
-                        AND COALESCE(states.attempt_count, 0) = 0
-                        AND states.error_code IS NULL
-                        AND states.error_message IS NULL
-                        AND states.next_action IS NULL
-                        AND states.started_at IS NULL
-                        AND states.finished_at IS NULL
-                        AND states.duration_ms IS NULL
-                        AND states.blocked_by_json IS NULL
-                    THEN 1
-                    WHEN states.stage = 'discover'
-                        AND states.state = 'succeeded'
-                        AND COALESCE(states.attempt_count, 0) = 0
-                    THEN 1
-                    ELSE 0
-                END
-            ) > 0
-        ORDER BY jobs.discovered_at DESC
-    """
-    params: list[Any] = [len(STAGE_ORDER)]
-    if limit > 0:
-        query += " LIMIT ?"
-        params.append(limit)
-    rows = conn.execute(query, params).fetchall()
-    if not rows:
-        return 0
-    jobs = [_row_to_dict(row) for row in rows]
-    explicit_by_job = _load_explicit_states_for_jobs(conn, [job["url"] for job in jobs])
-    for job in jobs:
-        _materialize_legacy_stage_rows(conn, job, min_score=min_score, explicit=explicit_by_job.get(job["url"], {}))
-    conn.commit()
-    return len(rows)
-
-
 def set_stage_state(
     conn,
     job_url: str,
@@ -187,12 +179,23 @@ def set_stage_state(
     blocked_by: list[str] | None = None,
     next_action: str | None = None,
     metadata: dict[str, Any] | None = None,
+    validate_transition: bool = True,
 ) -> None:
-    """Upsert one job/stage state row."""
+    """Upsert one job/stage state row.
+
+    When *validate_transition* is True (the default), the function reads the
+    current state from the DB and checks that the requested transition is valid
+    per the §8.5 state machine table.  If the transition is invalid, a
+    ``ValueError`` is raised.  Pass ``validate_transition=False`` to bypass
+    (e.g. during initial row creation or legacy migration).
+    """
     if stage not in STAGE_ORDER:
         raise ValueError(f"unknown stage: {stage}")
     if state not in STATE_VALUES:
         raise ValueError(f"unknown state: {state}")
+
+    if validate_transition:
+        _validate_stage_transition(conn, job_url, stage, state)
 
     now = utc_now()
     max_attempts = MAX_ATTEMPTS.get(stage) if max_attempts is None else max_attempts
@@ -251,16 +254,51 @@ def record_job_event(
     message: str | None = None,
     payload: dict[str, Any] | None = None,
     occurred_at: str | None = None,
+    publisher: EventPublisher | None = None,
 ) -> None:
-    """Append a durable per-job event."""
+    """Append a durable per-job event and optionally publish through the bus.
+
+    **Phase-3 deviation from §6.3** (round-1 review M2): the canonical §6.3
+    pattern is "dispatch happens AFTER the producing transaction commits",
+    implemented as a wildcard ``JobEventStoreHandler`` subscribed to the bus.
+    Phase 3 ships the simpler shape — INSERT inline, then call
+    ``publisher.publish`` as fan-out — because the bus is purely additive at
+    this stage.  Consequences a cloud cutover (Phase 9+) must address:
+
+    1. Dispatch fires *before* commit; subscribers reading via a fresh
+       connection won't see the row yet.
+    2. Swapping ``InProcessEventBus`` for an outbox publisher is *not* an
+       adapter-only change — every ``record_job_event`` caller is a
+       de-facto producer.
+
+    Note on payload composition: caller-supplied ``payload`` keys override
+    the envelope keys (``job_url``, ``stage``, ``level``, ``message``).  This
+    is intentional but worth knowing — don't shadow envelope keys
+    accidentally (round-1 review L3).
+    """
+    ts = occurred_at or utc_now()
     conn.execute(
         """
         INSERT INTO job_events (
             job_url, stage, event_type, level, message, occurred_at, payload_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (job_url, stage, event_type, level, message, occurred_at or utc_now(), _json_dumps(payload)),
+        (job_url, stage, event_type, level, message, ts, _json_dumps(payload)),
     )
+    if publisher is not None:
+        event = create_domain_event(
+            event_type=event_type,
+            tenant_id=LOCAL_TENANT,
+            payload={
+                "job_url": job_url,
+                "stage": stage,
+                "level": level,
+                "message": message or "",
+                **(payload or {}),
+            },
+            occurred_at=ts,
+        )
+        publisher.publish(event)
 
 
 def record_job_artifact(
@@ -300,337 +338,13 @@ def record_job_artifact(
     )
 
 
-def _state(
-    stage: str,
-    state: str,
-    *,
-    attempt_count: int = 0,
-    max_attempts: int | None = None,
-    started_at: str | None = None,
-    finished_at: str | None = None,
-    duration_ms: int | None = None,
-    error_code: str | None = None,
-    error_message: str | None = None,
-    retryable: bool = True,
-    blocked_by: list[str] | None = None,
-    next_action: str | None = None,
-) -> dict[str, Any]:
-    return {
-        "stage": stage,
-        "state": state,
-        "attempt_count": attempt_count,
-        "max_attempts": MAX_ATTEMPTS.get(stage) if max_attempts is None else max_attempts,
-        "started_at": started_at,
-        "finished_at": finished_at,
-        "duration_ms": duration_ms,
-        "error_code": error_code,
-        "error_message": error_message,
-        "retryable": retryable,
-        "blocked_by": blocked_by or [],
-        "next_action": next_action,
-    }
-
-
-def derive_legacy_stage_states(job: dict[str, Any], *, min_score: int = 7) -> list[dict[str, Any]]:
-    """Build stage states from the legacy jobs-table columns."""
-    url = job.get("url") or ""
-    states: list[dict[str, Any]] = []
-
-    states.append(
-        _state(
-            "discover",
-            "succeeded",
-            attempt_count=1 if job.get("discovered_at") else 0,
-            started_at=job.get("discovered_at"),
-            finished_at=job.get("discovered_at"),
-        )
-    )
-
-    if job.get("full_description"):
-        states.append(
-            _state(
-                "enrich",
-                "succeeded",
-                attempt_count=1,
-                finished_at=job.get("detail_scraped_at"),
-            )
-        )
-    elif job.get("detail_error"):
-        states.append(
-            _state(
-                "enrich",
-                "failed",
-                attempt_count=1,
-                finished_at=job.get("detail_scraped_at"),
-                error_code="DETAIL_ERROR",
-                error_message=str(job.get("detail_error") or "Detail enrichment failed"),
-                retryable=True,
-                next_action=f"jobhunter retry enrich {url}",
-            )
-        )
-    else:
-        states.append(_state("enrich", "pending", next_action="jobhunter enrich"))
-
-    if not job.get("full_description"):
-        states.append(
-            _state(
-                "score",
-                "blocked",
-                retryable=False,
-                blocked_by=["enrich"],
-                error_code="BLOCKED_UPSTREAM",
-                error_message="Cannot score until enrichment has a full description.",
-                next_action=f"jobhunter retry enrich {url}",
-            )
-        )
-    elif job.get("fit_score") is None:
-        states.append(_state("score", "pending", next_action="jobhunter score --limit 1"))
-    elif int(job.get("fit_score") or 0) <= 0:
-        states.append(
-            _state(
-                "score",
-                "failed",
-                attempt_count=1,
-                finished_at=job.get("scored_at"),
-                error_code="SCORE_FAILED",
-                error_message=str(job.get("score_reasoning") or "Scoring failed"),
-                retryable=True,
-                next_action=f"jobhunter retry score {url}",
-            )
-        )
-    else:
-        states.append(
-            _state(
-                "score",
-                "succeeded",
-                attempt_count=1,
-                finished_at=job.get("scored_at"),
-            )
-        )
-
-    score = job.get("fit_score")
-    tailor_attempts = int(job.get("tailor_attempts") or 0)
-    max_tailor = config.DEFAULTS["max_tailor_attempts"]
-    if score is None:
-        states.append(
-            _state(
-                "tailor",
-                "blocked",
-                retryable=False,
-                blocked_by=["score"],
-                error_code="BLOCKED_UPSTREAM",
-                error_message="Cannot tailor until scoring succeeds.",
-                next_action=f"jobhunter retry score {url}",
-            )
-        )
-    elif int(score) < min_score:
-        states.append(
-            _state(
-                "tailor",
-                "skipped",
-                retryable=False,
-                error_code="BELOW_MIN_SCORE",
-                error_message=f"Score {score} is below the minimum score {min_score}.",
-            )
-        )
-    elif job.get("tailored_resume_path"):
-        states.append(
-            _state(
-                "tailor",
-                "succeeded",
-                attempt_count=max(1, tailor_attempts),
-                finished_at=job.get("tailored_at"),
-            )
-        )
-    elif tailor_attempts >= max_tailor:
-        states.append(
-            _state(
-                "tailor",
-                "exhausted",
-                attempt_count=tailor_attempts,
-                max_attempts=max_tailor,
-                finished_at=job.get("tailored_at"),
-                error_code="TAILOR_ATTEMPTS_EXHAUSTED",
-                error_message=f"Tailoring used {tailor_attempts}/{max_tailor} attempts without an approved resume.",
-                retryable=True,
-                next_action=f"jobhunter retry tailor {url} --reset-attempts",
-            )
-        )
-    else:
-        states.append(
-            _state(
-                "tailor",
-                "pending",
-                attempt_count=tailor_attempts,
-                max_attempts=max_tailor,
-                next_action="jobhunter tailor --limit 1",
-            )
-        )
-
-    cover_attempts = int(job.get("cover_attempts") or 0)
-    max_cover = MAX_ATTEMPTS["cover"] or 5
-    if score is not None and int(score) < min_score:
-        states.append(_state("cover", "skipped", retryable=False, blocked_by=["score"]))
-    elif not job.get("tailored_resume_path"):
-        states.append(
-            _state(
-                "cover",
-                "blocked",
-                retryable=False,
-                blocked_by=["tailor"],
-                error_code="BLOCKED_UPSTREAM",
-                error_message="Cannot generate a cover letter until a tailored resume is approved.",
-                next_action=f"jobhunter retry tailor {url}",
-            )
-        )
-    elif job.get("cover_letter_path"):
-        states.append(
-            _state(
-                "cover",
-                "succeeded",
-                attempt_count=max(1, cover_attempts),
-                finished_at=job.get("cover_letter_at"),
-            )
-        )
-    elif cover_attempts >= max_cover:
-        states.append(
-            _state(
-                "cover",
-                "exhausted",
-                attempt_count=cover_attempts,
-                max_attempts=max_cover,
-                error_code="COVER_ATTEMPTS_EXHAUSTED",
-                error_message=f"Cover letter generation used {cover_attempts}/{max_cover} attempts.",
-                retryable=True,
-                next_action=f"jobhunter retry cover {url} --reset-attempts",
-            )
-        )
-    else:
-        states.append(
-            _state(
-                "cover",
-                "pending",
-                attempt_count=cover_attempts,
-                max_attempts=max_cover,
-                next_action="jobhunter cover --limit 1",
-            )
-        )
-
-    tailored_pdf = _pdf_sibling(job.get("tailored_resume_path"))
-    cover_pdf = _pdf_sibling(job.get("cover_letter_path"))
-    if score is not None and int(score) < min_score:
-        states.append(_state("pdf", "skipped", retryable=False, blocked_by=["score"]))
-    elif not job.get("tailored_resume_path"):
-        states.append(_state("pdf", "blocked", retryable=False, blocked_by=["tailor"]))
-    elif not job.get("cover_letter_path"):
-        states.append(_state("pdf", "blocked", retryable=False, blocked_by=["cover"]))
-    elif _path_exists(tailored_pdf) and _path_exists(cover_pdf):
-        states.append(_state("pdf", "succeeded", attempt_count=1))
-    else:
-        missing = []
-        if not _path_exists(tailored_pdf):
-            missing.append("tailored_resume_pdf")
-        if not _path_exists(cover_pdf):
-            missing.append("cover_letter_pdf")
-        states.append(
-            _state(
-                "pdf",
-                "pending",
-                error_code="PDF_MISSING",
-                error_message=f"Missing {', '.join(missing)}.",
-                next_action="jobhunter pdf --limit 1",
-            )
-        )
-
-    apply_status = (job.get("apply_status") or "").lower()
-    apply_attempts = int(job.get("apply_attempts") or 0)
-    if apply_status == "applied" or job.get("applied_at"):
-        states.append(
-            _state(
-                "apply",
-                "succeeded",
-                attempt_count=max(1, apply_attempts),
-                finished_at=job.get("applied_at"),
-            )
-        )
-    elif apply_status in {"in_progress", "running"}:
-        states.append(
-            _state(
-                "apply",
-                "running",
-                attempt_count=apply_attempts,
-                started_at=job.get("last_attempted_at"),
-            )
-        )
-    elif apply_status in {"failed", "captcha", "login_issue", "expired"}:
-        permanent = apply_status in {"captcha", "login_issue", "expired"}
-        states.append(
-            _state(
-                "apply",
-                "failed",
-                attempt_count=apply_attempts,
-                max_attempts=config.DEFAULTS["max_apply_attempts"],
-                finished_at=job.get("last_attempted_at"),
-                error_code=apply_status.upper(),
-                error_message=str(job.get("apply_error") or apply_status),
-                retryable=not permanent,
-                next_action=f"jobhunter apply --url {url}",
-            )
-        )
-    elif apply_status == "dry_run":
-        states.append(
-            _state(
-                "apply",
-                "skipped",
-                attempt_count=apply_attempts,
-                finished_at=job.get("last_attempted_at"),
-                error_code="DRY_RUN",
-                error_message="Dry run completed without submitting.",
-                retryable=True,
-                next_action=f"jobhunter apply --url {url}",
-            )
-        )
-    elif apply_status == "manual":
-        states.append(
-            _state(
-                "apply",
-                "skipped",
-                retryable=False,
-                error_code="MANUAL_ATS",
-                error_message=str(job.get("apply_error") or "Manual application required."),
-            )
-        )
-    elif not job.get("application_url"):
-        states.append(
-            _state(
-                "apply",
-                "blocked",
-                retryable=False,
-                blocked_by=["enrich"],
-                error_code="MISSING_APPLICATION_URL",
-                error_message="Cannot apply without a direct application URL.",
-                next_action=f"jobhunter retry enrich {url}",
-            )
-        )
-    elif not job.get("tailored_resume_path"):
-        states.append(_state("apply", "blocked", retryable=False, blocked_by=["tailor"]))
-    elif not job.get("cover_letter_path"):
-        states.append(_state("apply", "blocked", retryable=False, blocked_by=["cover"]))
-    else:
-        states.append(
-            _state(
-                "apply",
-                "pending",
-                attempt_count=apply_attempts,
-                max_attempts=config.DEFAULTS["max_apply_attempts"],
-                next_action=f"jobhunter apply --url {url}",
-            )
-        )
-
-    return states
+# ---------------------------------------------------------------------------
+# Read helpers
+# ---------------------------------------------------------------------------
 
 
 def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
+    """Load all stage rows from ``job_stage_states`` for one job."""
     rows = conn.execute(
         "SELECT * FROM job_stage_states WHERE job_url = ?",
         (job_url,),
@@ -645,112 +359,128 @@ def _load_explicit_states(conn, job_url: str) -> dict[str, dict[str, Any]]:
     return explicit
 
 
-def _load_all_explicit_states(conn) -> dict[str, dict[str, dict[str, Any]]]:
-    rows = conn.execute("SELECT * FROM job_stage_states").fetchall()
-    return _group_explicit_states(rows)
-
-
-def _load_explicit_states_for_jobs(conn, job_urls: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
-    if not job_urls:
-        return {}
-    placeholders = ",".join("?" for _ in job_urls)
-    rows = conn.execute(f"SELECT * FROM job_stage_states WHERE job_url IN ({placeholders})", job_urls).fetchall()
-    return _group_explicit_states(rows)
-
-
-def _group_explicit_states(rows) -> dict[str, dict[str, dict[str, Any]]]:
-    by_job: dict[str, dict[str, dict[str, Any]]] = {}
-    for row in rows:
-        data = _row_to_dict(row)
-        data["blocked_by"] = _json_loads(data.pop("blocked_by_json", None), [])
-        data["metadata"] = _json_loads(data.pop("metadata_json", None), {})
-        data["retryable"] = bool(data.get("retryable", 1))
-        by_job.setdefault(data["job_url"], {})[data["stage"]] = data
-    return by_job
-
-
-def _materialize_legacy_stage_rows(
-    conn,
-    job: dict[str, Any],
-    *,
-    min_score: int = 7,
-    explicit: dict[str, dict[str, Any]] | None = None,
-) -> None:
-    """Create canonical rows from legacy job columns without clobbering real state."""
-    explicit = _load_explicit_states(conn, job["url"]) if explicit is None else explicit
-    for legacy_state in derive_legacy_stage_states(job, min_score=min_score):
-        existing = explicit.get(legacy_state["stage"])
-        if existing and not _is_placeholder_state(existing, legacy_state):
-            continue
-        set_stage_state(
-            conn,
-            job["url"],
-            legacy_state["stage"],
-            legacy_state["state"],
-            attempt_count=legacy_state.get("attempt_count"),
-            max_attempts=legacy_state.get("max_attempts"),
-            started_at=legacy_state.get("started_at"),
-            finished_at=legacy_state.get("finished_at"),
-            duration_ms=legacy_state.get("duration_ms"),
-            error_code=legacy_state.get("error_code"),
-            error_message=legacy_state.get("error_message"),
-            retryable=bool(legacy_state.get("retryable", True)),
-            blocked_by=legacy_state.get("blocked_by") or [],
-            next_action=legacy_state.get("next_action"),
-            metadata=legacy_state.get("metadata") or {},
-        )
-
-
-def _is_placeholder_state(existing: dict[str, Any], legacy_state: dict[str, Any]) -> bool:
-    """Return true for rows created by the old default-row backfill."""
-    if (
-        existing.get("stage") == "discover"
-        and existing.get("state") == "succeeded"
-        and legacy_state.get("state") == "succeeded"
-        and int(existing.get("attempt_count") or 0) == 0
-    ):
-        return True
-    if _has_real_state_fields(existing):
-        return False
-    if existing.get("state") == "pending":
-        return True
-    return (
-        existing.get("stage") == "discover"
-        and existing.get("state") == "succeeded"
-        and legacy_state.get("state") == "succeeded"
-    )
-
-
-def _has_real_state_fields(existing: dict[str, Any]) -> bool:
-    return (
-        int(existing.get("attempt_count") or 0) != 0
-        or bool(existing.get("error_code"))
-        or bool(existing.get("error_message"))
-        or bool(existing.get("next_action"))
-        or bool(existing.get("blocked_by"))
-        or bool(existing.get("started_at"))
-        or bool(existing.get("finished_at"))
-        or bool(existing.get("duration_ms"))
-        or bool(existing.get("metadata"))
-    )
+def _default_state(stage: str) -> dict[str, Any]:
+    """Return a default pending state dict for a stage with no DB row."""
+    return {
+        "stage": stage,
+        "state": "pending",
+        "attempt_count": 0,
+        "max_attempts": MAX_ATTEMPTS.get(stage),
+        "started_at": None,
+        "finished_at": None,
+        "duration_ms": None,
+        "error_code": None,
+        "error_message": None,
+        "retryable": True,
+        "blocked_by": [],
+        "next_action": None,
+    }
 
 
 def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> list[dict[str, Any]]:
-    """Return canonical stage states for one job."""
-    legacy = {item["stage"]: item for item in derive_legacy_stage_states(job, min_score=min_score)}
-    explicit = _load_explicit_states(conn, job["url"])
+    """Return canonical stage states for one job.
 
-    if not explicit:
-        return [legacy[stage] for stage in STAGE_ORDER]
+    Reads directly from ``job_stage_states``. If a stage has no row,
+    a default ``pending`` state is returned.
+
+    The ``job`` and ``min_score`` parameters are retained for backward
+    compatibility but are no longer used for legacy derivation.
+    """
+    explicit = _load_explicit_states(conn, job["url"])
 
     states: list[dict[str, Any]] = []
     for stage in STAGE_ORDER:
         existing = explicit.get(stage)
-        if existing and not _is_placeholder_state(existing, legacy[stage]):
+        if existing:
             states.append(existing)
         else:
-            states.append(legacy[stage])
+            states.append(_default_state(stage))
     return states
+
+
+def _reset_enrichment_aggregate(conn, job_url: str) -> None:
+    """Reset the JobEnrichment aggregate for a job back to ``pending``.
+
+    Phase 7 (S-26 round-1 review B1). The mirror of
+    :func:`_reset_materials_artifacts` for the enrichment context. After
+    a stage reset for "enrich":
+
+      * the legacy ``jobs.detail_scraped_at`` / ``jobs.detail_error``
+        columns are nulled by ``reset_job_stage``'s standard UPDATE so
+        un-migrated rows reading the legacy fallback also reset;
+      * AND the ``job_enrichments`` row's ``current_status`` is set
+        back to ``pending`` and the terminal-state fields cleared,
+        otherwise the new ``_ENRICHMENT_PENDING`` predicate would
+        permanently exclude the row and retry would silently no-op.
+
+    The repository is loaded inline so we don't hit a circular import
+    (the enrichment package imports ``state``).
+    """
+    from jobhunter.domain.identifiers import JobId
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(job_url))
+    if aggregate is None:
+        # Nothing to reset — the next pipeline run will create the row
+        # in the empty state when start_attempt fires.
+        return
+    if aggregate.is_pending and aggregate.full_description is None:
+        return
+    repo.save(aggregate.reset(reset_at=utc_now()))
+
+
+def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
+    """Clear the latest generation's affected artifact rows after a stage reset.
+
+    Round-2 review B3. Maps stage → artifact_type subset:
+
+      * ``tailor`` resets EVERYTHING in the latest generation (resume,
+        cover, both PDFs) and resets the parent row's status back to
+        ``resume_in_progress`` — re-tailoring will start a fresh attempt
+        within the same generation; downstream artifacts are stale and
+        must be regenerated. (Use the ``MaterialsSetFactory.next_generation``
+        primitive when explicit re-tailoring with audit-trail is wanted —
+        ``reset_job_stage`` is the in-place reset path.)
+      * ``cover`` resets the cover-letter text + cover-letter PDF only;
+        tailored resume + resume PDF stay intact.
+      * ``pdf`` resets only the two PDFs; text artifacts stay.
+
+    Status is rolled back to the appropriate lifecycle state so the
+    aggregate's invariants stay consistent.
+    """
+    latest_row = conn.execute(
+        "SELECT generation FROM job_materials WHERE job_url = ? "
+        "ORDER BY generation DESC LIMIT 1",
+        (job_url,),
+    ).fetchone()
+    if latest_row is None:
+        return
+
+    generation = int(latest_row[0])
+    if stage == "tailor":
+        targets = ("tailored_resume", "cover_letter", "resume_pdf", "cover_letter_pdf")
+        new_status = "resume_in_progress"
+    elif stage == "cover":
+        targets = ("cover_letter", "cover_letter_pdf")
+        new_status = "resume_approved"
+    else:  # stage == "pdf"
+        targets = ("resume_pdf", "cover_letter_pdf")
+        new_status = None  # status doesn't change — PDFs were never gating
+
+    placeholders = ", ".join("?" for _ in targets)
+    conn.execute(
+        f"DELETE FROM job_materials_artifacts "
+        f"WHERE job_url = ? AND generation = ? AND artifact_type IN ({placeholders})",
+        (job_url, generation, *targets),
+    )
+    if new_status is not None:
+        conn.execute(
+            "UPDATE job_materials SET status = ?, updated_at = ? "
+            "WHERE job_url = ? AND generation = ?",
+            (new_status, utc_now(), job_url, generation),
+        )
 
 
 def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_attempts: bool = False) -> str:
@@ -779,6 +509,14 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         raise ValueError(f"no matching job found: {job_url_or_application_url}")
 
     job_url = row["url"]
+    # Round-2 review B3: tailor / cover / pdf resets MUST clear the
+    # ``job_materials_artifacts`` row(s) for the LATEST generation —
+    # otherwise the new ``_LATEST_MATERIALS_JOIN`` queue selectors keep
+    # the existing approved tailored_resume / cover_letter visible and
+    # re-tailoring is impossible. The legacy ``UPDATE jobs SET *_path =
+    # NULL`` statements are dead writes (new code never populated those
+    # columns); for un-migrated rows they still NULL the legacy columns
+    # so consumers reading the legacy fallback also see the reset.
     updates = {
         "discover": "UPDATE jobs SET discovered_at = discovered_at WHERE url = ?",
         "enrich": "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
@@ -801,12 +539,29 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         ),
     }
     conn.execute(updates[stage], (job_url,))
-    set_stage_state(conn, job_url, stage, "pending", attempt_count=0 if reset_attempts else None)
+
+    # Materials-side reset (Phase 6, round-2 B3). Idempotent — safe when
+    # job_materials hasn't been populated yet.
+    if stage in ("tailor", "cover", "pdf"):
+        _reset_materials_artifacts(conn, job_url, stage)
+    # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
+    # materials reset for the enrichment aggregate. Without this the
+    # ``_ENRICHMENT_PENDING`` queue predicate excludes the row and the
+    # retry-enrich is a silent no-op.
+    if stage == "enrich":
+        _reset_enrichment_aggregate(conn, job_url)
+    set_stage_state(
+        conn, job_url, stage, "pending",
+        attempt_count=0 if reset_attempts else None,
+        validate_transition=False,  # admin override — reset bypasses normal machine
+    )
     record_job_event(
         conn,
         job_url,
         stage,
-        "retry_requested",
+        # H1 (round-1 review): align with the domain catalog
+        # (`domain/events/orchestration.py::create_stage_reset`).
+        "StageReset",
         message=f"Retry reset requested for {stage}",
         payload={"reset_attempts": reset_attempts},
     )

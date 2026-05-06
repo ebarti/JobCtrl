@@ -355,6 +355,80 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("derives apply state from the apply_runs aggregate when legacy jobs columns are NULL", async () => {
+    // Phase 8 (S-30) round-1 review M2: the new launcher writes apply
+    // outcomes ONLY to ``apply_runs`` (no dual-write to
+    // jobs.apply_status / applied_at). The TS read-model must
+    // canonicalise the apply state from the joined apply_runs row so
+    // the dashboard + jobs list show the right values.
+    const db = new Database(options.dbPath);
+    const newJobUrl = "https://example.com/jobs/new-path-applied";
+    insertJob(db, {
+      url: newJobUrl,
+      title: "New Path Engineer",
+      site: "NewPathCo",
+      fitScore: 9,
+    });
+    // Seed an apply_runs row using the NEW lifecycle labels:
+    // status='succeeded' (not the legacy 'finished'), result='applied',
+    // a non-null finished_at — and crucially leave jobs.applied_at /
+    // jobs.apply_status NULL.
+    db.prepare(
+      "INSERT INTO apply_runs (run_id, job_url, title, site, status, result, dry_run, started_at, finished_at) "
+        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "run-new-path",
+      newJobUrl,
+      "New Path Engineer",
+      "NewPathCo",
+      "succeeded",
+      "applied",
+      0,
+      "2026-05-01T00:00:00+00:00",
+      "2026-05-01T00:01:00+00:00",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    try {
+      const jobsRes = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?q=${encodeURIComponent("New Path Engineer")}`,
+      });
+      expect(jobsRes.statusCode, jobsRes.body).toBe(200);
+      const job = jobsRes.json().items[0];
+      // Read-model derivation: ar.status === 'succeeded' ⇒
+      // applyStatus 'applied' + appliedAt = ar.finished_at, with no
+      // legacy column writes. (We don't assert currentStage /
+      // currentState here because the synthesised job hasn't moved
+      // through the upstream stages — the apply-derivation contract
+      // is what M2 is locking in.)
+      expect(job).toMatchObject({
+        jobKey: newJobUrl,
+        applyStatus: "applied",
+        appliedAt: "2026-05-01T00:01:00+00:00",
+      });
+
+      const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(summary.statusCode, summary.body).toBe(200);
+      const body = summary.json();
+      // The new-path job is counted as applied even though its
+      // legacy ``jobs.applied_at`` is NULL.
+      expect(body.totals.applied).toBeGreaterThanOrEqual(1);
+      // Recent apply runs widget surfaces the row with the canonical
+      // labels (the row's own title/site reach the widget directly).
+      const newRun = body.applyRuns.find((r: { runId: string }) => r.runId === "run-new-path");
+      expect(newRun).toMatchObject({
+        runId: "run-new-path",
+        title: "New Path Engineer",
+        company: "NewPathCo",
+        status: "succeeded",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("keeps legacy unscored jobs pending at the score stage", async () => {
     const db = new Database(options.dbPath);
     insertJob(db, {
@@ -577,6 +651,104 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
+  // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
+  // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
+  // permanently excludes the row and the retry is a silent no-op. Mirror
+  // of the Python ``test_reset_job_stage_enrich_clears_job_enrichments_aggregate``
+  // — exercises ``resetEnrichmentAggregate`` in
+  // ``apps/api/src/write-model.ts`` end-to-end through the HTTP route.
+  it("retry-enrich resets the job_enrichments aggregate to pending", async () => {
+    // Seed an enriched aggregate row directly — independent of the rest
+    // of the fixture so the test is self-contained.
+    const seedDb = new Database(options.dbPath);
+    seedDb.prepare(
+      `INSERT INTO job_enrichments (
+         job_url, tenant_id, current_status, full_description,
+         application_url, enriched_at, extraction_tier,
+         attempts_json, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "https://example.com/jobs/failed-score",
+      "local",
+      "enriched",
+      "The full job description.",
+      "https://example.com/apply",
+      "2026-04-29T10:01:00+00:00",
+      "json_ld",
+      '[{"attempt_number":1,"status":"succeeded","extraction_tier":"json_ld",'
+        + '"started_at":"t0","finished_at":"t1","error":null}]',
+      "2026-04-29T10:01:00+00:00",
+    );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/failed-score");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "enrich", resetAttempts: true },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    const enrichment = db
+      .prepare(
+        `SELECT current_status, full_description, application_url,
+                enriched_at, extraction_tier
+         FROM job_enrichments WHERE job_url = ?`,
+      )
+      .get("https://example.com/jobs/failed-score") as {
+      current_status: string;
+      full_description: string | null;
+      application_url: string | null;
+      enriched_at: string | null;
+      extraction_tier: string | null;
+    };
+    // Sanity: legacy columns are also nulled (existing behavior).
+    const legacyJob = db
+      .prepare(
+        "SELECT detail_scraped_at, detail_error FROM jobs WHERE url = ?",
+      )
+      .get("https://example.com/jobs/failed-score") as {
+      detail_scraped_at: string | null;
+      detail_error: string | null;
+    };
+    db.close();
+
+    expect(enrichment.current_status).toBe("pending");
+    expect(enrichment.full_description).toBeNull();
+    expect(enrichment.application_url).toBeNull();
+    expect(enrichment.enriched_at).toBeNull();
+    expect(enrichment.extraction_tier).toBeNull();
+    expect(legacyJob.detail_scraped_at).toBeNull();
+    expect(legacyJob.detail_error).toBeNull();
+
+    await app.close();
+  });
+
+  it("retry-enrich is a no-op when no job_enrichments row exists", async () => {
+    // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
+    // aggregate row was never written (job in legacy-only state). The
+    // legacy column reset still fires; the JE update is a 0-row UPDATE.
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "enrich", resetAttempts: true },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    const count = db
+      .prepare("SELECT COUNT(*) AS c FROM job_enrichments WHERE job_url = ?")
+      .get("https://example.com/jobs/blocked-tailor") as { c: number };
+    db.close();
+    expect(count.c).toBe(0); // still no row — UPDATE was a no-op
+    await app.close();
+  });
+
   it("dispatches run-after apply retry through the job-scoped action dispatcher path", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
@@ -776,11 +948,26 @@ describe("local TypeScript API", () => {
 
   it("persists profile, style, and template updates with JSON validation", async () => {
     const app = buildApp(options);
+    const validProfile = {
+      personal: { full_name: "Taylor Updated" },
+      resume: {
+        experience_entries: [
+          {
+            id: "role_1",
+            title: "Engineer",
+            company: "Example",
+            date_range: "2024 -- Present",
+            location: "Remote",
+            bullets: ["Shipped reliable systems."],
+          },
+        ],
+      },
+    };
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: {
-        profileText: JSON.stringify({ personal: { full_name: "Taylor Updated" } }),
+        profileText: JSON.stringify(validProfile),
         styleText: JSON.stringify({ font_family: "classic" }),
         templateText: "\\documentclass{moderncv}",
       },
@@ -1050,6 +1237,84 @@ describe("local TypeScript API", () => {
 
     await app.close();
   });
+
+  // -------------------------------------------------------------------------
+  // S-12: §8.5 state-machine gate + JSON-RPC envelope endpoint
+  // -------------------------------------------------------------------------
+
+  it("rejects illegal stage transitions through validateStageTransition", async () => {
+    const { validateStageTransition, InputError } = await import("../src/write-model.js");
+    const db = new Database(options.dbPath);
+    try {
+      // Pending → Succeeded is not a row in §8.5.
+      expect(() =>
+        validateStageTransition(db, "https://example.com/jobs/ready", "apply", "succeeded"),
+      ).toThrow(InputError);
+      // Succeeded → Pending is not allowed (only Stale → Pending).
+      expect(() =>
+        validateStageTransition(db, "https://example.com/jobs/ready", "score", "pending"),
+      ).toThrow(InputError);
+      // Failed → Pending IS allowed (row 10).
+      expect(() =>
+        validateStageTransition(db, "https://example.com/jobs/failed-score", "score", "pending"),
+      ).not.toThrow();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("admin-override commands bypass the §8.5 gate to mirror Python parity", async () => {
+    // The seed has apply=pending; markJobApplied is an admin override and
+    // must succeed even though Pending → Succeeded is not in the §8.5 table.
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/mark-applied`,
+      payload: { reason: "external" },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().stage.state).toBe("succeeded");
+    await app.close();
+  });
+
+  it("/v1/_internal/rpc accepts a JSON-RPC envelope and returns a valid response", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/_internal/rpc",
+      payload: {
+        jsonrpc: "2.0",
+        method: "reset_stage",
+        params: { tenantId: "local", jobUrl: "https://example.com/job/1", stage: "score" },
+        id: 7,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body).toMatchObject({ jsonrpc: "2.0", id: 7 });
+    expect(body.result).toMatchObject({ method: "reset_stage", status: "accepted" });
+    expect(body.error).toBeUndefined();
+
+    await app.close();
+  });
+
+  it("/v1/_internal/rpc rejects malformed JSON-RPC envelopes with code -32600", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/_internal/rpc",
+      payload: { not: "json-rpc", id: 9 },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    const body = response.json();
+    expect(body).toMatchObject({ jsonrpc: "2.0", id: 9 });
+    expect(body.error.code).toBe(-32600);
+
+    await app.close();
+  });
 });
 
 function seedDatabase(dbPath: string): void {
@@ -1117,6 +1382,17 @@ function seedDatabase(dbPath: string): void {
       message TEXT,
       occurred_at TEXT
     );
+    CREATE TABLE job_enrichments (
+      job_url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      current_status TEXT NOT NULL,
+      full_description TEXT,
+      application_url TEXT,
+      enriched_at TEXT,
+      extraction_tier TEXT,
+      attempts_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE apply_runs (
       run_id TEXT,
       job_url TEXT,
@@ -1125,7 +1401,8 @@ function seedDatabase(dbPath: string): void {
       status TEXT,
       result TEXT,
       dry_run INTEGER,
-      started_at TEXT
+      started_at TEXT,
+      finished_at TEXT
     );
   `);
 

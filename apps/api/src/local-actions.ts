@@ -1,3 +1,20 @@
+/**
+ * Local action dispatchers — JSON-RPC backed (Phase 9 / S-34).
+ *
+ * Per the no-strangler directive the previous "spawn one ``uv run
+ * jobhunter action ...`` subprocess per call" path is **deleted**.
+ * Every action is now routed through ``SubprocessJsonRpcAdapter``
+ * (long-lived ``jobhunter rpc`` worker) per ddd-target.md §6.5.
+ *
+ * Two seams stay outside JSON-RPC:
+ *
+ *   * ``defaultArtifactOpener`` — uses ``open`` / ``xdg-open`` /
+ *     ``cmd /c start`` to fire the OS file handler.  Not part of the
+ *     JSON-RPC protocol surface.
+ *   * ``defaultProfilePreviewRenderer`` — invokes an inline Python
+ *     script via ``uv run python -c`` for the LaTeX render path.  This
+ *     is a one-off helper that doesn't fit the JSON-RPC method set.
+ */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -5,7 +22,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import type { ActionCommandPayload, ActionRunResponse } from "./contracts.js";
+import type { ActionCommandPayload, ActionRunResponse, RpcMethod } from "./contracts.js";
+import { ProfileSchema } from "./contracts.js";
+import {
+  getDefaultJsonRpcDispatcher,
+  type JsonRpcDispatcher,
+} from "./json-rpc-adapter.js";
 
 const API_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/automation");
@@ -37,6 +59,10 @@ export interface ProfileImportInput {
 }
 
 export interface ProfileImportResult {
+  /** Draft profile JSON. Validated server-side against ``ProfileSchema`` in
+   * ``extractProfileImportDraft`` before being placed on this field; tests
+   * may inject partial drafts through the ``ProfileImporter`` injection
+   * point, so the static type stays ``unknown`` to keep that seam open. */
   profile?: unknown;
   style?: unknown;
   templateText?: string;
@@ -60,27 +86,52 @@ export type ProfilePreviewRenderer = (
   context: ActionDispatchContext,
 ) => Promise<Buffer>;
 
-export const defaultActionDispatcher: ActionDispatcher = async (command, context) => {
-  if (command.action === "retry_stage" && !command.runAfter) {
-    return { status: "reset", message: "Stage reset for retry." };
-  }
+/** Build the production action dispatcher backed by ``SubprocessJsonRpcAdapter``. */
+export function createActionDispatcher(dispatcher?: JsonRpcDispatcher): ActionDispatcher {
+  return async (command, _context) => {
+    const rpc = dispatcher ?? getDefaultJsonRpcDispatcher();
+    if (command.action === "retry_stage" && !command.runAfter) {
+      // Pure-reset path — handled by write-model.ts.  The dispatcher is
+      // only invoked when ``runAfter`` is set (i.e. user explicitly
+      // wants the stage to run after the reset).
+      return { status: "reset", message: "Stage reset for retry." };
+    }
 
-  const commands = buildCliCommands(command);
-  if (!commands.length) {
+    const rpcCall = mapCommandToRpc(command);
+    if (!rpcCall) {
+      return {
+        status: "unsupported",
+        message: "No job-scoped local command is available for this action.",
+      };
+    }
+
+    const response = await rpc.call(rpcCall.method, rpcCall.params);
+    if (response.error) {
+      return {
+        status: "failed",
+        message: response.error.message,
+        result: response.error.data,
+      };
+    }
+    if (rpcCall.method === "apply") {
+      // fire_and_forget — server returns { runId }.
+      const runId = extractRunId(response.result);
+      const result: ActionDispatchResult = {
+        status: "queued",
+        result: response.result,
+      };
+      if (runId) result.runId = runId;
+      return result;
+    }
     return {
-      status: "unsupported",
-      message: "No job-scoped local command is available for this action.",
+      status: "queued",
+      result: response.result,
     };
-  }
-  const pids = commands.map((argv) => spawnDetached(argv, context.appDir));
-  return {
-    status: "queued",
-    result: {
-      commands: commands.map((argv) => ["uv", "--project", AUTOMATION_PROJECT_DIR, ...argv]),
-      pids,
-    },
   };
-};
+}
+
+/** The default action dispatcher used by ``server.ts`` in production. */
+export const defaultActionDispatcher: ActionDispatcher = createActionDispatcher();
 
 export const defaultArtifactOpener: ArtifactOpener = async (artifactPath) => {
   const opener = openerCommand(artifactPath);
@@ -101,8 +152,17 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
       jobKey: "profile",
     };
     const actionId = `act-${randomUUID()}`;
-    const result = await runProfileImportCli(pdfPath, input, context);
-    const draft = extractProfileImportDraft(result);
+    const dispatcher = getDefaultJsonRpcDispatcher();
+    const response = await dispatcher.call("profile_import", {
+      tenantId: "local",
+      pdfPath,
+      importProfile: input.importProfile,
+      importStyle: input.importStyle,
+    });
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    const draft = extractProfileImportDraft(response.result);
     if (!input.importProfile) {
       delete draft.profile;
     }
@@ -119,7 +179,7 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
         status: "succeeded",
         jobKey: command.jobKey,
         command,
-        result,
+        result: response.result,
       },
     };
   } finally {
@@ -179,61 +239,41 @@ export function buildActionResponse(
   return response;
 }
 
-function buildCliCommands(command: ActionCommandPayload): string[][] {
+interface RpcCall {
+  method: RpcMethod;
+  params: Record<string, unknown>;
+}
+
+function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
   if (command.action === "retry_stage") {
-    if (!command.stage || !command.runAfter) {
-      return [];
-    }
+    if (!command.stage || !command.runAfter) return null;
     if (command.stage === "apply") {
-      return [applyActionArgs(command)];
+      return { method: "apply", params: applyRpcParams(command) };
     }
-    return [];
+    return null;
   }
-
-  if (command.action === "generate_materials") {
-    return [];
-  }
-
+  if (command.action === "generate_materials") return null;
   if (command.action === "apply") {
-    return [applyActionArgs(command)];
+    return { method: "apply", params: applyRpcParams(command) };
   }
-
-  return [];
+  return null;
 }
 
-function applyActionArgs(command: ActionCommandPayload): string[] {
-  const args = [
-    "run",
-    "jobhunter",
-    "action",
-    "apply",
-    "--url",
-    command.jobKey,
-    "--limit",
-    String(command.limit ?? 1),
-    "--model",
-    command.model ?? "haiku",
-  ];
-  if (command.dryRun !== false) {
-    args.push("--dry-run");
-  }
-  if (command.headless) {
-    args.push("--headless");
-  }
-  return args;
+function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+  return {
+    tenantId: "local",
+    jobUrl: command.jobKey,
+    limit: command.limit ?? 1,
+    model: command.model ?? "haiku",
+    dryRun: command.dryRun !== false,
+    headless: Boolean(command.headless),
+  };
 }
 
-function spawnDetached(argv: string[], appDir: string): number | undefined {
-  const child = spawn("uv", ["--project", AUTOMATION_PROJECT_DIR, ...argv], {
-    detached: true,
-    env: {
-      ...process.env,
-      JOBHUNTER_DIR: appDir,
-    },
-    stdio: "ignore",
-  });
-  child.unref();
-  return child.pid;
+function extractRunId(result: unknown): string | null {
+  if (!isRecord(result)) return null;
+  const runId = result.runId;
+  return typeof runId === "string" ? runId : null;
 }
 
 function openerCommand(artifactPath: string): { command: string; args: string[] } {
@@ -244,15 +284,6 @@ function openerCommand(artifactPath: string): { command: string; args: string[] 
     return { command: "cmd", args: ["/c", "start", "", artifactPath] };
   }
   return { command: "xdg-open", args: [artifactPath] };
-}
-
-async function runProfileImportCli(
-  pdfPath: string,
-  _input: ProfileImportInput,
-  context: ActionDispatchContext,
-): Promise<unknown> {
-  const args = ["run", "jobhunter", "action", "profile_import", "--pdf", pdfPath];
-  return runJsonCommand("uv", ["--project", AUTOMATION_PROJECT_DIR, ...args], context.appDir);
 }
 
 function runCommand(command: string, args: string[], appDir: string): Promise<string> {
@@ -285,43 +316,12 @@ function runCommand(command: string, args: string[], appDir: string): Promise<st
   });
 }
 
-function runJsonCommand(command: string, args: string[], appDir: string): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      env: {
-        ...process.env,
-        JOBHUNTER_DIR: appDir,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      const parsed = parseFirstJsonObject(stdout);
-      if (code === 0 && parsed !== undefined) {
-        resolve(parsed);
-        return;
-      }
-      reject(new Error(stderr.trim() || stdout.trim() || `Command failed with exit code ${code ?? "unknown"}.`));
-    });
-  });
-}
-
 const PROFILE_PREVIEW_SCRIPT = `
 import json
 import sys
 from pathlib import Path
 
-from jobhunter.scoring.pdf import build_latex, render_pdf_latex
+from jobhunter.infrastructure.materials.latex_pdf import build_latex, render_pdf_latex
 
 profile_path = Path(sys.argv[1])
 template_path = Path(sys.argv[2])
@@ -357,33 +357,35 @@ latex = build_latex(data, profile, template_text=template_text)
 render_pdf_latex(latex, str(output_path))
 `;
 
-function parseFirstJsonObject(output: string): unknown {
-  const start = output.indexOf("{");
-  const end = output.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(output.slice(start, end + 1));
-  } catch {
-    return undefined;
-  }
-}
-
 function extractProfileImportDraft(result: unknown): Omit<ProfileImportResult, "action"> {
+  // The JSON-RPC ``profile_import`` handler returns the
+  // ``LocalActionResult`` dict; the draft lives at ``result.draft``.
   const record = isRecord(result) ? result : {};
-  const draft = isRecord(record.result) && isRecord(record.result.draft) ? record.result.draft : {};
+  const draftRoot = isRecord(record.result) ? record.result : record;
+  const draft =
+    isRecord(draftRoot) && isRecord(draftRoot.draft) ? draftRoot.draft : draftRoot;
   const response: Omit<ProfileImportResult, "action"> = {};
-  if ("profile" in draft) {
-    response.profile = draft.profile;
+  if (isRecord(draft) && "profile" in draft) {
+    // Drafts often miss optional sections (the importer is best-effort) —
+    // surface a typed profile when validation succeeds, drop it otherwise so
+    // callers don't get back a half-shaped object that fails downstream.
+    const parsed = ProfileSchema.safeParse(draft.profile);
+    if (parsed.success) {
+      response.profile = parsed.data;
+    }
   }
-  if ("style" in draft) {
+  if (isRecord(draft) && "style" in draft) {
     response.style = draft.style;
   }
-  if ("latex_template" in draft && isRecord(draft.latex_template) && typeof draft.latex_template.text === "string") {
+  if (
+    isRecord(draft) &&
+    "latex_template" in draft &&
+    isRecord(draft.latex_template) &&
+    typeof draft.latex_template.text === "string"
+  ) {
     response.templateText = draft.latex_template.text;
   }
-  if ("source" in draft) {
+  if (isRecord(draft) && "source" in draft) {
     response.source = draft.source;
   }
   return response;

@@ -93,18 +93,6 @@ def ensure_dirs():
         d.mkdir(parents=True, exist_ok=True)
 
 
-def load_profile() -> dict:
-    """Load user profile from ~/.jobhunter/profile.json."""
-    import json
-    from jobhunter.resume_profile import augment_profile, require_resume_master
-    if not PROFILE_PATH.exists():
-        raise FileNotFoundError(
-            f"Profile not found at {PROFILE_PATH}. Run `jobhunter init` first."
-        )
-    profile = require_resume_master(json.loads(PROFILE_PATH.read_text(encoding="utf-8")))
-    return augment_profile(profile)
-
-
 def load_search_config() -> dict:
     """Load search configuration from ~/.jobhunter/searches.yaml."""
     import yaml

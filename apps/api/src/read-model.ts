@@ -1,3 +1,19 @@
+/**
+ * TS read-model — projection-backed (Phase 9 / S-33).
+ *
+ * Per the no-strangler directive, the legacy LEFT-JOIN-with-COALESCE
+ * helpers have been deleted.  Every endpoint now reads from one of the
+ * five ``*_projections`` tables maintained by ``projections.ts`` (TS
+ * mirror) and the Python ``ProjectionBuilder``.  The projection tables
+ * carry the canonical denormalised view; reads are simple SELECTs with
+ * no per-stage join soup.
+ *
+ * The refresh runs at the start of every read so the projections always
+ * reflect the latest worker writes (which all push to ``job_events``).
+ * The refresh is incremental (driven by the ``operations_projections``
+ * watermark in ``event_watermarks``) — typically zero or a handful of
+ * rows per request.
+ */
 import fs from "node:fs";
 
 import type {
@@ -13,69 +29,17 @@ import type {
   JobSummary,
   PaginatedResponse,
   ProfileConfigResponse,
+  ProfileShape,
   SettingsResponse,
   Stage,
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { STAGES } from "./contracts.js";
+import { ProfileSchema, STAGES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { refreshProjections } from "./projections.js";
 
-type JobRow = Record<string, unknown> & {
-  url?: string;
-  title?: string | null;
-  site?: string | null;
-  strategy?: string | null;
-  location?: string | null;
-  salary?: string | null;
-  discovered_at?: string | null;
-  application_url?: string | null;
-  full_description?: string | null;
-  detail_scraped_at?: string | null;
-  detail_error?: string | null;
-  fit_score?: number | null;
-  score_reasoning?: string | null;
-  scored_at?: string | null;
-  tailored_resume_path?: string | null;
-  tailored_at?: string | null;
-  tailor_attempts?: number | null;
-  cover_letter_path?: string | null;
-  cover_letter_at?: string | null;
-  cover_attempts?: number | null;
-  apply_status?: string | null;
-  apply_error?: string | null;
-  apply_attempts?: number | null;
-  applied_at?: string | null;
-  deleted_at?: string | null;
-};
-
-type StageRow = {
-  job_url?: string;
-  stage?: string;
-  state?: string;
-  attempt_count?: number | null;
-  max_attempts?: number | null;
-  started_at?: string | null;
-  updated_at?: string | null;
-  finished_at?: string | null;
-  duration_ms?: number | null;
-  error_code?: string | null;
-  error_message?: string | null;
-  retryable?: number | boolean | null;
-  blocked_by_json?: string | null;
-  next_action?: string | null;
-};
-
-type ArtifactRow = {
-  row_id?: number | string | null;
-  artifact_id?: number | string | null;
-  job_url?: string;
-  artifact_type?: string;
-  status?: string;
-  path?: string;
-  created_at?: string | null;
-  size_bytes?: number | null;
-};
+const DEFAULT_TENANT = "local";
 
 const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   discover: 1,
@@ -109,160 +73,235 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   scoreCriteria: "",
   targetCriteria: "",
 };
-const SOURCE_BOARD_NAMES = new Set(["greenhouse", "linkedin", "talent.com"]);
 
-const JOB_COLUMNS = [
-  "url",
-  "title",
-  "site",
-  "strategy",
-  "location",
-  "salary",
-  "discovered_at",
-  "application_url",
-  "description",
-  "full_description",
-  "detail_scraped_at",
-  "detail_error",
-  "fit_score",
-  "score_reasoning",
-  "scored_at",
-  "tailored_resume_path",
-  "tailored_at",
-  "tailor_attempts",
-  "cover_letter_path",
-  "cover_letter_at",
-  "cover_attempts",
-  "apply_status",
-  "apply_error",
-  "applied_at",
-] as const;
+interface JobListProjectionRow extends Record<string, unknown> {
+  tenant_id: string;
+  job_id: string;
+  title: string;
+  employer: string;
+  source: string;
+  strategy: string;
+  location: string;
+  salary: string;
+  application_url: string | null;
+  discovered_at: string | null;
+  description: string;
+  full_description: string;
+  fit_score: number | null;
+  score_reasoning: string;
+  current_stage: string;
+  current_state: string;
+  current_error_code: string | null;
+  current_error_message: string | null;
+  current_next_action: string | null;
+  has_resume: number;
+  has_cover_letter: number;
+  has_pdf: number;
+  apply_status: string | null;
+  applied_at: string | null;
+  artifact_count: number;
+  deleted_at: string | null;
+  last_updated_at: string | null;
+}
+
+interface JobDetailProjectionRow extends Record<string, unknown> {
+  tenant_id: string;
+  job_id: string;
+  description_preview: string;
+  score_reasoning: string;
+  stages_json: string;
+  last_updated_at: string | null;
+}
+
+interface ArtifactProjectionRow extends Record<string, unknown> {
+  artifact_id: string;
+  tenant_id: string;
+  job_id: string;
+  job_title: string;
+  job_employer: string;
+  artifact_type: string;
+  status: string;
+  local_path: string;
+  size_bytes: number | null;
+  created_at: string | null;
+  generation: number | null;
+}
+
+interface DashboardProjectionRow extends Record<string, unknown> {
+  tenant_id: string;
+  total_jobs: number;
+  failures: number;
+  blocked: number;
+  ready: number;
+  applied: number;
+  dry_runs: number;
+  funnel_json: string;
+  by_source_json: string;
+  score_distribution_json: string;
+  generated_at: string;
+}
+
+interface ApplyRunProjectionRow extends Record<string, unknown> {
+  run_id: string;
+  tenant_id: string;
+  job_id: string;
+  job_title: string;
+  job_employer: string;
+  status: string;
+  result: string | null;
+  dry_run: number;
+  worker_id: number | null;
+  model: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  events_json: string;
+}
 
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   discovered_at: "discovered_at",
-  title: "LOWER(COALESCE(title, ''))",
-  company: "LOWER(COALESCE(site, ''))",
-  location: "LOWER(COALESCE(location, ''))",
+  title: "LOWER(title)",
+  company: "LOWER(employer)",
+  location: "LOWER(location)",
   fit_score: "COALESCE(fit_score, -1)",
 };
 
 export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
-  const jobs = loadJobs(db);
-  const explicitStates = loadStageStates(db);
-  const artifactCounts = artifactCountByJob(db, jobs);
-
-  const summaries = jobs.map((job) => buildJobSummary(job, statesForJob(job, explicitStates), artifactCounts));
-  const funnel = STAGES.map((stage) => buildFunnelStage(summaries, jobs, explicitStates, stage));
-
+  refreshProjections(db, DEFAULT_TENANT);
+  const dashboardRow = getRow<DashboardProjectionRow>(
+    db,
+    "SELECT * FROM dashboard_projections WHERE tenant_id = ?",
+    [DEFAULT_TENANT],
+  );
+  const dashboard = dashboardRow ?? defaultDashboardRow();
   return {
     ok: true,
-    generatedAt: new Date().toISOString(),
+    generatedAt: dashboard.generated_at || new Date().toISOString(),
     totals: {
-      jobs: summaries.length,
-      failures: summaries.filter((job) => job.currentState === "failed" || job.currentState === "exhausted").length,
-      blocked: summaries.filter((job) => job.currentState === "blocked").length,
-      ready: summaries.filter((job) => job.currentStage === "apply" && job.currentState === "pending").length,
-      applied: summaries.filter((job) => job.appliedAt || job.applyStatus === "applied").length,
-      dryRuns: dryRunCount(db),
+      jobs: Number(dashboard.total_jobs ?? 0),
+      failures: Number(dashboard.failures ?? 0),
+      blocked: Number(dashboard.blocked ?? 0),
+      ready: Number(dashboard.ready ?? 0),
+      applied: Number(dashboard.applied ?? 0),
+      dryRuns: Number(dashboard.dry_runs ?? 0),
     },
-    funnel,
+    funnel: parseFunnel(dashboard.funnel_json),
     activity: recentActivity(db),
     applyRuns: recentApplyRuns(db),
   };
 }
 
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
-  const sqlSortColumn = SQL_JOB_SORT_COLUMNS[query.sort];
-  if (!query.q && !query.stage && !query.state && sqlSortColumn) {
-    const page = loadJobPage(db, query, sqlSortColumn);
-    const explicitStates = loadStageStates(db);
-    const artifactCounts = artifactCountByJob(db, page.jobs);
-    const summaries = page.jobs.map((job) => buildJobSummary(job, statesForJob(job, explicitStates), artifactCounts));
-    return paginateWithTotal(summaries, page.total, page.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+  refreshProjections(db, DEFAULT_TENANT);
+  const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort] ?? "discovered_at";
+  const filter = jobSqlFilter(query);
+
+  if (!query.q) {
+    const total = countJobProjections(db, filter);
+    const pages = Math.max(1, Math.ceil(total / query.pageSize));
+    const page = Math.min(query.page, pages);
+    const offset = (page - 1) * query.pageSize;
+    const direction = query.dir === "asc" ? "ASC" : "DESC";
+    const rows = allRows<JobListProjectionRow>(
+      db,
+      `SELECT * FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
+      [...filter.params, query.pageSize, offset],
+    );
+    const summaries = rows.map(rowToJobSummary);
+    return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
   }
 
-  const jobs = loadJobs(db, jobSqlFilter(query), query.deleted);
-  const explicitStates = loadStageStates(db);
-  const artifactCounts = artifactCountByJob(db, jobs);
+  // Free-text search: pull all matching rows and filter in memory (the
+  // projection table makes this cheap — it's already denormalised).
+  const allMatching = allRows<JobListProjectionRow>(
+    db,
+    `SELECT * FROM job_list_projections${filter.where}`,
+    filter.params,
+  );
   const normalizedQuery = query.q.toLowerCase();
-
-  const filtered = jobs
-    .map((job) => buildJobSummary(job, statesForJob(job, explicitStates), artifactCounts))
-    .filter((job) => filterJob(job, query, normalizedQuery));
-
+  const filtered = allMatching.map(rowToJobSummary).filter((job) => filterJob(job, query, normalizedQuery));
   filtered.sort((left, right) => compareJobs(left, right, query.sort, query.dir));
-
   return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
 }
 
 export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
   const query = normalizeMutationFilter(filter);
-  const jobs = loadJobs(db, jobSqlFilter(query), query.deleted);
-  const explicitStates = loadStageStates(db);
-  const artifactCounts = artifactCountByJob(db, jobs);
+  refreshProjections(db, DEFAULT_TENANT);
+  const sqlFilter = jobSqlFilter(query);
+  const rows = allRows<JobListProjectionRow>(
+    db,
+    `SELECT * FROM job_list_projections${sqlFilter.where}`,
+    sqlFilter.params,
+  );
   const normalizedQuery = query.q.toLowerCase();
-  return jobs
-    .map((job) => buildJobSummary(job, statesForJob(job, explicitStates), artifactCounts))
+  return rows
+    .map(rowToJobSummary)
     .filter((job) => filterJob(job, query, normalizedQuery))
     .map((job) => job.jobKey);
 }
 
 export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | null {
-  const job = findJob(db, jobKey);
-  if (!job) {
-    return null;
-  }
-  const explicitStates = loadStageStates(db);
-  const artifactCounts = artifactCountByJob(db, [job]);
-  const stages = statesForJob(job, explicitStates);
+  refreshProjections(db, DEFAULT_TENANT);
+  const listRow = findJobListRow(db, jobKey);
+  if (!listRow) return null;
+  const detailRow = getRow<JobDetailProjectionRow>(
+    db,
+    "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
+    [DEFAULT_TENANT, listRow.job_id],
+  );
+  const stages = parseStages(detailRow?.stages_json);
+  const artifacts = artifactsForJob(db, listRow.job_id);
   return {
     ok: true,
     job: {
-      ...buildJobSummary(job, stages, artifactCounts),
-      descriptionPreview: previewText(asString(job.full_description) || asString(job.description), 6000),
-      scoreReasoning: asString(job.score_reasoning),
+      ...rowToJobSummary(listRow),
+      descriptionPreview: detailRow?.description_preview ?? "",
+      scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
     stages,
-    artifacts: artifactsForJobs(db, [job]),
+    artifacts,
   };
 }
 
-function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobListQuery {
-  return {
-    page: 1,
-    pageSize: 50,
-    q: filter.q ?? "",
-    sort: "discovered_at",
-    dir: "desc",
-    stage: filter.stage,
-    state: filter.state,
-    deleted: filter.deleted ?? "active",
-    source: filter.source ?? "",
-    company: filter.company ?? "",
-    minFitScore: filter.minFitScore,
-    maxFitScore: filter.maxFitScore,
-  };
+function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRow | null {
+  const direct = getRow<JobListProjectionRow>(
+    db,
+    "SELECT * FROM job_list_projections WHERE tenant_id = ? AND job_id = ?",
+    [DEFAULT_TENANT, jobKey],
+  );
+  if (direct) return direct;
+  // Fall back to application_url match for the "open via apply URL" case.
+  return (
+    getRow<JobListProjectionRow>(
+      db,
+      "SELECT * FROM job_list_projections WHERE tenant_id = ? AND application_url = ? LIMIT 1",
+      [DEFAULT_TENANT, jobKey],
+    ) ?? null
+  );
 }
 
 export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): PaginatedResponse<ArtifactSummary> {
+  refreshProjections(db, DEFAULT_TENANT);
   const normalizedQuery = query.q.toLowerCase();
-  const artifacts = artifactsForJobs(db, loadJobs(db)).filter((artifact) => {
-    if (query.status && artifact.status !== query.status) {
-      return false;
-    }
-    if (query.type && artifact.type !== query.type) {
-      return false;
-    }
-    if (!normalizedQuery) {
-      return true;
-    }
+  const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ap.job_id AND d.restored_at IS NULL"
+    : "";
+  const deletedWhere = tableExists(db, "jobhunter_deleted_jobs") ? " AND d.job_url IS NULL" : "";
+  const rows = allRows<ArtifactProjectionRow>(
+    db,
+    `SELECT ap.* FROM artifact_list_projections ap${deletedJoin}
+     WHERE ap.tenant_id = ?${deletedWhere}`,
+    [DEFAULT_TENANT],
+  );
+  const artifacts = rows.map(rowToArtifactSummary).filter((artifact) => {
+    if (query.status && artifact.status !== query.status) return false;
+    if (query.type && artifact.type !== query.type) return false;
+    if (!normalizedQuery) return true;
     return [artifact.title, artifact.company, artifact.type, artifact.status, artifact.localPath].some((value) =>
       value.toLowerCase().includes(normalizedQuery),
     );
   });
-
   artifacts.sort((left, right) => compareArtifacts(left, right, query.sort, query.dir));
-
   return paginate(artifacts, query.page, query.pageSize, query.sort, query.dir, {
     q: query.q,
     status: query.status,
@@ -271,8 +310,14 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
 }
 
 export function getArtifactDetail(db: SqliteDatabase, artifactId: string): ArtifactDetail | null {
-  const artifact = findDbArtifact(db, artifactId) ?? findLegacyArtifact(db, artifactId);
-  return artifact ? { ok: true, artifact } : null;
+  refreshProjections(db, DEFAULT_TENANT);
+  const row = getRow<ArtifactProjectionRow>(
+    db,
+    "SELECT * FROM artifact_list_projections WHERE artifact_id = ?",
+    [artifactId],
+  );
+  if (!row) return null;
+  return { ok: true, artifact: rowToArtifactSummary(row) };
 }
 
 export function readProfileConfig(paths: {
@@ -282,10 +327,22 @@ export function readProfileConfig(paths: {
 }): ProfileConfigResponse {
   return {
     ok: true,
+    // Read returns the raw JSON so the web UI can edit even malformed
+    // profile.json files. Schema validation is enforced on PATCH (see
+    // ``writeProfileConfig``) — programmatic consumers should re-parse via
+    // ``ProfileSchema``.
     profile: readJson(paths.profilePath, {}),
     style: readJson(paths.resumeStylePath, {}),
     templateText: readText(paths.resumeTemplatePath),
   };
+}
+
+/** Validate a candidate profile JSON. Used by callers (e.g. tests, future
+ * SDK helpers) that want to assert canonical shape before posting. Stays
+ * unused by the GET path so corrupt profile.json files remain editable. */
+export function parseProfileShape(value: unknown): ProfileShape | null {
+  const parsed = ProfileSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function readSettingsConfig(paths: { settingsPath: string }): SettingsResponse {
@@ -296,313 +353,161 @@ export function readSettingsConfig(paths: { settingsPath: string }): SettingsRes
   };
 }
 
-function normalizeSettings(raw: unknown): DashboardSettings {
-  const source = isRecord(raw) ? raw : {};
-  return {
-    targetRole: normalizeText(source.targetRole ?? source.target_role, DEFAULT_SETTINGS.targetRole),
-    locationFilter: normalizeText(source.locationFilter ?? source.location_filter, DEFAULT_SETTINGS.locationFilter),
-    minFitScore: normalizeInt(source.minFitScore ?? source.min_fit_score, DEFAULT_SETTINGS.minFitScore, 0, 10),
-    autoApply: normalizeBool(source.autoApply ?? source.auto_apply, DEFAULT_SETTINGS.autoApply),
-    applyConcurrency: normalizeInt(
-      source.applyConcurrency ?? source.apply_concurrency,
-      DEFAULT_SETTINGS.applyConcurrency,
-      1,
-      16,
-    ),
-    scoreCriteria: normalizeText(source.scoreCriteria ?? source.score_criteria, DEFAULT_SETTINGS.scoreCriteria),
-    targetCriteria: normalizeText(source.targetCriteria ?? source.target_criteria, DEFAULT_SETTINGS.targetCriteria),
-  };
-}
+// ============================================================== mappings
 
-function loadJobs(
-  db: SqliteDatabase,
-  sqlFilter = { where: "", params: [] as SqliteValue[] },
-  deleted: JobDeletedFilter = "active",
-): JobRow[] {
-  if (!tableExists(db, "jobs")) {
-    return [];
-  }
-  const deletion = deletedSqlFilter(db, deleted);
-  const filter = combineSqlFilters(sqlFilter, deletion);
-  return allRows<JobRow>(
-    db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)} FROM jobs${deletedJoin(db)}${filter.where}`,
-    filter.params,
-  );
-}
-
-function loadJobPage(
-  db: SqliteDatabase,
-  query: JobListQuery,
-  sqlSortColumn: string,
-): { jobs: JobRow[]; page: number; total: number } {
-  if (!tableExists(db, "jobs")) {
-    return { jobs: [], page: 1, total: 0 };
-  }
-  const filter = combineSqlFilters(jobSqlFilter(query), deletedSqlFilter(db, query.deleted));
-  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${filter.where}`, filter.params);
-  const total = Number(totalRow?.count ?? 0);
-  const pages = Math.max(1, Math.ceil(total / query.pageSize));
-  const page = Math.min(query.page, pages);
-  const offset = (page - 1) * query.pageSize;
-  const direction = query.dir === "asc" ? "ASC" : "DESC";
-  const jobs = allRows<JobRow>(
-    db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)} FROM jobs${deletedJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
-    [...filter.params, query.pageSize, offset],
-  );
-  return { jobs, page, total };
-}
-
-function deletedJoin(db: SqliteDatabase): string {
-  return tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = jobs.url AND d.restored_at IS NULL"
-    : "";
-}
-
-function deletedSelect(db: SqliteDatabase): string {
-  return tableExists(db, "jobhunter_deleted_jobs") ? ", d.deleted_at AS deleted_at" : ", NULL AS deleted_at";
-}
-
-function deletedSqlFilter(db: SqliteDatabase, mode: JobDeletedFilter): { where: string; params: SqliteValue[] } {
-  if (mode === "all") {
-    return { where: "", params: [] };
-  }
-  if (!tableExists(db, "jobhunter_deleted_jobs")) {
-    return mode === "deleted" ? { where: " WHERE 1 = 0", params: [] } : { where: "", params: [] };
-  }
-  return { where: mode === "deleted" ? " WHERE d.job_url IS NOT NULL" : " WHERE d.job_url IS NULL", params: [] };
-}
-
-function combineSqlFilters(
-  left: { where: string; params: SqliteValue[] },
-  right: { where: string; params: SqliteValue[] },
-): { where: string; params: SqliteValue[] } {
-  const clauses = [left.where, right.where].flatMap((where) => {
-    const trimmed = where.trim();
-    return trimmed ? [trimmed.replace(/^WHERE\s+/i, "")] : [];
-  });
-  return {
-    where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
-    params: [...left.params, ...right.params],
-  };
-}
-
-function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
-  const clauses: string[] = [];
-  const params: SqliteValue[] = [];
-  if (query.source) {
-    clauses.push("LOWER(COALESCE(site, '')) LIKE ?");
-    params.push(`%${query.source.toLowerCase()}%`);
-  }
-  if (query.company) {
-    clauses.push("LOWER(COALESCE(site, '')) LIKE ?");
-    params.push(`%${query.company.toLowerCase()}%`);
-  }
-  if (query.minFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, -1) >= ?");
-    params.push(query.minFitScore);
-  }
-  if (query.maxFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, 999) <= ?");
-    params.push(query.maxFitScore);
-  }
-  return {
-    where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
-    params,
-  };
-}
-
-function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
-  return {
-    q: query.q,
-    stage: query.stage ?? "",
-    state: query.state ?? "",
-    source: query.source,
-    company: query.company,
-    minFitScore: query.minFitScore ?? null,
-    maxFitScore: query.maxFitScore ?? null,
-    deleted: query.deleted,
-  };
-}
-
-function findJob(db: SqliteDatabase, jobKey: string): JobRow | null {
-  if (!tableExists(db, "jobs")) {
-    return null;
-  }
-  const row = getRow<JobRow>(
-    db,
-    `SELECT jobs.*${deletedSelect(db)} FROM jobs${deletedJoin(db)} WHERE jobs.url = ? OR jobs.application_url = ? LIMIT 1`,
-    [jobKey, jobKey],
-  );
-  return row ?? null;
-}
-
-function loadStageStates(db: SqliteDatabase): Map<string, Map<Stage, StageSummary>> {
-  const byJob = new Map<string, Map<Stage, StageSummary>>();
-  if (!tableExists(db, "job_stage_states")) {
-    return byJob;
-  }
-  for (const row of allRows<StageRow>(db, "SELECT * FROM job_stage_states")) {
-    const jobUrl = asString(row.job_url);
-    if (!jobUrl || !isStage(row.stage)) {
-      continue;
-    }
-    const jobStates = byJob.get(jobUrl) ?? new Map<Stage, StageSummary>();
-    jobStates.set(row.stage, normalizeStageRow(row));
-    byJob.set(jobUrl, jobStates);
-  }
-  return byJob;
-}
-
-function statesForJob(job: JobRow, explicitStates: Map<string, Map<Stage, StageSummary>>): StageSummary[] {
-  const jobKey = job.url ?? "";
-  const states = explicitStates.get(jobKey);
-  if (states && states.size > 0) {
-    return STAGES.map((stage) => states.get(stage) ?? defaultStage(stage, "pending"));
-  }
-  return deriveLegacyStates(job);
-}
-
-function buildJobSummary(
-  job: JobRow,
-  states: StageSummary[],
-  artifactCounts: Map<string, number>,
-): JobSummary {
-  const current = firstActionableState(states);
-  const jobKey = job.url ?? "";
+function rowToJobSummary(row: JobListProjectionRow): JobSummary {
+  const jobKey = row.job_id;
   return {
     jobKey,
     url: jobKey,
-    title: asString(job.title) || "Untitled",
-    company: companyName(job),
-    source: asString(job.site) || "unknown",
-    strategy: asString(job.strategy),
-    location: asString(job.location),
-    salary: asString(job.salary),
-    discoveredAt: asNullableString(job.discovered_at),
-    applicationUrl: asNullableString(job.application_url),
-    fitScore: asNullableNumber(job.fit_score),
-    currentStage: current.stage,
-    currentState: current.state,
-    errorCode: current.errorCode,
-    errorMessage: current.errorMessage,
-    nextAction: current.nextAction,
-    artifactCount: artifactCounts.get(jobKey) ?? 0,
-    applyStatus: asNullableString(job.apply_status),
-    appliedAt: asNullableString(job.applied_at),
-    deletedAt: asNullableString(job.deleted_at),
+    title: row.title || "Untitled",
+    company: row.employer || "Unknown company",
+    source: row.source || "unknown",
+    strategy: row.strategy ?? "",
+    location: row.location ?? "",
+    salary: row.salary ?? "",
+    discoveredAt: row.discovered_at,
+    applicationUrl: row.application_url,
+    fitScore: row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score),
+    currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
+    currentState: (isStageState(row.current_state) ? row.current_state : "pending") as StageState,
+    errorCode: row.current_error_code,
+    errorMessage: row.current_error_message,
+    nextAction: row.current_next_action,
+    artifactCount: Number(row.artifact_count ?? 0),
+    applyStatus: row.apply_status,
+    appliedAt: row.applied_at,
+    deletedAt: row.deleted_at,
   };
 }
 
-function buildFunnelStage(
-  summaries: JobSummary[],
-  jobs: JobRow[],
-  explicitStates: Map<string, Map<Stage, StageSummary>>,
-  stage: Stage,
-): DashboardSummary["funnel"][number] {
-  const counts = { stage, total: 0, succeeded: 0, running: 0, pending: 0, blocked: 0, failed: 0 };
-  const byJob = new Map(summaries.map((summary) => [summary.jobKey, summary]));
-  for (const job of jobs) {
-    const summary = byJob.get(job.url ?? "");
-    if (!summary) {
-      continue;
-    }
-    const stageState = statesForJob(job, explicitStates).find((item) => item.stage === stage);
-    if (!stageState || stageState.state === "skipped") {
-      continue;
-    }
-    counts.total += 1;
-    if (stageState.state === "exhausted" || stageState.state === "failed") {
-      counts.failed += 1;
-    } else if (stageState.state === "running" || stageState.state === "queued") {
-      counts.running += 1;
-    } else if (stageState.state === "blocked") {
-      counts.blocked += 1;
-    } else if (stageState.state === "succeeded") {
-      counts.succeeded += 1;
-    } else {
-      counts.pending += 1;
-    }
+function rowToArtifactSummary(row: ArtifactProjectionRow): ArtifactSummary {
+  const localPath = row.local_path ?? "";
+  let sizeBytes = row.size_bytes;
+  if (sizeBytes === null || sizeBytes === undefined) {
+    sizeBytes = localFileSize(localPath);
   }
-  return counts;
-}
-
-function deriveLegacyStates(job: JobRow): StageSummary[] {
-  const discover = defaultStage("discover", "succeeded");
-  const hasScore = Boolean(job.scored_at) || asNullableNumber(job.fit_score) !== null;
-  const enrich = job.detail_error
-    ? defaultStage("enrich", "failed", asString(job.detail_error))
-    : job.detail_scraped_at || job.full_description
-      ? defaultStage("enrich", "succeeded")
-      : defaultStage("enrich", "pending");
-  const score =
-    enrich.state !== "succeeded"
-      ? defaultStage("score", "blocked", "Enrichment has not completed.")
-      : hasScore
-        ? defaultStage("score", "succeeded")
-        : defaultStage("score", "pending");
-  const tailor = deriveArtifactStage("tailor", score, job.tailored_resume_path, job.tailor_attempts);
-  const cover = deriveArtifactStage("cover", tailor, job.cover_letter_path, job.cover_attempts);
-  const pdf = tailor.state === "succeeded" ? defaultStage("pdf", "succeeded") : defaultStage("pdf", "blocked");
-  const apply = deriveApplyStage(job, pdf);
-  return [discover, enrich, score, tailor, cover, pdf, apply];
-}
-
-function deriveArtifactStage(
-  stage: "tailor" | "cover",
-  upstream: StageSummary,
-  artifactPath: string | null | undefined,
-  attempts: number | null | undefined,
-): StageSummary {
-  if (artifactPath) {
-    return defaultStage(stage, "succeeded");
+  let status = row.status || "active";
+  if (localPath && sizeBytes === null) {
+    status = "missing";
   }
-  if (upstream.state !== "succeeded") {
-    return defaultStage(stage, "blocked", `${upstream.stage} has not completed.`);
-  }
-  const maxAttempts = DEFAULT_MAX_ATTEMPTS[stage];
-  if ((attempts ?? 0) >= maxAttempts) {
-    return { ...defaultStage(stage, "exhausted", `${stage} attempts exhausted.`), attemptCount: attempts ?? 0 };
-  }
-  return { ...defaultStage(stage, "pending"), attemptCount: attempts ?? 0 };
-}
-
-function deriveApplyStage(job: JobRow, upstream: StageSummary): StageSummary {
-  const status = asString(job.apply_status).toLowerCase();
-  if (job.applied_at || status === "applied") {
-    return defaultStage("apply", "succeeded");
-  }
-  if (status === "in_progress") {
-    return defaultStage("apply", "running");
-  }
-  if (job.apply_error) {
-    return defaultStage("apply", "failed", asString(job.apply_error));
-  }
-  if (upstream.state !== "succeeded") {
-    return defaultStage("apply", "blocked", "Materials are not ready.");
-  }
-  return defaultStage("apply", "pending");
-}
-
-function normalizeStageRow(row: StageRow): StageSummary {
-  const stage = isStage(row.stage) ? row.stage : "discover";
-  const state = isStageState(row.state) ? row.state : "pending";
   return {
-    stage,
-    state,
-    attemptCount: Number(row.attempt_count ?? 0),
-    maxAttempts: asNullableNumber(row.max_attempts) ?? DEFAULT_MAX_ATTEMPTS[stage],
-    startedAt: asNullableString(row.started_at),
-    updatedAt: asNullableString(row.updated_at),
-    finishedAt: asNullableString(row.finished_at),
-    durationMs: asNullableNumber(row.duration_ms),
-    errorCode: asNullableString(row.error_code),
-    errorMessage: asNullableString(row.error_message),
-    retryable: row.retryable === null || row.retryable === undefined ? true : Boolean(row.retryable),
-    blockedBy: parseStringArray(row.blocked_by_json),
-    nextAction: asNullableString(row.next_action),
+    artifactId: row.artifact_id,
+    jobKey: row.job_id,
+    title: row.job_title || "Untitled",
+    company: row.job_employer || "Unknown company",
+    type: row.artifact_type || "artifact",
+    status,
+    localPath,
+    createdAt: row.created_at,
+    sizeBytes,
+    size: formatSize(sizeBytes),
   };
+}
+
+function parseFunnel(funnelJson: string): DashboardSummary["funnel"] {
+  let parsed: unknown = [];
+  try {
+    parsed = JSON.parse(funnelJson || "[]");
+  } catch {
+    parsed = [];
+  }
+  if (!Array.isArray(parsed)) return defaultFunnel();
+  const byStage = new Map<string, DashboardSummary["funnel"][number]>();
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    const stage = String(item.stage ?? "");
+    if (!isStage(stage)) continue;
+    byStage.set(stage, {
+      stage,
+      total: Number(item.total ?? 0),
+      succeeded: Number(item.succeeded ?? 0),
+      running: Number(item.running ?? 0),
+      pending: Number(item.pending ?? 0),
+      blocked: Number(item.blocked ?? 0),
+      failed: Number(item.failed ?? 0),
+    });
+  }
+  return STAGES.map(
+    (stage) =>
+      byStage.get(stage) ?? {
+        stage,
+        total: 0,
+        succeeded: 0,
+        running: 0,
+        pending: 0,
+        blocked: 0,
+        failed: 0,
+      },
+  );
+}
+
+function defaultFunnel(): DashboardSummary["funnel"] {
+  return STAGES.map((stage) => ({
+    stage,
+    total: 0,
+    succeeded: 0,
+    running: 0,
+    pending: 0,
+    blocked: 0,
+    failed: 0,
+  }));
+}
+
+function defaultDashboardRow(): DashboardProjectionRow {
+  return {
+    tenant_id: DEFAULT_TENANT,
+    total_jobs: 0,
+    failures: 0,
+    blocked: 0,
+    ready: 0,
+    applied: 0,
+    dry_runs: 0,
+    funnel_json: "[]",
+    by_source_json: "[]",
+    score_distribution_json: "[]",
+    generated_at: "",
+  };
+}
+
+function parseStages(stagesJson: string | undefined): StageSummary[] {
+  let parsed: unknown = [];
+  try {
+    parsed = JSON.parse(stagesJson || "[]");
+  } catch {
+    parsed = [];
+  }
+  if (!Array.isArray(parsed)) return defaultStages();
+  const byStage = new Map<Stage, StageSummary>();
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    const stage = String(item.stage ?? "");
+    if (!isStage(stage)) continue;
+    const state = String(item.state ?? "pending");
+    byStage.set(stage, {
+      stage,
+      state: isStageState(state) ? (state as StageState) : "pending",
+      attemptCount: Number(item.attempt_count ?? 0),
+      maxAttempts:
+        item.max_attempts === null || item.max_attempts === undefined
+          ? DEFAULT_MAX_ATTEMPTS[stage]
+          : Number(item.max_attempts),
+      startedAt: nullableString(item.started_at),
+      updatedAt: nullableString(item.updated_at),
+      finishedAt: nullableString(item.finished_at),
+      durationMs: nullableNumber(item.duration_ms),
+      errorCode: nullableString(item.error_code),
+      errorMessage: nullableString(item.error_message),
+      retryable: item.retryable === undefined || item.retryable === null ? true : Boolean(item.retryable),
+      blockedBy: Array.isArray(item.blocked_by) ? item.blocked_by.map((it) => String(it)) : [],
+      nextAction: nullableString(item.next_action),
+    });
+  }
+  return STAGES.map((stage) => byStage.get(stage) ?? defaultStage(stage, "pending"));
+}
+
+function defaultStages(): StageSummary[] {
+  return STAGES.map((stage) => defaultStage(stage, "pending"));
 }
 
 function defaultStage(stage: Stage, state: StageState, errorMessage = ""): StageSummary {
@@ -623,123 +528,102 @@ function defaultStage(stage: Stage, state: StageState, errorMessage = ""): Stage
   };
 }
 
-function firstActionableState(states: StageSummary[]): StageSummary {
-  return states.find((item) => !["succeeded", "skipped"].includes(item.state)) ?? states[states.length - 1]!;
+function artifactsForJob(db: SqliteDatabase, jobId: string): ArtifactSummary[] {
+  const rows = allRows<ArtifactProjectionRow>(
+    db,
+    "SELECT * FROM artifact_list_projections WHERE tenant_id = ? AND job_id = ?",
+    [DEFAULT_TENANT, jobId],
+  );
+  return rows.map(rowToArtifactSummary);
 }
 
-function artifactCountByJob(db: SqliteDatabase, jobs: JobRow[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const artifact of artifactsForJobs(db, jobs)) {
-    counts.set(artifact.jobKey, (counts.get(artifact.jobKey) ?? 0) + 1);
-  }
-  return counts;
-}
+// ================================================================ filters
 
-function artifactsForJobs(db: SqliteDatabase, jobs: JobRow[]): ArtifactSummary[] {
-  const jobByUrl = new Map(jobs.map((job) => [job.url ?? "", job]));
-  const artifacts: ArtifactSummary[] = [];
-  if (tableExists(db, "job_artifacts")) {
-    for (const row of allRows<ArtifactRow>(db, "SELECT rowid AS row_id, * FROM job_artifacts")) {
-      const job = jobByUrl.get(asString(row.job_url));
-      if (!job || !row.path) {
-        continue;
-      }
-      artifacts.push(formatArtifact(row, job));
-    }
-  }
-  for (const job of jobs) {
-    artifacts.push(...legacyArtifacts(job, artifacts));
-  }
-  return artifacts;
-}
-
-function formatArtifact(row: ArtifactRow, job: JobRow): ArtifactSummary {
-  const localPath = asString(row.path);
-  const sizeBytes = asNullableNumber(row.size_bytes) ?? localFileSize(localPath);
+function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobListQuery {
   return {
-    artifactId: asString(row.row_id ?? row.artifact_id) || `${asString(row.job_url)}:${asString(row.artifact_type)}:${localPath}`,
-    jobKey: job.url ?? "",
-    title: asString(job.title) || "Untitled",
-    company: companyName(job),
-    type: asString(row.artifact_type) || "artifact",
-    status: localPath && sizeBytes === null ? "missing" : asString(row.status) || "active",
-    localPath,
-    createdAt: asNullableString(row.created_at),
-    sizeBytes,
-    size: formatSize(sizeBytes),
+    page: 1,
+    pageSize: 50,
+    q: filter.q ?? "",
+    sort: "discovered_at",
+    dir: "desc",
+    stage: filter.stage,
+    state: filter.state,
+    deleted: filter.deleted ?? "active",
+    source: filter.source ?? "",
+    company: filter.company ?? "",
+    minFitScore: filter.minFitScore,
+    maxFitScore: filter.maxFitScore,
   };
 }
 
-function findDbArtifact(db: SqliteDatabase, artifactId: string): ArtifactSummary | null {
-  if (!tableExists(db, "job_artifacts") || !tableExists(db, "jobs")) {
-    return null;
+function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
+  const clauses: string[] = ["tenant_id = ?"];
+  const params: SqliteValue[] = [DEFAULT_TENANT];
+  if (query.deleted === "active") {
+    clauses.push("deleted_at IS NULL");
+  } else if (query.deleted === "deleted") {
+    clauses.push("deleted_at IS NOT NULL");
   }
-  const row = getRow<ArtifactRow>(db, "SELECT rowid AS row_id, * FROM job_artifacts WHERE CAST(rowid AS TEXT) = ? LIMIT 1", [
-    artifactId,
-  ]);
-  if (!row || !row.path) {
-    return null;
+  if (query.stage) {
+    clauses.push("current_stage = ?");
+    params.push(query.stage);
   }
-  const job = findJob(db, asString(row.job_url));
-  return job ? formatArtifact(row, job) : null;
+  if (query.state) {
+    clauses.push("current_state = ?");
+    params.push(query.state);
+  }
+  if (query.source) {
+    clauses.push("LOWER(source) LIKE ?");
+    params.push(`%${query.source.toLowerCase()}%`);
+  }
+  if (query.company) {
+    clauses.push("LOWER(employer) LIKE ?");
+    params.push(`%${query.company.toLowerCase()}%`);
+  }
+  if (query.minFitScore !== undefined) {
+    clauses.push("COALESCE(fit_score, -1) >= ?");
+    params.push(query.minFitScore);
+  }
+  if (query.maxFitScore !== undefined) {
+    clauses.push("COALESCE(fit_score, 999) <= ?");
+    params.push(query.maxFitScore);
+  }
+  return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
 
-function findLegacyArtifact(db: SqliteDatabase, artifactId: string): ArtifactSummary | null {
-  return artifactsForJobs(db, loadJobs(db)).find((item) => item.artifactId === artifactId) ?? null;
+function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
+  return {
+    q: query.q,
+    stage: query.stage ?? "",
+    state: query.state ?? "",
+    source: query.source,
+    company: query.company,
+    minFitScore: query.minFitScore ?? null,
+    maxFitScore: query.maxFitScore ?? null,
+    deleted: query.deleted,
+  };
 }
 
-function legacyArtifacts(job: JobRow, existing: ArtifactSummary[]): ArtifactSummary[] {
-  const candidates = [
-    ["tailored_resume_txt", job.tailored_resume_path, job.tailored_at],
-    ["tailored_resume_pdf", pdfSibling(job.tailored_resume_path), job.tailored_at],
-    ["cover_letter_txt", job.cover_letter_path, job.cover_letter_at],
-    ["cover_letter_pdf", pdfSibling(job.cover_letter_path), job.cover_letter_at],
-  ] as const;
-  const seen = new Set(existing.filter((artifact) => artifact.jobKey === job.url).map((artifact) => `${artifact.type}:${artifact.localPath}`));
-  return candidates.flatMap(([type, localPath, createdAt]) => {
-    if (!localPath || seen.has(`${type}:${localPath}`)) {
-      return [];
-    }
-    const sizeBytes = localFileSize(localPath);
-    return [
-      {
-        artifactId: `${job.url}:${type}:${localPath}`,
-        jobKey: job.url ?? "",
-        title: asString(job.title) || "Untitled",
-        company: companyName(job),
-        type,
-        status: sizeBytes === null ? "missing" : "active",
-        localPath,
-        createdAt: asNullableString(createdAt),
-        sizeBytes,
-        size: formatSize(sizeBytes),
-      },
-    ];
-  });
+function countJobProjections(
+  db: SqliteDatabase,
+  filter: { where: string; params: SqliteValue[] },
+): number {
+  const row = getRow<{ count: number }>(
+    db,
+    `SELECT COUNT(*) AS count FROM job_list_projections${filter.where}`,
+    filter.params,
+  );
+  return Number(row?.count ?? 0);
 }
 
 function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
-  if (query.stage && job.currentStage !== query.stage) {
-    return false;
-  }
-  if (query.state && job.currentState !== query.state) {
-    return false;
-  }
-  if (query.source && !job.source.toLowerCase().includes(query.source.toLowerCase())) {
-    return false;
-  }
-  if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) {
-    return false;
-  }
-  if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) {
-    return false;
-  }
-  if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) {
-    return false;
-  }
-  if (!normalizedQuery) {
-    return true;
-  }
+  if (query.stage && job.currentStage !== query.stage) return false;
+  if (query.state && job.currentState !== query.state) return false;
+  if (query.source && !job.source.toLowerCase().includes(query.source.toLowerCase())) return false;
+  if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) return false;
+  if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) return false;
+  if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) return false;
+  if (!normalizedQuery) return true;
   return [job.title, job.company, job.url, job.location, job.strategy, job.currentStage, job.currentState].some((value) =>
     value.toLowerCase().includes(normalizedQuery),
   );
@@ -800,10 +684,7 @@ function paginate<T>(
       total,
       pages,
     },
-    sort: {
-      field: sortField,
-      dir: sortDir,
-    },
+    sort: { field: sortField, dir: sortDir },
     filter,
   };
 }
@@ -821,101 +702,72 @@ function paginateWithTotal<T>(
   return {
     ok: true,
     items,
-    pagination: {
-      page,
-      pageSize,
-      total,
-      pages,
-    },
-    sort: {
-      field: sortField,
-      dir: sortDir,
-    },
+    pagination: { page, pageSize, total, pages },
+    sort: { field: sortField, dir: sortDir },
     filter,
   };
 }
 
 function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
-  if (!tableExists(db, "job_events")) {
-    return [];
-  }
+  if (!tableExists(db, "job_events")) return [];
   const hideDeletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = e.job_url AND d.restored_at IS NULL"
     : "";
   const hideDeletedWhere = tableExists(db, "jobhunter_deleted_jobs") ? "WHERE d.job_url IS NULL" : "";
-  const activitySql = tableExists(db, "jobs")
-    ? `SELECT
+  const sql = `
+    SELECT
       e.event_id,
       e.job_url,
       e.stage,
       e.level,
       e.message,
       e.occurred_at,
-      j.title,
-      j.site
+      jp.title    AS title,
+      jp.employer AS employer
     FROM job_events e
-    LEFT JOIN jobs j ON j.url = e.job_url
+    LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
     ${hideDeletedJoin}
     ${hideDeletedWhere}
     ORDER BY e.occurred_at DESC, e.event_id DESC
-    LIMIT 20`
-    : `SELECT
-      event_id,
-      job_url,
-      stage,
-      level,
-      message,
-      occurred_at,
-      NULL AS title,
-      NULL AS site
-    FROM job_events
-    ORDER BY occurred_at DESC, event_id DESC
     LIMIT 20`;
-  return allRows<Record<string, unknown>>(db, activitySql).map((row) => ({
-    eventId: asString(row.event_id),
-    jobKey: asNullableString(row.job_url),
-    title: asNullableString(row.title),
-    company: companyName({ ...row, url: row.job_url } as JobRow),
-    stage: asString(row.stage) || "system",
-    level: asString(row.level) || "info",
-    message: asString(row.message) || "event",
-    at: asNullableString(row.occurred_at),
+  return allRows<Record<string, unknown>>(db, sql, [DEFAULT_TENANT]).map((row) => ({
+    eventId: stringField(row.event_id),
+    jobKey: nullableString(row.job_url),
+    title: nullableString(row.title),
+    company: nullableString(row.employer),
+    stage: stringField(row.stage) || "system",
+    level: stringField(row.level) || "info",
+    message: stringField(row.message) || "event",
+    at: nullableString(row.occurred_at),
   }));
 }
 
 function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
-  if (!tableExists(db, "apply_runs")) {
-    return [];
-  }
-  const deletedJoinSql = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = apply_runs.job_url AND d.restored_at IS NULL"
+  // L3 (round-1 review): caller (``buildDashboardSummary``) already
+  // refreshed projections; do not double-refresh here.
+  const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
     : "";
-  const deletedWhereSql = tableExists(db, "jobhunter_deleted_jobs") ? " WHERE d.job_url IS NULL" : "";
-  return allRows<Record<string, unknown>>(
+  const deletedWhere = tableExists(db, "jobhunter_deleted_jobs") ? " AND d.job_url IS NULL" : "";
+  const rows = allRows<ApplyRunProjectionRow>(
     db,
-    `SELECT run_id, apply_runs.job_url, title, site, status, result, dry_run, started_at FROM apply_runs${deletedJoinSql}${deletedWhereSql} ORDER BY started_at DESC LIMIT 12`,
-  ).map((row) => ({
-    runId: asString(row.run_id),
-    jobKey: asString(row.job_url),
-    title: asString(row.title) || "Untitled",
-    company: companyName({ site: row.site, url: row.job_url } as JobRow),
-    status: asString(row.status) || asString(row.result) || "unknown",
+    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}
+     WHERE arp.tenant_id = ?${deletedWhere}
+     ORDER BY arp.started_at DESC LIMIT 12`,
+    [DEFAULT_TENANT],
+  );
+  return rows.map((row) => ({
+    runId: row.run_id,
+    jobKey: row.job_id,
+    title: row.job_title || "Untitled",
+    company: row.job_employer || "Unknown company",
+    status: row.status || "unknown",
     dryRun: Boolean(row.dry_run),
-    startedAt: asNullableString(row.started_at),
+    startedAt: row.started_at,
   }));
 }
 
-function dryRunCount(db: SqliteDatabase): number {
-  if (!tableExists(db, "apply_runs")) {
-    return 0;
-  }
-  const deletedJoinSql = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = apply_runs.job_url AND d.restored_at IS NULL"
-    : "";
-  const deletedWhereSql = tableExists(db, "jobhunter_deleted_jobs") ? " AND d.job_url IS NULL" : "";
-  const row = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM apply_runs${deletedJoinSql} WHERE dry_run = 1${deletedWhereSql}`);
-  return Number(row?.count ?? 0);
-}
+// ================================================================ helpers
 
 function readJson(filePath: string, fallback: unknown): unknown {
   try {
@@ -933,77 +785,15 @@ function readText(filePath: string): string {
   }
 }
 
-function previewText(value: string, limit: number): string {
-  return value.length > limit ? `${value.slice(0, limit)}...` : value;
-}
-
-function pdfSibling(value: string | null | undefined): string {
-  if (!value) {
-    return "";
-  }
-  return `${value.replace(/\.[^.]+$/, "")}.pdf`;
-}
-
 function formatSize(size: number | null): string {
-  if (size === null) {
-    return "missing file";
-  }
-  if (size < 1024) {
-    return `${size}b`;
-  }
-  if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(1)}kb`;
-  }
+  if (size === null) return "missing file";
+  if (size < 1024) return `${size}b`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)}kb`;
   return `${(size / (1024 * 1024)).toFixed(1)}mb`;
 }
 
-function companyName(job: JobRow): string {
-  const source = asString(job.site);
-  const inferred = inferredCompanyFromUrl(asString(job.application_url) || asString(job.url));
-  if (inferred) {
-    return inferred;
-  }
-  if (!source || SOURCE_BOARD_NAMES.has(source.toLowerCase())) {
-    return "Unknown company";
-  }
-  return source;
-}
-
-function inferredCompanyFromUrl(rawUrl: string): string {
-  try {
-    const parsed = new URL(rawUrl);
-    const segments = parsed.pathname.split("/").filter(Boolean);
-    if (parsed.hostname.endsWith("greenhouse.io") && segments[0]) {
-      return titleFromSlug(segments[0]);
-    }
-    if (parsed.hostname === "jobs.lever.co" && segments[0]) {
-      return titleFromSlug(segments[0]);
-    }
-    if (parsed.hostname === "jobs.ashbyhq.com" && segments[0]) {
-      return titleFromSlug(segments[0]);
-    }
-  } catch {
-    return "";
-  }
-  return "";
-}
-
-function titleFromSlug(value: string): string {
-  const normalized = value.toLowerCase();
-  const knownNames: Record<string, string> = {
-    gitlab: "GitLab",
-  };
-  if (knownNames[normalized]) {
-    return knownNames[normalized];
-  }
-  return value
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function localFileSize(filePath: string): number | null {
+  if (!filePath) return null;
   try {
     const stat = fs.statSync(filePath);
     return stat.isFile() ? stat.size : null;
@@ -1013,35 +803,15 @@ function localFileSize(filePath: string): number | null {
 }
 
 function compareValues(left: unknown, right: unknown): number {
-  if (left === right) {
-    return 0;
-  }
-  if (left === null || left === undefined || left === "") {
-    return -1;
-  }
-  if (right === null || right === undefined || right === "") {
-    return 1;
-  }
-  if (typeof left === "number" && typeof right === "number") {
-    return left - right;
-  }
+  if (left === right) return 0;
+  if (left === null || left === undefined || left === "") return -1;
+  if (right === null || right === undefined || right === "") return 1;
+  if (typeof left === "number" && typeof right === "number") return left - right;
   return String(left).localeCompare(String(right));
 }
 
-function parseStringArray(value: string | null | undefined): string[] {
-  if (!value) {
-    return [];
-  }
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
-  } catch {
-    return [];
-  }
-}
-
 function isStage(value: unknown): value is Stage {
-  return typeof value === "string" && STAGES.includes(value as Stage);
+  return typeof value === "string" && (STAGES as readonly string[]).includes(value);
 }
 
 function isStageState(value: unknown): value is StageState {
@@ -1059,19 +829,18 @@ function isStageState(value: unknown): value is StageState {
   );
 }
 
-function asString(value: unknown): string {
+function stringField(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
-function asNullableString(value: unknown): string | null {
-  const stringValue = asString(value);
+function nullableString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const stringValue = String(value);
   return stringValue ? stringValue : null;
 }
 
-function asNullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
 }
@@ -1080,34 +849,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function normalizeSettings(raw: unknown): DashboardSettings {
+  const source = isRecord(raw) ? raw : {};
+  return {
+    targetRole: normalizeText(source.targetRole ?? source.target_role, DEFAULT_SETTINGS.targetRole),
+    locationFilter: normalizeText(source.locationFilter ?? source.location_filter, DEFAULT_SETTINGS.locationFilter),
+    minFitScore: normalizeInt(source.minFitScore ?? source.min_fit_score, DEFAULT_SETTINGS.minFitScore, 0, 10),
+    autoApply: normalizeBool(source.autoApply ?? source.auto_apply, DEFAULT_SETTINGS.autoApply),
+    applyConcurrency: normalizeInt(
+      source.applyConcurrency ?? source.apply_concurrency,
+      DEFAULT_SETTINGS.applyConcurrency,
+      1,
+      16,
+    ),
+    scoreCriteria: normalizeText(source.scoreCriteria ?? source.score_criteria, DEFAULT_SETTINGS.scoreCriteria),
+    targetCriteria: normalizeText(source.targetCriteria ?? source.target_criteria, DEFAULT_SETTINGS.targetCriteria),
+  };
+}
+
 function normalizeText(value: unknown, fallback: string): string {
-  const text = asString(value).trim();
+  const text = stringField(value).trim();
   return text.length <= 160 ? text : fallback;
 }
 
 function normalizeInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  const numberValue = Number.parseInt(asString(value), 10);
-  if (!Number.isFinite(numberValue)) {
-    return fallback;
-  }
+  const numberValue = Number.parseInt(stringField(value), 10);
+  if (!Number.isFinite(numberValue)) return fallback;
   return Math.min(maximum, Math.max(minimum, numberValue));
 }
 
 function normalizeBool(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "number") {
-    return value !== 0;
-  }
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (["1", "true", "yes", "on"].includes(normalized)) {
-      return true;
-    }
-    if (["0", "false", "no", "off"].includes(normalized)) {
-      return false;
-    }
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
   }
   return fallback;
 }

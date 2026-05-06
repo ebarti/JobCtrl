@@ -1,0 +1,264 @@
+"""Phase 5 / S-15: JobScore aggregate + value object invariants.
+
+These tests pin the constructor invariants so the aggregate and its value
+objects refuse to accept invalid data. Behaviour exercised here is pure
+data — no I/O, no fakes — so failures point straight at the type
+definitions.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.scoring import (
+    FitScore,
+    JobScore,
+    MatchedKeywords,
+    ScoreBreakdown,
+    ScoreCorrection,
+    ScoringCriteria,
+)
+from jobhunter.domain.scoring.services import EligibilityChecker, ScoreParser
+from jobhunter.domain.tenant import LOCAL_TENANT
+
+
+# ---------------------------------------------------------------------------
+# FitScore
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [1, 5, 10])
+def test_fit_score_accepts_in_range(value: int) -> None:
+    assert FitScore.create(value).value == value
+
+
+@pytest.mark.parametrize("value", [0, 11, -3, 100])
+def test_fit_score_rejects_out_of_range(value: int) -> None:
+    with pytest.raises(ValueError):
+        FitScore.create(value)
+
+
+def test_fit_score_from_optional_returns_none_for_invalid() -> None:
+    assert FitScore.from_optional(None) is None
+    assert FitScore.from_optional(0) is None
+    assert FitScore.from_optional(11) is None
+    assert FitScore.from_optional("not-a-number") is None
+
+
+def test_fit_score_from_optional_passes_through_existing_instance() -> None:
+    existing = FitScore.create(7)
+    assert FitScore.from_optional(existing) is existing
+
+
+# ---------------------------------------------------------------------------
+# ScoreBreakdown
+# ---------------------------------------------------------------------------
+
+
+def test_score_breakdown_defaults_to_zero_components() -> None:
+    bd = ScoreBreakdown()
+    assert (bd.technical_fit, bd.experience_fit, bd.role_fit) == (0, 0, 0)
+    assert bd.reasoning == ""
+
+
+def test_score_breakdown_round_trips_through_dict() -> None:
+    original = ScoreBreakdown(
+        technical_fit=8, experience_fit=7, role_fit=9, reasoning="Strong match"
+    )
+    restored = ScoreBreakdown.from_dict(original.to_dict())
+    assert restored == original
+
+
+@pytest.mark.parametrize("name", ["technical_fit", "experience_fit", "role_fit"])
+def test_score_breakdown_rejects_out_of_range_components(name: str) -> None:
+    with pytest.raises(ValueError):
+        ScoreBreakdown(**{name: 11})
+
+
+# ---------------------------------------------------------------------------
+# MatchedKeywords
+# ---------------------------------------------------------------------------
+
+
+def test_matched_keywords_dedupes_case_insensitive() -> None:
+    keywords = MatchedKeywords.from_iterable(["Python", "python", "FastAPI", "fastapi"])
+    assert keywords.values == ("Python", "FastAPI")
+
+
+def test_matched_keywords_rejects_empty_strings_after_trim() -> None:
+    keywords = MatchedKeywords.from_iterable(["python", "  ", None, "go"])
+    assert keywords.values == ("python", "go")
+
+
+def test_matched_keywords_constructor_rejects_blank_entries() -> None:
+    with pytest.raises(ValueError):
+        MatchedKeywords(values=("ok", " "))
+
+
+def test_matched_keywords_must_be_non_empty() -> None:
+    """Round-1 review M1: §4.4 invariant — at least one keyword required."""
+    with pytest.raises(ValueError, match="at least one keyword"):
+        MatchedKeywords(values=())
+
+
+def test_matched_keywords_default_constructor_uses_legacy_sentinel() -> None:
+    """Default constructor falls back to the ``["legacy"]`` sentinel so
+    backfill / failure-path code that doesn't carry real keywords stays
+    valid without violating the §4.4 non-empty invariant."""
+    assert MatchedKeywords().values == ("legacy",)
+
+
+def test_matched_keywords_from_iterable_collapses_empty_to_sentinel() -> None:
+    assert MatchedKeywords.from_iterable([]).values == ("legacy",)
+    assert MatchedKeywords.from_iterable(["", "  ", None]).values == ("legacy",)
+
+
+def test_matched_keywords_csv_round_trip() -> None:
+    keywords = MatchedKeywords.from_csv("python, fastapi,  postgres ")
+    assert keywords.values == ("python", "fastapi", "postgres")
+    assert keywords.to_csv() == "python, fastapi, postgres"
+
+
+# ---------------------------------------------------------------------------
+# ScoreCorrection
+# ---------------------------------------------------------------------------
+
+
+def test_score_correction_requires_non_empty_rationale() -> None:
+    with pytest.raises(ValueError):
+        ScoreCorrection(
+            corrected_fit_score=FitScore.create(8),
+            rationale=" ",
+            corrected_by=LOCAL_TENANT,
+            corrected_at="2024-01-01T00:00:00+00:00",
+        )
+
+
+# ---------------------------------------------------------------------------
+# JobScore aggregate
+# ---------------------------------------------------------------------------
+
+
+def _sample_score(version: int = 1, fit: int = 7) -> JobScore:
+    return JobScore(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("https://example.com/job/1"),
+        version=version,
+        fit_score=FitScore.create(fit),
+        breakdown=ScoreBreakdown(reasoning="ok"),
+        matched_keywords=MatchedKeywords.from_iterable(["python"]),
+        scored_at="2024-01-01T00:00:00+00:00",
+    )
+
+
+def test_job_score_initial_starts_at_version_one() -> None:
+    score = JobScore.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("u"),
+        fit_score=FitScore.create(7),
+        breakdown=ScoreBreakdown(),
+        matched_keywords=MatchedKeywords(),
+        scored_at="2024-01-01T00:00:00+00:00",
+    )
+    assert score.version == 1
+    assert score.correction is None
+
+
+def test_job_score_next_version_bumps_and_replaces_fields() -> None:
+    base = _sample_score()
+    new = base.next_version(
+        fit_score=FitScore.create(9),
+        breakdown=ScoreBreakdown(reasoning="rescored"),
+        matched_keywords=MatchedKeywords.from_iterable(["fastapi"]),
+        scored_at="2024-02-01T00:00:00+00:00",
+    )
+    assert new.version == 2
+    assert new.fit_score.value == 9
+    assert new.breakdown.reasoning == "rescored"
+    # base is unchanged (frozen)
+    assert base.version == 1
+
+
+def test_job_score_with_correction_preserves_breakdown_uses_corrected_score() -> None:
+    base = _sample_score(fit=7)
+    correction = ScoreCorrection(
+        corrected_fit_score=FitScore.create(9),
+        rationale="False negative",
+        corrected_by=LOCAL_TENANT,
+        corrected_at="2024-03-01T00:00:00+00:00",
+    )
+    corrected = base.with_correction(correction)
+    assert corrected.version == base.version + 1
+    assert corrected.fit_score.value == 9
+    assert corrected.scored_at == correction.corrected_at
+    assert corrected.correction is correction
+    assert corrected.breakdown == base.breakdown
+
+
+def test_job_score_rejects_zero_version() -> None:
+    with pytest.raises(ValueError):
+        JobScore(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId("u"),
+            version=0,
+            fit_score=FitScore.create(5),
+            breakdown=ScoreBreakdown(),
+            matched_keywords=MatchedKeywords(),
+            scored_at="2024-01-01T00:00:00+00:00",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Domain services
+# ---------------------------------------------------------------------------
+
+
+def test_score_parser_happy_path() -> None:
+    response = (
+        "SCORE: 8\n"
+        "KEYWORDS: python, fastapi, postgres\n"
+        "REASONING: Strong technical overlap with the role."
+    )
+    result = ScoreParser().parse(response)
+    assert result.ok is True
+    assert result.fit_score is not None and result.fit_score.value == 8
+    assert result.keywords.values == ("python", "fastapi", "postgres")
+    assert "Strong technical overlap" in result.breakdown.reasoning
+
+
+def test_score_parser_rejects_missing_score_line() -> None:
+    result = ScoreParser().parse("KEYWORDS: a\nREASONING: nope")
+    assert result.ok is False
+    assert result.fit_score is None
+    assert "missing" in result.error.lower()
+
+
+def test_score_parser_rejects_out_of_range_score() -> None:
+    result = ScoreParser().parse("SCORE: 11\nKEYWORDS:\nREASONING: too high")
+    assert result.ok is False
+    assert result.fit_score is None
+    assert "outside" in result.error.lower()
+
+
+def test_score_parser_rejects_successful_score_with_no_keywords() -> None:
+    """Round-1 review M1: a SCORE line with no KEYWORDS line is not a
+    valid scoring per §4.4 — the parser surfaces it as ``ok=False`` so
+    the caller doesn't accidentally persist a sentinel-keyword score."""
+    result = ScoreParser().parse("SCORE: 7\nREASONING: missing the keywords line")
+    assert result.ok is False
+    assert result.fit_score is None
+    assert "keywords" in result.error.lower()
+
+
+def test_score_parser_rejects_empty_keywords_line() -> None:
+    result = ScoreParser().parse("SCORE: 7\nKEYWORDS:\nREASONING: empty list")
+    assert result.ok is False
+    assert "keywords" in result.error.lower()
+
+
+def test_eligibility_checker_threshold() -> None:
+    checker = EligibilityChecker()
+    criteria = ScoringCriteria(min_fit_score=7)
+    assert checker.is_eligible(FitScore.create(7), criteria) is True
+    assert checker.is_eligible(FitScore.create(6), criteria) is False

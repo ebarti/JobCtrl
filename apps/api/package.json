@@ -14,6 +14,7 @@
   "dependencies": {
     "@fastify/cors": "^11.2.0",
     "@jobhunter/contracts": "workspace:*",
+    "@jobhunter/domain-types": "workspace:*",
     "better-sqlite3": "^12.9.0",
     "fastify": "^5.8.5",
     "zod": "^4.4.1"

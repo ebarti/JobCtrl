@@ -23,6 +23,7 @@ from rich.table import Table
 
 from jobhunter import config
 from jobhunter.config import load_env, ensure_dirs
+from jobhunter import database as db_module
 from jobhunter.database import init_db, get_connection, get_stats
 
 log = logging.getLogger(__name__)
@@ -173,10 +174,33 @@ def _run_cover(
 
 
 def _run_pdf(limit: int = 0) -> dict:
-    """Stage: PDF conversion — convert tailored resumes and cover letters to PDF."""
+    """Stage: PDF conversion — convert tailored resumes and cover letters to PDF.
+
+    Phase 6 (S-22 / S-24): the legacy ``scoring/pdf.batch_convert``
+    helper is gone; this stage now wraps the Materials Generation
+    :class:`RenderPdfUseCase` for cover-letter PDFs that didn't get
+    rendered during the cover stage. Resume PDFs are produced inline
+    by the tailor stage (LaTeX path), so they don't show up here.
+    """
     try:
-        from jobhunter.scoring.pdf import batch_convert
-        batch_convert(limit=limit)
+        from jobhunter.domain.materials.use_cases import RenderPdfUseCase
+        from jobhunter.domain.tenant import LOCAL_TENANT
+        from jobhunter.infrastructure.materials import (
+            LatexPdfAdapter,
+            PlaywrightHtmlPdfAdapter,
+            SqliteMaterialsRepository,
+        )
+
+        conn = get_connection()
+        repository = SqliteMaterialsRepository(conn)
+        use_case = RenderPdfUseCase(
+            repository=repository,
+            resume_renderer=LatexPdfAdapter(),
+            cover_letter_renderer=PlaywrightHtmlPdfAdapter(),
+        )
+        pending = repository.list_pending_pdf(LOCAL_TENANT, limit=limit)
+        for job_id in pending:
+            use_case.execute(job_id=job_id, tenant_id=LOCAL_TENANT)
         return {"status": "ok"}
     except Exception as e:
         log.error("PDF conversion failed: %s", e)
@@ -279,22 +303,56 @@ class _StageTracker:
             return dict(self._results)
 
 
-# SQL to count pending work for each stage
+# SQL to count pending work for each stage. Round-1 review B1: every
+# selector that previously read bare ``fit_score`` now goes through the
+# shared ``database._LATEST_SCORE_JOIN`` + ``_EFFECTIVE_FIT_SCORE``
+# expression so new scores written via ``ScoreRepository.save`` are
+# visible immediately (jobs.fit_score is NULL on the new write path).
 _PENDING_SQL: dict[str, str] = {
-    "enrich": "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL",
-    "score":  "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL AND fit_score IS NULL",
+    # Phase 7 (S-26 round-1 review B3 + B4): every selector that
+    # previously read bare ``detail_scraped_at`` / ``full_description``
+    # now goes through the shared ``_ENRICHMENT_JOIN`` /
+    # ``_ENRICHMENT_PENDING`` / ``_EFFECTIVE_FULL_DESCRIPTION``
+    # expressions so jobs enriched through the new repository path are
+    # observable. Without these the pipeline thinks "enrich" always has
+    # work and "score" / "tailor" / "cover" never have work.
+    "enrich": (
+        f"SELECT COUNT(*) FROM jobs {db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._ENRICHMENT_PENDING}"
+    ),
+    "score": (
+        f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL"
+    ),
+    # Phase 6 (S-20 + round-2 H1): tailor + cover predicates read through
+    # ``_LATEST_MATERIALS_JOIN`` (path) and ``_LATEST_STAGE_ATTEMPTS_JOIN``
+    # (attempts + exhaustion). New code never bumps
+    # ``jobs.tailor_attempts`` / ``cover_attempts`` so the legacy column
+    # would forever read 0 — the canonical counter lives on
+    # ``job_stage_states.attempt_count`` and the canonical exhaustion
+    # signal is ``job_stage_states.state = 'exhausted'``.
     "tailor": (
-        "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
-        "AND full_description IS NOT NULL "
-        "AND tailored_resume_path IS NULL "
-        "AND COALESCE(tailor_attempts, 0) < 5"
+        f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+        f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
+        f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
+        f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+        f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
     ),
     "cover": (
-        "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
-        "AND full_description IS NOT NULL "
-        "AND tailored_resume_path IS NOT NULL AND tailored_resume_path != '' "
-        "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
-        "AND COALESCE(cover_attempts, 0) < 5"
+        f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+        f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
+        f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {db_module._EFFECTIVE_TAILOR_PATH} != '' "
+        f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
+        f"AND {db_module._COVER_NOT_EXHAUSTED} "
+        f"AND {db_module._EFFECTIVE_COVER_ATTEMPTS} < 5"
     ),
 }
 
@@ -305,19 +363,38 @@ _STREAM_POLL_INTERVAL = 10
 def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> int:
     """Count pending work items for a stage."""
     if stage == "pdf":
-        from jobhunter.scoring.pdf import count_pending_conversions
-        return count_pending_conversions()
+        # Phase 6 (S-22): pending PDFs come from the materials repository,
+        # not from a sibling-file scan.
+        from jobhunter.domain.tenant import LOCAL_TENANT
+        from jobhunter.infrastructure.materials import SqliteMaterialsRepository
+
+        repo = SqliteMaterialsRepository(get_connection())
+        return len(repo.list_pending_pdf(LOCAL_TENANT))
 
     if stage == "tailor":
         conn = get_connection()
+        # Phase 7 (S-26 round-1 review B4): bare ``full_description``
+        # is NULL on the new write path; route through the COALESCE
+        # expression backed by ``job_enrichments``.
         where = (
-            "fit_score >= ? AND full_description IS NOT NULL "
-            "AND (tailored_resume_path IS NOT NULL OR COALESCE(tailor_attempts, 0) < 5)"
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+            f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
             if retailor else
-            "fit_score >= ? AND full_description IS NOT NULL "
-            "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
+            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+            f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
         )
-        return conn.execute(f"SELECT COUNT(*) FROM jobs WHERE {where}", (min_score,)).fetchone()[0]
+        return conn.execute(
+            f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
+            f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+            f"{db_module._ENRICHMENT_JOIN} "
+            f"WHERE {where}",
+            (min_score,),
+        ).fetchone()[0]
 
     sql = _PENDING_SQL.get(stage)
     if sql is None:
@@ -703,20 +780,28 @@ def run_single_job(
     """
     from datetime import datetime, timezone
     from urllib.parse import urlparse
-    import re
 
     from jobhunter.config import (
-        RESUME_PATH, TAILORED_DIR, COVER_LETTER_DIR, load_profile,
+        RESUME_PATH, TAILORED_DIR, COVER_LETTER_DIR,
     )
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.profile import get_profile_repository
 
     load_env()
     ensure_dirs()
     init_db()
 
     conn = get_connection()
-    row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+    # Phase 7 (S-26 round-1 review B6): use the helper that LEFT JOINs
+    # ``job_enrichments`` and promotes ``full_description`` /
+    # ``application_url`` / ``detail_scraped_at`` into the legacy
+    # column slots — bare ``SELECT * FROM jobs`` reads NULL on the new
+    # write path.
+    from jobhunter.database import load_job_with_enrichment
 
-    if row is None:
+    job_record = load_job_with_enrichment(conn, url)
+
+    if job_record is None:
         # ---- Auto-insert + enrich unknown job URL ----
         console.print("  [cyan]Job not in database — inserting and enriching...[/cyan]")
 
@@ -768,25 +853,24 @@ def run_single_job(
         else:
             console.print("  [dim]DRY RUN — would enrich job[/dim]")
 
-        # Re-read after enrichment
-        row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
-        if row is None:
+        # Re-read after enrichment via the same helper
+        job_record = load_job_with_enrichment(conn, url)
+        if job_record is None:
             return {"url": url, "error": "Job disappeared after insert"}
 
         # Infer title from description if still missing
-        job_check = dict(row)
-        if not job_check.get("title") and job_check.get("full_description"):
+        if not job_record.get("title") and job_record.get("full_description"):
             # Use first non-empty line as a rough title
-            for line in job_check["full_description"].splitlines():
+            for line in job_record["full_description"].splitlines():
                 line = line.strip()
                 if 10 < len(line) < 120:
                     conn.execute("UPDATE jobs SET title = ? WHERE url = ?", (line, url))
                     conn.commit()
                     break
             # Re-read with updated title
-            row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+            job_record = load_job_with_enrichment(conn, url)
 
-    job = dict(row)
+    job = job_record or {}
     result: dict = {"url": url, "title": job.get("title") or "", "errors": []}
 
     # ------------------------------------------------------------------
@@ -808,9 +892,9 @@ def run_single_job(
                 if enrich_stats["ok"] == 0 and enrich_stats["partial"] == 0:
                     result["error"] = "Enrichment failed — could not scrape job description"
                     return result
-                # Re-read
-                row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
-                job = dict(row)
+                # Re-read through the helper so enrichment fields land
+                # in the row dict.
+                job = load_job_with_enrichment(conn, url) or {}
             else:
                 console.print("  [dim]DRY RUN — would enrich job[/dim]")
 
@@ -818,53 +902,53 @@ def run_single_job(
             result["error"] = "Job still has no full description after enrichment"
             return result
 
-        profile = load_profile()
+        snapshot = get_profile_repository().load_snapshot(LOCAL_TENANT)
         resume_text = RESUME_PATH.read_text(encoding="utf-8")
 
-        # Score if not yet scored
-        if job.get("fit_score") is None:
+        # Score if not yet scored. Phase 5 (S-18): scoring goes through the
+        # ScoreRepository — no more inline UPDATE jobs SET fit_score writes.
+        from jobhunter.domain.identifiers import JobId
+        from jobhunter.infrastructure.scoring import SqliteScoreRepository
+
+        score_repo = SqliteScoreRepository(conn)
+        existing_score = score_repo.load(LOCAL_TENANT, JobId(str(url)))
+        if existing_score is None:
             console.print("  [cyan]Scoring job...[/cyan]")
             if not dry_run:
                 from jobhunter.scoring.scorer import score_job
-                score_result = score_job(resume_text, job)
-                now = datetime.now(timezone.utc).isoformat()
-                reasoning = (
-                    f'{score_result.get("keywords", "")}\n'
-                    f'{score_result.get("reasoning", "")}'
+                outcome = score_job(
+                    snapshot,
+                    job,
+                    repository=score_repo,
+                    resume_text=resume_text,
                 )
-                conn.execute(
-                    "UPDATE jobs SET fit_score=?, score_reasoning=?, scored_at=? WHERE url=?",
-                    (score_result["score"], reasoning, now, url),
-                )
-                conn.commit()
-                job["fit_score"] = score_result["score"]
-                console.print(f"  Score: [bold]{score_result['score']}[/bold]/10")
+                if outcome.ok and outcome.score is not None:
+                    job["fit_score"] = outcome.score.fit_score.value
+                    console.print(f"  Score: [bold]{outcome.score.fit_score.value}[/bold]/10")
+                else:
+                    result["error"] = outcome.error or "Scoring failed"
+                    return result
             else:
                 console.print("  [dim]DRY RUN — would score job[/dim]")
+        else:
+            job["fit_score"] = existing_score.fit_score.value
 
-        # Tailor resume
+        # Tailor resume — Phase 6 (S-23) routes through TailorResumeUseCase
+        # via the existing ``_tailor_one_job`` thin wrapper. No more
+        # ``UPDATE jobs SET tailored_resume_path``: persistence happens
+        # inside the use case via ``MaterialsRepository``.
         console.print("  [cyan]Tailoring resume...[/cyan]")
         if not dry_run:
             from jobhunter.scoring.tailor import _tailor_one_job
 
             TAILORED_DIR.mkdir(parents=True, exist_ok=True)
-            tailor_result = _tailor_one_job(job, resume_text, profile, validation_mode)
+            tailor_result = _tailor_one_job(job, resume_text, snapshot, validation_mode)
 
-            now = datetime.now(timezone.utc).isoformat()
             _success = {"approved", "approved_with_judge_warning"}
-            if tailor_result["status"] in _success:
-                conn.execute(
-                    "UPDATE jobs SET tailored_resume_path=?, tailored_at=?, "
-                    "tailor_attempts=COALESCE(tailor_attempts,0)+1 WHERE url=?",
-                    (tailor_result["path"], now, url),
-                )
+            if tailor_result["status"] in _success and tailor_result.get("path"):
+                # Surface the materials path into the legacy job dict slot
+                # so the cover-letter step (still file-driven) can read it.
                 job["tailored_resume_path"] = tailor_result["path"]
-            else:
-                conn.execute(
-                    "UPDATE jobs SET tailor_attempts=COALESCE(tailor_attempts,0)+1 WHERE url=?",
-                    (url,),
-                )
-            conn.commit()
 
             result["tailor_status"] = tailor_result["status"]
             result["tailored_path"] = tailor_result.get("path")
@@ -879,58 +963,57 @@ def run_single_job(
             console.print("  [dim]DRY RUN — would tailor resume[/dim]")
             result["tailor_status"] = "dry_run"
 
-        # Cover letter
+        # Cover letter — Phase 6 (S-24) routes through
+        # GenerateCoverLetterUseCase. Persistence + PDF render happen in
+        # the use case path; this branch only surfaces status to the UI.
         console.print("  [cyan]Generating cover letter...[/cyan]")
         if not dry_run:
-            from jobhunter.scoring.cover_letter import generate_cover_letter
             from pathlib import Path
 
+            from jobhunter.scoring.cover_letter import _build_use_case as _build_cover_use_case
+            from jobhunter.infrastructure.materials import (
+                PlaywrightHtmlPdfAdapter,
+                SqliteMaterialsRepository,
+            )
+
             COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
-
-            tailored_path = job.get("tailored_resume_path")
-            if not tailored_path or not Path(tailored_path).exists():
-                result["errors"].append("Cover skipped: tailored resume is missing")
-                result["cover_status"] = "blocked_missing_tailored_resume"
-                result["apply_status"] = "skipped"
-                return result
-            cl_resume = Path(tailored_path).read_text(encoding="utf-8")
-
+            cover_use_case = _build_cover_use_case(
+                repository=SqliteMaterialsRepository(conn),
+            )
             try:
-                letter = generate_cover_letter(
-                    cl_resume, job, profile,
+                outcome = cover_use_case.execute(
+                    job=job,
+                    profile_snapshot=snapshot,
+                    cover_letter_dir=COVER_LETTER_DIR,
                     validation_mode=validation_mode,
                 )
-                safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
-                safe_site = re.sub(r"[^\w\s-]", "", job.get("site", ""))[:20].strip().replace(" ", "_")
-                prefix = f"{safe_site}_{safe_title}"
-
-                cl_path = COVER_LETTER_DIR / f"{prefix}_CL.txt"
-                cl_path.write_text(letter, encoding="utf-8")
-
-                # PDF (best-effort)
-                try:
-                    from jobhunter.scoring.pdf import convert_cover_letter_to_pdf
-                    convert_cover_letter_to_pdf(cl_path)
-                except Exception:
-                    log.debug("Cover letter PDF failed for %s", cl_path, exc_info=True)
-
-                now = datetime.now(timezone.utc).isoformat()
-                conn.execute(
-                    "UPDATE jobs SET cover_letter_path=?, cover_letter_at=?, "
-                    "cover_attempts=COALESCE(cover_attempts,0)+1 WHERE url=?",
-                    (str(cl_path), now, url),
-                )
-                conn.commit()
-
-                result["cover_status"] = "ok"
-                result["cover_letter_path"] = str(cl_path)
-                console.print("  Cover letter: [bold green]ok[/bold green]")
+                if outcome.status == "ok" and outcome.text_path and outcome.materials is not None:
+                    # Best-effort cover-letter PDF render so the apply
+                    # launcher can pick it up alongside the txt artifact.
+                    try:
+                        cl_text = Path(outcome.text_path).read_text(encoding="utf-8")
+                        pdf_artifact = PlaywrightHtmlPdfAdapter().render_cover_letter_to_pdf(
+                            cover_letter_text=cl_text,
+                            output_path=str(Path(outcome.text_path).with_suffix(".pdf")),
+                            created_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        materials = outcome.materials.with_cover_letter_pdf(
+                            pdf_artifact,
+                            updated_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        SqliteMaterialsRepository(conn).save(materials)
+                    except Exception:
+                        log.debug("Cover letter PDF failed", exc_info=True)
+                    result["cover_status"] = "ok"
+                    result["cover_letter_path"] = outcome.text_path
+                    console.print("  Cover letter: [bold green]ok[/bold green]")
+                else:
+                    result["cover_status"] = f"error: {outcome.error or outcome.status}"
+                    result["errors"].append(
+                        f"Cover letter failed: {outcome.error or outcome.status}"
+                    )
+                    console.print(f"  Cover letter: [red]error[/red] — {outcome.error or outcome.status}")
             except Exception as e:
-                conn.execute(
-                    "UPDATE jobs SET cover_attempts=COALESCE(cover_attempts,0)+1 WHERE url=?",
-                    (url,),
-                )
-                conn.commit()
                 result["cover_status"] = f"error: {e}"
                 result["errors"].append(f"Cover letter failed: {e}")
                 console.print(f"  Cover letter: [red]error[/red] — {e}")

@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from jobhunter import config
 from jobhunter.database import get_connection, init_db
+from jobhunter.infrastructure.profile import get_profile_repository
 from jobhunter.pipeline import STAGE_ORDER, run_pipeline
 from jobhunter.state import record_job_event, utc_now
 
@@ -89,7 +90,7 @@ def run_local_action(request: LocalActionRequest) -> LocalActionResult:
         _bootstrap_runtime()
         _record_action_event(
             request,
-            "action_started",
+            "ActionStarted",
             "info",
             f"{request.stage} action started",
             {"action_id": action_id, "dry_run": request.dry_run},
@@ -187,20 +188,16 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
     if request.stage == "profile_import":
         if not request.pdf_path:
             raise ValueError("profile_import requires pdf_path.")
-        from jobhunter.profile_import import import_resume_pdf
-        from jobhunter.scoring.pdf import load_resume_style
+        from jobhunter.domain.profile.use_cases import ImportProfileUseCase
 
         pdf_path = Path(request.pdf_path).expanduser()
-        draft = import_resume_pdf(
-            pdf_path.read_bytes(),
-            filename=pdf_path.name,
-            base_profile=config.load_profile(),
-            base_style=load_resume_style(),
-        )
-        if not request.import_profile:
-            draft.pop("profile", None)
-        if not request.import_style:
-            draft.pop("style", None)
+        use_case = ImportProfileUseCase(repository=get_profile_repository())
+        result = use_case(pdf_path.read_bytes(), filename=pdf_path.name)
+        draft: dict[str, Any] = {"source": result.source}
+        if request.import_profile:
+            draft["profile"] = result.profile
+        if request.import_style:
+            draft["style"] = result.style
         return {"status": "ok", "draft": draft}
     raise ValueError(f"Unknown action stage: {request.stage}")
 
@@ -235,7 +232,7 @@ def _finish_action(
     try:
         _record_action_event(
             request,
-            "action_succeeded" if ok else "action_failed",
+            "ActionSucceeded" if ok else "ActionFailed",
             "info" if ok else "error",
             f"{request.stage} action {status}",
             {

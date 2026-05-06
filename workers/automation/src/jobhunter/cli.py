@@ -38,14 +38,41 @@ VALID_STAGES = STAGE_ORDER
 # Helpers
 # ---------------------------------------------------------------------------
 
+_projection_subscription = None
+
+
 def _bootstrap() -> None:
-    """Common setup: load env, create dirs, init DB."""
+    """Common setup: load env, create dirs, init DB, refresh projections.
+
+    Phase 9 (S-32): the ``ProjectionBuilder`` runs an initial backfill on
+    every CLI invocation so the read-model projections reflect the
+    current canonical state before any stage logic runs.  This is
+    cheap (incremental from the watermark) and ensures the dashboards
+    don't go blank after a fresh DB or a schema migration.
+
+    The same builder also subscribes (idempotently) to the process-wide
+    ``InProcessEventBus`` so events emitted later in the worker run
+    drive live projection refreshes.
+    """
+    global _projection_subscription
     from jobhunter.config import load_env, ensure_dirs
     from jobhunter.database import init_db
+    from jobhunter.infrastructure.projections.projection_builder import (
+        ProjectionBuilder,
+    )
 
     load_env()
     ensure_dirs()
-    init_db()
+    conn = init_db()
+    try:
+        builder = ProjectionBuilder(conn)
+        builder.refresh()
+        if _projection_subscription is None:
+            from jobhunter.infrastructure.events import get_default_publisher
+
+            _projection_subscription = builder.subscribe_to(get_default_publisher())
+    except Exception:  # noqa: BLE001 — projection refresh failure must not break boot
+        log.exception("ProjectionBuilder backfill on bootstrap failed")
 
 
 def _version_callback(value: bool) -> None:
@@ -1094,6 +1121,25 @@ def runs(
 
 
 @app.command()
+def rpc() -> None:
+    """Run the JSON-RPC 2.0 server on stdin/stdout (target §6.5).
+
+    Each line on stdin must be a single JSON-RPC request envelope; each
+    response is written as a single line on stdout.  Used by the TS API to
+    drive complex commands (Phase 9 onward) — Phase 3 ships a small handler
+    set: ``reset_stage``, ``mark_applied``, ``mark_skipped``, ``cancel_stage``,
+    ``run_stage``, ``apply``, ``profile_import``.
+    """
+    _bootstrap()
+    from jobhunter.infrastructure.rpc.handlers import register_default_handlers
+    from jobhunter.infrastructure.rpc.server import JsonRpcServer
+
+    server = JsonRpcServer()
+    register_default_handlers(server)
+    server.serve()
+
+
+@app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
@@ -1127,7 +1173,7 @@ def doctor() -> None:
 
     # LaTeX is mandatory for tailored resume PDFs.
     try:
-        from jobhunter.scoring.pdf import _find_pdflatex
+        from jobhunter.infrastructure.materials.latex_pdf import _find_pdflatex
 
         results.append(("pdflatex", ok_mark, _find_pdflatex()))
     except FileNotFoundError:

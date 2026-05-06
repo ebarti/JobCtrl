@@ -5,8 +5,10 @@ Use these repository documents before making architectural, workflow, or QA deci
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, and known high-risk workflows that need test coverage.
 - `docs/local-ts-api.md`: local TypeScript API, web app development commands, API/web verification, and dashboard migration context.
-- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, local-first boundaries, and phased migration constraints.
-- `docs/domain-model.md`: core domain language, bounded contexts, aggregates, and ownership rules.
+- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, eight bounded contexts, projection-backed read model, JSON-RPC TS↔Python protocol, local-first boundaries.
+- `docs/ddd-target.md`: canonical DDD + hexagonal target architecture (aggregates, ports, domain events, projection strategy, hosted-future seams). The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-ddd-migration.md`.
+- `docs/domain-model.md`: implementer's quick reference to the eight bounded contexts and their aggregates / repositories / events.
+- `docs/decisions.md`: architectural decision records — DDD adoption, per-aggregate repositories, in-process EventPublisher + projections, JSON-RPC for TS↔Python.
 - `package.json`: current TypeScript/API/web scripts.
 - `workers/automation/pyproject.toml`: Python package metadata, CLI entry point, Python version, optional dev dependencies, and Ruff config.
 

@@ -7,8 +7,7 @@ from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter.apply import launcher
 from jobhunter.cli import app
 from jobhunter.database import close_connection, get_connection, init_db
-from jobhunter import profile_import
-from jobhunter.scoring import pdf as scoring_pdf
+from jobhunter.domain.profile.ports import ProfileImportResult
 
 
 def test_local_stage_action_records_events(tmp_path, monkeypatch):
@@ -34,8 +33,8 @@ def test_local_stage_action_records_events(tmp_path, monkeypatch):
         assert calls[0]["limit"] == 3
         assert calls[0]["workers"] == 2
         assert [(row["event_type"], row["stage"], row["level"]) for row in rows] == [
-            ("action_started", "score", "info"),
-            ("action_succeeded", "score", "info"),
+            ("ActionStarted", "score", "info"),
+            ("ActionSucceeded", "score", "info"),
         ]
     finally:
         close_connection(db_path)
@@ -60,7 +59,7 @@ def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
         assert result.status == "failed"
         assert result.error == "boom"
         assert "RuntimeError" in (result.traceback or "")
-        assert failure["event_type"] == "action_failed"
+        assert failure["event_type"] == "ActionFailed"
         assert failure["level"] == "error"
     finally:
         close_connection(db_path)
@@ -190,25 +189,33 @@ def test_profile_import_action_expands_user_paths(tmp_path, monkeypatch):
     pdf_path = tmp_path / "resume.pdf"
     pdf_path.write_bytes(b"%PDF")
 
-    def fake_import(data, *, filename, base_profile, base_style):
-        return {
-            "profile": {"filename": filename, "bytes": len(data), "base": base_profile},
-            "style": base_style,
-        }
+    captured: dict[str, object] = {}
+
+    class FakeRepository:
+        def import_from_pdf(self, tenant_id, pdf_bytes, *, filename):
+            captured["tenant_id"] = tenant_id
+            captured["filename"] = filename
+            captured["bytes"] = len(pdf_bytes)
+            return ProfileImportResult(
+                profile={"filename": filename, "bytes": len(pdf_bytes)},
+                style={"font": "moderncv"},
+                source={"filename": filename, "pages": 1},
+            )
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
-    monkeypatch.setattr(actions.config, "load_profile", lambda: {"name": "Base"})
-    monkeypatch.setattr(profile_import, "import_resume_pdf", fake_import)
-    monkeypatch.setattr(scoring_pdf, "load_resume_style", lambda: {"font": "moderncv"})
+    monkeypatch.setattr(actions, "get_profile_repository", lambda: FakeRepository())
 
     try:
         result = run_local_action(LocalActionRequest(stage="profile_import", pdf_path="~/resume.pdf"))
 
         assert result.ok is True
-        assert result.result["draft"]["profile"] == {"filename": "resume.pdf", "bytes": 4, "base": {"name": "Base"}}
+        assert captured["filename"] == "resume.pdf"
+        assert captured["bytes"] == 4
+        assert result.result["draft"]["profile"] == {"filename": "resume.pdf", "bytes": 4}
         assert result.result["draft"]["style"] == {"font": "moderncv"}
+        assert result.result["draft"]["source"] == {"filename": "resume.pdf", "pages": 1}
     finally:
         close_connection(db_path)
 

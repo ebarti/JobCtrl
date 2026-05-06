@@ -14,7 +14,12 @@ import type {
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { STAGES } from "./contracts.js";
+import { ProfileSchema, STAGES } from "./contracts.js";
+import {
+  isValidTransition,
+  deserializeStageStateKind,
+  type StageStateKind,
+} from "@jobhunter/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { matchingJobKeys, readProfileConfig, readSettingsConfig } from "./read-model.js";
 
@@ -35,6 +40,57 @@ const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   pdf: 3,
   apply: 3,
 };
+
+/**
+ * Validate a stage-state transition using the §8.5 state machine
+ * (`packages/domain-types/src/pipeline/state_machine.ts`).
+ *
+ * Reads the current state from the DB. If no row exists yet (INSERT path),
+ * the transition is always allowed. If the current state equals the target,
+ * the call is idempotent — also allowed.
+ *
+ * Throws `InputError` when the transition is rejected.
+ *
+ * Wired into `upsertStageState`, so every write-model command —
+ * `resetJobStage`, `markJobApplied`, `markJobSkipped`, `cancelJobAction` —
+ * is gated by §8.5 before the SQLite write happens.
+ */
+export function validateStageTransition(
+  db: SqliteDatabase,
+  jobUrl: string,
+  stage: Stage,
+  targetState: StageState,
+): void {
+  if (!tableExists(db, "job_stage_states")) {
+    return;
+  }
+  const row = getRow<{ state?: string }>(
+    db,
+    "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
+    [jobUrl, stage],
+  );
+  if (!row || !row.state) {
+    return; // No existing row — INSERT path, always valid.
+  }
+  const currentStateStr = row.state;
+  if (currentStateStr === targetState) {
+    return; // Idempotent write.
+  }
+  let fromKind: StageStateKind;
+  let toKind: StageStateKind;
+  try {
+    fromKind = deserializeStageStateKind(currentStateStr);
+    toKind = deserializeStageStateKind(targetState);
+  } catch {
+    // Unknown state strings — skip validation rather than crash.
+    return;
+  }
+  if (!isValidTransition(fromKind, toKind)) {
+    throw new InputError(
+      `Invalid state transition for ${stage}: ${currentStateStr} → ${targetState} (not allowed by the §8.5 stage state machine)`,
+    );
+  }
+}
 
 export function resolveJobUrl(db: SqliteDatabase, jobKey: string): string | null {
   if (!tableExists(db, "jobs")) {
@@ -58,10 +114,15 @@ export function resetJobStage(
     throw new InputError("Job not found.");
   }
 
+  // Reset is an admin override (parity with Python's `reset_job_stage`),
+  // so even though we _call_ isValidTransition (via validateStageTransition)
+  // when the gate is opt-in, this entry-point bypasses §8.5 — the user is
+  // explicitly forcing the stage back to pending.
   updateLegacyJobColumnsForReset(db, jobUrl, stage, options.resetAttempts);
   const stageOptions: Parameters<typeof upsertStageState>[4] = {
     retryable: true,
     clearTiming: true,
+    skipValidation: true,
   };
   if (options.resetAttempts) {
     stageOptions.attemptCount = 0;
@@ -70,7 +131,10 @@ export function resetJobStage(
   recordActionEvent(db, {
     jobUrl,
     stage,
-    eventType: "retry_requested",
+    // H1 (round-1 review): align with domain catalog — `StageReset` already
+    // exists in `domain/events/orchestration.py`.  Python's
+    // `state.py::reset_job_stage` writes the same string.
+    eventType: "StageReset",
     level: "info",
     message: `Retry reset requested for ${stage}`,
     payload: { reset_attempts: options.resetAttempts },
@@ -87,6 +151,9 @@ export function markJobApplied(
   if (!jobUrl) {
     throw new InputError("Job not found.");
   }
+  // Manual mark-applied — admin override, bypasses §8.5 (parity with the
+  // Python JSON-RPC `mark_applied` handler).  The user is asserting they
+  // applied externally; we trust them.
   updateExistingJobColumns(db, jobUrl, {
     apply_status: "applied",
     apply_error: null,
@@ -95,11 +162,15 @@ export function markJobApplied(
   upsertStageState(db, jobUrl, "apply", "succeeded", {
     retryable: false,
     finishedAt: new Date().toISOString(),
+    skipValidation: true,
   });
   recordActionEvent(db, {
     jobUrl,
     stage: "apply",
-    eventType: "mark_applied",
+    // H1 (round-1 review): align with the Python JSON-RPC handler
+    // (`infrastructure/rpc/handlers.py::mark_applied`) which writes the
+    // same string.  Same logical action across both write surfaces.
+    eventType: "ApplicationManuallyMarked",
     level: "info",
     message: "Job marked applied from the local API.",
     payload: { reason: request.reason ?? "" },
@@ -116,6 +187,8 @@ export function markJobSkipped(
   if (!jobUrl) {
     throw new InputError("Job not found.");
   }
+  // Manual mark-skipped — admin override, bypasses §8.5 (parity with
+  // Python's `mark_skipped` JSON-RPC handler).
   updateExistingJobColumns(db, jobUrl, {
     apply_status: "skipped",
     apply_error: null,
@@ -123,11 +196,15 @@ export function markJobSkipped(
   upsertStageState(db, jobUrl, "apply", "skipped", {
     retryable: false,
     finishedAt: new Date().toISOString(),
+    skipValidation: true,
   });
   recordActionEvent(db, {
     jobUrl,
     stage: "apply",
-    eventType: "mark_skipped",
+    // H1 (round-1 review): align with domain catalog — `StageSkipped`
+    // already exists in `domain/events/orchestration.py`.  The Python RPC
+    // `mark_skipped` handler writes the same string.
+    eventType: "StageSkipped",
     level: "info",
     message: "Job marked skipped from the local API.",
     payload: { reason: request.reason ?? "" },
@@ -141,14 +218,21 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
     throw new InputError("Job not found.");
   }
   const stage = currentMutableStage(db, jobUrl);
+  // Manual cancel — admin override, bypasses §8.5 (parity with Python's
+  // `cancel_stage` JSON-RPC handler).  Cancel from any state is permitted
+  // when the user explicitly requests it from the UI.
   upsertStageState(db, jobUrl, stage, "canceled", {
     retryable: true,
     finishedAt: new Date().toISOString(),
+    skipValidation: true,
   });
   recordActionEvent(db, {
     jobUrl,
     stage,
-    eventType: "cancel_requested",
+    // H1 (round-1 review): align with the new `StageCanceled` catalog event
+    // (added to `domain/events/orchestration.py` this round).  Python RPC
+    // `cancel_stage` handler writes the same string.
+    eventType: "StageCanceled",
     level: "warning",
     message: "Cancel requested from the local API.",
     payload: { run_id: runId },
@@ -178,7 +262,7 @@ export function softDeleteJobs(db: SqliteDatabase, request: BulkJobMutationReque
       recordActionEvent(db, {
         jobUrl,
         stage: currentMutableStage(db, jobUrl),
-        eventType: "job_deleted",
+        eventType: "JobDeleted",
         level: "info",
         message: "Job soft-deleted from the local API.",
         payload: { reason: request.reason ?? "" },
@@ -204,7 +288,7 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
       recordActionEvent(db, {
         jobUrl,
         stage: currentMutableStage(db, jobUrl),
-        eventType: "job_restored",
+        eventType: "JobRestored",
         level: "info",
         message: "Job restored from deleted jobs.",
         payload: {},
@@ -222,7 +306,14 @@ export function writeProfileConfig(paths: ProfilePaths, request: ProfileUpdateRe
   let templateText: string | undefined;
 
   if (request.profile !== undefined || request.profileText !== undefined) {
-    profile = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
+    const candidate = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
+    const validated = ProfileSchema.safeParse(candidate);
+    if (!validated.success) {
+      const issue = validated.error.issues[0];
+      const path = issue?.path.length ? issue.path.join(".") : "profile";
+      throw new InputError(`profile.json validation failed at ${path}: ${issue?.message ?? "invalid input"}`);
+    }
+    profile = validated.data as Record<string, unknown>;
     wrote = true;
   }
   if (request.style !== undefined || request.styleText !== undefined) {
@@ -300,6 +391,12 @@ function updateLegacyJobColumnsForReset(
   if (stage === "enrich") {
     updates.detail_error = null;
     updates.detail_scraped_at = null;
+    // Phase 7 (S-26 round-1 review B2): the new ``job_enrichments``
+    // table is the canonical source of "is this job enriched". Without
+    // resetting its row the worker's ``_ENRICHMENT_PENDING`` predicate
+    // permanently excludes the job and the API-driven retry-enrich
+    // silently no-ops. Mirror of Python's ``_reset_enrichment_aggregate``.
+    resetEnrichmentAggregate(db, jobUrl);
   } else if (stage === "score") {
     updates.fit_score = null;
     updates.score_reasoning = null;
@@ -326,6 +423,38 @@ function updateLegacyJobColumnsForReset(
     }
   }
   updateExistingJobColumns(db, jobUrl, updates);
+}
+
+/**
+ * Phase 7 (S-26 round-1 review B2): reset the ``job_enrichments`` row
+ * for one job back to the ``pending`` lifecycle state.
+ *
+ * Mirror of Python's ``state.py::_reset_enrichment_aggregate`` — both
+ * paths (CLI ``jobhunter retry enrich URL`` and API
+ * ``POST /v1/jobs/{key}/retry?stage=enrich``) MUST clear the
+ * aggregate's terminal-state fields, otherwise the worker's
+ * ``_ENRICHMENT_PENDING`` predicate excludes the row and retry is a
+ * silent no-op.
+ *
+ * The reset preserves the attempt history (audit trail intact) and
+ * only clears the success-side fields plus rolls ``current_status``
+ * back to ``pending``. Idempotent — safe to call when no row exists.
+ */
+function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
+  if (!tableExists(db, "job_enrichments")) {
+    return;
+  }
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE job_enrichments
+       SET current_status = 'pending',
+           full_description = NULL,
+           application_url = NULL,
+           enriched_at = NULL,
+           extraction_tier = NULL,
+           updated_at = ?
+     WHERE job_url = ?`,
+  ).run(now, jobUrl);
 }
 
 function ensureDeletedJobsTable(db: SqliteDatabase): void {
@@ -363,6 +492,23 @@ function updateExistingJobColumns(db: SqliteDatabase, jobUrl: string, updates: R
   db.prepare(`UPDATE jobs SET ${assignments} WHERE url = ?`).run(...entries.map(([, value]) => value), jobUrl);
 }
 
+/**
+ * Upsert one row into `job_stage_states`, gated by the §8.5 state machine.
+ *
+ * §8.5 enforcement is **default-on** via `validateStageTransition`.  The
+ * only callers that legitimately bypass the gate are the four admin-override
+ * commands in this file:
+ *
+ *   - `resetJobStage`        — user retry, mirrors Python `reset_job_stage`
+ *   - `markJobApplied`       — user assertion "I applied externally"
+ *   - `markJobSkipped`       — user assertion "skip this one"
+ *   - `cancelJobAction`      — user-initiated cancel from any state
+ *
+ * **Automated pipeline writes (Phase 9 / S-34 onward) MUST NOT pass
+ * `skipValidation`.**  If you're adding a new TS write path and you can't
+ * justify it as one of the four admin overrides above, leave the option
+ * unset and let the gate enforce §8.5.
+ */
 function upsertStageState(
   db: SqliteDatabase,
   jobUrl: string,
@@ -373,10 +519,21 @@ function upsertStageState(
     clearTiming?: boolean;
     finishedAt?: string;
     retryable?: boolean;
+    /**
+     * S-12: skip the §8.5 validation gate. Admin overrides (manual
+     * mark-applied, mark-skipped, cancel, reset) set this to mirror
+     * Python's `set_stage_state(... validate_transition=False)` —
+     * see `state.py::reset_job_stage`. Automated/normal writes leave
+     * this `false` (default) and pay the cost of the gate.
+     */
+    skipValidation?: boolean;
   } = {},
 ): void {
   if (!tableExists(db, "job_stage_states")) {
     return;
+  }
+  if (!options.skipValidation) {
+    validateStageTransition(db, jobUrl, stage, state);
   }
   const columns = columnNames(db, "job_stage_states");
   const now = new Date().toISOString();

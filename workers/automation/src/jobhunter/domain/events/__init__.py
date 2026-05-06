@@ -1,0 +1,138 @@
+"""Domain event types — barrel re-exports."""
+
+from jobhunter.domain.events.base import DomainEvent, create_domain_event
+from jobhunter.domain.events.discovery import (
+    JobDiscoveredPayload,
+    create_job_discovered,
+    JobUpdatedPayload,
+    create_job_updated,
+    JobDeletedPayload,
+    create_job_deleted,
+    JobRestoredPayload,
+    create_job_restored,
+)
+from jobhunter.domain.events.enrichment import (
+    JobEnrichedPayload,
+    create_job_enriched,
+    EnrichmentFailedPayload,
+    create_enrichment_failed,
+)
+from jobhunter.domain.events.scoring import (
+    JobScoredPayload,
+    create_job_scored,
+    ScoreCorrectedPayload,
+    create_score_corrected,
+)
+from jobhunter.domain.events.materials import (
+    ResumeApprovedPayload,
+    create_resume_approved,
+    ResumeFailedPayload,
+    create_resume_failed,
+    CoverLetterGeneratedPayload,
+    create_cover_letter_generated,
+    PdfRenderedPayload,
+    create_pdf_rendered,
+    MaterialsExhaustedPayload,
+    create_materials_exhausted,
+)
+from jobhunter.domain.events.apply import (
+    ApplicationSubmittedPayload,
+    create_application_submitted,
+    ApplicationFailedPayload,
+    create_application_failed,
+    ApplyRunStartedPayload,
+    create_apply_run_started,
+    ApplyRunEventRecordedPayload,
+    create_apply_run_event_recorded,
+)
+from jobhunter.domain.events.orchestration import (
+    StageStartedPayload,
+    create_stage_started,
+    StageCompletedPayload,
+    create_stage_completed,
+    StageFailedPayload,
+    create_stage_failed,
+    StageExhaustedPayload,
+    create_stage_exhausted,
+    StageResetPayload,
+    create_stage_reset,
+    StageBlockedPayload,
+    create_stage_blocked,
+    StageSkippedPayload,
+    create_stage_skipped,
+    StageCanceledPayload,
+    create_stage_canceled,
+)
+from jobhunter.domain.events.profile import (
+    ProfileUpdatedPayload,
+    create_profile_updated,
+    ProfileImportedPayload,
+    create_profile_imported,
+)
+
+__all__ = [
+    # Base
+    "DomainEvent",
+    "create_domain_event",
+    # Discovery
+    "JobDiscoveredPayload",
+    "create_job_discovered",
+    "JobUpdatedPayload",
+    "create_job_updated",
+    "JobDeletedPayload",
+    "create_job_deleted",
+    "JobRestoredPayload",
+    "create_job_restored",
+    # Enrichment
+    "JobEnrichedPayload",
+    "create_job_enriched",
+    "EnrichmentFailedPayload",
+    "create_enrichment_failed",
+    # Scoring
+    "JobScoredPayload",
+    "create_job_scored",
+    "ScoreCorrectedPayload",
+    "create_score_corrected",
+    # Materials
+    "ResumeApprovedPayload",
+    "create_resume_approved",
+    "ResumeFailedPayload",
+    "create_resume_failed",
+    "CoverLetterGeneratedPayload",
+    "create_cover_letter_generated",
+    "PdfRenderedPayload",
+    "create_pdf_rendered",
+    "MaterialsExhaustedPayload",
+    "create_materials_exhausted",
+    # Apply
+    "ApplicationSubmittedPayload",
+    "create_application_submitted",
+    "ApplicationFailedPayload",
+    "create_application_failed",
+    "ApplyRunStartedPayload",
+    "create_apply_run_started",
+    "ApplyRunEventRecordedPayload",
+    "create_apply_run_event_recorded",
+    # Orchestration
+    "StageStartedPayload",
+    "create_stage_started",
+    "StageCompletedPayload",
+    "create_stage_completed",
+    "StageFailedPayload",
+    "create_stage_failed",
+    "StageExhaustedPayload",
+    "create_stage_exhausted",
+    "StageResetPayload",
+    "create_stage_reset",
+    "StageBlockedPayload",
+    "create_stage_blocked",
+    "StageSkippedPayload",
+    "create_stage_skipped",
+    "StageCanceledPayload",
+    "create_stage_canceled",
+    # Profile
+    "ProfileUpdatedPayload",
+    "create_profile_updated",
+    "ProfileImportedPayload",
+    "create_profile_imported",
+]

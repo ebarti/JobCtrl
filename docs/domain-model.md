@@ -1,180 +1,142 @@
 # Domain Model
 
-This document defines JobHunter's core domain language and ownership
-boundaries.
+This document is the implementer's quick reference to JobHunter's domain
+language. The full specification — invariants, value objects, lifecycle,
+domain events, and ports — lives in [`docs/ddd-target.md`](ddd-target.md).
+This file summarises the eight bounded contexts and points at the code that
+owns each.
 
-## Bounded Contexts
+## Bounded Contexts (target shape, implemented)
 
-### Job Acquisition
+### Job Discovery (§3.1, §4.1)
 
-Owns finding job postings and creating canonical job records.
+Owns finding job postings and creating canonical `Job` aggregate records.
 
-Primary concepts:
+- **Aggregate root:** `Job` — `(TenantId, JobId)`
+- **Value objects:** `PostingUrl`, `Source(board)`, `Employer(name)`,
+  `SearchStrategy`, `JobMetadata`
+- **Domain events:** `JobDiscovered`, `JobUpdated`, `JobDeleted`,
+  `JobRestored`
+- **Code:** `workers/automation/src/jobhunter/domain/discovery/`,
+  `workers/automation/src/jobhunter/infrastructure/discovery/`
 
-- `Job`
-- `Source`
-- `SearchStrategy`
-- `JobUrl`
-- `ApplicationUrl`
+### Job Enrichment (§3.2, §4.2)
 
-### Pipeline State
+Owns enriching jobs with detail-page data using the 3-tier extractor
+(JSON-LD → CSS → LLM).
 
-Owns operational truth for where a job is in the workflow.
+- **Aggregate root:** `JobEnrichment` — `(TenantId, JobId)`
+- **Child entity:** `EnrichmentAttempt`
+- **Domain events:** `JobEnriched`, `EnrichmentFailed`
+- **Code:** `workers/automation/src/jobhunter/domain/enrichment/`,
+  `workers/automation/src/jobhunter/infrastructure/enrichment/`
 
-Primary concepts:
+### Candidate Profile (§3.3, §4.3)
 
-- `Stage`
-- `StageState`
-- `Attempt`
-- `BlockedReason`
-- `NextAction`
-- `RetryPolicy`
+Owns the user's reusable career data, resume baseline, tailoring policy, and
+writing style.
 
-Canonical stages:
+- **Aggregate root:** `Profile`
+- **Domain events:** `ProfileUpdated`, `ProfileImported`
+- **Code:** `workers/automation/src/jobhunter/domain/profile/`,
+  `workers/automation/src/jobhunter/infrastructure/profile/`
 
-```text
-discover -> enrich -> score -> tailor -> cover -> pdf -> apply
-```
+### Scoring (§3.4, §4.4)
 
-Canonical states:
+Owns LLM fit scoring and user-corrected scores.
 
-```text
-pending
-queued
-running
-succeeded
-failed
-blocked
-skipped
-exhausted
-canceled
-stale
-```
+- **Aggregate root:** `JobScore`
+- **Domain events:** `JobScored`, `ScoreCorrected`
+- **Code:** `workers/automation/src/jobhunter/domain/scoring/`,
+  `workers/automation/src/jobhunter/infrastructure/scoring/`
 
-### Candidate Profile
+### Materials Generation (§3.5, §4.5)
 
-Owns the user's reusable career data and resume styling inputs.
+Owns resume tailoring, cover-letter generation, and PDF rendering for one job.
 
-Primary concepts:
+- **Aggregate root:** `MaterialsSet`
+- **Child entities:** `TailoredResume`, `CoverLetter`, `RenderedPdf`
+- **Domain events:** `ResumeApproved`, `ResumeFailed`,
+  `CoverLetterGenerated`, `PdfRendered`, `MaterialsExhausted`
+- **Code:** `workers/automation/src/jobhunter/domain/materials/`,
+  `workers/automation/src/jobhunter/infrastructure/materials/`
 
-- `Profile`
-- `ApplicationDefaults`
-- `ResumeBaseline`
-- `ExperienceEntry`
-- `EducationEntry`
-- `SkillCategory`
-- `TailoringPolicy`
-- `WritingStyle`
-- `ResumeTemplate`
+### Apply Automation (§3.6, §4.6)
 
-Profile data is stored locally in `profile.json`; style and LaTeX template data
-are stored in local style/template files.
+Owns Chrome lifecycle, Claude Code subprocess, and apply submission.
 
-### Materials Generation
+- **Aggregate root:** `ApplyRun`
+- **Child entities:** `ApplyRunEvent`
+- **Domain events:** `ApplyRunStarted`, `ApplyRunEventRecorded`,
+  `ApplicationSubmitted`, `ApplicationFailed`
+- **Code:** `workers/automation/src/jobhunter/domain/apply/`,
+  `workers/automation/src/jobhunter/infrastructure/apply/`
 
-Owns generated application artifacts.
+### Pipeline Orchestration (§3.7, §4.7)
 
-Primary concepts:
+Owns per-job stage state, transitions, and the saga that sequences a
+multi-stage pipeline run.
 
-- `TailoredResume`
-- `CoverLetter`
-- `ResumePdf`
-- `CoverLetterPdf`
-- `Template`
-- `Artifact`
+- **Aggregate root:** `JobPipelineState`
+- **Stages:** `discover → enrich → score → tailor → cover → pdf → apply`
+- **States:** `pending`, `queued`, `running`, `succeeded`, `failed`,
+  `blocked`, `skipped`, `exhausted`, `stale`, `canceled`
+- **Domain events:** `StageStarted`, `StageCompleted`, `StageFailed`,
+  `StageBlocked`, `StageSkipped`, `StageReset`, `StageExhausted`,
+  `StageCanceled`
+- **Code:** `workers/automation/src/jobhunter/domain/pipeline/`,
+  `workers/automation/src/jobhunter/infrastructure/pipeline/`,
+  `packages/domain-types/src/pipeline/`
 
-Artifacts should be recorded in `job_artifacts` before the UI can show or open
-them.
+### Operations / Read-Side (§3.8, §4.8, §6.6)
 
-### Apply Automation
+Owns no aggregate. Maintains five denormalised projections built from domain
+events from every other context.
 
-Owns local browser automation for application submission.
+- **Projections:** `JobListProjection`, `DashboardProjection`,
+  `JobDetailProjection`, `ArtifactListProjection`, `ApplyRunProjection`
+- **Driven port:** `ReadModelStore`
+- **Adapter:** `SqliteProjectionStore`
+- **Builders:** `ProjectionBuilder` (Python, `infra/projections/`) +
+  `refreshProjections` (TS, `apps/api/src/projections.ts`)
+- **Code:** `workers/automation/src/jobhunter/domain/operations/`,
+  `workers/automation/src/jobhunter/infrastructure/projections/`
 
-Primary concepts:
+## Cross-Cutting
 
-- `ApplyRun`
-- `DryRun`
-- `SubmissionResult`
-- `ScreeningAnswer`
-- `BrowserWorker`
-- `ApplyLog`
+### Tenancy
 
-Dry runs must never mark jobs as applied.
+`TenantId` is a first-class identity scope. Every aggregate identity, every
+domain event, and every repository query is tenant-scoped. Local-first mode
+uses the `LOCAL_TENANT` constant (`local`); the hosted-future migration
+swaps adapters without changing domain code.
 
-### Operations UI
+### Domain Events
 
-Owns the user's live control surface.
+Domain events are immutable past-tense facts. They flow through the
+`InProcessEventBus` (`infrastructure/events/in_process_bus.py`) — local-mode —
+or via the future SQS-FIFO outbox in hosted mode (§6.3). Each subscriber runs
+in its own transaction scope; handler errors are logged without breaking
+peers.
 
-Primary concepts:
+### Integration Protocol (§6.5)
 
-- `DashboardSummary`
-- `JobList`
-- `JobDrawer`
-- `ActionButton`
-- `ActionStatus`
-- `EventLog`
+The TS API ↔ Python worker boundary is **JSON-RPC 2.0 over a long-lived
+subprocess**. The TS-side `SubprocessJsonRpcAdapter`
+(`apps/api/src/json-rpc-adapter.ts`) speaks to the Python `JsonRpcServer`
+(`workers/automation/src/jobhunter/infrastructure/rpc/server.py`) launched
+via `jobhunter rpc`.
 
-The UI should show actionable stage state and should not require direct SQLite
-inspection.
+### Stage State Machine
 
-## Aggregates
+The shared state machine (`packages/domain-types/src/pipeline/state_machine.ts`
++ `workers/automation/src/jobhunter/domain/pipeline/state_machine.py`) defines
+valid `StageState` transitions. Both languages derive their checker from the
+same TypeSpec-shaped table; the `scripts/check-domain-type-parity.py`
+fitness function asserts they stay in sync.
 
-### Job Aggregate
+## See Also
 
-Root: `Job`
-
-Owns:
-
-- source identity
-- title/company/location metadata
-- discovered and enriched job description data
-- stage states
-- events
-- artifacts
-- apply status
-
-The job URL remains the current compatibility key. The target model should add
-a stable `jobKey` so original job URL and application URL can differ safely.
-
-### Profile Aggregate
-
-Root: `Profile`
-
-Owns:
-
-- personal information
-- application defaults
-- resume baseline
-- experience entries
-- education entries
-- skill categories
-- tailoring controls
-- writing style controls
-
-The profile editor should present structured form fields, not raw JSON, even
-though local persistence remains JSON.
-
-### Action/Run Aggregate
-
-Root: `LocalAction` or `Run`
-
-Owns:
-
-- requested action
-- target job or stage
-- status
-- timing
-- stdout/stderr or structured output
-- error information
-- resulting events and artifacts
-
-## Ownership Rules
-
-- The UI owns interaction state, not workflow truth.
-- `job_stage_states` owns pipeline truth once a stage has explicit state.
-- Legacy nullable `jobs` fields are compatibility inputs, not the long-term
-  operational model.
-- Python workers own external automation and LLM calls.
-- The TypeScript API owns product-facing JSON contracts.
-- Local file paths are sensitive and should only be exposed where needed for
-  local operation.
+- `docs/ddd-target.md` — full architectural target.
+- `docs/decisions.md` — ADRs.
+- `docs/plans/implemented/2026-05-06-ddd-migration.md` — migration history.
