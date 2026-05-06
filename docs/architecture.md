@@ -129,6 +129,165 @@ The frontend uses `@jobhunter/api-client` for API transport and
 `@jobhunter/contracts` for shared schemas and DTOs. It should not know shell
 command syntax.
 
+The frontend follows its own DDD + hexagonal target documented in
+[`docs/frontend-target.md`](frontend-target.md) — three-layer state separation,
+eight bounded contexts that mirror the backend 1:1, view-vs-context dichotomy,
+hexagonal frontend ports, SSE realtime via the invalidation router, and a
+projection-typed Operations read-side. The summary below cross-links to the
+target sections; the target doc is the canonical detail.
+
+#### Stack
+
+| Concern | Choice | Target ref |
+|---|---|---|
+| Bundler / dev server | Vite (SPA today; TanStack Start named-not-built for SSR) | §4.1, §9.1 |
+| UI library | React 19 | §4.7 |
+| Styling | Tailwind CSS 4 with design tokens in `tokens.css`; `darkMode: ["selector", "[data-theme='dark']"]` | §4.8 |
+| Component primitives | shadcn/ui (Radix-based, copied + owned in `shared/ui/`) | §4.7 |
+| Router | TanStack Router (file-based via `@tanstack/router-vite-plugin`) with route-level Zod search-param schemas | §4.3 |
+| Server state | TanStack Query v5 with per-context query-key factories, `tenant`-first keys, central registry in `contexts/operations/queryKeys.ts` | §4.1, §4.4.1 |
+| Tables | TanStack Table v8; column models live with the consuming view; cell renderers are imported from contexts | §3.10, §11 |
+| Forms | TanStack Form + Zod `safeParse` | §4.6 |
+| Client state | Zustand (`shared/stores/`) — UI prefs, toast queue, command palette, profile-import wizard draft (`persist` middleware where durability matters) | §4.9, §4.10 |
+| Test runner | Vitest + React Testing Library + MSW for unit / hook / component | §10.2, §10.3 |
+| End-to-end | Playwright against a seeded local API + SQLite fixture | §10.4 |
+| Component-driven dev | Storybook with `addon-msw` and `addon-a11y` (critical+serious axe violations fail CI) | §10.5, §10.7 |
+| Type-level tests | Vitest `typecheck` mode via `vitest.types.config.ts`; `*.test-d.ts` files live under `apps/web/test/types/`; invoked as `pnpm --filter @jobhunter/web test-d` | §10.6 |
+
+#### Three Layers of State
+
+Every piece of state lives in exactly one layer (`docs/frontend-target.md` §2.1):
+
+| Layer | Owner | What lives here |
+|---|---|---|
+| Server state | TanStack Query cache | API-derived projections, profile, settings, dashboard summary — anything fetched from `apps/api`. |
+| URL state | TanStack Router (typed search params via Zod) | Anything bookmarkable: view, filters, sort, page, page size, selected job, drawer open/close. |
+| Client state | Zustand (with `persist` where appropriate) + React context | Theme, density, tenant context, transient UI like toast queue, ephemeral form drafts that do not survive navigation. |
+
+No server data in `useState`; no filter / pagination / sort / drawer state in
+`useState`; no durable user preferences in component-local state; one source of
+truth per fact; components consume state through hooks (never raw stores or the
+`QueryClient` directly).
+
+#### Frontend Bounded Contexts
+
+`apps/web/src/contexts/<name>/` mirrors the backend's eight bounded contexts
+1:1 (`docs/frontend-target.md` §3, §11):
+
+| Frontend folder | Owns | Backend mirror |
+|---|---|---|
+| `discovery/` | `useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`; future `useImportJobMutation`. | Job Discovery |
+| `enrichment/` | `JobEnriched` / `EnrichmentFailed` invalidation handlers; future `useEnrichmentRetryMutation`. | Job Enrichment |
+| `profile/` | `useProfileQuery`, `useUpdateProfileMutation`, `useImportResumeMutation`, settings + credentials hooks, profile-import wizard store, profile editor + resume preview components. | Candidate Profile |
+| `scoring/` | `<ScoreBadge>`, `<ScoreBreakdown>`; future `useCorrectScoreMutation`. | Scoring |
+| `materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation`, generate / open buttons. | Materials Generation |
+| `apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyButton>`, `<DryRunButton>`, `<ApplyRunBadge>`, `<ApplyRunTimeline>`, `<ApplyHistory>`. | Apply Automation |
+| `pipeline/` | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`, `<StageBadge>`, `<StageTimeline>`, `<JobActions>`. | Pipeline Orchestration |
+| `operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`); query-key registry; SSE subscription; invalidation router. | Operations / Read-Side |
+
+`views/dashboard/`, `views/jobs/`, and `views/artifacts/` are **composers, not
+contexts** (`docs/frontend-target.md` §3.10). They import hooks from
+`contexts/operations/` and components / mutations from aggregate contexts;
+they own layout and view-local ephemeral UI (e.g., bulk-selection sets) and
+nothing else. View → context dependency is one-way; views never depend on
+other views.
+
+#### Hexagonal Frontend Ports
+
+Components and feature hooks depend only on **ports**; concrete adapters bind
+to the ports in `shared/providers/PortsProvider.tsx`
+(`docs/frontend-target.md` §6):
+
+| Port | Local-mode adapter | Hosted-mode adapter (named, not built) |
+|---|---|---|
+| `ApiClientPort` | `FetchApiClientAdapter` (wraps `@jobhunter/api-client`) | Same adapter; baseUrl from env, `Authorization: Bearer <jwt>` injected by hosted `AuthInterceptor`. |
+| `EventStreamPort` | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` if SSE proves limiting. |
+| `StoragePort` | `LocalStorageAdapter` | `IndexedDbAdapter` when client-side cache exceeds 5 MB. |
+| `SessionPort` | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito). |
+| `ClipboardPort` | `NavigatorClipboardAdapter` | Same adapter. |
+| `OpenInOsPort` | `OpenArtifactAdapter` (POSTs to `/v1/artifacts/:id/open`) | Disabled in hosted mode; UI surfaces a presigned-URL download instead. |
+| `TelemetryPort` | `ConsoleTelemetryAdapter` (no-op) | `OpenTelemetryWebAdapter` → OTLP collector. |
+| `FeatureFlagPort` | `StaticFeatureFlagAdapter` (always default) | Backend-served via `apiClient.featureFlags()`; cached in Query. |
+
+The "frontend driving ports" (use cases) are the per-context hooks themselves
+(`useApplyJobMutation`, `useDeleteJobMutation`, …) — React conventions are the
+de-facto driving-port representation; no `UseCase` interface is formalised
+(`docs/frontend-target.md` §6.7).
+
+#### Provider Stack
+
+The provider stack as wired in `apps/web/src/main.tsx` (top-down):
+
+```mermaid
+flowchart TB
+  Main["main.tsx<br/>createRoot + adapter wiring"]
+  PP["PortsProvider<br/>(ApiClient, EventStream, Storage, Session,<br/>Clipboard, OpenInOs, Telemetry, FeatureFlag)"]
+  TP["TenantProvider<br/>(LOCAL_TENANT today; JWT-derived in hosted)"]
+  QC["QueryClientProvider<br/>(TanStack Query; per-context query-key factories)"]
+  ES["EventStreamProvider<br/>(contexts/operations/providers/;<br/>subscribes EventStreamPort; dispatches DomainEvent<br/>to invalidation-router)"]
+  TH["ThemeProvider"]
+  DN["DensityProvider"]
+  TT["TooltipProvider (Radix)"]
+  TS["ToasterProvider"]
+  App["App<br/>(RouterProvider — TanStack Router file-based routes)"]
+  Shell["AppShell<br/>(Topbar, NavBar, ConnectionStatusPill, Toaster)"]
+  Routes["routes/* → views/*"]
+
+  Main --> PP --> TP --> QC --> ES --> TH --> DN --> TT --> TS --> App --> Shell --> Routes
+```
+
+`EventStreamProvider` lives in `contexts/operations/providers/` because the
+Operations context owns the SSE subscription and the invalidation-router
+dispatch (`docs/frontend-target.md` §3.9, §7.3); every other provider lives
+in `shared/providers/`.
+
+#### Realtime — SSE → Invalidation Router → Cache
+
+```mermaid
+flowchart LR
+  Worker["Python worker<br/>+ apps/api writes"]
+  Events["job_events<br/>(SQLite)"]
+  Endpoint["GET /v1/events/stream<br/>(text/event-stream;<br/>COALESCE tenant filter)"]
+  ES["EventSource<br/>(browser auto-reconnect via Last-Event-ID)"]
+  Provider["EventStreamProvider"]
+  Parser["parseDomainEvent<br/>(Zod-validated DomainEvent)"]
+  Router["InvalidationRouter<br/>Record&lt;DomainEvent['eventType'], InvalidationHandler&gt;"]
+  Keys["Query-key registry<br/>(jobsKeys / dashboardKeys / artifactsKeys / …)"]
+  Cache["TanStack Query cache<br/>invalidateQueries / setQueryData"]
+
+  Worker --> Events
+  Events --> Endpoint
+  Endpoint --> ES
+  ES --> Provider
+  Provider --> Parser
+  Parser --> Router
+  Router --> Keys
+  Router --> Cache
+```
+
+The invalidation router is **the** integration contract between the backend's
+`DomainEvent` taxonomy and the frontend cache — a pure function tested in
+isolation. Every backend event has a handler; the
+`Record<DomainEvent["eventType"], InvalidationHandler>` typing makes a missing
+handler a TypeScript compile error, and the
+`every-event-has-handler.test.ts` parity test catches obvious empty-stub
+implementations (`docs/frontend-target.md` §7.4).
+
+#### Test Pyramid
+
+`docs/frontend-target.md` §10. Vitest + React Testing Library + MSW for unit /
+hook / component tests; Playwright for end-to-end critical flows; Storybook
+with the a11y addon for component-driven development. Two parity tests guard
+the cross-language seams:
+
+- `every-event-has-handler.test.ts` — every `DomainEvent["eventType"]` has a
+  registered invalidation handler.
+- `every-stage-state-has-badge.test.tsx` — every `STAGE_STATE_KINDS` value
+  has a `<StageBadge>` arm.
+
+Detailed coverage and the a11y bar live in
+[`docs/local-reliability-qa.md`](local-reliability-qa.md).
+
 ### TypeScript Product API
 
 The local TypeScript API under `apps/api` owns typed JSON read models and
@@ -237,3 +396,4 @@ git diff --check
 - `docs/plans/implemented/2026-05-03-local-reliability-qa.md`
 - `docs/plans/implemented/2026-05-03-remove-python-dashboard-compat.md`
 - `docs/plans/implemented/2026-05-06-ddd-migration.md`
+- `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`

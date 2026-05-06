@@ -46,3 +46,118 @@ pnpm web:build
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to
 that origin unless `VITE_JOBHUNTER_API_BASE_URL` is set.
+
+## Server-Sent Events — `GET /v1/events/stream`
+
+The API exposes a Server-Sent Events endpoint that the frontend's
+`SseEventStreamAdapter` (`apps/web/src/shared/adapters/local/`) consumes via
+the browser's native `EventSource`. Per
+[`docs/frontend-target.md`](frontend-target.md) §7.1, this endpoint is the
+single realtime channel from the worker / API write-side to the frontend's
+TanStack Query cache; the frontend's `InvalidationRouter` translates each
+`DomainEvent` into the right `invalidateQueries` / `setQueryData` calls.
+
+### Request
+
+```
+GET /v1/events/stream?tenantId=<tenantId>&since=<lastEventId>
+Accept: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+Last-Event-ID: <lastEventId>      # set by EventSource auto-reconnect
+```
+
+`tenantId` is recommended; in local mode (`apps/api/src/event-stream.ts`
+`resolveTenantId`) it defaults to `LOCAL_TENANT` and any non-`LOCAL_TENANT`
+value is silently overridden to `LOCAL_TENANT`. In hosted mode (named-not-built),
+the server resolves `tenantId` from the JWT, the JWT-derived tenant is
+canonical, and a mismatched query-string value returns `403 Forbidden`.
+
+`since` is optional and is used only by the planned IndexedDB warm-start path
+(`docs/frontend-target.md` §9.7) to resume from a persisted watermark on
+first connect; the browser's native `EventSource` auto-reconnect uses the
+`Last-Event-ID` header instead.
+
+### Response framing
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/event-stream
+X-Accel-Buffering: no
+
+retry: 5000
+
+id: 12345
+event: JobScored
+data: {"tenantId":"local","jobId":"job-...","fitScore":8,"version":1,"scoredAt":"..."}
+
+id: 12346
+event: ResumeApproved
+data: {"tenantId":"local","jobId":"job-...","artifactId":"...","generation":2,"approvedAt":"..."}
+
+: keepalive
+
+event: heartbeat
+data: {"watermark":12346}
+```
+
+Each frame:
+
+- `id: <event_id>` — the row's `event_id` from `job_events`. The browser
+  echoes this as `Last-Event-ID` on auto-reconnect.
+- `event: <event_type>` — the discriminator from the `DomainEvent` Zod
+  schema (e.g., `JobScored`, `ResumeApproved`, `ApplyRunStarted`).
+- `data: <payload_json>` — the payload, ready for `JSON.parse`.
+
+### Tenant filtering (COALESCE on the row, not the request)
+
+The server filters `job_events` with the COALESCE on the *event row's*
+extracted tenant — falling back to the literal `'local'` string when the
+row's `payload_json` lacks a `$.tenantId` key (legacy events written before
+`tenantId` was a required payload field):
+
+```sql
+SELECT event_id, event_type, payload_json, occurred_at
+FROM job_events
+WHERE event_id > ?
+  AND COALESCE(JSON_EXTRACT(payload_json, '$.tenantId'), 'local') = ?
+ORDER BY event_id ASC
+LIMIT ?
+```
+
+The right-hand `?` is the resolved request `tenantId` (per `resolveTenantId`
+above — `LOCAL_TENANT` in local mode; JWT-derived in hosted). The COALESCE
+guarantees that legacy `LOCAL_TENANT` rows missing `$.tenantId` still match
+the local-mode filter without a write-side backfill.
+
+Tenant scope is mandatory; there is no "all tenants" mode
+(`docs/frontend-target.md` §7.8).
+
+### Resume-position precedence
+
+1. `Last-Event-ID` HTTP header (preferred — populated by `EventSource`
+   auto-reconnect).
+2. `?since=<lastEventId>` query string (fallback for IndexedDB warm-start).
+3. `MAX(event_id)` on `job_events` for the resolved `tenantId` (default if
+   neither is supplied — first connect streams from the current tail with
+   no backfill).
+
+If both header and query are present, `Last-Event-ID` wins.
+
+### Cadences
+
+- **`retry: 5000`** — 5 s reconnect baseline (the browser respects this;
+  no application code).
+- **`: keepalive`** — comment line every 15 s, keeps reverse proxies and
+  CDNs from idling the connection out.
+- **`event: heartbeat` with `data: {"watermark":<event_id>}`** — every
+  30 s, so the client can verify liveness even when no domain events
+  fire. The frontend's AppShell renders a "connection lost" banner if
+  no heartbeat or domain event arrives for 30 s.
+
+### Reconnect backstop
+
+On reconnect after a "closed" status of more than 30 s, the frontend's
+`EventStreamProvider` fires a one-shot `queryClient.invalidateQueries()`
+to recover from any events lost during the gap. `Last-Event-ID` covers the
+common case; the full invalidation is a backstop.
