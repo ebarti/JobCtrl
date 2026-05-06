@@ -743,7 +743,8 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
 }
 
 function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
-  refreshProjections(db, DEFAULT_TENANT);
+  // L3 (round-1 review): caller (``buildDashboardSummary``) already
+  // refreshed projections; do not double-refresh here.
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
     : "";

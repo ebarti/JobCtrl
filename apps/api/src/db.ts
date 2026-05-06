@@ -5,11 +5,23 @@ export type SqliteDatabase = Database.Database;
 export type SqliteValue = string | number | bigint | null;
 
 export function openReadOnlyDatabase(dbPath: string): SqliteDatabase {
-  return new Database(dbPath, { readonly: true, fileMustExist: true });
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  // Match the worker's PRAGMA so contended reads wait instead of failing
+  // immediately with SQLITE_BUSY.  Worker writes hold the WAL briefly;
+  // 5s gives the API process room to retry transparently.
+  db.pragma("busy_timeout = 5000");
+  return db;
 }
 
 export function openDatabase(dbPath: string): SqliteDatabase {
-  return new Database(dbPath, { fileMustExist: true });
+  const db = new Database(dbPath, { fileMustExist: true });
+  // L4 (round-1 review): now that read endpoints write (projection
+  // refresh) and the worker process also writes to the same
+  // ``*_projections`` tables + watermark, SQLite contention is more
+  // likely.  Match the worker's ``PRAGMA busy_timeout=10000`` half-way
+  // so the API doesn't fail with ``SQLITE_BUSY`` on a write conflict.
+  db.pragma("busy_timeout = 5000");
+  return db;
 }
 
 export function databaseExists(dbPath: string): boolean {

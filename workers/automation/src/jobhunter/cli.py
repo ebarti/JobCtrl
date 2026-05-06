@@ -68,9 +68,9 @@ def _bootstrap() -> None:
         builder = ProjectionBuilder(conn)
         builder.refresh()
         if _projection_subscription is None:
-            from jobhunter.infrastructure.profile.factory import _get_default_publisher
+            from jobhunter.infrastructure.events import get_default_publisher
 
-            _projection_subscription = builder.subscribe_to(_get_default_publisher())
+            _projection_subscription = builder.subscribe_to(get_default_publisher())
     except Exception:  # noqa: BLE001 — projection refresh failure must not break boot
         log.exception("ProjectionBuilder backfill on bootstrap failed")
 

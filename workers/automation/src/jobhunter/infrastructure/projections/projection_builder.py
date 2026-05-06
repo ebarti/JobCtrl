@@ -166,13 +166,29 @@ class ProjectionBuilder:
                 # to backfill.
                 pass
 
+        # L5 (round-1 review): if there's nothing dirty AND we've already
+        # synced past the latest event, skip the O(jobs × stages)
+        # dashboard / apply-run rebuilds.  Exception: first-run, when
+        # the dashboard row doesn't exist yet — materialise an empty
+        # one so reads always return data.
+        dashboard_exists = (
+            self._conn.execute(
+                "SELECT 1 FROM dashboard_projections WHERE tenant_id = ?",
+                (str(self._tenant_id),),
+            ).fetchone()
+            is not None
+        )
+        if not dirty_jobs and max_event_id == watermark and dashboard_exists:
+            return 0
+
         if not dirty_jobs:
-            # Still advance the watermark so we don't keep reading the
-            # same empty result set on subsequent refreshes.
+            # Watermark advanced past events with no job_url (e.g.
+            # system events) OR first-run: bump the watermark + ensure
+            # the dashboard row exists.
             if max_event_id > watermark:
                 self._watermarks.set(PROJECTION_NAME, max_event_id)
-            self._rebuild_dashboard()
-            self._rebuild_apply_runs()
+            if not dashboard_exists:
+                self._rebuild_dashboard()
             self._conn.commit()
             return 0
 

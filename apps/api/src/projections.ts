@@ -29,6 +29,216 @@ const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   apply: 3,
 };
 
+interface BackfillOpts {
+  jobUrl: string;
+  stage: string;
+  attemptCount?: number;
+  finishedAt?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}
+
+/**
+ * Idempotently backfill ``job_stage_states`` from legacy ``jobs`` columns
+ * for any job that has no explicit stage rows.
+ *
+ * Mirrors ``database._backfill_legacy_stage_states`` in Python.  Both
+ * paths use ``INSERT OR IGNORE``, so running both is safe.  Per the
+ * no-strangler directive, the projection refreshers MUST NOT carry a
+ * "derive stage state from legacy columns" compat shim — the canonical
+ * source has to be ``job_stage_states``.  This backfill makes that
+ * possible for legacy databases that pre-date the post-DDD pipeline.
+ */
+function backfillLegacyStageStates(db: SqliteDatabase): void {
+  if (!tableExists(db, "jobs") || !tableExists(db, "job_stage_states")) return;
+  const legacyJobs = allRows<{
+    url: string;
+    discovered_at: string | null;
+    full_description: string | null;
+    detail_scraped_at: string | null;
+    detail_error: string | null;
+    fit_score: number | null;
+    tailored_resume_path: string | null;
+    tailor_attempts: number | null;
+    cover_letter_path: string | null;
+    cover_attempts: number | null;
+    applied_at: string | null;
+    apply_status: string | null;
+    apply_error: string | null;
+  }>(
+    db,
+    `SELECT j.url, j.discovered_at, j.full_description, j.detail_scraped_at,
+            j.detail_error, j.fit_score,
+            j.tailored_resume_path, j.tailor_attempts,
+            j.cover_letter_path, j.cover_attempts,
+            j.applied_at, j.apply_status, j.apply_error
+     FROM jobs j
+     LEFT JOIN job_stage_states jss ON jss.job_url = j.url
+     GROUP BY j.url
+     HAVING COUNT(jss.stage) = 0`,
+  );
+  if (legacyJobs.length === 0) return;
+
+  const now = new Date().toISOString();
+  const stageMaxAttempts: Record<string, number> = {
+    discover: 1,
+    enrich: 3,
+    score: 3,
+    tailor: 5,
+    cover: 5,
+    pdf: 3,
+    apply: 3,
+  };
+  // Column-aware INSERT: ``database.py::ensure_state_tables`` is the
+  // canonical schema (includes ``metadata_json`` + ``version``), but
+  // tests construct the table by hand and may omit those columns.  Read
+  // the live PRAGMA, build the INSERT around what's actually there.
+  const stageColumns = new Set(
+    allRows<{ name: string }>(db, "PRAGMA table_info(job_stage_states)").map((r) => r.name),
+  );
+  const allColumnSpecs: Array<[string, (state: string, opts: BackfillOpts) => SqliteValue]> = [
+    ["job_url", (_s, o) => o.jobUrl],
+    ["stage", (_s, o) => o.stage],
+    ["state", (s) => s],
+    ["attempt_count", (_s, o) => o.attemptCount ?? 0],
+    ["max_attempts", (_s, o) => stageMaxAttempts[o.stage] ?? null],
+    ["started_at", () => null],
+    ["updated_at", () => now],
+    ["finished_at", (_s, o) => o.finishedAt ?? null],
+    ["duration_ms", () => null],
+    ["error_code", (_s, o) => o.errorCode ?? null],
+    ["error_message", (_s, o) => o.errorMessage ?? null],
+    ["retryable", (s) => (s === "blocked" ? 0 : 1)],
+    ["blocked_by_json", () => null],
+    ["next_action", () => null],
+    ["metadata_json", () => null],
+    ["version", () => 0],
+  ];
+  const presentColumns = allColumnSpecs.filter(([col]) => stageColumns.has(col));
+  if (presentColumns.length === 0) return;
+  const insertSql = `INSERT OR IGNORE INTO job_stage_states (${presentColumns
+    .map(([col]) => col)
+    .join(", ")}) VALUES (${presentColumns.map(() => "?").join(", ")})`;
+  const insert = db.prepare(insertSql);
+  const insertStage = (
+    jobUrl: string,
+    stage: string,
+    state: string,
+    opts: Omit<BackfillOpts, "jobUrl" | "stage"> = {},
+  ): void => {
+    const fullOpts: BackfillOpts = { ...opts, jobUrl, stage };
+    const values = presentColumns.map(([, fn]) => fn(state, fullOpts));
+    insert.run(...values);
+  };
+
+  for (const row of legacyJobs) {
+    if (!row.url) continue;
+    insertStage(row.url, "discover", "succeeded", {
+      attemptCount: 1,
+      finishedAt: row.discovered_at ?? now,
+    });
+
+    const hasEnrichment = Boolean(row.full_description) || Boolean(row.detail_scraped_at);
+    let enrichSucceeded = false;
+    if (row.detail_error && !hasEnrichment) {
+      insertStage(row.url, "enrich", "failed", {
+        errorCode: "LEGACY_DETAIL_ERROR",
+        errorMessage: String(row.detail_error),
+      });
+    } else if (hasEnrichment) {
+      insertStage(row.url, "enrich", "succeeded", { finishedAt: row.detail_scraped_at ?? now });
+      enrichSucceeded = true;
+    } else {
+      insertStage(row.url, "enrich", "pending");
+    }
+
+    const hasScore = row.fit_score !== null && row.fit_score !== undefined;
+    let scoreSucceeded = false;
+    if (hasScore) {
+      insertStage(row.url, "score", "succeeded", { finishedAt: now });
+      scoreSucceeded = true;
+    } else if (!enrichSucceeded) {
+      insertStage(row.url, "score", "blocked", {
+        errorCode: "BLOCKED",
+        errorMessage: "Enrichment has not completed.",
+      });
+    } else {
+      insertStage(row.url, "score", "pending");
+    }
+
+    const hasTailor = Boolean(row.tailored_resume_path);
+    const tailorAttempts = Number(row.tailor_attempts ?? 0);
+    let tailorSucceeded = false;
+    if (hasTailor) {
+      insertStage(row.url, "tailor", "succeeded", {
+        attemptCount: tailorAttempts,
+        finishedAt: now,
+      });
+      tailorSucceeded = true;
+    } else if (!scoreSucceeded) {
+      insertStage(row.url, "tailor", "blocked", {
+        errorCode: "BLOCKED",
+        errorMessage: "score has not completed.",
+      });
+    } else if (tailorAttempts >= (stageMaxAttempts.tailor ?? 5)) {
+      insertStage(row.url, "tailor", "exhausted", {
+        attemptCount: tailorAttempts,
+        errorCode: "EXHAUSTED",
+        errorMessage: "tailor attempts exhausted.",
+      });
+    } else {
+      insertStage(row.url, "tailor", "pending", { attemptCount: tailorAttempts });
+    }
+
+    const hasCover = Boolean(row.cover_letter_path);
+    const coverAttempts = Number(row.cover_attempts ?? 0);
+    if (hasCover) {
+      insertStage(row.url, "cover", "succeeded", { attemptCount: coverAttempts, finishedAt: now });
+    } else if (!tailorSucceeded) {
+      insertStage(row.url, "cover", "blocked", {
+        errorCode: "BLOCKED",
+        errorMessage: "tailor has not completed.",
+      });
+    } else if (coverAttempts >= (stageMaxAttempts.cover ?? 5)) {
+      insertStage(row.url, "cover", "exhausted", {
+        attemptCount: coverAttempts,
+        errorCode: "EXHAUSTED",
+        errorMessage: "cover attempts exhausted.",
+      });
+    } else {
+      insertStage(row.url, "cover", "pending", { attemptCount: coverAttempts });
+    }
+
+    if (tailorSucceeded) {
+      insertStage(row.url, "pdf", "succeeded", { finishedAt: now });
+    } else {
+      insertStage(row.url, "pdf", "blocked", {
+        errorCode: "BLOCKED",
+        errorMessage: "tailor has not completed.",
+      });
+    }
+
+    const applyStatusLower = String(row.apply_status ?? "").toLowerCase();
+    if (row.applied_at || applyStatusLower === "applied") {
+      insertStage(row.url, "apply", "succeeded", { finishedAt: row.applied_at ?? now });
+    } else if (applyStatusLower === "in_progress") {
+      insertStage(row.url, "apply", "running");
+    } else if (row.apply_error) {
+      insertStage(row.url, "apply", "failed", {
+        errorCode: "LEGACY_APPLY_ERROR",
+        errorMessage: String(row.apply_error),
+      });
+    } else if (!tailorSucceeded) {
+      insertStage(row.url, "apply", "blocked", {
+        errorCode: "BLOCKED",
+        errorMessage: "Materials are not ready.",
+      });
+    } else {
+      insertStage(row.url, "apply", "pending");
+    }
+  }
+}
+
 /** Idempotently create the projection tables. Mirrors the Python schema. */
 export function ensureProjectionTables(db: SqliteDatabase): void {
   db.exec(`
@@ -150,6 +360,7 @@ function setWatermark(db: SqliteDatabase, projection: string, eventId: number): 
  */
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
   ensureProjectionTables(db);
+  backfillLegacyStageStates(db);
 
   const watermark = readWatermark(db, PROJECTION_WATERMARK_NAME);
 
@@ -184,11 +395,19 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     }
   }
 
+  // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
+  // O(jobs × stages) dashboard / apply-run rebuilds.
+  if (dirtyJobs.size === 0 && maxEventId === watermark) {
+    return;
+  }
+
   for (const jobUrl of dirtyJobs) {
     rebuildJobProjections(db, tenantId, jobUrl);
   }
-  rebuildApplyRunProjections(db, tenantId);
-  rebuildDashboardProjection(db, tenantId);
+  if (dirtyJobs.size > 0) {
+    rebuildApplyRunProjections(db, tenantId);
+    rebuildDashboardProjection(db, tenantId);
+  }
 
   if (maxEventId > watermark) {
     setWatermark(db, PROJECTION_WATERMARK_NAME, maxEventId);
@@ -475,139 +694,6 @@ function loadStages(db: SqliteDatabase, jobUrl: string): NormalizedStage[] {
       next_action: nullableString(row.next_action),
     };
   });
-}
-
-/** Legacy stage derivation for jobs that pre-date job_stage_states.
- *
- * Mirrors the prior ``deriveLegacyStates`` in ``read-model.ts``: when a
- * job has no explicit stage rows, fall back to inferring stage state
- * from the per-aggregate tables + legacy job columns.  This keeps
- * dashboards correct for legacy data that was discovered before the
- * pipeline started writing canonical stage rows.
- */
-function deriveLegacyStages(
-  job: Record<string, unknown>,
-  enrichment: EnrichmentLatest,
-  score: ScoreLatest,
-  materials: MaterialsLatest,
-  apply: ApplyLatest,
-): NormalizedStage[] {
-  const discover = stageOf("discover", "succeeded");
-
-  const enrichmentStatus = enrichment.currentStatus;
-  const hasEnrichmentSuccess =
-    enrichmentStatus === "enriched" ||
-    Boolean(enrichment.fullDescription) ||
-    Boolean(enrichment.enrichedAt);
-  const hasEnrichmentFailure = enrichmentStatus === "failed";
-  const detailError = nullableString(job.detail_error);
-  let enrich: NormalizedStage;
-  if (hasEnrichmentFailure) {
-    enrich = stageOf("enrich", "failed", "Enrichment failed");
-  } else if (hasEnrichmentSuccess) {
-    enrich = stageOf("enrich", "succeeded");
-  } else if (detailError) {
-    enrich = stageOf("enrich", "failed", detailError);
-  } else if (job.detail_scraped_at || job.full_description) {
-    enrich = stageOf("enrich", "succeeded");
-  } else {
-    enrich = stageOf("enrich", "pending");
-  }
-
-  const hasScore =
-    score.fitScore !== null ||
-    nullableNumber(job.fit_score) !== null ||
-    Boolean(job.scored_at);
-  let scoreStage: NormalizedStage;
-  if (enrich.state !== "succeeded") {
-    scoreStage = stageOf("score", "blocked", "Enrichment has not completed.");
-  } else if (hasScore) {
-    scoreStage = stageOf("score", "succeeded");
-  } else {
-    scoreStage = stageOf("score", "pending");
-  }
-
-  const tailorPath = materials.tailorPath ?? nullableString(job.tailored_resume_path);
-  const tailorAttempts = nullableNumber(job.tailor_attempts) ?? 0;
-  const tailor = deriveArtifactStage("tailor", scoreStage, tailorPath, tailorAttempts);
-
-  const coverPath = materials.coverPath ?? nullableString(job.cover_letter_path);
-  const coverAttempts = nullableNumber(job.cover_attempts) ?? 0;
-  const cover = deriveArtifactStage("cover", tailor, coverPath, coverAttempts);
-
-  const pdf =
-    tailor.state === "succeeded"
-      ? stageOf("pdf", "succeeded")
-      : stageOf("pdf", "blocked");
-
-  let applyStage: NormalizedStage;
-  const arStatus = apply.status;
-  if (arStatus === "succeeded" || job.applied_at) {
-    applyStage = stageOf("apply", "succeeded");
-  } else if (arStatus === "starting" || arStatus === "in_progress") {
-    applyStage = stageOf("apply", "running");
-  } else if (
-    arStatus === "failed" ||
-    arStatus === "captcha" ||
-    arStatus === "login_issue" ||
-    arStatus === "expired"
-  ) {
-    applyStage = stageOf("apply", "failed", apply.result ?? arStatus ?? "");
-  } else if (arStatus === "manual") {
-    applyStage = stageOf("apply", "skipped", "Manual ATS — apply by hand.");
-  } else if (arStatus === "dry_run_complete") {
-    applyStage = stageOf("apply", "skipped", "Dry run complete — re-run without --dry-run to submit.");
-  } else {
-    const legacyStatus = String(job.apply_status ?? "").toLowerCase();
-    if (legacyStatus === "applied") {
-      applyStage = stageOf("apply", "succeeded");
-    } else if (legacyStatus === "in_progress") {
-      applyStage = stageOf("apply", "running");
-    } else if (job.apply_error) {
-      applyStage = stageOf("apply", "failed", String(job.apply_error));
-    } else if (pdf.state !== "succeeded") {
-      applyStage = stageOf("apply", "blocked", "Materials are not ready.");
-    } else {
-      applyStage = stageOf("apply", "pending");
-    }
-  }
-  return [discover, enrich, scoreStage, tailor, cover, pdf, applyStage];
-}
-
-function deriveArtifactStage(
-  stage: "tailor" | "cover",
-  upstream: NormalizedStage,
-  artifactPath: string | null,
-  attempts: number,
-): NormalizedStage {
-  if (artifactPath) return stageOf(stage, "succeeded");
-  if (upstream.state !== "succeeded") {
-    return stageOf(stage, "blocked", `${upstream.stage} has not completed.`);
-  }
-  const maxAttempts = DEFAULT_MAX_ATTEMPTS[stage] ?? Infinity;
-  if (attempts >= maxAttempts) {
-    return { ...stageOf(stage, "exhausted", `${stage} attempts exhausted.`), attempt_count: attempts };
-  }
-  return { ...stageOf(stage, "pending"), attempt_count: attempts };
-}
-
-function stageOf(stage: string, state: string, errorMessage = ""): NormalizedStage {
-  return {
-    stage,
-    state,
-    attempt_count: 0,
-    max_attempts: DEFAULT_MAX_ATTEMPTS[stage] ?? null,
-    started_at: null,
-    updated_at: null,
-    finished_at: null,
-    duration_ms: null,
-    error_code:
-      state === "failed" || state === "exhausted" || state === "blocked" ? state.toUpperCase() : null,
-    error_message: errorMessage || null,
-    retryable: state !== "blocked",
-    blocked_by: [],
-    next_action: null,
-  };
 }
 
 function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: string): void {
