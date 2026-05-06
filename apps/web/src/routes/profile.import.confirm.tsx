@@ -1,8 +1,8 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { useImportResumeMutation } from "../contexts/profile/hooks/useImportResumeMutation.js";
 import { useProfileImportStore } from "../contexts/profile/stores/profile-import-store.js";
-import { usePorts } from "../shared/providers/PortsProvider.js";
 import { Empty } from "../shared/ui/empty.js";
 
 export const Route = createFileRoute("/profile/import/confirm")({
@@ -10,7 +10,6 @@ export const Route = createFileRoute("/profile/import/confirm")({
 });
 
 function ResumeImportConfirmStep() {
-  const ports = usePorts();
   const navigate = useNavigate();
   const filename = useProfileImportStore((state) => state.filename);
   const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
@@ -18,9 +17,9 @@ function ResumeImportConfirmStep() {
   const importStyle = useProfileImportStore((state) => state.importStyle);
   const reset = useProfileImportStore((state) => state.reset);
 
-  const [error, setError] = useState("");
-  const [status, setStatus] = useState("");
-  const [busy, setBusy] = useState(false);
+  const importResume = useImportResumeMutation();
+  const [statusMessage, setStatusMessage] = useState("");
+  const errorMessage = importResume.error?.message ?? "";
 
   if (!filename || !pdfBase64) {
     return (
@@ -35,33 +34,24 @@ function ResumeImportConfirmStep() {
     );
   }
 
-  const submit = async () => {
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      const response = await ports.api.importResume({
-        filename,
-        pdfBase64,
-        importProfile,
-        importStyle,
-      });
-      setStatus(`import draft ${response.action?.status ?? "ready"}`);
-      reset();
-      void navigate({ to: "/profile" });
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error ? requestError.message : "Unable to import resume.",
-      );
-    } finally {
-      setBusy(false);
-    }
+  const submit = () => {
+    setStatusMessage("");
+    importResume.mutate(
+      { filename, pdfBase64, importProfile, importStyle },
+      {
+        onSuccess: (response) => {
+          setStatusMessage(`import draft ${response.action?.status ?? "ready"}`);
+          reset();
+          void navigate({ to: "/profile" });
+        },
+      },
+    );
   };
 
   return (
     <div className="wizard-step">
-      {error ? <div className="banner inline">{error}</div> : null}
-      {status ? <div className="status-line">{status}</div> : null}
+      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
       <p>
         Importing <b>{filename}</b> with{" "}
         {importProfile && importStyle
@@ -74,8 +64,13 @@ function ResumeImportConfirmStep() {
         .
       </p>
       <div className="form-actions">
-        <button className="tab on" type="button" disabled={busy} onClick={() => void submit()}>
-          {busy ? "importing..." : "confirm import"}
+        <button
+          className="tab on"
+          type="button"
+          disabled={importResume.isPending}
+          onClick={submit}
+        >
+          {importResume.isPending ? "importing..." : "confirm import"}
         </button>
         <Link className="tab" to="/profile/import/preview">
           back

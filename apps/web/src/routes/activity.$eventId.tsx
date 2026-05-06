@@ -1,13 +1,17 @@
-import type { DashboardSummary } from "@jobhunter/contracts";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
+import { dashboardKeys } from "../contexts/operations/dashboardKeys.js";
+import type { DashboardSummary } from "../contexts/operations/types.js";
 import { ActivityDetailDrawer } from "../views/dashboard/ActivityDetailDrawer.js";
 
 type ActivityEvent = DashboardSummary["activity"][number];
 
 export const Route = createFileRoute("/activity/$eventId")({
-  loader: async ({ params, context }): Promise<{ activity: ActivityEvent | null }> => {
-    const summary = await context.ports.api.dashboardSummary();
+  loader: async ({ params, context }): Promise<void> => {
+    const summary = await context.queryClient.ensureQueryData<DashboardSummary>({
+      queryKey: dashboardKeys.summary(context.tenantId),
+      queryFn: () => context.ports.api.dashboardSummary(),
+    });
     const activity =
       summary.activity.find((entry: ActivityEvent) => entry.eventId === params.eventId) ?? null;
     if (activity?.jobKey) {
@@ -17,13 +21,11 @@ export const Route = createFileRoute("/activity/$eventId")({
         replace: true,
       });
     }
-    return { activity };
   },
   component: ActivityRoute,
 });
 
 function ActivityRoute() {
-  const { activity } = Route.useLoaderData();
   const { eventId } = Route.useParams();
-  return <ActivityDetailDrawer eventId={eventId} activity={activity} />;
+  return <ActivityDetailDrawer eventId={eventId} />;
 }

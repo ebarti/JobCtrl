@@ -1,76 +1,72 @@
-import type { DashboardSettings } from "@jobhunter/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import type { DashboardSettings } from "../../operations/types.js";
+import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
+import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
 
 export function SettingsPanel() {
-  const ports = usePorts();
-  const [settings, setSettings] = useState<DashboardSettings | null>(null);
-  const [originalSettings, setOriginalSettings] = useState<DashboardSettings | null>(null);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const settingsQuery = useSettingsQuery();
+  const updateSettings = useUpdateSettingsMutation();
 
-  const load = useCallback(async () => {
-    setError("");
-    setStatus("");
-    try {
-      const settingsResponse = await ports.api.settings();
-      setSettings(settingsResponse.settings);
-      setOriginalSettings(settingsResponse.settings);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error ? requestError.message : "Unable to load settings.",
-      );
-    }
-  }, [ports.api]);
+  const [draft, setDraft] = useState<DashboardSettings | null>(null);
+  const [original, setOriginal] = useState<DashboardSettings | null>(null);
+  const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (settingsQuery.data && !draft) {
+      setDraft(settingsQuery.data.settings);
+      setOriginal(settingsQuery.data.settings);
+    }
+  }, [settingsQuery.data, draft]);
+
+  const errorMessage =
+    settingsQuery.error?.message ?? updateSettings.error?.message ?? "";
 
   const update = <K extends keyof DashboardSettings>(key: K, value: DashboardSettings[K]) => {
-    setSettings((current) => (current ? { ...current, [key]: value } : current));
+    setDraft((current) => (current ? { ...current, [key]: value } : current));
   };
 
   const dirty = Boolean(
-    settings && originalSettings && JSON.stringify(settings) !== JSON.stringify(originalSettings),
+    draft && original && JSON.stringify(draft) !== JSON.stringify(original),
   );
+  const busy = updateSettings.isPending;
 
-  const save = async () => {
-    if (!settings) {
+  const save = () => {
+    if (!draft) {
       return;
     }
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      const response = await ports.api.updateSettings(settings);
-      setSettings(response.settings);
-      setOriginalSettings(response.settings);
-      setStatus("settings saved");
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error ? requestError.message : "Unable to save settings.",
-      );
-    } finally {
-      setBusy(false);
+    setStatusMessage("");
+    updateSettings.mutate(draft, {
+      onSuccess: (response) => {
+        setDraft(response.settings);
+        setOriginal(response.settings);
+        setStatusMessage("settings saved");
+      },
+    });
+  };
+
+  const reload = async () => {
+    setStatusMessage("");
+    const result = await settingsQuery.refetch();
+    if (result.data) {
+      setDraft(result.data.settings);
+      setOriginal(result.data.settings);
     }
   };
 
   return (
     <section className="card full">
       <CardHeader title="Config" meta="scoring and targeting" />
-      {error ? <div className="banner inline">{error}</div> : null}
-      {status ? <div className="status-line">{status}</div> : null}
-      {settings ? (
+      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+      {draft ? (
         <form
           className="config-form"
           onSubmit={(event) => {
             event.preventDefault();
-            void save();
+            save();
           }}
         >
           <label className="field">
@@ -80,7 +76,7 @@ export function SettingsPanel() {
               min={0}
               max={10}
               step={1}
-              value={settings.minFitScore}
+              value={draft.minFitScore}
               onChange={(event) => update("minFitScore", Number(event.target.value))}
             />
           </label>
@@ -91,21 +87,21 @@ export function SettingsPanel() {
               min={1}
               max={16}
               step={1}
-              value={settings.applyConcurrency}
+              value={draft.applyConcurrency}
               onChange={(event) => update("applyConcurrency", Number(event.target.value))}
             />
           </label>
           <label className="field">
             <span>Target role</span>
             <input
-              value={settings.targetRole}
+              value={draft.targetRole}
               onChange={(event) => update("targetRole", event.target.value)}
             />
           </label>
           <label className="field">
             <span>Location filter</span>
             <input
-              value={settings.locationFilter}
+              value={draft.locationFilter}
               onChange={(event) => update("locationFilter", event.target.value)}
             />
           </label>
@@ -113,7 +109,7 @@ export function SettingsPanel() {
             <span>Score criteria</span>
             <textarea
               placeholder="Criteria the scoring step should use when ranking jobs."
-              value={settings.scoreCriteria}
+              value={draft.scoreCriteria}
               onChange={(event) => update("scoreCriteria", event.target.value)}
             />
           </label>
@@ -121,14 +117,14 @@ export function SettingsPanel() {
             <span>Targeting criteria</span>
             <textarea
               placeholder="Role, company, location, seniority, and exclusion criteria for the search pipeline."
-              value={settings.targetCriteria}
+              value={draft.targetCriteria}
               onChange={(event) => update("targetCriteria", event.target.value)}
             />
           </label>
           <label className="field check">
             <input
               type="checkbox"
-              checked={settings.autoApply}
+              checked={draft.autoApply}
               onChange={(event) => update("autoApply", event.target.checked)}
             />
             <span>Auto apply</span>
@@ -140,12 +136,12 @@ export function SettingsPanel() {
             <button
               className="tab"
               type="button"
-              disabled={!dirty || busy || !originalSettings}
-              onClick={() => originalSettings && setSettings(originalSettings)}
+              disabled={!dirty || busy || !original}
+              onClick={() => original && setDraft(original)}
             >
               reset
             </button>
-            <button className="tab" type="button" disabled={busy} onClick={() => void load()}>
+            <button className="tab" type="button" disabled={busy} onClick={() => void reload()}>
               reload
             </button>
           </div>

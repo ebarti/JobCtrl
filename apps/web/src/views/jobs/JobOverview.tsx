@@ -1,5 +1,4 @@
-import type { JobDetail } from "@jobhunter/contracts";
-
+import type { JobDetail } from "../../contexts/operations/types.js";
 import { scoreTier } from "../../contexts/scoring/lib/score-tier.js";
 
 export interface JobOverviewProps {

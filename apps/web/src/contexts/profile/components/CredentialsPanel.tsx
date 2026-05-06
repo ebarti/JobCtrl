@@ -1,11 +1,9 @@
-import {
-  type CredentialKey,
-  CredentialKeys,
-  type CredentialsResponse,
-} from "@jobhunter/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { type CredentialKey, CredentialKeys } from "@jobhunter/contracts";
+import { useState } from "react";
 
-import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useCredentialsQuery } from "../hooks/useCredentialsQuery.js";
+import { useDeleteCredentialMutation } from "../hooks/useDeleteCredentialMutation.js";
+import { useUpdateCredentialMutation } from "../hooks/useUpdateCredentialMutation.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 
 export function credentialLabel(key: CredentialKey): string {
@@ -25,79 +23,57 @@ const EMPTY_DRAFTS: Record<CredentialKey, string> = {
 };
 
 export function CredentialsPanel() {
-  const ports = usePorts();
-  const [credentials, setCredentials] = useState<CredentialsResponse["credentials"]>([]);
+  const credentialsQuery = useCredentialsQuery();
+  const updateCredential = useUpdateCredentialMutation();
+  const deleteCredential = useDeleteCredentialMutation();
+
   const [drafts, setDrafts] = useState<Record<CredentialKey, string>>(EMPTY_DRAFTS);
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState<CredentialKey | "">("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [busyKey, setBusyKey] = useState<CredentialKey | "">("");
 
-  const load = useCallback(async () => {
-    setError("");
-    setStatus("");
-    try {
-      const credentialsResponse = await ports.api.credentials();
-      setCredentials(credentialsResponse.credentials);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error ? requestError.message : "Unable to load credentials.",
-      );
-    }
-  }, [ports.api]);
+  const credentials = credentialsQuery.data?.credentials ?? [];
+  const errorMessage =
+    credentialsQuery.error?.message ??
+    updateCredential.error?.message ??
+    deleteCredential.error?.message ??
+    "";
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const saveCredential = async (key: CredentialKey) => {
+  const saveCredential = (key: CredentialKey) => {
     const value = drafts[key].trim();
     if (!value) {
       return;
     }
-    setBusy(key);
-    setError("");
-    setStatus("");
-    try {
-      const response = await ports.api.updateCredential({ key, value });
-      setCredentials(response.credentials);
-      setDrafts((current) => ({ ...current, [key]: "" }));
-      setStatus(`${credentialLabel(key)} saved in Keychain`);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : `Unable to save ${credentialLabel(key)}.`,
-      );
-    } finally {
-      setBusy("");
-    }
+    setBusyKey(key);
+    setStatusMessage("");
+    updateCredential.mutate(
+      { key, value },
+      {
+        onSuccess: () => {
+          setDrafts((current) => ({ ...current, [key]: "" }));
+          setStatusMessage(`${credentialLabel(key)} saved in Keychain`);
+        },
+        onSettled: () => setBusyKey(""),
+      },
+    );
   };
 
-  const removeCredential = async (key: CredentialKey) => {
-    setBusy(key);
-    setError("");
-    setStatus("");
-    try {
-      const response = await ports.api.deleteCredential(key);
-      setCredentials(response.credentials);
-      setDrafts((current) => ({ ...current, [key]: "" }));
-      setStatus(`${credentialLabel(key)} removed from Keychain`);
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : `Unable to remove ${credentialLabel(key)}.`,
-      );
-    } finally {
-      setBusy("");
-    }
+  const removeCredential = (key: CredentialKey) => {
+    setBusyKey(key);
+    setStatusMessage("");
+    deleteCredential.mutate(key, {
+      onSuccess: () => {
+        setDrafts((current) => ({ ...current, [key]: "" }));
+        setStatusMessage(`${credentialLabel(key)} removed from Keychain`);
+      },
+      onSettled: () => setBusyKey(""),
+    });
   };
 
   return (
     <section className="card full">
       <CardHeader title="Credentials" meta="macOS Keychain" />
-      {error ? <div className="banner inline">{error}</div> : null}
-      {status ? <div className="status-line">{status}</div> : null}
+      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
+      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
       <div className="credential-list">
         {CredentialKeys.map((key) => {
           const credential = credentials.find((item) => item.key === key);
@@ -124,16 +100,16 @@ export function CredentialsPanel() {
                 <button
                   className="tab on"
                   type="button"
-                  disabled={!drafts[key].trim() || busy === key}
-                  onClick={() => void saveCredential(key)}
+                  disabled={!drafts[key].trim() || busyKey === key}
+                  onClick={() => saveCredential(key)}
                 >
                   save
                 </button>
                 <button
                   className="tab"
                   type="button"
-                  disabled={!configured || busy === key}
-                  onClick={() => void removeCredential(key)}
+                  disabled={!configured || busyKey === key}
+                  onClick={() => removeCredential(key)}
                 >
                   remove
                 </button>

@@ -1,4 +1,4 @@
-import { usePorts } from "../providers/PortsProvider.js";
+import { useEventStreamStatus } from "../../contexts/operations/providers/EventStreamProvider.js";
 
 const STATUS_LABEL: Record<string, string> = {
   stub: "stub mode",
@@ -8,8 +8,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export function ConnectionStatusPill() {
-  const { eventStream } = usePorts();
-  const status = eventStream.status;
+  const status = useEventStreamStatus();
   const label = STATUS_LABEL[status] ?? status;
   return (
     <span className="connection-pill" data-status={status} aria-live="polite">

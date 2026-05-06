@@ -17,10 +17,9 @@ const STATE_OPTIONS = [
 
 export interface JobFilterBarProps {
   search: JobsSearch;
-  onRefresh: () => void;
 }
 
-export function JobFilterBar({ search, onRefresh }: JobFilterBarProps) {
+export function JobFilterBar({ search }: JobFilterBarProps) {
   const navigate = useNavigate({ from: "/jobs" });
   const apply = (next: Partial<JobsSearch>) => {
     void navigate({ search: (prev: JobsSearch) => ({ ...prev, page: 1, ...next }) });
@@ -49,9 +48,6 @@ export function JobFilterBar({ search, onRefresh }: JobFilterBarProps) {
         ))}
       </select>
       <PageSize value={search.pageSize} onChange={(value) => apply({ pageSize: value })} />
-      <button className="tab" type="button" onClick={onRefresh}>
-        refresh
-      </button>
     </div>
   );
 }

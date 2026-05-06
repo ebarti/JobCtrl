@@ -1,6 +1,6 @@
-import type { DashboardSummary } from "@jobhunter/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
+import type { DashboardSummary } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export type KpiTarget = "all" | "failed" | "blocked" | "ready";

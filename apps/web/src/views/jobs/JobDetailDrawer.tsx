@@ -1,11 +1,16 @@
-import type { ArtifactSummary, JobDetail } from "@jobhunter/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
+import { useDryRunApplyMutation } from "../../contexts/apply/hooks/useDryRunApplyMutation.js";
 import { artifactStatusTone } from "../../contexts/materials/lib/artifact-status-tone.js";
+import { useOpenArtifactMutation } from "../../contexts/materials/hooks/useOpenArtifactMutation.js";
+import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
+import type { ArtifactSummary } from "../../contexts/operations/types.js";
+import { useMarkAppliedMutation } from "../../contexts/pipeline/hooks/useMarkAppliedMutation.js";
+import { useMarkSkippedMutation } from "../../contexts/pipeline/hooks/useMarkSkippedMutation.js";
+import { useRetryStageMutation } from "../../contexts/pipeline/hooks/useRetryStageMutation.js";
 import { ScoreReasoning } from "../../contexts/scoring/components/ScoreReasoning.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
-import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
@@ -17,7 +22,6 @@ export interface JobDetailDrawerProps {
 }
 
 export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
-  const ports = usePorts();
   const navigate = useNavigate();
   const search = useSearch({ from: "/jobs" });
   const close = useCallback(() => {
@@ -25,47 +29,40 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
   }, [navigate, search]);
   useEscapeKey(true, close);
 
-  const [detail, setDetail] = useState<JobDetail | null>(null);
-  const [error, setError] = useState("");
+  const { data: detail, error: detailError } = useJobDetailQuery(jobId);
+  const retryStage = useRetryStageMutation();
+  const dryRun = useDryRunApplyMutation();
+  const markApplied = useMarkAppliedMutation();
+  const markSkipped = useMarkSkippedMutation();
+  const openArtifact = useOpenArtifactMutation();
   const [actionStatus, setActionStatus] = useState("");
-  const [actionBusy, setActionBusy] = useState("");
 
-  const loadDetail = useCallback(async () => {
-    setDetail(null);
-    setError("");
-    try {
-      setDetail(await ports.api.job(jobId));
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to load job.");
-    }
-  }, [jobId, ports.api]);
+  const errorMessage =
+    detailError instanceof Error
+      ? detailError.message
+      : retryStage.error?.message ||
+        dryRun.error?.message ||
+        markApplied.error?.message ||
+        markSkipped.error?.message ||
+        openArtifact.error?.message ||
+        "";
 
-  useEffect(() => {
-    void loadDetail();
-  }, [loadDetail]);
+  const actionBusy =
+    retryStage.isPending ||
+    dryRun.isPending ||
+    markApplied.isPending ||
+    markSkipped.isPending ||
+    openArtifact.isPending;
 
-  const runAction = async (label: string, action: () => Promise<{ status: string }>) => {
-    setActionBusy(label);
+  const handleOpenArtifact = (artifact: ArtifactSummary) => {
     setActionStatus("");
-    setError("");
-    try {
-      const result = await action();
-      setActionStatus(`${label} ${result.status}`);
-      await loadDetail();
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error ? requestError.message : `Unable to ${label}.`,
-      );
-    } finally {
-      setActionBusy("");
-    }
-  };
-
-  const openArtifact = async (artifact: ArtifactSummary) => {
-    await runAction("open artifact", async () => {
-      const result = await ports.api.openArtifact(artifact.artifactId);
-      return { status: result.opened ? "opened" : "failed" };
-    });
+    openArtifact.mutate(
+      { artifactId: artifact.artifactId },
+      {
+        onSuccess: (result) =>
+          setActionStatus(`open artifact ${result.opened ? "opened" : "failed"}`),
+      },
+    );
   };
 
   return (
@@ -79,8 +76,8 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
         >
           x
         </button>
-        {error ? <Empty title={error} /> : null}
-        {!detail && !error ? <Empty title="Loading job." /> : null}
+        {errorMessage ? <Empty title={errorMessage} /> : null}
+        {!detail && !errorMessage ? <Empty title="Loading job." /> : null}
         {detail ? (
           <>
             <JobOverview detail={detail} />
@@ -94,49 +91,70 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
               <button
                 className="tab on"
                 type="button"
-                disabled={Boolean(actionBusy)}
-                onClick={() =>
-                  void runAction("retry stage", () =>
-                    ports.api.retryStage(detail.job.jobKey, {
+                disabled={actionBusy}
+                onClick={() => {
+                  setActionStatus("");
+                  retryStage.mutate(
+                    {
+                      jobId: detail.job.jobKey,
                       stage: detail.job.currentStage,
                       resetAttempts: false,
                       runAfter: false,
                       dryRun: false,
-                    }),
-                  )
-                }
+                    },
+                    {
+                      onSuccess: (result) => setActionStatus(`retry stage ${result.status}`),
+                    },
+                  );
+                }}
               >
                 retry
               </button>
               <button
                 className="tab"
                 type="button"
-                disabled={Boolean(actionBusy)}
-                onClick={() =>
-                  void runAction("apply dry-run", () =>
-                    ports.api.applyJob(detail.job.jobKey, { dryRun: true }),
-                  )
-                }
+                disabled={actionBusy}
+                onClick={() => {
+                  setActionStatus("");
+                  dryRun.mutate(
+                    { jobId: detail.job.jobKey },
+                    {
+                      onSuccess: (result) => setActionStatus(`apply dry-run ${result.status}`),
+                    },
+                  );
+                }}
               >
                 dry-run
               </button>
               <button
                 className="tab"
                 type="button"
-                disabled={Boolean(actionBusy)}
-                onClick={() =>
-                  void runAction("mark applied", () => ports.api.markApplied(detail.job.jobKey))
-                }
+                disabled={actionBusy}
+                onClick={() => {
+                  setActionStatus("");
+                  markApplied.mutate(
+                    { jobId: detail.job.jobKey },
+                    {
+                      onSuccess: (result) => setActionStatus(`mark applied ${result.status}`),
+                    },
+                  );
+                }}
               >
                 applied
               </button>
               <button
                 className="tab"
                 type="button"
-                disabled={Boolean(actionBusy)}
-                onClick={() =>
-                  void runAction("mark skipped", () => ports.api.markSkipped(detail.job.jobKey))
-                }
+                disabled={actionBusy}
+                onClick={() => {
+                  setActionStatus("");
+                  markSkipped.mutate(
+                    { jobId: detail.job.jobKey },
+                    {
+                      onSuccess: (result) => setActionStatus(`mark skipped ${result.status}`),
+                    },
+                  );
+                }}
               >
                 skip
               </button>
@@ -162,13 +180,13 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
                   <button
                     className="tab on"
                     type="button"
-                    disabled={Boolean(actionBusy) || artifact.status === "missing"}
+                    disabled={actionBusy || artifact.status === "missing"}
                     title={
                       artifact.status === "missing"
                         ? "Local file is missing; regenerate this artifact before opening it."
                         : undefined
                     }
-                    onClick={() => void openArtifact(artifact)}
+                    onClick={() => handleOpenArtifact(artifact)}
                   >
                     open
                   </button>

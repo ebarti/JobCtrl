@@ -19,10 +19,9 @@ const SORT_OPTIONS = [
 
 export interface ArtifactFilterBarProps {
   search: ArtifactsSearch;
-  onRefresh: () => void;
 }
 
-export function ArtifactFilterBar({ search, onRefresh }: ArtifactFilterBarProps) {
+export function ArtifactFilterBar({ search }: ArtifactFilterBarProps) {
   const navigate = useNavigate({ from: "/artifacts" });
   const apply = (next: Partial<ArtifactsSearch>) => {
     void navigate({
@@ -48,9 +47,6 @@ export function ArtifactFilterBar({ search, onRefresh }: ArtifactFilterBarProps)
       />
       <DirectionSelect value={search.dir} onChange={(value) => apply({ dir: value })} />
       <PageSize value={search.pageSize} onChange={(value) => apply({ pageSize: value })} />
-      <button className="tab" type="button" onClick={onRefresh}>
-        refresh
-      </button>
     </div>
   );
 }
