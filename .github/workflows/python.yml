@@ -1,27 +1,24 @@
-name: CI
+name: Python CI
 
 on:
   push:
     branches: ["main"]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
-      - ".gitignore"
-      - ".env.example"
-      - "profile.example.json"
+    paths:
+      - "workers/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/python.yml"
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - "LICENSE"
-      - ".gitignore"
-      - ".env.example"
-      - "profile.example.json"
+    paths:
+      - "workers/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/python.yml"
   workflow_dispatch:
 
 jobs:
   python:
+    name: Python (workers/automation)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -57,31 +54,3 @@ jobs:
 
       - name: Build package
         run: python -m build workers/automation
-
-  typescript:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20.19"
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Check
-        run: pnpm -r check
-
-      - name: Test
-        run: pnpm --filter @jobhunter/api test
-
-      - name: Build web
-        run: pnpm --filter @jobhunter/web build
