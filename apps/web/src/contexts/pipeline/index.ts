@@ -5,6 +5,16 @@ export { useMarkAppliedMutation } from "./hooks/useMarkAppliedMutation.js";
 export { useMarkSkippedMutation } from "./hooks/useMarkSkippedMutation.js";
 export { useRetryStageMutation } from "./hooks/useRetryStageMutation.js";
 
+export { CancelStageButton, type CancelStageButtonProps } from "./components/CancelStageButton.js";
+export { JobActions, type JobActionsProps } from "./components/JobActions.js";
+export { MarkAppliedButton, type MarkAppliedButtonProps } from "./components/MarkAppliedButton.js";
+export { MarkSkippedButton, type MarkSkippedButtonProps } from "./components/MarkSkippedButton.js";
+export { RetryStageButton, type RetryStageButtonProps } from "./components/RetryStageButton.js";
+export { StageBadge, type StageBadgeProps } from "./components/StageBadge.js";
+export { StageTimeline, type StageTimelineProps } from "./components/StageTimeline.js";
+export { stageStateTone, type StageStateTone } from "./lib/stage-state-tone.js";
+export { stageTone, type StageTone } from "./lib/stage-tone.js";
+
 export {
   stageBlockedHandler,
   stageCanceledHandler,

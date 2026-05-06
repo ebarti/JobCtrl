@@ -444,7 +444,7 @@ textarea {
   background: var(--paper-2);
 }
 
-.sort-head {
+.table-head {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
@@ -455,14 +455,9 @@ textarea {
   text-align: left;
 }
 
-.sort-head.active,
-.sort-head:hover {
+.table-head.active,
+.table-head:hover {
   color: var(--ink);
-}
-
-.data-row.artifact-group {
-  grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.4fr) auto;
-  gap: 14px;
 }
 
 .mini-row,
@@ -1131,7 +1126,6 @@ textarea {
 
   .data-row.job,
   .data-row.artifact,
-  .data-row.artifact-group,
   .activity-row,
   .funnel-row,
   .action-panel,

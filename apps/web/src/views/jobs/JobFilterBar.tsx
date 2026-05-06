@@ -1,19 +1,9 @@
-import { STAGES } from "@jobhunter/contracts";
+import { STAGES, STAGE_STATES } from "@jobhunter/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
-import { PageSize } from "../../shared/ui/page-size.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
-const STATE_OPTIONS = [
-  "all",
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "blocked",
-  "exhausted",
-  "stale",
-] as const;
+const STATE_OPTIONS = ["all", ...STAGE_STATES] as const;
 
 export interface JobFilterBarProps {
   search: JobsSearch;
@@ -47,7 +37,6 @@ export function JobFilterBar({ search }: JobFilterBarProps) {
           </option>
         ))}
       </select>
-      <PageSize value={search.pageSize} onChange={(value) => apply({ pageSize: value })} />
     </div>
   );
 }

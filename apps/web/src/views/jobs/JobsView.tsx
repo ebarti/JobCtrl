@@ -1,16 +1,16 @@
 import { type BulkJobMutationRequest, type JobSortField } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import type { RowSelectionState, SortingState } from "@tanstack/react-table";
+import { useEffect, useMemo, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
-import { CardHeader } from "../../shared/ui/card-header.js";
-import { Pager } from "../../shared/ui/pager.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
+import { CardHeader } from "../../shared/ui/card-header.js";
 import { JobBulkActions } from "./JobBulkActions.js";
 import { JobFilterBar } from "./JobFilterBar.js";
-import { JobsTable, type JobSortColumn } from "./JobsTable.js";
+import { JobsTable } from "./JobsTable.js";
 
 function jobsListInput(search: JobsSearch) {
   return {
@@ -25,6 +25,20 @@ function jobsListInput(search: JobsSearch) {
   };
 }
 
+const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
+  "discovered_at",
+  "title",
+  "company",
+  "location",
+  "fit_score",
+  "current_stage",
+  "current_state",
+]);
+
+function isJobSortField(value: string): value is JobSortField {
+  return SORTABLE_JOB_FIELDS.has(value as JobSortField);
+}
+
 export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
@@ -34,11 +48,11 @@ export function JobsView() {
   const restoreJobs = useRestoreJobsBulkMutation();
   const message = error instanceof Error ? error.message : null;
 
-  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(() => new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
 
   useEffect(() => {
-    setSelectedJobs(new Set());
+    setRowSelection({});
     setAllMatchingSelected(false);
   }, [
     search.deleted,
@@ -55,32 +69,51 @@ export function JobsView() {
     void navigate({ search: (prev: JobsSearch) => ({ ...prev, ...next }) });
   };
 
-  const toggleSelection = (jobKey: string, selected: boolean) => {
-    setAllMatchingSelected(false);
-    setSelectedJobs((current) => {
-      const next = new Set(current);
-      if (selected) {
-        next.add(jobKey);
-      } else {
-        next.delete(jobKey);
-      }
-      return next;
+  const sorting = useMemo<SortingState>(
+    () => [{ id: search.sort, desc: search.dir === "desc" }],
+    [search.sort, search.dir],
+  );
+
+  const handleSortingChange = (next: SortingState) => {
+    const head = next[0];
+    if (!head || !isJobSortField(head.id)) {
+      return;
+    }
+    setSearch({
+      sort: head.id,
+      dir: head.desc ? "desc" : "asc",
+      page: 1,
     });
   };
 
-  const selectPage = () => {
+  const handleRowSelectionChange = (next: RowSelectionState) => {
     setAllMatchingSelected(false);
-    setSelectedJobs(new Set(data?.items.map((job) => job.jobKey) ?? []));
+    setRowSelection(next);
   };
 
+  const selectedKeys = useMemo(
+    () => Object.entries(rowSelection).filter(([, on]) => on).map(([key]) => key),
+    [rowSelection],
+  );
+
   const selectAllMatching = () => {
-    setSelectedJobs(new Set());
+    setRowSelection({});
     setAllMatchingSelected(Boolean(data?.pagination.total));
   };
 
   const clearSelection = () => {
-    setSelectedJobs(new Set());
+    setRowSelection({});
     setAllMatchingSelected(false);
+  };
+
+  const selectPage = () => {
+    setAllMatchingSelected(false);
+    const items = data?.items ?? [];
+    const next: RowSelectionState = {};
+    for (const job of items) {
+      next[job.jobKey] = true;
+    }
+    setRowSelection(next);
   };
 
   const currentJobFilter = (): NonNullable<BulkJobMutationRequest["filter"]> => {
@@ -99,25 +132,12 @@ export function JobsView() {
     return filter;
   };
 
-  const changeSort = (field: JobSortColumn) => {
-    if (search.sort === field) {
-      setSearch({ dir: search.dir === "asc" ? "desc" : "asc", page: 1 });
-      return;
-    }
-    setSearch({
-      sort: field as JobSortField,
-      dir: field === "discovered_at" || field === "fit_score" ? "desc" : "asc",
-      page: 1,
-    });
-  };
-
   const restoring = search.deleted === "deleted";
   const mutation = restoring ? restoreJobs : deleteJobs;
   const mutateBusy = mutation.isPending;
 
   const mutateSelected = () => {
-    const jobKeys = Array.from(selectedJobs);
-    const count = allMatchingSelected ? (data?.pagination.total ?? 0) : jobKeys.length;
+    const count = allMatchingSelected ? (data?.pagination.total ?? 0) : selectedKeys.length;
     if (!count) {
       return;
     }
@@ -132,7 +152,7 @@ export function JobsView() {
     }
     const payload: BulkJobMutationRequest = allMatchingSelected
       ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
-      : { allMatching: false, jobKeys };
+      : { allMatching: false, jobKeys: selectedKeys };
     mutation.mutate(payload, {
       onSuccess: () => clearSelection(),
     });
@@ -140,7 +160,7 @@ export function JobsView() {
 
   const selectedCount = allMatchingSelected
     ? (data?.pagination.total ?? 0)
-    : selectedJobs.size;
+    : selectedKeys.length;
 
   const openJob = (jobKey: string) => {
     void navigate({
@@ -171,18 +191,16 @@ export function JobsView() {
         <JobsTable
           data={data ?? null}
           loading={isFetching}
-          sort={search.sort}
-          dir={search.dir}
-          selectedJobs={selectedJobs}
+          sorting={sorting}
+          onSortingChange={handleSortingChange}
+          rowSelection={rowSelection}
+          onRowSelectionChange={handleRowSelectionChange}
           allMatchingSelected={allMatchingSelected}
-          onChangeSort={changeSort}
-          onToggleSelection={toggleSelection}
-          onOpenJob={openJob}
-        />
-        <Pager
-          pagination={data?.pagination}
           page={search.page}
-          onPage={(page) => setSearch({ page })}
+          pageSize={search.pageSize}
+          onPageChange={(page) => setSearch({ page })}
+          onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
+          onOpenJob={openJob}
         />
       </section>
       <Outlet />
