@@ -65,8 +65,7 @@ deployment model.
 - **Strangler / dual-mount / feature flags.** JobHunter has exactly one
   user. Every migration is rip-and-replace: the new implementation lands in
   the same change that deletes the old one. This doc does not model any
-  legacy code path or compatibility shim. (See
-  [`feedback_no_strangler.md`](../../.claude/projects/-Users-eloibarti-Github-JobHunter/memory/feedback_no_strangler.md).)
+  legacy code path or compatibility shim.
 - **Visual design / copy / iconography choices.** This doc constrains the
   *primitives* (shadcn/ui + Radix) and the *layout system* (Tailwind), not
   the visual identity, design tokens, or copy.
