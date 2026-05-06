@@ -49,3 +49,12 @@ jobs:
 
       - name: Build web
         run: pnpm --filter @jobhunter/web build
+
+      - name: Build web storybook
+        run: pnpm --filter @jobhunter/web storybook:build
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @jobhunter/web exec playwright install --with-deps chromium
+
+      - name: Test web storybook
+        run: pnpm --filter @jobhunter/web storybook:test
