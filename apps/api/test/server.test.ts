@@ -355,6 +355,80 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("derives apply state from the apply_runs aggregate when legacy jobs columns are NULL", async () => {
+    // Phase 8 (S-30) round-1 review M2: the new launcher writes apply
+    // outcomes ONLY to ``apply_runs`` (no dual-write to
+    // jobs.apply_status / applied_at). The TS read-model must
+    // canonicalise the apply state from the joined apply_runs row so
+    // the dashboard + jobs list show the right values.
+    const db = new Database(options.dbPath);
+    const newJobUrl = "https://example.com/jobs/new-path-applied";
+    insertJob(db, {
+      url: newJobUrl,
+      title: "New Path Engineer",
+      site: "NewPathCo",
+      fitScore: 9,
+    });
+    // Seed an apply_runs row using the NEW lifecycle labels:
+    // status='succeeded' (not the legacy 'finished'), result='applied',
+    // a non-null finished_at — and crucially leave jobs.applied_at /
+    // jobs.apply_status NULL.
+    db.prepare(
+      "INSERT INTO apply_runs (run_id, job_url, title, site, status, result, dry_run, started_at, finished_at) "
+        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "run-new-path",
+      newJobUrl,
+      "New Path Engineer",
+      "NewPathCo",
+      "succeeded",
+      "applied",
+      0,
+      "2026-05-01T00:00:00+00:00",
+      "2026-05-01T00:01:00+00:00",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    try {
+      const jobsRes = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?q=${encodeURIComponent("New Path Engineer")}`,
+      });
+      expect(jobsRes.statusCode, jobsRes.body).toBe(200);
+      const job = jobsRes.json().items[0];
+      // Read-model derivation: ar.status === 'succeeded' ⇒
+      // applyStatus 'applied' + appliedAt = ar.finished_at, with no
+      // legacy column writes. (We don't assert currentStage /
+      // currentState here because the synthesised job hasn't moved
+      // through the upstream stages — the apply-derivation contract
+      // is what M2 is locking in.)
+      expect(job).toMatchObject({
+        jobKey: newJobUrl,
+        applyStatus: "applied",
+        appliedAt: "2026-05-01T00:01:00+00:00",
+      });
+
+      const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(summary.statusCode, summary.body).toBe(200);
+      const body = summary.json();
+      // The new-path job is counted as applied even though its
+      // legacy ``jobs.applied_at`` is NULL.
+      expect(body.totals.applied).toBeGreaterThanOrEqual(1);
+      // Recent apply runs widget surfaces the row with the canonical
+      // labels (the row's own title/site reach the widget directly).
+      const newRun = body.applyRuns.find((r: { runId: string }) => r.runId === "run-new-path");
+      expect(newRun).toMatchObject({
+        runId: "run-new-path",
+        title: "New Path Engineer",
+        company: "NewPathCo",
+        status: "succeeded",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("keeps legacy unscored jobs pending at the score stage", async () => {
     const db = new Database(options.dbPath);
     insertJob(db, {
@@ -1327,7 +1401,8 @@ function seedDatabase(dbPath: string): void {
       status TEXT,
       result TEXT,
       dry_run INTEGER,
-      started_at TEXT
+      started_at TEXT,
+      finished_at TEXT
     );
   `);
 

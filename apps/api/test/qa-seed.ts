@@ -229,7 +229,8 @@ export function seedQaDatabase(dbPath: string): void {
       status TEXT,
       result TEXT,
       dry_run INTEGER,
-      started_at TEXT
+      started_at TEXT,
+      finished_at TEXT
     );
   `);
 

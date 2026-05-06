@@ -66,6 +66,12 @@ type JobRow = Record<string, unknown> & {
   apply_error?: string | null;
   apply_attempts?: number | null;
   applied_at?: string | null;
+  // Phase 8 (S-30): joined-in fields from apply_runs latest row.
+  ar_run_id?: string | null;
+  ar_status?: string | null;
+  ar_result?: string | null;
+  ar_finished_at?: string | null;
+  ar_started_at?: string | null;
   deleted_at?: string | null;
 };
 
@@ -289,6 +295,59 @@ function enrichmentSelect(db: SqliteDatabase): string {
         ", NULL AS je_enriched_at" +
         ", NULL AS je_current_status" +
         ", NULL AS je_extraction_tier"
+      );
+}
+
+// Phase 8 (S-30): apply state. The legacy launcher wrote
+// ``jobs.applied_at`` / ``jobs.apply_status`` / ``jobs.apply_error``;
+// the new launcher (and ``ApplyRunRepository``) write ONLY to
+// ``apply_runs`` + ``apply_run_events``. The LEFT JOIN below promotes
+// the latest apply_runs row into ``ar_*`` aliases that ``buildJobSummary``
+// + ``deriveApplyStage`` consume to derive the canonical apply state.
+// The legacy columns stay in the schema as a read-only fallback for
+// historical rows that never went through the new code path.
+// Round-1 review L1: tie-break by run_id when two apply_runs rows
+// share the same ``started_at``. The correlated subquery picks the
+// latest row deterministically (ORDER BY started_at DESC, run_id
+// DESC + LIMIT 1) — the prior MAX(started_at) GROUP BY pattern
+// produced duplicate parent rows on same-second retries.
+const APPLY_RUN_SUBQUERY = `(
+  SELECT ar.job_url AS ar_job_url,
+         ar.run_id AS ar_run_id,
+         ar.status AS ar_status,
+         ar.result AS ar_result,
+         ar.finished_at AS ar_finished_at,
+         ar.started_at AS ar_started_at
+  FROM apply_runs ar
+  WHERE ar.run_id = (
+    SELECT run_id FROM apply_runs ar_inner
+    WHERE ar_inner.job_url = ar.job_url
+    ORDER BY ar_inner.started_at DESC, ar_inner.run_id DESC
+    LIMIT 1
+  )
+)`;
+
+function applyRunJoin(db: SqliteDatabase): string {
+  return tableExists(db, "apply_runs")
+    ? ` LEFT JOIN ${APPLY_RUN_SUBQUERY} ar ON ar.ar_job_url = jobs.url`
+    : "";
+}
+
+function applyRunSelect(db: SqliteDatabase): string {
+  return tableExists(db, "apply_runs")
+    ? (
+        ", ar.ar_run_id AS ar_run_id" +
+        ", ar.ar_status AS ar_status" +
+        ", ar.ar_result AS ar_result" +
+        ", ar.ar_finished_at AS ar_finished_at" +
+        ", ar.ar_started_at AS ar_started_at"
+      )
+    : (
+        ", NULL AS ar_run_id" +
+        ", NULL AS ar_status" +
+        ", NULL AS ar_result" +
+        ", NULL AS ar_finished_at" +
+        ", NULL AS ar_started_at"
       );
 }
 
@@ -530,7 +589,7 @@ function loadJobs(
   const filter = combineSqlFilters(sqlFilter, deletion);
   return allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${filter.where}`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)}${applyRunSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${applyRunJoin(db)}${filter.where}`,
     filter.params,
   );
 }
@@ -552,7 +611,7 @@ function loadJobPage(
   const direction = query.dir === "asc" ? "ASC" : "DESC";
   const jobs = allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)}${applyRunSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${applyRunJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
     [...filter.params, query.pageSize, offset],
   );
   return { jobs, page, total };
@@ -636,7 +695,7 @@ function findJob(db: SqliteDatabase, jobKey: string): JobRow | null {
   }
   const row = getRow<JobRow>(
     db,
-    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)} WHERE jobs.url = ? OR ${effectiveApplicationUrl(db)} = ? LIMIT 1`,
+    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)}${applyRunSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${applyRunJoin(db)} WHERE jobs.url = ? OR ${effectiveApplicationUrl(db)} = ? LIMIT 1`,
     [jobKey, jobKey],
   );
   return row ?? null;
@@ -699,10 +758,38 @@ function buildJobSummary(
     errorMessage: current.errorMessage,
     nextAction: current.nextAction,
     artifactCount: artifactCounts.get(jobKey) ?? 0,
-    applyStatus: asNullableString(job.apply_status),
-    appliedAt: asNullableString(job.applied_at),
+    // Phase 8 (S-30): prefer the latest ``apply_runs`` row, falling
+    // back to the legacy ``jobs.apply_status`` / ``jobs.applied_at``
+    // for historical rows that never went through the new code path.
+    applyStatus: deriveApplyStatusString(job),
+    appliedAt: deriveAppliedAt(job),
     deletedAt: asNullableString(job.deleted_at),
   };
+}
+
+function deriveApplyStatusString(job: JobRow): string | null {
+  const arStatus = asNullableString(job.ar_status);
+  if (arStatus) {
+    switch (arStatus) {
+      case "succeeded":
+        return "applied";
+      case "starting":
+      case "in_progress":
+        return "in_progress";
+      case "dry_run_complete":
+        return "dry_run";
+      default:
+        return arStatus;
+    }
+  }
+  return asNullableString(job.apply_status);
+}
+
+function deriveAppliedAt(job: JobRow): string | null {
+  if (asNullableString(job.ar_status) === "succeeded") {
+    return asNullableString(job.ar_finished_at);
+  }
+  return asNullableString(job.applied_at);
 }
 
 /**
@@ -832,8 +919,31 @@ function deriveArtifactStage(
 }
 
 function deriveApplyStage(job: JobRow, upstream: StageSummary): StageSummary {
+  // Phase 8 (S-30): prefer the joined apply_runs row.
+  const arStatus = asString(job.ar_status).toLowerCase();
+  if (arStatus === "succeeded" || job.applied_at) {
+    return defaultStage("apply", "succeeded");
+  }
+  if (arStatus === "starting" || arStatus === "in_progress") {
+    return defaultStage("apply", "running");
+  }
+  if (
+    arStatus === "failed"
+    || arStatus === "captcha"
+    || arStatus === "login_issue"
+    || arStatus === "expired"
+  ) {
+    return defaultStage("apply", "failed", asString(job.ar_result) || arStatus);
+  }
+  if (arStatus === "manual") {
+    return defaultStage("apply", "skipped", "Manual ATS — apply by hand.");
+  }
+  if (arStatus === "dry_run_complete") {
+    return defaultStage("apply", "skipped", "Dry run complete — re-run without --dry-run to submit.");
+  }
+  // Legacy fallback for historical rows (no apply_runs row exists).
   const status = asString(job.apply_status).toLowerCase();
-  if (job.applied_at || status === "applied") {
+  if (status === "applied") {
     return defaultStage("apply", "succeeded");
   }
   if (status === "in_progress") {

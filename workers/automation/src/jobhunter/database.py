@@ -1064,6 +1064,64 @@ _LATEST_SCORE_JOIN: str = (
 _EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
 
 
+# ---------------------------------------------------------------------------
+# Phase 8 (S-30): apply read-side. The legacy launcher wrote
+# ``jobs.applied_at`` / ``jobs.apply_status`` / ``jobs.apply_error`` etc.;
+# the new launcher (and the ``ApplyRunRepository``) write ONLY to
+# ``apply_runs`` + ``apply_run_events``. This LEFT JOIN promotes the
+# latest apply_runs row's status / finished_at into the legacy column
+# slots so the queue selectors (``pending_apply``, ``applied``) and
+# ``get_stats`` see new aggregate writes without re-querying through
+# the repository at every read site.
+# ---------------------------------------------------------------------------
+
+# Round-1 review L1: tie-break by run_id when two apply_runs rows
+# share the same ``started_at`` (same-second collisions are possible
+# with ``_utc_now()``-stamped retries). The correlated subquery picks
+# the latest row deterministically — ORDER BY started_at DESC,
+# run_id DESC + LIMIT 1.
+_LATEST_APPLY_RUN_JOIN: str = (
+    "LEFT JOIN ("
+    "SELECT ar.job_url AS ar_job_url, ar.status AS ar_status, "
+    "ar.result AS ar_result, ar.finished_at AS ar_finished_at, "
+    "ar.started_at AS ar_started_at, ar.run_id AS ar_run_id "
+    "FROM apply_runs ar "
+    "WHERE ar.run_id = ("
+    "SELECT run_id FROM apply_runs ar_inner "
+    "WHERE ar_inner.job_url = ar.job_url "
+    "ORDER BY ar_inner.started_at DESC, ar_inner.run_id DESC "
+    "LIMIT 1"
+    ")"
+    ") ar ON ar.ar_job_url = jobs.url"
+)
+
+# Applied = any apply_run with status='succeeded' for the job (we
+# COALESCE with the legacy column so historical rows stay visible).
+_EFFECTIVE_APPLIED_AT: str = (
+    "CASE WHEN ar.ar_status = 'succeeded' THEN ar.ar_finished_at "
+    "ELSE jobs.applied_at END"
+)
+
+# Apply status string suitable for read-model consumption — collapses
+# ``starting`` / ``in_progress`` into the historical ``in_progress``
+# label so callers needn't relearn the labels.
+_EFFECTIVE_APPLY_STATUS: str = (
+    "COALESCE("
+    "CASE ar.ar_status "
+    "WHEN 'starting' THEN 'in_progress' "
+    "WHEN 'in_progress' THEN 'in_progress' "
+    "WHEN 'succeeded' THEN 'applied' "
+    "WHEN 'failed' THEN 'failed' "
+    "WHEN 'captcha' THEN 'captcha' "
+    "WHEN 'login_issue' THEN 'login_issue' "
+    "WHEN 'expired' THEN 'expired' "
+    "WHEN 'manual' THEN 'manual' "
+    "WHEN 'dry_run_complete' THEN 'dry_run' "
+    "ELSE NULL END, "
+    "jobs.apply_status)"
+)
+
+
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     """Return job counts by pipeline stage.
 
@@ -1172,19 +1230,26 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND ({_EFFECTIVE_COVER_ATTEMPTS} >= 5 OR jss_c.jss_c_state = 'exhausted')"
     ).fetchone()[0]
 
-    # Application stage
+    # Application stage — Phase 8 (S-30): read through the
+    # ``apply_runs`` join so dashboard counts reflect new ApplyRun
+    # writes (jobs.applied_at / apply_status / apply_error are NULL
+    # on the new write path).
     stats["applied"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE applied_at IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} "
+        f"WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL"
     ).fetchone()[0]
 
     stats["apply_errors"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE apply_error IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} "
+        f"WHERE ar.ar_status IN ('failed', 'captcha', 'login_issue', 'expired') "
+        "OR jobs.apply_error IS NOT NULL"
     ).fetchone()[0]
 
     stats["ready_to_apply"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} {_ENRICHMENT_JOIN} "
+        f"{_LATEST_APPLY_RUN_JOIN} "
         f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
-        "AND applied_at IS NULL "
+        f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
         f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
         f"AND {_EFFECTIVE_APPLICATION_URL} != ''"
     ).fetchone()[0]
@@ -1271,8 +1336,13 @@ def load_job_with_enrichment(
         f"je.application_url AS je_application_url, "
         f"je.enriched_at AS je_enriched_at, "
         f"je.current_status AS je_current_status, "
-        f"je.extraction_tier AS je_extraction_tier "
-        f"FROM jobs {_ENRICHMENT_JOIN} "
+        f"je.extraction_tier AS je_extraction_tier, "
+        f"ar.ar_status AS ar_status, "
+        f"ar.ar_finished_at AS ar_finished_at, "
+        f"ar.ar_run_id AS ar_run_id, "
+        f"{_EFFECTIVE_APPLIED_AT} AS effective_applied_at, "
+        f"{_EFFECTIVE_APPLY_STATUS} AS effective_apply_status "
+        f"FROM jobs {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
         "WHERE jobs.url = ? LIMIT 1",
         (url,),
     ).fetchone()
@@ -1290,6 +1360,18 @@ def load_job_with_enrichment(
         record["application_url"] = je_app
     if je_at is not None:
         record["detail_scraped_at"] = je_at
+    # Phase 8 (S-30): promote apply_runs columns.
+    record.pop("ar_status", None)
+    record.pop("ar_finished_at", None)
+    ar_applied = record.pop("effective_applied_at", None)
+    ar_status = record.pop("effective_apply_status", None)
+    ar_run_id = record.pop("ar_run_id", None)
+    if ar_applied is not None:
+        record["applied_at"] = ar_applied
+    if ar_status is not None:
+        record["apply_status"] = ar_status
+    if ar_run_id is not None:
+        record["apply_task_id"] = ar_run_id
     return record
 
 
@@ -1380,11 +1462,17 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
             f"OR ({_EFFECTIVE_COVER_PATH} IS NOT NULL AND jm.jm_cover_pdf_path IS NULL)"
         ),
         "tailored": f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
+        # Phase 8 (S-30): pending_apply / applied read through
+        # ``apply_runs`` so the new write path (which leaves
+        # jobs.applied_at NULL) is visible.
         "pending_apply": (
-            f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND applied_at IS NULL "
-            f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL"
+            f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+            f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
+            f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
+            "AND (ar.ar_status IS NULL "
+            "     OR ar.ar_status NOT IN ('starting', 'in_progress'))"
         ),
-        "applied": "applied_at IS NOT NULL",
+        "applied": f"{_EFFECTIVE_APPLIED_AT} IS NOT NULL",
     }
 
     where = conditions.get(stage, "1=1")
@@ -1432,9 +1520,14 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         f"je.application_url AS je_application_url, "
         f"je.enriched_at AS je_enriched_at, "
         f"je.current_status AS je_current_status, "
-        f"je.extraction_tier AS je_extraction_tier "
+        f"je.extraction_tier AS je_extraction_tier, "
+        f"ar.ar_status AS ar_status, "
+        f"ar.ar_finished_at AS ar_finished_at, "
+        f"ar.ar_run_id AS ar_run_id, "
+        f"{_EFFECTIVE_APPLIED_AT} AS effective_applied_at, "
+        f"{_EFFECTIVE_APPLY_STATUS} AS effective_apply_status "
         f"FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_LATEST_STAGE_ATTEMPTS_JOIN} {_ENRICHMENT_JOIN} "
+        f"{_LATEST_STAGE_ATTEMPTS_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )
@@ -1486,5 +1579,20 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
             record["application_url"] = je_app
         if je_at is not None:
             record["detail_scraped_at"] = je_at
+        # Phase 8 (S-30): promote apply_runs columns into the legacy
+        # column slots so consumers (TS read-model, Rich dashboard,
+        # legacy CLI) that still read ``applied_at`` / ``apply_status``
+        # see canonical values written by ``ApplyRunRepository``.
+        ar_applied = record.pop("effective_applied_at", None)
+        ar_status = record.pop("effective_apply_status", None)
+        record.pop("ar_status", None)
+        record.pop("ar_finished_at", None)
+        ar_run_id = record.pop("ar_run_id", None)
+        if ar_applied is not None:
+            record["applied_at"] = ar_applied
+        if ar_status is not None:
+            record["apply_status"] = ar_status
+        if ar_run_id is not None:
+            record["apply_task_id"] = ar_run_id
         out.append(record)
     return out
