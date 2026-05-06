@@ -12,6 +12,7 @@ const meta = {
   title: "Shared/UI/Toaster",
   component: Toaster,
   parameters: {
+    // a11y deferred — toast.tsx ToastClose icon-only button-name defect; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof Toaster>;

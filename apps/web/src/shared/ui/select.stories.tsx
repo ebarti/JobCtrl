@@ -18,6 +18,7 @@ const meta = {
   title: "Shared/UI/Select",
   component: Select,
   parameters: {
+    // a11y deferred — Radix Select aria-hidden-focus during open transition; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof Select>;

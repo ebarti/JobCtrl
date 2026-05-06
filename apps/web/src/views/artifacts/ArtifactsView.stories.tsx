@@ -22,6 +22,7 @@ const meta = {
   title: "Views/Artifacts/ArtifactsView",
   component: ArtifactsView,
   parameters: {
+    // a11y deferred — DataTable + ArtifactFilterBar select-name defects; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof ArtifactsView>;

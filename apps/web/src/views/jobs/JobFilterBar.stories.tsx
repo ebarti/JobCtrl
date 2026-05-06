@@ -14,6 +14,7 @@ const meta = {
   parameters: {
     withRouter: true,
     initialPath: "/jobs",
+    // a11y deferred — JobFilterBar.tsx bare <select> select-name defect; see meta comment above.
     a11y: { test: "off" },
   },
   args: {

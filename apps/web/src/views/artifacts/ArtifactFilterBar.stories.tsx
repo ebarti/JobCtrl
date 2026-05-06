@@ -13,6 +13,7 @@ const meta = {
   parameters: {
     withRouter: true,
     initialPath: "/artifacts",
+    // a11y deferred — ArtifactFilterBar.tsx bare <select> select-name defect; see meta comment above.
     a11y: { test: "off" },
   },
   args: {

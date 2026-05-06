@@ -15,6 +15,7 @@ const meta = {
   args: { jobId: "job-1" },
   parameters: {
     layout: "padded",
+    // a11y deferred — TanStack Router Link button-name defect in ApplyHistory.tsx; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof ApplyHistory>;

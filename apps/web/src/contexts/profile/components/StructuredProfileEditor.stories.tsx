@@ -17,6 +17,7 @@ const meta = {
     onStyleTextChange: () => {},
   },
   parameters: {
+    // a11y deferred — StructuredProfileEditor.tsx bare select-name + button-name defects; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof StructuredProfileEditor>;

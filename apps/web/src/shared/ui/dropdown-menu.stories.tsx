@@ -16,6 +16,7 @@ const meta = {
   title: "Shared/UI/DropdownMenu",
   component: DropdownMenu,
   parameters: {
+    // a11y deferred — Radix DropdownMenu aria-hidden-focus during open animation; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof DropdownMenu>;

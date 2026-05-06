@@ -9,6 +9,7 @@ const meta = {
   title: "Shared/UI/Popover",
   component: Popover,
   parameters: {
+    // a11y deferred — Radix Popover portal role/ARIA labelling requirements; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof Popover>;
