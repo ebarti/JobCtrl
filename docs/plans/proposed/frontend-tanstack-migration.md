@@ -106,8 +106,7 @@ boundary).
 
 JobHunter has exactly one user. There is no other consumer whose UI
 state, deep links, browser cache, or workflows must be preserved across
-a migration. Every step here is **rip-and-replace** per
-[`feedback_no_strangler.md`](../../../.claude/projects/-Users-eloibarti-Github-JobHunter/memory/feedback_no_strangler.md):
+a migration. Every step here is **rip-and-replace**:
 the new implementation lands in the same change that deletes the old
 one.
 
