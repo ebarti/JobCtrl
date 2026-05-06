@@ -577,6 +577,104 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
+  // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
+  // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
+  // permanently excludes the row and the retry is a silent no-op. Mirror
+  // of the Python ``test_reset_job_stage_enrich_clears_job_enrichments_aggregate``
+  // — exercises ``resetEnrichmentAggregate`` in
+  // ``apps/api/src/write-model.ts`` end-to-end through the HTTP route.
+  it("retry-enrich resets the job_enrichments aggregate to pending", async () => {
+    // Seed an enriched aggregate row directly — independent of the rest
+    // of the fixture so the test is self-contained.
+    const seedDb = new Database(options.dbPath);
+    seedDb.prepare(
+      `INSERT INTO job_enrichments (
+         job_url, tenant_id, current_status, full_description,
+         application_url, enriched_at, extraction_tier,
+         attempts_json, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "https://example.com/jobs/failed-score",
+      "local",
+      "enriched",
+      "The full job description.",
+      "https://example.com/apply",
+      "2026-04-29T10:01:00+00:00",
+      "json_ld",
+      '[{"attempt_number":1,"status":"succeeded","extraction_tier":"json_ld",'
+        + '"started_at":"t0","finished_at":"t1","error":null}]',
+      "2026-04-29T10:01:00+00:00",
+    );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/failed-score");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "enrich", resetAttempts: true },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    const enrichment = db
+      .prepare(
+        `SELECT current_status, full_description, application_url,
+                enriched_at, extraction_tier
+         FROM job_enrichments WHERE job_url = ?`,
+      )
+      .get("https://example.com/jobs/failed-score") as {
+      current_status: string;
+      full_description: string | null;
+      application_url: string | null;
+      enriched_at: string | null;
+      extraction_tier: string | null;
+    };
+    // Sanity: legacy columns are also nulled (existing behavior).
+    const legacyJob = db
+      .prepare(
+        "SELECT detail_scraped_at, detail_error FROM jobs WHERE url = ?",
+      )
+      .get("https://example.com/jobs/failed-score") as {
+      detail_scraped_at: string | null;
+      detail_error: string | null;
+    };
+    db.close();
+
+    expect(enrichment.current_status).toBe("pending");
+    expect(enrichment.full_description).toBeNull();
+    expect(enrichment.application_url).toBeNull();
+    expect(enrichment.enriched_at).toBeNull();
+    expect(enrichment.extraction_tier).toBeNull();
+    expect(legacyJob.detail_scraped_at).toBeNull();
+    expect(legacyJob.detail_error).toBeNull();
+
+    await app.close();
+  });
+
+  it("retry-enrich is a no-op when no job_enrichments row exists", async () => {
+    // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
+    // aggregate row was never written (job in legacy-only state). The
+    // legacy column reset still fires; the JE update is a 0-row UPDATE.
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/blocked-tailor");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "enrich", resetAttempts: true },
+    });
+    expect(response.statusCode, response.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    const count = db
+      .prepare("SELECT COUNT(*) AS c FROM job_enrichments WHERE job_url = ?")
+      .get("https://example.com/jobs/blocked-tailor") as { c: number };
+    db.close();
+    expect(count.c).toBe(0); // still no row — UPDATE was a no-op
+    await app.close();
+  });
+
   it("dispatches run-after apply retry through the job-scoped action dispatcher path", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
@@ -1209,6 +1307,17 @@ function seedDatabase(dbPath: string): void {
       level TEXT,
       message TEXT,
       occurred_at TEXT
+    );
+    CREATE TABLE job_enrichments (
+      job_url TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      current_status TEXT NOT NULL,
+      full_description TEXT,
+      application_url TEXT,
+      enriched_at TEXT,
+      extraction_tier TEXT,
+      attempts_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE apply_runs (
       run_id TEXT,

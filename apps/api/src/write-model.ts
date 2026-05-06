@@ -391,6 +391,12 @@ function updateLegacyJobColumnsForReset(
   if (stage === "enrich") {
     updates.detail_error = null;
     updates.detail_scraped_at = null;
+    // Phase 7 (S-26 round-1 review B2): the new ``job_enrichments``
+    // table is the canonical source of "is this job enriched". Without
+    // resetting its row the worker's ``_ENRICHMENT_PENDING`` predicate
+    // permanently excludes the job and the API-driven retry-enrich
+    // silently no-ops. Mirror of Python's ``_reset_enrichment_aggregate``.
+    resetEnrichmentAggregate(db, jobUrl);
   } else if (stage === "score") {
     updates.fit_score = null;
     updates.score_reasoning = null;
@@ -417,6 +423,38 @@ function updateLegacyJobColumnsForReset(
     }
   }
   updateExistingJobColumns(db, jobUrl, updates);
+}
+
+/**
+ * Phase 7 (S-26 round-1 review B2): reset the ``job_enrichments`` row
+ * for one job back to the ``pending`` lifecycle state.
+ *
+ * Mirror of Python's ``state.py::_reset_enrichment_aggregate`` — both
+ * paths (CLI ``jobhunter retry enrich URL`` and API
+ * ``POST /v1/jobs/{key}/retry?stage=enrich``) MUST clear the
+ * aggregate's terminal-state fields, otherwise the worker's
+ * ``_ENRICHMENT_PENDING`` predicate excludes the row and retry is a
+ * silent no-op.
+ *
+ * The reset preserves the attempt history (audit trail intact) and
+ * only clears the success-side fields plus rolls ``current_status``
+ * back to ``pending``. Idempotent — safe to call when no row exists.
+ */
+function resetEnrichmentAggregate(db: SqliteDatabase, jobUrl: string): void {
+  if (!tableExists(db, "job_enrichments")) {
+    return;
+  }
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE job_enrichments
+       SET current_status = 'pending',
+           full_description = NULL,
+           application_url = NULL,
+           enriched_at = NULL,
+           extraction_tier = NULL,
+           updated_at = ?
+     WHERE job_url = ?`,
+  ).run(now, jobUrl);
 }
 
 function ensureDeletedJobsTable(db: SqliteDatabase): void {

@@ -14,44 +14,14 @@ from datetime import datetime, timezone
 
 from jobhunter import config
 from jobhunter.database import get_connection, init_db
+# Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
+# ``jobhunter.infrastructure.network`` so the Enrichment context's
+# Playwright fetcher can import it without depending on this Discovery
+# module. Imported here for the local call sites in ``_run_one_search``
+# / ``_full_crawl``.
+from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
-
-
-# -- Proxy parsing -----------------------------------------------------------
-
-def parse_proxy(proxy_str: str) -> dict:
-    """Parse host:port:user:pass into components."""
-    parts = proxy_str.split(":")
-    if len(parts) == 4:
-        host, port, user, passwd = parts
-        return {
-            "host": host,
-            "port": port,
-            "user": user,
-            "pass": passwd,
-            "jobspy": f"{user}:{passwd}@{host}:{port}",
-            "playwright": {
-                "server": f"http://{host}:{port}",
-                "username": user,
-                "password": passwd,
-            },
-        }
-    elif len(parts) == 2:
-        host, port = parts
-        return {
-            "host": host,
-            "port": port,
-            "user": None,
-            "pass": None,
-            "jobspy": f"{host}:{port}",
-            "playwright": {"server": f"http://{host}:{port}"},
-        }
-    else:
-        raise ValueError(
-            f"Proxy format not recognized: {proxy_str}. "
-            f"Expected: host:port:user:pass or host:port"
-        )
 
 
 # -- Retry wrapper -----------------------------------------------------------
@@ -230,7 +200,7 @@ def _run_one_search(
         if s.get("remote"):
             kwargs["is_remote"] = True
         if proxy_config:
-            kwargs["proxies"] = [proxy_config["jobspy"]]
+            kwargs["proxies"] = [proxy_config.jobspy]
         if "linkedin" in other_sites:
             kwargs["linkedin_fetch_description"] = True
         try:
@@ -253,7 +223,7 @@ def _run_one_search(
         if s.get("remote"):
             gd_kwargs["is_remote"] = True
         if proxy_config:
-            gd_kwargs["proxies"] = [proxy_config["jobspy"]]
+            gd_kwargs["proxies"] = [proxy_config.jobspy]
         try:
             gd_df = _scrape_with_retry(gd_kwargs, max_retries=max_retries)
             all_dfs.append(gd_df)
@@ -328,7 +298,7 @@ def search_jobs(
         kwargs["is_remote"] = True
 
     if proxy_config:
-        kwargs["proxies"] = [proxy_config["jobspy"]]
+        kwargs["proxies"] = [proxy_config.jobspy]
 
     if "linkedin" in sites:
         kwargs["linkedin_fetch_description"] = True

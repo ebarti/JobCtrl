@@ -398,6 +398,39 @@ def get_job_stage_states(conn, job: dict[str, Any], *, min_score: int = 7) -> li
     return states
 
 
+def _reset_enrichment_aggregate(conn, job_url: str) -> None:
+    """Reset the JobEnrichment aggregate for a job back to ``pending``.
+
+    Phase 7 (S-26 round-1 review B1). The mirror of
+    :func:`_reset_materials_artifacts` for the enrichment context. After
+    a stage reset for "enrich":
+
+      * the legacy ``jobs.detail_scraped_at`` / ``jobs.detail_error``
+        columns are nulled by ``reset_job_stage``'s standard UPDATE so
+        un-migrated rows reading the legacy fallback also reset;
+      * AND the ``job_enrichments`` row's ``current_status`` is set
+        back to ``pending`` and the terminal-state fields cleared,
+        otherwise the new ``_ENRICHMENT_PENDING`` predicate would
+        permanently exclude the row and retry would silently no-op.
+
+    The repository is loaded inline so we don't hit a circular import
+    (the enrichment package imports ``state``).
+    """
+    from jobhunter.domain.identifiers import JobId
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+
+    repo = SqliteEnrichmentRepository(conn)
+    aggregate = repo.load(LOCAL_TENANT, JobId(job_url))
+    if aggregate is None:
+        # Nothing to reset — the next pipeline run will create the row
+        # in the empty state when start_attempt fires.
+        return
+    if aggregate.is_pending and aggregate.full_description is None:
+        return
+    repo.save(aggregate.reset(reset_at=utc_now()))
+
+
 def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
     """Clear the latest generation's affected artifact rows after a stage reset.
 
@@ -511,6 +544,12 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
     # job_materials hasn't been populated yet.
     if stage in ("tailor", "cover", "pdf"):
         _reset_materials_artifacts(conn, job_url, stage)
+    # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
+    # materials reset for the enrichment aggregate. Without this the
+    # ``_ENRICHMENT_PENDING`` queue predicate excludes the row and the
+    # retry-enrich is a silent no-op.
+    if stage == "enrich":
+        _reset_enrichment_aggregate(conn, job_url)
     set_stage_state(
         conn, job_url, stage, "pending",
         attempt_count=0 if reset_attempts else None,

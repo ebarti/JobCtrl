@@ -250,11 +250,22 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
     # exactly. The SELECT promotes the materials path / score into the
     # legacy column slots so downstream code (``run_job``, ``_job_snapshot``)
     # keeps reading via the existing keys.
+    # Phase 7 (S-26 round-1 review B5): the new enrichment use case
+    # writes to ``job_enrichments`` only — ``jobs.application_url`` /
+    # ``jobs.full_description`` stay NULL on the new path. Without
+    # joining ``job_enrichments`` here, ``jobhunter apply`` silently
+    # excludes every post-Phase-7 enriched job. Mirror the Phase-6
+    # materials-join pattern: read through the COALESCE expressions and
+    # promote into the legacy column slots so downstream consumers
+    # (``run_job``, ``_job_snapshot``) keep working.
     from jobhunter.database import (
+        _ENRICHMENT_JOIN,
         _LATEST_MATERIALS_JOIN,
         _LATEST_SCORE_JOIN,
+        _EFFECTIVE_APPLICATION_URL,
         _EFFECTIVE_COVER_PATH,
         _EFFECTIVE_FIT_SCORE,
+        _EFFECTIVE_FULL_DESCRIPTION,
         _EFFECTIVE_TAILOR_PATH,
     )
     try:
@@ -264,14 +275,15 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             like = f"%{target_url.split('?')[0].rstrip('/')}%"
             row = conn.execute(f"""
                 SELECT jobs.url AS url, jobs.title AS title, jobs.site AS site,
-                       jobs.application_url AS application_url,
+                       {_EFFECTIVE_APPLICATION_URL} AS application_url,
                        {_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path,
                        {_EFFECTIVE_FIT_SCORE} AS fit_score,
-                       jobs.location AS location, jobs.full_description AS full_description,
+                       jobs.location AS location,
+                       {_EFFECTIVE_FULL_DESCRIPTION} AS full_description,
                        {_EFFECTIVE_COVER_PATH} AS cover_letter_path,
                        jobs.apply_attempts AS apply_attempts
-                FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN}
-                WHERE (jobs.url = ? OR jobs.application_url = ? OR jobs.application_url LIKE ? OR jobs.url LIKE ?)
+                FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} {_ENRICHMENT_JOIN}
+                WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ? OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
                   AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
                   AND (jobs.apply_status IS NULL OR jobs.apply_status != 'in_progress')
                 LIMIT 1
@@ -291,15 +303,16 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 params.extend(blocked_patterns)
             row = conn.execute(f"""
                 SELECT jobs.url AS url, jobs.title AS title, jobs.site AS site,
-                       jobs.application_url AS application_url,
+                       {_EFFECTIVE_APPLICATION_URL} AS application_url,
                        {_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path,
                        {_EFFECTIVE_FIT_SCORE} AS fit_score,
-                       jobs.location AS location, jobs.full_description AS full_description,
+                       jobs.location AS location,
+                       {_EFFECTIVE_FULL_DESCRIPTION} AS full_description,
                        {_EFFECTIVE_COVER_PATH} AS cover_letter_path,
                        jobs.apply_attempts AS apply_attempts
-                FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN}
+                FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} {_ENRICHMENT_JOIN}
                 WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
-                  AND jobs.application_url IS NOT NULL AND jobs.application_url != ''
+                  AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL AND {_EFFECTIVE_APPLICATION_URL} != ''
                   AND (jobs.apply_status IS NULL OR jobs.apply_status = 'failed')
                   AND (jobs.apply_attempts IS NULL OR jobs.apply_attempts < ?)
                   AND {_EFFECTIVE_FIT_SCORE} >= ?

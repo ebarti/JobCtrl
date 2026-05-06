@@ -309,10 +309,22 @@ class _StageTracker:
 # expression so new scores written via ``ScoreRepository.save`` are
 # visible immediately (jobs.fit_score is NULL on the new write path).
 _PENDING_SQL: dict[str, str] = {
-    "enrich": "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL",
+    # Phase 7 (S-26 round-1 review B3 + B4): every selector that
+    # previously read bare ``detail_scraped_at`` / ``full_description``
+    # now goes through the shared ``_ENRICHMENT_JOIN`` /
+    # ``_ENRICHMENT_PENDING`` / ``_EFFECTIVE_FULL_DESCRIPTION``
+    # expressions so jobs enriched through the new repository path are
+    # observable. Without these the pipeline thinks "enrich" always has
+    # work and "score" / "tailor" / "cover" never have work.
+    "enrich": (
+        f"SELECT COUNT(*) FROM jobs {db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._ENRICHMENT_PENDING}"
+    ),
     "score": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
-        f"WHERE full_description IS NOT NULL AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL"
+        f"{db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL"
     ),
     # Phase 6 (S-20 + round-2 H1): tailor + cover predicates read through
     # ``_LATEST_MATERIALS_JOIN`` (path) and ``_LATEST_STAGE_ATTEMPTS_JOIN``
@@ -324,8 +336,9 @@ _PENDING_SQL: dict[str, str] = {
     "tailor": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
         f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
-        "AND full_description IS NOT NULL "
+        f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
         f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -333,8 +346,9 @@ _PENDING_SQL: dict[str, str] = {
     "cover": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
         f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
-        "AND full_description IS NOT NULL "
+        f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {db_module._EFFECTIVE_TAILOR_PATH} != '' "
         f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
         f"AND {db_module._COVER_NOT_EXHAUSTED} "
@@ -359,12 +373,17 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
 
     if stage == "tailor":
         conn = get_connection()
+        # Phase 7 (S-26 round-1 review B4): bare ``full_description``
+        # is NULL on the new write path; route through the COALESCE
+        # expression backed by ``job_enrichments``.
         where = (
-            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
             if retailor else
-            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -372,6 +391,7 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
         return conn.execute(
             f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
             f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+            f"{db_module._ENRICHMENT_JOIN} "
             f"WHERE {where}",
             (min_score,),
         ).fetchone()[0]
@@ -772,9 +792,16 @@ def run_single_job(
     init_db()
 
     conn = get_connection()
-    row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+    # Phase 7 (S-26 round-1 review B6): use the helper that LEFT JOINs
+    # ``job_enrichments`` and promotes ``full_description`` /
+    # ``application_url`` / ``detail_scraped_at`` into the legacy
+    # column slots — bare ``SELECT * FROM jobs`` reads NULL on the new
+    # write path.
+    from jobhunter.database import load_job_with_enrichment
 
-    if row is None:
+    job_record = load_job_with_enrichment(conn, url)
+
+    if job_record is None:
         # ---- Auto-insert + enrich unknown job URL ----
         console.print("  [cyan]Job not in database — inserting and enriching...[/cyan]")
 
@@ -826,25 +853,24 @@ def run_single_job(
         else:
             console.print("  [dim]DRY RUN — would enrich job[/dim]")
 
-        # Re-read after enrichment
-        row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
-        if row is None:
+        # Re-read after enrichment via the same helper
+        job_record = load_job_with_enrichment(conn, url)
+        if job_record is None:
             return {"url": url, "error": "Job disappeared after insert"}
 
         # Infer title from description if still missing
-        job_check = dict(row)
-        if not job_check.get("title") and job_check.get("full_description"):
+        if not job_record.get("title") and job_record.get("full_description"):
             # Use first non-empty line as a rough title
-            for line in job_check["full_description"].splitlines():
+            for line in job_record["full_description"].splitlines():
                 line = line.strip()
                 if 10 < len(line) < 120:
                     conn.execute("UPDATE jobs SET title = ? WHERE url = ?", (line, url))
                     conn.commit()
                     break
             # Re-read with updated title
-            row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
+            job_record = load_job_with_enrichment(conn, url)
 
-    job = dict(row)
+    job = job_record or {}
     result: dict = {"url": url, "title": job.get("title") or "", "errors": []}
 
     # ------------------------------------------------------------------
@@ -866,9 +892,9 @@ def run_single_job(
                 if enrich_stats["ok"] == 0 and enrich_stats["partial"] == 0:
                     result["error"] = "Enrichment failed — could not scrape job description"
                     return result
-                # Re-read
-                row = conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
-                job = dict(row)
+                # Re-read through the helper so enrichment fields land
+                # in the row dict.
+                job = load_job_with_enrichment(conn, url) or {}
             else:
                 console.print("  [dim]DRY RUN — would enrich job[/dim]")
 

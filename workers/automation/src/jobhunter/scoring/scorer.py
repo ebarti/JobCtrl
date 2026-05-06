@@ -147,11 +147,12 @@ def run_scoring(
     )
 
     if rescore:
-        query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
-        if limit > 0:
-            query += f" LIMIT {limit}"
-        rows = conn.execute(query).fetchall()
-        jobs = [dict(zip(row.keys(), row)) for row in rows]
+        # Phase 7 (S-26 round-1 review H1): bare ``full_description`` is
+        # NULL on the new write path; route through ``get_jobs_by_stage``
+        # which already COALESCEs over ``job_enrichments``. Use the
+        # ``enriched`` selector instead of ``pending_score`` so already-
+        # scored rows are included (rescore semantics).
+        jobs = get_jobs_by_stage(conn=conn, stage="enriched", limit=limit)
     else:
         jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=limit)
 

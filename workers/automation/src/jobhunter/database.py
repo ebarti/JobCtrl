@@ -144,6 +144,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_state_tables(conn)
     ensure_score_tables(conn)
     ensure_materials_tables(conn)
+    ensure_enrichment_tables(conn)
 
     return conn
 
@@ -753,6 +754,213 @@ def _backfill_one_materials_row(
         )
 
 
+def ensure_enrichment_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the per-job ``job_enrichments`` table and run its backfill.
+
+    See ddd-target.md §4.2 / §7.2. The table is the persistence side
+    of the Phase-7 :class:`JobEnrichment` aggregate. The legacy
+    ``jobs.full_description`` / ``jobs.application_url`` /
+    ``jobs.detail_scraped_at`` / ``jobs.detail_error`` columns remain
+    in the schema as a read-only fallback for historical rows but
+    new enrichment writes target this table only (no-strangler
+    directive).
+
+    Backfill is **idempotent**: it only fires when ``job_enrichments``
+    is empty AND ``jobs.full_description`` has values. Each backfilled
+    row becomes a single succeeded attempt at ``css_selectors`` tier
+    so consumers see the expected attempt history shape.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_enrichments (
+            job_url             TEXT PRIMARY KEY,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            current_status      TEXT NOT NULL,
+            full_description    TEXT,
+            application_url     TEXT,
+            enriched_at         TEXT,
+            extraction_tier     TEXT,
+            attempts_json       TEXT NOT NULL DEFAULT '[]',
+            updated_at          TEXT NOT NULL,
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_enrichments_tenant_status
+        ON job_enrichments(tenant_id, current_status, updated_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_enrichments_enriched_at
+        ON job_enrichments(enriched_at DESC)
+        """
+    )
+
+    # Idempotent one-shot backfill from the legacy columns.
+    backfill_count = conn.execute(
+        "SELECT COUNT(*) FROM job_enrichments"
+    ).fetchone()[0]
+    if backfill_count == 0:
+        legacy_rows = conn.execute(
+            """
+            SELECT url, full_description, application_url,
+                   detail_scraped_at, detail_error
+            FROM jobs
+            WHERE full_description IS NOT NULL
+               OR application_url IS NOT NULL
+               OR detail_scraped_at IS NOT NULL
+               OR detail_error IS NOT NULL
+            """
+        ).fetchall()
+        if legacy_rows:
+            now = datetime.now(timezone.utc).isoformat()
+            for row in legacy_rows:
+                _backfill_one_enrichment_row(conn, row, now)
+
+    conn.commit()
+    return ["job_enrichments"]
+
+
+def _backfill_one_enrichment_row(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    now: str,
+) -> None:
+    """Backfill one legacy job into the new ``job_enrichments`` shape.
+
+    The lifecycle is derived from the legacy columns:
+
+      * ``full_description`` set, no error  ⇒ ``enriched`` (single
+        succeeded attempt at ``css_selectors`` tier — we don't know
+        which tier originally succeeded, but ``css_selectors`` is the
+        most common landing tier).
+      * ``detail_error`` set, no description ⇒ ``failed`` (single
+        failed attempt with the legacy error message).
+      * Any other combination ⇒ ``pending`` (e.g. a row that has only
+        ``application_url`` or only ``detail_scraped_at`` is treated
+        as not-yet-enriched so the worker re-queues it).
+
+    Backfilled rows carry the sentinel ``"backfilled": true`` flag
+    inside the attempt JSON so consumers can tell migrated rows apart
+    from machine-generated ones.
+    """
+    url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
+    full_description = row["full_description"] if isinstance(row, sqlite3.Row) else row[1]
+    application_url = row["application_url"] if isinstance(row, sqlite3.Row) else row[2]
+    detail_scraped_at = row["detail_scraped_at"] if isinstance(row, sqlite3.Row) else row[3]
+    detail_error = row["detail_error"] if isinstance(row, sqlite3.Row) else row[4]
+
+    enriched_at: str | None = None
+    extraction_tier: str | None = None
+    current_status: str
+    attempts: list[dict]
+
+    if full_description and not detail_error:
+        current_status = "enriched"
+        enriched_at = detail_scraped_at or now
+        extraction_tier = "css_selectors"
+        attempts = [
+            {
+                "attempt_number": 1,
+                "extraction_tier": "css_selectors",
+                "status": "succeeded",
+                "started_at": detail_scraped_at or now,
+                "finished_at": detail_scraped_at or now,
+                "error": None,
+                "backfilled": True,
+            }
+        ]
+    elif detail_error and not full_description:
+        current_status = "failed"
+        attempts = [
+            {
+                "attempt_number": 1,
+                "extraction_tier": "css_selectors",
+                "status": "failed",
+                "started_at": detail_scraped_at or now,
+                "finished_at": detail_scraped_at or now,
+                "error": {
+                    "code": "LEGACY_DETAIL_ERROR",
+                    "message": str(detail_error),
+                    "retryable": True,
+                },
+                "backfilled": True,
+            }
+        ]
+    else:
+        current_status = "pending"
+        attempts = []
+
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO job_enrichments (
+            job_url, tenant_id, current_status, full_description,
+            application_url, enriched_at, extraction_tier,
+            attempts_json, updated_at
+        ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            url,
+            current_status,
+            full_description if full_description else None,
+            application_url if application_url else None,
+            enriched_at,
+            extraction_tier,
+            json.dumps(attempts, sort_keys=True),
+            detail_scraped_at or now,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# job_enrichments read fragments — used by every selector / stat that
+# previously read bare ``jobs.full_description`` / ``jobs.application_url``
+# / ``jobs.detail_scraped_at`` / ``jobs.detail_error``. After Phase 7 the
+# canonical enrichment fields live in ``job_enrichments``; the legacy
+# ``jobs.*`` columns stay as a read-only fallback for un-backfilled rows.
+# Use these COALESCE expressions everywhere the old code read bare columns
+# so the worker queue selectors see new repository writes immediately and
+# don't starve.
+# ---------------------------------------------------------------------------
+
+_ENRICHMENT_JOIN: str = (
+    "LEFT JOIN job_enrichments je ON je.job_url = jobs.url"
+)
+
+_EFFECTIVE_FULL_DESCRIPTION: str = (
+    "COALESCE(je.full_description, jobs.full_description)"
+)
+_EFFECTIVE_APPLICATION_URL: str = (
+    "COALESCE(je.application_url, jobs.application_url)"
+)
+_EFFECTIVE_DETAIL_SCRAPED_AT: str = (
+    "COALESCE(je.enriched_at, jobs.detail_scraped_at)"
+)
+# Per §7.1 the canonical "this job has been enriched" predicate is the
+# aggregate's terminal status; un-backfilled rows fall back to the legacy
+# detail_scraped_at column.
+_ENRICHMENT_DONE: str = (
+    "(je.current_status = 'enriched' OR jobs.detail_scraped_at IS NOT NULL)"
+)
+# Phase 7 (S-26 round-1 review M3): the canonical "this job needs
+# enrichment" predicate is the aggregate's status alone. Earlier drafts
+# carried an `AND jobs.detail_scraped_at IS NULL` clause that (a)
+# excluded backfilled `pending` rows that happened to have the legacy
+# timestamp set, and (b) would block the post-reset re-pickup once
+# `reset_job_stage("enrich")` clears the aggregate. The predicate now
+# matches the Phase-5/6 pattern — COALESCE expressions are the source
+# of truth, the legacy column is read-only fallback only.
+_ENRICHMENT_PENDING: str = (
+    "(je.job_url IS NULL OR je.current_status = 'pending')"
+)
+
+
 # ---------------------------------------------------------------------------
 # job_materials read fragments — used by the queue selectors that
 # previously read bare ``jobs.tailored_resume_path`` / ``cover_letter_path``.
@@ -885,17 +1093,22 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchall()
     stats["by_site"] = [(row[0], row[1]) for row in rows]
 
-    # Enrichment stage
+    # Enrichment stage — Phase 7 (S-26): read through the
+    # ``job_enrichments`` join so dashboard counts reflect new
+    # JobEnrichment writes (jobs.full_description / jobs.application_url
+    # are NULL on the new path).
     stats["pending_detail"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL"
+        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} WHERE {_ENRICHMENT_PENDING}"
     ).fetchone()[0]
 
     stats["with_description"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} "
+        f"WHERE {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL"
     ).fetchone()[0]
 
     stats["detail_errors"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE detail_error IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} "
+        f"WHERE je.current_status = 'failed' OR jobs.detail_error IS NOT NULL"
     ).fetchone()[0]
 
     # Scoring stage — round-1 review B2: read through the same job_scores
@@ -908,8 +1121,9 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["unscored"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} "
-        f"WHERE full_description IS NOT NULL AND {_EFFECTIVE_FIT_SCORE} IS NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_ENRICHMENT_JOIN} "
+        f"WHERE {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {_EFFECTIVE_FIT_SCORE} IS NULL"
     ).fetchone()[0]
 
     # Score distribution — group by the effective score so legacy and new
@@ -935,7 +1149,9 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["untailored_eligible"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 AND full_description IS NOT NULL "
+        f"{_ENRICHMENT_JOIN} "
+        f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 "
+        f"AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL"
     ).fetchone()[0]
 
@@ -966,10 +1182,11 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["ready_to_apply"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} "
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} {_ENRICHMENT_JOIN} "
         f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
         "AND applied_at IS NULL "
-        "AND application_url IS NOT NULL AND application_url != ''"
+        f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
+        f"AND {_EFFECTIVE_APPLICATION_URL} != ''"
     ).fetchone()[0]
 
     return stats
@@ -1031,6 +1248,51 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
     return new, existing
 
 
+def load_job_with_enrichment(
+    conn: sqlite3.Connection,
+    url: str,
+) -> dict | None:
+    """Load one job row with the canonical enrichment fields promoted.
+
+    Phase 7 (S-26 round-1 review B6). The legacy
+    ``SELECT * FROM jobs WHERE url = ?`` reads NULL for
+    ``full_description`` / ``application_url`` / ``detail_scraped_at``
+    on the new write path. This helper LEFT JOINs ``job_enrichments``
+    and promotes the joined values into the legacy column slots so
+    callers (manual ``apply_jobs`` flow, ``apply/launcher`` snapshots)
+    keep reading via the existing keys without an extra round-trip
+    through the repository.
+
+    Returns the row dict, or ``None`` if no job row exists for ``url``.
+    """
+    row = conn.execute(
+        f"SELECT jobs.*, "
+        f"je.full_description AS je_full_description, "
+        f"je.application_url AS je_application_url, "
+        f"je.enriched_at AS je_enriched_at, "
+        f"je.current_status AS je_current_status, "
+        f"je.extraction_tier AS je_extraction_tier "
+        f"FROM jobs {_ENRICHMENT_JOIN} "
+        "WHERE jobs.url = ? LIMIT 1",
+        (url,),
+    ).fetchone()
+    if row is None:
+        return None
+    record = dict(row)
+    je_full = record.pop("je_full_description", None)
+    je_app = record.pop("je_application_url", None)
+    je_at = record.pop("je_enriched_at", None)
+    record.pop("je_current_status", None)
+    record.pop("je_extraction_tier", None)
+    if je_full is not None:
+        record["full_description"] = je_full
+    if je_app is not None:
+        record["application_url"] = je_app
+    if je_at is not None:
+        record["detail_scraped_at"] = je_at
+    return record
+
+
 def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
                       stage: str = "discovered",
                       min_score: int | None = None,
@@ -1077,12 +1339,20 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     # ``cover_attempts`` columns through ``_EFFECTIVE_*_ATTEMPTS`` so
     # un-migrated rows that never got a ``job_stage_states`` row still
     # honour the legacy ≥ 5 cap.
+    # Phase 7 (S-26): every predicate that historically read bare
+    # ``full_description`` / ``application_url`` / ``detail_scraped_at``
+    # / ``detail_error`` now reads through the ``_EFFECTIVE_*`` COALESCE
+    # expressions backed by the ``job_enrichments`` table. New
+    # enrichment writes target ``job_enrichments`` only (no-strangler);
+    # without this join ``pending_score`` would loop forever (description
+    # column stays NULL on the new path) and ``pending_detail`` would
+    # double-pick already-enriched jobs.
     pending_tailor_where = (
-        f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
+        f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
         if retailor else
-        f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
+        f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -1090,13 +1360,16 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
 
     conditions = {
         "discovered": "1=1",
-        "pending_detail": "detail_scraped_at IS NULL",
-        "enriched": "full_description IS NOT NULL",
-        "pending_score": f"full_description IS NOT NULL AND {_EFFECTIVE_FIT_SCORE} IS NULL",
+        "pending_detail": _ENRICHMENT_PENDING,
+        "enriched": f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL",
+        "pending_score": (
+            f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {_EFFECTIVE_FIT_SCORE} IS NULL"
+        ),
         "scored": f"{_EFFECTIVE_FIT_SCORE} IS NOT NULL",
         "pending_tailor": pending_tailor_where,
         "pending_cover": (
-            f"{_EFFECTIVE_FIT_SCORE} >= ? AND full_description IS NOT NULL "
+            f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {_EFFECTIVE_TAILOR_PATH} != '' "
             f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
             f"AND {_COVER_NOT_EXHAUSTED} "
@@ -1109,7 +1382,7 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         "tailored": f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
         "pending_apply": (
             f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND applied_at IS NULL "
-            "AND application_url IS NOT NULL"
+            f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL"
         ),
         "applied": "applied_at IS NOT NULL",
     }
@@ -1154,8 +1427,14 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         f"jm.jm_resume_pdf_path AS jm_resume_pdf_path, "
         f"jm.jm_cover_pdf_path AS jm_cover_pdf_path, "
         f"jm.jm_generation AS jm_generation, "
-        f"jm.jm_status AS jm_status "
-        f"FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} {_LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"jm.jm_status AS jm_status, "
+        f"je.full_description AS je_full_description, "
+        f"je.application_url AS je_application_url, "
+        f"je.enriched_at AS je_enriched_at, "
+        f"je.current_status AS je_current_status, "
+        f"je.extraction_tier AS je_extraction_tier "
+        f"FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
+        f"{_LATEST_STAGE_ATTEMPTS_JOIN} {_ENRICHMENT_JOIN} "
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )
@@ -1191,5 +1470,21 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
             record["cover_letter_path"] = jm_cover
             if jm_cover_at is not None:
                 record["cover_letter_at"] = jm_cover_at
+        # Phase 7 (S-26): promote enrichment fields from job_enrichments
+        # into the legacy column slots so downstream consumers (apply,
+        # scoring, tailor) that still read ``full_description`` /
+        # ``application_url`` / ``detail_scraped_at`` see canonical values
+        # without an extra repository round-trip.
+        je_full = record.pop("je_full_description", None)
+        je_app = record.pop("je_application_url", None)
+        je_at = record.pop("je_enriched_at", None)
+        record.pop("je_current_status", None)
+        record.pop("je_extraction_tier", None)
+        if je_full is not None:
+            record["full_description"] = je_full
+        if je_app is not None:
+            record["application_url"] = je_app
+        if je_at is not None:
+            record["detail_scraped_at"] = je_at
         out.append(record)
     return out

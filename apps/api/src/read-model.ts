@@ -56,6 +56,12 @@ type JobRow = Record<string, unknown> & {
   jm_cover_at?: string | null;
   jm_resume_pdf_path?: string | null;
   jm_cover_pdf_path?: string | null;
+  // Phase 7 (S-26): joined-in fields from job_enrichments.
+  je_full_description?: string | null;
+  je_application_url?: string | null;
+  je_enriched_at?: string | null;
+  je_current_status?: string | null;
+  je_extraction_tier?: string | null;
   apply_status?: string | null;
   apply_error?: string | null;
   apply_attempts?: number | null;
@@ -255,10 +261,57 @@ function materialsSelect(db: SqliteDatabase): string {
       );
 }
 
+// Phase 7 (S-26): the canonical enrichment fields (description, apply
+// URL, enrichment timestamp) now live in ``job_enrichments``. The legacy
+// ``jobs.full_description`` / ``jobs.application_url`` /
+// ``jobs.detail_scraped_at`` columns remain in the schema as a read-only
+// fallback for un-backfilled rows. The LEFT JOIN below surfaces the
+// per-job enrichment row under ``je_*`` aliases that don't collide with
+// the legacy columns.
+function enrichmentJoin(db: SqliteDatabase): string {
+  return tableExists(db, "job_enrichments")
+    ? " LEFT JOIN job_enrichments je ON je.job_url = jobs.url"
+    : "";
+}
+
+function enrichmentSelect(db: SqliteDatabase): string {
+  return tableExists(db, "job_enrichments")
+    ? (
+        ", je.full_description AS je_full_description" +
+        ", je.application_url AS je_application_url" +
+        ", je.enriched_at AS je_enriched_at" +
+        ", je.current_status AS je_current_status" +
+        ", je.extraction_tier AS je_extraction_tier"
+      )
+    : (
+        ", NULL AS je_full_description" +
+        ", NULL AS je_application_url" +
+        ", NULL AS je_enriched_at" +
+        ", NULL AS je_current_status" +
+        ", NULL AS je_extraction_tier"
+      );
+}
+
 // Effective score: latest job_scores row (canonical) ⇒ fall back to legacy
 // ``jobs.fit_score`` for un-rescored historical rows. Used everywhere we
 // previously wrote bare ``fit_score`` — sort columns, filters, comparators.
 const EFFECTIVE_FIT_SCORE = "COALESCE(js.js_fit_score, jobs.fit_score)";
+
+// Phase 7 (S-26) effective enrichment-field expression for SQL WHERE
+// clauses. New writes land in ``job_enrichments``; the legacy column
+// is the read-only fallback. The helper degrades gracefully when the
+// ``job_enrichments`` table doesn't yet exist (early-startup state
+// before ``init_db`` runs the migration) — it collapses to the bare
+// legacy column reference so callers don't see "no such column" SQL
+// errors. SELECT-side projection of the same effective values happens
+// via ``enrichmentSelect`` (which surfaces ``je_*`` aliases that
+// ``buildJobSummary`` / ``getJobDetail`` then COALESCE against the
+// legacy fields in TS).
+function effectiveApplicationUrl(db: SqliteDatabase): string {
+  return tableExists(db, "job_enrichments")
+    ? "COALESCE(je.application_url, jobs.application_url)"
+    : "jobs.application_url";
+}
 
 // Phase 6 (S-20) effective-path expressions. New tailor + cover writes
 // land in ``job_materials_artifacts``; the legacy columns are a read-only
@@ -350,7 +403,15 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     ok: true,
     job: {
       ...buildJobSummary(job, stages, artifactCounts),
-      descriptionPreview: previewText(asString(job.full_description) || asString(job.description), 6000),
+      // Phase 7 (S-26): prefer the joined ``job_enrichments.full_description``,
+      // falling back to the legacy ``jobs.full_description`` (or the
+      // discovery-time description) for un-backfilled rows.
+      descriptionPreview: previewText(
+        asString(job.je_full_description) ||
+          asString(job.full_description) ||
+          asString(job.description),
+        6000,
+      ),
       scoreReasoning: extractScoreReasoning(job),
     },
     stages,
@@ -469,7 +530,7 @@ function loadJobs(
   const filter = combineSqlFilters(sqlFilter, deletion);
   return allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${filter.where}`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${filter.where}`,
     filter.params,
   );
 }
@@ -483,7 +544,7 @@ function loadJobPage(
     return { jobs: [], page: 1, total: 0 };
   }
   const filter = combineSqlFilters(jobSqlFilter(query), deletedSqlFilter(db, query.deleted));
-  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${filter.where}`, filter.params);
+  const totalRow = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${filter.where}`, filter.params);
   const total = Number(totalRow?.count ?? 0);
   const pages = Math.max(1, Math.ceil(total / query.pageSize));
   const page = Math.min(query.page, pages);
@@ -491,7 +552,7 @@ function loadJobPage(
   const direction = query.dir === "asc" ? "ASC" : "DESC";
   const jobs = allRows<JobRow>(
     db,
-    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
+    `SELECT ${JOB_COLUMNS.map((column) => `jobs.${column}`).join(", ")}${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)}${filter.where} ORDER BY ${sqlSortColumn} ${direction}, url ASC LIMIT ? OFFSET ?`,
     [...filter.params, query.pageSize, offset],
   );
   return { jobs, page, total };
@@ -575,7 +636,7 @@ function findJob(db: SqliteDatabase, jobKey: string): JobRow | null {
   }
   const row = getRow<JobRow>(
     db,
-    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)} WHERE jobs.url = ? OR jobs.application_url = ? LIMIT 1`,
+    `SELECT jobs.*${deletedSelect(db)}${scoreSelect(db)}${materialsSelect(db)}${enrichmentSelect(db)} FROM jobs${deletedJoin(db)}${scoreJoin(db)}${materialsJoin(db)}${enrichmentJoin(db)} WHERE jobs.url = ? OR ${effectiveApplicationUrl(db)} = ? LIMIT 1`,
     [jobKey, jobKey],
   );
   return row ?? null;
@@ -624,7 +685,11 @@ function buildJobSummary(
     location: asString(job.location),
     salary: asString(job.salary),
     discoveredAt: asNullableString(job.discovered_at),
-    applicationUrl: asNullableString(job.application_url),
+    // Phase 7 (S-26): prefer the joined ``job_enrichments.application_url``,
+    // falling back to the legacy ``jobs.application_url`` only for
+    // historical rows that were never re-enriched.
+    applicationUrl:
+      asNullableString(job.je_application_url) ?? asNullableString(job.application_url),
     // Phase 5 (S-18): prefer the joined ``job_scores.fit_score``, falling
     // back to the legacy ``jobs.fit_score`` only for historical rows.
     fitScore: asNullableNumber(job.js_fit_score) ?? asNullableNumber(job.fit_score),
@@ -710,11 +775,25 @@ function deriveLegacyStates(job: JobRow): StageSummary[] {
     asNullableNumber(job.js_fit_score) !== null ||
     Boolean(job.scored_at) ||
     asNullableNumber(job.fit_score) !== null;
-  const enrich = job.detail_error
-    ? defaultStage("enrich", "failed", asString(job.detail_error))
-    : job.detail_scraped_at || job.full_description
+  // Phase 7 (S-26): the canonical "enriched" signal now lives in
+  // ``job_enrichments.current_status`` ⇒ ``enriched``; the legacy
+  // ``jobs.detail_scraped_at`` / ``jobs.full_description`` columns
+  // remain as a read-only fallback for un-backfilled rows.
+  const enrichmentStatus = asString(job.je_current_status);
+  const hasEnrichmentSuccess =
+    enrichmentStatus === "enriched" ||
+    Boolean(job.je_full_description) ||
+    Boolean(job.je_enriched_at);
+  const hasEnrichmentFailure = enrichmentStatus === "failed";
+  const enrich = hasEnrichmentFailure
+    ? defaultStage("enrich", "failed", "Enrichment failed")
+    : hasEnrichmentSuccess
       ? defaultStage("enrich", "succeeded")
-      : defaultStage("enrich", "pending");
+      : job.detail_error
+        ? defaultStage("enrich", "failed", asString(job.detail_error))
+        : job.detail_scraped_at || job.full_description
+          ? defaultStage("enrich", "succeeded")
+          : defaultStage("enrich", "pending");
   const score =
     enrich.state !== "succeeded"
       ? defaultStage("score", "blocked", "Enrichment has not completed.")

@@ -41,6 +41,10 @@ export * from "./scoring/index.js";
 
 export * from "./materials/index.js";
 
+export * from "./discovery/index.js";
+
+export * from "./enrichment/index.js";
+
 export {
   StageTransitions,
   type StageTransition,

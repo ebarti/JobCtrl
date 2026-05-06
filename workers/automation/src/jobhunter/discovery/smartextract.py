@@ -650,28 +650,11 @@ def ask_llm(prompt: str) -> tuple[str, float, dict]:
     return text, elapsed, meta
 
 
-def extract_json(text: str) -> dict:
-    """Extract JSON from LLM response, handling think tags and code fences."""
-    if "<think>" in text:
-        after = text.split("</think>")[-1].strip()
-        if after:
-            text = after
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-    text = text.strip()
-    text = re.sub(r'\\([^"\\\/bfnrtu])', r'\1', text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    while text.endswith("}") or text.endswith("]"):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            text = text[:-1].rstrip()
-    raise json.JSONDecodeError("Could not parse JSON", text, 0)
+# Phase 7 (S-27 round-1 review M1): ``extract_json`` lives in
+# ``jobhunter.domain.extraction`` so the Enrichment context can import
+# it without depending on this Discovery module. Imported here for the
+# intra-module callers below.
+from jobhunter.domain.extraction import extract_json  # noqa: E402
 
 
 # -- JSON path resolution ---------------------------------------------------

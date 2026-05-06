@@ -1,27 +1,64 @@
-"""Detail page enrichment: scrapes full descriptions and apply URLs.
+"""Detail page enrichment — Phase 7 / S-27 refactor.
 
-For each job URL in the database, navigates to the detail page and extracts:
-  - full_description: the complete job posting text
-  - application_url: the "Apply" button/link URL
+This module is the **adapter shell** that the CLI / pipeline call into.
+The actual enrichment logic now lives in the domain layer:
 
-Three-tier extraction cascade (cheapest first):
-  Tier 1: JSON-LD JobPosting structured data (0 tokens)
-  Tier 2: Deterministic CSS pattern matching (0 tokens)
-  Tier 3: LLM-assisted extraction (1 LLM call)
+  * extractors → ``jobhunter.domain.enrichment.services``
+  * use cases  → ``jobhunter.domain.enrichment.use_cases``
+  * fetcher    → ``jobhunter.infrastructure.enrichment.playwright_fetcher``
+  * persistence → ``jobhunter.infrastructure.enrichment.sqlite_repository``
+
+Per the no-strangler directive, this module:
+
+  * imports ONLY from ``jobhunter.domain``, ``jobhunter.infrastructure``
+    and ``jobhunter.state`` / ``jobhunter.database`` (NO discovery imports);
+  * never writes to ``jobs.full_description`` / ``jobs.application_url`` /
+    ``jobs.detail_scraped_at`` / ``jobs.detail_error`` — every enrichment
+    write goes through ``EnrichmentRepository`` to ``job_enrichments``.
+
+The public surface (``run_enrichment``, ``scrape_detail_page``,
+``scrape_site_batch``, ``stream_detail``) is preserved so existing
+``pipeline.py`` callers don't change.
 """
+
+from __future__ import annotations
 
 import json
 import logging
-import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 from jobhunter.database import init_db
+from jobhunter.domain.enrichment import (
+    DetailPage,
+    EnrichmentError,
+    ExtractionTier,
+    JobEnrichment,
+)
+from jobhunter.domain.enrichment.services import (
+    CssSelectorExtractor,
+    ExtractionResult,
+    JsonLdExtractor,
+    LlmExtractor,
+)
+from jobhunter.domain.enrichment.value_objects import (
+    ApplicationUrl,
+    FullDescription,
+)
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobhunter.infrastructure.enrichment.playwright_fetcher import (
+    _clean_content_html,
+    _collect_json_ld,
+    _collect_main_content,
+)
+from jobhunter.infrastructure.network.proxy import ProxyConfig, parse_proxy
 from jobhunter.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -32,14 +69,13 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
 
 # Module-level proxy config (set from CLI or caller)
-_PROXY_CONFIG: dict | None = None
+_PROXY_CONFIG: ProxyConfig | None = None
 
 
-def set_proxy(proxy_str: str | None):
+def set_proxy(proxy_str: str | None) -> None:
     """Set proxy config from an external caller."""
     global _PROXY_CONFIG
     if proxy_str:
-        from jobhunter.discovery.jobspy import parse_proxy
         _PROXY_CONFIG = parse_proxy(proxy_str)
 
 
@@ -102,28 +138,23 @@ def resolve_all_urls(conn: sqlite3.Connection) -> dict:
         else:
             failed += 1
 
-    # Also resolve relative application_urls
-    app_resolved = 0
-    rows = conn.execute(
-        "SELECT url, site, application_url FROM jobs "
-        "WHERE application_url IS NOT NULL AND application_url != '' "
-        "AND application_url NOT LIKE 'http%'"
-    ).fetchall()
-    for row in rows:
-        url, site, app_url = row[0], row[1], row[2]
-        new_app = resolve_url(app_url, site)
-        if new_app and new_app != app_url:
-            conn.execute("UPDATE jobs SET application_url = ? WHERE url = ?", (new_app, url))
-            app_resolved += 1
-
+    # Note: legacy ``jobs.application_url`` is NO LONGER updated here.
+    # New enrichment writes target ``job_enrichments.application_url``;
+    # the legacy column is read-only fallback for un-backfilled rows.
     conn.commit()
-    return {"resolved": resolved, "failed": failed, "already_absolute": already_absolute,
-            "app_resolved": app_resolved}
+    return {
+        "resolved": resolved,
+        "failed": failed,
+        "already_absolute": already_absolute,
+        "app_resolved": 0,
+    }
 
 
 def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
     """Re-fetch WTTJ Algolia API to get proper detail URLs and fix slug-as-title.
-    Returns count of URLs updated."""
+
+    Returns count of URLs updated.
+    """
     wttj_jobs = conn.execute(
         "SELECT url, title FROM jobs WHERE site = 'WelcomeToTheJungle'"
     ).fetchall()
@@ -200,329 +231,136 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
     return updated
 
 
-# -- Detail page intelligence ------------------------------------------------
-
-def collect_detail_intelligence(page) -> dict:
-    """Collect signals from a detail page. Lighter than discovery -- no API interception."""
-    intel: dict = {"json_ld": [], "page_title": "", "final_url": ""}
-
-    intel["page_title"] = page.title()
-    intel["final_url"] = page.url
-
-    for el in page.query_selector_all('script[type="application/ld+json"]'):
-        try:
-            data = json.loads(el.inner_text())
-            intel["json_ld"].append(data)
-        except Exception:
-            pass
-
-    return intel
+# ---------------------------------------------------------------------------
+# Page → DetailPage conversion (used by the live-browser scrape paths)
+# ---------------------------------------------------------------------------
 
 
-# -- Tier 1: JSON-LD extraction -----------------------------------------------
+def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPage:
+    """Build a ``DetailPage`` value object from a live Playwright page.
 
-def extract_from_json_ld(intel: dict) -> dict | None:
-    """Extract description and apply URL from JSON-LD JobPosting.
-    Returns {"full_description": str, "application_url": str|None} or None."""
-
-    def find_job_posting(data):
-        if isinstance(data, dict):
-            if data.get("@type") == "JobPosting":
-                return data
-            if "@graph" in data and isinstance(data["@graph"], list):
-                for item in data["@graph"]:
-                    result = find_job_posting(item)
-                    if result:
-                        return result
-        elif isinstance(data, list):
-            for item in data:
-                result = find_job_posting(item)
-                if result:
-                    return result
-        return None
-
-    for ld in intel.get("json_ld", []):
-        posting = find_job_posting(ld)
-        if not posting:
-            continue
-
-        desc = posting.get("description", "")
-        if not desc:
-            continue
-
-        desc_clean = clean_description(desc)
-        if len(desc_clean) < 50:
-            continue
-
-        apply_url = None
-        if posting.get("directApply"):
-            apply_url = posting.get("url")
-        if not apply_url:
-            contact = posting.get("applicationContact")
-            if isinstance(contact, dict):
-                apply_url = contact.get("url")
-        if not apply_url:
-            apply_url = posting.get("url")
-
-        return {
-            "full_description": desc_clean,
-            "application_url": apply_url,
-        }
-
-    return None
-
-
-# -- Tier 2: Deterministic pattern matching ----------------------------------
-
-APPLY_SELECTORS = [
-    'a[href*="apply"]',
-    'a[data-testid*="apply"]',
-    'a[class*="apply"]',
-    'a[aria-label*="pply"]',
-    'button[data-testid*="apply"]',
-    'a#apply_button',
-    '.postings-btn-wrapper a',
-    'a.ashby-job-posting-apply-button',
-    '#grnhse_app a[href*="apply"]',
-    'a[data-qa="btn-apply"]',
-    'a[class*="btn-apply"]',
-    'a[class*="apply-btn"]',
-    'a[class*="apply-button"]',
-]
-
-DESCRIPTION_SELECTORS = [
-    '#job-description',
-    '#job_description',
-    '#jobDescriptionText',
-    '.job-description',
-    '.job_description',
-    '.job__description',
-    '[class*="job-description"]',
-    '[class*="jobDescription"]',
-    '[data-testid*="description"]',
-    '[data-testid="job-description"]',
-    '.posting-page .posting-categories + div',
-    '#content .posting-page',
-    '#app_body .content',
-    '#grnhse_app .content',
-    '.job-post-container',
-    '.ashby-job-posting-description',
-    '[class*="posting-description"]',
-    '[class*="job-detail"]',
-    '[class*="jobDetail"]',
-    '[class*="job-content"]',
-    '[class*="job-body"]',
-    '[role="main"] article',
-    'main article',
-    'article[class*="job"]',
-    '.job-posting-content',
-]
-
-
-def extract_apply_url_deterministic(page) -> str | None:
-    """Try known CSS patterns for apply buttons/links."""
-    for sel in APPLY_SELECTORS:
-        try:
-            el = page.query_selector(sel)
-            if el:
-                href = el.get_attribute("href")
-                if href and href != "#":
-                    return href
-                tag = el.evaluate("el => el.tagName.toLowerCase()")
-                if tag == "button":
-                    parent_href = el.evaluate("el => el.parentElement?.querySelector('a')?.href || null")
-                    if parent_href:
-                        return parent_href
-                    return page.url
-        except Exception:
-            continue
-
+    The fetcher already navigated and waited; this helper just collects
+    the fields the extractors need so the cascade can run as pure
+    functions over the value object.
+    """
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    final_url = page.url
+    page_title = ""
     try:
-        links = page.query_selector_all("a")
-        for link in links:
-            text = link.inner_text().strip().lower()
-            if "apply" in text and len(text) < 50:
-                href = link.get_attribute("href")
-                if href and href != "#" and "javascript:" not in href:
-                    return href
+        page_title = page.title() or ""
     except Exception:
         pass
-
-    # Fallback: check <button> elements with "apply" text (e.g. Greenhouse)
-    try:
-        buttons = page.query_selector_all("button")
-        for btn in buttons:
-            text = btn.inner_text().strip().lower()
-            if "apply" in text and len(text) < 50:
-                return page.url
-    except Exception:
-        pass
-
-    return None
-
-
-def extract_description_deterministic(page) -> str | None:
-    """Try known CSS patterns for the job description block."""
-    for sel in DESCRIPTION_SELECTORS:
-        try:
-            el = page.query_selector(sel)
-            if el:
-                text = el.inner_text().strip()
-                if len(text) >= 100:
-                    return clean_description(text)
-        except Exception:
-            continue
-
-    return None
-
-
-# -- Tier 3: LLM extraction -------------------------------------------------
-
-DETAIL_EXTRACT_PROMPT = """You are extracting job details from a single job posting page.
-
-PAGE URL: {url}
-PAGE TITLE: {title}
-
-Find TWO things in the HTML below:
-1. The full job description text (responsibilities, requirements, etc.)
-2. The URL of the "Apply" button/link
-
-Rules:
-- For description: extract the FULL text. Include all sections (About, Responsibilities, Requirements, etc.)
-- For apply URL: find the href of the link/button that starts the application process
-- If you cannot find one, set it to null
-
-Return ONLY valid JSON:
-{{"full_description": "the complete job description text here", "application_url": "https://..." or null}}
-
-No explanation, no markdown. Keep reasoning under 20 words.
-
-HTML:
-{content}"""
-
-
-def extract_main_content(page) -> str:
-    """Extract the main content area, stripped of navigation noise."""
-    for sel in ["main", "article", '[role="main"]', "#content", ".content"]:
-        try:
-            el = page.query_selector(sel)
-            if el:
-                text_len = len(el.inner_text().strip())
-                if text_len > 200:
-                    html = el.inner_html()
-                    if len(html) < 50000:
-                        return clean_content_html(html)
-        except Exception:
-            continue
-
-    try:
-        html = page.evaluate("""
-            () => {
-                const clone = document.body.cloneNode(true);
-                clone.querySelectorAll('nav, header, footer, script, style, noscript, svg, iframe').forEach(el => el.remove());
-                return clone.innerHTML;
-            }
-        """)
-        return clean_content_html(html[:50000])
-    except Exception:
-        return ""
-
-
-def clean_content_html(html: str) -> str:
-    """Clean detail page HTML for LLM consumption."""
-    soup = BeautifulSoup(html, "html.parser")
-
-    for tag in soup.select("script, style, noscript, svg, iframe, nav, header, footer"):
-        tag.decompose()
-
-    for tag in soup.find_all(True):
-        new_attrs: dict = {}
-        for attr, val in list(tag.attrs.items()):
-            if attr in ("id", "href", "class", "role", "aria-label", "data-testid", "name", "for", "type"):
-                if attr == "class":
-                    classes = val if isinstance(val, list) else val.split()
-                    kept = [c for c in classes if len(c) < 30 and not re.match(r"^[a-z]{1,2}-\d+$", c)]
-                    if kept:
-                        new_attrs["class"] = " ".join(kept[:3])
-                else:
-                    new_attrs[attr] = val
-            elif attr.startswith("data-") or attr.startswith("aria-"):
-                new_attrs[attr] = val
-        tag.attrs = new_attrs
-
-    return str(soup)
-
-
-def extract_with_llm(page, url: str) -> dict:
-    """Send focused HTML to LLM for extraction. Fallback tier."""
-    content = extract_main_content(page)
-    if not content:
-        return {"full_description": None, "application_url": None}
-
-    title = ""
-    try:
-        title = page.title()
-    except Exception:
-        pass
-
-    prompt = DETAIL_EXTRACT_PROMPT.format(
+    json_ld = _collect_json_ld(page)
+    html = _collect_main_content(page)
+    return DetailPage(
         url=url,
-        title=title,
-        content=content[:30000],
+        final_url=final_url,
+        page_title=page_title,
+        html=html,
+        json_ld=tuple(json_ld),
+        status=status,
+        fetched_at=fetched_at,
     )
 
+
+# ---------------------------------------------------------------------------
+# Cascade orchestration over a Playwright Page (legacy batch entry points)
+# ---------------------------------------------------------------------------
+
+
+_RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
+_PERMANENT_FAILURES = {404, 410, 451}
+
+
+def scrape_detail_page(page, url: str) -> dict:
+    """Run the three-tier cascade on one already-loaded Playwright page.
+
+    Public API preserved for callers in ``pipeline.py``; internally
+    delegates to the domain-layer extractors. Returns the legacy dict
+    shape (``status``, ``tier_used``, ``full_description``,
+    ``application_url``, ``error``, ``elapsed``) so existing callers
+    don't change.
+    """
+    result: dict = {
+        "full_description": None,
+        "application_url": None,
+        "status": "error",
+        "tier_used": None,
+        "error": None,
+    }
+    t0 = time.time()
+
+    status_code: int | None = None
     try:
-        client = get_client()
-        t0 = time.time()
-        raw = client.ask(prompt, temperature=0.0, max_tokens=4096)
-        elapsed = time.time() - t0
-        log.info("LLM: %d chars in, %.1fs", len(prompt), elapsed)
+        resp = page.goto(url, timeout=45000)
+        if resp is not None:
+            status_code = resp.status
+            if status_code in _PERMANENT_FAILURES:
+                result["error"] = f"HTTP {status_code}"
+                result["elapsed"] = time.time() - t0
+                return result
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+    except Exception as exc:
+        err_str = str(exc)
+        result["error"] = "timeout" if "timeout" in err_str.lower() else err_str[:200]
+        result["elapsed"] = time.time() - t0
+        return result
 
-        from jobhunter.discovery.smartextract import extract_json
-        result = extract_json(raw)
-        desc = result.get("full_description")
-        apply_url = result.get("application_url")
+    detail_page = _page_to_detail_page(page, url, status=status_code)
 
-        if desc:
-            desc = clean_description(desc)
+    cascade = (
+        (1, ExtractionTier.JSON_LD, JsonLdExtractor()),
+        (2, ExtractionTier.CSS_SELECTORS, CssSelectorExtractor()),
+        (3, ExtractionTier.LLM_ASSISTED, _make_llm_extractor()),
+    )
 
-        return {"full_description": desc, "application_url": apply_url}
-    except Exception as e:
-        log.error("LLM ERROR: %s", e)
-        return {"full_description": None, "application_url": None}
+    last_apply: ApplicationUrl | None = None
+    for tier_num, _tier_enum, extractor in cascade:
+        try:
+            extracted: ExtractionResult = extractor.extract(detail_page)
+        except Exception as exc:
+            log.warning("scrape_detail_page: tier %s raised: %s", tier_num, exc)
+            continue
+        if extracted.application_url is not None:
+            last_apply = extracted.application_url
+        if extracted.ok and extracted.full_description is not None:
+            apply_final = extracted.application_url or last_apply
+            result["full_description"] = extracted.full_description.text
+            result["application_url"] = apply_final.value if apply_final else None
+            result["tier_used"] = tier_num
+            result["status"] = "ok" if result["application_url"] else "partial"
+            result["elapsed"] = time.time() - t0
+            return result
 
-
-# -- Description cleaning ---------------------------------------------------
-
-def clean_description(text: str) -> str:
-    """Convert HTML description to clean readable text."""
-    if not text:
-        return ""
-
-    if "<" in text and ">" in text:
-        soup = BeautifulSoup(text, "html.parser")
-        for br in soup.find_all("br"):
-            br.replace_with("\n")
-        for tag in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "li", "tr"]):
-            tag.insert_before("\n")
-            tag.insert_after("\n")
-        for li in soup.find_all("li"):
-            li.insert_before("- ")
-        text = soup.get_text()
-
-    lines = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if line:
-            lines.append(line)
-
-    text = "\n".join(lines)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    return text.strip()
+    # All tiers failed — record the partial-apply outcome if Tier 2 found one
+    result["application_url"] = last_apply.value if last_apply else None
+    result["tier_used"] = 3  # last tier attempted
+    if result["application_url"]:
+        result["status"] = "partial"
+    else:
+        result["status"] = "error"
+        result["error"] = "no data extracted"
+    result["elapsed"] = time.time() - t0
+    return result
 
 
-# -- Orchestration -----------------------------------------------------------
+def _make_llm_extractor() -> LlmExtractor:
+    """Build a Tier-3 extractor backed by the legacy LlmClient.
+
+    Factored out so tests can swap a stub LlmPort.
+    """
+    client = get_client()
+    return LlmExtractor(llm=client)
+
+
+# ---------------------------------------------------------------------------
+# Batch scraping — uses the new EnrichmentRepository for persistence
+# ---------------------------------------------------------------------------
+
 
 SITE_DELAYS = {
     "RemoteOK": 3.0,
@@ -533,87 +371,6 @@ SITE_DELAYS = {
     "BuiltIn Remote": 2.0,
 }
 
-RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
-PERMANENT_FAILURES = {404, 410, 451}
-
-
-def scrape_detail_page(page, url: str) -> dict:
-    """Full cascade for one detail page."""
-    result: dict = {
-        "full_description": None,
-        "application_url": None,
-        "status": "error",
-        "tier_used": None,
-        "error": None,
-    }
-    t0 = time.time()
-
-    try:
-        resp = page.goto(url, timeout=45000)
-        if resp and resp.status in PERMANENT_FAILURES:
-            result["error"] = f"HTTP {resp.status}"
-            result["elapsed"] = time.time() - t0
-            return result
-        page.wait_for_load_state("domcontentloaded", timeout=15000)
-        try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-    except Exception as e:
-        err_str = str(e)
-        if "timeout" in err_str.lower():
-            result["error"] = "timeout"
-        else:
-            result["error"] = err_str[:200]
-        result["elapsed"] = time.time() - t0
-        return result
-
-    intel = collect_detail_intelligence(page)
-
-    # Tier 1: JSON-LD
-    json_ld_result = extract_from_json_ld(intel)
-    if json_ld_result and json_ld_result.get("full_description"):
-        result.update(json_ld_result)
-        result["tier_used"] = 1
-        if not result.get("application_url"):
-            apply = extract_apply_url_deterministic(page)
-            if apply:
-                result["application_url"] = apply
-        result["status"] = "ok" if result.get("application_url") else "partial"
-        result["elapsed"] = time.time() - t0
-        return result
-
-    # Tier 2: Deterministic CSS
-    desc = extract_description_deterministic(page)
-    apply = extract_apply_url_deterministic(page)
-
-    if desc:
-        result["full_description"] = desc
-        result["application_url"] = apply
-        result["tier_used"] = 2
-        result["status"] = "ok" if apply else "partial"
-        result["elapsed"] = time.time() - t0
-        return result
-
-    tier2_apply = apply
-
-    # Tier 3: LLM
-    llm_result = extract_with_llm(page, url)
-    result["full_description"] = llm_result.get("full_description")
-    result["application_url"] = llm_result.get("application_url") or tier2_apply
-    result["tier_used"] = 3
-
-    if result.get("full_description"):
-        result["status"] = "ok" if result.get("application_url") else "partial"
-    elif result.get("application_url"):
-        result["status"] = "partial"
-    else:
-        result["status"] = "error"
-        result["error"] = "no data extracted"
-
-    result["elapsed"] = time.time() - t0
-    return result
-
 
 def scrape_site_batch(
     conn: sqlite3.Connection | None,
@@ -622,11 +379,20 @@ def scrape_site_batch(
     delay: float = 2.0,
     max_jobs: int | None = None,
 ) -> dict:
-    """Process all jobs for one site using shared browser context.
+    """Process all jobs for one site using a shared browser context.
 
-    If conn is None, creates its own DB connection.
+    Persistence routes through ``SqliteEnrichmentRepository`` — legacy
+    ``jobs.full_description`` / ``jobs.application_url`` /
+    ``jobs.detail_scraped_at`` / ``jobs.detail_error`` columns are NOT
+    written.
     """
-    stats: dict = {"processed": 0, "ok": 0, "partial": 0, "error": 0, "tiers": {1: 0, 2: 0, 3: 0}}
+    stats: dict = {
+        "processed": 0,
+        "ok": 0,
+        "partial": 0,
+        "error": 0,
+        "tiers": {1: 0, 2: 0, 3: 0},
+    }
 
     if max_jobs:
         jobs = jobs[:max_jobs]
@@ -637,18 +403,26 @@ def scrape_site_batch(
     own_conn = conn is None
     if own_conn:
         conn = init_db()
+    assert conn is not None
+
+    repo = SqliteEnrichmentRepository(conn)
 
     try:
         with sync_playwright() as p:
             launch_opts: dict = {"headless": True}
-            if _PROXY_CONFIG:
-                launch_opts["proxy"] = _PROXY_CONFIG["playwright"]
+            if _PROXY_CONFIG is not None:
+                launch_opts["proxy"] = _PROXY_CONFIG.playwright
             browser = p.chromium.launch(**launch_opts)
             context = browser.new_context(user_agent=UA)
             page = context.new_page()
 
             for i, (url, title) in enumerate(jobs):
-                log.info("[%d/%d] %s", i + 1, len(jobs), title[:50] if title else url[:50])
+                log.info(
+                    "[%d/%d] %s",
+                    i + 1,
+                    len(jobs),
+                    title[:50] if title else url[:50],
+                )
 
                 from jobhunter.state import (
                     ensure_job_stage_rows,
@@ -662,38 +436,89 @@ def scrape_site_batch(
                 set_stage_state(conn, url, "enrich", "running", started_at=started_at)
                 record_job_event(conn, url, "enrich", "StageStarted", message="Enrichment started")
 
-                result = scrape_detail_page(page, url)
-                stats["processed"] += 1
-
-                tier = result.get("tier_used")
-                status = result["status"]
-                elapsed = result.get("elapsed", 0)
-
-                if tier:
-                    stats["tiers"][tier] = stats["tiers"].get(tier, 0) + 1
-
-                tier_str = f"T{tier}" if tier else "--"
-                desc_len = len(result.get("full_description") or "")
-                apply_str = "yes" if result.get("application_url") else "no"
-                err_str = f" | err={result.get('error')}" if result.get("error") else ""
-
-                log.info("  %s | %s | desc=%s chars | apply=%s | %.1fs%s",
-                         status, tier_str, f"{desc_len:,}", apply_str, elapsed, err_str)
-
-                if status in ("ok", "partial"):
-                    stats[status] += 1
-                    finished_at = utc_now()
-                    conn.execute(
-                        "UPDATE jobs SET full_description = ?, application_url = ?, "
-                        "detail_scraped_at = ?, detail_error = NULL WHERE url = ?",
-                        (result.get("full_description"), result.get("application_url"), finished_at, url),
+                # Load / build the JobEnrichment aggregate
+                aggregate = repo.load(LOCAL_TENANT, JobId(url))
+                if aggregate is None:
+                    aggregate = JobEnrichment.empty(
+                        tenant_id=LOCAL_TENANT,
+                        job_id=JobId(url),
+                        updated_at=started_at,
                     )
+
+                if aggregate.is_enriched:
+                    # Already enriched — count as ok and skip.
+                    stats["processed"] += 1
+                    stats["ok"] += 1
                     set_stage_state(
                         conn,
                         url,
                         "enrich",
                         "succeeded",
-                        attempt_count=1,
+                        attempt_count=aggregate.attempt_count,
+                        started_at=started_at,
+                        finished_at=utc_now(),
+                    )
+                    if i < len(jobs) - 1:
+                        time.sleep(delay)
+                    continue
+
+                aggregate = aggregate.start_attempt(
+                    extraction_tier=ExtractionTier.JSON_LD,
+                    started_at=started_at,
+                )
+
+                cascade_result = scrape_detail_page(page, url)
+                stats["processed"] += 1
+
+                tier = cascade_result.get("tier_used")
+                status = cascade_result["status"]
+                elapsed = cascade_result.get("elapsed", 0)
+
+                if tier:
+                    stats["tiers"][tier] = stats["tiers"].get(tier, 0) + 1
+
+                tier_str = f"T{tier}" if tier else "--"
+                desc_len = len(cascade_result.get("full_description") or "")
+                apply_str = "yes" if cascade_result.get("application_url") else "no"
+                err_str = (
+                    f" | err={cascade_result.get('error')}"
+                    if cascade_result.get("error")
+                    else ""
+                )
+                log.info(
+                    "  %s | %s | desc=%s chars | apply=%s | %.1fs%s",
+                    status,
+                    tier_str,
+                    f"{desc_len:,}",
+                    apply_str,
+                    elapsed,
+                    err_str,
+                )
+
+                finished_at = utc_now()
+                if status in ("ok", "partial"):
+                    stats[status] += 1
+                    full_desc = FullDescription(
+                        text=cascade_result["full_description"] or ""
+                    )
+                    apply_url = (
+                        ApplicationUrl(value=cascade_result["application_url"])
+                        if cascade_result.get("application_url")
+                        else None
+                    )
+                    succeeded = aggregate.succeed_attempt(
+                        full_description=full_desc,
+                        application_url=apply_url,
+                        extraction_tier=_tier_from_legacy(tier),
+                        finished_at=finished_at,
+                    )
+                    repo.save(succeeded)
+                    set_stage_state(
+                        conn,
+                        url,
+                        "enrich",
+                        "succeeded",
+                        attempt_count=succeeded.attempt_count,
                         started_at=started_at,
                         finished_at=finished_at,
                     )
@@ -707,20 +532,25 @@ def scrape_site_batch(
                     )
                 else:
                     stats["error"] += 1
-                    conn.execute(
-                        "UPDATE jobs SET detail_error = ? WHERE url = ?",
-                        (result.get("error", "unknown"), url),
+                    err = EnrichmentError(
+                        code="DETAIL_ERROR",
+                        message=str(cascade_result.get("error") or "unknown")[:500],
+                        retryable=True,
                     )
+                    failed = aggregate.fail_attempt(
+                        error=err, finished_at=finished_at
+                    )
+                    repo.save(failed)
                     set_stage_state(
                         conn,
                         url,
                         "enrich",
                         "failed",
-                        attempt_count=1,
+                        attempt_count=failed.attempt_count,
                         started_at=started_at,
-                        finished_at=utc_now(),
+                        finished_at=finished_at,
                         error_code="DETAIL_ERROR",
-                        error_message=result.get("error", "unknown"),
+                        error_message=err.message,
                         retryable=True,
                         next_action=f"jobhunter retry enrich {url}",
                     )
@@ -730,7 +560,7 @@ def scrape_site_batch(
                         "enrich",
                         "StageFailed",
                         level="error",
-                        message=result.get("error", "unknown"),
+                        message=err.message,
                     )
 
                 conn.commit()
@@ -746,24 +576,41 @@ def scrape_site_batch(
     return stats
 
 
+def _tier_from_legacy(tier_num: int | None) -> ExtractionTier:
+    """Translate the legacy 1/2/3 tier number into the typed enum."""
+    if tier_num == 1:
+        return ExtractionTier.JSON_LD
+    if tier_num == 2:
+        return ExtractionTier.CSS_SELECTORS
+    return ExtractionTier.LLM_ASSISTED
+
+
 def _run_detail_scraper(
     conn: sqlite3.Connection,
     sites: list[str] | None = None,
     max_per_site: int | None = None,
     workers: int = 1,
 ) -> dict:
-    """Groups pending jobs by site and processes each batch.
+    """Group pending jobs by site and process each batch.
 
-    Sequential by default. When workers > 1, processes multiple site batches
-    in parallel using ThreadPoolExecutor (each thread gets its own browser
-    and DB connection).
+    Sequential by default; ``workers > 1`` runs site batches in
+    parallel (one DB connection per thread).
 
-    Returns aggregate stats dict.
+    Pending = jobs whose enrichment row is missing OR ``current_status``
+    is ``pending`` (read through the new enrichment LEFT JOIN — see
+    ``database.get_jobs_by_stage`` and the same pattern surfaced here).
     """
-    skip_filter = " AND ".join(f"site != '{s}'" for s in SKIP_DETAIL_SITES)
-    where = f"WHERE detail_scraped_at IS NULL AND {skip_filter}"
+    skip_filter = " AND ".join(f"jobs.site != '{s}'" for s in SKIP_DETAIL_SITES)
+    # Phase 7 (S-26 round-1 review M3): the canonical pending predicate
+    # is the aggregate's status alone. The legacy
+    # ``detail_scraped_at IS NULL`` gate was redundant AND blocked the
+    # post-``reset_job_stage("enrich")`` re-pickup.
     rows = conn.execute(
-        f"SELECT url, title, site FROM jobs {where} ORDER BY site"
+        "SELECT jobs.url, jobs.title, jobs.site FROM jobs "
+        "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
+        f"WHERE (je.job_url IS NULL OR je.current_status = 'pending') "
+        f"AND {skip_filter} "
+        "ORDER BY jobs.site"
     ).fetchall()
 
     if not rows:
@@ -782,13 +629,23 @@ def _run_detail_scraper(
         log.info("  %s: %d jobs", site, len(jobs))
 
     known_order = [
-        "RemoteOK", "Job Bank Canada", "BuiltIn Remote",
-        "WelcomeToTheJungle", "CareerJet Canada", "Hacker News Jobs",
+        "RemoteOK",
+        "Job Bank Canada",
+        "BuiltIn Remote",
+        "WelcomeToTheJungle",
+        "CareerJet Canada",
+        "Hacker News Jobs",
     ]
     order = [s for s in known_order if s in site_jobs]
     order += [s for s in sorted(site_jobs.keys()) if s not in order]
 
-    total_stats: dict = {"processed": 0, "ok": 0, "partial": 0, "error": 0, "tiers": {1: 0, 2: 0, 3: 0}}
+    total_stats: dict = {
+        "processed": 0,
+        "ok": 0,
+        "partial": 0,
+        "error": 0,
+        "tiers": {1: 0, 2: 0, 3: 0},
+    }
 
     def _merge_stats(stats: dict) -> None:
         for k in ("processed", "ok", "partial", "error"):
@@ -797,16 +654,21 @@ def _run_detail_scraper(
             total_stats["tiers"][t] = total_stats["tiers"].get(t, 0) + count
 
     if workers > 1 and len(order) > 1:
-        # Parallel mode: each site batch runs in its own thread with its own
-        # DB connection (conn=None tells scrape_site_batch to create one)
         def _scrape_site(site: str) -> dict:
             jobs = site_jobs[site]
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
             stats = scrape_site_batch(None, site, jobs, delay=delay, max_jobs=max_per_site)
-            log.info("%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
-                     site, stats["ok"], stats["partial"], stats["error"],
-                     stats["tiers"].get(1, 0), stats["tiers"].get(2, 0), stats["tiers"].get(3, 0))
+            log.info(
+                "%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
+                site,
+                stats["ok"],
+                stats["partial"],
+                stats["error"],
+                stats["tiers"].get(1, 0),
+                stats["tiers"].get(2, 0),
+                stats["tiers"].get(3, 0),
+            )
             return stats
 
         with ThreadPoolExecutor(max_workers=min(workers, len(order))) as pool:
@@ -814,23 +676,35 @@ def _run_detail_scraper(
             for future in as_completed(futures):
                 _merge_stats(future.result())
     else:
-        # Sequential mode (default)
         for site in order:
             jobs = site_jobs[site]
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
-
             stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site)
             _merge_stats(stats)
+            log.info(
+                "Site summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
+                stats["ok"],
+                stats["partial"],
+                stats["error"],
+                stats["tiers"].get(1, 0),
+                stats["tiers"].get(2, 0),
+                stats["tiers"].get(3, 0),
+            )
 
-            log.info("Site summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
-                     stats["ok"], stats["partial"], stats["error"],
-                     stats["tiers"].get(1, 0), stats["tiers"].get(2, 0), stats["tiers"].get(3, 0))
-
-    log.info("TOTAL: %d processed | %d ok | %d partial | %d error",
-             total_stats["processed"], total_stats["ok"], total_stats["partial"], total_stats["error"])
-    log.info("Tier distribution: T1=%d T2=%d T3=%d",
-             total_stats["tiers"].get(1, 0), total_stats["tiers"].get(2, 0), total_stats["tiers"].get(3, 0))
+    log.info(
+        "TOTAL: %d processed | %d ok | %d partial | %d error",
+        total_stats["processed"],
+        total_stats["ok"],
+        total_stats["partial"],
+        total_stats["error"],
+    )
+    log.info(
+        "Tier distribution: T1=%d T2=%d T3=%d",
+        total_stats["tiers"].get(1, 0),
+        total_stats["tiers"].get(2, 0),
+        total_stats["tiers"].get(3, 0),
+    )
 
     llm_calls = total_stats["tiers"].get(3, 0)
     total = total_stats["processed"]
@@ -841,7 +715,10 @@ def _run_detail_scraper(
     return total_stats
 
 
-# -- Streaming detail scraper (for sequential pipeline) ----------------------
+# ---------------------------------------------------------------------------
+# Streaming scraper (used by the sequential pipeline)
+# ---------------------------------------------------------------------------
+
 
 def stream_detail(
     upstream_done,
@@ -849,10 +726,10 @@ def stream_detail(
     proxy_str: str | None = None,
     poll_interval: float = 5.0,
 ) -> None:
-    """Streaming detail scraper: polls DB for un-scraped jobs, scrapes sites sequentially.
+    """Streaming detail scraper: polls for un-scraped jobs and processes them.
 
     Args:
-        upstream_done: Event set when discover+extract done. None = run once.
+        upstream_done: Event set when discover+extract done. None ⇒ run once.
         my_done: Event to set when this stage completes.
         proxy_str: Proxy in host:port:user:pass format.
         poll_interval: Seconds to sleep when no pending jobs found.
@@ -863,8 +740,11 @@ def stream_detail(
     conn = init_db()
 
     url_stats = resolve_all_urls(conn)
-    log.info("URL resolution: %d resolved, %d absolute",
-             url_stats['resolved'], url_stats['already_absolute'])
+    log.info(
+        "URL resolution: %d resolved, %d absolute",
+        url_stats["resolved"],
+        url_stats["already_absolute"],
+    )
 
     total_ok = 0
     total_err = 0
@@ -872,11 +752,18 @@ def stream_detail(
 
     try:
         while True:
-            skip_filter = " AND ".join(f"site != '{s}'" for s in SKIP_DETAIL_SITES)
+            skip_filter = " AND ".join(f"jobs.site != '{s}'" for s in SKIP_DETAIL_SITES)
+            # Phase 7 (S-26 round-1 review M3 + round-2 L3): the canonical
+            # pending predicate is the aggregate's status alone — keep
+            # ``stream_detail`` consistent with ``_run_detail_scraper`` and
+            # ``_ENRICHMENT_PENDING`` so all three call sites use the
+            # same signal.
             rows = conn.execute(
-                "SELECT url, title, site FROM jobs "
-                f"WHERE detail_scraped_at IS NULL AND {skip_filter} "
-                "ORDER BY site LIMIT 200"
+                "SELECT jobs.url, jobs.title, jobs.site FROM jobs "
+                "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
+                f"WHERE (je.job_url IS NULL OR je.current_status = 'pending') "
+                f"AND {skip_filter} "
+                "ORDER BY jobs.site LIMIT 200"
             ).fetchall()
 
             if rows:
@@ -888,15 +775,19 @@ def stream_detail(
                 for site, jobs in site_jobs.items():
                     delay = SITE_DELAYS.get(site, 2.0)
                     log.info("%s: %d jobs (delay=%.1fs)", site, len(jobs), delay)
-
                     try:
                         stats = scrape_site_batch(conn, site, jobs, delay=delay)
                         total_ok += stats["ok"] + stats["partial"]
                         total_err += stats["error"]
-                        log.info("%s: %d ok, %d partial, %d error",
-                                 site, stats['ok'], stats['partial'], stats['error'])
-                    except Exception as e:
-                        log.error("%s: CRASHED: %s", site, e)
+                        log.info(
+                            "%s: %d ok, %d partial, %d error",
+                            site,
+                            stats["ok"],
+                            stats["partial"],
+                            stats["error"],
+                        )
+                    except Exception as exc:
+                        log.error("%s: CRASHED: %s", site, exc)
 
             upstream_finished = upstream_done is None or upstream_done.is_set()
             if upstream_finished and not rows:
@@ -911,30 +802,37 @@ def stream_detail(
         my_done.set()
 
 
-# -- Public entry point ------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Public entry point — preserved for pipeline.py
+# ---------------------------------------------------------------------------
+
 
 def run_enrichment(limit: int = 100, workers: int = 1) -> dict:
     """Main entry point for detail page enrichment.
 
-    Fetches pending jobs from the database (those without full_description),
-    resolves relative URLs, then runs the three-tier extraction cascade on
-    each detail page.
+    Fetches pending jobs from the new ``job_enrichments`` view (rows
+    without an enrichment record OR ``current_status = 'pending'``),
+    resolves relative URLs, then runs the three-tier extraction
+    cascade on each detail page through the new
+    ``EnrichmentRepository``.
 
     Args:
         limit: Maximum number of jobs per site to process.
-        workers: Number of parallel threads for site batch processing. Default 1 (sequential).
+        workers: Number of parallel threads. Default 1 (sequential).
 
     Returns:
         Dict with stats: processed, ok, partial, error, tiers.
     """
     conn = init_db()
 
-    # URL resolution first
     url_stats = resolve_all_urls(conn)
-    log.info("URL resolution: %d resolved, %d absolute, %d failed",
-             url_stats["resolved"], url_stats["already_absolute"], url_stats["failed"])
+    log.info(
+        "URL resolution: %d resolved, %d absolute, %d failed",
+        url_stats["resolved"],
+        url_stats["already_absolute"],
+        url_stats["failed"],
+    )
 
-    # WTTJ special handling
     wttj_count = conn.execute(
         "SELECT COUNT(*) FROM jobs WHERE site = 'WelcomeToTheJungle'"
     ).fetchone()[0]
@@ -946,7 +844,22 @@ def run_enrichment(limit: int = 100, workers: int = 1) -> dict:
             updated = resolve_wttj_urls(conn)
             log.info("WTTJ: %d URLs updated", updated)
 
-    # Run the detail scraper
-    stats = _run_detail_scraper(conn, max_per_site=limit, workers=workers)
+    return _run_detail_scraper(conn, max_per_site=limit, workers=workers)
 
-    return stats
+
+# Keep helper imports referenced for type-checkers' "unused" warnings —
+# they exist on the module so legacy callers can still discover them.
+__all__ = [
+    "DetailPage",
+    "SKIP_DETAIL_SITES",
+    "SITE_DELAYS",
+    "resolve_url",
+    "resolve_all_urls",
+    "resolve_wttj_urls",
+    "scrape_detail_page",
+    "scrape_site_batch",
+    "set_proxy",
+    "stream_detail",
+    "run_enrichment",
+    "_clean_content_html",  # re-exported for back-compat with any test that patched it
+]

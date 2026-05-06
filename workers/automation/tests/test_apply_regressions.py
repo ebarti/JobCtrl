@@ -47,6 +47,128 @@ def test_targeted_apply_acquires_job_with_null_apply_status(tmp_path, monkeypatc
         close_connection(db_path)
 
 
+def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
+    """Phase 7 (S-26 round-1 review B5) regression: ``acquire_job`` must
+    find jobs whose ``application_url`` lives only in ``job_enrichments``
+    (the new write path leaves ``jobs.application_url`` NULL).
+
+    Without the LEFT JOIN + COALESCE in ``apply.launcher.acquire_job``,
+    this test would assert ``job is None`` — the apply queue would skip
+    every post-Phase-7 enriched job.
+    """
+    from jobhunter.domain.enrichment import (
+        ApplicationUrl,
+        ExtractionTier,
+        FullDescription,
+        JobEnrichment,
+    )
+    from jobhunter.domain.identifiers import JobId
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    # Insert a discovered job WITHOUT touching jobs.application_url /
+    # jobs.full_description (mirrors the new write path exactly).
+    url = "https://example.com/new-path-job"
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, site, fit_score, tailored_resume_path)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (url, "New Path Engineer", "ExampleCo", 9, "/tmp/resume.txt"),
+    )
+    conn.commit()
+
+    # Enrich via the new repository — application_url + full_description
+    # land in job_enrichments only.
+    repo = SqliteEnrichmentRepository(conn)
+    repo.save(
+        JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT, job_id=JobId(url), updated_at="t0"
+        )
+        .start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at="t0")
+        .succeed_attempt(
+            full_description=FullDescription(text="Build distributed systems."),
+            application_url=ApplicationUrl(value="https://example.com/apply-new"),
+            extraction_tier=ExtractionTier.JSON_LD,
+            finished_at="t1",
+        )
+    )
+
+    # Confirm the legacy column really is NULL (proves the test exercises
+    # the new path, not a fluke).
+    legacy = conn.execute(
+        "SELECT application_url FROM jobs WHERE url = ?", (url,)
+    ).fetchone()
+    assert legacy["application_url"] is None
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        job = acquire_job(target_url=url, worker_id=1)
+        assert job is not None
+        assert job["url"] == url
+        # The COALESCE'd application_url surfaces from job_enrichments.
+        assert job["application_url"] == "https://example.com/apply-new"
+        # And the COALESCE'd description follows along.
+        assert job["full_description"] == "Build distributed systems."
+    finally:
+        close_connection(db_path)
+
+
+def test_acquire_job_queue_picks_new_path_enriched_job(tmp_path, monkeypatch):
+    """Same as above but exercises the queue-mode WHERE clause (no
+    target_url) — distinct code path inside ``claim_one``."""
+    from jobhunter.domain.enrichment import (
+        ApplicationUrl,
+        ExtractionTier,
+        FullDescription,
+        JobEnrichment,
+    )
+    from jobhunter.domain.identifiers import JobId
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://example.com/queue-mode-job"
+    conn.execute(
+        "INSERT INTO jobs (url, title, site, fit_score, tailored_resume_path) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (url, "QueueModeRole", "ExampleCo", 9, "/tmp/resume.txt"),
+    )
+    conn.commit()
+
+    repo = SqliteEnrichmentRepository(conn)
+    repo.save(
+        JobEnrichment.empty(
+            tenant_id=LOCAL_TENANT, job_id=JobId(url), updated_at="t0"
+        )
+        .start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at="t0")
+        .succeed_attempt(
+            full_description=FullDescription(text="Queue-mode description."),
+            application_url=ApplicationUrl(value="https://example.com/q-apply"),
+            extraction_tier=ExtractionTier.JSON_LD,
+            finished_at="t1",
+        )
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        # No target_url ⇒ exercises the queue-mode WHERE clause
+        job = acquire_job(worker_id=1, min_score=7)
+        assert job is not None
+        assert job["url"] == url
+        assert job["application_url"] == "https://example.com/q-apply"
+    finally:
+        close_connection(db_path)
+
+
 def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
