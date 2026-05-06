@@ -1,5 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type { DomainEventEnvelope, EventStreamStatus } from "../../../shared/ports/EventStreamPort.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -55,11 +63,33 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const router = useInvalidationRouter();
   const [status, setStatus] = useState<EventStreamStatus>(eventStream.status);
+  // §7.7 backstop is "on reconnect" — fire once we've previously been
+  // open and recover to open after a drop.  The first
+  // connecting→open of the session is the initial connection, not a
+  // reconnection, and must not invalidate.
+  const hadOpenRef = useRef(false);
 
   useEffect(() => {
     const subscription = eventStream.subscribe({ tenantId });
     setStatus(subscription.status);
-    const offStatus = subscription.onStatusChange(setStatus);
+    // Reset on every (re-)subscription so a tenant switch behaves like
+    // a fresh first-connect rather than a reconnect.
+    hadOpenRef.current = subscription.status === "open";
+
+    const offStatus = subscription.onStatusChange((next) => {
+      setStatus(next);
+      if (next !== "open") {
+        return;
+      }
+      if (hadOpenRef.current) {
+        // A closed→open recovery may have missed events the
+        // EventSource couldn't resume via Last-Event-ID.  One-shot
+        // full invalidation pulls the cache back into line.
+        void queryClient.invalidateQueries();
+      } else {
+        hadOpenRef.current = true;
+      }
+    });
     const offEvent = subscription.on((envelope) => {
       if (!isKnownDomainEvent(envelope)) {
         telemetry.event("event-stream.unknown-event", {

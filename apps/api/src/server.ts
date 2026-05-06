@@ -23,7 +23,8 @@ import {
   RetryStageRequestSchema,
   SettingsUpdateRequestSchema,
 } from "./contracts.js";
-import { databaseExists, openDatabase, openReadOnlyDatabase } from "./db.js";
+import { databaseExists, openDatabase } from "./db.js";
+import { registerEventStreamRoute } from "./event-stream.js";
 import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   buildActionResponse,
@@ -117,6 +118,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     dbPath: options.dbPath,
     dbExists: databaseExists(options.dbPath),
   }));
+
+  registerEventStreamRoute(app, { dbPath: options.dbPath });
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),

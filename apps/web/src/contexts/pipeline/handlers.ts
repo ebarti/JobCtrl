@@ -9,19 +9,57 @@ import type {
   StageStarted,
 } from "@jobhunter/domain-types";
 
-import type { InvalidationItem } from "../operations/invalidation-router.js";
+import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import { jobsKeys } from "../operations/jobsKeys.js";
 
-export const stageStartedHandler = (_event: StageStarted): readonly InvalidationItem[] => [];
+export const stageStartedHandler = (event: StageStarted): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];
+
 export const stageCompletedHandler = (
-  _event: StageCompleted,
-): readonly InvalidationItem[] => [];
-export const stageFailedHandler = (_event: StageFailed): readonly InvalidationItem[] => [];
+  event: StageCompleted,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const stageFailedHandler = (event: StageFailed): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
 export const stageExhaustedHandler = (
-  _event: StageExhausted,
-): readonly InvalidationItem[] => [];
-export const stageResetHandler = (_event: StageReset): readonly InvalidationItem[] => [];
-export const stageBlockedHandler = (_event: StageBlocked): readonly InvalidationItem[] => [];
-export const stageSkippedHandler = (_event: StageSkipped): readonly InvalidationItem[] => [];
+  event: StageExhausted,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const stageResetHandler = (event: StageReset): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];
+
+export const stageBlockedHandler = (event: StageBlocked): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const stageSkippedHandler = (event: StageSkipped): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
 export const stageCanceledHandler = (
-  _event: StageCanceled,
-): readonly InvalidationItem[] => [];
+  event: StageCanceled,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];

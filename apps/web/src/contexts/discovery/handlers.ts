@@ -5,9 +5,28 @@ import type {
   JobUpdated,
 } from "@jobhunter/domain-types";
 
-import type { InvalidationItem } from "../operations/invalidation-router.js";
+import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import { jobsKeys } from "../operations/jobsKeys.js";
 
-export const jobDiscoveredHandler = (_event: JobDiscovered): readonly InvalidationItem[] => [];
-export const jobUpdatedHandler = (_event: JobUpdated): readonly InvalidationItem[] => [];
-export const jobDeletedHandler = (_event: JobDeleted): readonly InvalidationItem[] => [];
-export const jobRestoredHandler = (_event: JobRestored): readonly InvalidationItem[] => [];
+export const jobDiscoveredHandler = (event: JobDiscovered): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];
+
+export const jobDeletedHandler = (event: JobDeleted): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const jobRestoredHandler = (event: JobRestored): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];

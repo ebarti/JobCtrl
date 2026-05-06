@@ -1,8 +1,19 @@
 import type { EnrichmentFailed, JobEnriched } from "@jobhunter/domain-types";
 
-import type { InvalidationItem } from "../operations/invalidation-router.js";
+import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import { jobsKeys } from "../operations/jobsKeys.js";
 
-export const jobEnrichedHandler = (_event: JobEnriched): readonly InvalidationItem[] => [];
+export const jobEnrichedHandler = (event: JobEnriched): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
 export const enrichmentFailedHandler = (
-  _event: EnrichmentFailed,
-): readonly InvalidationItem[] => [];
+  event: EnrichmentFailed,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];

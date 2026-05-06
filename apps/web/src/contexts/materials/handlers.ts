@@ -6,16 +6,46 @@ import type {
   ResumeFailed,
 } from "@jobhunter/domain-types";
 
-import type { InvalidationItem } from "../operations/invalidation-router.js";
+import { artifactsKeys } from "../operations/artifactsKeys.js";
+import { dashboardKeys } from "../operations/dashboardKeys.js";
+import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import { jobsKeys } from "../operations/jobsKeys.js";
 
 export const resumeApprovedHandler = (
-  _event: ResumeApproved,
-): readonly InvalidationItem[] => [];
-export const resumeFailedHandler = (_event: ResumeFailed): readonly InvalidationItem[] => [];
+  event: ResumeApproved,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const resumeFailedHandler = (event: ResumeFailed): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
 export const coverLetterGeneratedHandler = (
-  _event: CoverLetterGenerated,
-): readonly InvalidationItem[] => [];
-export const pdfRenderedHandler = (_event: PdfRendered): readonly InvalidationItem[] => [];
+  event: CoverLetterGenerated,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const pdfRenderedHandler = (event: PdfRendered): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
 export const materialsExhaustedHandler = (
-  _event: MaterialsExhausted,
-): readonly InvalidationItem[] => [];
+  event: MaterialsExhausted,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];

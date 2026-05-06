@@ -1,5 +1,8 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
+import type { ApplyRunEventRecorded, TenantId } from "@jobhunter/domain-types";
+
+import { appendApplyRunEvent } from "../apply/selectors/applyRunSelectors.js";
 import {
   applicationFailedHandler,
   applicationSubmittedHandler,
@@ -32,13 +35,37 @@ import {
 } from "../pipeline/handlers.js";
 import { profileImportedHandler, profileUpdatedHandler } from "../profile/handlers.js";
 import { jobScoredHandler, scoreCorrectedHandler } from "../scoring/handlers.js";
+import { applyRunsKeys } from "./applyRunsKeys.js";
 import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
 
-export type InvalidationItem = QueryKey;
+export type InvalidationItem =
+  | { readonly kind: "invalidate"; readonly queryKey: QueryKey }
+  | {
+      readonly kind: "apply-run-event-append";
+      readonly tenantId: TenantId;
+      readonly runId: string;
+      readonly event: ApplyRunEventRecorded;
+    };
 
 export type InvalidationHandler<TEvent extends KnownDomainEvent = KnownDomainEvent> = (
   event: TEvent,
 ) => readonly InvalidationItem[];
+
+export const invalidate = (queryKey: QueryKey): InvalidationItem => ({
+  kind: "invalidate",
+  queryKey,
+});
+
+export const patchApplyRunEvent = (
+  tenantId: TenantId,
+  runId: string,
+  event: ApplyRunEventRecorded,
+): InvalidationItem => ({
+  kind: "apply-run-event-append",
+  tenantId,
+  runId,
+  event,
+});
 
 type HandlerMap = {
   readonly [K in KnownDomainEventType]: InvalidationHandler<
@@ -90,8 +117,17 @@ function dispatch<K extends KnownDomainEventType>(
 export const invalidationRouter: InvalidationRouter = {
   handle(event, queryClient) {
     const items = dispatch(event);
-    for (const key of items) {
-      void queryClient.invalidateQueries({ queryKey: key });
+    for (const item of items) {
+      if (item.kind === "invalidate") {
+        void queryClient.invalidateQueries({ queryKey: item.queryKey });
+        continue;
+      }
+      // High-frequency `ApplyRunEventRecorded` events patch the apply-run
+      // cache surgically per target §7.5; refetching per per-second event
+      // would saturate the API.
+      queryClient.setQueryData(applyRunsKeys.detail(item.tenantId, item.runId), (current) =>
+        appendApplyRunEvent(current as never, item.event),
+      );
     }
   },
 };
