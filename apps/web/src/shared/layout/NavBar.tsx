@@ -1,30 +1,23 @@
-export type View = "dashboard" | "jobs" | "artifacts" | "config" | "profile";
+import { Link } from "@tanstack/react-router";
 
-const NAV_ITEMS: ReadonlyArray<{ readonly view: View; readonly label: string }> = [
-  { view: "dashboard", label: "Dashboard" },
-  { view: "jobs", label: "Jobs" },
-  { view: "artifacts", label: "Artifacts" },
-  { view: "profile", label: "Profile" },
-  { view: "config", label: "Settings" },
+const NAV_ITEMS: ReadonlyArray<{
+  readonly label: string;
+  readonly to: "/dashboard" | "/jobs" | "/artifacts" | "/profile" | "/settings";
+}> = [
+  { label: "Dashboard", to: "/dashboard" },
+  { label: "Jobs", to: "/jobs" },
+  { label: "Artifacts", to: "/artifacts" },
+  { label: "Profile", to: "/profile" },
+  { label: "Settings", to: "/settings" },
 ];
 
-export interface NavBarProps {
-  currentView: View;
-  onViewChange: (view: View) => void;
-}
-
-export function NavBar({ currentView, onViewChange }: NavBarProps) {
+export function NavBar() {
   return (
     <nav className="nav" aria-label="Main navigation">
-      {NAV_ITEMS.map(({ view, label }) => (
-        <button
-          key={view}
-          type="button"
-          className={currentView === view ? "on" : ""}
-          onClick={() => onViewChange(view)}
-        >
+      {NAV_ITEMS.map(({ label, to }) => (
+        <Link key={to} to={to} activeProps={{ className: "on" }}>
           {label}
-        </button>
+        </Link>
       ))}
     </nav>
   );

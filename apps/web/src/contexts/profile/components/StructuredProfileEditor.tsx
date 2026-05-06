@@ -1,0 +1,648 @@
+import {
+  asTextArray,
+  cloneJsonRecord,
+  defaultRepeatItem,
+  getPathValue,
+  type JsonRecord,
+  lines,
+  numberOrEmpty,
+  parseJsonRecord,
+  recordArrayAt,
+  recordAt,
+  setPathValue,
+  textArrayAt,
+  textAt,
+  textFrom,
+} from "../lib/json-record.js";
+
+export interface StructuredProfileEditorProps {
+  profileText: string;
+  styleText: string;
+  onProfileTextChange: (value: string) => void;
+  onStyleTextChange: (value: string) => void;
+}
+
+export function StructuredProfileEditor({
+  profileText,
+  styleText,
+  onProfileTextChange,
+  onStyleTextChange,
+}: StructuredProfileEditorProps) {
+  const profile = parseJsonRecord(profileText);
+  const style = parseJsonRecord(styleText);
+
+  if (!profile || !style) {
+    return (
+      <div className="banner inline">
+        The structured editor needs valid JSON. Switch to source, fix the invalid file, then return
+        to fields.
+      </div>
+    );
+  }
+
+  const updateProfileDraft = (updater: (draft: JsonRecord) => void) => {
+    const draft = cloneJsonRecord(profile);
+    updater(draft);
+    onProfileTextChange(JSON.stringify(draft, null, 2));
+  };
+
+  const updateProfilePath = (path: string, value: unknown) => {
+    updateProfileDraft((draft) => setPathValue(draft, path, value));
+  };
+
+  const updateStylePath = (path: string, value: unknown) => {
+    const draft = cloneJsonRecord(style);
+    setPathValue(draft, path, value);
+    onStyleTextChange(JSON.stringify(draft, null, 2));
+  };
+
+  const setRequiredId = (path: string, id: string, checked: boolean) => {
+    if (!id) {
+      return;
+    }
+    updateProfileDraft((draft) => {
+      const values = new Set(textArrayAt(draft, path));
+      if (checked) {
+        values.add(id);
+      } else {
+        values.delete(id);
+      }
+      setPathValue(draft, path, Array.from(values));
+    });
+  };
+
+  const setRequiredBullet = (entryId: string, bullet: string, checked: boolean) => {
+    if (!entryId || !bullet) {
+      return;
+    }
+    updateProfileDraft((draft) => {
+      const mapPath = "resume.tailoring_rules.required_bullets_by_experience_id";
+      const existing = recordAt(draft, mapPath);
+      const values = new Set(asTextArray(existing[entryId]));
+      if (checked) {
+        values.add(bullet);
+      } else {
+        values.delete(bullet);
+      }
+      setPathValue(draft, mapPath, { ...existing, [entryId]: Array.from(values) });
+    });
+  };
+
+  const addRepeatItem = (path: string) => {
+    updateProfileDraft((draft) => {
+      const items = recordArrayAt(draft, path);
+      setPathValue(draft, path, [...items, defaultRepeatItem(path)]);
+    });
+  };
+
+  const removeRepeatItem = (path: string, index: number) => {
+    updateProfileDraft((draft) => {
+      const items = recordArrayAt(draft, path);
+      setPathValue(
+        draft,
+        path,
+        items.filter((_, itemIndex) => itemIndex !== index),
+      );
+    });
+  };
+
+  const addBullet = (entryIndex: number) => {
+    updateProfileDraft((draft) => {
+      const path = `resume.experience_entries.${entryIndex}.bullets`;
+      setPathValue(draft, path, [...textArrayAt(draft, path), ""]);
+    });
+  };
+
+  const removeBullet = (entryIndex: number, bulletIndex: number) => {
+    updateProfileDraft((draft) => {
+      const path = `resume.experience_entries.${entryIndex}.bullets`;
+      setPathValue(
+        draft,
+        path,
+        textArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
+      );
+    });
+  };
+
+  const textField = (
+    path: string,
+    label: string,
+    type = "text",
+    attrs: Record<string, unknown> = {},
+  ) => (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        {...attrs}
+        type={type}
+        value={textAt(profile, path)}
+        onChange={(event) =>
+          updateProfilePath(
+            path,
+            type === "number" ? numberOrEmpty(event.target.value) : event.target.value,
+          )
+        }
+      />
+    </label>
+  );
+
+  const selectField = (
+    path: string,
+    label: string,
+    options: Array<[string, string]> | string[],
+  ) => (
+    <label className="field">
+      <span>{label}</span>
+      <select
+        value={textAt(profile, path)}
+        onChange={(event) => updateProfilePath(path, event.target.value)}
+      >
+        {options.map((option) => {
+          const value = Array.isArray(option) ? option[0] : option;
+          const text = Array.isArray(option) ? option[1] : option;
+          return (
+            <option key={value} value={value}>
+              {text}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  );
+
+  const checkboxField = (path: string, label: string) => (
+    <label className="field check">
+      <input
+        type="checkbox"
+        checked={Boolean(getPathValue(profile, path))}
+        onChange={(event) => updateProfilePath(path, event.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+
+  const textareaField = (path: string, label: string, placeholder = "") => (
+    <label className="field wide">
+      <span>{label}</span>
+      <textarea
+        placeholder={placeholder}
+        value={textAt(profile, path)}
+        onChange={(event) => updateProfilePath(path, event.target.value)}
+      />
+    </label>
+  );
+
+  const listField = (path: string, label: string) => (
+    <label className="field wide">
+      <span>{label}</span>
+      <textarea
+        value={textArrayAt(profile, path).join("\n")}
+        onChange={(event) => updateProfilePath(path, lines(event.target.value))}
+      />
+    </label>
+  );
+
+  const styleSelect = (path: string, label: string, options: Array<[string, string]>) => (
+    <label className="field">
+      <span>{label}</span>
+      <select
+        value={textAt(style, path)}
+        onChange={(event) => updateStylePath(path, event.target.value)}
+      >
+        {options.map(([value, text]) => (
+          <option key={value} value={value}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const styleNumber = (path: string, label: string, min: number, max: number, step: number) => (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={textAt(style, path)}
+        onChange={(event) => updateStylePath(path, numberOrEmpty(event.target.value))}
+      />
+    </label>
+  );
+
+  const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
+  const educationEntries = recordArrayAt(profile, "resume.education_entries");
+  const skillCategories = recordArrayAt(profile, "resume.skill_categories");
+  const requiredExperienceIds = new Set(
+    textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids"),
+  );
+  const requiredEducationIds = new Set(
+    textArrayAt(profile, "resume.tailoring_rules.required_education_entry_ids"),
+  );
+  const requiredSkillIds = new Set(
+    textArrayAt(profile, "resume.tailoring_rules.required_skill_category_ids"),
+  );
+
+  return (
+    <div className="profile-sections">
+      <section className="form-section">
+        <h3>Personal information</h3>
+        <div className="field-grid">
+          {textField("personal.full_name", "Full name", "text", { required: true })}
+          {textField("personal.preferred_name", "Preferred name")}
+          {textField("personal.email", "Email", "email", { required: true })}
+          {textField("personal.password", "Application password", "password", {
+            autoComplete: "new-password",
+          })}
+          {textField("personal.phone", "Phone", "tel")}
+          {textField("personal.address", "Address")}
+          {textField("personal.city", "City")}
+          {textField("personal.province_state", "State / province")}
+          {textField("personal.country", "Country")}
+          {textField("personal.postal_code", "Postal code")}
+          {textField("personal.linkedin_url", "LinkedIn URL", "url")}
+          {textField("personal.github_url", "GitHub URL", "url")}
+          {textField("personal.portfolio_url", "Portfolio URL", "url")}
+          {textField("personal.website_url", "Website URL", "url")}
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Application defaults</h3>
+        <div className="field-grid">
+          {selectField("work_authorization.legally_authorized_to_work", "Legally authorized to work", [
+            "Yes",
+            "No",
+          ])}
+          {selectField("work_authorization.require_sponsorship", "Requires sponsorship", ["No", "Yes"])}
+          {textField("work_authorization.work_permit_type", "Work permit type")}
+          {textField("availability.earliest_start_date", "Earliest start date", "date")}
+          {selectField("availability.available_for_full_time", "Available full-time", ["Yes", "No"])}
+          {selectField("availability.available_for_contract", "Available for contract", ["No", "Yes"])}
+          {textField("compensation.salary_expectation", "Salary expectation", "number", {
+            min: 0,
+            step: 1000,
+          })}
+          {textField("compensation.salary_currency", "Salary currency")}
+          {textField("compensation.salary_range_min", "Salary range min", "number", {
+            min: 0,
+            step: 1000,
+          })}
+          {textField("compensation.salary_range_max", "Salary range max", "number", {
+            min: 0,
+            step: 1000,
+          })}
+          {textField("compensation.currency_conversion_note", "Currency note")}
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Resume baseline</h3>
+        <div className="field-grid">
+          {textField("experience.years_of_experience_total", "Total years of experience", "number", {
+            min: 0,
+            step: 1,
+          })}
+          {textField("experience.education_level", "Education level")}
+          {textField("experience.current_job_title", "Current job title")}
+          {textField("experience.current_company", "Current company")}
+          {textField("experience.target_role", "Target role")}
+          {textField(
+            "resume.tailoring_rules.max_experience_bullets",
+            "Max bullets per role",
+            "number",
+            { min: 1, max: 10, step: 1 },
+          )}
+        </div>
+        <div className="field-grid one">
+          {listField("resume_constraints.real_metrics", "Real metrics the AI may reuse")}
+          {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Tailoring controls</h3>
+        <div className="field-grid">
+          {selectField("resume.tailoring_rules.tailoring_policy.mode", "Tailoring mode", [
+            ["strict", "Strict"],
+            ["balanced", "Balanced"],
+            ["aggressive", "Aggressive"],
+          ])}
+          {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
+            ["direct", "Direct"],
+            ["executive", "Executive"],
+            ["technical", "Technical"],
+            ["confident", "Confident"],
+            ["warm", "Warm"],
+          ])}
+          {selectField("resume.tailoring_rules.writing_style.bullet_style", "Bullet style", [
+            ["balanced", "Balanced"],
+            ["impact", "Impact"],
+            ["technical_depth", "Technical depth"],
+            ["leadership", "Leadership"],
+          ])}
+          {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
+            ["concise", "Concise"],
+            ["balanced", "Balanced"],
+            ["detailed", "Detailed"],
+          ])}
+          {selectField("resume.tailoring_rules.writing_style.keyword_density", "Keyword density", [
+            ["natural", "Natural"],
+            ["moderate", "Moderate"],
+            ["high", "High"],
+          ])}
+          {checkboxField(
+            "resume.tailoring_rules.writing_style.avoid_first_person",
+            "Avoid first-person language",
+          )}
+          {checkboxField(
+            "resume.tailoring_rules.tailoring_policy.allow_summary_rewrite",
+            "AI may rewrite the executive summary",
+          )}
+          {checkboxField(
+            "resume.tailoring_rules.tailoring_policy.allow_title_reframing",
+            "AI may reframe experience titles",
+          )}
+          {checkboxField(
+            "resume.tailoring_rules.tailoring_policy.allow_achievement_rewriting",
+            "AI may rewrite achievement bullets",
+          )}
+          {checkboxField(
+            "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
+            "AI may reorder or trim skill items",
+          )}
+          {checkboxField(
+            "resume.tailoring_rules.tailoring_policy.allow_minor_inference",
+            "AI may make minor inferred phrasing",
+          )}
+        </div>
+        <div className="field-grid one">
+          {textareaField(
+            "resume.tailoring_rules.custom_tailoring_prompt",
+            "Additional tailoring prompt",
+            "Optional guidance injected into every resume tailoring prompt.",
+          )}
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Resume style</h3>
+        <div className="field-grid">
+          {styleSelect("document_font_size", "Text size", [
+            ["10pt", "Small"],
+            ["11pt", "Regular"],
+            ["12pt", "Large"],
+          ])}
+          {styleSelect("font_family", "Text font", [
+            ["sans", "Sans"],
+            ["roman", "Serif"],
+          ])}
+          {styleSelect("body_alignment", "Body alignment", [
+            ["justified", "Justified"],
+            ["left", "Left aligned"],
+          ])}
+          {styleSelect("moderncv_style", "Template style", [
+            ["banking", "Banking"],
+            ["classic", "Classic"],
+            ["casual", "Casual"],
+            ["oldstyle", "Oldstyle"],
+            ["fancy", "Fancy"],
+          ])}
+          {styleSelect("moderncv_color", "Accent color", [
+            ["black", "Black"],
+            ["blue", "Blue"],
+            ["burgundy", "Burgundy"],
+            ["green", "Green"],
+            ["grey", "Grey"],
+            ["orange", "Orange"],
+            ["purple", "Purple"],
+            ["red", "Red"],
+          ])}
+          {styleSelect("paper_size", "Paper", [
+            ["a4paper", "A4"],
+            ["letterpaper", "Letter"],
+          ])}
+          {styleNumber("page_scale", "Page scale", 0.7, 1, 0.01)}
+          {styleNumber("hints_column_width_cm", "Date column width (cm)", 1.5, 5, 0.1)}
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Experience entries</h3>
+        <div className="repeat-list">
+          {experienceEntries.map((entry, index) => {
+            const entryId = textFrom(entry["id"]);
+            const bullets = asTextArray(entry["bullets"]);
+            const requiredBullets = new Set(
+              asTextArray(
+                recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
+              ),
+            );
+            return (
+              <div className="repeat-card" key={`${entryId || "experience"}-${index}`}>
+                <div className="repeat-hd">
+                  <b>{textFrom(entry["title"]) || `Experience ${index + 1}`}</b>
+                  <div className="repeat-controls">
+                    <label className="choice">
+                      <input
+                        type="checkbox"
+                        checked={requiredExperienceIds.has(entryId)}
+                        disabled={!entryId}
+                        onChange={(event) =>
+                          setRequiredId(
+                            "resume.tailoring_rules.required_experience_entry_ids",
+                            entryId,
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      <span>must appear in final resume</span>
+                    </label>
+                    <button
+                      className="tab"
+                      type="button"
+                      onClick={() => removeRepeatItem("resume.experience_entries", index)}
+                    >
+                      remove experience
+                    </button>
+                  </div>
+                </div>
+                <div className="field-grid">
+                  {textField(`resume.experience_entries.${index}.id`, "Entry ID")}
+                  {textField(`resume.experience_entries.${index}.date_range`, "Date range")}
+                  {textField(`resume.experience_entries.${index}.title`, "Title")}
+                  {textField(`resume.experience_entries.${index}.company`, "Company")}
+                  {textField(`resume.experience_entries.${index}.location`, "Location")}
+                </div>
+                <div className="bullet-list">
+                  {bullets.map((bullet, bulletIndex) => (
+                    <div className="bullet-row" key={`${entryId}-${bulletIndex}`}>
+                      <label className="field">
+                        <span>Bullet</span>
+                        <textarea
+                          value={bullet}
+                          onChange={(event) =>
+                            updateProfilePath(
+                              `resume.experience_entries.${index}.bullets.${bulletIndex}`,
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </label>
+                      <label className="choice">
+                        <input
+                          type="checkbox"
+                          checked={requiredBullets.has(bullet)}
+                          disabled={!entryId || !bullet}
+                          onChange={(event) =>
+                            setRequiredBullet(entryId, bullet, event.target.checked)
+                          }
+                        />
+                        <span>must appear</span>
+                      </label>
+                      <button
+                        className="tab"
+                        type="button"
+                        onClick={() => removeBullet(index, bulletIndex)}
+                      >
+                        remove bullet
+                      </button>
+                    </div>
+                  ))}
+                  <button className="tab" type="button" onClick={() => addBullet(index)}>
+                    add bullet
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          <button
+            className="tab"
+            type="button"
+            onClick={() => addRepeatItem("resume.experience_entries")}
+          >
+            add experience
+          </button>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Education</h3>
+        <div className="repeat-list">
+          {educationEntries.map((entry, index) => {
+            const entryId = textFrom(entry["id"]);
+            return (
+              <div className="repeat-card" key={`${entryId || "education"}-${index}`}>
+                <div className="repeat-hd">
+                  <b>{textFrom(entry["degree"]) || `Education ${index + 1}`}</b>
+                  <div className="repeat-controls">
+                    <label className="choice">
+                      <input
+                        type="checkbox"
+                        checked={requiredEducationIds.has(entryId)}
+                        disabled={!entryId}
+                        onChange={(event) =>
+                          setRequiredId(
+                            "resume.tailoring_rules.required_education_entry_ids",
+                            entryId,
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      <span>must appear in final resume</span>
+                    </label>
+                    <button
+                      className="tab"
+                      type="button"
+                      onClick={() => removeRepeatItem("resume.education_entries", index)}
+                    >
+                      remove education
+                    </button>
+                  </div>
+                </div>
+                <div className="field-grid">
+                  {textField(`resume.education_entries.${index}.id`, "Entry ID")}
+                  {textField(`resume.education_entries.${index}.date`, "Completion month", "month")}
+                  {textField(`resume.education_entries.${index}.degree`, "Degree")}
+                  {textField(`resume.education_entries.${index}.institution`, "Institution")}
+                  {textField(`resume.education_entries.${index}.location`, "Location")}
+                </div>
+              </div>
+            );
+          })}
+          <button
+            className="tab"
+            type="button"
+            onClick={() => addRepeatItem("resume.education_entries")}
+          >
+            add education
+          </button>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Skill categories</h3>
+        <div className="repeat-list">
+          {skillCategories.map((entry, index) => {
+            const entryId = textFrom(entry["id"]);
+            return (
+              <div className="repeat-card" key={`${entryId || "skills"}-${index}`}>
+                <div className="repeat-hd">
+                  <b>{textFrom(entry["label"]) || `Skill category ${index + 1}`}</b>
+                  <div className="repeat-controls">
+                    <label className="choice">
+                      <input
+                        type="checkbox"
+                        checked={requiredSkillIds.has(entryId)}
+                        disabled={!entryId}
+                        onChange={(event) =>
+                          setRequiredId(
+                            "resume.tailoring_rules.required_skill_category_ids",
+                            entryId,
+                            event.target.checked,
+                          )
+                        }
+                      />
+                      <span>must appear in final resume</span>
+                    </label>
+                    <button
+                      className="tab"
+                      type="button"
+                      onClick={() => removeRepeatItem("resume.skill_categories", index)}
+                    >
+                      remove skill category
+                    </button>
+                  </div>
+                </div>
+                <div className="field-grid">
+                  {textField(`resume.skill_categories.${index}.id`, "Category ID")}
+                  {textField(`resume.skill_categories.${index}.label`, "Label")}
+                  {listField(`resume.skill_categories.${index}.items`, "Skills")}
+                </div>
+              </div>
+            );
+          })}
+          <button
+            className="tab"
+            type="button"
+            onClick={() => addRepeatItem("resume.skill_categories")}
+          >
+            add skill category
+          </button>
+        </div>
+      </section>
+
+      <section className="form-section">
+        <h3>Voluntary EEO</h3>
+        <div className="field-grid">
+          {textField("eeo_voluntary.gender", "Gender")}
+          {textField("eeo_voluntary.race_ethnicity", "Race / ethnicity")}
+          {textField("eeo_voluntary.veteran_status", "Veteran status")}
+          {textField("eeo_voluntary.disability_status", "Disability status")}
+        </div>
+      </section>
+    </div>
+  );
+}

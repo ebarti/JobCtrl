@@ -1,34 +1,32 @@
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+
 import { useDensity } from "../hooks/useDensity.js";
 import type { Density } from "../stores/ui-preferences.js";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
-import type { View } from "./NavBar.js";
 import { ThemeToggle } from "./ThemeToggle.js";
 
 const DENSITY_OPTIONS: ReadonlyArray<Density> = ["compact", "regular", "comfy"];
 
-export interface TopbarProps {
-  setView: (view: View) => void;
-  globalQuery: string;
-  setGlobalQuery: (query: string) => void;
-}
-
-export function Topbar({ setView, globalQuery, setGlobalQuery }: TopbarProps) {
+export function Topbar() {
   const { density, setDensity } = useDensity();
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
   return (
     <header className="topbar">
-      <button className="brand" type="button" onClick={() => setView("dashboard")}>
+      <Link className="brand" to="/dashboard">
         <span className="brand-mark">jh</span>
         <span>jobhunter</span>
-      </button>
+      </Link>
       <input
         aria-label="Global search"
         className="global-search"
         placeholder="Filter jobs, errors, companies..."
-        value={globalQuery}
-        onChange={(event) => setGlobalQuery(event.target.value)}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && globalQuery.trim()) {
-            setView("jobs");
+          if (event.key === "Enter" && query.trim()) {
+            void navigate({ to: "/jobs", search: { q: query.trim(), page: 1 } });
           }
         }}
       />
