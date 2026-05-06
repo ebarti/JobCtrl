@@ -17,6 +17,7 @@ const meta = {
   title: "Shared/UI/Command",
   component: Command,
   parameters: {
+    // a11y deferred — cmdk aria-required-children during initial mount; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof Command>;

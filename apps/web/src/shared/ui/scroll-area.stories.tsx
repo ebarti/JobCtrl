@@ -9,6 +9,7 @@ const meta = {
   title: "Shared/UI/ScrollArea",
   component: ScrollArea,
   parameters: {
+    // a11y deferred — Radix ScrollArea viewport scrollable-region-focusable; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof ScrollArea>;
