@@ -8,6 +8,9 @@ resume.pdf
 
 # Runtime artifacts
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 .runtime_tailor_test/
 tailored_resumes/
 cover_letters/
