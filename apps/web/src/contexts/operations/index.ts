@@ -33,7 +33,9 @@ export {
   type InvalidationHandler,
   type InvalidationItem,
   type InvalidationRouter,
+  invalidate,
   invalidationRouter,
+  patchApplyRunEvent,
 } from "./invalidation-router.js";
 export { useInvalidationRouter } from "./hooks/useInvalidationRouter.js";
 

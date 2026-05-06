@@ -21,11 +21,12 @@ import { ToasterProvider } from "./shared/providers/ToasterProvider.js";
 import { TooltipProvider } from "./shared/ui/tooltip.js";
 import "./styles/globals.css";
 
-const api = new FetchApiClientAdapter(import.meta.env.VITE_JOBHUNTER_API_BASE_URL ?? "");
+const apiBaseUrl = import.meta.env.VITE_JOBHUNTER_API_BASE_URL ?? "";
+const api = new FetchApiClientAdapter(apiBaseUrl);
 
 const ports: Ports = {
   api,
-  eventStream: new SseEventStreamAdapter(),
+  eventStream: new SseEventStreamAdapter(apiBaseUrl),
   storage: new LocalStorageAdapter("jh:"),
   session: new LocalSessionAdapter(),
   clipboard: new NavigatorClipboardAdapter(),

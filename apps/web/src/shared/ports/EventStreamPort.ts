@@ -1,6 +1,6 @@
 import type { TenantId } from "@jobhunter/domain-types";
 
-export type EventStreamStatus = "stub" | "connecting" | "open" | "closed";
+export type EventStreamStatus = "connecting" | "open" | "closed";
 
 export interface DomainEventEnvelope {
   readonly eventType: string;

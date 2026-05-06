@@ -1,10 +1,12 @@
 import type { ProfileImported, ProfileUpdated } from "@jobhunter/domain-types";
 
-import type { InvalidationItem } from "../operations/invalidation-router.js";
+import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import { profileKeys } from "./queryKeys.js";
 
 export const profileUpdatedHandler = (
-  _event: ProfileUpdated,
-): readonly InvalidationItem[] => [];
+  event: ProfileUpdated,
+): readonly InvalidationItem[] => [invalidate(profileKeys.profile(event.tenantId))];
+
 export const profileImportedHandler = (
-  _event: ProfileImported,
-): readonly InvalidationItem[] => [];
+  event: ProfileImported,
+): readonly InvalidationItem[] => [invalidate(profileKeys.profile(event.tenantId))];
