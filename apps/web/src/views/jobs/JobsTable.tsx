@@ -1,116 +1,67 @@
-import type { JobSortField } from "@jobhunter/contracts";
+import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 
-import { stateTone } from "../../contexts/pipeline/lib/state-tone.js";
 import type { JobSummary, PaginatedResponse } from "../../contexts/operations/types.js";
-import { scoreTier } from "../../contexts/scoring/lib/score-tier.js";
-import { formatCompanySource } from "../../shared/lib/formatters.js";
-import { Empty } from "../../shared/ui/empty.js";
-
-export type JobSortColumn = Extract<
-  JobSortField,
-  | "discovered_at"
-  | "title"
-  | "company"
-  | "location"
-  | "fit_score"
-  | "current_stage"
-  | "current_state"
->;
-
-const COLUMNS: ReadonlyArray<{ readonly field: JobSortColumn; readonly label: string }> = [
-  { field: "fit_score", label: "Fit score" },
-  { field: "title", label: "Title" },
-  { field: "company", label: "Company" },
-  { field: "location", label: "Location" },
-  { field: "current_stage", label: "Stage" },
-  { field: "current_state", label: "State" },
-  { field: "discovered_at", label: "Discovered" },
-];
-
-export type Direction = "asc" | "desc";
+import { DataTable } from "../../shared/ui/data-table.js";
+import { TablePager } from "../../shared/ui/table-pager.js";
+import { jobColumns } from "./columns.js";
 
 export interface JobsTableProps {
   data: PaginatedResponse<JobSummary> | null;
   loading: boolean;
-  sort: JobSortField;
-  dir: Direction;
-  selectedJobs: ReadonlySet<string>;
+  sorting: SortingState;
+  onSortingChange: (next: SortingState) => void;
+  rowSelection: RowSelectionState;
+  onRowSelectionChange: (next: RowSelectionState) => void;
   allMatchingSelected: boolean;
-  onChangeSort: (field: JobSortColumn) => void;
-  onToggleSelection: (jobKey: string, selected: boolean) => void;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
   onOpenJob: (jobKey: string) => void;
 }
 
 export function JobsTable({
   data,
   loading,
-  sort,
-  dir,
-  selectedJobs,
+  sorting,
+  onSortingChange,
+  rowSelection,
+  onRowSelectionChange,
   allMatchingSelected,
-  onChangeSort,
-  onToggleSelection,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
   onOpenJob,
 }: JobsTableProps) {
   return (
-    <div className="table">
-      <div className="data-row job job-header" role="row">
-        <span aria-hidden="true" />
-        {COLUMNS.map((column) => (
-          <button
-            key={column.field}
-            type="button"
-            aria-sort={
-              sort === column.field ? (dir === "asc" ? "ascending" : "descending") : "none"
-            }
-            className={sort === column.field ? "sort-head active" : "sort-head"}
-            onClick={() => onChangeSort(column.field)}
-          >
-            {column.label}
-            {sort === column.field ? (
-              <span aria-hidden="true">{dir === "asc" ? " ↑" : " ↓"}</span>
-            ) : null}
-          </button>
-        ))}
-      </div>
-      {loading && !data ? <Empty title="Loading jobs." /> : null}
-      {data?.items.map((job) => (
-        <div
-          key={job.jobKey}
-          role="button"
-          tabIndex={0}
-          className="data-row job"
-          onClick={() => onOpenJob(job.jobKey)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onOpenJob(job.jobKey);
-            }
-          }}
-        >
-          <span className="row-check">
-            <input
-              aria-label={`Select ${job.title}`}
-              type="checkbox"
-              checked={allMatchingSelected || selectedJobs.has(job.jobKey)}
-              onChange={(event) => onToggleSelection(job.jobKey, event.target.checked)}
-              onClick={(event) => event.stopPropagation()}
-            />
-          </span>
-          <span className={`fit ${scoreTier(job.fitScore)}`}>{job.fitScore ?? "-"}</span>
-          <span className="title-stack">
-            <b>{job.title}</b>
-          </span>
-          <span className="muted-cell">{formatCompanySource(job.company, job.source)}</span>
-          <span>{job.location || "-"}</span>
-          <span className="stage-pill">{job.currentStage}</span>
-          <span className={`tag ${stateTone(job.currentState)}`}>{job.currentState}</span>
-          <span className="mono">
-            {job.discoveredAt ? new Date(job.discoveredAt).toLocaleDateString() : "-"}
-          </span>
-        </div>
-      ))}
-      {data && data.items.length === 0 ? <Empty title="No jobs match." /> : null}
-    </div>
+    <DataTable<JobSummary>
+      data={data?.items ?? []}
+      columns={jobColumns}
+      getRowId={(row) => row.jobKey}
+      loading={loading}
+      loaded={data !== null}
+      loadingMessage="Loading jobs."
+      emptyMessage="No jobs match."
+      headerClassName="data-row job job-header"
+      rowClassName="data-row job"
+      sorting={sorting}
+      onSortingChange={onSortingChange}
+      rowSelection={rowSelection}
+      onRowSelectionChange={onRowSelectionChange}
+      onRowActivate={(row) => onOpenJob(row.jobKey)}
+      rowAriaSelected={(row) => allMatchingSelected || Boolean(rowSelection[row.jobKey])}
+      cellClassName={(columnId) => (columnId === "select" ? "row-check" : undefined)}
+      footer={
+        <TablePager
+          page={page}
+          pageSize={pageSize}
+          totalPages={data?.pagination.pages ?? 1}
+          totalRows={data?.pagination.total}
+          onPageChange={onPageChange}
+          onPageSizeChange={onPageSizeChange}
+        />
+      }
+    />
   );
 }

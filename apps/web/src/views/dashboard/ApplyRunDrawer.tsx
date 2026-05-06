@@ -7,7 +7,7 @@ import { formatDateTime } from "../../shared/lib/formatters.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
-import { ApplyRunTimeline } from "./ApplyRunTimeline.js";
+import { ApplyRunTimeline } from "../../contexts/apply/components/ApplyRunTimeline.js";
 
 function applyRunDotState(status: string): string {
   if (status === "running") {
