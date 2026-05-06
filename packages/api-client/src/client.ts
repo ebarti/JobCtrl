@@ -14,6 +14,7 @@ import type {
   DeleteJobRequest,
   GenerateMaterialsRequest,
   JobDetail,
+  JobFacetsResponse,
   JobListQuery,
   JobMutationResponse,
   JobSummary,
@@ -29,6 +30,7 @@ import type {
 } from "@jobhunter/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
+type QueryParamValue = QueryValue | readonly QueryValue[];
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 
 export interface HealthResponse {
@@ -54,6 +56,10 @@ export class JobHunterApiClient {
 
   jobs(query: Partial<JobListQuery> = {}): Promise<PaginatedResponse<JobSummary>> {
     return this.get("/v1/jobs", query);
+  }
+
+  jobFacets(query: Pick<Partial<JobListQuery>, "deleted"> = {}): Promise<JobFacetsResponse> {
+    return this.get("/v1/jobs/facets", query);
   }
 
   job(jobKey: string): Promise<JobDetail> {
@@ -153,7 +159,7 @@ export class JobHunterApiClient {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/mark-skipped`, body);
   }
 
-  private async get<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+  private async get<T>(path: string, query?: Record<string, QueryParamValue>): Promise<T> {
     return this.request("GET", path, query ? { query } : {});
   }
 
@@ -172,12 +178,15 @@ export class JobHunterApiClient {
   private async request<T>(
     method: "DELETE" | "GET" | "PATCH" | "POST",
     path: string,
-    options: { body?: unknown; query?: Record<string, QueryValue> } = {},
+    options: { body?: unknown; query?: Record<string, QueryParamValue> } = {},
   ): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
     for (const [key, value] of Object.entries(options.query ?? {})) {
-      if (value !== undefined && value !== null && value !== "") {
-        url.searchParams.set(key, String(value));
+      const values = Array.isArray(value) ? value : [value];
+      for (const item of values) {
+        if (item !== undefined && item !== null && item !== "") {
+          url.searchParams.append(key, String(item));
+        }
       }
     }
     const href = this.baseUrl ? url.href : `${url.pathname}${url.search}`;

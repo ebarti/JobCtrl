@@ -83,6 +83,16 @@ DEFAULT_MAX_ATTEMPTS: dict[str, int] = {
 _SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
 
 
+def _canonical_artifact_type(value: str | None) -> str:
+    if value == "tailored_resume":
+        return "tailored_resume_txt"
+    if value == "resume_pdf":
+        return "tailored_resume_pdf"
+    if value == "cover_letter":
+        return "cover_letter_txt"
+    return value or "artifact"
+
+
 class ProjectionBuilder:
     """In-process projection materialiser.
 
@@ -551,7 +561,7 @@ class ProjectionBuilder:
                 (job_url,),
             ).fetchall():
                 local_path = _row_nullable_str(row, "path") or ""
-                atype = _row_nullable_str(row, "artifact_type") or ""
+                atype = _canonical_artifact_type(_row_nullable_str(row, "artifact_type"))
                 if not local_path:
                     continue
                 key = (atype, local_path)
@@ -583,7 +593,7 @@ class ProjectionBuilder:
                 (job_url,),
             ).fetchall():
                 local_path = _row_nullable_str(row, "path") or ""
-                atype = _row_nullable_str(row, "artifact_type") or "artifact"
+                atype = _canonical_artifact_type(_row_nullable_str(row, "artifact_type"))
                 if not local_path:
                     continue
                 key = (atype, local_path)

@@ -14,6 +14,7 @@ import {
   CredentialUpdateRequestSchema,
   DeleteJobRequestSchema,
   GenerateMaterialsRequestSchema,
+  JobFacetsQuerySchema,
   JobListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
@@ -40,6 +41,7 @@ import {
   buildDashboardSummary,
   getArtifactDetail,
   getJobDetail,
+  listJobFacets,
   listArtifacts,
   listJobs,
   readProfileConfig,
@@ -124,6 +126,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/jobs", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
+  );
+
+  app.get("/v1/jobs/facets", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => listJobFacets(db, JobFacetsQuerySchema.parse(request.query))),
   );
 
   app.post("/v1/jobs/bulk-delete", async (request, reply) => {

@@ -7,12 +7,18 @@ local profile/style/template files, and invokes Python automation through the
 JSON-RPC 2.0 protocol over a long-lived `jobhunter rpc` subprocess. It is
 intentionally local-first and binds to `127.0.0.1` by default.
 
-Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
-`/v1/artifacts`) read from the five `*_projections` tables maintained by
+Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/facets`,
+`/v1/jobs/:key`, `/v1/artifacts`) read from the five `*_projections` tables maintained by
 `apps/api/src/projections.ts` (TS-side mirror) and the Python
 `ProjectionBuilder` (`workers/automation/src/jobhunter/infrastructure/projections/`).
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
+
+`/v1/jobs` supports exact multi-value filters through repeated query
+parameters for `location`, `companies`, and `title`, plus `discoveredFrom`,
+`discoveredTo`, `minFitScore`, and `maxFitScore`. The legacy scalar `company`
+query parameter remains a partial company search. `/v1/jobs/facets` returns the
+available location, company, and title values for the local dashboard filters.
 
 ## Related Packages
 

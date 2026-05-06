@@ -45,7 +45,26 @@ const optionalText = z
   .catch("")
   .transform((value) => value ?? "");
 
-const optionalNumber = z.coerce.number().int().optional().catch(undefined);
+const optionalFitScore = z.coerce.number().int().min(0).max(10).optional().catch(undefined);
+const optionalDateText = z
+  .string()
+  .trim()
+  .max(40)
+  .optional()
+  .catch("")
+  .transform((value) => value ?? "");
+const optionalTextList = z
+  .preprocess((value) => {
+    if (value === undefined || value === null) {
+      return [];
+    }
+    const values = Array.isArray(value) ? value : [value];
+    return values
+      .flatMap((item) => String(item).split(","))
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }, z.array(z.string().trim().min(1).max(500)))
+  .catch([]);
 
 export const RetryStageRequestSchema = z
   .object({
@@ -105,8 +124,13 @@ export const BulkJobMutationFilterSchema = z
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     source: optionalText,
     company: optionalText,
-    minFitScore: optionalNumber,
-    maxFitScore: optionalNumber,
+    companies: optionalTextList,
+    location: optionalTextList,
+    title: optionalTextList,
+    discoveredFrom: optionalDateText,
+    discoveredTo: optionalDateText,
+    minFitScore: optionalFitScore,
+    maxFitScore: optionalFitScore,
   })
   .strict();
 export type BulkJobMutationFilter = z.infer<typeof BulkJobMutationFilterSchema>;
@@ -354,8 +378,13 @@ export const JobListQuerySchema = z
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     source: optionalText,
     company: optionalText,
-    minFitScore: optionalNumber,
-    maxFitScore: optionalNumber,
+    companies: optionalTextList,
+    location: optionalTextList,
+    title: optionalTextList,
+    discoveredFrom: optionalDateText,
+    discoveredTo: optionalDateText,
+    minFitScore: optionalFitScore,
+    maxFitScore: optionalFitScore,
   })
   .transform((value) => ({
     ...value,
@@ -363,6 +392,12 @@ export const JobListQuerySchema = z
   }));
 
 export type JobListQuery = z.infer<typeof JobListQuerySchema>;
+
+export const JobFacetsQuerySchema = z.object({
+  deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+});
+
+export type JobFacetsQuery = z.infer<typeof JobFacetsQuerySchema>;
 
 export const ArtifactListQuerySchema = z
   .object({
@@ -419,6 +454,21 @@ export interface JobSummary {
   applyStatus: string | null;
   appliedAt: string | null;
   deletedAt: string | null;
+}
+
+export interface JobFacetsResponse {
+  ok: true;
+  locations: string[];
+  companies: string[];
+  titles: string[];
+  fitScore: {
+    min: number | null;
+    max: number | null;
+  };
+  discoveredAt: {
+    min: string | null;
+    max: string | null;
+  };
 }
 
 export interface ArtifactSummary {

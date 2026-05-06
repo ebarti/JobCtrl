@@ -893,12 +893,13 @@ function collectArtifacts(
     );
     for (const row of rows) {
       if (!row.path) continue;
-      const key = `${row.artifact_type}:${row.path}`;
+      const artifactType = canonicalArtifactType(row.artifact_type);
+      const key = `${artifactType}:${row.path}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
         artifactId: row.artifact_id || key,
-        artifactType: row.artifact_type || "artifact",
+        artifactType,
         status: row.status || "active",
         localPath: row.path,
         sizeBytes: nullableNumber(row.size_bytes),
@@ -923,12 +924,13 @@ function collectArtifacts(
     );
     for (const row of rows) {
       if (!row.path) continue;
-      const key = `${row.artifact_type || "artifact"}:${row.path}`;
+      const artifactType = canonicalArtifactType(row.artifact_type);
+      const key = `${artifactType}:${row.path}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push({
         artifactId: String(row.row_id ?? key),
-        artifactType: row.artifact_type || "artifact",
+        artifactType,
         status: row.status || "active",
         localPath: row.path,
         sizeBytes: nullableNumber(row.size_bytes),
@@ -974,6 +976,13 @@ function collectArtifacts(
     });
   }
   return out;
+}
+
+function canonicalArtifactType(value: string | null | undefined): string {
+  if (value === "tailored_resume") return "tailored_resume_txt";
+  if (value === "resume_pdf") return "tailored_resume_pdf";
+  if (value === "cover_letter") return "cover_letter_txt";
+  return value || "artifact";
 }
 
 function pdfSibling(value: string | null | undefined): string | null {

@@ -25,6 +25,8 @@ import type {
   DashboardSummary,
   JobDeletedFilter,
   JobDetail,
+  JobFacetsQuery,
+  JobFacetsResponse,
   JobListQuery,
   JobSummary,
   PaginatedResponse,
@@ -111,6 +113,14 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   score_reasoning: string;
   stages_json: string;
   last_updated_at: string | null;
+}
+
+interface JobFacetProjectionRow extends Record<string, unknown> {
+  title: string;
+  employer: string;
+  location: string;
+  discovered_at: string | null;
+  fit_score: number | null;
 }
 
 interface ArtifactProjectionRow extends Record<string, unknown> {
@@ -224,6 +234,37 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   return paginate(filtered, query.page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
 }
 
+export function listJobFacets(db: SqliteDatabase, query: JobFacetsQuery): JobFacetsResponse {
+  refreshProjections(db, DEFAULT_TENANT);
+  const filter = deletedSqlFilter(query.deleted);
+  const rows = allRows<JobFacetProjectionRow>(
+    db,
+    `SELECT title, employer, location, discovered_at, fit_score FROM job_list_projections${filter.where}`,
+    filter.params,
+  );
+  const scores = rows
+    .map((row) => nullableNumber(row.fit_score))
+    .filter((score): score is number => score !== null);
+  const discovered = rows
+    .map((row) => nullableString(row.discovered_at))
+    .filter((value): value is string => value !== null && value !== "");
+  discovered.sort();
+  return {
+    ok: true,
+    locations: sortedUnique(rows.map((row) => row.location)),
+    companies: sortedUnique(rows.map((row) => row.employer)),
+    titles: sortedUnique(rows.map((row) => row.title)),
+    fitScore: {
+      min: scores.length ? Math.min(...scores) : null,
+      max: scores.length ? Math.max(...scores) : null,
+    },
+    discoveredAt: {
+      min: discovered[0] ?? null,
+      max: discovered.at(-1) ?? null,
+    },
+  };
+}
+
 export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
   const query = normalizeMutationFilter(filter);
   refreshProjections(db, DEFAULT_TENANT);
@@ -293,9 +334,9 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
      WHERE ap.tenant_id = ?${deletedWhere}`,
     [DEFAULT_TENANT],
   );
-  const artifacts = rows.map(rowToArtifactSummary).filter((artifact) => {
+  const artifacts = dedupeArtifacts(rows.map(rowToArtifactSummary)).filter((artifact) => {
     if (query.status && artifact.status !== query.status) return false;
-    if (query.type && artifact.type !== query.type) return false;
+    if (query.type && artifact.type !== canonicalArtifactTypeFilter(query.type)) return false;
     if (!normalizedQuery) return true;
     return [artifact.title, artifact.company, artifact.type, artifact.status, artifact.localPath].some((value) =>
       value.toLowerCase().includes(normalizedQuery),
@@ -307,6 +348,13 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
     status: query.status,
     type: query.type,
   });
+}
+
+function canonicalArtifactTypeFilter(value: string | null | undefined): string {
+  if (value === "resume_pdf") return "tailored_resume_pdf";
+  if (value === "tailored_resume") return "tailored_resume_txt";
+  if (value === "cover_letter") return "cover_letter_txt";
+  return value || "artifact";
 }
 
 export function getArtifactDetail(db: SqliteDatabase, artifactId: string): ArtifactDetail | null {
@@ -396,7 +444,7 @@ function rowToArtifactSummary(row: ArtifactProjectionRow): ArtifactSummary {
     jobKey: row.job_id,
     title: row.job_title || "Untitled",
     company: row.job_employer || "Unknown company",
-    type: row.artifact_type || "artifact",
+    type: canonicalArtifactTypeFilter(row.artifact_type),
     status,
     localPath,
     createdAt: row.created_at,
@@ -534,7 +582,19 @@ function artifactsForJob(db: SqliteDatabase, jobId: string): ArtifactSummary[] {
     "SELECT * FROM artifact_list_projections WHERE tenant_id = ? AND job_id = ?",
     [DEFAULT_TENANT, jobId],
   );
-  return rows.map(rowToArtifactSummary);
+  return dedupeArtifacts(rows.map(rowToArtifactSummary));
+}
+
+function dedupeArtifacts(artifacts: ArtifactSummary[]): ArtifactSummary[] {
+  const seen = new Set<string>();
+  const out: ArtifactSummary[] = [];
+  for (const artifact of artifacts) {
+    const key = [artifact.jobKey, artifact.type, artifact.localPath || artifact.artifactId].join("\0");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(artifact);
+  }
+  return out;
 }
 
 // ================================================================ filters
@@ -551,19 +611,31 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     deleted: filter.deleted ?? "active",
     source: filter.source ?? "",
     company: filter.company ?? "",
+    companies: filter.companies ?? [],
+    location: filter.location ?? [],
+    title: filter.title ?? [],
+    discoveredFrom: filter.discoveredFrom ?? "",
+    discoveredTo: filter.discoveredTo ?? "",
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
   };
 }
 
-function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
+function deletedSqlFilter(deleted: JobDeletedFilter): { where: string; params: SqliteValue[] } {
   const clauses: string[] = ["tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
-  if (query.deleted === "active") {
+  if (deleted === "active") {
     clauses.push("deleted_at IS NULL");
-  } else if (query.deleted === "deleted") {
+  } else if (deleted === "deleted") {
     clauses.push("deleted_at IS NOT NULL");
   }
+  return { where: ` WHERE ${clauses.join(" AND ")}`, params };
+}
+
+function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
+  const filter = deletedSqlFilter(query.deleted);
+  const clauses = filter.where.replace(/^ WHERE /, "").split(" AND ");
+  const params = [...filter.params];
   if (query.stage) {
     clauses.push("current_stage = ?");
     params.push(query.stage);
@@ -580,13 +652,28 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     clauses.push("LOWER(employer) LIKE ?");
     params.push(`%${query.company.toLowerCase()}%`);
   }
-  if (query.minFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, -1) >= ?");
-    params.push(query.minFitScore);
+  appendInFilter(clauses, params, "location", query.location);
+  appendInFilter(clauses, params, "employer", query.companies);
+  appendInFilter(clauses, params, "title", query.title);
+  if (query.discoveredFrom) {
+    clauses.push("discovered_at IS NOT NULL AND date(discovered_at) >= date(?)");
+    params.push(query.discoveredFrom);
   }
-  if (query.maxFitScore !== undefined) {
-    clauses.push("COALESCE(fit_score, 999) <= ?");
-    params.push(query.maxFitScore);
+  if (query.discoveredTo) {
+    clauses.push("discovered_at IS NOT NULL AND date(discovered_at) <= date(?)");
+    params.push(query.discoveredTo);
+  }
+  const fitRange = normalizedFitRange(query);
+  if (fitRange.narrowed) {
+    clauses.push("fit_score IS NOT NULL");
+    if (fitRange.min > 0) {
+      clauses.push("fit_score >= ?");
+      params.push(fitRange.min);
+    }
+    if (fitRange.max < 10) {
+      clauses.push("fit_score <= ?");
+      params.push(fitRange.max);
+    }
   }
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
@@ -598,6 +685,11 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     state: query.state ?? "",
     source: query.source,
     company: query.company,
+    companies: query.companies,
+    location: query.location,
+    title: query.title,
+    discoveredFrom: query.discoveredFrom,
+    discoveredTo: query.discoveredTo,
     minFitScore: query.minFitScore ?? null,
     maxFitScore: query.maxFitScore ?? null,
     deleted: query.deleted,
@@ -621,12 +713,58 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
   if (query.state && job.currentState !== query.state) return false;
   if (query.source && !job.source.toLowerCase().includes(query.source.toLowerCase())) return false;
   if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) return false;
-  if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) return false;
-  if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) return false;
+  if (query.location.length && !matchesOneOf(job.location, query.location)) return false;
+  if (query.companies.length && !matchesOneOf(job.company, query.companies)) return false;
+  if (query.title.length && !matchesOneOf(job.title, query.title)) return false;
+  if (query.discoveredFrom && (!job.discoveredAt || dateKey(job.discoveredAt) < query.discoveredFrom)) return false;
+  if (query.discoveredTo && (!job.discoveredAt || dateKey(job.discoveredAt) > query.discoveredTo)) return false;
+  const fitRange = normalizedFitRange(query);
+  if (fitRange.narrowed) {
+    if (job.fitScore === null) return false;
+    if (fitRange.min > 0 && job.fitScore < fitRange.min) return false;
+    if (fitRange.max < 10 && job.fitScore > fitRange.max) return false;
+  }
   if (!normalizedQuery) return true;
   return [job.title, job.company, job.url, job.location, job.strategy, job.currentStage, job.currentState].some((value) =>
     value.toLowerCase().includes(normalizedQuery),
   );
+}
+
+function appendInFilter(
+  clauses: string[],
+  params: SqliteValue[],
+  column: "employer" | "location" | "title",
+  values: string[],
+): void {
+  const normalized = sortedUnique(values);
+  if (!normalized.length) {
+    return;
+  }
+  clauses.push(`LOWER(${column}) IN (${normalized.map(() => "?").join(", ")})`);
+  params.push(...normalized.map((value) => value.toLowerCase()));
+}
+
+function normalizedFitRange(query: Pick<JobListQuery, "maxFitScore" | "minFitScore">): {
+  min: number;
+  max: number;
+  narrowed: boolean;
+} {
+  const min = query.minFitScore ?? 0;
+  const max = query.maxFitScore ?? 10;
+  return {
+    min,
+    max,
+    narrowed: min > 0 || max < 10,
+  };
+}
+
+function matchesOneOf(value: string, options: string[]): boolean {
+  const normalized = value.toLowerCase();
+  return options.some((option) => option.toLowerCase() === normalized);
+}
+
+function dateKey(value: string): string {
+  return value.slice(0, 10);
 }
 
 function compareJobs(left: JobSummary, right: JobSummary, field: string, direction: "asc" | "desc"): number {
@@ -808,6 +946,12 @@ function compareValues(left: unknown, right: unknown): number {
   if (right === null || right === undefined || right === "") return 1;
   if (typeof left === "number" && typeof right === "number") return left - right;
   return String(left).localeCompare(String(right));
+}
+
+function sortedUnique(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean))).sort((left, right) =>
+    left.localeCompare(right),
+  );
 }
 
 function isStage(value: unknown): value is Stage {

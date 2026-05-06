@@ -8,6 +8,7 @@ import {
   type DashboardSummary,
   type DashboardSettings,
   type JobDetail,
+  type JobFacetsResponse,
   type JobSummary,
   type JobSortField,
   type PaginatedResponse,
@@ -56,6 +57,19 @@ const artifactSortFields = [
   ["status", "Status"],
   ["size_bytes", "Size"],
 ] as const;
+
+const currentStateOptions: Array<readonly [StageState | "all", string]> = [
+  ["all", "all current states"],
+  ["pending", "pending"],
+  ["queued", "queued"],
+  ["running", "running"],
+  ["failed", "failed"],
+  ["blocked", "blocked"],
+  ["exhausted", "exhausted"],
+  ["stale", "stale"],
+  ["canceled", "canceled"],
+  ["skipped", "skipped"],
+];
 
 export function App(): JSX.Element {
   const [view, setView] = useState<View>("dashboard");
@@ -358,9 +372,17 @@ function JobsView({
   onOpenJob: (jobKey: string) => void;
 }): JSX.Element {
   const [data, setData] = useState<PaginatedResponse<JobSummary> | null>(null);
+  const [facets, setFacets] = useState<JobFacetsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState<Stage | "all">("all");
   const [state, setState] = useState<StageState | "all">("all");
+  const [locationFilter, setLocationFilter] = useState<string[]>([]);
+  const [companyFilter, setCompanyFilter] = useState<string[]>([]);
+  const [titleFilter, setTitleFilter] = useState<string[]>([]);
+  const [discoveredFrom, setDiscoveredFrom] = useState("");
+  const [discoveredTo, setDiscoveredTo] = useState("");
+  const [minFitScore, setMinFitScore] = useState("");
+  const [maxFitScore, setMaxFitScore] = useState("");
   const [deleted, setDeleted] = useState<"active" | "deleted">("active");
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(() => new Set());
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
@@ -386,6 +408,13 @@ function JobsView({
         deleted,
         stage: stage === "all" ? undefined : stage,
         state: state === "all" ? undefined : state,
+        location: locationFilter,
+        companies: companyFilter,
+        title: titleFilter,
+        discoveredFrom,
+        discoveredTo,
+        minFitScore: scoreFilterValue(minFitScore),
+        maxFitScore: scoreFilterValue(maxFitScore),
       });
       if (requestId === requestSeq.current) {
         setData(nextData);
@@ -400,11 +429,39 @@ function JobsView({
         setLoading(false);
       }
     }
-  }, [deleted, dir, globalQuery, page, pageSize, sort, stage, state]);
+  }, [
+    companyFilter,
+    deleted,
+    dir,
+    discoveredFrom,
+    discoveredTo,
+    globalQuery,
+    locationFilter,
+    maxFitScore,
+    minFitScore,
+    page,
+    pageSize,
+    sort,
+    stage,
+    state,
+    titleFilter,
+  ]);
+
+  const loadFacets = useCallback(async () => {
+    try {
+      setFacets(await api.jobFacets({ deleted }));
+    } catch {
+      setFacets(null);
+    }
+  }, [deleted]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadFacets();
+  }, [loadFacets]);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -431,12 +488,28 @@ function JobsView({
 
   useEffect(() => {
     setPage(1);
-  }, [globalQuery]);
+  }, [companyFilter, discoveredFrom, discoveredTo, globalQuery, locationFilter, maxFitScore, minFitScore, titleFilter]);
 
   useEffect(() => {
     setSelectedJobs(new Set());
     setAllMatchingSelected(false);
-  }, [deleted, dir, globalQuery, page, pageSize, sort, stage, state]);
+  }, [
+    companyFilter,
+    deleted,
+    dir,
+    discoveredFrom,
+    discoveredTo,
+    globalQuery,
+    locationFilter,
+    maxFitScore,
+    minFitScore,
+    page,
+    pageSize,
+    sort,
+    stage,
+    state,
+    titleFilter,
+  ]);
 
   const toggleSelection = (jobKey: string, selected: boolean) => {
     setAllMatchingSelected(false);
@@ -472,7 +545,20 @@ function JobsView({
       deleted,
       source: "",
       company: "",
+      location: locationFilter,
+      companies: companyFilter,
+      title: titleFilter,
+      discoveredFrom,
+      discoveredTo,
     };
+    const parsedMinFitScore = scoreFilterValue(minFitScore);
+    const parsedMaxFitScore = scoreFilterValue(maxFitScore);
+    if (parsedMinFitScore !== undefined) {
+      filter.minFitScore = parsedMinFitScore;
+    }
+    if (parsedMaxFitScore !== undefined) {
+      filter.maxFitScore = parsedMaxFitScore;
+    }
     if (stage !== "all") {
       filter.stage = stage;
     }
@@ -515,7 +601,7 @@ function JobsView({
         await api.deleteJobs(payload);
       }
       clearSelection();
-      await Promise.all([load(), onJobsChanged()]);
+      await Promise.all([load(), loadFacets(), onJobsChanged()]);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : `Unable to ${action} selected jobs.`);
     } finally {
@@ -524,6 +610,25 @@ function JobsView({
   };
 
   const selectedCount = allMatchingSelected ? data?.pagination.total ?? 0 : selectedJobs.size;
+  const filtersActive = Boolean(
+    locationFilter.length
+      || companyFilter.length
+      || titleFilter.length
+      || discoveredFrom
+      || discoveredTo
+      || minFitScore
+      || maxFitScore,
+  );
+  const clearFilters = () => {
+    setLocationFilter([]);
+    setCompanyFilter([]);
+    setTitleFilter([]);
+    setDiscoveredFrom("");
+    setDiscoveredTo("");
+    setMinFitScore("");
+    setMaxFitScore("");
+    setPage(1);
+  };
 
   return (
     <section className="card full">
@@ -551,12 +656,64 @@ function JobsView({
             setPage(1);
           }}
         >
-          {["all", "pending", "running", "succeeded", "failed", "blocked", "exhausted", "stale"].map((item) => (
+          {currentStateOptions.map(([item, label]) => (
             <option key={item} value={item}>
-              {item} states
+              {label}
             </option>
           ))}
         </select>
+        <MultiSelectFilter
+          label="location"
+          options={facets?.locations ?? []}
+          values={locationFilter}
+          onChange={(values) => setLocationFilter(values)}
+        />
+        <MultiSelectFilter
+          label="company"
+          options={facets?.companies ?? []}
+          values={companyFilter}
+          onChange={(values) => setCompanyFilter(values)}
+        />
+        <MultiSelectFilter
+          label="job"
+          options={facets?.titles ?? []}
+          values={titleFilter}
+          onChange={(values) => setTitleFilter(values)}
+        />
+        <label className="inline-field">
+          <span>discovered from</span>
+          <input type="date" value={discoveredFrom} onChange={(event) => setDiscoveredFrom(event.target.value)} />
+        </label>
+        <label className="inline-field">
+          <span>to</span>
+          <input type="date" value={discoveredTo} onChange={(event) => setDiscoveredTo(event.target.value)} />
+        </label>
+        <label className="inline-field score-range-field">
+          <span>fit</span>
+          <input
+            aria-label="Minimum fit score"
+            inputMode="numeric"
+            max={10}
+            min={0}
+            placeholder="0"
+            type="number"
+            value={minFitScore}
+            onChange={(event) => setMinFitScore(clampScoreInput(event.target.value))}
+          />
+        </label>
+        <label className="inline-field score-range-field">
+          <span>to</span>
+          <input
+            aria-label="Maximum fit score"
+            inputMode="numeric"
+            max={10}
+            min={0}
+            placeholder="10"
+            type="number"
+            value={maxFitScore}
+            onChange={(event) => setMaxFitScore(clampScoreInput(event.target.value))}
+          />
+        </label>
         <PageSize
           value={pageSize}
           onChange={(value) => {
@@ -566,6 +723,9 @@ function JobsView({
         />
         <button className="tab" onClick={() => void load()} type="button">
           refresh
+        </button>
+        <button className="tab" disabled={!filtersActive} onClick={clearFilters} type="button">
+          clear filters
         </button>
       </div>
       <div className="bulk-bar">
@@ -714,7 +874,7 @@ function ArtifactsView({
     setOpenStatus("");
     try {
       const response = await api.openArtifact(artifact.artifactId);
-      setOpenStatus(`opened ${response.artifact.type}`);
+      setOpenStatus(`opened ${artifactDisplayLabel(response.artifact.type)}`);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to open artifact.");
     }
@@ -789,7 +949,7 @@ function ArtifactsView({
                   type="button"
                 >
                   <span className={`tag ${artifactStatusTone(artifact.status)}`}>{artifactKind(artifact.type)}</span>
-                  <span>{artifactVersionLabel(artifact.type)}</span>
+                  <span>{artifactDisplayLabel(artifact.type)}</span>
                   <span className="mono">{artifact.size}</span>
                 </button>
               ))}
@@ -2308,6 +2468,54 @@ function SelectPairs<T extends string>({
   );
 }
 
+function MultiSelectFilter({
+  label,
+  options,
+  values,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  values: string[];
+  onChange: (values: string[]) => void;
+}): JSX.Element {
+  const selected = new Set(values);
+  const toggle = (value: string, checked: boolean) => {
+    const next = new Set(selected);
+    if (checked) {
+      next.add(value);
+    } else {
+      next.delete(value);
+    }
+    onChange(options.filter((option) => next.has(option)));
+  };
+  return (
+    <details className="multi-filter">
+      <summary>{multiSelectSummary(label, values)}</summary>
+      <div className="multi-filter-menu">
+        <div className="multi-filter-head">
+          <span className="meta">{options.length} available</span>
+          <button className="tab" disabled={!values.length} onClick={() => onChange([])} type="button">
+            clear
+          </button>
+        </div>
+        <div className="multi-filter-options">
+          {options.length ? (
+            options.map((option) => (
+              <label className="multi-filter-option" key={option}>
+                <input checked={selected.has(option)} type="checkbox" onChange={(event) => toggle(option, event.target.checked)} />
+                <span>{option}</span>
+              </label>
+            ))
+          ) : (
+            <span className="empty compact">No values.</span>
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function DirectionSelect({ value, onChange }: { value: Direction; onChange: (value: Direction) => void }): JSX.Element {
   return (
     <select value={value} onChange={(event) => onChange(event.target.value as Direction)}>
@@ -2327,6 +2535,41 @@ function PageSize({ value, onChange }: { value: number; onChange: (value: number
       ))}
     </select>
   );
+}
+
+function multiSelectSummary(label: string, values: string[]): string {
+  if (!values.length) {
+    return `all ${pluralFilterLabel(label)}`;
+  }
+  if (values.length === 1) {
+    return `${label}: ${values[0]}`;
+  }
+  return `${label}: ${values.length} selected`;
+}
+
+function pluralFilterLabel(label: string): string {
+  if (label === "company") return "companies";
+  if (label === "job") return "jobs";
+  return `${label}s`;
+}
+
+function scoreFilterValue(value: string): number | undefined {
+  if (value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function clampScoreInput(value: string): string {
+  if (value === "") {
+    return "";
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  return String(Math.min(10, Math.max(0, Math.trunc(parsed))));
 }
 
 function StatusDot({ state }: { state: string }): JSX.Element {
@@ -2461,7 +2704,13 @@ function formatCompanySource(company: string, source: string): string {
 
 function groupArtifacts(artifacts: ArtifactSummary[]): ArtifactGroup[] {
   const groups = new Map<string, ArtifactGroup>();
+  const seen = new Set<string>();
   for (const artifact of artifacts) {
+    const artifactKey = `${artifact.jobKey}:${canonicalArtifactVariantType(artifact.type)}:${artifact.localPath}`;
+    if (seen.has(artifactKey)) {
+      continue;
+    }
+    seen.add(artifactKey);
     const groupKey = artifact.jobKey || `${artifact.title}:${artifact.company}`;
     const group = groups.get(groupKey) ?? {
       groupKey,
@@ -2480,7 +2729,9 @@ function groupArtifacts(artifacts: ArtifactSummary[]): ArtifactGroup[] {
 }
 
 function compareArtifactVersions(left: ArtifactSummary, right: ArtifactSummary): number {
-  return artifactVersionRank(left.type) - artifactVersionRank(right.type) || left.type.localeCompare(right.type);
+  const leftType = canonicalArtifactVariantType(left.type);
+  const rightType = canonicalArtifactVariantType(right.type);
+  return artifactVersionRank(leftType) - artifactVersionRank(rightType) || leftType.localeCompare(rightType);
 }
 
 function artifactVersionRank(type: string): number {
@@ -2503,14 +2754,20 @@ function artifactKind(type: string): string {
   return type.includes("cover") ? "cover" : type.includes("resume") ? "resume" : "artifact";
 }
 
-function artifactVersionLabel(type: string): string {
-  if (type.endsWith("_pdf")) {
-    return "PDF";
-  }
-  if (type.endsWith("_txt")) {
-    return "TXT";
-  }
-  return type.replaceAll("_", " ");
+function artifactDisplayLabel(type: string): string {
+  const normalized = canonicalArtifactVariantType(type);
+  if (normalized === "tailored_resume_pdf") return "tailored resume PDF";
+  if (normalized === "tailored_resume_txt") return "tailored resume text";
+  if (normalized === "cover_letter_pdf") return "cover letter PDF";
+  if (normalized === "cover_letter_txt") return "cover letter text";
+  return normalized.replaceAll("_", " ");
+}
+
+function canonicalArtifactVariantType(type: string): string {
+  if (type === "resume_pdf") return "tailored_resume_pdf";
+  if (type === "tailored_resume") return "tailored_resume_txt";
+  if (type === "cover_letter") return "cover_letter_txt";
+  return type;
 }
 
 async function fileToBase64(file: File): Promise<string> {

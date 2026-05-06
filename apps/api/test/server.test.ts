@@ -293,6 +293,49 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns job facets and filters jobs by exact multi-value filters, dates, and fit score range", async () => {
+    const app = buildApp(options);
+
+    const facets = await app.inject({ method: "GET", url: "/v1/jobs/facets" });
+    expect(facets.statusCode, facets.body).toBe(200);
+    expect(facets.json()).toMatchObject({
+      companies: ["Acme", "ExampleCo"],
+      locations: ["Remote"],
+      fitScore: { min: 6, max: 9 },
+      discoveredAt: {
+        min: "2026-04-29T10:00:00+00:00",
+        max: "2026-04-29T10:00:00+00:00",
+      },
+    });
+    expect(facets.json().titles).toEqual(["Backend Engineer", "Frontend Engineer", "Platform Engineer"]);
+
+    const legacyCompanySearch = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?company=example&sort=title&dir=asc",
+    });
+    expect(legacyCompanySearch.statusCode, legacyCompanySearch.body).toBe(200);
+    expect(legacyCompanySearch.json().pagination.total).toBe(2);
+
+    const filtered = await app.inject({
+      method: "GET",
+      url:
+        "/v1/jobs?companies=ExampleCo&title=Backend%20Engineer&location=Remote"
+        + "&discoveredFrom=2026-04-29&discoveredTo=2026-04-29&minFitScore=8&maxFitScore=8",
+    });
+
+    expect(filtered.statusCode, filtered.body).toBe(200);
+    expect(filtered.json().pagination.total).toBe(1);
+    expect(filtered.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/failed-score",
+      company: "ExampleCo",
+      location: "Remote",
+      title: "Backend Engineer",
+      fitScore: 8,
+    });
+
+    await app.close();
+  });
+
   it("soft-deletes jobs, hides them from active lists, and restores them", async () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -592,6 +635,117 @@ describe("local TypeScript API", () => {
       path: artifact.localPath,
     });
     expect(opened).toEqual([artifact.localPath]);
+
+    await app.close();
+  });
+
+  it("canonicalizes duplicate resume PDF artifact rows for a job", async () => {
+    const pdfPath = path.join(tempDir, "ready-resume.pdf");
+    fs.writeFileSync(pdfPath, "%PDF test");
+    const db = new Database(options.dbPath);
+    db.prepare(
+      "INSERT INTO job_artifacts (job_url, stage, artifact_type, status, path, created_at, size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://example.com/jobs/ready",
+      "pdf",
+      "resume_pdf",
+      "active",
+      pdfPath,
+      "2026-04-29T10:06:00+00:00",
+      9,
+    );
+    db.prepare(
+      "INSERT INTO job_artifacts (job_url, stage, artifact_type, status, path, created_at, size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://example.com/jobs/ready",
+      "pdf",
+      "tailored_resume_pdf",
+      "active",
+      pdfPath,
+      "2026-04-29T10:07:00+00:00",
+      9,
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf&pageSize=20" });
+    const legacyResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=resume_pdf&pageSize=20" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(legacyResponse.statusCode, legacyResponse.body).toBe(200);
+    const readyPdfs = response
+      .json()
+      .items.filter((artifact: { jobKey: string }) => artifact.jobKey === "https://example.com/jobs/ready");
+    expect(readyPdfs).toHaveLength(1);
+    expect(readyPdfs[0]).toMatchObject({
+      type: "tailored_resume_pdf",
+      localPath: pdfPath,
+    });
+    expect(legacyResponse.json().items).toEqual(response.json().items);
+
+    await app.close();
+  });
+
+  it("normalizes stale artifact projection rows on read", async () => {
+    const stalePdfPath = path.join(tempDir, "stale-ready-resume.pdf");
+    fs.writeFileSync(stalePdfPath, "%PDF stale");
+    const app = buildApp(options);
+    const warmupResponse = await app.inject({ method: "GET", url: "/v1/artifacts" });
+    expect(warmupResponse.statusCode, warmupResponse.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    const insertProjection = db.prepare(`
+      INSERT INTO artifact_list_projections (
+        artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
+        status, local_path, size_bytes, created_at, generation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertProjection.run(
+      "stale-resume-pdf",
+      "local",
+      "https://example.com/jobs/ready",
+      "Platform Engineer",
+      "ExampleCo",
+      "resume_pdf",
+      "active",
+      stalePdfPath,
+      10,
+      "2026-04-29T10:06:00+00:00",
+      null,
+    );
+    insertProjection.run(
+      "stale-tailored-resume-pdf",
+      "local",
+      "https://example.com/jobs/ready",
+      "Platform Engineer",
+      "ExampleCo",
+      "tailored_resume_pdf",
+      "active",
+      stalePdfPath,
+      10,
+      "2026-04-29T10:07:00+00:00",
+      null,
+    );
+    db.close();
+
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=resume_pdf&pageSize=20" });
+    const detailResponse = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/ready")}`,
+    });
+
+    expect(listResponse.statusCode, listResponse.body).toBe(200);
+    expect(detailResponse.statusCode, detailResponse.body).toBe(200);
+    const staleListArtifacts = listResponse
+      .json()
+      .items.filter((artifact: { localPath: string }) => artifact.localPath === stalePdfPath);
+    const staleDetailArtifacts = detailResponse
+      .json()
+      .artifacts.filter((artifact: { localPath: string }) => artifact.localPath === stalePdfPath);
+    expect(staleListArtifacts).toHaveLength(1);
+    expect(staleDetailArtifacts).toHaveLength(1);
+    expect(staleListArtifacts[0]).toMatchObject({ type: "tailored_resume_pdf", localPath: stalePdfPath });
+    expect(staleDetailArtifacts[0]).toMatchObject({ type: "tailored_resume_pdf", localPath: stalePdfPath });
 
     await app.close();
   });

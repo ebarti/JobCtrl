@@ -273,9 +273,106 @@ textarea {
   border-bottom: 1px solid var(--rule);
 }
 
-.toolbar input {
+.toolbar > input {
   min-width: min(420px, 100%);
   flex: 1;
+}
+
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inline-field input {
+  min-width: 136px;
+}
+
+.score-range-field input {
+  width: 58px;
+  min-width: 58px;
+}
+
+.multi-filter {
+  position: relative;
+}
+
+.multi-filter summary {
+  min-width: 132px;
+  max-width: 260px;
+  overflow: hidden;
+  border: 1px solid var(--rule-2);
+  border-radius: 6px;
+  background: var(--paper);
+  padding: 7px 28px 7px 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  list-style: none;
+}
+
+.multi-filter summary::-webkit-details-marker {
+  display: none;
+}
+
+.multi-filter summary::after {
+  position: absolute;
+  right: 9px;
+  content: "v";
+  color: var(--muted);
+}
+
+.multi-filter-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  width: min(420px, 78vw);
+  max-height: 360px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--rule-2);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14);
+}
+
+.multi-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--rule);
+  padding: 8px 10px;
+}
+
+.multi-filter-options {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 6px;
+}
+
+.multi-filter-option {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  border-radius: 5px;
+  padding: 6px;
+}
+
+.multi-filter-option:hover {
+  background: var(--paper-2);
+}
+
+.multi-filter-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .config-layout {
@@ -699,6 +796,11 @@ textarea {
   padding: 28px 16px;
   color: var(--muted);
   text-align: center;
+}
+
+.empty.compact {
+  padding: 8px 10px;
+  text-align: left;
 }
 
 .banner {

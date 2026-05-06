@@ -220,3 +220,64 @@ def test_refresh_is_idempotent(conn: sqlite3.Connection) -> None:
         "SELECT COUNT(*) FROM job_list_projections WHERE job_id = ?", (url,)
     ).fetchone()
     assert rows[0] == 1
+
+
+def test_artifact_projection_canonicalizes_legacy_types_and_deduplicates(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://example.com/jobs/artifacts"
+    _seed_job(conn, url)
+    now = utc_now()
+    resume_pdf = "/tmp/job-artifacts/resume.pdf"
+    cover_txt = "/tmp/job-artifacts/cover.txt"
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (url, 1, "complete", now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (url, 1, "resume_pdf", "resume-legacy", "approved", resume_pdf, "pdf", now),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_artifacts (
+            job_url, stage, artifact_type, status, path, created_at, size_bytes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (url, "pdf", "tailored_resume_pdf", "active", resume_pdf, now, 128),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_artifacts (
+            job_url, stage, artifact_type, status, path, created_at, size_bytes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (url, "cover", "cover_letter", "active", cover_txt, now, 32),
+    )
+    record_job_event(conn, url, "pdf", "PdfRendered")
+    conn.commit()
+
+    ProjectionBuilder(conn).refresh()
+
+    rows = conn.execute(
+        """
+        SELECT artifact_type, local_path
+        FROM artifact_list_projections
+        WHERE job_id = ?
+        ORDER BY artifact_type, local_path
+        """,
+        (url,),
+    ).fetchall()
+    assert [(row["artifact_type"], row["local_path"]) for row in rows] == [
+        ("cover_letter_txt", cover_txt),
+        ("tailored_resume_pdf", resume_pdf),
+    ]
