@@ -21,10 +21,11 @@ import { createJobHunterApiClient } from "@jobhunter/api-client";
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type View = "dashboard" | "jobs" | "artifacts" | "config" | "profile";
+import { AppShell } from "./shared/layout/AppShell.js";
+import type { View } from "./shared/layout/NavBar.js";
+
 type Direction = "asc" | "desc";
 type LoadState = "idle" | "loading" | "ready" | "error";
-type Theme = "light" | "dark";
 type ActivityEvent = DashboardSummary["activity"][number];
 type ApplyRunSummary = DashboardSummary["applyRuns"][number];
 type JobSortColumn = Extract<JobSortField, "discovered_at" | "title" | "company" | "location" | "fit_score" | "current_stage" | "current_state">;
@@ -59,12 +60,6 @@ const artifactSortFields = [
 
 export function App(): JSX.Element {
   const [view, setView] = useState<View>("dashboard");
-  const [density, setDensity] = useState("regular");
-  const [theme, setTheme] = useState<Theme>(() => {
-    const saved = window.localStorage.getItem("jobhunter-theme");
-    return saved === "dark" ? "dark" : "light";
-  });
-  const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<LoadState>("idle");
   const [error, setError] = useState("");
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -78,11 +73,9 @@ export function App(): JSX.Element {
     setError("");
     try {
       await api.health();
-      setConnected(true);
       setSummary(await api.dashboardSummary());
       setStatus("ready");
     } catch (requestError) {
-      setConnected(false);
       setStatus("error");
       setError(requestError instanceof Error ? requestError.message : "Unable to reach JobHunter API.");
     }
@@ -91,11 +84,6 @@ export function App(): JSX.Element {
   useEffect(() => {
     void refreshSummary();
   }, [refreshSummary]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("jobhunter-theme", theme);
-  }, [theme]);
 
   const selectKpi = (target: "all" | "failed" | "blocked" | "ready") => {
     setView("jobs");
@@ -121,78 +109,33 @@ export function App(): JSX.Element {
   };
 
   return (
-    <div className="app" data-density={density}>
-      <header className="topbar">
-        <button className="brand" onClick={() => setView("dashboard")} type="button">
-          <span className="brand-mark">jh</span>
-          <span>jobhunter</span>
-        </button>
-        <nav className="nav" aria-label="Main navigation">
-          {(["dashboard", "jobs", "artifacts", "config", "profile"] as const).map((item) => (
-            <button className={view === item ? "on" : ""} key={item} onClick={() => setView(item)} type="button">
-              {item}
-            </button>
-          ))}
-        </nav>
-        <input
-          aria-label="Global search"
-          className="global-search"
-          placeholder="Filter jobs, errors, companies..."
-          value={globalQuery}
-          onChange={(event) => setGlobalQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && globalQuery.trim()) {
-              setView("jobs");
-            }
-          }}
-        />
-        <select aria-label="Row density" className="select" value={density} onChange={(event) => setDensity(event.target.value)}>
-          <option value="compact">compact</option>
-          <option value="regular">regular</option>
-          <option value="comfy">comfy</option>
-        </select>
-        <button
-          aria-label="Reload dashboard data from the local API"
-          className="tab"
-          onClick={() => void refreshSummary()}
-          type="button"
-        >
-          {status === "loading" ? "syncing local data" : "sync local data"}
-        </button>
-        <button
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-          className="tab"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          type="button"
-        >
-          theme
-        </button>
-        <span className={`pulse ${connected ? "" : "offline"}`}>{connected ? "local API live" : "local API offline"}</span>
-      </header>
-
+    <AppShell
+      currentView={view}
+      setView={setView}
+      globalQuery={globalQuery}
+      setGlobalQuery={setGlobalQuery}
+    >
       {summary ? <Kpis summary={summary} onSelect={selectKpi} /> : <KpiSkeleton />}
 
       {error ? <div className="banner">{error}</div> : null}
 
-      <main className="main">
-        {view === "dashboard" ? (
-          <Dashboard
-            summary={summary}
-            status={status}
-            onOpenActivity={openActivity}
-            onOpenApplyRun={openApplyRun}
-            onOpenJobs={selectKpi}
-          />
-        ) : view === "jobs" ? (
-          <JobsView globalQuery={globalQuery} onJobsChanged={refreshSummary} onOpenJob={openJob} />
-        ) : view === "artifacts" ? (
-          <ArtifactsView globalQuery={globalQuery} onOpenJob={openJob} />
-        ) : view === "config" ? (
-          <ConfigView />
-        ) : (
-          <ProfileView />
-        )}
-      </main>
+      {view === "dashboard" ? (
+        <Dashboard
+          summary={summary}
+          status={status}
+          onOpenActivity={openActivity}
+          onOpenApplyRun={openApplyRun}
+          onOpenJobs={selectKpi}
+        />
+      ) : view === "jobs" ? (
+        <JobsView globalQuery={globalQuery} onJobsChanged={refreshSummary} onOpenJob={openJob} />
+      ) : view === "artifacts" ? (
+        <ArtifactsView globalQuery={globalQuery} onOpenJob={openJob} />
+      ) : view === "config" ? (
+        <ConfigView />
+      ) : (
+        <ProfileView />
+      )}
 
       {selectedJobKey ? <JobDrawer jobKey={selectedJobKey} onClose={() => setSelectedJobKey("")} /> : null}
       {selectedApplyRun ? (
@@ -206,7 +149,7 @@ export function App(): JSX.Element {
         />
       ) : null}
       {selectedActivity ? <ActivityDetailDrawer activity={selectedActivity} onClose={() => setSelectedActivity(null)} /> : null}
-    </div>
+    </AppShell>
   );
 }
 

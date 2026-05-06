@@ -1,0 +1,42 @@
+:root {
+  --bg: #fafaf7;
+  --paper: #fff;
+  --paper-2: #f5f4ef;
+  --rule: rgba(20, 18, 12, 0.1);
+  --rule-2: rgba(20, 18, 12, 0.18);
+  --ink: #1d1c18;
+  --muted: #737067;
+  --soft: #a09c90;
+  --danger: #b5473a;
+  --warn: #a97721;
+  --ok: #397b57;
+  --info: #617892;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: "SFMono-Regular", ui-monospace, Menlo, monospace;
+  --row: 42px;
+}
+
+[data-density="compact"] {
+  --row: 34px;
+  font-size: 12px;
+}
+
+[data-density="comfy"] {
+  --row: 50px;
+  font-size: 14px;
+}
+
+[data-theme="dark"] {
+  --bg: #14130f;
+  --paper: #1a1814;
+  --paper-2: #221f1a;
+  --rule: rgba(255, 255, 255, 0.08);
+  --rule-2: rgba(255, 255, 255, 0.16);
+  --ink: #f1eee5;
+  --muted: #aaa69a;
+  --soft: #777368;
+  --danger: #d86c5d;
+  --warn: #d0a34a;
+  --ok: #69aa83;
+  --info: #88a1bc;
+}
