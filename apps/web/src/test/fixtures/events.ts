@@ -1,0 +1,199 @@
+import {
+  createApplicationFailed,
+  createApplicationSubmitted,
+  createApplyRunEventRecorded,
+  createApplyRunStarted,
+  createCoverLetterGenerated,
+  createEnrichmentFailed,
+  createJobDeleted,
+  createJobDiscovered,
+  createJobEnriched,
+  createJobRestored,
+  createJobScored,
+  createJobUpdated,
+  createMaterialsExhausted,
+  createPdfRendered,
+  createProfileImported,
+  createProfileUpdated,
+  createResumeApproved,
+  createResumeFailed,
+  createScoreCorrected,
+  createStageBlocked,
+  createStageCanceled,
+  createStageCompleted,
+  createStageExhausted,
+  createStageFailed,
+  createStageReset,
+  createStageSkipped,
+  createStageStarted,
+  LOCAL_TENANT,
+  type DomainEventUnion,
+} from "@jobhunter/domain-types";
+
+const NOW = "2026-05-06T08:00:00Z";
+
+const JOB_ID = "job-1";
+const RUN_ID = "run-1";
+const ARTIFACT_ID = "artifact-1";
+
+export const eventByType = {
+  JobDiscovered: createJobDiscovered(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    postingUrl: "https://example.com/jobs/1",
+    source: "lever",
+    employer: "Acme Corp",
+    metadata: {},
+    discoveredAt: NOW,
+  }),
+  JobUpdated: createJobUpdated(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    changedFields: { title: "Staff Software Engineer" },
+  }),
+  JobDeleted: createJobDeleted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    reason: "user-requested",
+    deletedAt: NOW,
+  }),
+  JobRestored: createJobRestored(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    restoredAt: NOW,
+  }),
+  JobEnriched: createJobEnriched(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    fullDescription: "Long description...",
+    applicationUrl: "https://example.com/apply/1",
+    extractionTier: "primary",
+    enrichedAt: NOW,
+  }),
+  EnrichmentFailed: createEnrichmentFailed(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    error: "timeout",
+    attemptNumber: 2,
+  }),
+  JobScored: createJobScored(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    fitScore: 8,
+    breakdown: { reliability: 9, leadership: 7 },
+    keywords: ["platform", "kubernetes"],
+    version: 1,
+    scoredAt: NOW,
+  }),
+  ScoreCorrected: createScoreCorrected(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    originalScore: 8,
+    correctedScore: 9,
+    reason: "manual override",
+    correctedAt: NOW,
+  }),
+  ResumeApproved: createResumeApproved(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    artifactId: ARTIFACT_ID,
+    generation: 2,
+    approvedAt: NOW,
+  }),
+  ResumeFailed: createResumeFailed(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    validationErrors: ["bullets exceed limit"],
+    attemptNumber: 1,
+  }),
+  CoverLetterGenerated: createCoverLetterGenerated(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    artifactId: ARTIFACT_ID,
+    generatedAt: NOW,
+  }),
+  PdfRendered: createPdfRendered(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    artifactType: "resume_pdf",
+    artifactId: ARTIFACT_ID,
+    renderedAt: NOW,
+  }),
+  MaterialsExhausted: createMaterialsExhausted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "tailor",
+    attemptCount: 3,
+    maxAttempts: 3,
+  }),
+  ApplyRunStarted: createApplyRunStarted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    runId: RUN_ID,
+    workerId: "worker-1",
+    model: "haiku",
+    dryRun: false,
+    startedAt: NOW,
+  }),
+  ApplyRunEventRecorded: createApplyRunEventRecorded(LOCAL_TENANT, {
+    runId: RUN_ID,
+    event: { at: NOW, type: "navigation", url: "https://example.com/apply/1" },
+  }),
+  ApplicationSubmitted: createApplicationSubmitted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    runId: RUN_ID,
+    appliedAt: NOW,
+    verificationConfidence: 0.92,
+  }),
+  ApplicationFailed: createApplicationFailed(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    runId: RUN_ID,
+    result: { reason: "captcha-detected" },
+    attemptNumber: 1,
+  }),
+  StageStarted: createStageStarted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "tailor",
+    attemptNumber: 1,
+    startedAt: NOW,
+  }),
+  StageCompleted: createStageCompleted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "tailor",
+    finishedAt: NOW,
+    durationMs: 12_000,
+  }),
+  StageFailed: createStageFailed(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "tailor",
+    errorCode: "RATE_LIMIT",
+    errorMessage: "rate limited",
+    retryable: true,
+    attemptNumber: 2,
+  }),
+  StageExhausted: createStageExhausted(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "tailor",
+    attemptCount: 3,
+    maxAttempts: 3,
+  }),
+  StageReset: createStageReset(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "tailor",
+    resetAttempts: true,
+    resetAt: NOW,
+  }),
+  StageBlocked: createStageBlocked(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "apply",
+    blockedBy: ["materials"],
+  }),
+  StageSkipped: createStageSkipped(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "cover",
+    reason: "not-required",
+  }),
+  StageCanceled: createStageCanceled(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    stage: "apply",
+    canceledAt: NOW,
+    reason: "user-cancel",
+  }),
+  ProfileUpdated: createProfileUpdated(LOCAL_TENANT, {
+    changedSections: ["personal"],
+    updatedAt: NOW,
+  }),
+  ProfileImported: createProfileImported(LOCAL_TENANT, {
+    source: "pdf-upload",
+    importedSections: ["personal", "experience"],
+    importedAt: NOW,
+  }),
+} as const satisfies Record<DomainEventUnion["eventType"], DomainEventUnion>;
+
+export type EventByType = typeof eventByType;

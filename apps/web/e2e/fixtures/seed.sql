@@ -1,0 +1,13 @@
+-- This file is a documentation placeholder. The canonical seed schema and rows
+-- are produced by `apps/api/test/qa-seed.ts`, invoked from `global-setup.ts`.
+-- Direct SQLite seeding for SSE-driven E2E flows happens inline in the
+-- relevant `*.spec.ts` files using the `better-sqlite3` Node API against the
+-- per-run database created by global-setup.
+
+-- Schema (mirrors workers/automation persistence):
+--   jobs(url, title, site, strategy, location, salary, discovered_at,
+--        application_url, description, full_description, fit_score, ...)
+--   job_stage_states(job_url, stage, state, attempt_count, ...)
+--   job_artifacts(job_url, stage, artifact_type, status, path, ...)
+--   job_events(event_id, job_url, stage, level, message, occurred_at)
+--   apply_runs(run_id, job_url, title, site, status, result, dry_run, ...)

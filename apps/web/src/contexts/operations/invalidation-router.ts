@@ -67,13 +67,13 @@ export const patchApplyRunEvent = (
   event,
 });
 
-type HandlerMap = {
+export type HandlerMap = {
   readonly [K in KnownDomainEventType]: InvalidationHandler<
     Extract<KnownDomainEvent, { eventType: K }>
   >;
 };
 
-const handlers: HandlerMap = {
+export const handlers: HandlerMap = {
   JobDiscovered: jobDiscoveredHandler,
   JobUpdated: jobUpdatedHandler,
   JobDeleted: jobDeletedHandler,
@@ -107,7 +107,7 @@ export interface InvalidationRouter {
   handle(event: KnownDomainEvent, queryClient: QueryClient): void;
 }
 
-function dispatch<K extends KnownDomainEventType>(
+export function dispatch<K extends KnownDomainEventType>(
   event: Extract<KnownDomainEvent, { eventType: K }>,
 ): readonly InvalidationItem[] {
   const handler = handlers[event.eventType] as InvalidationHandler<typeof event>;

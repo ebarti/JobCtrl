@@ -19,7 +19,7 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     proxy: {
-      "/v1": "http://127.0.0.1:8766",
+      "/v1": process.env["VITE_DEV_API_PROXY_TARGET"] ?? "http://127.0.0.1:8766",
     },
   },
   build: {

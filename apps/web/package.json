@@ -7,7 +7,13 @@
     "dev": "vite --host 127.0.0.1",
     "check": "tsc --noEmit --project tsconfig.json",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test-d": "vitest run --config vitest.types.config.ts",
+    "e2e": "playwright test --config=e2e/playwright.config.ts",
+    "e2e:headed": "playwright test --config=e2e/playwright.config.ts --headed"
   },
   "dependencies": {
     "@jobhunter/api-client": "workspace:*",
@@ -45,13 +51,25 @@
   },
   "devDependencies": {
     "@jobhunter/tsconfig": "workspace:*",
+    "@playwright/test": "^1.50.0",
     "@tailwindcss/vite": "^4.2.4",
     "@tanstack/router-plugin": "^1.93.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/jest-axe": "^3.5.9",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/coverage-v8": "^4.1.5",
+    "axe-core": "^4.10.2",
+    "jest-axe": "^9.0.0",
+    "jsdom": "^26.0.0",
+    "msw": "^2.7.0",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
-    "vite": "^7.3.0"
+    "vite": "^7.3.0",
+    "vitest": "^4.1.5"
   }
 }
