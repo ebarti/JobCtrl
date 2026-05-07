@@ -24,6 +24,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, TextIO
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from jobhunter.domain.rpc.messages import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -80,34 +83,45 @@ class JsonRpcServer:
         handlers should be driven via :meth:`serve` instead of this entry
         point.
         """
-        spec = self._handlers.get(request.method)
-        if spec is None:
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(METHOD_NOT_FOUND, f"Method not found: {request.method}"),
-            )
+        tracer = trace.get_tracer("jobhunter.rpc")
+        with tracer.start_as_current_span(f"rpc.{request.method}") as span:
+            span.set_attribute("rpc.method", request.method)
+            span.set_attribute("rpc.id", "" if request.id is None else str(request.id))
+            span.set_attribute("langfuse.trace.name", request.method)
+            span.set_attribute("langfuse.observation.type", "span")
 
-        if spec.mode == "workflow":
-            return self._dispatch_workflow(request, spec)
+            spec = self._handlers.get(request.method)
+            if spec is None:
+                span.set_status(Status(StatusCode.ERROR, "method not found"))
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(METHOD_NOT_FOUND, f"Method not found: {request.method}"),
+                )
 
-        # sync — streaming is handled separately in serve()
-        try:
-            result = spec.fn(request.params)
-        except _RpcParamError as exc:
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(INVALID_PARAMS, str(exc)),
-            )
-        except Exception as exc:  # noqa: BLE001 — surface as INTERNAL_ERROR
-            logger.exception("Handler %s raised", request.method)
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
-            )
-        if request.id is None:
-            # Notification — no response.
-            return None
-        return JsonRpcResponse.success(request.id, result)
+            if spec.mode == "workflow":
+                return self._dispatch_workflow(request, spec)
+
+            # sync — streaming is handled separately in serve()
+            try:
+                result = spec.fn(request.params)
+            except _RpcParamError as exc:
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(INVALID_PARAMS, str(exc)),
+                )
+            except Exception as exc:  # noqa: BLE001 — surface as INTERNAL_ERROR
+                logger.exception("Handler %s raised", request.method)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
+                )
+            if request.id is None:
+                # Notification — no response.
+                return None
+            return JsonRpcResponse.success(request.id, result)
 
     # ------------------------------------------------------------------ workflow
 
