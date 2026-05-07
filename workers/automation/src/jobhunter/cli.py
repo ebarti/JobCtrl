@@ -1156,15 +1156,22 @@ def worker(
         build_worker,
         get_temporal_client,
     )
+    from jobhunter.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
 
     queue = task_queue or JOBHUNTER_TASK_QUEUE
 
     async def _run() -> None:
         client = await get_temporal_client()
-        worker = build_worker(client, workflows=[], activities=[], task_queue=queue)
+        worker = build_worker(
+            client,
+            workflows=WORKFLOWS,
+            activities=ACTIVITIES,
+            task_queue=queue,
+        )
         console.print(
             f"[bold blue]JobHunter worker[/bold blue] running on task queue "
-            f"[bold]{queue}[/bold] — Ctrl-C to stop."
+            f"[bold]{queue}[/bold] with {len(WORKFLOWS)} workflow(s) and "
+            f"{len(ACTIVITIES)} activity(ies) — Ctrl-C to stop."
         )
         await worker.run()
 
