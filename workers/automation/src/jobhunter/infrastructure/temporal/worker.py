@@ -25,9 +25,21 @@ class _BootstrapNoOpWorkflow:
         return "noop"
 
 
-# Pass jobhunter through the sandbox: workflow modules import activity dataclasses
-# whose modules transitively pull in rich/sqlite/etc. Activities run outside the
-# sandbox, so determinism is preserved.
+# Pass the entire ``jobhunter`` package through the workflow sandbox.
+#
+# Why: workflow code constructs activity-input dataclasses (e.g.
+# ``EnrichActivityInput(...)``) at the workflow boundary. Those dataclasses
+# live in ``jobhunter.<context>.activities`` modules; without passthrough the
+# sandbox proxies them, and constructing instances of frozen dataclasses
+# imported through ``imports_passed_through()`` raises
+# ``RuntimeError: Restriction state not present. Using subclasses of proxied
+# objects is unsupported.``
+#
+# Why broad: a narrower scope would have to enumerate every activity-input
+# dataclass module (and every future one), coupling the worker bootstrap to
+# the activity layer. The package-wide passthrough trades that coupling for a
+# single-line policy. Activities run outside the sandbox, so determinism is
+# preserved on the workflow code that actually executes inside the sandbox.
 _PASSTHROUGH_RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules(
     "jobhunter"
 )
