@@ -188,6 +188,7 @@ def _setup_structured_resume(profile: dict) -> None:
             "required_education_entry_ids": [entry["id"] for entry in education_entries],
             "required_skill_category_ids": [category["id"] for category in skill_categories],
             "required_bullets_by_experience_id": {},
+            "required_skills_by_category_id": {},
             "max_experience_bullets": 4,
             "tailoring_policy": {
                 "mode": "balanced",

@@ -186,6 +186,7 @@ def profile_from_resume_text(text: str, *, base_profile: dict[str, Any] | None =
     rules["required_education_entry_ids"] = [entry["id"] for entry in education]
     rules["required_skill_category_ids"] = [category["id"] for category in skills]
     rules["required_bullets_by_experience_id"] = {}
+    rules["required_skills_by_category_id"] = {}
     rules["max_experience_bullets"] = _coerce_positive_int(rules.get("max_experience_bullets"), default=4)
     rules["tailoring_policy"] = {**DEFAULT_TAILORING_POLICY, **_dict_or_empty(rules.get("tailoring_policy"))}
     rules["writing_style"] = {**DEFAULT_WRITING_STYLE, **_dict_or_empty(rules.get("writing_style"))}

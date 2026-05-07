@@ -9,6 +9,7 @@ import { Editor } from "../components/Editor.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
 
+export type ProfileSection = "profile" | "preferences";
 export type ProfileMode = "fields" | "source";
 
 export interface ProfileFormValues {
@@ -19,6 +20,7 @@ export interface ProfileFormValues {
 
 export interface ProfileFormProps {
   initial: ProfileConfigResponse;
+  section?: ProfileSection;
 }
 
 export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
@@ -64,10 +66,11 @@ function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
   };
 }
 
-export function ProfileForm({ initial }: ProfileFormProps) {
+export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
   const [mode, setMode] = useState<ProfileMode>("fields");
   const [statusMessage, setStatusMessage] = useState("");
+  const isProfileSection = section === "profile";
 
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
@@ -79,7 +82,7 @@ export function ProfileForm({ initial }: ProfileFormProps) {
       setStatusMessage("");
       const response = await updateProfile.mutateAsync(toUpdateRequest(value));
       formApi.reset(toProfileFormValues(response));
-      setStatusMessage("profile saved");
+      setStatusMessage(isProfileSection ? "profile saved" : "preferences saved");
     },
   });
 
@@ -104,9 +107,11 @@ export function ProfileForm({ initial }: ProfileFormProps) {
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
         {({ isDirty, isSubmitting }) => (
           <div className="editor-bulk-actions">
-            <Link className="tab on" to="/profile/import/upload">
-              import resume
-            </Link>
+            {isProfileSection ? (
+              <Link className="tab on" to="/profile/import/upload">
+                import resume
+              </Link>
+            ) : null}
             <button
               className="tab on"
               type="submit"
@@ -124,30 +129,33 @@ export function ProfileForm({ initial }: ProfileFormProps) {
           </div>
         )}
       </form.Subscribe>
-      <div className="profile-mode-tabs">
-        <button
-          className={`tab ${mode === "fields" ? "on" : ""}`}
-          type="button"
-          onClick={() => setMode("fields")}
-        >
-          fields
-        </button>
-        <button
-          className={`tab ${mode === "source" ? "on" : ""}`}
-          type="button"
-          onClick={() => setMode("source")}
-        >
-          source
-        </button>
-      </div>
+      {isProfileSection ? (
+        <div className="profile-mode-tabs">
+          <button
+            className={`tab ${mode === "fields" ? "on" : ""}`}
+            type="button"
+            onClick={() => setMode("fields")}
+          >
+            fields
+          </button>
+          <button
+            className={`tab ${mode === "source" ? "on" : ""}`}
+            type="button"
+            onClick={() => setMode("source")}
+          >
+            source
+          </button>
+        </div>
+      ) : null}
       <form.Field name="profileText">
         {(profileField) => (
           <form.Field name="styleText">
             {(styleField) => (
               <form.Field name="templateText">
                 {(templateField) =>
-                  mode === "fields" ? (
+                  !isProfileSection || mode !== "source" ? (
                     <StructuredProfileEditor
+                      mode={section}
                       profileText={profileField.state.value}
                       styleText={styleField.state.value}
                       onProfileTextChange={(value) => profileField.handleChange(value)}

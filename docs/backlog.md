@@ -186,6 +186,10 @@ Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
   shareable selections become a requirement, promote to URL state.
 - Add side-by-side artifact comparison in the app, including AI-assisted
   comparison for resume and cover-letter variants.
+- Add AI-assisted improvement suggestions for resume items marked Required,
+  starting with experience bullets. Suggestions should cover grammar and
+  wording, relevance to a target job, achievement framing, evidence strength,
+  and whether the item deserves required placement in the final resume.
 
 ## SaaS And Commercialization
 

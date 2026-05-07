@@ -361,6 +361,7 @@ def build_latex(
         get_tailoring_policy,
         tailored_experience_bullets,
         tailored_experience_title,
+        tailored_skill_items,
     )
     from jobhunter.domain.materials.services import sanitize_text
 
@@ -483,7 +484,7 @@ def build_latex(
     skill_lines = [r"\begin{itemize}[label=\textbullet]"]
     for category in skill_categories:
         update = skill_updates.get(category.get("id"), {})
-        items = update.get("items", category.get("items", [])) if tailoring_policy["allow_skill_reordering"] else category.get("items", [])
+        items = tailored_skill_items(category, update, profile)
         label = _escape_latex_light(category.get("label", "Skills"))
         sanitized_items = [_escape_latex_light(sanitize_text(str(item))) for item in items if str(item).strip()]
         items_str = ", ".join(sanitized_items)

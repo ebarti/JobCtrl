@@ -461,10 +461,14 @@ home.
 ### 3.4 Candidate Profile
 
 **Purpose:** Read, edit, and import the candidate profile; manage
-settings and credentials; preview the rendered resume PDF.
+application preferences, settings, and credentials; preview the rendered
+resume PDF.
 
 **Ubiquitous language** (matches Candidate Profile):
 - **Profile** — the candidate document.
+- **Preferences** — application defaults, target-role strategy, tailoring
+  controls, and resume-rendering preferences that affect how JobHunter acts
+  for the candidate.
 - **ExperienceEntry**, **EducationEntry**, **SkillCategory** — child
   entities.
 - **TailoringPolicy**, **WritingStyle**, **ResumeConstraints** — value
@@ -481,6 +485,10 @@ settings and credentials; preview the rendered resume PDF.
   (`/profile/import/upload`, `/profile/import/preview`,
   `/profile/import/confirm`) so each step is bookmarkable and refresh-safe.
   (Resolves §6 question 8.)
+- Render the top-level Preferences route (`/preferences`) for application
+  defaults, target preferences, AI tailoring controls, and resume style. The
+  route edits the same profile/style payloads but keeps those controls out of
+  the Profile view, whose UI is reserved for who the candidate is.
 - Show the live PDF preview by reading a `cacheKey` derived from the
   profile mutation count (see §4.4.4 for the precise binding pattern).
 - Host settings and credentials hooks. Settings and credentials are
@@ -904,11 +912,11 @@ separately in §4.5.
 
 | Aspect | Pattern |
 |---|---|
-| Routes | `routes/profile.tsx` (layout), `routes/profile.index.tsx` (editor), `routes/profile.import.{upload,preview,confirm}.tsx` (wizard steps); `routes/settings.tsx` (layout), `routes/settings.index.tsx` (general), `routes/settings.credentials.tsx` (credentials). |
+| Routes | `routes/profile.tsx` (layout), `routes/profile.index.tsx` (editor), `routes/preferences.tsx` (application preferences), `routes/profile.import.{upload,preview,confirm}.tsx` (wizard steps); `routes/settings.tsx` (layout), `routes/settings.index.tsx` (general), `routes/settings.credentials.tsx` (credentials). |
 | Queries | `useProfileQuery()` → `profileKeys.profile(tenantId)`; `useSettingsQuery()` → `profileKeys.settings(tenantId)`; `useCredentialsQuery()` → `profileKeys.credentials(tenantId)`. |
 | Mutations | `useUpdateProfileMutation()`, `useUpdateSettingsMutation()`, `useUpdateCredentialMutation()`, `useDeleteCredentialMutation()`, `useImportResumeMutation()` (the wizard's confirm step). All invalidate the corresponding query key. |
 | Forms | TanStack Form with Zod resolvers (§4.6). |
-| PDF preview | `useProfilePdfPreviewUrl()` returns `apiClient.profilePreviewPdfUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The `<iframe>` is keyed on `cacheKey` so each profile mutation forces a reload. (Resolves §6 question 7.) |
+| PDF preview | `useProfilePdfPreviewUrl()` returns `apiClient.profilePreviewPdfUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The preview component reloads from that URL whenever the cache key changes. (Resolves §6 question 7.) |
 | Notes | The wizard is **a nested route**, not a `useState` step counter. Each step is its own component / route; navigation uses `Link` so steps are bookmarkable, browser-back works, and refresh recovers. Step state (uploaded file metadata, draft profile) lives in a Zustand `profileImportStore` with `persist` middleware so a refresh does not lose the upload. (Resolves §6 question 8.) Settings and credentials hooks are co-located here because their backend endpoints are part of the Profile context's API surface. |
 
 #### 4.4.5 Scoring
