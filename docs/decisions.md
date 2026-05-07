@@ -269,7 +269,7 @@ Rationale:
   subprocess per request (~400 ms cold start), with stringly-typed action
   names parsed via Typer and stdout-scraped for results
 - JSON-RPC gives us typed request/response envelopes, three dispatch modes
-  (`sync`, `fire_and_forget`, `streaming`), and a single long-lived worker
+  (`sync`, `workflow`, `streaming`), and a single long-lived worker
   per API process
 - the protocol matches what we'd ship to a hosted gRPC / HTTP transport
   later — Section 9 of `docs/ddd-target.md` names the swap
@@ -281,6 +281,13 @@ Consequences:
 - the worker ships the `jobhunter rpc` Typer command (Phase 3 / S-11)
 - TS-side JSON-RPC dispatcher is testable in isolation without spawning the
   Python worker (`apps/api/test/json-rpc-adapter.test.ts`)
+
+2026-05-07 update (PR #36): the `fire_and_forget` dispatch mode is deleted
+in favour of `workflow`. The JSON-RPC server now starts a Temporal workflow
+through an injected `WorkflowStarter` and returns
+`{runId, workflowId, firstExecutionRunId}`; cooperative cancellation is
+handled by a new `cancel_run` method that signals the in-flight workflow.
+The supported modes are now `(sync, workflow, streaming)`.
 
 ## 2026-05-06: TanStack Family Adopted For The Frontend
 
