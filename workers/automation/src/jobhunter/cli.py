@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -1140,6 +1141,37 @@ def rpc() -> None:
 
 
 @app.command()
+def worker(
+    task_queue: Optional[str] = typer.Option(
+        None,
+        "--task-queue",
+        help="Override the Temporal task queue (defaults to JOBHUNTER_TASK_QUEUE).",
+    ),
+) -> None:
+    """Run the long-lived JobHunter Temporal worker."""
+    _bootstrap()
+
+    from jobhunter.infrastructure.temporal import (
+        JOBHUNTER_TASK_QUEUE,
+        build_worker,
+        get_temporal_client,
+    )
+
+    queue = task_queue or JOBHUNTER_TASK_QUEUE
+
+    async def _run() -> None:
+        client = await get_temporal_client()
+        worker = build_worker(client, workflows=[], activities=[], task_queue=queue)
+        console.print(
+            f"[bold blue]JobHunter worker[/bold blue] running on task queue "
+            f"[bold]{queue}[/bold] — Ctrl-C to stop."
+        )
+        await worker.run()
+
+    asyncio.run(_run())
+
+
+@app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
@@ -1247,6 +1279,16 @@ def doctor() -> None:
     else:
         results.append(("CapSolver API key", "[dim]optional[/dim]",
                         "Set CAPSOLVER_API_KEY in .env for CAPTCHA solving"))
+
+    # Temporal dev server (workflow engine)
+    from jobhunter.infrastructure.temporal import get_temporal_client
+
+    try:
+        asyncio.run(get_temporal_client())
+        results.append(("Temporal", ok_mark, "reachable"))
+    except Exception:  # noqa: BLE001 — surface any connect failure as unreachable
+        results.append(("Temporal", fail_mark,
+                        "unreachable (start with: temporal server start-dev)"))
 
     # --- Render results ---
     console.print()
