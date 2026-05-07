@@ -13,10 +13,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 
 @dataclass(frozen=True)
 class ApplyActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     job_url: str | None = None
     limit: int = 1
@@ -37,7 +40,16 @@ class ApplyActivityOutput:
 
 @activity.defn(name="apply")
 async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
-    """Run the apply launcher in a worker thread, heart-beating so cancellation lands."""
+    """Run the apply launcher in a worker thread, heart-beating so cancellation lands.
+
+    Exception policy:
+
+    - ``CancelledError`` — re-raised so Temporal marks the activity cancelled.
+    - ``LookupError`` (missing job URL or other lookup misses) — wrapped in a
+      non-retryable ``ApplicationError`` so the workflow fails fast.
+    - Any other exception — re-raised verbatim so Temporal's configured retry
+      policy can fire on transient browser / network / executor failures.
+    """
 
     def _run_apply() -> tuple[int, int]:
         from jobhunter.apply.launcher import main as apply_main
@@ -66,13 +78,10 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     except asyncio.CancelledError:
         activity.logger.info("apply_activity cancelled")
         raise
-    except Exception as exc:  # noqa: BLE001 — apply path must surface as structured failure
-        return ApplyActivityOutput(
-            status="failed",
-            applied=0,
-            failed=0,
-            error=str(exc),
-        )
+    except LookupError as exc:
+        # Missing job URL or other lookup misses are operator errors; do not
+        # retry — surface them immediately to the workflow.
+        raise ApplicationError(str(exc), type=type(exc).__name__, non_retryable=True) from exc
 
     status = "ok" if failed == 0 else "failed"
     return ApplyActivityOutput(
