@@ -1,11 +1,15 @@
-"""Phase 8 (S-31): ApplySaga happy-path + compensation branches."""
+"""ApplySaga happy-path + compensation branches.
 
-from pathlib import Path
+PR 4 of the Temporal stack removed ``SqliteApplyRunRepository``; the
+saga now exercises the ``ApplyRun`` aggregate against an in-memory
+fake repository. The aggregate's events get persisted by the launcher
+through ``record_job_event`` (see ``test_apply_regressions``).
+"""
+
 from typing import Any
 
 import pytest
 
-from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.domain.apply import (
     Applied,
     ApplyPrompt,
@@ -19,7 +23,32 @@ from jobhunter.domain.apply.process_manager import ApplySaga
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.apply import AgentResult, BrowserSession
 from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.apply import SqliteApplyRunRepository
+
+
+class _InMemoryApplyRunRepository:
+    """Test-only ``ApplyRunRepository`` — keeps aggregates in a dict."""
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], ApplyRun] = {}
+
+    def save(self, run: ApplyRun) -> None:
+        self._store[(str(run.tenant_id), str(run.run_id))] = run
+
+    def load(self, tenant_id, run_id) -> ApplyRun | None:
+        return self._store.get((str(tenant_id), str(run_id)))
+
+    def list_active(self, tenant_id) -> list[ApplyRun]:
+        return [
+            run
+            for (t, _), run in self._store.items()
+            if t == str(tenant_id)
+            and run.status
+            in (ApplyRunStatus.STARTING, ApplyRunStatus.IN_PROGRESS)
+        ]
+
+    def list_recent(self, tenant_id, *, limit: int = 50) -> list[ApplyRun]:
+        runs = [run for (t, _), run in self._store.items() if t == str(tenant_id)]
+        return runs[: max(int(limit), 0)]
 
 
 class _FakeBrowser:
@@ -57,12 +86,8 @@ class _FakeAgent:
 
 
 @pytest.fixture()
-def repo(tmp_path):
-    db_path = Path(tmp_path) / "jobs.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    yield SqliteApplyRunRepository(conn)
-    close_connection(db_path)
+def repo():
+    return _InMemoryApplyRunRepository()
 
 
 def _starting() -> ApplyRun:

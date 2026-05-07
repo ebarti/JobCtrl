@@ -1,9 +1,10 @@
-"""Phase 8 (S-30): empirical proof that ``database.get_jobs_by_stage``
+"""PR 4 of the Temporal stack: ``database.get_jobs_by_stage``
 ``pending_apply`` / ``applied`` selectors and ``get_stats`` see new
-``ApplyRun`` writes (no dual-write to legacy jobs.* columns).
-
-Mirrors the Phase-5/6/7 ``test_*_queue_selectors`` pattern.
+apply lifecycle writes (sourced from ``job_events`` →
+``apply_run_projections``). The bespoke ``apply_runs`` table is gone.
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -16,15 +17,8 @@ from jobhunter.database import (
     get_stats,
     init_db,
 )
-from jobhunter.domain.apply import (
-    Applied,
-    ApplyRun,
-    Failed,
-    new_apply_run_id,
-)
-from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.apply import SqliteApplyRunRepository
+from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 
 @pytest.fixture()
@@ -36,8 +30,6 @@ def conn(tmp_path):
 
 
 def _insert_apply_ready_job(conn, *, url: str = "https://example.com/job"):
-    """Insert a job that satisfies the materials/score gates so the
-    pending_apply selector should pick it."""
     conn.execute(
         """
         INSERT INTO jobs (
@@ -58,6 +50,36 @@ def _insert_apply_ready_job(conn, *, url: str = "https://example.com/job"):
     conn.commit()
 
 
+def _emit_started(conn, url: str, run_id: str, *, when: str = "t0") -> None:
+    record_job_event(
+        conn,
+        url,
+        "apply",
+        "ApplyRunStarted",
+        payload={"run_id": run_id, "started_at": when},
+    )
+
+
+def _emit_succeeded(conn, url: str, run_id: str, *, when: str = "t9") -> None:
+    record_job_event(
+        conn,
+        url,
+        "apply",
+        "ApplicationSubmitted",
+        payload={"run_id": run_id, "finished_at": when, "result": "applied"},
+    )
+
+
+def _emit_failed(conn, url: str, run_id: str, *, when: str = "t9") -> None:
+    record_job_event(
+        conn,
+        url,
+        "apply",
+        "ApplicationFailed",
+        payload={"run_id": run_id, "finished_at": when, "result": "failed"},
+    )
+
+
 def test_pending_apply_includes_jobs_with_no_apply_run(conn):
     _insert_apply_ready_job(conn)
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
@@ -66,22 +88,21 @@ def test_pending_apply_includes_jobs_with_no_apply_run(conn):
 
 
 def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
-    """After the new launcher writes a succeeded ApplyRun, the
-    pending_apply selector must drop the job (and applied selector
-    must include it)."""
     _insert_apply_ready_job(conn)
-    repo = SqliteApplyRunRepository(conn)
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=new_apply_run_id(),
-            job_id=JobId("https://example.com/job"),
-            started_at="t0",
-        ).complete(
-            result=Applied(applied_at="t9", verification_confidence=1.0),
-            finished_at="t9",
-        )
+    ensure_job_stage_rows(conn, "https://example.com/job")
+    set_stage_state(
+        conn,
+        "https://example.com/job",
+        "apply",
+        "succeeded",
+        finished_at="t9",
+        validate_transition=False,
     )
+    _emit_started(conn, "https://example.com/job", "run-1")
+    _emit_succeeded(conn, "https://example.com/job", "run-1")
+    conn.commit()
+    ProjectionBuilder(conn).refresh()
+
     pending = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     applied = get_jobs_by_stage(conn, "applied")
     assert pending == []
@@ -90,17 +111,13 @@ def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
 
 
 def test_pending_apply_excludes_jobs_with_in_progress_apply_run(conn):
-    """A starting/in-progress run is the lock — the queue must skip it."""
     _insert_apply_ready_job(conn)
-    repo = SqliteApplyRunRepository(conn)
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=new_apply_run_id(),
-            job_id=JobId("https://example.com/job"),
-            started_at="t0",
-        ).transition_to_in_progress()
-    )
+    ensure_job_stage_rows(conn, "https://example.com/job")
+    set_stage_state(conn, "https://example.com/job", "apply", "running", started_at="t0")
+    _emit_started(conn, "https://example.com/job", "run-2")
+    conn.commit()
+    ProjectionBuilder(conn).refresh()
+
     pending = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     assert pending == []
 
@@ -108,83 +125,106 @@ def test_pending_apply_excludes_jobs_with_in_progress_apply_run(conn):
 def test_pending_apply_includes_jobs_with_failed_apply_run(conn):
     """A failed run leaves the job re-queued (the eligibility checker
     enforces the per-attempt cap; the SQL selector only checks for an
-    ACTIVE lock)."""
+    ACTIVE lock and the canonical attempts counter)."""
     _insert_apply_ready_job(conn)
-    repo = SqliteApplyRunRepository(conn)
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=new_apply_run_id(),
-            job_id=JobId("https://example.com/job"),
-            started_at="t0",
-        ).complete(
-            result=Failed(error="boom", retryable=True),
-            finished_at="t9",
-        )
+    ensure_job_stage_rows(conn, "https://example.com/job")
+    set_stage_state(
+        conn,
+        "https://example.com/job",
+        "apply",
+        "failed",
+        finished_at="t9",
+        attempt_count=1,
+        validate_transition=False,
     )
+    _emit_started(conn, "https://example.com/job", "run-3")
+    _emit_failed(conn, "https://example.com/job", "run-3")
+    conn.commit()
+    ProjectionBuilder(conn).refresh()
+
     pending = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     assert len(pending) == 1
 
 
-def test_get_stats_reflects_apply_runs(conn):
+def test_get_stats_reflects_apply_run_projections(conn):
     _insert_apply_ready_job(conn)
-    # Pre-condition: nothing applied.
     stats = get_stats(conn)
     assert stats["applied"] == 0
 
-    repo = SqliteApplyRunRepository(conn)
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=new_apply_run_id(),
-            job_id=JobId("https://example.com/job"),
-            started_at="t0",
-        ).complete(
-            result=Applied(applied_at="t9", verification_confidence=1.0),
-            finished_at="t9",
-        )
+    ensure_job_stage_rows(conn, "https://example.com/job")
+    set_stage_state(
+        conn,
+        "https://example.com/job",
+        "apply",
+        "succeeded",
+        finished_at="t9",
+        validate_transition=False,
     )
+    _emit_started(conn, "https://example.com/job", "run-stats")
+    _emit_succeeded(conn, "https://example.com/job", "run-stats")
+    conn.commit()
+    ProjectionBuilder(conn).refresh()
+
     stats_after = get_stats(conn)
     assert stats_after["applied"] == 1
     assert stats_after["ready_to_apply"] == 0
 
 
 def test_apply_join_tie_breaks_by_run_id_on_same_started_at(conn):
-    """Round-1 review L1: when two apply_runs rows share an identical
-    ``started_at`` (e.g. same-second retries), the join must
-    deterministically return ONE parent jobs row — the previous
-    MAX(started_at) GROUP BY pattern duplicated the parent row.
-
-    The tie-breaker is run_id DESC, so the row with the
-    lexicographically larger run_id wins.
-    """
+    """When two ``apply_run_projections`` rows share an identical
+    ``started_at`` (same-second collisions), the join must
+    deterministically return ONE parent ``jobs`` row — the previous
+    MAX(started_at) GROUP BY pattern duplicated the parent."""
     _insert_apply_ready_job(conn, url="https://example.com/job-tied")
-    repo = SqliteApplyRunRepository(conn)
-    # Two failed runs, identical started_at.
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id="run-aaaa",
-            job_id=JobId("https://example.com/job-tied"),
-            started_at="2026-05-01T00:00:00+00:00",
-        ).complete(
-            result=Failed(error="first", retryable=True),
-            finished_at="2026-05-01T00:00:01+00:00",
-        )
+    ensure_job_stage_rows(conn, "https://example.com/job-tied")
+    set_stage_state(
+        conn,
+        "https://example.com/job-tied",
+        "apply",
+        "failed",
+        finished_at="2026-05-01T00:00:02+00:00",
+        attempt_count=2,
+        validate_transition=False,
     )
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id="run-bbbb",
-            job_id=JobId("https://example.com/job-tied"),
-            started_at="2026-05-01T00:00:00+00:00",
-        ).complete(
-            result=Failed(error="second", retryable=True),
-            finished_at="2026-05-01T00:00:02+00:00",
-        )
+    record_job_event(
+        conn,
+        "https://example.com/job-tied",
+        "apply",
+        "ApplyRunStarted",
+        payload={"run_id": "run-aaaa", "started_at": "2026-05-01T00:00:00+00:00"},
     )
-    # The selector must return ONE row, not two. The ORDER BY in the
-    # tie-breaker subquery picks ``run-bbbb`` (lex max).
+    record_job_event(
+        conn,
+        "https://example.com/job-tied",
+        "apply",
+        "ApplicationFailed",
+        payload={
+            "run_id": "run-aaaa",
+            "finished_at": "2026-05-01T00:00:01+00:00",
+            "result": "failed",
+        },
+    )
+    record_job_event(
+        conn,
+        "https://example.com/job-tied",
+        "apply",
+        "ApplyRunStarted",
+        payload={"run_id": "run-bbbb", "started_at": "2026-05-01T00:00:00+00:00"},
+    )
+    record_job_event(
+        conn,
+        "https://example.com/job-tied",
+        "apply",
+        "ApplicationFailed",
+        payload={
+            "run_id": "run-bbbb",
+            "finished_at": "2026-05-01T00:00:02+00:00",
+            "result": "failed",
+        },
+    )
+    conn.commit()
+    ProjectionBuilder(conn).refresh()
+
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     matching = [r for r in rows if r["url"] == "https://example.com/job-tied"]
     assert len(matching) == 1
@@ -193,25 +233,26 @@ def test_apply_join_tie_breaks_by_run_id_on_same_started_at(conn):
 
 
 def test_pending_apply_promotes_apply_status_into_row_dict(conn):
-    """The SELECT in get_jobs_by_stage promotes the apply_runs status
-    into the legacy ``apply_status`` slot so downstream consumers
-    that still read ``row["apply_status"]`` see canonical values."""
+    """``get_jobs_by_stage`` promotes the projection's status into the
+    legacy ``apply_status`` slot so consumers that still read
+    ``row["apply_status"]`` see canonical values."""
     _insert_apply_ready_job(conn, url="https://example.com/job-with-fail")
-    repo = SqliteApplyRunRepository(conn)
-    repo.save(
-        ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=new_apply_run_id(),
-            job_id=JobId("https://example.com/job-with-fail"),
-            started_at="t0",
-        ).complete(
-            result=Failed(error="boom", retryable=True),
-            finished_at="t9",
-        )
+    ensure_job_stage_rows(conn, "https://example.com/job-with-fail")
+    set_stage_state(
+        conn,
+        "https://example.com/job-with-fail",
+        "apply",
+        "failed",
+        finished_at="t9",
+        attempt_count=1,
+        validate_transition=False,
     )
+    _emit_started(conn, "https://example.com/job-with-fail", "run-fail")
+    _emit_failed(conn, "https://example.com/job-with-fail", "run-fail")
+    conn.commit()
+    ProjectionBuilder(conn).refresh()
+
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     matching = [r for r in rows if r["url"] == "https://example.com/job-with-fail"]
     assert len(matching) == 1
-    # Legacy column stays NULL — the COALESCE in the SELECT promotes
-    # the apply_runs.status onto the dict's ``apply_status`` key.
     assert matching[0]["apply_status"] == "failed"
