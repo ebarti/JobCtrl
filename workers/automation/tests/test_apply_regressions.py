@@ -774,6 +774,14 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             ("SagaStarted", {"job_id": job["url"], "model": "haiku"}),
             ("BrowserLaunched", {"cdp_port": 9222, "pid": 1234}),
             ("AgentStarted", {"model": "haiku"}),
+            # Agent-stream events forwarded by the Claude CLI adapter
+            # (claude_code_cli.py emits ClaudeLaunched / AssistantText /
+            # ToolUse).  Round-2 review (Medium): these used to be
+            # dropped by the safelist; now they must land in
+            # job_events too.
+            ("ClaudeLaunched", {"pid": 4567}),
+            ("AssistantText", {"text": "Filling in form"}),
+            ("ToolUse", {"name": "browser_action", "input": {"action": "click"}}),
             ("AgentResult", {"kind": "applied", "duration_ms": 1500}),
         ):
             run = run.record_event(
@@ -817,8 +825,21 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
         assert "AgentStarted" in recorded, recorded
         assert "AgentResult" in recorded, recorded
         assert "ApplicationSubmitted" in recorded, recorded
+        # Round-2 review (Medium): agent-stream events from the CLI
+        # adapter must land too.
+        assert "ClaudeLaunched" in recorded, recorded
+        assert "AssistantText" in recorded, recorded
+        assert "ToolUse" in recorded, recorded
         # Each saga event is keyed by the same run_id as the lifecycle.
-        for evt_type in ("SagaStarted", "BrowserLaunched", "AgentStarted", "AgentResult"):
+        for evt_type in (
+            "SagaStarted",
+            "BrowserLaunched",
+            "AgentStarted",
+            "AgentResult",
+            "ClaudeLaunched",
+            "AssistantText",
+            "ToolUse",
+        ):
             assert recorded[evt_type].get("run_id") == run_id, (evt_type, recorded[evt_type])
 
         # apply_run_projections.events_json carries the full timeline.
@@ -831,8 +852,24 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
         assert ar["status"] == "succeeded"
         events_json = json.loads(ar["events_json"]) if ar["events_json"] else []
         event_types = [e.get("event_type") for e in events_json]
-        for required in ("SagaStarted", "BrowserLaunched", "AgentStarted", "AgentResult"):
+        for required in (
+            "SagaStarted",
+            "BrowserLaunched",
+            "AgentStarted",
+            "AgentResult",
+            "ClaudeLaunched",
+            "AssistantText",
+            "ToolUse",
+        ):
             assert required in event_types, (required, event_types)
+        # The ToolUse payload survives the round-trip into events_json.
+        tool_use_entry = next(
+            (e for e in events_json if e.get("event_type") == "ToolUse"),
+            None,
+        )
+        assert tool_use_entry is not None
+        assert tool_use_entry["payload"]["name"] == "browser_action"
+        assert tool_use_entry["payload"]["input"] == {"action": "click"}
     finally:
         close_connection(db_path)
 

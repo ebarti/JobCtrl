@@ -758,16 +758,23 @@ class _NoopApplyRunRepository:
         return []
 
 
-_SAGA_EVENT_TYPES_PERSISTED: frozenset[str] = frozenset(
+# Inverted from a safelist (round-2 review): the saga buffer carries
+# both its own wrappers (``SagaStarted`` / ``BrowserLaunched`` /
+# ``AgentStarted`` / ``AgentResult`` / ...) AND the agent stream events
+# the Claude CLI adapter emits (``ClaudeLaunched`` / ``AssistantText`` /
+# ``ToolUse`` / ...).  We want every observed event in
+# ``apply_run_projections.events_json`` so the operator-facing timeline
+# is complete; we only filter the small set of lifecycle events the
+# launcher already wrote directly to ``job_events`` (would otherwise
+# duplicate).
+_LAUNCHER_OWNED_EVENT_TYPES: frozenset[str] = frozenset(
     {
-        "SagaStarted",
-        "BrowserLaunched",
-        "BrowserLaunchFailed",
-        "AgentStarted",
-        "AgentTimedOut",
-        "AgentCrashed",
-        "AgentResult",
-        "AgentEvent",
+        "ApplyRunStarted",        # acquire_job
+        "ApplicationSubmitted",   # mark_result(applied)
+        "ApplicationFailed",      # mark_result(failed) + release_lock(orphan)
+        "DryRunCompleted",        # mark_result(dry_run)
+        "ApplyManualSkip",        # acquire_job (manual ATS)
+        "LockReleased",           # release_lock
     }
 )
 
@@ -777,16 +784,17 @@ def _persist_saga_event_timeline(apply_run, *, run_id: str) -> None:
 
     The saga records events on the in-memory ``ApplyRun`` aggregate
     (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
-    ``AgentTimedOut`` / ``AgentCrashed`` / ``AgentResult`` / per-
-    ``AgentEvent`` entries).  The launcher mirrors them into
-    ``job_events`` keyed by ``run_id`` so the projection's
-    ``_collect_apply_events_by_run`` materialises a complete
-    ``apply_run_projections.events_json`` timeline.
+    ``AgentTimedOut`` / ``AgentCrashed`` / ``AgentResult`` plus the raw
+    agent-stream events forwarded by the Claude CLI adapter —
+    ``ClaudeLaunched`` / ``AssistantText`` / ``ToolUse``).  The launcher
+    mirrors **every** such event into ``job_events`` keyed by
+    ``run_id`` so the projection's ``_collect_apply_events_by_run``
+    materialises a complete ``apply_run_projections.events_json``
+    timeline.
 
-    Terminal lifecycle events (``ApplicationSubmitted`` /
-    ``ApplicationFailed`` / ``DryRunCompleted`` / ``ApplyRunStarted``)
-    are written by ``acquire_job`` / ``mark_result`` / ``release_lock``
-    and are intentionally skipped here to avoid duplicate rows.
+    Lifecycle events the launcher already wrote directly
+    (``_LAUNCHER_OWNED_EVENT_TYPES``) are filtered out to avoid
+    duplicate rows in ``job_events``.
     """
     if apply_run is None:
         return
@@ -801,7 +809,7 @@ def _persist_saga_event_timeline(apply_run, *, run_id: str) -> None:
     try:
         for event in events:
             event_type = str(getattr(event, "event_type", "") or "")
-            if not event_type or event_type not in _SAGA_EVENT_TYPES_PERSISTED:
+            if not event_type or event_type in _LAUNCHER_OWNED_EVENT_TYPES:
                 continue
             payload = dict(getattr(event, "payload", {}) or {})
             payload["run_id"] = str(run_id)
