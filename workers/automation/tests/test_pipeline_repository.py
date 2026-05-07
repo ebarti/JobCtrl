@@ -201,7 +201,7 @@ def test_save_emits_event_per_changed_stage(db):
     repo.save(agg)
 
     events = _job_events(db, "https://example.com/job")
-    stages_with_events = sorted({stage for _, stage, _ in events})
+    stages_with_events = sorted({stage for _, stage, _ in events if stage is not None})
     assert stages_with_events == ["enrich", "score"], events
     types_by_stage = {stage: event_type for event_type, stage, _ in events}
     assert types_by_stage["enrich"] == "StageStarted"
@@ -325,15 +325,18 @@ def test_save_attempts_counter_progresses_across_calls(db):
 
     reloaded = repo.load(LOCAL_TENANT, "https://example.com/job")
     assert reloaded is not None
-    assert isinstance(reloaded.get_stage_state(Stage.Enrich), Running)
-    assert reloaded.get_stage_state(Stage.Enrich).attempt_count == 1
+    enrich_state = reloaded.get_stage_state(Stage.Enrich)
+    assert isinstance(enrich_state, Running)
+    assert enrich_state.attempt_count == 1
 
     reloaded.set_stage_state(Stage.Enrich, Running(attempt_count=2, started_at="2026-05-01T00:02:00Z"))
     repo.save(reloaded)
 
     final = repo.load(LOCAL_TENANT, "https://example.com/job")
     assert final is not None
-    assert final.get_stage_state(Stage.Enrich).attempt_count == 2
+    final_state = final.get_stage_state(Stage.Enrich)
+    assert isinstance(final_state, Running)
+    assert final_state.attempt_count == 2
 
 
 def test_save_blocked_state_round_trip(db):
