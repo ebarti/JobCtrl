@@ -1283,10 +1283,13 @@ def doctor() -> None:
     # Temporal dev server (workflow engine)
     from jobhunter.infrastructure.temporal import get_temporal_client
 
+    async def _probe_temporal() -> None:
+        await asyncio.wait_for(get_temporal_client(), timeout=3.0)
+
     try:
-        asyncio.run(get_temporal_client())
+        asyncio.run(_probe_temporal())
         results.append(("Temporal", ok_mark, "reachable"))
-    except Exception:  # noqa: BLE001 — surface any connect failure as unreachable
+    except (Exception, asyncio.TimeoutError):  # noqa: BLE001 — any failure ⇒ unreachable
         results.append(("Temporal", fail_mark,
                         "unreachable (start with: temporal server start-dev)"))
 
