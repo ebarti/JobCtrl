@@ -75,7 +75,12 @@ from jobhunter.database import (
 from jobhunter.domain.apply.services import ApplyPromptBuilder
 from jobhunter.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
+from jobhunter.state import (
+    ensure_job_stage_rows,
+    record_job_artifact,
+    record_job_event,
+    set_stage_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -363,6 +368,32 @@ def acquire_job(
         raise
 
 
+def _register_apply_log_artifact(
+    conn,
+    url: str,
+    *,
+    worker_id: int | None,
+    run_id: str,
+    occurred_at: str,
+) -> None:
+    """Record the per-worker apply log (``LOG_DIR/worker-{worker_id}.log``,
+    written by :class:`ClaudeCodeCliAdapter`) as a ``job_artifacts`` row;
+    no-op when ``worker_id`` is ``None`` (manual ``mark_result`` calls)."""
+    if worker_id is None:
+        return
+    log_path = config.LOG_DIR / f"worker-{int(worker_id)}.log"
+    record_job_artifact(
+        conn,
+        url,
+        "apply",
+        "apply_log",
+        log_path,
+        status="active",
+        created_at=occurred_at,
+        metadata={"run_id": str(run_id), "worker_id": int(worker_id)},
+    )
+
+
 def mark_result(
     url: str,
     status: str,
@@ -374,11 +405,13 @@ def mark_result(
 ) -> None:
     """Update a job's apply outcome.
 
-    Writes go to ``job_stage_states.apply`` (canonical lifecycle row)
-    and a terminal ``ApplicationSubmitted`` / ``ApplicationFailed`` /
+    Writes go to ``job_stage_states.apply`` (canonical lifecycle row),
+    a terminal ``ApplicationSubmitted`` / ``ApplicationFailed`` /
     ``DryRunCompleted`` event whose payload feeds
-    ``apply_run_projections``. The legacy ``jobs.apply_*`` columns are
-    NOT touched.
+    ``apply_run_projections``, and — when the run carries a
+    ``worker_id`` — a ``job_artifacts`` row pointing at the agent's
+    per-worker log file (kind ``apply_log``). The legacy
+    ``jobs.apply_*`` columns are NOT touched.
     """
     conn = get_connection()
     now = _utc_now()
@@ -476,6 +509,9 @@ def mark_result(
             },
         )
 
+    _register_apply_log_artifact(
+        conn, url, worker_id=worker_id, run_id=str(run_id), occurred_at=now
+    )
     conn.commit()
 
 
