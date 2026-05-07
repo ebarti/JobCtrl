@@ -290,6 +290,79 @@ Out of scope:
 QA: skipped — automation-only writer changes; artifacts list is
 already fully tested.
 
+### PR 8 — Langfuse observability via OpenTelemetry
+
+Branch: `observability/langfuse-otel` off
+`worker-reliability/logs-as-artifacts`.
+
+- Add OpenTelemetry to `workers/automation/pyproject.toml`:
+  `opentelemetry-api`, `opentelemetry-sdk`,
+  `opentelemetry-exporter-otlp-proto-http`, plus the optional
+  `opentelemetry-instrumentation-httpx` for auto-instrumented LLM HTTP calls.
+- New module
+  `workers/automation/src/jobhunter/infrastructure/observability/`:
+  - `otel.py` — `init_otel(*, service_name, environment)`, `shutdown_otel()`,
+    and `is_otel_enabled()`. Reads `LANGFUSE_PUBLIC_KEY` /
+    `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` from `os.environ`,
+    builds an `OTLPSpanExporter` pointed at
+    `${LANGFUSE_BASE_URL}/api/public/otel/v1/traces` with
+    `Authorization: Basic <base64(pk:sk)>` and the
+    `x-langfuse-ingestion-version: 4` fast-preview header, wraps it in
+    a `BatchSpanProcessor`, and sets the global `TracerProvider`.
+    Idempotent. Degrades gracefully when env vars are missing.
+    Honours `LANGFUSE_DISABLE=1` as an explicit opt-out even when
+    credentials are present.
+  - `llm_spans.py` — `llm_generation_span(model, messages, params)`
+    context manager that opens a `langfuse.observation.type=generation`
+    span, sets the Langfuse-specific attributes
+    (`langfuse.observation.model.name`,
+    `langfuse.observation.model.parameters`,
+    `langfuse.observation.input`, `langfuse.observation.output`,
+    `langfuse.observation.usage_details`) plus the GenAI semantic
+    conventions (`gen_ai.request.model`, `gen_ai.response.model`,
+    `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`).
+- Wiring:
+  - `jobhunter.llm.LLMClient.chat` (both compat + native Gemini paths)
+    now wraps each call in `llm_generation_span`, extracting token
+    counts from the OpenAI-compat `usage` object and the native
+    Gemini `usageMetadata`.
+  - `jobhunter.infrastructure.temporal.client.get_temporal_client` now
+    constructs the `Client` with
+    `interceptors=[TracingInterceptor()]`.
+  - `jobhunter.infrastructure.temporal.worker.build_worker` now passes
+    the same `TracingInterceptor` into the `Worker` so workflow +
+    activity spans flow automatically with trace context preserved
+    across the workflow start.
+  - `jobhunter.infrastructure.rpc.server.JsonRpcServer.dispatch` now
+    opens a `rpc.<method>` span with `langfuse.trace.name=<method>`,
+    `langfuse.observation.type="span"`, `rpc.method`, and `rpc.id`
+    attributes; handler exceptions mark the span ERROR.
+  - `jobhunter.cli._bootstrap()` calls `init_otel()`, so every CLI
+    command configures exporting on startup. The `worker` command
+    calls `shutdown_otel()` in a `finally` so the
+    `BatchSpanProcessor` flushes on Ctrl-C.
+- `jobhunter doctor` gains a `Langfuse` row that probes the OTLP
+  endpoint with a 2 s `httpx.head` and reports
+  `OK reachable` / `MISSING (set LANGFUSE_*…)` / `unreachable`.
+- Tests: `test_otel_init.py` (idempotency, missing-creds graceful
+  degradation, `LANGFUSE_DISABLE` opt-out, payload-export warning,
+  endpoint + auth header shape), `test_llm_spans.py` (Langfuse span
+  attributes, unknown-token handling, exception status), `test_rpc_otel.py`
+  (dispatch span attributes + error status), `test_doctor_langfuse.py`
+  (reachable / missing / unreachable code paths).
+- Docs: `docs/architecture.md` gains an "Observability" section under
+  `Runtime Boundaries`. `README.md` `Configuration` section grows the
+  `LANGFUSE_*` env-var entry. `AGENTS.md` `Reference Index` and
+  `Documentation Requirements` table both gain an Observability row.
+
+Out of scope: TS/web instrumentation (`apps/api`, `apps/web`,
+`packages/`), distributed-trace propagation across the TS↔Python
+JSON-RPC boundary, dashboards / alerts / SLOs in Langfuse UI,
+prompt-versioning via Langfuse prompts, cost calculation overrides
+(Langfuse computes cost from token counts via its model registry).
+
+QA: skipped — automation/observability only.
+
 ## Sequencing rules
 
 - Each PR creates its own worktree off the previous branch.

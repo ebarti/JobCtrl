@@ -382,6 +382,51 @@ The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
 Live workflow state — running workflows, history, signals, retries — is
 visible at `http://127.0.0.1:8233` in the Temporal Web UI.
 
+### Observability
+
+The Python automation worker exports OpenTelemetry spans over OTLP/HTTP to a
+Langfuse instance for LLM tracing. The wiring lives under
+`workers/automation/src/jobhunter/infrastructure/observability/`:
+
+- `otel.py` — `init_otel()` configures a global `TracerProvider` with a
+  `BatchSpanProcessor` feeding an `OTLPSpanExporter`. Endpoint:
+  `${LANGFUSE_BASE_URL}/api/public/otel/v1/traces`. Authentication is HTTP
+  Basic with `base64(LANGFUSE_PUBLIC_KEY:LANGFUSE_SECRET_KEY)`. If any of
+  `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` is
+  unset, init logs a warning and the worker continues without exporting.
+  `LANGFUSE_DISABLE=1` opts out even when credentials are present.
+- `llm_spans.py` — `llm_generation_span(...)` context manager that opens a
+  `langfuse.observation.type=generation` span around each LLM call. It also
+  sets the GenAI semantic-conventions attributes (`gen_ai.request.model`,
+  `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
+  `gen_ai.usage.output_tokens`) so OTel-native dashboards work too.
+
+Three sources emit spans:
+
+| Source | Span name | `langfuse.observation.type` |
+| --- | --- | --- |
+| Every LLM call (`jobhunter.llm.LLMClient.chat`) | `llm.<model>` | `generation` |
+| Every Temporal workflow + activity (via `temporalio.contrib.opentelemetry.TracingInterceptor`) | workflow / activity name | `span` (default) |
+| Every JSON-RPC dispatch (`jobhunter.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
+
+The `TracingInterceptor` is registered both client-side
+(`infrastructure/temporal/client.py`) and worker-side
+(`infrastructure/temporal/worker.py`) so trace context propagates from the
+JSON-RPC handler that starts a workflow into the worker that runs it.
+
+`init_otel()` is called from `jobhunter.cli._bootstrap()`, so every CLI
+command (notably `jobhunter worker` and `jobhunter rpc`) configures
+exporting on startup. The `worker` command calls `shutdown_otel()` on
+exit so the `BatchSpanProcessor` flushes any in-flight spans.
+
+`jobhunter doctor` includes a `Langfuse` row that probes the OTLP endpoint
+with a `HEAD` request — `OK reachable`, `MISSING (set
+LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)`, or `unreachable`.
+
+Out of scope for this layer: TypeScript API / web instrumentation and
+distributed-trace propagation across the TS↔Python JSON-RPC boundary
+(would need TS to emit OTel context too).
+
 ### SQLite And Files
 
 SQLite in `~/.jobhunter/jobhunter.db` is the local source of truth for jobs,

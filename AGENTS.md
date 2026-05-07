@@ -5,7 +5,7 @@ Use these repository documents before making architectural, workflow, or QA deci
 - `README.md`: user-facing product behavior, CLI commands, runtime requirements, generated local artifacts, and safety notes.
 - `docs/local-reliability-qa.md`: local QA checklist, regression matrix, known high-risk workflows that need test coverage, and the frontend test pyramid + a11y bar.
 - `docs/local-ts-api.md`: local TypeScript API, web app development commands, API/web verification, dashboard migration context, and the `GET /v1/events/stream` SSE contract.
-- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, eight bounded contexts, projection-backed read model, JSON-RPC TS↔Python protocol, local-first boundaries, and the frontend stack / state layers / ports / SSE realtime.
+- `docs/architecture.md`: current TypeScript app/API plus Python worker architecture, eight bounded contexts, projection-backed read model, JSON-RPC TS↔Python protocol, local-first boundaries, the frontend stack / state layers / ports / SSE realtime, and the OpenTelemetry → Langfuse observability layer for LLM, workflow, and JSON-RPC spans.
 - `docs/ddd-target.md`: canonical DDD + hexagonal target architecture (aggregates, ports, domain events, projection strategy, hosted-future seams). The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-ddd-migration.md`.
 - `docs/frontend-target.md`: canonical frontend architecture — three-layer state (server / URL / client), eight bounded contexts mirrored 1:1 from the backend, view-vs-context dichotomy, hexagonal frontend ports, SSE realtime + invalidation router, testing pyramid. The implementation in this codebase realises this target — see `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
 - `docs/domain-model.md`: implementer's quick reference to the eight bounded contexts and their aggregates / repositories / events.
@@ -60,6 +60,7 @@ When a doc update is warranted:
 | Local QA expectations, regression matrix entries, high-risk workflows, or manually verified product paths | `docs/local-reliability-qa.md` |
 | Local TypeScript API behavior, web app development commands, API/web verification, or dashboard migration details | `docs/local-ts-api.md` |
 | TypeScript API plus Python worker architecture, local-first boundaries, orchestration, or phased migration constraints | `docs/architecture.md` |
+| Observability / OpenTelemetry / Langfuse export of LLM, workflow, or JSON-RPC spans | `docs/architecture.md` |
 | Frontend architecture (state layers, bounded contexts, ports, realtime, testing pyramid) | `docs/frontend-target.md` |
 | TypeScript/API/web scripts, package metadata, dependencies, or tooling commands | `package.json` |
 | Python package metadata, CLI entry point, Python version, optional dev dependencies, or Ruff config | `workers/automation/pyproject.toml` |
