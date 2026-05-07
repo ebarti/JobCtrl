@@ -119,6 +119,21 @@ def test_assembler_includes_master_bullets_when_llm_omits_update() -> None:
     assert "Built a distributed system." in text
 
 
+def test_assembler_preserves_required_skills_when_llm_omits_them() -> None:
+    profile = _profile()
+    profile["resume"]["tailoring_rules"]["required_skills_by_category_id"] = {
+        "languages": ["Go"]
+    }
+    payload = _payload()
+    payload["skill_category_updates"] = [
+        {"id": "languages", "items": ["Python", "Rust"]},
+    ]
+
+    text = _ASSEMBLER.assemble_resume_text(payload, profile)
+
+    assert "Languages: Python, Rust, Go" in text
+
+
 def test_assembler_normalises_em_dashes_via_sanitize() -> None:
     payload = _payload()
     payload["experience_updates"][0]["bullets"] = ["Reduced latency — a lot."]

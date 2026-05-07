@@ -99,6 +99,22 @@ def get_required_bullets_by_experience_id(profile: dict) -> dict[str, list[str]]
     return required
 
 
+def get_required_skills_by_category_id(profile: dict) -> dict[str, list[str]]:
+    """Return required baseline skill names keyed by skill category ID."""
+    rules = get_resume_master(profile).get("tailoring_rules", {})
+    raw = rules.get("required_skills_by_category_id", {})
+    if not isinstance(raw, dict):
+        return {}
+    required: dict[str, list[str]] = {}
+    for category_id, skills in raw.items():
+        if not isinstance(category_id, str) or not isinstance(skills, list):
+            continue
+        cleaned = [str(skill).strip() for skill in skills if str(skill).strip()]
+        if cleaned:
+            required[category_id] = cleaned
+    return required
+
+
 DEFAULT_TAILORING_POLICY = {
     "mode": "balanced",
     "allow_title_reframing": False,
@@ -219,4 +235,21 @@ def tailored_experience_bullets(entry: dict, update: dict, profile: dict) -> lis
     kept_other = [bullet for bullet in bullets if _normalize_text(bullet) not in required_norm]
     return (kept_required + kept_other)[:max_bullets]
 
+
+def tailored_skill_items(category: dict, update: dict, profile: dict) -> list[str]:
+    """Return skills allowed by policy, with required baseline skills preserved."""
+    policy = get_tailoring_policy(profile)
+    source = update.get("items") if policy["allow_skill_reordering"] and isinstance(update, dict) else None
+    if not isinstance(source, list) or not source:
+        source = category.get("items", [])
+
+    items = [str(item).strip() for item in source if str(item).strip()]
+    required = get_required_skills_by_category_id(profile).get(str(category.get("id", "")), [])
+    seen = {_normalize_text(item) for item in items}
+    for item in required:
+        normalized = _normalize_text(item)
+        if normalized and normalized not in seen:
+            items.append(item)
+            seen.add(normalized)
+    return items
 

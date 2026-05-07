@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useDensity } from "../hooks/useDensity.js";
 import type { Density } from "../stores/ui-preferences.js";
 import { ConnectionStatusPill } from "./ConnectionStatusPill.js";
+import { NavBar } from "./NavBar.js";
 import { ThemeToggle } from "./ThemeToggle.js";
 
 const DENSITY_OPTIONS: ReadonlyArray<Density> = ["compact", "regular", "comfy"];
@@ -18,6 +19,7 @@ export function Topbar() {
         <span className="brand-mark">jh</span>
         <span>jobhunter</span>
       </Link>
+      <NavBar />
       <input
         aria-label="Global search"
         className="global-search"

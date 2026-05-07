@@ -201,6 +201,18 @@ def test_required_bullets_mapping_is_immutable_after_parsing():
         parsed.tailoring_rules.required_bullets_by_experience_id["role_1"] = ()  # type: ignore[index]
 
 
+def test_required_skills_mapping_is_immutable_after_parsing():
+    raw = _valid_profile_dict()
+    raw["resume"]["tailoring_rules"]["required_skills_by_category_id"] = {
+        "lang": ["Python"]
+    }
+    parsed = Profile.from_dict(LOCAL_TENANT, raw)
+
+    assert parsed.tailoring_rules.required_skills_by_category_id["lang"] == ("Python",)
+    with pytest.raises(TypeError):
+        parsed.tailoring_rules.required_skills_by_category_id["lang"] = ()  # type: ignore[index]
+
+
 def test_required_helpers_fallback_to_all_when_unspecified():
     raw = _valid_profile_dict()
     raw["resume"]["tailoring_rules"]["required_experience_entry_ids"] = []

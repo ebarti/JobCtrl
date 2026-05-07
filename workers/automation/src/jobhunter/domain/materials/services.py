@@ -47,6 +47,7 @@ from jobhunter.resume_profile import (
     require_resume_master,
     tailored_experience_bullets,
     tailored_experience_title,
+    tailored_skill_items,
 )
 
 log = logging.getLogger(__name__)
@@ -540,7 +541,7 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     lines.append("SKILLS")
     for category in skill_categories:
         update = skill_updates.get(category.get("id"), {})
-        items = update.get("items", category.get("items", [])) if tailoring_policy["allow_skill_reordering"] else category.get("items", [])
+        items = tailored_skill_items(category, update, profile)
         sanitized_items = [sanitize_text(str(item)) for item in items if str(item).strip()]
         lines.append(f"{category.get('label', 'Skills')}: {', '.join(sanitized_items)}")
 

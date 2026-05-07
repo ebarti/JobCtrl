@@ -400,6 +400,9 @@ class TailoringRules:
     required_bullets_by_experience_id: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: _EMPTY_MAPPING
     )
+    required_skills_by_category_id: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: _EMPTY_MAPPING
+    )
     max_experience_bullets: int = 4
     custom_tailoring_prompt: str = ""
     tailoring_policy: TailoringPolicy = field(default_factory=TailoringPolicy)
@@ -417,6 +420,15 @@ class TailoringRules:
                     if cleaned:
                         cleaned_bullets[entry_id] = cleaned
 
+        raw_required_skills = data.get("required_skills_by_category_id") or {}
+        cleaned_skills: dict[str, tuple[str, ...]] = {}
+        if isinstance(raw_required_skills, dict):
+            for category_id, skills in raw_required_skills.items():
+                if isinstance(category_id, str) and category_id:
+                    cleaned = _str_tuple(skills)
+                    if cleaned:
+                        cleaned_skills[category_id] = cleaned
+
         max_bullets_raw = data.get("max_experience_bullets")
         if max_bullets_raw is None:
             max_bullets = 4
@@ -433,6 +445,7 @@ class TailoringRules:
             required_education_entry_ids=_str_tuple(data.get("required_education_entry_ids")),
             required_skill_category_ids=_str_tuple(data.get("required_skill_category_ids")),
             required_bullets_by_experience_id=MappingProxyType(cleaned_bullets),
+            required_skills_by_category_id=MappingProxyType(cleaned_skills),
             max_experience_bullets=max_bullets,
             custom_tailoring_prompt=_str(data.get("custom_tailoring_prompt"), "").strip(),
             tailoring_policy=TailoringPolicy.from_dict(data.get("tailoring_policy")),
@@ -447,6 +460,10 @@ class TailoringRules:
             "required_bullets_by_experience_id": {
                 entry_id: list(bullets)
                 for entry_id, bullets in self.required_bullets_by_experience_id.items()
+            },
+            "required_skills_by_category_id": {
+                category_id: list(skills)
+                for category_id, skills in self.required_skills_by_category_id.items()
             },
             "max_experience_bullets": self.max_experience_bullets,
             "tailoring_policy": self.tailoring_policy.to_dict(),

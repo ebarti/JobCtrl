@@ -13,10 +13,11 @@ export function StageTimeline({ stages }: StageTimelineProps): JSX.Element {
     <ol className="timeline">
       {stages.map((stage) => (
         <li key={stage.stage} className="timeline-row">
-          <StatusDot state={stage.state} />
-          <StageBadge stage={stage.stage} />
+          <span className="timeline-row-head">
+            <StatusDot state={stage.state} />
+            <StageBadge stage={stage.stage} />
+          </span>
           <StageBadge state={stage.state} />
-          {stage.nextAction ? <small>{stage.nextAction}</small> : null}
         </li>
       ))}
     </ol>

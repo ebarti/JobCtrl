@@ -253,6 +253,7 @@ const ProfileTailoringRulesSchema = z
     required_education_entry_ids: z.array(z.string()).default([]),
     required_skill_category_ids: z.array(z.string()).default([]),
     required_bullets_by_experience_id: z.record(z.string(), z.array(z.string())).default({}),
+    required_skills_by_category_id: z.record(z.string(), z.array(z.string())).default({}),
     max_experience_bullets: z.number().int().positive().default(4),
     custom_tailoring_prompt: z.string().default(""),
     tailoring_policy: ProfileTailoringPolicySchema.default({}),

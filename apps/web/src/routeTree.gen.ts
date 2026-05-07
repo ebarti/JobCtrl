@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as SettingsRouteImport } from "./routes/settings";
 import { Route as ProfileRouteImport } from "./routes/profile";
+import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as JobsRouteImport } from "./routes/jobs";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
@@ -38,6 +39,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: "/profile",
   path: "/profile",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PreferencesRoute = PreferencesRouteImport.update({
+  id: "/preferences",
+  path: "/preferences",
   getParentRoute: () => rootRouteImport,
 } as any);
 const JobsRoute = JobsRouteImport.update({
@@ -136,6 +142,7 @@ export interface FileRoutesByFullPath {
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
   "/settings": typeof SettingsRouteWithChildren;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -156,6 +163,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/dashboard": typeof DashboardRoute;
+  "/preferences": typeof PreferencesRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
   "/jobs/$jobId": typeof JobsJobIdRouteWithChildren;
@@ -177,6 +185,7 @@ export interface FileRoutesById {
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
   "/settings": typeof SettingsRouteWithChildren;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -201,6 +210,7 @@ export interface FileRouteTypes {
     | "/artifacts"
     | "/dashboard"
     | "/jobs"
+    | "/preferences"
     | "/profile"
     | "/settings"
     | "/activity/$eventId"
@@ -221,6 +231,7 @@ export interface FileRouteTypes {
   to:
     | "/"
     | "/dashboard"
+    | "/preferences"
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
     | "/jobs/$jobId"
@@ -241,6 +252,7 @@ export interface FileRouteTypes {
     | "/artifacts"
     | "/dashboard"
     | "/jobs"
+    | "/preferences"
     | "/profile"
     | "/settings"
     | "/activity/$eventId"
@@ -264,6 +276,7 @@ export interface RootRouteChildren {
   ArtifactsRoute: typeof ArtifactsRouteWithChildren;
   DashboardRoute: typeof DashboardRoute;
   JobsRoute: typeof JobsRouteWithChildren;
+  PreferencesRoute: typeof PreferencesRoute;
   ProfileRoute: typeof ProfileRouteWithChildren;
   SettingsRoute: typeof SettingsRouteWithChildren;
   ActivityEventIdRoute: typeof ActivityEventIdRoute;
@@ -284,6 +297,13 @@ declare module "@tanstack/react-router" {
       path: "/profile";
       fullPath: "/profile";
       preLoaderRoute: typeof ProfileRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/preferences": {
+      id: "/preferences";
+      path: "/preferences";
+      fullPath: "/preferences";
+      preLoaderRoute: typeof PreferencesRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/jobs": {
@@ -501,6 +521,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtifactsRoute: ArtifactsRouteWithChildren,
   DashboardRoute: DashboardRoute,
   JobsRoute: JobsRouteWithChildren,
+  PreferencesRoute: PreferencesRoute,
   ProfileRoute: ProfileRouteWithChildren,
   SettingsRoute: SettingsRouteWithChildren,
   ActivityEventIdRoute: ActivityEventIdRoute,

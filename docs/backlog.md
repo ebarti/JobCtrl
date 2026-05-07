@@ -50,6 +50,10 @@ This is the authoritative roadmap. Keep detailed historical proposals under
 - Preserve user filters, sort, page, and selection during live updates.
 - Add side-by-side artifact comparison in the app, including AI-assisted
   comparison for resume and cover-letter variants.
+- Add AI-assisted improvement suggestions for resume items marked Required,
+  starting with experience bullets. Suggestions should cover grammar and
+  wording, relevance to a target job, achievement framing, evidence strength,
+  and whether the item deserves required placement in the final resume.
 
 ## SaaS And Commercialization
 
