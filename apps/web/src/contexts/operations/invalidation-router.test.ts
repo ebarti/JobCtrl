@@ -8,6 +8,7 @@ import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { invalidationRouter } from "./invalidation-router.js";
 import { jobsKeys } from "./jobsKeys.js";
+import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
 
 type ExpectedKeys = readonly QueryKey[];
@@ -78,6 +79,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   ApplyRunStarted: [
     applyRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.lists(LOCAL_TENANT),
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -88,6 +90,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     applyRunsKeys.lists(LOCAL_TENANT),
     applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ApplicationFailed: [
@@ -95,6 +99,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     applyRunsKeys.lists(LOCAL_TENANT),
     applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   StageStarted: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
