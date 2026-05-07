@@ -413,6 +413,8 @@ def mark_result(
             },
         )
     elif status == "dry_run":
+        # Launcher owns lock-release policy: Running -> Skipped is a launcher
+        # convention (dry-run completed), not in the canonical §8.5 table.
         set_stage_state(
             conn,
             url,
@@ -424,6 +426,7 @@ def mark_result(
             error_message="Dry run completed without submitting.",
             retryable=True,
             next_action=f"jobhunter apply --url {url}",
+            validate_transition=False,
         )
         record_job_event(
             conn,
@@ -476,16 +479,54 @@ def mark_result(
     conn.commit()
 
 
+def _latest_apply_run_started_run_id(conn, url: str) -> str | None:
+    """Look up the run_id of the most recent ``ApplyRunStarted`` event for ``url``.
+
+    Used by orphan rescue (and any caller without a ``run_ctx``) to
+    close the SAME run row instead of minting a phantom new uuid that
+    leaves the original run stuck in ``status='starting'`` forever.
+    """
+    row = conn.execute(
+        "SELECT payload_json FROM job_events "
+        "WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
+        "ORDER BY event_id DESC LIMIT 1",
+        (url,),
+    ).fetchone()
+    if row is None:
+        return None
+    payload_json = row["payload_json"] if not isinstance(row, tuple) else row[0]
+    if not payload_json:
+        return None
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = payload.get("run_id")
+    return str(run_id) if run_id else None
+
+
 def release_lock(url: str, run_ctx: dict | None = None) -> None:
     """Release any active apply stage row for ``url`` without recording a result.
 
     Records an ``ApplicationFailed`` event with an ORPHANED reason so
     the projection treats the run as failed (retryable). Resets the
     ``job_stage_states`` row to pending.
+
+    When the caller doesn't pass a ``run_ctx`` (orphan-rescue path), we
+    look up the prior ``ApplyRunStarted`` event for the URL and reuse
+    its ``run_id`` so the terminal event closes the SAME row in
+    ``apply_run_projections`` instead of minting a phantom new run.
     """
     conn = get_connection()
     now = _utc_now()
-    run_id = (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
+    ctx_run_id = run_ctx.get("run_id") if run_ctx else None
+    run_id = (
+        ctx_run_id
+        or _latest_apply_run_started_run_id(conn, url)
+        or new_apply_run_id()
+    )
     if _has_active_apply(conn, url):
         record_job_event(
             conn,
@@ -501,15 +542,23 @@ def release_lock(url: str, run_ctx: dict | None = None) -> None:
                 "duration_ms": 0,
             },
         )
+    # Launcher owns lock-release policy: Running -> Pending is a launcher
+    # convention, not in the canonical §8.5 state-machine table.
     set_stage_state(
         conn,
         url,
         "apply",
         "pending",
         next_action=f"jobhunter apply --url {url}",
+        validate_transition=False,
     )
     record_job_event(
-        conn, url, "apply", "LockReleased", message="Apply lock released"
+        conn,
+        url,
+        "apply",
+        "LockReleased",
+        message="Apply lock released",
+        payload={"run_id": str(run_id)},
     )
     conn.commit()
 
@@ -1164,7 +1213,13 @@ def main(
 
 
 def _rescue_orphaned_running_apply(console: Console) -> int:
-    """Mark any ``apply.state == 'running'`` row as failed/orphaned."""
+    """Mark any ``apply.state == 'running'`` row as failed/orphaned.
+
+    Per-row failures are caught + logged so one bad row doesn't poison
+    the whole sweep — a single corrupt payload (or a row whose
+    ``release_lock`` raises) must not strand every other orphan in
+    ``running`` forever.
+    """
     try:
         conn = get_connection()
         rows = conn.execute(
@@ -1173,12 +1228,22 @@ def _rescue_orphaned_running_apply(console: Console) -> int:
         ).fetchall()
         if not rows:
             return 0
+        rescued = 0
         for row in rows:
-            release_lock(row["job_url"])
-        console.print(
-            f"[yellow]Rescued {len(rows)} orphaned apply run(s) from prior crash[/yellow]"
-        )
-        return len(rows)
+            url = row["job_url"]
+            try:
+                release_lock(url)
+                rescued += 1
+            except Exception:  # noqa: BLE001 — keep sweeping past per-row failures
+                logger.exception(
+                    "Orphan rescue: release_lock failed for %s", url
+                )
+                continue
+        if rescued:
+            console.print(
+                f"[yellow]Rescued {rescued} orphaned apply run(s) from prior crash[/yellow]"
+            )
+        return rescued
     except Exception:  # noqa: BLE001 — orphan sweep is best-effort
         logger.exception("Orphan sweep failed")
         return 0
