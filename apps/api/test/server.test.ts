@@ -355,12 +355,13 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("derives apply state from the apply_runs aggregate when legacy jobs columns are NULL", async () => {
-    // Phase 8 (S-30) round-1 review M2: the new launcher writes apply
-    // outcomes ONLY to ``apply_runs`` (no dual-write to
-    // jobs.apply_status / applied_at). The TS read-model must
-    // canonicalise the apply state from the joined apply_runs row so
-    // the dashboard + jobs list show the right values.
+  it("derives apply state from apply_run_projections when legacy jobs columns are NULL", async () => {
+    // PR 4 of the Temporal stack: ``apply_run_projections`` (sourced
+    // from ``job_events`` by the Python projection builder) is the
+    // canonical apply lifecycle row. The TS read-model derives
+    // applyStatus / appliedAt from the joined projection row so the
+    // dashboard + jobs list show the right values without dual-writing
+    // to ``jobs.apply_status`` / ``applied_at``.
     const db = new Database(options.dbPath);
     const newJobUrl = "https://example.com/jobs/new-path-applied";
     insertJob(db, {
@@ -369,12 +370,8 @@ describe("local TypeScript API", () => {
       site: "NewPathCo",
       fitScore: 9,
     });
-    // Seed an apply_runs row using the NEW lifecycle labels:
-    // status='succeeded' (not the legacy 'finished'), result='applied',
-    // a non-null finished_at — and crucially leave jobs.applied_at /
-    // jobs.apply_status NULL.
     db.prepare(
-      "INSERT INTO apply_runs (run_id, job_url, title, site, status, result, dry_run, started_at, finished_at) "
+      "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at) "
         + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       "run-new-path",
@@ -1393,16 +1390,21 @@ function seedDatabase(dbPath: string): void {
       attempts_json TEXT NOT NULL DEFAULT '[]',
       updated_at TEXT NOT NULL
     );
-    CREATE TABLE apply_runs (
-      run_id TEXT,
-      job_url TEXT,
-      title TEXT,
-      site TEXT,
-      status TEXT,
+    CREATE TABLE apply_run_projections (
+      run_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      job_title TEXT NOT NULL DEFAULT '',
+      job_employer TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
       result TEXT,
-      dry_run INTEGER,
+      dry_run INTEGER NOT NULL DEFAULT 0,
+      worker_id INTEGER,
+      model TEXT,
       started_at TEXT,
-      finished_at TEXT
+      finished_at TEXT,
+      duration_ms INTEGER,
+      events_json TEXT NOT NULL DEFAULT '[]'
     );
   `);
 
@@ -1457,7 +1459,7 @@ function seedDatabase(dbPath: string): void {
     "2026-04-29T10:10:00+00:00",
   );
   db.prepare(
-    "INSERT INTO apply_runs (run_id, job_url, title, site, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "run-1",
     "https://example.com/jobs/ready",
