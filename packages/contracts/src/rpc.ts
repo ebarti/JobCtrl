@@ -67,6 +67,7 @@ export const RpcMethods = {
   RunStage: "run_stage",
   Apply: "apply",
   ProfileImport: "profile_import",
+  CancelRun: "cancel_run",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -185,6 +186,24 @@ export const ApplyResultSchema = z
   })
   .strict();
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;
+
+/* --- cooperative workflow cancellation ----------------------------------- */
+
+export const CancelRunParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    runId: z.string().min(1),
+  })
+  .strict();
+export type CancelRunParams = z.infer<typeof CancelRunParamsSchema>;
+
+export const CancelRunResultSchema = z
+  .object({
+    runId: z.string(),
+    status: z.literal("canceling"),
+  })
+  .strict();
+export type CancelRunResult = z.infer<typeof CancelRunResultSchema>;
 
 export const ProfileImportParamsSchema = z
   .object({
