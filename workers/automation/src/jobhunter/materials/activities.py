@@ -15,6 +15,8 @@ from temporalio import activity
 
 @dataclass(frozen=True)
 class TailorActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     min_score: int = 7
     limit: int = 0
@@ -63,6 +65,8 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
 
 @dataclass(frozen=True)
 class CoverActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     min_score: int = 7
     limit: int = 0
@@ -107,6 +111,8 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
 
 @dataclass(frozen=True)
 class PdfActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     limit: int = 0
 

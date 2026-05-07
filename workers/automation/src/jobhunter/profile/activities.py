@@ -14,6 +14,8 @@ from temporalio import activity
 
 @dataclass(frozen=True)
 class ProfileImportActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     pdf_path: str
     import_profile: bool = True

@@ -10,6 +10,8 @@ from temporalio import activity
 
 @dataclass(frozen=True)
 class EnrichActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     limit: int = 0
     workers: int = 1

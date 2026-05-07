@@ -14,6 +14,8 @@ from temporalio import activity
 
 @dataclass(frozen=True)
 class DiscoverActivityInput:
+    # ``tenant_id`` is currently informational; runners read from
+    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     workers: int = 1
 
