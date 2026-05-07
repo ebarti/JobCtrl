@@ -1134,9 +1134,13 @@ def rpc() -> None:
     _bootstrap()
     from jobhunter.infrastructure.rpc.handlers import register_default_handlers
     from jobhunter.infrastructure.rpc.server import JsonRpcServer
+    from jobhunter.infrastructure.rpc.workflow_starter import (
+        default_workflow_canceler,
+        default_workflow_starter,
+    )
 
-    server = JsonRpcServer()
-    register_default_handlers(server)
+    server = JsonRpcServer(workflow_starter=default_workflow_starter)
+    register_default_handlers(server, canceler=default_workflow_canceler)
     server.serve()
 
 
