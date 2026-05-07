@@ -1,8 +1,20 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from temporalio.contrib.opentelemetry import TracingInterceptor
 
 from jobhunter.infrastructure.temporal import get_temporal_client
+
+
+def _assert_connect_call(connect_mock, *, address: str, namespace: str) -> None:
+    """Assert ``Client.connect`` was awaited with the expected args + interceptor."""
+    connect_mock.assert_awaited_once()
+    args, kwargs = connect_mock.await_args
+    assert args == (address,)
+    assert kwargs["namespace"] == namespace
+    interceptors = kwargs["interceptors"]
+    assert len(interceptors) == 1
+    assert isinstance(interceptors[0], TracingInterceptor)
 
 
 @pytest.mark.asyncio
@@ -18,7 +30,7 @@ async def test_get_temporal_client_uses_default_address_and_namespace(monkeypatc
         client = await get_temporal_client()
 
     assert client is sentinel
-    connect_mock.assert_awaited_once_with("localhost:7233", namespace="default")
+    _assert_connect_call(connect_mock, address="localhost:7233", namespace="default")
 
 
 @pytest.mark.asyncio
@@ -34,4 +46,4 @@ async def test_get_temporal_client_honours_environment(monkeypatch):
         client = await get_temporal_client()
 
     assert client is sentinel
-    connect_mock.assert_awaited_once_with("temporal.example:7777", namespace="jobhunter")
+    _assert_connect_call(connect_mock, address="temporal.example:7777", namespace="jobhunter")

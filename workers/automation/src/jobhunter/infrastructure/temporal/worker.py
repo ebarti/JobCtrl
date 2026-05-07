@@ -7,6 +7,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.client import Client
+from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import (
     SandboxedWorkflowRunner,
@@ -65,4 +66,5 @@ def build_worker(
         workflow_runner=SandboxedWorkflowRunner(
             restrictions=_PASSTHROUGH_RESTRICTIONS,
         ),
+        interceptors=[TracingInterceptor()],
     )
