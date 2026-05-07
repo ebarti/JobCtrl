@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as SettingsRouteImport } from "./routes/settings";
+import { Route as RunsRouteImport } from "./routes/runs";
 import { Route as ProfileRouteImport } from "./routes/profile";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as JobsRouteImport } from "./routes/jobs";
@@ -17,6 +18,7 @@ import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SettingsIndexRouteImport } from "./routes/settings.index";
+import { Route as RunsIndexRouteImport } from "./routes/runs.index";
 import { Route as ProfileIndexRouteImport } from "./routes/profile.index";
 import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
 import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
@@ -34,6 +36,11 @@ import { Route as JobsJobIdRunRunIdRouteImport } from "./routes/jobs.$jobId.run.
 const SettingsRoute = SettingsRouteImport.update({
   id: "/settings",
   path: "/settings",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const RunsRoute = RunsRouteImport.update({
+  id: "/runs",
+  path: "/runs",
   getParentRoute: () => rootRouteImport,
 } as any);
 const ProfileRoute = ProfileRouteImport.update({
@@ -71,6 +78,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   path: "/",
   getParentRoute: () => SettingsRoute,
 } as any);
+const RunsIndexRoute = RunsIndexRouteImport.update({
+  id: "/",
+  path: "/",
+  getParentRoute: () => RunsRoute,
+} as any);
 const ProfileIndexRoute = ProfileIndexRouteImport.update({
   id: "/",
   path: "/",
@@ -92,9 +104,9 @@ const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   getParentRoute: () => SettingsRoute,
 } as any);
 const RunsRunIdRoute = RunsRunIdRouteImport.update({
-  id: "/runs/$runId",
-  path: "/runs/$runId",
-  getParentRoute: () => rootRouteImport,
+  id: "/$runId",
+  path: "/$runId",
+  getParentRoute: () => RunsRoute,
 } as any);
 const ProfileImportRoute = ProfileImportRouteImport.update({
   id: "/import",
@@ -144,6 +156,7 @@ export interface FileRoutesByFullPath {
   "/jobs": typeof JobsRouteWithChildren;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
+  "/runs": typeof RunsRouteWithChildren;
   "/settings": typeof SettingsRouteWithChildren;
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
@@ -154,6 +167,7 @@ export interface FileRoutesByFullPath {
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
   "/profile/": typeof ProfileIndexRoute;
+  "/runs/": typeof RunsIndexRoute;
   "/settings/": typeof SettingsIndexRoute;
   "/profile/import/confirm": typeof ProfileImportConfirmRoute;
   "/profile/import/preview": typeof ProfileImportPreviewRoute;
@@ -173,6 +187,7 @@ export interface FileRoutesByTo {
   "/artifacts": typeof ArtifactsIndexRoute;
   "/jobs": typeof JobsIndexRoute;
   "/profile": typeof ProfileIndexRoute;
+  "/runs": typeof RunsIndexRoute;
   "/settings": typeof SettingsIndexRoute;
   "/profile/import/confirm": typeof ProfileImportConfirmRoute;
   "/profile/import/preview": typeof ProfileImportPreviewRoute;
@@ -187,6 +202,7 @@ export interface FileRoutesById {
   "/jobs": typeof JobsRouteWithChildren;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
+  "/runs": typeof RunsRouteWithChildren;
   "/settings": typeof SettingsRouteWithChildren;
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
@@ -197,6 +213,7 @@ export interface FileRoutesById {
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
   "/profile/": typeof ProfileIndexRoute;
+  "/runs/": typeof RunsIndexRoute;
   "/settings/": typeof SettingsIndexRoute;
   "/profile/import/confirm": typeof ProfileImportConfirmRoute;
   "/profile/import/preview": typeof ProfileImportPreviewRoute;
@@ -212,6 +229,7 @@ export interface FileRouteTypes {
     | "/jobs"
     | "/preferences"
     | "/profile"
+    | "/runs"
     | "/settings"
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
@@ -222,6 +240,7 @@ export interface FileRouteTypes {
     | "/artifacts/"
     | "/jobs/"
     | "/profile/"
+    | "/runs/"
     | "/settings/"
     | "/profile/import/confirm"
     | "/profile/import/preview"
@@ -241,6 +260,7 @@ export interface FileRouteTypes {
     | "/artifacts"
     | "/jobs"
     | "/profile"
+    | "/runs"
     | "/settings"
     | "/profile/import/confirm"
     | "/profile/import/preview"
@@ -254,6 +274,7 @@ export interface FileRouteTypes {
     | "/jobs"
     | "/preferences"
     | "/profile"
+    | "/runs"
     | "/settings"
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
@@ -264,6 +285,7 @@ export interface FileRouteTypes {
     | "/artifacts/"
     | "/jobs/"
     | "/profile/"
+    | "/runs/"
     | "/settings/"
     | "/profile/import/confirm"
     | "/profile/import/preview"
@@ -278,9 +300,9 @@ export interface RootRouteChildren {
   JobsRoute: typeof JobsRouteWithChildren;
   PreferencesRoute: typeof PreferencesRoute;
   ProfileRoute: typeof ProfileRouteWithChildren;
+  RunsRoute: typeof RunsRouteWithChildren;
   SettingsRoute: typeof SettingsRouteWithChildren;
   ActivityEventIdRoute: typeof ActivityEventIdRoute;
-  RunsRunIdRoute: typeof RunsRunIdRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -290,6 +312,13 @@ declare module "@tanstack/react-router" {
       path: "/settings";
       fullPath: "/settings";
       preLoaderRoute: typeof SettingsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/runs": {
+      id: "/runs";
+      path: "/runs";
+      fullPath: "/runs";
+      preLoaderRoute: typeof RunsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/profile": {
@@ -341,6 +370,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsIndexRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/runs/": {
+      id: "/runs/";
+      path: "/";
+      fullPath: "/runs/";
+      preLoaderRoute: typeof RunsIndexRouteImport;
+      parentRoute: typeof RunsRoute;
+    };
     "/profile/": {
       id: "/profile/";
       path: "/";
@@ -371,10 +407,10 @@ declare module "@tanstack/react-router" {
     };
     "/runs/$runId": {
       id: "/runs/$runId";
-      path: "/runs/$runId";
+      path: "/$runId";
       fullPath: "/runs/$runId";
       preLoaderRoute: typeof RunsRunIdRouteImport;
-      parentRoute: typeof rootRouteImport;
+      parentRoute: typeof RunsRoute;
     };
     "/profile/import": {
       id: "/profile/import";
@@ -502,6 +538,18 @@ const ProfileRouteChildren: ProfileRouteChildren = {
 const ProfileRouteWithChildren =
   ProfileRoute._addFileChildren(ProfileRouteChildren);
 
+interface RunsRouteChildren {
+  RunsRunIdRoute: typeof RunsRunIdRoute;
+  RunsIndexRoute: typeof RunsIndexRoute;
+}
+
+const RunsRouteChildren: RunsRouteChildren = {
+  RunsRunIdRoute: RunsRunIdRoute,
+  RunsIndexRoute: RunsIndexRoute,
+};
+
+const RunsRouteWithChildren = RunsRoute._addFileChildren(RunsRouteChildren);
+
 interface SettingsRouteChildren {
   SettingsCredentialsRoute: typeof SettingsCredentialsRoute;
   SettingsIndexRoute: typeof SettingsIndexRoute;
@@ -523,9 +571,9 @@ const rootRouteChildren: RootRouteChildren = {
   JobsRoute: JobsRouteWithChildren,
   PreferencesRoute: PreferencesRoute,
   ProfileRoute: ProfileRouteWithChildren,
+  RunsRoute: RunsRouteWithChildren,
   SettingsRoute: SettingsRouteWithChildren,
   ActivityEventIdRoute: ActivityEventIdRoute,
-  RunsRunIdRoute: RunsRunIdRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
