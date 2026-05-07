@@ -26,6 +26,8 @@ import type {
   RetryStageRequest,
   SettingsResponse,
   SettingsUpdateRequest,
+  WorkflowRunSummary,
+  WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
 
 export interface ApiHealthResponse {
@@ -44,6 +46,8 @@ export interface ApiClientPort {
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   restoreJob(jobKey: string): Promise<JobMutationResponse>;
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+
+  workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;
