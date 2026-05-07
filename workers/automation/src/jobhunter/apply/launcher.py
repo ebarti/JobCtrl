@@ -692,6 +692,14 @@ def _build_use_case():
 
     Imported lazily — the use case pulls the `Applied`/`Failed` value
     objects, which only the run-job path needs.
+
+    The process-wide ``InProcessEventBus`` is wired in as the publisher
+    so the use case's ``ApplyRunStarted`` / ``ApplyRunEventRecorded`` /
+    ``ApplicationSubmitted`` / ``ApplicationFailed`` events fan out to
+    the bus, which drives the projection builder's wildcard
+    subscriber.  Saga events are also persisted to ``job_events`` from
+    ``run_job`` after the use case returns, so the projection's
+    ``_collect_apply_events_by_run`` sees the full timeline.
     """
     from jobhunter.domain.apply.process_manager import ApplySaga
     from jobhunter.domain.apply.services import ApplyEligibilityChecker
@@ -700,6 +708,7 @@ def _build_use_case():
         ClaudeCodeCliAdapter,
         LocalChromeAdapter,
     )
+    from jobhunter.infrastructure.events import get_default_publisher
 
     browser_port = LocalChromeAdapter()
     agent_port = ClaudeCodeCliAdapter()
@@ -717,6 +726,7 @@ def _build_use_case():
             max_attempts=int(config.DEFAULTS["max_apply_attempts"])
         ),
         prompt_builder=ApplyPromptBuilder(),
+        publisher=get_default_publisher(),
         saga=saga,
         timeout_seconds=int(config.DEFAULTS.get("apply_timeout", 300)),
     )
@@ -746,6 +756,74 @@ class _NoopApplyRunRepository:
 
     def list_recent(self, tenant_id, *, limit: int = 50):  # pragma: no cover
         return []
+
+
+_SAGA_EVENT_TYPES_PERSISTED: frozenset[str] = frozenset(
+    {
+        "SagaStarted",
+        "BrowserLaunched",
+        "BrowserLaunchFailed",
+        "AgentStarted",
+        "AgentTimedOut",
+        "AgentCrashed",
+        "AgentResult",
+        "AgentEvent",
+    }
+)
+
+
+def _persist_saga_event_timeline(apply_run, *, run_id: str) -> None:
+    """Persist the saga's intermediate timeline into ``job_events``.
+
+    The saga records events on the in-memory ``ApplyRun`` aggregate
+    (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
+    ``AgentTimedOut`` / ``AgentCrashed`` / ``AgentResult`` / per-
+    ``AgentEvent`` entries).  The launcher mirrors them into
+    ``job_events`` keyed by ``run_id`` so the projection's
+    ``_collect_apply_events_by_run`` materialises a complete
+    ``apply_run_projections.events_json`` timeline.
+
+    Terminal lifecycle events (``ApplicationSubmitted`` /
+    ``ApplicationFailed`` / ``DryRunCompleted`` / ``ApplyRunStarted``)
+    are written by ``acquire_job`` / ``mark_result`` / ``release_lock``
+    and are intentionally skipped here to avoid duplicate rows.
+    """
+    if apply_run is None:
+        return
+    events = list(getattr(apply_run, "events", []) or [])
+    if not events:
+        return
+    job_url = str(apply_run.job_id)
+    if not job_url:
+        return
+
+    conn = get_connection()
+    try:
+        for event in events:
+            event_type = str(getattr(event, "event_type", "") or "")
+            if not event_type or event_type not in _SAGA_EVENT_TYPES_PERSISTED:
+                continue
+            payload = dict(getattr(event, "payload", {}) or {})
+            payload["run_id"] = str(run_id)
+            record_job_event(
+                conn,
+                job_url,
+                "apply",
+                event_type,
+                level=str(getattr(event, "level", "info") or "info"),
+                message=getattr(event, "message", None),
+                payload=payload,
+                occurred_at=str(getattr(event, "occurred_at", "") or "") or None,
+            )
+        conn.commit()
+    except Exception:  # noqa: BLE001 — timeline persistence must never break the run
+        logger.exception(
+            "Failed to persist saga event timeline for run %s", run_id
+        )
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _result_to_status_string(result) -> str:
@@ -841,6 +919,12 @@ def run_job(
         run_id=ApplyRunId(run_id),
         worker_dir=worker_dir,
     )
+    # Persist the saga's intermediate event timeline (SagaStarted /
+    # BrowserLaunched / AgentStarted / AgentResult / per-AgentEvent) into
+    # ``job_events`` so the projection's ``_collect_apply_events_by_run``
+    # sees them.  The use case publishes these to the bus too, but the
+    # projection re-reads from ``job_events`` to derive ``apply_run_projections``.
+    _persist_saga_event_timeline(outcome.apply_run, run_id=run_id)
     duration_ms = int((time.time() - start) * 1000)
     if outcome.skipped:
         return "skipped", duration_ms

@@ -256,7 +256,14 @@ def record_job_event(
     occurred_at: str | None = None,
     publisher: EventPublisher | None = None,
 ) -> None:
-    """Append a durable per-job event and optionally publish through the bus.
+    """Append a durable per-job event and publish through the in-process bus.
+
+    Every event fans out through the process-wide ``InProcessEventBus``
+    so wildcard subscribers (notably ``ProjectionBuilder._on_event``)
+    refresh the read-model after each write.  Callers may inject a
+    custom ``publisher`` for tests; the production default is the
+    process-wide singleton from
+    :func:`jobhunter.infrastructure.events.get_default_publisher`.
 
     **Phase-3 deviation from §6.3** (round-1 review M2): the canonical §6.3
     pattern is "dispatch happens AFTER the producing transaction commits",
@@ -285,20 +292,27 @@ def record_job_event(
         """,
         (job_url, stage, event_type, level, message, ts, _json_dumps(payload)),
     )
-    if publisher is not None:
-        event = create_domain_event(
-            event_type=event_type,
-            tenant_id=LOCAL_TENANT,
-            payload={
-                "job_url": job_url,
-                "stage": stage,
-                "level": level,
-                "message": message or "",
-                **(payload or {}),
-            },
-            occurred_at=ts,
-        )
-        publisher.publish(event)
+    if publisher is None:
+        # Default to the process-wide ``InProcessEventBus`` so the
+        # projection builder's wildcard subscriber refreshes after every
+        # write.  Imported lazily so ``state`` stays importable from
+        # bootstrap code that runs before the events package is wired.
+        from jobhunter.infrastructure.events import get_default_publisher
+
+        publisher = get_default_publisher()
+    event = create_domain_event(
+        event_type=event_type,
+        tenant_id=LOCAL_TENANT,
+        payload={
+            "job_url": job_url,
+            "stage": stage,
+            "level": level,
+            "message": message or "",
+            **(payload or {}),
+        },
+        occurred_at=ts,
+    )
+    publisher.publish(event)
 
 
 def record_job_artifact(
