@@ -243,17 +243,49 @@ QA: skipped — automation-only.
 Branch: `worker-reliability/logs-as-artifacts` off
 `worker-reliability/single-stage-state-writer`.
 
-- Wire `state.record_job_artifact` (currently dead-code per the
-  backlog) into the apply / materials / scoring writers so the log
-  files and report files they produce show up in the artifacts list.
-- Drop the `apply_runs.log_path` string field from the workflow-runs
-  projector (PR 4) — log paths now live in `job_artifacts`.
-- TS read-model: `artifact_list_projections` automatically picks
-  these up via the existing projection.
-- Tests: a successful apply run produces an artifact row of kind
-  `apply_log`; a successful score run produces an artifact row of
-  kind `score_report`; UI integration coverage stays at the
-  read-model boundary (no new UI in this PR).
+- Wire `state.record_job_artifact` (previously dead-code per the
+  backlog) into `apply.launcher.mark_result` so the per-worker agent
+  log file (`LOG_DIR/worker-{worker_id}.log`, written by
+  `ClaudeCodeCliAdapter`) shows up as a `job_artifacts` row of kind
+  `apply_log` in the same transaction as the terminal
+  `ApplicationSubmitted` / `ApplicationFailed` / `DryRunCompleted`
+  event. The UPSERT key on `(job_url, stage, artifact_type, path)`
+  keeps the call idempotent across the worker's job sequence.
+- Producer survey for the rest of the pipeline:
+  - `scoring.scorer` writes no files — reasoning lives in `job_scores`
+    only. No artifact to register; deferred to a follow-up if/when the
+    scorer starts emitting an on-disk report.
+  - `scoring.tailor`, `scoring.cover_letter`, and the
+    `LatexPdfAdapter` / `PlaywrightHtmlPdfAdapter` PDF renderers
+    already register their primary outputs (resume `.txt`, cover
+    letter `.txt`, resume PDF, cover letter PDF) through
+    `SqliteMaterialsRepository` into `job_materials_artifacts`, which
+    `ProjectionBuilder._load_artifacts` already merges into
+    `artifact_list_projections`. No additional wiring needed.
+- TS read-model: `artifact_list_projections` automatically picks the
+  new `apply_log` rows up via the existing projection — no schema
+  change.
+- Tests: per-writer coverage in
+  `tests/test_apply_log_artifact_registration.py` —
+  `mark_result(applied)`, `mark_result(failed)`, and
+  `mark_result(dry_run)` each record an `apply_log` artifact (and the
+  `applied` test refreshes the projection and asserts the row appears
+  in `artifact_list_projections`); a manual `mark_result` without a
+  `worker_id` does NOT fabricate an artifact; two consecutive runs
+  from the same worker UPSERT to a single row whose `size_bytes`
+  reflects the appended file.
+
+Out of scope:
+- `score_report` registration — scoring is in-memory + DB only today;
+  introducing on-disk reports just to register them is a behaviour
+  change that exceeds this PR.
+- Auxiliary tailor side-files (`{prefix}_REPORT.json`,
+  `{prefix}_JOB.txt`) and the LaTeX `.tex` source emitted next to the
+  resume PDF — primary tailored materials are already registered;
+  surfacing the auxiliaries would require a new artifact kind.
+- Vestigial `apply_runs.log_path` cleanup — already done in PR 4 (the
+  table is dropped).
+- `DryRunComplete` event addition (Frontend Tooling backlog).
 
 QA: skipped — automation-only writer changes; artifacts list is
 already fully tested.

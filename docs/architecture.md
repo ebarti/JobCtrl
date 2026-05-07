@@ -391,6 +391,11 @@ projection tables (above) are also stored here.
 Generated resumes, cover letters, PDFs, logs, templates, and imported PDFs stay
 on the local filesystem. They are registered in `job_artifacts` and
 `job_materials_artifacts` and surfaced via `artifact_list_projections`.
+The apply launcher records each per-worker agent log
+(`LOG_DIR/worker-{worker_id}.log`, written by `ClaudeCodeCliAdapter`) as a
+`job_artifacts` row of kind `apply_log` in the same transaction as the
+terminal `ApplicationSubmitted` / `ApplicationFailed` / `DryRunCompleted`
+event (PR 7 of the Temporal stack).
 
 ## Core Data Flow
 
