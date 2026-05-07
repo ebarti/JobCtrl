@@ -141,18 +141,28 @@ contract is preserved, so the UI continues to function unchanged.
 
 Branch: `temporal/apply-runs-collapse` off `temporal/jsonrpc-cutover`.
 
-- Drop the bespoke `apply_runs` table writes from
-  `workers/automation/src/jobhunter/infrastructure/apply/sqlite_repository.py`
-  and friends.
-- Add a workflow-history projector at
-  `workers/automation/src/jobhunter/infrastructure/projections/workflow_runs_projector.py`
-  that polls completed workflow histories and writes the
-  `apply_run_projections` rows the TS read-model already consumes.
-- TS `apps/api/src/projections.ts` keeps reading
-  `apply_run_projections`; the source columns may be renamed but the
-  projection contract remains the existing shape.
-- Migration: drop the `apply_runs` table in a single SQL migration
-  added to `workers/automation/src/jobhunter/database.py` (single
+Shipped via Approach A (event-driven projection). The launcher and
+`SubmitApplicationUseCase` already publish `ApplyRunStarted` /
+`ApplicationSubmitted` / `ApplicationFailed` / `DryRunCompleted` events
+through `record_job_event`; the Python `ProjectionBuilder` now derives
+`apply_run_projections` rows directly from `job_events` keyed by
+`payload.run_id`. The workflow-history poller (Approach B) was not
+needed.
+
+- Delete the bespoke `apply_runs` table writes (drop
+  `SqliteApplyRunRepository` entirely). The launcher's queue locks
+  move to `job_stage_states.apply.state`; lifecycle events feed
+  `apply_run_projections` directly.
+- Extend `ProjectionBuilder._rebuild_apply_runs` to source the
+  projection rows from `job_events` (no second poller). The TS
+  read-model keeps reading `apply_run_projections`.
+- TS `apps/api/src/projections.ts` deletes the
+  `apply_runs → apply_run_projections` projector (Python now owns it)
+  and reads `apply_run_projections` directly via `loadLatestApplyRun`
+  / `recentApplyRuns`.
+- Migration: drop the `apply_runs` + `apply_run_events` tables in a
+  single SQL block added to `workers/automation/src/jobhunter/database.py`
+  (single
   user, no data preservation requirement — but call this out
   explicitly in the PR description so the user knows their existing
   apply-run history is wiped).
