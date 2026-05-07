@@ -27,10 +27,11 @@ dependencies = [
     "pypdf>=5.0",
     "pyyaml>=6.0",
     "pandas>=2.0",
+    "temporalio>=1.6",
     ]
 
 [project.optional-dependencies]
-dev = ["build>=1.2", "pytest>=7.0", "ruff>=0.1"]
+dev = ["build>=1.2", "pytest>=7.0", "pytest-asyncio>=0.23", "ruff>=0.1"]
 
 [project.scripts]
 jobhunter = "jobhunter.cli:app"
@@ -53,3 +54,6 @@ artifacts = ["src/jobhunter/config/*.yaml"]
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
