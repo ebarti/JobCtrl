@@ -8,6 +8,10 @@ from typing import Any
 from temporalio import workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import (
+    SandboxedWorkflowRunner,
+    SandboxRestrictions,
+)
 
 from jobhunter.infrastructure.temporal.task_queues import JOBHUNTER_TASK_QUEUE
 
@@ -19,6 +23,14 @@ class _BootstrapNoOpWorkflow:
     @workflow.run
     async def run(self) -> str:
         return "noop"
+
+
+# Pass jobhunter through the sandbox: workflow modules import activity dataclasses
+# whose modules transitively pull in rich/sqlite/etc. Activities run outside the
+# sandbox, so determinism is preserved.
+_PASSTHROUGH_RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules(
+    "jobhunter"
+)
 
 
 def build_worker(
@@ -38,4 +50,7 @@ def build_worker(
         task_queue=task_queue,
         workflows=workflow_list,
         activities=activity_list,
+        workflow_runner=SandboxedWorkflowRunner(
+            restrictions=_PASSTHROUGH_RESTRICTIONS,
+        ),
     )
