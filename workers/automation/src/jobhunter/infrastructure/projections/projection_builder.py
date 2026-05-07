@@ -6,7 +6,10 @@ context.  In the local-first architecture this is a synchronous,
 in-process subscriber: the wildcard handler runs on every published
 event and rebuilds the affected projection rows from canonical
 aggregate state (jobs / job_stage_states / job_scores / job_materials /
-job_enrichments / apply_runs / job_artifacts / jobhunter_deleted_jobs).
+job_enrichments / job_artifacts / jobhunter_deleted_jobs) plus the
+``job_events`` row stream (which now sources ``apply_run_projections``
+directly — PR 4 of the Temporal stack collapsed the bespoke
+``apply_runs`` table into the workflow run history).
 
 This is intentionally **derive-from-canonical** rather than
 **derive-from-event-payload**: the projection refresh re-reads the
@@ -192,9 +195,12 @@ class ProjectionBuilder:
             self._conn.commit()
             return 0
 
+        # PR 4 of the Temporal stack: rebuild ``apply_run_projections``
+        # first so ``_rebuild_job`` can read the freshly derived apply
+        # lifecycle status when it materialises ``job_list_projections``.
+        self._rebuild_apply_runs()
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
-        self._rebuild_apply_runs()
         self._rebuild_dashboard()
         if max_event_id > watermark:
             self._watermarks.set(PROJECTION_NAME, max_event_id)
@@ -494,13 +500,18 @@ class ProjectionBuilder:
         }
 
     def _load_latest_apply_run(self, job_url: str) -> dict:
+        # PR 4 of the Temporal stack: ``apply_run_projections`` is the
+        # canonical apply lifecycle row (sourced from ``job_events`` by
+        # ``_rebuild_apply_runs`` below). ``_rebuild_job`` reads it
+        # back here to derive ``apply_status`` / ``applied_at`` for
+        # ``job_list_projections``.
         try:
             row = self._conn.execute(
                 """
                 SELECT run_id, status, result, started_at, finished_at,
                        worker_id, model, dry_run, duration_ms
-                FROM apply_runs
-                WHERE job_url = ?
+                FROM apply_run_projections
+                WHERE job_id = ?
                 ORDER BY started_at DESC, run_id DESC
                 LIMIT 1
                 """,
@@ -637,7 +648,7 @@ class ProjectionBuilder:
         try:
             dry_runs = int(
                 self._conn.execute(
-                    "SELECT COUNT(*) FROM apply_runs WHERE dry_run = 1"
+                    "SELECT COUNT(*) FROM apply_run_projections WHERE dry_run = 1"
                 ).fetchone()[0]
             )
         except sqlite3.OperationalError:
@@ -739,67 +750,214 @@ class ProjectionBuilder:
     # ----------------------------------------------------------- apply runs
 
     def _rebuild_apply_runs(self) -> None:
+        """Materialise ``apply_run_projections`` from ``job_events``.
+
+        PR 4 of the Temporal stack collapsed the bespoke ``apply_runs``
+        table into the workflow run history. Each apply lifecycle is now
+        a sequence of ``job_events`` rows keyed by ``run_id`` in the
+        event payload:
+
+          * ``ApplyRunStarted``      — opens a row.
+          * ``ApplicationSubmitted`` — terminal: succeeded.
+          * ``ApplicationFailed``    — terminal: failed (or another
+                                       non-applied SubmissionResult kind).
+          * ``DryRunCompleted``      — terminal: dry_run_complete.
+          * Any other apply-stage event with a ``run_id`` — appended to
+            the per-run ``events_json`` timeline.
+        """
+        events_by_run = self._collect_apply_events_by_run()
+        if not events_by_run:
+            return
+        for run_id, events in events_by_run.items():
+            projection = self._project_run_from_events(run_id, events)
+            if projection is None:
+                continue
+            self._store.upsert_apply_run(projection)
+
+    def _collect_apply_events_by_run(self) -> dict[str, list[dict]]:
         try:
             rows = self._conn.execute(
                 """
-                SELECT run_id, job_url, site, title, status, result, dry_run,
-                       worker_id, model, started_at, finished_at, duration_ms
-                FROM apply_runs
-                ORDER BY started_at DESC
+                SELECT job_url, event_type, level, message, occurred_at,
+                       payload_json
+                FROM job_events
+                WHERE stage = 'apply'
+                ORDER BY event_id ASC
                 """
             ).fetchall()
         except sqlite3.OperationalError:
-            return
+            return {}
+        out: dict[str, list[dict]] = {}
         for row in rows:
-            run_id = _row_str(row, "run_id")
+            payload = _json_loads(_row_nullable_str(row, "payload_json"), {})
+            if not isinstance(payload, dict):
+                continue
+            run_id = payload.get("run_id")
             if not run_id:
                 continue
-            job_url = _row_str(row, "job_url")
-            title = _row_str(row, "title") or "Untitled"
-            site = _row_str(row, "site")
-            employer = _company_name(site, job_url)
-            events = self._load_run_events(run_id)
-            self._store.upsert_apply_run(
-                ApplyRunProjection(
-                    run_id=run_id,
-                    tenant_id=self._tenant_id,
-                    job_id=job_url,
-                    job_title=title,
-                    job_employer=employer,
-                    status=_row_str(row, "status") or "unknown",
-                    result=_row_nullable_str(row, "result"),
-                    dry_run=bool(_row_nullable_int(row, "dry_run") or 0),
-                    worker_id=_row_nullable_int(row, "worker_id"),
-                    model=_row_nullable_str(row, "model"),
-                    started_at=_row_nullable_str(row, "started_at"),
-                    finished_at=_row_nullable_str(row, "finished_at"),
-                    duration_ms=_row_nullable_int(row, "duration_ms"),
-                    events=tuple(events),
-                )
-            )
-
-    def _load_run_events(self, run_id: str) -> list[dict]:
-        try:
-            rows = self._conn.execute(
-                """
-                SELECT * FROM apply_run_events
-                WHERE run_id = ?
-                ORDER BY rowid ASC
-                """,
-                (run_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return []
-        events: list[dict] = []
-        for row in rows:
-            events.append(
+            run_id_str = str(run_id)
+            out.setdefault(run_id_str, []).append(
                 {
-                    key: row[key]
-                    for key in row.keys()
-                    if not isinstance(row[key], (bytes, bytearray))
+                    "job_url": _row_nullable_str(row, "job_url"),
+                    "event_type": _row_str(row, "event_type"),
+                    "level": _row_nullable_str(row, "level") or "info",
+                    "message": _row_nullable_str(row, "message"),
+                    "occurred_at": _row_nullable_str(row, "occurred_at"),
+                    "payload": payload,
                 }
             )
-        return events
+        return out
+
+    _TERMINAL_EVENT_STATUS: dict[str, tuple[str, str | None]] = {
+        "ApplicationSubmitted": ("succeeded", "applied"),
+        "DryRunCompleted": ("dry_run_complete", "dry_run_complete"),
+        "ApplyManualSkip": ("manual", "manual"),
+        "LockReleased": ("failed", "failed"),
+    }
+
+    _STATUS_FROM_RESULT: dict[str, str] = {
+        "applied": "succeeded",
+        "failed": "failed",
+        "captcha": "captcha",
+        "login_issue": "login_issue",
+        "expired": "expired",
+        "manual": "manual",
+        "dry_run_complete": "dry_run_complete",
+    }
+
+    def _project_run_from_events(
+        self, run_id: str, events: list[dict]
+    ) -> ApplyRunProjection | None:
+        if not events:
+            return None
+        job_url = ""
+        title = ""
+        site = ""
+        status = "starting"
+        result: str | None = None
+        started_at: str | None = None
+        finished_at: str | None = None
+        duration_ms: int | None = None
+        worker_id: int | None = None
+        model: str | None = None
+        dry_run = False
+
+        for event in events:
+            payload = event["payload"]
+            event_type = event["event_type"]
+            if event["job_url"]:
+                job_url = event["job_url"]
+
+            if event_type == "ApplyRunStarted":
+                started_at = (
+                    str(payload.get("started_at"))
+                    if payload.get("started_at") is not None
+                    else event.get("occurred_at")
+                )
+                model = (
+                    str(payload["model"])
+                    if isinstance(payload.get("model"), str) and payload.get("model")
+                    else model
+                )
+                worker = payload.get("worker_id")
+                if isinstance(worker, (int, float)):
+                    worker_id = int(worker)
+                elif isinstance(worker, str) and worker.isdigit():
+                    worker_id = int(worker)
+                if "dry_run" in payload:
+                    dry_run = bool(payload.get("dry_run"))
+                status = "starting"
+            elif event_type == "ApplyRunInProgress":
+                if status == "starting":
+                    status = "in_progress"
+            elif event_type in self._TERMINAL_EVENT_STATUS:
+                term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]
+                status = term_status
+                result = (
+                    str(payload.get("result"))
+                    if isinstance(payload.get("result"), str)
+                    else term_result
+                )
+                finished_at = (
+                    str(payload.get("finished_at"))
+                    if payload.get("finished_at") is not None
+                    else event.get("occurred_at")
+                )
+                if "duration_ms" in payload:
+                    try:
+                        duration_ms = int(payload["duration_ms"])
+                    except (TypeError, ValueError):
+                        pass
+                if event_type == "DryRunCompleted":
+                    dry_run = True
+            elif event_type == "ApplicationFailed":
+                # Payload may carry the SubmissionResult kind explicitly.
+                kind = (
+                    payload.get("result", {}).get("kind")
+                    if isinstance(payload.get("result"), dict)
+                    else (payload.get("result") if isinstance(payload.get("result"), str) else None)
+                )
+                status = self._STATUS_FROM_RESULT.get(str(kind), "failed") if kind else "failed"
+                result = str(kind) if kind else "failed"
+                finished_at = (
+                    str(payload.get("finished_at"))
+                    if payload.get("finished_at") is not None
+                    else event.get("occurred_at")
+                )
+                if "duration_ms" in payload:
+                    try:
+                        duration_ms = int(payload["duration_ms"])
+                    except (TypeError, ValueError):
+                        pass
+
+        if not job_url:
+            return None
+
+        # Hydrate denormalised job columns from the parent ``jobs`` row
+        # so the read-side widgets render real values rather than
+        # "Untitled" / "Unknown company".
+        try:
+            meta = self._conn.execute(
+                "SELECT title, site FROM jobs WHERE url = ? LIMIT 1",
+                (job_url,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            meta = None
+        if meta is not None:
+            title = _row_str(meta, "title") or title
+            site = _row_str(meta, "site") or site
+
+        employer = _company_name(site, job_url)
+
+        events_payload: list[dict] = []
+        for event in events:
+            entry = {
+                "event_type": event["event_type"],
+                "level": event["level"],
+                "occurred_at": event["occurred_at"],
+            }
+            if event["message"]:
+                entry["message"] = event["message"]
+            if event["payload"]:
+                entry["payload"] = event["payload"]
+            events_payload.append(entry)
+
+        return ApplyRunProjection(
+            run_id=run_id,
+            tenant_id=self._tenant_id,
+            job_id=job_url,
+            job_title=title or "Untitled",
+            job_employer=employer,
+            status=status,
+            result=result,
+            dry_run=dry_run,
+            worker_id=worker_id,
+            model=model,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            events=tuple(events_payload),
+        )
 
 
 # ============================================================== helpers

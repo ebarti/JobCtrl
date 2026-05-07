@@ -99,15 +99,22 @@ def test_blocked_count(conn: sqlite3.Connection) -> None:
 
 def test_applied_count_via_apply_status(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/e")
-    conn.execute(
-        """
-        INSERT INTO apply_runs (run_id, job_url, status, started_at,
-                                updated_at, finished_at)
-        VALUES (?, ?, 'succeeded', ?, ?, ?)
-        """,
-        ("run-e", "https://example.com/e", utc_now(), utc_now(), utc_now()),
+    started = utc_now()
+    finished = utc_now()
+    record_job_event(
+        conn,
+        "https://example.com/e",
+        "apply",
+        "ApplyRunStarted",
+        payload={"run_id": "run-e", "started_at": started},
     )
-    record_job_event(conn, "https://example.com/e", "apply", "ApplicationSubmitted")
+    record_job_event(
+        conn,
+        "https://example.com/e",
+        "apply",
+        "ApplicationSubmitted",
+        payload={"run_id": "run-e", "finished_at": finished, "result": "applied"},
+    )
     conn.commit()
     ProjectionBuilder(conn).refresh()
     row = _dashboard(conn)

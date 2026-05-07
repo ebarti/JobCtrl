@@ -135,15 +135,20 @@ def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
     _seed_job(conn, url)
     started = "2026-05-04T13:00:00+00:00"
     finished = "2026-05-04T13:05:00+00:00"
-    conn.execute(
-        """
-        INSERT INTO apply_runs (run_id, job_url, status, started_at,
-                                updated_at, finished_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        ("run-1", url, "succeeded", started, started, finished),
+    record_job_event(
+        conn,
+        url,
+        "apply",
+        "ApplyRunStarted",
+        payload={"run_id": "run-1", "started_at": started},
     )
-    record_job_event(conn, url, "apply", "ApplicationSubmitted")
+    record_job_event(
+        conn,
+        url,
+        "apply",
+        "ApplicationSubmitted",
+        payload={"run_id": "run-1", "finished_at": finished, "result": "applied"},
+    )
     conn.commit()
 
     ProjectionBuilder(conn).refresh()
