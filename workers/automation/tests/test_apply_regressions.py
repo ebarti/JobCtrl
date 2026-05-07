@@ -131,7 +131,7 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
         },
     )
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     try:
         monkeypatch.setattr(
             "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
@@ -219,7 +219,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
             duration_ms=123,
             task_id="run-test",
         )
-        ProjectionBuilder(get_connection(db_path)).refresh()
+        ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
 
         row = conn.execute(
             "SELECT apply_status, applied_at, apply_task_id FROM jobs WHERE url = ?",
@@ -301,7 +301,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(
 
         # (c) apply_run_projections has a row for the run_id with dry_run=1
         # and a sensible terminal status, after refresh.
-        ProjectionBuilder(get_connection(db_path)).refresh()
+        ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
         ar = conn.execute(
             "SELECT run_id, status, dry_run FROM apply_run_projections "
             "WHERE job_id = ?",
@@ -385,7 +385,7 @@ def test_orphan_rescue_keeps_original_run_id(tmp_path, monkeypatch):
         release_lock(job["url"])
 
         # 3. Refresh the projection.
-        ProjectionBuilder(get_connection(db_path)).refresh()
+        ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
 
         # 4. The projection row uses the ORIGINAL run_id and is failed.
         rows = conn.execute(
@@ -596,7 +596,7 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(
             },
         )
         conn.commit()
-        ProjectionBuilder(conn).refresh()
+        ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
         ar = conn.execute(
             "SELECT run_id, status FROM apply_run_projections WHERE job_id = ?",
@@ -606,6 +606,112 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(
         assert ar["run_id"] == "run-fresh"
         assert ar["status"] == "succeeded"
     finally:
+        reset_default_publisher()
+        close_connection(db_path)
+
+
+def test_record_job_event_from_worker_thread_refreshes_projection(
+    tmp_path,
+):
+    """Reviewer-reported regression (PR 37 High, second iteration):
+    when a worker thread calls ``record_job_event`` (now defaulted to
+    publish through the bus), the wildcard subscriber
+    ``ProjectionBuilder._on_event`` must refresh the projection — even
+    though the bootstrap thread that wired the subscriber owns a
+    different SQLite connection.
+
+    Without the thread-local connection-factory fix, the subscriber
+    blows up with ``sqlite3.ProgrammingError`` (SQLite objects can only
+    be used in the thread that created them) and the broad ``except``
+    in ``_on_event`` swallows it — the projection never updates.
+    """
+    import time as _time
+
+    from jobhunter.infrastructure.events import (
+        get_default_publisher,
+        reset_default_publisher,
+    )
+
+    db_path = Path(tmp_path) / "jobs.db"
+    bootstrap_conn = init_db(db_path)
+    _insert_ready_job(bootstrap_conn)
+    reset_default_publisher()
+
+    # Wire the projection builder on the bootstrap thread the same way
+    # ``cli._bootstrap`` does in production: pass a thread-local
+    # connection factory so the wildcard subscriber can refresh from
+    # any worker thread.
+    builder = ProjectionBuilder(conn_factory=lambda: get_connection(db_path))
+    subscription = builder.subscribe_to(get_default_publisher())
+
+    worker_errors: list[BaseException] = []
+
+    def _worker() -> None:
+        try:
+            worker_conn = get_connection(db_path)
+            # Two events keyed by the same run_id so the projection
+            # builder has a complete starting + terminal pair to fold.
+            record_job_event(
+                worker_conn,
+                "https://example.com/job",
+                "apply",
+                "ApplyRunStarted",
+                payload={
+                    "run_id": "from-worker",
+                    "started_at": "2026-05-04T13:00:00+00:00",
+                    "model": "haiku",
+                    "worker_id": 7,
+                },
+            )
+            record_job_event(
+                worker_conn,
+                "https://example.com/job",
+                "apply",
+                "ApplicationSubmitted",
+                payload={
+                    "run_id": "from-worker",
+                    "result": "applied",
+                    "finished_at": "2026-05-04T13:01:00+00:00",
+                    "duration_ms": 60000,
+                },
+            )
+            worker_conn.commit()
+        except BaseException as exc:  # noqa: BLE001 — propagate to assertions
+            worker_errors.append(exc)
+
+    t = threading.Thread(target=_worker, name="apply-worker-1")
+    t.start()
+    t.join(timeout=5.0)
+    assert not t.is_alive(), "worker thread did not finish"
+    assert not worker_errors, worker_errors
+
+    try:
+        # Poll briefly — the wildcard subscriber commits inline on the
+        # worker thread so the projection should land within a tick or
+        # two.  1s is plenty.
+        deadline = _time.monotonic() + 1.0
+        ar = None
+        while _time.monotonic() < deadline:
+            ar = bootstrap_conn.execute(
+                "SELECT run_id, status FROM apply_run_projections "
+                "WHERE job_id = ?",
+                ("https://example.com/job",),
+            ).fetchone()
+            if ar is not None:
+                break
+            _time.sleep(0.05)
+
+        assert ar is not None, (
+            "apply_run_projections row never appeared — "
+            "the wildcard subscriber did not refresh on the worker thread"
+        )
+        assert ar["run_id"] == "from-worker"
+        assert ar["status"] == "succeeded"
+    finally:
+        try:
+            subscription.unsubscribe()
+        except Exception:  # noqa: BLE001
+            pass
         reset_default_publisher()
         close_connection(db_path)
 
@@ -716,7 +822,7 @@ def test_apply_saga_writes_full_event_timeline_to_job_events(
             assert recorded[evt_type].get("run_id") == run_id, (evt_type, recorded[evt_type])
 
         # apply_run_projections.events_json carries the full timeline.
-        ProjectionBuilder(get_connection(db_path)).refresh()
+        ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
         ar = conn.execute(
             "SELECT events_json, status FROM apply_run_projections WHERE run_id = ?",
             (run_id,),
@@ -799,7 +905,7 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
             ("https://example.com/job-deleted", "2026-05-04T13:05:00+00:00"),
         )
         conn.commit()
-        ProjectionBuilder(conn).refresh()
+        ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
         dash = conn.execute(
             "SELECT dry_runs FROM dashboard_projections LIMIT 1"

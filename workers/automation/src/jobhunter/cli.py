@@ -57,16 +57,21 @@ def _bootstrap() -> None:
     """
     global _projection_subscription
     from jobhunter.config import load_env, ensure_dirs
-    from jobhunter.database import init_db
+    from jobhunter.database import get_connection, init_db
     from jobhunter.infrastructure.projections.projection_builder import (
         ProjectionBuilder,
     )
 
     load_env()
     ensure_dirs()
-    conn = init_db()
+    init_db()
     try:
-        builder = ProjectionBuilder(conn)
+        # Pass a thread-local connection factory so the wildcard
+        # subscriber (which fires on whichever thread published the
+        # event — including ``ThreadPoolExecutor`` worker threads in
+        # ``apply --workers > 1``) opens a connection on its own
+        # thread instead of reusing the bootstrap-thread handle.
+        builder = ProjectionBuilder(conn_factory=get_connection)
         builder.refresh()
         if _projection_subscription is None:
             from jobhunter.infrastructure.events import get_default_publisher

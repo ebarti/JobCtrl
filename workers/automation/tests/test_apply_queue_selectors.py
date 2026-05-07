@@ -101,7 +101,7 @@ def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
     _emit_started(conn, "https://example.com/job", "run-1")
     _emit_succeeded(conn, "https://example.com/job", "run-1")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     pending = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     applied = get_jobs_by_stage(conn, "applied")
@@ -116,7 +116,7 @@ def test_pending_apply_excludes_jobs_with_in_progress_apply_run(conn):
     set_stage_state(conn, "https://example.com/job", "apply", "running", started_at="t0")
     _emit_started(conn, "https://example.com/job", "run-2")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     pending = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     assert pending == []
@@ -140,7 +140,7 @@ def test_pending_apply_includes_jobs_with_failed_apply_run(conn):
     _emit_started(conn, "https://example.com/job", "run-3")
     _emit_failed(conn, "https://example.com/job", "run-3")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     pending = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     assert len(pending) == 1
@@ -163,7 +163,7 @@ def test_get_stats_reflects_apply_run_projections(conn):
     _emit_started(conn, "https://example.com/job", "run-stats")
     _emit_succeeded(conn, "https://example.com/job", "run-stats")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     stats_after = get_stats(conn)
     assert stats_after["applied"] == 1
@@ -223,7 +223,7 @@ def test_apply_join_tie_breaks_by_run_id_on_same_started_at(conn):
         },
     )
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     matching = [r for r in rows if r["url"] == "https://example.com/job-tied"]
@@ -250,7 +250,7 @@ def test_pending_apply_promotes_apply_status_into_row_dict(conn):
     _emit_started(conn, "https://example.com/job-with-fail", "run-fail")
     _emit_failed(conn, "https://example.com/job-with-fail", "run-fail")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     matching = [r for r in rows if r["url"] == "https://example.com/job-with-fail"]

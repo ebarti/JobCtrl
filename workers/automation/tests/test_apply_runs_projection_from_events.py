@@ -78,7 +78,7 @@ def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT * FROM apply_run_projections WHERE run_id = ?", ("run-1",)
@@ -123,7 +123,7 @@ def test_submitted_event_terminates_row_as_succeeded(
     )
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT * FROM apply_run_projections WHERE run_id = ?", ("run-2",)
@@ -162,7 +162,7 @@ def test_failed_event_terminates_row_as_failed(conn: sqlite3.Connection) -> None
     )
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT * FROM apply_run_projections WHERE run_id = ?", ("run-3",)
@@ -200,7 +200,7 @@ def test_dry_run_completed_event_terminates_row(conn: sqlite3.Connection) -> Non
     )
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT * FROM apply_run_projections WHERE run_id = ?", ("run-4",)
@@ -241,7 +241,7 @@ def test_event_timeline_collected_per_run(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT events_json FROM apply_run_projections WHERE run_id = ?",
@@ -282,7 +282,7 @@ def test_projection_rebuild_is_deterministic(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     builder.refresh()
     row_first = conn.execute(
         "SELECT * FROM apply_run_projections WHERE run_id = ?",

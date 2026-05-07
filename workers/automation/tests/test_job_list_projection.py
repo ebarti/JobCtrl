@@ -61,7 +61,7 @@ def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
     record_job_event(conn, url, "discover", "JobDiscovered", message="discovered")
     conn.commit()
 
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     refreshed = builder.refresh()
 
     assert refreshed >= 1
@@ -78,7 +78,7 @@ def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
 def test_pipeline_progress_advances_current_stage(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/2"
     _seed_job(conn, url, title="Platform Engineer")
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
 
     set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
     record_job_event(conn, url, "discover", "StageCompleted")
@@ -120,7 +120,7 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     record_job_event(conn, url, "score", "JobScored")
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT fit_score, score_reasoning FROM job_list_projections WHERE job_id = ?",
@@ -151,7 +151,7 @@ def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT apply_status, applied_at FROM job_list_projections WHERE job_id = ?",
@@ -183,7 +183,7 @@ def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
     record_job_event(conn, url, "discover", "JobDeleted")
     conn.commit()
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT deleted_at FROM job_list_projections WHERE job_id = ?", (url,)
@@ -202,7 +202,7 @@ def test_initial_backfill_picks_up_pre_event_history(conn: sqlite3.Connection) -
     _seed_job(conn, url, title="Legacy Engineer")
     # No record_job_event call — pure backfill path.
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
         "SELECT title FROM job_list_projections WHERE job_id = ?", (url,)
@@ -216,7 +216,7 @@ def test_refresh_is_idempotent(conn: sqlite3.Connection) -> None:
     record_job_event(conn, url, "discover", "JobDiscovered")
     conn.commit()
 
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     builder.refresh()
     builder.refresh()
     builder.refresh()

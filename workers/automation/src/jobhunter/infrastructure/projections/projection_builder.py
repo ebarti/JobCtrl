@@ -34,10 +34,13 @@ rows.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timezone
+from typing import Callable
 
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.operations.projections import (
@@ -94,19 +97,43 @@ class ProjectionBuilder:
     :meth:`refresh` after the canonical write so the derived projections
     catch up.  Tests can also drive it manually via :meth:`refresh` after
     seeding data.
+
+    The builder takes a ``conn_factory`` rather than a fixed
+    :class:`sqlite3.Connection` because the in-process bus's wildcard
+    subscriber (``_on_event``) fires synchronously on whatever thread
+    published the event — and SQLite connections are thread-bound.
+    The factory lets ``_on_event`` open a per-call connection on the
+    publishing thread (see ``get_connection`` in
+    :mod:`jobhunter.database`, which is itself thread-local-cached).
+
+    For single-threaded callers (CLI bootstrap, tests) the factory can
+    legitimately return the same shared connection on every call:
+    ``ProjectionBuilder(conn_factory=lambda: conn)``.
     """
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
         *,
+        conn_factory: Callable[[], sqlite3.Connection],
         tenant_id: TenantId = LOCAL_TENANT,
     ) -> None:
-        self._conn = conn
+        self._conn_factory = conn_factory
         self._tenant_id: TenantId = tenant_id
-        ensure_projection_tables(conn)
-        self._store = SqliteProjectionStore(conn)
-        self._watermarks = SqliteEventWatermarkRepository(conn)
+        # Thread-local binding scope for refresh().  Each thread that
+        # calls refresh() (or _on_event) gets its own conn / store /
+        # watermarks rooted at the connection the factory returned on
+        # that thread.  This is necessary because the wildcard
+        # subscriber fires on whatever thread published the event.
+        self._local = threading.local()
+        # Schema setup runs once on construction.  We pull a connection
+        # from the factory and intentionally do **not** close it: when
+        # the factory returns a thread-local cached handle (production)
+        # or a shared test handle (``lambda: conn``), closing here would
+        # break subsequent callers.  The factory is the right place to
+        # own connection lifetime.
+        boot_conn = conn_factory()
+        ensure_projection_tables(boot_conn)
+        boot_conn.commit()
 
     # ------------------------------------------------------------ subscription
 
@@ -115,12 +142,74 @@ class ProjectionBuilder:
         return publisher.subscribe(None, self._on_event)
 
     def _on_event(self, event: DomainEvent) -> None:
+        # Open a thread-local connection via the factory so the refresh
+        # runs on whichever thread published the event.  We deliberately
+        # do **not** close the connection here: in production the
+        # factory is :func:`jobhunter.database.get_connection` which
+        # returns the thread-local cached handle that the publishing
+        # caller is itself using — closing it would yank the conn out
+        # from under the writer.  Tests pass ``lambda: conn`` (shared
+        # handle) for the same reason.  The factory owns connection
+        # lifetime; the builder must never close.
         try:
-            self.refresh()
+            conn = self._conn_factory()
+            self._refresh(conn)
         except Exception:  # noqa: BLE001 — projection failure must not break write
+            # ``log.exception`` (=== ``log.error(..., exc_info=True)``)
+            # records the full traceback.  A silent swallow here is
+            # what previously hid the cross-thread ProgrammingError.
             log.exception(
                 "ProjectionBuilder failed to refresh after %s", event.event_type
             )
+
+    # ----------------------------------------------------------- thread-local
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            raise RuntimeError(
+                "ProjectionBuilder._conn accessed outside a refresh scope"
+            )
+        return conn
+
+    @property
+    def _store(self) -> SqliteProjectionStore:
+        store = getattr(self._local, "store", None)
+        if store is None:
+            raise RuntimeError(
+                "ProjectionBuilder._store accessed outside a refresh scope"
+            )
+        return store
+
+    @property
+    def _watermarks(self) -> SqliteEventWatermarkRepository:
+        watermarks = getattr(self._local, "watermarks", None)
+        if watermarks is None:
+            raise RuntimeError(
+                "ProjectionBuilder._watermarks accessed outside a refresh scope"
+            )
+        return watermarks
+
+    @contextlib.contextmanager
+    def _bind(self, conn: sqlite3.Connection):
+        """Bind ``conn`` (+ derived adapters) to thread-local state.
+
+        Restores any prior binding on exit so reentrant refreshes from
+        the same thread do not clobber each other.
+        """
+        prev_conn = getattr(self._local, "conn", None)
+        prev_store = getattr(self._local, "store", None)
+        prev_watermarks = getattr(self._local, "watermarks", None)
+        self._local.conn = conn
+        self._local.store = SqliteProjectionStore(conn)
+        self._local.watermarks = SqliteEventWatermarkRepository(conn)
+        try:
+            yield
+        finally:
+            self._local.conn = prev_conn
+            self._local.store = prev_store
+            self._local.watermarks = prev_watermarks
 
     # ----------------------------------------------------------------- refresh
 
@@ -129,7 +218,25 @@ class ProjectionBuilder:
 
         Returns the number of dirty jobs processed.  Idempotent: running
         twice in a row produces the same projection state.
+
+        External callers (CLI bootstrap, tests) drive this directly; the
+        connection comes from the factory and is **not** closed here —
+        the bootstrap path reuses a thread-local cached connection
+        (``get_connection`` in :mod:`jobhunter.database`) and tests
+        commonly pass ``lambda: conn`` so the same shared handle is
+        returned every call.  Only :meth:`_on_event` owns the close
+        because it opens a per-event connection on whichever thread
+        published the event.
         """
+        conn = self._conn_factory()
+        return self._refresh(conn)
+
+    def _refresh(self, conn: sqlite3.Connection) -> int:
+        """Refresh against an already-opened connection (used by ``_on_event``)."""
+        with self._bind(conn):
+            return self._refresh_impl()
+
+    def _refresh_impl(self) -> int:
         watermark = self._watermarks.get(PROJECTION_NAME)
         rows = self._conn.execute(
             """
