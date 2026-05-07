@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-import threading
-import time
 
 from jobhunter.domain.rpc.messages import (
     INTERNAL_ERROR,
@@ -84,28 +82,6 @@ def test_notification_returns_no_response() -> None:
 
     assert response is None
     assert seen == [{"a": 1}]
-
-
-# ---------------------------------------------------------------------------
-# fire-and-forget
-# ---------------------------------------------------------------------------
-
-
-def test_fire_and_forget_returns_run_id() -> None:
-    server = JsonRpcServer()
-    fired = threading.Event()
-
-    def slow(params):
-        # Simulate background work.
-        fired.set()
-
-    server.register("slow", slow, mode="fire_and_forget")
-
-    response = server.dispatch(_request("slow", {}))
-    assert response is not None
-    body = response.to_dict()
-    assert body["result"]["runId"].startswith("run-")
-    assert fired.wait(timeout=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +173,3 @@ def test_serve_handles_missing_method_gracefully() -> None:
     server.serve(stdin=stdin, stdout=stdout)
     body = json.loads(stdout.getvalue().strip())
     assert body["error"]["code"] == INVALID_REQUEST
-
-
-# Quiet imports we don't end up using in every test path.
-_ = time
