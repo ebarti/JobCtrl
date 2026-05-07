@@ -75,6 +75,8 @@ Core pipeline:
   Gemini, OpenAI, and local HTTP-backed providers are supported through
   environment variables.
 - A TeX distribution with `pdflatex` for PDF output.
+- Temporal dev server (`temporal server start-dev`) for the workflow engine
+  the Python worker runs against. See `docs/local-development.md`.
 
 Local API and web UI:
 

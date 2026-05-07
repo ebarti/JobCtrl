@@ -20,6 +20,7 @@ To be defined as a complete, single source of truth. Until this is finalized, in
 Known local commands:
 
 - Python CLI: `uv --project workers/automation run jobhunter doctor`, `uv --project workers/automation run jobhunter run`, or targeted `uv --project workers/automation run jobhunter <command>` after dependencies are installed.
+- Temporal worker: `uv --project workers/automation run jobhunter worker` (long-lived workflow worker; needs `temporal server start-dev` running).
 - TypeScript API: `pnpm api:dev`.
 - Web app: `pnpm web:dev`.
 - Web preview after build: `pnpm web:preview`.

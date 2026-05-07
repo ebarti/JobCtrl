@@ -333,6 +333,24 @@ its aggregate, repository (in `infrastructure/<context>/`), and ports (in
 `domain/ports/`). The CLI is the human-facing driving adapter; the JSON-RPC
 server (`jobhunter rpc`) is the API-facing driving adapter.
 
+### Workflow Orchestration (Local Temporal)
+
+A local Temporal dev server (`temporal server start-dev`) is the workflow
+engine for the Python worker. The infrastructure split lives under
+`workers/automation/src/jobhunter/infrastructure/temporal/`:
+
+- `client.py` — `get_temporal_client()` connects to `TEMPORAL_ADDRESS`
+  (default `localhost:7233`) and `TEMPORAL_NAMESPACE` (default `default`).
+- `worker.py` — `build_worker(client, *, workflows, activities)` returns a
+  `temporalio.worker.Worker` bound to `JOBHUNTER_TASK_QUEUE`.
+- `task_queues.py` — single `JOBHUNTER_TASK_QUEUE = "jobhunter-default"`.
+
+`jobhunter worker` is the long-lived process that runs the worker loop.
+Pipeline workflows + activities are introduced in later PRs of this stack;
+this layer is the substrate they bind to. Live workflow state — running
+workflows, history, signals, retries — is visible at
+`http://127.0.0.1:8233` in the Temporal Web UI.
+
 ### SQLite And Files
 
 SQLite in `~/.jobhunter/jobhunter.db` is the local source of truth for jobs,
