@@ -411,6 +411,9 @@ on the local filesystem. They are registered in `job_artifacts` and
    aggregate state. The Python builder owns `apply_run_projections`;
    the TS API reads it directly.
 7. The UI reads from the projection tables via the TS read-model — no joins.
+   The Workflow Runs view at `/runs` (PR 5 of the Temporal stack) reads
+   `apply_run_projections` via `GET /v1/workflow-runs` and deep-links each
+   row to the local Temporal Web UI (`http://127.0.0.1:8233`).
 8. UI actions are routed through JSON-RPC for complex commands or executed
    inline for simple state transitions.
 
