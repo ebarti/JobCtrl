@@ -1,18 +1,20 @@
 """SqlitePipelineStateRepository — adapter for persisting JobPipelineState in SQLite.
 
 Maps domain StageState PascalCase variants to/from the lowercase serialized
-strings stored in the ``job_stage_states`` table.  Implements optimistic
-locking via the ``version`` column (ddd-target.md S8.6).
+strings stored in the ``job_stage_states`` table.  Persistence is delegated
+to :func:`jobhunter.state.set_stage_state` so all stage-state writes share
+the same SQL, validation, and per-row event emission.  Optimistic locking
+uses the ``version`` column (ddd-target.md S8.6) via the helper's
+``expected_version`` parameter.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
 from typing import Any
 
-from jobhunter.domain.pipeline.aggregate import JobPipelineState, OptimisticLockError
+from jobhunter.domain.pipeline.aggregate import JobPipelineState
 from jobhunter.domain.pipeline_types import (
     Blocked,
     Canceled,
@@ -31,10 +33,7 @@ from jobhunter.domain.pipeline_types import (
     serialize_stage_state,
 )
 from jobhunter.domain.tenant import TenantId
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from jobhunter.state import record_job_event, set_stage_state
 
 
 def _json_loads(value: str | None, default: Any) -> Any:
@@ -44,12 +43,6 @@ def _json_loads(value: str | None, default: Any) -> Any:
         return json.loads(value)
     except Exception:
         return default
-
-
-def _json_dumps(value: Any) -> str | None:
-    if value in (None, "", [], {}, ()):
-        return None
-    return json.dumps(value, sort_keys=True)
 
 
 # ---------------------------------------------------------------------------
@@ -120,69 +113,108 @@ def _row_to_stage_state(row: dict[str, Any]) -> StageState:
     return Pending()
 
 
-def _stage_state_to_row(stage: Stage, state: StageState, job_url: str) -> dict[str, Any]:
-    """Convert a domain Stage + StageState into a dict suitable for SQL INSERT."""
-    now = _utc_now()
-    base: dict[str, Any] = {
-        "job_url": job_url,
-        "stage": serialize_stage(stage),
-        "state": serialize_stage_state(state),
-        "updated_at": now,
-        "attempt_count": 0,
-        "max_attempts": None,
-        "started_at": None,
-        "finished_at": None,
-        "duration_ms": None,
-        "error_code": None,
-        "error_message": None,
-        "retryable": 1,
-        "blocked_by_json": None,
-        "next_action": None,
-        "metadata_json": None,
-    }
+# ---------------------------------------------------------------------------
+# Stage-state -> set_stage_state kwargs
+# ---------------------------------------------------------------------------
 
+
+def _stage_state_to_kwargs(state: StageState) -> dict[str, Any]:
+    """Translate a domain StageState into ``set_stage_state`` keyword args."""
     if isinstance(state, Pending):
-        base["attempt_count"] = state.attempt_count
-        base["max_attempts"] = state.max_attempts if state.max_attempts != 0 else None
-        base["next_action"] = state.next_action
-    elif isinstance(state, Queued):
-        base["started_at"] = state.queued_at if state.queued_at else None
-    elif isinstance(state, Running):
-        base["attempt_count"] = state.attempt_count
-        base["started_at"] = state.started_at if state.started_at else None
-    elif isinstance(state, Succeeded):
-        base["attempt_count"] = state.attempt_count
-        base["finished_at"] = state.finished_at if state.finished_at else None
-        base["duration_ms"] = state.duration_ms  # preserve 0
-    elif isinstance(state, Failed):
-        base["attempt_count"] = state.attempt_count
-        base["max_attempts"] = state.max_attempts if state.max_attempts != 0 else None
-        base["error_code"] = state.error_code if state.error_code else None
-        base["error_message"] = state.error_message if state.error_message else None
-        base["retryable"] = int(state.retryable)
-        base["next_action"] = state.next_action
-    elif isinstance(state, Blocked):
-        base["blocked_by_json"] = _json_dumps([serialize_stage(s) for s in state.blocked_by])
-        base["error_code"] = state.error_code if state.error_code else None
-        base["error_message"] = state.error_message if state.error_message else None
-        base["retryable"] = 0
-    elif isinstance(state, Skipped):
-        base["error_message"] = state.reason if state.reason else None
-        base["retryable"] = 0
-    elif isinstance(state, Exhausted):
-        base["attempt_count"] = state.attempt_count
-        base["max_attempts"] = state.max_attempts if state.max_attempts != 0 else None
-        base["error_code"] = state.error_code if state.error_code else None
-        base["error_message"] = state.error_message if state.error_message else None
-        base["next_action"] = state.next_action
-    elif isinstance(state, Stale):
-        base["error_message"] = state.reason if state.reason else None
-    elif isinstance(state, Canceled):
-        base["finished_at"] = state.canceled_at if state.canceled_at else None
-        base["error_message"] = state.reason
-        base["retryable"] = 0
+        return {
+            "attempt_count": state.attempt_count,
+            "max_attempts": state.max_attempts if state.max_attempts != 0 else None,
+            "next_action": state.next_action,
+        }
+    if isinstance(state, Queued):
+        return {"started_at": state.queued_at or None}
+    if isinstance(state, Running):
+        return {
+            "attempt_count": state.attempt_count,
+            "started_at": state.started_at or None,
+        }
+    if isinstance(state, Succeeded):
+        return {
+            "attempt_count": state.attempt_count,
+            "finished_at": state.finished_at or None,
+            "duration_ms": state.duration_ms,
+        }
+    if isinstance(state, Failed):
+        return {
+            "attempt_count": state.attempt_count,
+            "max_attempts": state.max_attempts if state.max_attempts != 0 else None,
+            "error_code": state.error_code or None,
+            "error_message": state.error_message or None,
+            "retryable": state.retryable,
+            "next_action": state.next_action,
+        }
+    if isinstance(state, Blocked):
+        blocked = [serialize_stage(s) for s in state.blocked_by]
+        return {
+            "blocked_by": blocked or None,
+            "error_code": state.error_code or None,
+            "error_message": state.error_message or None,
+            "retryable": False,
+        }
+    if isinstance(state, Skipped):
+        return {
+            "error_message": state.reason or None,
+            "retryable": False,
+        }
+    if isinstance(state, Exhausted):
+        return {
+            "attempt_count": state.attempt_count,
+            "max_attempts": state.max_attempts if state.max_attempts != 0 else None,
+            "error_code": state.error_code or None,
+            "error_message": state.error_message or None,
+        }
+    if isinstance(state, Stale):
+        return {"error_message": state.reason or None}
+    if isinstance(state, Canceled):
+        return {
+            "finished_at": state.canceled_at or None,
+            "error_message": state.reason,
+            "retryable": False,
+        }
+    return {}
 
-    return base
+
+# ---------------------------------------------------------------------------
+# State-kind -> (event_type, level) for repository-driven event emission.
+# Mirrors the per-stage events that runners emit through ``record_job_event``
+# (see e.g. scoring/scorer.py, enrichment/detail.py).
+# ---------------------------------------------------------------------------
+
+
+_EVENTS_BY_KIND: dict[str, tuple[str, str]] = {
+    "Queued": ("StageQueued", "info"),
+    "Running": ("StageStarted", "info"),
+    "Succeeded": ("StageCompleted", "info"),
+    "Failed": ("StageFailed", "error"),
+    "Blocked": ("StageBlocked", "warn"),
+    "Skipped": ("StageSkipped", "info"),
+    "Exhausted": ("StageExhausted", "error"),
+    "Stale": ("StageStale", "info"),
+    "Canceled": ("StageCanceled", "info"),
+    "Pending": ("StageReset", "info"),
+}
+
+
+def _event_message(state: StageState) -> str:
+    """Short message attached to the per-stage event."""
+    if isinstance(state, Failed):
+        return state.error_message or state.error_code or "Stage failed"
+    if isinstance(state, Exhausted):
+        return state.error_message or "Stage attempts exhausted"
+    if isinstance(state, Blocked):
+        return state.error_message or "Stage blocked"
+    if isinstance(state, Skipped):
+        return state.reason or "Stage skipped"
+    if isinstance(state, Stale):
+        return state.reason or "Stage marked stale"
+    if isinstance(state, Canceled):
+        return state.reason or "Stage canceled"
+    return f"Stage {state.kind.lower()}"
 
 
 # ---------------------------------------------------------------------------
@@ -232,95 +264,45 @@ class SqlitePipelineStateRepository:
         )
 
     def save(self, state: JobPipelineState) -> None:
-        """Persist all stage rows for the aggregate.
+        """Persist all stage rows for the aggregate via the canonical writer.
 
-        Optimistic locking: each row is written with ``version = old + 1``
-        and a WHERE guard on the current version.  If any row fails the guard,
-        ``OptimisticLockError`` is raised and no changes are committed.
+        Each stage is written through :func:`jobhunter.state.set_stage_state`
+        with ``expected_version=state.version`` to preserve optimistic-lock
+        semantics; on version mismatch the helper raises
+        ``OptimisticLockError`` and no further rows are written.  When a row's
+        persisted state actually changes, a per-stage event is emitted via
+        :func:`jobhunter.state.record_job_event` so the read-model stays in
+        sync with the same fan-out used by the per-stage runners.
         """
-        new_version = state.version + 1
+        existing_states = self._existing_state_strings(state.job_url)
 
         for stage, stage_state in state.stages.items():
-            row = _stage_state_to_row(stage, stage_state, state.job_url)
+            stage_str = serialize_stage(stage)
+            new_state_str = serialize_stage_state(stage_state)
 
-            # Try UPDATE with version guard first
-            cur = self._conn.execute(
-                """
-                UPDATE job_stage_states
-                SET state = ?, attempt_count = ?, max_attempts = ?,
-                    started_at = COALESCE(?, started_at),
-                    updated_at = ?, finished_at = COALESCE(?, finished_at),
-                    duration_ms = COALESCE(?, duration_ms),
-                    error_code = ?, error_message = ?,
-                    retryable = ?, blocked_by_json = ?,
-                    next_action = ?, metadata_json = ?,
-                    version = ?
-                WHERE job_url = ? AND stage = ? AND version = ?
-                """,
-                (
-                    row["state"],
-                    row["attempt_count"],
-                    row["max_attempts"],
-                    row["started_at"],
-                    row["updated_at"],
-                    row["finished_at"],
-                    row["duration_ms"],
-                    row["error_code"],
-                    row["error_message"],
-                    row["retryable"],
-                    row["blocked_by_json"],
-                    row["next_action"],
-                    row["metadata_json"],
-                    new_version,
-                    state.job_url,
-                    serialize_stage(stage),
-                    state.version,
-                ),
+            set_stage_state(
+                self._conn,
+                state.job_url,
+                stage_str,
+                new_state_str,
+                expected_version=state.version,
+                validate_transition=False,
+                **_stage_state_to_kwargs(stage_state),
             )
 
-            if cur.rowcount == 0:
-                # Either the row doesn't exist (INSERT) or version mismatch (conflict).
-                # Check if the row exists to distinguish.
-                existing = self._conn.execute(
-                    "SELECT version FROM job_stage_states WHERE job_url = ? AND stage = ?",
-                    (state.job_url, serialize_stage(stage)),
-                ).fetchone()
+            if existing_states.get(stage_str) == new_state_str:
+                continue
+            event_type, level = _EVENTS_BY_KIND[stage_state.kind]
+            record_job_event(
+                self._conn,
+                state.job_url,
+                stage_str,
+                event_type,
+                level=level,
+                message=_event_message(stage_state),
+            )
 
-                if existing is not None:
-                    actual_ver = existing[0] if isinstance(existing[0], int) else (existing["version"] or 0)
-                    raise OptimisticLockError(state.job_url, state.version, actual_ver)
-
-                # Row doesn't exist — insert
-                self._conn.execute(
-                    """
-                    INSERT INTO job_stage_states (
-                        job_url, stage, state, attempt_count, max_attempts,
-                        started_at, updated_at, finished_at, duration_ms,
-                        error_code, error_message, retryable,
-                        blocked_by_json, next_action, metadata_json, version
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["job_url"],
-                        row["stage"],
-                        row["state"],
-                        row["attempt_count"],
-                        row["max_attempts"],
-                        row["started_at"],
-                        row["updated_at"],
-                        row["finished_at"],
-                        row["duration_ms"],
-                        row["error_code"],
-                        row["error_message"],
-                        row["retryable"],
-                        row["blocked_by_json"],
-                        row["next_action"],
-                        row["metadata_json"],
-                        new_version,
-                    ),
-                )
-
-        state.version = new_version
+        state.version = state.version + 1
 
     def list_by_stage(
         self,
@@ -348,6 +330,14 @@ class SqlitePipelineStateRepository:
         return results
 
     # -- helpers --------------------------------------------------------------
+
+    def _existing_state_strings(self, job_url: str) -> dict[str, str]:
+        """Return the persisted ``stage -> state`` map for change detection."""
+        rows = self._conn.execute(
+            "SELECT stage, state FROM job_stage_states WHERE job_url = ?",
+            (job_url,),
+        ).fetchall()
+        return {row["stage"]: row["state"] for row in rows}
 
     @staticmethod
     def _row_to_dict(row: Any) -> dict[str, Any]:
