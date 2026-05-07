@@ -645,10 +645,20 @@ class ProjectionBuilder:
             if _row_nullable_str(row, "applied_at")
             or _row_nullable_str(row, "apply_status") == "applied"
         )
+        # Mirror the TS counter (apps/api/src/projections.ts):
+        # exclude dry runs whose underlying job is soft-deleted via
+        # ``jobhunter_deleted_jobs`` so the user-visible value agrees
+        # regardless of which writer (Python or TS) ran last.
         try:
             dry_runs = int(
                 self._conn.execute(
-                    "SELECT COUNT(*) FROM apply_run_projections WHERE dry_run = 1"
+                    """
+                    SELECT COUNT(*)
+                    FROM apply_run_projections arp
+                    LEFT JOIN jobhunter_deleted_jobs d
+                        ON d.job_url = arp.job_id AND d.restored_at IS NULL
+                    WHERE arp.dry_run = 1 AND d.job_url IS NULL
+                    """
                 ).fetchone()[0]
             )
         except sqlite3.OperationalError:
