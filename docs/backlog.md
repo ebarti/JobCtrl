@@ -41,6 +41,60 @@ This is the authoritative roadmap. Keep detailed historical proposals under
   `apply_runs.log_path`. Wire the helper into the apply / materials /
   scoring writers so logs and reports show up in the artifacts list.
 
+### Workflow Orchestration (Local Temporal)
+
+Adopt Temporal as the orchestration engine for the Python worker, run
+**locally** for now (Temporal dev server / `docker compose` profile, no
+managed service). The trigger is that several Worker Reliability items
+above are converging on a small, badly-scaled workflow engine —
+re-implementing durable retries, cancellation, and run records inside
+SQLite is more expensive than adopting Temporal and pointing it at the
+existing aggregates.
+
+This work subsumes three of the Worker Reliability items above:
+
+- "Add cancellation for queued or running local actions" — native
+  workflow + activity cancellation.
+- "Extend the `apply_runs` canonical run-record table to non-apply
+  local actions" — the Temporal workflow execution ID becomes the
+  canonical run record for every action.
+- The ad-hoc `fire_and_forget` thread in
+  `apps/api → workers/automation/.../server.py:90-96` and the TS
+  `BackgroundQueue` go away — JSON-RPC starts a workflow instead and
+  returns the workflow ID as the run handle.
+
+Scope:
+
+- Add `temporalio` to `workers/automation/pyproject.toml` and a
+  `temporal` service to a local `docker compose` profile (or document
+  the `temporal server start-dev` workflow in
+  `docs/local-development.md`).
+- Each pipeline stage (discover, enrich, score, tailor, cover, pdf,
+  apply) becomes a Temporal **Activity** owned by its bounded context
+  under `workers/automation/src/jobhunter/<context>/activities.py`.
+- A `JobPipelineWorkflow` (one per `(TenantId, JobId)`) orchestrates
+  the stages, owns the retry policies that today live in
+  `state.set_stage_state` defaults, and consults the existing
+  `StageStateMachine` for transition validity.
+- `apply_runs` collapses into a workflow run; the read-side projection
+  sources from a Temporal completion sink (or workflow history query)
+  rather than the bespoke table.
+- The `JsonRpcServer.fire_and_forget` path in
+  `workers/automation/src/jobhunter/infrastructure/rpc/server.py:90`
+  starts a workflow and returns the workflow ID; the existing JSON-RPC
+  contract (`run_stage`, `apply`, `profile_import`, …) is preserved.
+- Add a Workflow Runs view in the UI that surfaces in-progress /
+  failed / completed runs with a deep-link to the Temporal Web UI
+  (`http://127.0.0.1:8233` by default) for live debugging during the
+  local-dev phase.
+
+Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
+
+- Managed Temporal Cloud,
+- distributed worker fleet (multi-machine task queues),
+- cross-tenant isolation in workflows,
+- Temporal-specific production observability stack.
+
 ### Data Model Cleanup
 
 - Cut the `jobs` table over from URL primary key to `JobId`. Domain has

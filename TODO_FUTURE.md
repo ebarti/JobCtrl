@@ -261,28 +261,10 @@ Revisit when:
 
 ## Deferred Workflow Infrastructure
 
-### Managed Temporal Or Equivalent Hosted Workflow Engine
-
-Deferred as infrastructure, but not as a design direction.
-
-Future work:
-
-- introduce durable workflow orchestration,
-- model job workflows and batch workflows,
-- add durable retries, cancellation, and heartbeats,
-- separate workflow commands from worker execution,
-- expose workflow runs in the UI.
-
-Why deferred:
-
-The immediate local goal is reliable stage boundaries and recoverable state. That can be prototyped with the current process model or a local lightweight queue before committing to hosted workflow infrastructure.
-
-Revisit when:
-
-- local stages are reliable enough to formalize,
-- multiple workers need coordination,
-- runs need crash recovery,
-- hosted execution begins.
+> Local Temporal adoption was promoted out of this section into
+> [`docs/backlog.md`](docs/backlog.md) → "Workflow Orchestration
+> (Local Temporal)". Managed/hosted Temporal Cloud and the
+> distributed worker fleet remain deferred.
 
 ### Distributed Worker Fleet
 
