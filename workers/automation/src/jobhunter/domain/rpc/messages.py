@@ -10,7 +10,10 @@ reads newline-delimited responses from stdout.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover — import only for type hints
+    from temporalio.common import RetryPolicy
 
 # JSON-RPC 2.0 reserved error codes (https://www.jsonrpc.org/specification).
 PARSE_ERROR: int = -32700
@@ -96,3 +99,18 @@ class JsonRpcResponse:
     @classmethod
     def failure(cls, request_id: str | int | None, error: JsonRpcError) -> "JsonRpcResponse":
         return cls(id=request_id, error=error)
+
+
+@dataclass(frozen=True)
+class WorkflowStartSpec:
+    """Return value of a ``workflow``-mode JSON-RPC handler.
+
+    The handler converts JSON-RPC params into the workflow input shape and
+    hands the spec to the server, which starts the workflow via the injected
+    ``WorkflowStarter``.
+    """
+
+    workflow: type
+    args: tuple[Any, ...]
+    workflow_id: str | None = None
+    retry_policy: "RetryPolicy | None" = None
