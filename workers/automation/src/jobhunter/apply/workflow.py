@@ -33,6 +33,9 @@ class ApplyWorkflowInput:
     min_score: int = 7
     workers: int = 1
     limit: int = 1
+    # Run-forever poll mode — when True, the activity translates to the
+    # ``apply.launcher`` ``limit=0`` sentinel that drives the continuous loop.
+    continuous: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,12 +69,13 @@ class ApplyWorkflow:
                 ApplyActivityInput(
                     tenant_id=payload.tenant_id,
                     job_url=payload.job_url,
-                    limit=max(1, payload.limit),
+                    limit=payload.limit,
                     min_score=payload.min_score,
                     model=payload.model,
                     headless=payload.headless,
                     dry_run=payload.dry_run,
                     workers=payload.workers,
+                    continuous=payload.continuous,
                 ),
                 start_to_close_timeout=_APPLY_TIMEOUT,
                 retry_policy=_APPLY_RETRY,

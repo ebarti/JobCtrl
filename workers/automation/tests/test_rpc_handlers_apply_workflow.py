@@ -87,3 +87,22 @@ def test_apply_via_jsonrpc_starts_workflow() -> None:
     assert payload.job_url == "https://example.com/job/1"
     assert payload.limit == 1
     assert payload.model == "haiku"
+
+
+def test_apply_handler_forwards_continuous_flag() -> None:
+    """``continuous=True`` must reach :class:`ApplyWorkflowInput`."""
+    spec = apply_action({"tenantId": "local", "continuous": True})
+
+    assert isinstance(spec, WorkflowStartSpec)
+    (payload,) = spec.args
+    assert isinstance(payload, ApplyWorkflowInput)
+    assert payload.continuous is True
+
+
+def test_apply_handler_continuous_defaults_to_false() -> None:
+    """Omitted ``continuous`` must default to ``False`` (single-shot)."""
+    spec = apply_action({"tenantId": "local"})
+
+    (payload,) = spec.args
+    assert isinstance(payload, ApplyWorkflowInput)
+    assert payload.continuous is False

@@ -198,6 +198,7 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
         limit=int(params.get("limit", 1)),
+        continuous=bool(params.get("continuous", False)),
     )
     return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,))
 
