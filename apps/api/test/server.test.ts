@@ -531,6 +531,60 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns the workflow runs list from apply_run_projections", async () => {
+    // PR 5 of the Temporal stack: `/v1/workflow-runs` is the read-side
+    // surface for the new Workflow Runs view. The seed inserts a single
+    // `apply_run_projections` row (`run-1`, status `finished` ⇒
+    // normalized to `succeeded`), so the happy path returns one entry.
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/workflow-runs" });
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json();
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.items)).toBe(true);
+      expect(body.items.length).toBeGreaterThanOrEqual(1);
+      const run = body.items.find((r: { workflowId: string }) => r.workflowId === "run-1");
+      expect(run).toBeDefined();
+      expect(run).toMatchObject({
+        workflowId: "run-1",
+        runId: "run-1",
+        jobKey: "https://example.com/jobs/ready",
+        title: "Platform Engineer",
+        company: "ExampleCo",
+        // Seed inserts `status: "finished"`, the read-model normalizes
+        // it to the `WorkflowRunStatus` enum (`succeeded`).
+        status: "succeeded",
+        dryRun: true,
+      });
+      expect(body.pagination).toMatchObject({ page: 1, total: 1, pages: 1 });
+      expect(body.filter).toMatchObject({ status: "all" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("filters workflow runs by status", async () => {
+    const app = buildApp(options);
+    try {
+      const succeeded = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?status=succeeded",
+      });
+      expect(succeeded.statusCode, succeeded.body).toBe(200);
+      expect(succeeded.json().items).toHaveLength(1);
+
+      const failed = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?status=failed",
+      });
+      expect(failed.statusCode, failed.body).toBe(200);
+      expect(failed.json().items).toHaveLength(0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("opens only a known existing artifact through the injected opener", async () => {
     const opened: string[] = [];
     const app = buildApp({

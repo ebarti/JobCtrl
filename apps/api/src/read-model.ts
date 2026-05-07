@@ -34,8 +34,11 @@ import type {
   Stage,
   StageState,
   StageSummary,
+  WorkflowRunStatus,
+  WorkflowRunSummary,
+  WorkflowRunsListQuery,
 } from "./contracts.js";
-import { ProfileSchema, STAGES } from "./contracts.js";
+import { ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
 
@@ -740,6 +743,83 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     message: stringField(row.message) || "event",
     at: nullableString(row.occurred_at),
   }));
+}
+
+/**
+ * PR 5 of the Temporal stack — Workflow Runs view source.
+ *
+ * Reads `apply_run_projections` (now sourced from Temporal workflow
+ * histories per PR 4) and projects each row to a `WorkflowRunSummary`.
+ * The `runId` IS the Temporal `workflow_id` (see `ApplyWorkflow.run`),
+ * so the deep-link to the Temporal Web UI uses it verbatim. The
+ * `workflowId` field is kept distinct in the wire shape so future
+ * non-apply workflows can supply a different value without a breaking
+ * read-model change.
+ */
+export function listWorkflowRuns(
+  db: SqliteDatabase,
+  query: WorkflowRunsListQuery,
+): PaginatedResponse<WorkflowRunSummary> {
+  refreshProjections(db, DEFAULT_TENANT);
+  if (!tableExists(db, "apply_run_projections")) {
+    return paginate([], query.page, query.pageSize, "started_at", "desc", {
+      status: query.status,
+    });
+  }
+  const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
+    : "";
+  const where: string[] = ["arp.tenant_id = ?"];
+  const params: SqliteValue[] = [DEFAULT_TENANT];
+  if (tableExists(db, "jobhunter_deleted_jobs")) {
+    where.push("d.job_url IS NULL");
+  }
+  const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+  const rows = allRows<ApplyRunProjectionRow>(
+    db,
+    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}${whereSql}
+     ORDER BY arp.started_at DESC, arp.run_id DESC`,
+    params,
+  );
+  const all = rows
+    .map(rowToWorkflowRunSummary)
+    .filter((run) => query.status === "all" || run.status === query.status);
+  return paginate(all, query.page, query.pageSize, "started_at", "desc", {
+    status: query.status,
+  });
+}
+
+function rowToWorkflowRunSummary(row: ApplyRunProjectionRow): WorkflowRunSummary {
+  const runId = stringField(row.run_id);
+  return {
+    workflowId: runId,
+    runId,
+    jobKey: stringField(row.job_id),
+    title: stringField(row.job_title) || "Untitled",
+    company: stringField(row.job_employer) || "Unknown company",
+    status: normalizeWorkflowRunStatus(row.status),
+    result: nullableString(row.result),
+    dryRun: Boolean(row.dry_run),
+    model: nullableString(row.model),
+    startedAt: nullableString(row.started_at),
+    finishedAt: nullableString(row.finished_at),
+    durationMs: nullableNumber(row.duration_ms),
+  };
+}
+
+const WORKFLOW_RUN_STATUS_SET = new Set<string>(WORKFLOW_RUN_STATUSES);
+
+function normalizeWorkflowRunStatus(value: unknown): WorkflowRunStatus {
+  const raw = stringField(value);
+  if (WORKFLOW_RUN_STATUS_SET.has(raw)) {
+    return raw as WorkflowRunStatus;
+  }
+  // The legacy "finished" sentinel from earlier seeds → succeeded.
+  if (raw === "finished") {
+    return "succeeded";
+  }
+  // Unknown / "unknown" / blank → treat as in_progress so the row still renders.
+  return "in_progress";
 }
 
 function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {

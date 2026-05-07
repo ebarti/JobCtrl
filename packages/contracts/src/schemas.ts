@@ -383,6 +383,71 @@ export const ArtifactListQuerySchema = z
 
 export type ArtifactListQuery = z.infer<typeof ArtifactListQuerySchema>;
 
+// ---------------------------------------------------------------------------
+// Workflow runs (PR 5 of the Temporal stack)
+//
+// `apply_run_projections` is the unified workflow-run row after PR 4. The
+// run id is the Temporal workflow id (see `ApplyWorkflow.run` —
+// `run_id=info.workflow_id`), so the deep-link uses it verbatim.
+// `WorkflowRunStatusSchema` widens beyond `ApplyRunStatus` so future non-
+// apply workflows can land here without another migration.
+// ---------------------------------------------------------------------------
+
+export const WORKFLOW_RUN_STATUSES = [
+  "starting",
+  "in_progress",
+  "succeeded",
+  "failed",
+  "canceled",
+  "terminated",
+  "timed_out",
+  "dry_run_complete",
+  "captcha",
+  "login_issue",
+  "expired",
+  "manual",
+] as const;
+export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
+
+export const WORKFLOW_RUN_STATUS_FILTERS = ["all", ...WORKFLOW_RUN_STATUSES] as const;
+export type WorkflowRunStatusFilter = (typeof WORKFLOW_RUN_STATUS_FILTERS)[number];
+
+export const WorkflowRunsListQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1).catch(1),
+    pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    page_size: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    status: z.enum(WORKFLOW_RUN_STATUS_FILTERS).default("all").catch("all"),
+  })
+  .transform((value) => ({
+    page: value.page,
+    pageSize: value.pageSize ?? value.page_size ?? 50,
+    status: value.status,
+  }));
+export type WorkflowRunsListQuery = z.infer<typeof WorkflowRunsListQuerySchema>;
+
+export interface WorkflowRunSummary {
+  /** Temporal workflow id — drives the deep-link to the Temporal Web UI. */
+  readonly workflowId: string;
+  /**
+   * Logical run id surfaced by the read-model. Equal to `workflowId` for
+   * apply runs (the Python `ApplyWorkflow` sets `run_id = info.workflow_id`);
+   * preserved as a distinct field so future non-apply workflows that key
+   * timeline events on a different id keep working.
+   */
+  readonly runId: string;
+  readonly jobKey: string;
+  readonly title: string;
+  readonly company: string;
+  readonly status: WorkflowRunStatus;
+  readonly result: string | null;
+  readonly dryRun: boolean;
+  readonly model: string | null;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly durationMs: number | null;
+}
+
 export interface StageSummary {
   stage: Stage;
   state: StageState;
