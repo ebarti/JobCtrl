@@ -114,7 +114,7 @@ export function createActionDispatcher(dispatcher?: JsonRpcDispatcher): ActionDi
       };
     }
     if (rpcCall.method === "apply") {
-      // fire_and_forget — server returns { runId }.
+      // workflow start — server returns { runId } (the Temporal workflow id).
       const runId = extractRunId(response.result);
       const result: ActionDispatchResult = {
         status: "queued",
