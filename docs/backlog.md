@@ -40,6 +40,14 @@ This is the authoritative roadmap. Keep detailed historical proposals under
   called; apply log files are only kept on disk and stored as a string in
   `apply_runs.log_path`. Wire the helper into the apply / materials /
   scoring writers so logs and reports show up in the artifacts list.
+- Refactor non-apply stage runners to accept a single `job_url` so
+  `JobPipelineWorkflow` can drive per-job batches. Today the runners are
+  batch-only — they walk DB selectors over the entire `jobs` table — and
+  only `ApplyWorkflow` is truly per-job. Driver path: `discovery`,
+  `enrichment`, `scoring`, `materials/tailor`, `materials/cover`,
+  `materials/pdf`. Once the runners take a `job_url`, the workflow can
+  expose `(TenantId, JobId)` semantics and PR 4's `apply_runs → workflow
+  runs` collapse can extend uniformly to the non-apply stages.
 
 ### Workflow Orchestration (Local Temporal)
 
