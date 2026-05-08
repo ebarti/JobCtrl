@@ -3,21 +3,30 @@
 The JSON-RPC server depends on these via constructor injection so unit tests
 can substitute stubs without booting a Temporal cluster.
 
-The Temporal :class:`Client` is cached at module scope so repeated ``apply``
-and ``cancel_run`` JSON-RPC calls reuse the same gRPC connection — the
-``jobhunter rpc`` server is long-lived and a fresh ``Client.connect()`` per
-request would burn a TCP / TLS / namespace-describe handshake on every
-workflow start.  ``get_temporal_client()`` itself stays as the per-call
-factory; caching is a workflow-starter concern.
+The Temporal :class:`Client` is intentionally NOT cached at module scope.
+The earlier cache broke on the second JSON-RPC call because each request
+opens a fresh event loop via ``asyncio.run(...)``, and Temporal's cached
+``Client`` (plus the module-scope ``asyncio.Lock``) is bound to the loop
+that constructed it; reusing it from a new loop raises
+``RuntimeError: <Lock ...> is bound to a different event loop`` and
+defeats every gRPC retry. Reconnecting per request costs a single
+TCP+TLS+namespace-describe round-trip — a few ms against localhost.
+``jobhunter rpc`` is the only caller and runs in the user's loopback
+worker, so the optimisation isn't worth the correctness cost.
+
+The proper long-term fix is to host one process-wide event loop inside
+``JsonRpcServer.serve()`` (so dispatch can ``loop.run_until_complete(...)``
+instead of opening a fresh loop per request), at which point the cache
+becomes safe again. That is tracked as a follow-up; for now we err on the
+side of correctness.
 """
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
-from temporalio.client import Client, WorkflowHandle
+from temporalio.client import WorkflowHandle
 
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.infrastructure.temporal.client import get_temporal_client
@@ -33,30 +42,8 @@ WorkflowStarter = Callable[[WorkflowStartSpec], Coroutine[Any, Any, WorkflowHand
 WorkflowCanceler = Callable[[str], Coroutine[Any, Any, None]]
 
 
-_cached_client: Client | None = None
-_cache_lock = asyncio.Lock()
-
-
-async def _get_or_create_client() -> Client:
-    """Return the cached Temporal :class:`Client`, building it on first call."""
-    global _cached_client
-    if _cached_client is not None:
-        return _cached_client
-    async with _cache_lock:
-        if _cached_client is None:
-            _cached_client = await get_temporal_client()
-        return _cached_client
-
-
-async def _reset_cached_client_for_tests() -> None:
-    """Drop the cached client so tests can re-exercise the connect path."""
-    global _cached_client
-    async with _cache_lock:
-        _cached_client = None
-
-
 async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
-    client = await _get_or_create_client()
+    client = await get_temporal_client()
     workflow_id = spec.workflow_id or f"run-{uuid4().hex}"
     return await client.start_workflow(
         spec.workflow,
@@ -68,7 +55,7 @@ async def default_workflow_starter(spec: WorkflowStartSpec) -> WorkflowHandle:
 
 
 async def default_workflow_canceler(run_id: str) -> None:
-    client = await _get_or_create_client()
+    client = await get_temporal_client()
     await client.get_workflow_handle(run_id).cancel()
 
 

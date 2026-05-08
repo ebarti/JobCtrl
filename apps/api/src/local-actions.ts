@@ -256,6 +256,18 @@ function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
   if (command.action === "apply") {
     return { method: "apply", params: applyRpcParams(command) };
   }
+  if (command.action === "cancel") {
+    // PR 3 added the cancel_run JSON-RPC method on the worker side; without
+    // this branch the cancel route only writes a StageCanceled event to
+    // SQLite and the running Temporal workflow keeps polling. Map the
+    // command's runId (the workflow id) into the worker call so the
+    // workflow actually receives a cancellation signal.
+    if (!command.runId) return null;
+    return {
+      method: "cancel_run",
+      params: { tenantId: "local", runId: command.runId },
+    };
+  }
   return null;
 }
 

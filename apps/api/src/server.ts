@@ -243,7 +243,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    return withWritableDb(reply, options.dbPath, (db) => {
+    const writeOutcome = await withWritableDb(reply, options.dbPath, (db) => {
       const canceled = cancelJobAction(db, decodeRouteParam(request.params.jobKey), body.runId ?? "");
       const command: ActionCommandPayload = {
         action: "cancel" as const,
@@ -252,8 +252,33 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (body.runId) {
         command.runId = body.runId;
       }
-      return buildActionResponse(command, { status: "cancel_requested" }, { stage: canceled.stage });
+      return { command, stage: canceled.stage };
     });
+    if ("ok" in writeOutcome) {
+      return writeOutcome;
+    }
+    // Forward the cancel to the worker so the running Temporal workflow
+    // (started by PR 3's mode="workflow" cut-over) actually receives a
+    // cancellation signal. Without this, the SQLite event-flip succeeds
+    // but the workflow keeps polling Chrome and the stage row drifts
+    // back to running on the next worker_loop cycle.
+    const { command: cancelCommand, stage: cancelStage } = writeOutcome;
+    const runId = cancelCommand.runId;
+    if (runId) {
+      try {
+        await actionDispatcher(cancelCommand, actionContext);
+      } catch (err) {
+        request.log?.warn(
+          { err, jobKey: cancelCommand.jobKey, runId },
+          "cancel route: worker dispatch failed; SQLite cancel event still recorded",
+        );
+      }
+    }
+    return buildActionResponse(
+      cancelCommand,
+      { status: "cancel_requested" },
+      { stage: cancelStage },
+    );
   });
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/mark-applied", async (request, reply) => {
