@@ -24,17 +24,23 @@ This is the authoritative roadmap. Keep detailed historical proposals under
   RPC handlers, …) — the repository should route through it too so all
   writes share validation and event emission.
 - Extend the `apply_runs` canonical run-record table to non-apply local
-  actions. Today only `apply` produces a row; `run_stage`, `profile_import`,
-  and other JSON-RPC fire-and-forget actions only emit `job_events` and
-  return an in-memory `LocalActionResult` (`workers/automation/src/jobhunter/actions.py:48`).
-  Without a uniform run record, the dashboard cannot show running / queued /
-  failed status for non-apply work.
-- Add cancellation for queued or running local actions. `cancel_stage`
-  (`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py:112`)
-  only flips the stage row to `canceled`; the JSON-RPC `fire_and_forget`
-  thread (`server.py:90-96`) keeps no handle and the apply launcher has no
-  cooperative cancel check. Add a cancel token surface (queue-side and
-  in-process) so the UI cancel buttons actually interrupt work.
+  actions. Today only `apply` produces a row; `run_stage` and
+  `profile_import` are sync RPCs that emit `job_events` and return an
+  in-memory `LocalActionResult` (`workers/automation/src/jobhunter/actions.py:48`)
+  without persisting a run record. Without a uniform run record, the
+  dashboard cannot show running / queued / failed status for non-apply
+  work. (PR 4 in the Workflow Orchestration stack collapses this onto
+  Temporal workflow runs.)
+- Add cancellation for queued or running non-workflow local actions.
+  `apply` and other workflow-mode RPCs already cooperatively cancel via
+  `cancel_run` (PR #36), but `run_stage` / `profile_import` still run
+  synchronously inside the JSON-RPC handler and have no cancel surface,
+  and `cancel_stage`
+  (`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`) only
+  flips the stage row to `canceled` post-hoc. Migrating these handlers to
+  workflows (PR 4 / per-job runners) gets cooperative cancel for free; a
+  shorter-term option is to add a cancel token surface for the in-process
+  sync handlers.
 - Record generated logs and reports as artifacts. `record_job_artifact`
   (`workers/automation/src/jobhunter/state.py:304`) exists but is never
   called; apply log files are only kept on disk and stored as a string in
@@ -62,14 +68,15 @@ existing aggregates.
 This work subsumes three of the Worker Reliability items above:
 
 - "Add cancellation for queued or running local actions" — native
-  workflow + activity cancellation.
+  workflow + activity cancellation. (Apply: delivered in PR #36 via
+  `cancel_run`. Non-apply RPCs follow PR 4.)
 - "Extend the `apply_runs` canonical run-record table to non-apply
   local actions" — the Temporal workflow execution ID becomes the
-  canonical run record for every action.
-- The ad-hoc `fire_and_forget` thread in
-  `apps/api → workers/automation/.../server.py:90-96` and the TS
-  `BackgroundQueue` go away — JSON-RPC starts a workflow instead and
-  returns the workflow ID as the run handle.
+  canonical run record for every action. (PR 4.)
+- The ad-hoc `fire_and_forget` dispatch mode is deleted (PR #36): the
+  JSON-RPC server now exposes `mode="workflow"`, starts a Temporal
+  workflow, and returns `{runId, workflowId, firstExecutionRunId}` as
+  the run handle.
 
 Scope:
 
@@ -87,10 +94,12 @@ Scope:
 - `apply_runs` collapses into a workflow run; the read-side projection
   sources from a Temporal completion sink (or workflow history query)
   rather than the bespoke table.
-- The `JsonRpcServer.fire_and_forget` path in
-  `workers/automation/src/jobhunter/infrastructure/rpc/server.py:90`
-  starts a workflow and returns the workflow ID; the existing JSON-RPC
-  contract (`run_stage`, `apply`, `profile_import`, …) is preserved.
+- The `JsonRpcServer` now dispatches `mode="workflow"` handlers
+  (`apply` is the first; PR 4 migrates `run_stage` /
+  `profile_import`); each starts a Temporal workflow and returns
+  `{runId, workflowId, firstExecutionRunId}`. The existing JSON-RPC
+  contract (`run_stage`, `apply`, `profile_import`, `cancel_run`, …)
+  is preserved.
 - Add a Workflow Runs view in the UI that surfaces in-progress /
   failed / completed runs with a deep-link to the Temporal Web UI
   (`http://127.0.0.1:8233` by default) for live debugging during the

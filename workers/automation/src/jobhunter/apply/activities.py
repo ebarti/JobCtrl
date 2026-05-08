@@ -28,6 +28,10 @@ class ApplyActivityInput:
     headless: bool = False
     dry_run: bool = False
     workers: int = 1
+    # Run-forever poll mode — when True, the activity calls ``apply_main``
+    # with ``limit=0`` (the launcher's run-forever sentinel) and ignores
+    # ``limit``.  Otherwise ``max(1, limit)`` jobs are processed.
+    continuous: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,8 +58,12 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     def _run_apply() -> tuple[int, int]:
         from jobhunter.apply.launcher import main as apply_main
 
+        # ``continuous=True`` selects the launcher's run-forever poll mode,
+        # which it activates via ``limit == 0``.  Otherwise enforce a floor
+        # of one to keep ``limit < 1`` calls from no-oping.
+        effective_limit = 0 if payload.continuous else max(1, payload.limit)
         return apply_main(
-            limit=max(1, payload.limit),
+            limit=effective_limit,
             target_url=payload.job_url,
             min_score=payload.min_score,
             headless=payload.headless,

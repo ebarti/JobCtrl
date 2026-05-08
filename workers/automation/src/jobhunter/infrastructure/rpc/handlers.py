@@ -6,8 +6,13 @@ Per S-11 the initial method set covers:
   ``mark_skipped``, ``cancel_stage``.  These mutate ``job_stage_states``
   through the same write API the TS surface uses (``state.reset_job_stage``
   / ``state.set_stage_state``).
-* Existing local-action wrappers — ``run_stage``, ``apply``,
-  ``profile_import``.  These delegate to ``actions.run_local_action``.
+* Existing local-action wrappers — ``run_stage``, ``profile_import``.
+  These delegate to ``actions.run_local_action``.
+* Workflow starters — ``apply`` returns a :class:`WorkflowStartSpec` for
+  :class:`ApplyWorkflow`; the server starts it on the Temporal task queue
+  and ships back ``{"runId", "workflowId", "firstExecutionRunId"}``.
+* Cooperative cancellation — ``cancel_run`` cancels an in-flight workflow
+  via the injected canceler.
 
 Every method accepts ``params.tenantId``; if it is missing the handler logs
 a warning and substitutes ``LOCAL_TENANT`` (single-user / local-first per
@@ -16,13 +21,17 @@ target §6.5).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from jobhunter.actions import LocalActionRequest, run_local_action
+from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
 from jobhunter.database import get_connection
+from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.rpc.server import JsonRpcServer, invalid_params
+from jobhunter.infrastructure.rpc.workflow_starter import WorkflowCanceler
 from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, utc_now
 
 logger = logging.getLogger(__name__)
@@ -109,6 +118,9 @@ def mark_skipped(params: dict[str, Any]) -> dict[str, Any]:
     return {"jobUrl": job_url, "stage": stage, "state": "skipped"}
 
 
+# Post-hoc state-flip path — marks the stage canceled in SQLite without
+# touching the workflow runtime.  Pair with ``cancel_run`` for the
+# cooperative path that signals an in-flight workflow.
 def cancel_stage(params: dict[str, Any]) -> dict[str, Any]:
     _tenant_id(params)
     job_url = str(_require(params, "jobUrl"))
@@ -157,22 +169,6 @@ def run_stage(params: dict[str, Any]) -> dict[str, Any]:
     return run_local_action(request).to_dict()
 
 
-def apply_action(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    request = LocalActionRequest(
-        stage="apply",
-        job_url=params.get("jobUrl"),
-        limit=int(params.get("limit", 1)),
-        workers=int(params.get("workers", 1)),
-        min_score=int(params.get("minScore", 7)),
-        dry_run=bool(params.get("dryRun", False)),
-        model=str(params.get("model", "haiku")),
-        headless=bool(params.get("headless", False)),
-        continuous=bool(params.get("continuous", False)),
-    )
-    return run_local_action(request).to_dict()
-
-
 def profile_import(params: dict[str, Any]) -> dict[str, Any]:
     _tenant_id(params)
     pdf_path = str(_require(params, "pdfPath"))
@@ -186,19 +182,61 @@ def profile_import(params: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Workflow handlers
+# ---------------------------------------------------------------------------
+
+
+def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
+    """Build a :class:`WorkflowStartSpec` for :class:`ApplyWorkflow`."""
+    tenant_id = _tenant_id(params)
+    payload = ApplyWorkflowInput(
+        tenant_id=tenant_id,
+        job_url=params.get("jobUrl"),
+        dry_run=bool(params.get("dryRun", False)),
+        headless=bool(params.get("headless", False)),
+        model=str(params.get("model", "haiku")),
+        min_score=int(params.get("minScore", 7)),
+        workers=int(params.get("workers", 1)),
+        limit=int(params.get("limit", 1)),
+        continuous=bool(params.get("continuous", False)),
+    )
+    return WorkflowStartSpec(workflow=ApplyWorkflow, args=(payload,))
+
+
+def make_cancel_run(canceler: WorkflowCanceler):
+    """Build a ``cancel_run`` handler bound to *canceler*.
+
+    Cooperative cancellation path — signals the workflow runtime to cancel
+    the in-flight run.  See :func:`cancel_stage` for the post-hoc state-flip
+    path that does not touch the workflow runtime.
+    """
+
+    def cancel_run(params: dict[str, Any]) -> dict[str, Any]:
+        _tenant_id(params)
+        run_id = str(_require(params, "runId"))
+        asyncio.run(canceler(run_id))
+        return {"runId": run_id, "status": "canceling"}
+
+    return cancel_run
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
 
-def register_default_handlers(server: JsonRpcServer) -> None:
+def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobHunter method set onto *server*."""
     # Simple state-transition commands — synchronous.
     server.register("reset_stage", reset_stage, mode="sync")
     server.register("mark_applied", mark_applied, mode="sync")
     server.register("mark_skipped", mark_skipped, mode="sync")
     server.register("cancel_stage", cancel_stage, mode="sync")
-    # Local-action wrappers — sync for now (the TS API can stream via the
-    # ``streaming`` mode in Phase 9).
+    # Local-action wrappers — sync; ``run_stage`` and ``profile_import`` keep
+    # their sync result shape until a follow-up converts them to workflows.
     server.register("run_stage", run_stage, mode="sync")
-    server.register("apply", apply_action, mode="fire_and_forget")
     server.register("profile_import", profile_import, mode="sync")
+    # Workflow starters.
+    server.register("apply", apply_action, mode="workflow")
+    # Cooperative cancellation of in-flight workflows.
+    server.register("cancel_run", make_cancel_run(canceler), mode="sync")

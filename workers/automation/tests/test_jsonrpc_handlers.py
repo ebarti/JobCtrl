@@ -19,6 +19,20 @@ from jobhunter.infrastructure.rpc.handlers import register_default_handlers
 from jobhunter.infrastructure.rpc.server import JsonRpcServer
 
 
+class _StubHandle:
+    def __init__(self, workflow_id: str, run_id: str = "first-run") -> None:
+        self.id = workflow_id
+        self.first_execution_run_id = run_id
+
+
+async def _stub_starter(spec):
+    return _StubHandle("wf-stub")
+
+
+async def _stub_canceler(_run_id: str) -> None:  # pragma: no cover — never invoked here
+    return None
+
+
 @pytest.fixture
 def tmp_db(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "jobs.db"
@@ -29,8 +43,8 @@ def tmp_db(tmp_path: Path, monkeypatch):
 
 
 def _server() -> JsonRpcServer:
-    server = JsonRpcServer()
-    register_default_handlers(server)
+    server = JsonRpcServer(workflow_starter=_stub_starter)
+    register_default_handlers(server, canceler=_stub_canceler)
     return server
 
 
@@ -55,6 +69,7 @@ def test_default_handlers_are_registered() -> None:
         "mark_applied",
         "mark_skipped",
         "cancel_stage",
+        "cancel_run",
         "run_stage",
         "apply",
         "profile_import",
@@ -250,39 +265,6 @@ def test_run_stage_delegates_to_run_local_action(tmp_db: Path, monkeypatch) -> N
     assert captured[0].stage == "score"
     assert captured[0].limit == 5
     assert captured[0].workers == 2
-
-
-def test_apply_handler_returns_run_id(tmp_db: Path, monkeypatch) -> None:
-    """apply is registered as fire_and_forget — returns runId immediately."""
-
-    def fake_run(request: LocalActionRequest) -> LocalActionResult:
-        return LocalActionResult(
-            ok=True,
-            action_id="act-1",
-            stage=request.stage,
-            status="succeeded",
-            started_at="t0",
-            finished_at="t1",
-            duration_ms=1,
-        )
-
-    monkeypatch.setattr(handlers_mod, "run_local_action", fake_run)
-
-    server = _server()
-    response = server.dispatch(
-        JsonRpcRequest(
-            method="apply",
-            params={
-                "tenantId": "local",
-                "jobUrl": "https://example.com/job/1",
-                "limit": 1,
-            },
-            id=2,
-        )
-    )
-    assert response is not None
-    body = response.to_dict()
-    assert "runId" in body["result"]
 
 
 def test_profile_import_requires_pdf_path(tmp_db: Path) -> None:

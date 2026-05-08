@@ -1,11 +1,12 @@
 """JSON-RPC 2.0 stdin/stdout server (local subprocess transport, ddd-target.md §6.5).
 
-Three dispatch modes are supported per §6.5:
+Three dispatch modes are supported:
 
-* ``sync``           — handler returns a result; it ships back as ``result``.
-* ``fire_and_forget`` — handler is launched on a background thread; the
-  server immediately returns ``{ "runId": ... }`` so the TS API can poll.
-* ``streaming``      — handler is a generator that yields zero or more
+* ``sync``      — handler returns a result; it ships back as ``result``.
+* ``workflow``  — handler returns a :class:`WorkflowStartSpec`; the server
+  starts the workflow via the injected :data:`WorkflowStarter` and returns
+  ``{"runId", "workflowId", "firstExecutionRunId"}``.
+* ``streaming`` — handler is a generator that yields zero or more
   intermediate JSON-RPC notifications, optionally followed by a final
   response value.
 
@@ -16,13 +17,12 @@ with the error string in ``data``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
-import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, TextIO
-from uuid import uuid4
 
 from jobhunter.domain.rpc.messages import (
     INTERNAL_ERROR,
@@ -33,7 +33,9 @@ from jobhunter.domain.rpc.messages import (
     JsonRpcError,
     JsonRpcRequest,
     JsonRpcResponse,
+    WorkflowStartSpec,
 )
+from jobhunter.infrastructure.rpc.workflow_starter import WorkflowStarter
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class HandlerSpec:
     """Registered handler + its dispatch mode."""
 
     fn: HandlerFn
-    mode: str  # "sync" | "fire_and_forget" | "streaming"
+    mode: str  # "sync" | "workflow" | "streaming"
 
 
 class JsonRpcServer:
@@ -58,13 +60,14 @@ class JsonRpcServer:
     newline-delimited envelopes.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, workflow_starter: WorkflowStarter | None = None) -> None:
         self._handlers: dict[str, HandlerSpec] = {}
+        self._workflow_starter = workflow_starter
 
     # ------------------------------------------------------------------ register
 
     def register(self, method: str, fn: HandlerFn, *, mode: str = "sync") -> None:
-        if mode not in ("sync", "fire_and_forget", "streaming"):
+        if mode not in ("sync", "workflow", "streaming"):
             raise ValueError(f"unknown dispatch mode: {mode}")
         self._handlers[method] = HandlerSpec(fn=fn, mode=mode)
 
@@ -73,9 +76,9 @@ class JsonRpcServer:
     def dispatch(self, request: JsonRpcRequest) -> JsonRpcResponse | None:
         """Dispatch a single parsed request to its handler.
 
-        Returns the response, or ``None`` for notifications and
-        fire-and-forget calls without an id.  Streaming handlers should be
-        driven via :meth:`serve` instead of this entry point.
+        Returns the response, or ``None`` for notifications.  Streaming
+        handlers should be driven via :meth:`serve` instead of this entry
+        point.
         """
         spec = self._handlers.get(request.method)
         if spec is None:
@@ -84,17 +87,8 @@ class JsonRpcServer:
                 JsonRpcError(METHOD_NOT_FOUND, f"Method not found: {request.method}"),
             )
 
-        if spec.mode == "fire_and_forget":
-            run_id = f"run-{uuid4().hex}"
-
-            def _runner() -> None:
-                try:
-                    spec.fn({**request.params, "_runId": run_id})
-                except Exception:  # noqa: BLE001 — background errors must not crash server
-                    logger.exception("Background handler %s failed", request.method)
-
-            threading.Thread(target=_runner, daemon=True).start()
-            return JsonRpcResponse.success(request.id, {"runId": run_id})
+        if spec.mode == "workflow":
+            return self._dispatch_workflow(request, spec)
 
         # sync — streaming is handled separately in serve()
         try:
@@ -112,6 +106,65 @@ class JsonRpcServer:
             )
         if request.id is None:
             # Notification — no response.
+            return None
+        return JsonRpcResponse.success(request.id, result)
+
+    # ------------------------------------------------------------------ workflow
+
+    def _dispatch_workflow(
+        self,
+        request: JsonRpcRequest,
+        spec: HandlerSpec,
+    ) -> JsonRpcResponse | None:
+        if self._workflow_starter is None:
+            logger.error("Workflow handler %s invoked without a workflow_starter", request.method)
+            return JsonRpcResponse.failure(
+                request.id,
+                JsonRpcError(
+                    INTERNAL_ERROR,
+                    "Internal error",
+                    data="workflow_starter is not configured",
+                ),
+            )
+
+        try:
+            start_spec = spec.fn(request.params)
+        except _RpcParamError as exc:
+            return JsonRpcResponse.failure(
+                request.id,
+                JsonRpcError(INVALID_PARAMS, str(exc)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Workflow handler %s raised while building spec", request.method)
+            return JsonRpcResponse.failure(
+                request.id,
+                JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
+            )
+
+        if not isinstance(start_spec, WorkflowStartSpec):
+            return JsonRpcResponse.failure(
+                request.id,
+                JsonRpcError(
+                    INTERNAL_ERROR,
+                    f"Workflow handler {request.method} did not return a WorkflowStartSpec",
+                ),
+            )
+
+        try:
+            handle = asyncio.run(self._workflow_starter(start_spec))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Workflow start failed for %s", request.method)
+            return JsonRpcResponse.failure(
+                request.id,
+                JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
+            )
+
+        result = {
+            "runId": handle.id,
+            "workflowId": handle.id,
+            "firstExecutionRunId": handle.first_execution_run_id,
+        }
+        if request.id is None:
             return None
         return JsonRpcResponse.success(request.id, result)
 

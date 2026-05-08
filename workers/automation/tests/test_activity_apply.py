@@ -71,3 +71,63 @@ async def test_apply_activity_invokes_apply_main_and_returns_ok():
     assert output.applied == 2
     assert output.failed == 0
     assert output.error is None
+
+
+@pytest.mark.asyncio
+async def test_apply_activity_continuous_calls_apply_main_with_limit_zero():
+    """``continuous=True`` must drive ``apply_main`` with ``limit=0`` (run-forever sentinel)."""
+    queue = f"apply-{uuid.uuid4()}"
+
+    with patch(
+        "jobhunter.apply.launcher.main",
+        return_value=(0, 0),
+    ) as apply_main_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_ApplyHarness],
+                activities=[apply_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                await env.client.execute_workflow(
+                    _ApplyHarness.run,
+                    ApplyActivityInput(
+                        tenant_id="local",
+                        limit=5,  # ignored when continuous=True
+                        continuous=True,
+                    ),
+                    id=f"apply-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    apply_main_mock.assert_called_once()
+    assert apply_main_mock.call_args.kwargs["limit"] == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_activity_non_continuous_floors_limit_at_one():
+    """``continuous=False`` keeps ``max(1, limit)`` semantics — ``limit=0`` becomes 1."""
+    queue = f"apply-{uuid.uuid4()}"
+
+    with patch(
+        "jobhunter.apply.launcher.main",
+        return_value=(0, 0),
+    ) as apply_main_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_ApplyHarness],
+                activities=[apply_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                await env.client.execute_workflow(
+                    _ApplyHarness.run,
+                    ApplyActivityInput(tenant_id="local", limit=0, continuous=False),
+                    id=f"apply-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    apply_main_mock.assert_called_once()
+    assert apply_main_mock.call_args.kwargs["limit"] == 1

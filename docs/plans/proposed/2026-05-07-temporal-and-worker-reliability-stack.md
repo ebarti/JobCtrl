@@ -100,33 +100,39 @@ Branch: `temporal/jsonrpc-cutover` off `temporal/pipeline-workflow`.
 - Delete the `fire_and_forget` mode in
   `workers/automation/src/jobhunter/infrastructure/rpc/server.py`
   (the `threading.Thread` shortcut on lines 87–97). Replace it with a
-  `workflow` dispatch mode where the handler returns a workflow
-  invocation tuple `(workflow, args)` and the server starts the
-  workflow via the Temporal client and returns
-  `{ "workflowId": ..., "runId": ... }` (preserving the existing
-  `runId` field name in the response so the TS contract stays the
-  same).
+  `workflow` dispatch mode where the handler returns a
+  `WorkflowStartSpec(workflow, args, workflow_id?, retry_policy?)`
+  and the server starts the workflow via an injected `WorkflowStarter`
+  (default: `get_temporal_client().start_workflow(...)`) and returns
+  `{ "runId": ..., "workflowId": ..., "firstExecutionRunId": ... }`
+  (preserving the existing `runId` field name in the response so the
+  TS contract stays the same).
 - Re-register `apply` as `mode="workflow"` mapping to
-  `ApplyWorkflow.run`.
-- Re-register `run_stage` and `profile_import` as `mode="workflow"`
-  too (they are sync today only because there is nowhere to enqueue
-  them — Temporal is now that place).
+  `ApplyWorkflow`.
+- **Scope narrowed:** `run_stage` and `profile_import` stay
+  `mode="sync"` for now. They are sync today and the TS callers
+  expect synchronous result shapes (e.g. `defaultProfileImporter`
+  extracts a profile draft from the response). Converting them
+  changes existing sync contracts and deserves its own follow-up —
+  in PR 3, only `apply` flips to `workflow` mode.
 - TS `apps/api/src/local-actions.ts` keeps its `{ runId }` shape and
   the existing `status: "queued"` translation — the comment about
   `fire_and_forget` becomes "workflow start — server returns
   `{ runId }` (the Temporal workflow id)".
 - New JSON-RPC method `cancel_run` (`mode=sync`) that takes a
-  `runId` (workflow id) and calls `client.cancel_workflow(...)` so
-  the existing TS cancel surface (`cancelJobAction`) works against
-  in-flight workflows. The current `cancel_stage` handler stays as
-  the post-hoc state-flip; `cancel_run` is the cooperative path.
+  `runId` (workflow id) and calls
+  `client.get_workflow_handle(run_id).cancel()` so the existing TS
+  cancel surface (`cancelJobAction`) works against in-flight
+  workflows. The current `cancel_stage` handler stays as the
+  post-hoc state-flip; `cancel_run` is the cooperative path.
 - Tests: (a) `apply` via JSON-RPC starts a workflow and returns a
   workflow id, (b) `cancel_run` propagates to a running workflow,
   (c) the deleted `fire_and_forget` path is gone — assert the mode
   is no longer accepted by `JsonRpcServer.register`.
 
 Out of scope: collapsing the `apply_runs` table into workflow runs;
-UI surfaces.
+UI surfaces; converting `run_stage` / `profile_import` to workflows
+(deferred to a follow-up — see scope narrowing above).
 
 QA: skipped — automation-only at the wire level. Existing TS `{ runId }`
 contract is preserved, so the UI continues to function unchanged.
