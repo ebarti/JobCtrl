@@ -2,6 +2,7 @@ export { jobsKeys } from "./jobsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
 export { applyRunsKeys } from "./applyRunsKeys.js";
+export { workflowRunsKeys } from "./workflowRunsKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { profileKeys } from "../profile/queryKeys.js";
 export { discoveryKeys } from "../discovery/queryKeys.js";

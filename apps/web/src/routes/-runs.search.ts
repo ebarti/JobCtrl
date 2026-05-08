@@ -1,0 +1,10 @@
+import { WORKFLOW_RUN_STATUS_FILTERS } from "@jobhunter/contracts";
+import { z } from "zod";
+
+export const runsSearchSchema = z.object({
+  status: z.enum(WORKFLOW_RUN_STATUS_FILTERS).default("all"),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(200).default(50),
+});
+
+export type RunsSearch = z.infer<typeof runsSearchSchema>;

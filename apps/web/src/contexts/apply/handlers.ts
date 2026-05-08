@@ -13,11 +13,13 @@ import {
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { workflowRunsKeys } from "../operations/workflowRunsKeys.js";
 
 export const applyRunStartedHandler = (
   event: ApplyRunStarted,
 ): readonly InvalidationItem[] => [
   invalidate(applyRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
@@ -40,6 +42,8 @@ export const applicationSubmittedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(applyRunsKeys.lists(event.tenantId)),
   invalidate(applyRunsKeys.detail(event.tenantId, event.payload.runId)),
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.runId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
@@ -50,5 +54,7 @@ export const applicationFailedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(applyRunsKeys.lists(event.tenantId)),
   invalidate(applyRunsKeys.detail(event.tenantId, event.payload.runId)),
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.runId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];

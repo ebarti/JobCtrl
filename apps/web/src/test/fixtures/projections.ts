@@ -8,6 +8,7 @@ import type {
   PaginatedResponse,
   ProfileConfigResponse,
   SettingsResponse,
+  WorkflowRunSummary,
 } from "@jobhunter/contracts";
 
 import type { ApiHealthResponse } from "../../shared/ports/ApiClientPort.js";
@@ -228,6 +229,53 @@ export const sampleSettingsResponse: SettingsResponse = {
   },
   paths: { settingsPath: "/tmp/jobhunter-test/settings.json" },
 };
+
+export const sampleWorkflowRun: WorkflowRunSummary = {
+  workflowId: "apply-run-1",
+  runId: "apply-run-1",
+  jobKey: "job-1",
+  title: sampleJob.title,
+  company: sampleJob.company,
+  status: "in_progress",
+  result: null,
+  dryRun: false,
+  model: "haiku",
+  startedAt: "2026-05-06T07:45:00Z",
+  finishedAt: null,
+  durationMs: null,
+};
+
+export const sampleWorkflowRunCompleted: WorkflowRunSummary = {
+  workflowId: "apply-run-2",
+  runId: "apply-run-2",
+  jobKey: "job-2",
+  title: sampleSecondaryJob.title,
+  company: sampleSecondaryJob.company,
+  status: "succeeded",
+  result: "applied",
+  dryRun: false,
+  model: "haiku",
+  startedAt: "2026-05-06T06:30:00Z",
+  finishedAt: "2026-05-06T06:35:00Z",
+  durationMs: 300_000,
+};
+
+export function makeWorkflowRunsPage(
+  items: readonly WorkflowRunSummary[] = [sampleWorkflowRun, sampleWorkflowRunCompleted],
+): PaginatedResponse<WorkflowRunSummary> {
+  return {
+    ok: true,
+    items: [...items],
+    pagination: {
+      page: 1,
+      pageSize: 50,
+      total: items.length,
+      pages: 1,
+    },
+    sort: { field: "started_at", dir: "desc" },
+    filter: { status: "all" },
+  };
+}
 
 export const sampleCredentialsResponse: CredentialsResponse = {
   ok: true,

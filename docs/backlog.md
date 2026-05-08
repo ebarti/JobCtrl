@@ -308,7 +308,7 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-17 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
+18 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
 they exercise pre-existing production accessibility defects that are scoped
 out of the Phase 7 baseline. Each defect needs a follow-up production fix;
 once fixed, the deferral is removed from the corresponding story
@@ -322,6 +322,7 @@ parameters.
 | `apps/web/src/views/artifacts/ArtifactFilterBar.tsx` | Bare `<select>` element with no associated label. | `ArtifactFilterBar.stories.tsx` |
 | `apps/web/src/views/jobs/JobsView.tsx` (composes the above) | Inherits `DataTable` + `JobFilterBar` defects. | `JobsView.stories.tsx` |
 | `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `DataTable` + `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
+| `apps/web/src/views/runs/RunsView.tsx` (composes `DataTable`) | Inherits `DataTable` defects. | `RunsView.stories.tsx` |
 | `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx` | Bare `<select>` elements with no labels; icon-only buttons missing accessible names. | `StructuredProfileEditor.stories.tsx`, `ProfileEditor.stories.tsx` (composes it) |
 | `apps/web/src/contexts/apply/components/ApplyHistory.tsx` | TanStack Router `<Link>` rendered as a button without an accessible name. | `ApplyHistory.stories.tsx` |
 | Radix `DropdownMenu` portal | `aria-hidden-focus` violation reported during the open animation (Radix transient internal state). | `dropdown-menu.stories.tsx` |

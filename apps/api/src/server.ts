@@ -22,6 +22,7 @@ import {
   ProfileUpdateRequestSchema,
   RetryStageRequestSchema,
   SettingsUpdateRequestSchema,
+  WorkflowRunsListQuerySchema,
 } from "./contracts.js";
 import { databaseExists, openDatabase } from "./db.js";
 import { registerEventStreamRoute } from "./event-stream.js";
@@ -43,6 +44,7 @@ import {
   getJobDetail,
   listArtifacts,
   listJobs,
+  listWorkflowRuns,
   readProfileConfig,
   readSettingsConfig,
 } from "./read-model.js";
@@ -330,6 +332,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       },
     };
   });
+
+  app.get("/v1/workflow-runs", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) =>
+      listWorkflowRuns(db, WorkflowRunsListQuerySchema.parse(request.query)),
+    ),
+  );
 
   app.get("/v1/artifacts", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listArtifacts(db, ArtifactListQuerySchema.parse(request.query))),

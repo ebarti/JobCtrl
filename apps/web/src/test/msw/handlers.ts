@@ -5,6 +5,7 @@ import {
   makeArtifactsPage,
   makeJobDetail,
   makeJobsPage,
+  makeWorkflowRunsPage,
   sampleCredentialsResponse,
   sampleDashboardSummary,
   sampleHealthResponse,
@@ -71,6 +72,8 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/actions/mark-skipped", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "mark_skipped")),
   ),
+
+  http.get("*/v1/workflow-runs", () => HttpResponse.json(makeWorkflowRunsPage())),
 
   http.get("*/v1/artifacts", () => HttpResponse.json(makeArtifactsPage())),
   http.get("*/v1/artifacts/:artifactId", ({ params }) =>

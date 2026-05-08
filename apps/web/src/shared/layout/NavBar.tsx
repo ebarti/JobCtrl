@@ -2,10 +2,18 @@ import { Link } from "@tanstack/react-router";
 
 const NAV_ITEMS: ReadonlyArray<{
   readonly label: string;
-  readonly to: "/dashboard" | "/jobs" | "/artifacts" | "/profile" | "/preferences" | "/settings";
+  readonly to:
+    | "/dashboard"
+    | "/jobs"
+    | "/runs"
+    | "/artifacts"
+    | "/profile"
+    | "/preferences"
+    | "/settings";
 }> = [
   { label: "Dashboard", to: "/dashboard" },
   { label: "Jobs", to: "/jobs" },
+  { label: "Runs", to: "/runs" },
   { label: "Artifacts", to: "/artifacts" },
   { label: "Profile", to: "/profile" },
   { label: "Preferences", to: "/preferences" },

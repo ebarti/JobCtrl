@@ -8,11 +8,18 @@ JSON-RPC 2.0 protocol over a long-lived `jobhunter rpc` subprocess. It is
 intentionally local-first and binds to `127.0.0.1` by default.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
-`/v1/artifacts`) read from the five `*_projections` tables maintained by
-`apps/api/src/projections.ts` (TS-side mirror) and the Python
+`/v1/artifacts`, `/v1/workflow-runs`) read from the five `*_projections` tables
+maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 `ProjectionBuilder` (`workers/automation/src/jobhunter/infrastructure/projections/`).
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
+
+`/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
+and projects each row to a `WorkflowRunSummary`, including the Temporal
+workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`
+uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
+`/runs` deep-links each row to the local Temporal Web UI
+(`http://127.0.0.1:8233`).
 
 ## Related Packages
 

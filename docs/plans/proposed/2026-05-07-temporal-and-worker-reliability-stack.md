@@ -195,11 +195,29 @@ Branch: `temporal/runs-view` off `temporal/apply-runs-collapse`.
   `apps/web/src/contexts/operations/hooks/`.
 - Invalidation handler: extend
   `apps/web/src/contexts/operations/invalidation-router.ts` so
+  workflow-run lifecycle events from the SSE stream invalidate the runs
+  list. Implementation note: the worker does not yet emit dedicated
   `WorkflowStarted` / `WorkflowCompleted` / `WorkflowFailed` /
-  `WorkflowCanceled` events from the SSE stream invalidate the runs
-  list.
+  `WorkflowCanceled` event types; the existing apply-run lifecycle
+  events (`ApplyRunStarted` / `ApplicationSubmitted` /
+  `ApplicationFailed`) drive the same invalidation by also targeting
+  `workflowRunsKeys.lists` and `workflowRunsKeys.detail`. When the
+  worker grows non-apply workflows, add the `Workflow*` event types and
+  route them through the same `workflowRunsKeys` factory.
+- Backend surface: `GET /v1/workflow-runs` (paginated; `status` filter,
+  with `WorkflowRunStatus` widening beyond `ApplyRunStatus` to include
+  `canceled` / `terminated` / `timed_out`). Schema:
+  `WorkflowRunSummary` exposes both `runId` and `workflowId` as
+  distinct fields — today they are equal (the Python `ApplyWorkflow`
+  uses `info.workflow_id` as the timeline key); the seam is preserved
+  so future non-apply workflows that separate the two land without a
+  breaking read-model change.
+- Out-of-scope follow-up: the JSON-RPC `cancel_run` handler +
+  `CancelRunParamsSchema` already exist (PR 3 fixer). Wiring an
+  in-row "Cancel running workflow" UI button is a follow-up.
 - Tests: hook test + view component test + a Playwright spec covering
-  list → detail → "Open in Temporal Web UI" link presence.
+  list → "Open in Temporal Web UI" link presence (correct `href` and
+  `target="_blank"`).
 
 QA: **required** for this PR — UI surface change, new page, new
 invalidation routing. Run the full PR review/fix + QA loop per

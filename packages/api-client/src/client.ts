@@ -26,6 +26,8 @@ import type {
   RetryStageRequest,
   SettingsUpdateRequest,
   SettingsResponse,
+  WorkflowRunSummary,
+  WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
 
 type QueryValue = boolean | number | string | null | undefined;
@@ -74,6 +76,12 @@ export class JobHunterApiClient {
 
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
     return this.post("/v1/jobs/bulk-restore", body);
+  }
+
+  workflowRuns(
+    query: Partial<WorkflowRunsListQuery> = {},
+  ): Promise<PaginatedResponse<WorkflowRunSummary>> {
+    return this.get("/v1/workflow-runs", query);
   }
 
   artifacts(query: Partial<ArtifactListQuery> = {}): Promise<PaginatedResponse<ArtifactSummary>> {

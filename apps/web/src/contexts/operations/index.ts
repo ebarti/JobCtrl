@@ -21,6 +21,11 @@ export type {
   StageOrAll,
   StageState,
   StageStateOrAll,
+  WorkflowRunStatus,
+  WorkflowRunStatusFilter,
+  WorkflowRunSummary,
+  WorkflowRunsListInput,
+  WorkflowRunsListQuery,
 } from "./types.js";
 
 export { applyRunsKeys } from "./applyRunsKeys.js";
@@ -28,6 +33,7 @@ export { artifactsKeys } from "./artifactsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
+export { workflowRunsKeys } from "./workflowRunsKeys.js";
 
 export {
   type InvalidationHandler,
@@ -48,5 +54,6 @@ export { useDashboardSummaryQuery } from "./hooks/useDashboardSummaryQuery.js";
 export { useHealthQuery } from "./hooks/useHealthQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";
+export { useWorkflowRunsListQuery } from "./hooks/useWorkflowRunsListQuery.js";
 
 export { EventStreamProvider, useEventStreamStatus } from "./providers/EventStreamProvider.js";

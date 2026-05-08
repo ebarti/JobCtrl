@@ -1,0 +1,64 @@
+import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+
+import { useWorkflowRunsListQuery } from "../../contexts/operations/hooks/useWorkflowRunsListQuery.js";
+import type { WorkflowRunsListInput } from "../../contexts/operations/types.js";
+import type { RunsSearch } from "../../routes/-runs.search.js";
+import { CardHeader } from "../../shared/ui/card-header.js";
+import { RunsFilterBar } from "./RunsFilterBar.js";
+import { RunsTable } from "./RunsTable.js";
+
+// TODO(temporal): the JSON-RPC `cancel_run` handler + `CancelRunParamsSchema`
+// already exist (PR 3 fixer). Wiring an in-row "Cancel running workflow"
+// button is out of scope for PR 5 and lands in a follow-up.
+
+function workflowRunsInput(search: RunsSearch): WorkflowRunsListInput {
+  return {
+    page: search.page,
+    pageSize: search.pageSize,
+    status: search.status,
+  };
+}
+
+export function RunsView() {
+  const search = useSearch({ from: "/runs" });
+  const navigate = useNavigate({ from: "/runs" });
+  const { data, isFetching, error } = useWorkflowRunsListQuery(workflowRunsInput(search));
+  const message = error instanceof Error ? error.message : null;
+
+  const setSearch = (next: Partial<RunsSearch>) => {
+    void navigate({ search: (prev: RunsSearch) => ({ ...prev, ...next }) });
+  };
+
+  // The detail drawer route is `/runs/$runId`; clicking a row navigates
+  // there. The table's `onRowActivate` already supplies the workflow id
+  // (which equals `runId` for apply runs).
+  const openRun = (workflowId: string) => {
+    void navigate({ to: "/runs/$runId", params: { runId: workflowId } });
+  };
+
+  return (
+    <>
+      <section className="card full">
+        <CardHeader
+          title="Workflow runs"
+          meta={data ? `${data.pagination.total} total` : "loading"}
+        />
+        {message ? <div className="banner inline">{message}</div> : null}
+        <RunsFilterBar
+          status={search.status}
+          onStatusChange={(status) => setSearch({ status, page: 1 })}
+        />
+        <RunsTable
+          data={data ?? null}
+          loading={isFetching}
+          page={search.page}
+          pageSize={search.pageSize}
+          onPageChange={(page) => setSearch({ page })}
+          onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
+          onOpenRun={openRun}
+        />
+      </section>
+      <Outlet />
+    </>
+  );
+}
