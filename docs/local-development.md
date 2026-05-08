@@ -20,6 +20,27 @@ uv --project workers/automation run jobhunter doctor
 
 The Vite web dev server proxies `/v1/*` to the local API by default.
 
+### Local Temporal dev server
+
+The Python worker uses [Temporal](https://docs.temporal.io/) as its workflow
+engine. Start the dev server in its own terminal:
+
+```bash
+temporal server start-dev
+```
+
+That binds the frontend gRPC service on `127.0.0.1:7233` and the Web UI on
+`http://127.0.0.1:8233`. With it running, `jobhunter doctor` reports
+`Temporal: reachable` and the worker process can connect:
+
+```bash
+uv --project workers/automation run jobhunter worker
+```
+
+`jobhunter worker` is the long-lived process that picks up workflow + activity
+tasks from the `jobhunter-default` queue. Run it alongside `pnpm api:dev` and
+`pnpm web:dev` whenever you want the full local stack live.
+
 ## Verify
 
 ```bash
