@@ -9,6 +9,7 @@ Auto-detects provider from environment:
 LLM_MODEL env var overrides the model name for any provider.
 """
 
+import json
 import logging
 import os
 import time
@@ -66,7 +67,7 @@ def _detect_provider() -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 _MAX_RETRIES = 5
-_TIMEOUT = 120  # seconds
+_TIMEOUT = 180  # seconds — Gemini thinking models can take >120s on a single call.
 
 # Base wait on first 429/503 (doubles each retry, caps at 60s).
 # Gemini free tier is 15 RPM = 4s minimum between requests; 10s gives headroom.
@@ -77,6 +78,24 @@ _GEMINI_COMPAT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
 _GEMINI_NATIVE_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 
+class LlmEmptyResponseError(RuntimeError):
+    """Raised when the provider returned a structurally valid response with
+    no completion text. Carries the ``finish_reason`` so callers can decide
+    whether to retry with a higher token budget or downgrade gracefully.
+    """
+
+    def __init__(self, *, finish_reason: str, model: str, hint: str = "") -> None:
+        self.finish_reason = finish_reason
+        self.model = model
+        self.hint = hint
+        msg = (
+            f"LLM '{model}' returned no content (finish_reason={finish_reason!r})"
+        )
+        if hint:
+            msg = f"{msg}. {hint}"
+        super().__init__(msg)
+
+
 class LLMClient:
     """Thin LLM client supporting OpenAI-compatible and native Gemini endpoints.
 
@@ -84,6 +103,14 @@ class LLMClient:
     happens with preview/experimental models not exposed via compat), it
     automatically switches to the native generateContent API and stays there
     for the lifetime of the process.
+
+    Structured outputs are exposed via the ``response_schema`` kwarg on
+    ``chat()`` / ``ask()`` / ``chat_json()``. Provider quirks:
+
+      * OpenAI-compat (incl. Gemini compat): forwarded as
+        ``response_format={"type": "json_schema", ...}``.
+      * Native Gemini: forwarded as
+        ``generationConfig.responseSchema`` + ``responseMimeType=application/json``.
     """
 
     def __init__(self, base_url: str, model: str, api_key: str) -> None:
@@ -102,6 +129,8 @@ class LLMClient:
         messages: list[dict],
         temperature: float,
         max_tokens: int,
+        response_schema: dict | None,
+        thinking_budget: int | None,
     ) -> str:
         """Call the native Gemini generateContent API.
 
@@ -125,18 +154,30 @@ class LLMClient:
                 # Gemini uses "model" instead of "assistant"
                 contents.append({"role": "model", "parts": [{"text": text}]})
 
+        generation_config: dict = {
+            "temperature": temperature,
+            "maxOutputTokens": max_tokens,
+        }
+        if response_schema is not None:
+            # Native Gemini wants JSON mode + the schema spelled inline.
+            generation_config["responseMimeType"] = "application/json"
+            generation_config["responseSchema"] = response_schema
+        if thinking_budget is not None:
+            generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+
         payload: dict = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-            },
+            "generationConfig": generation_config,
         }
         if system_parts:
             payload["systemInstruction"] = {"parts": system_parts}
 
         url = f"{_GEMINI_NATIVE_BASE}/models/{self.model}:generateContent"
         params = {"temperature": temperature, "max_tokens": max_tokens}
+        if response_schema is not None:
+            params["response_schema"] = "<json_schema>"
+        if thinking_budget is not None:
+            params["thinking_budget"] = thinking_budget
         # Pass the key as a header (not a URL query param) so it never lands in
         # OTel's `http.url` span attribute and gets shipped to Langfuse.
         with llm_generation_span(model=self.model, messages=messages, params=params) as record:
@@ -150,7 +191,7 @@ class LLMClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = _extract_native_gemini_text(data, model=self.model)
             usage = data.get("usageMetadata") or {}
             record(
                 text,
@@ -166,20 +207,40 @@ class LLMClient:
         messages: list[dict],
         temperature: float,
         max_tokens: int,
+        response_schema: dict | None,
+        thinking_budget: int | None,
     ) -> str:
         """Call the OpenAI-compatible endpoint."""
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        payload = {
+        payload: dict = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if response_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_schema.get("title", "response"),
+                    "schema": response_schema,
+                    "strict": True,
+                },
+            }
+        if thinking_budget is not None and self._is_gemini:
+            # Gemini-only knob exposed via OpenAI-compat's `extra_body`.
+            payload["extra_body"] = {
+                "google": {"thinking_config": {"thinking_budget": thinking_budget}}
+            }
 
         params = {"temperature": temperature, "max_tokens": max_tokens}
+        if response_schema is not None:
+            params["response_schema"] = "<json_schema>"
+        if thinking_budget is not None:
+            params["thinking_budget"] = thinking_budget
         with llm_generation_span(model=self.model, messages=messages, params=params) as record:
             resp = self._client.post(
                 f"{self.base_url}/chat/completions",
@@ -194,7 +255,7 @@ class LLMClient:
 
             resp.raise_for_status()
             data = resp.json()
-            text = data["choices"][0]["message"]["content"]
+            text = _extract_compat_text(data, model=self.model)
             usage = data.get("usage") or {}
             record(
                 text,
@@ -210,8 +271,20 @@ class LLMClient:
         messages: list[dict],
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        response_schema: dict | None = None,
+        thinking_budget: int | None = None,
     ) -> str:
-        """Send a chat completion request and return the assistant message text."""
+        """Send a chat completion request and return the assistant message text.
+
+        ``response_schema`` enables structured outputs — the provider is
+        instructed to return a JSON document conforming to the schema.
+        Use :meth:`chat_json` for the parsed-dict convenience.
+
+        ``thinking_budget`` (Gemini only): caps internal reasoning tokens.
+        Set to ``0`` to skip thinking entirely on Gemini 3.x preview models
+        whose default budget can swallow the entire ``max_tokens`` allotment
+        before any visible content is produced.
+        """
         # Qwen3 optimization: prepend /no_think to skip chain-of-thought
         # reasoning, saving tokens on structured extraction tasks.
         if "qwen" in self.model.lower() and messages:
@@ -223,9 +296,13 @@ class LLMClient:
             try:
                 # Route to native Gemini if we've already confirmed it's needed
                 if self._use_native_gemini:
-                    return self._chat_native_gemini(messages, temperature, max_tokens)
+                    return self._chat_native_gemini(
+                        messages, temperature, max_tokens, response_schema, thinking_budget
+                    )
 
-                return self._chat_compat(messages, temperature, max_tokens)
+                return self._chat_compat(
+                    messages, temperature, max_tokens, response_schema, thinking_budget
+                )
 
             except _GeminiCompatForbidden:
                 # Model not available on OpenAI-compat layer — switch to native.
@@ -238,7 +315,9 @@ class LLMClient:
                 self._use_native_gemini = True
                 # Retry immediately with native — don't count as a rate-limit wait
                 try:
-                    return self._chat_native_gemini(messages, temperature, max_tokens)
+                    return self._chat_native_gemini(
+                        messages, temperature, max_tokens, response_schema, thinking_budget
+                    )
                 except httpx.HTTPStatusError as native_exc:
                     raise RuntimeError(
                         f"Both Gemini endpoints failed. Compat: 403 Forbidden. "
@@ -285,12 +364,99 @@ class LLMClient:
 
         raise RuntimeError("LLM request failed after all retries")
 
+    def chat_json(
+        self,
+        messages: list[dict],
+        *,
+        response_schema: dict,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        thinking_budget: int | None = None,
+    ) -> dict:
+        """Like :meth:`chat` but expects a JSON object back and parses it.
+
+        Raises ``LlmEmptyResponseError`` if the provider returned no content.
+        Raises ``json.JSONDecodeError`` if the content was not valid JSON
+        (which should not happen when ``response_schema`` is honored, but
+        the LLM gateway is the only writer that can guarantee that —
+        fail loudly so the caller surfaces the schema/contract drift).
+        """
+        text = self.chat(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_schema=response_schema,
+            thinking_budget=thinking_budget,
+        )
+        return json.loads(text)
+
     def ask(self, prompt: str, **kwargs) -> str:
         """Convenience: single user prompt -> assistant response."""
         return self.chat([{"role": "user", "content": prompt}], **kwargs)
 
     def close(self) -> None:
         self._client.close()
+
+
+def _extract_compat_text(data: dict, *, model: str) -> str:
+    """Pull assistant text out of an OpenAI-compat response.
+
+    Some Gemini "thinking" preview models return a response where
+    ``choices[0].message`` carries only ``role`` (no ``content``) when the
+    entire ``max_tokens`` budget was spent on internal reasoning before any
+    visible token landed. We surface that as :class:`LlmEmptyResponseError`
+    instead of a confusing ``KeyError: 'content'``.
+    """
+    choices = data.get("choices") or []
+    if not choices:
+        finish_reason = "no_choices"
+    else:
+        message = choices[0].get("message") or {}
+        text = message.get("content")
+        finish_reason = choices[0].get("finish_reason", "unknown")
+        if isinstance(text, str) and text:
+            return text
+        # Some providers return content as a list of {type: text, text: "..."}
+        if isinstance(text, list):
+            joined = "".join(part.get("text", "") for part in text if isinstance(part, dict))
+            if joined:
+                return joined
+    hint = ""
+    if finish_reason == "length":
+        hint = (
+            "max_tokens budget exhausted before any visible content was emitted "
+            "(common with Gemini 3.x thinking models). Raise max_tokens, or pass "
+            "thinking_budget=0 to disable internal reasoning."
+        )
+    raise LlmEmptyResponseError(finish_reason=finish_reason, model=model, hint=hint)
+
+
+def _extract_native_gemini_text(data: dict, *, model: str) -> str:
+    """Pull assistant text out of a native Gemini ``generateContent`` response.
+
+    Native responses can also return an empty completion when the model
+    spends all its tokens on reasoning. Surface that the same way the
+    compat path does so the caller never has to special-case the provider.
+    """
+    candidates = data.get("candidates") or []
+    if not candidates:
+        finish_reason = "no_candidates"
+    else:
+        candidate = candidates[0]
+        content = candidate.get("content") or {}
+        parts = content.get("parts") or []
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+        finish_reason = candidate.get("finishReason", "unknown")
+        if text:
+            return text
+    hint = ""
+    if finish_reason in ("MAX_TOKENS", "length"):
+        hint = (
+            "max_tokens budget exhausted before any visible content was emitted "
+            "(common with Gemini 3.x thinking models). Raise max_tokens, or pass "
+            "thinking_budget=0 to disable internal reasoning."
+        )
+    raise LlmEmptyResponseError(finish_reason=finish_reason, model=model, hint=hint)
 
 
 class _GeminiCompatForbidden(Exception):
