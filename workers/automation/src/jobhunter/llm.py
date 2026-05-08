@@ -137,12 +137,16 @@ class LLMClient:
 
         url = f"{_GEMINI_NATIVE_BASE}/models/{self.model}:generateContent"
         params = {"temperature": temperature, "max_tokens": max_tokens}
+        # Pass the key as a header (not a URL query param) so it never lands in
+        # OTel's `http.url` span attribute and gets shipped to Langfuse.
         with llm_generation_span(model=self.model, messages=messages, params=params) as record:
             resp = self._client.post(
                 url,
                 json=payload,
-                headers={"Content-Type": "application/json"},
-                params={"key": self.api_key},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
             )
             resp.raise_for_status()
             data = resp.json()

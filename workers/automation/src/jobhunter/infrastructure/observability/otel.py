@@ -89,9 +89,38 @@ def init_otel(*, service_name: str = "jobhunter", environment: str | None = None
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-        HTTPXClientInstrumentor().instrument()
+        HTTPXClientInstrumentor().instrument(request_hook=_scrub_url_credentials)
     except ImportError:
         pass
+
+
+def _scrub_url_credentials(span, request) -> None:  # type: ignore[no-untyped-def]
+    """Replace ``http.url`` if it carries a ``?key=`` credential.
+
+    Belt-and-suspenders: every JobHunter call path should be passing the API
+    key as a header (e.g. ``x-goog-api-key``), but if any future caller
+    accidentally puts ``?key=...`` back in the URL it would otherwise be
+    captured into the ``http.url`` span attribute and shipped to Langfuse.
+    The hook strips that single query param while preserving everything else.
+    """
+    try:
+        url = str(request.url)
+    except Exception:  # noqa: BLE001 — defensive: never break the request path
+        return
+    if "key=" not in url:
+        return
+    from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+
+    parsed = urlparse(url)
+    if not parsed.query:
+        return
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    scrubbed = [(k, "REDACTED" if k.lower() == "key" else v) for k, v in pairs]
+    if scrubbed == pairs:
+        return
+    cleaned = urlunparse(parsed._replace(query=urlencode(scrubbed)))
+    span.set_attribute("http.url", cleaned)
+    span.set_attribute("url.full", cleaned)
 
 
 def shutdown_otel() -> None:
