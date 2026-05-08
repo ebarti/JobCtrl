@@ -1149,6 +1149,7 @@ def rpc() -> None:
     ``run_stage``, ``apply``, ``profile_import``.
     """
     _bootstrap()
+    from jobhunter.infrastructure.observability import shutdown_otel
     from jobhunter.infrastructure.rpc.handlers import register_default_handlers
     from jobhunter.infrastructure.rpc.server import JsonRpcServer
     from jobhunter.infrastructure.rpc.workflow_starter import (
@@ -1158,7 +1159,13 @@ def rpc() -> None:
 
     server = JsonRpcServer(workflow_starter=default_workflow_starter)
     register_default_handlers(server, canceler=default_workflow_canceler)
-    server.serve()
+    try:
+        server.serve()
+    finally:
+        # Flush queued OTel spans before stdin EOF kills the process —
+        # without this the BatchSpanProcessor drops in-flight rpc.<method>
+        # spans and Langfuse loses the JSON-RPC trace tail.
+        shutdown_otel()
 
 
 @app.command()

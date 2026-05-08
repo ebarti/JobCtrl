@@ -841,7 +841,10 @@ function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
     jobKey: row.job_id,
     title: row.job_title || "Untitled",
     company: row.job_employer || "Unknown company",
-    status: row.status || "unknown",
+    // Mirror listWorkflowRuns: ``apply_run_projections`` rows can carry
+    // raw legacy strings ("finished", "submitted", etc.); normalize so
+    // dashboard.applyRuns and /v1/workflow-runs agree on the same row.
+    status: normalizeWorkflowRunStatus(row.status),
     dryRun: Boolean(row.dry_run),
     startedAt: row.started_at,
   }));
