@@ -71,6 +71,11 @@ _DEFAULT_RETRY = RetryPolicy(
     maximum_attempts=3,
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
+# 2 minutes gives the activity ~8 cycles of the 15s heartbeat poll inside
+# ``run_blocking_with_heartbeat`` before Temporal would consider the
+# activity dead. Without this knob Temporal never times out a stuck
+# activity and the workflow waits the full ``start_to_close_timeout``.
+_DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 
 
 @workflow.defn(name="JobPipelineWorkflow")
@@ -113,6 +118,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             discover_activity,
             DiscoverActivityInput(tenant_id=payload.tenant_id, workers=payload.workers),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
+            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "enrich":
@@ -124,6 +130,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
+            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "score":
@@ -135,6 +142,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
+            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "tailor":
@@ -148,6 +156,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
+            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "cover":
@@ -160,6 +169,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
+            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "pdf":
@@ -167,6 +177,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             pdf_activity,
             PdfActivityInput(tenant_id=payload.tenant_id, limit=payload.limit),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
+            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "apply":

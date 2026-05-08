@@ -34,16 +34,25 @@ async def profile_import_activity(
     payload: ProfileImportActivityInput,
 ) -> ProfileImportActivityOutput:
     """Import a profile draft from an uploaded resume PDF."""
-    activity.heartbeat("profile_import starting")
     from jobhunter.actions import LocalActionRequest, run_local_action
+    from jobhunter.infrastructure.temporal.run_in_activity import (
+        run_blocking_with_heartbeat,
+    )
 
-    result = run_local_action(
-        LocalActionRequest(
-            stage="profile_import",
-            pdf_path=payload.pdf_path,
-            import_profile=payload.import_profile,
-            import_style=payload.import_style,
+    def _do() -> Any:
+        return run_local_action(
+            LocalActionRequest(
+                stage="profile_import",
+                pdf_path=payload.pdf_path,
+                import_profile=payload.import_profile,
+                import_style=payload.import_style,
+            )
         )
+
+    result = await run_blocking_with_heartbeat(
+        _do,
+        starting_message="profile_import starting",
+        progress_message="profile_import still running",
     )
     if not result.ok:
         return ProfileImportActivityOutput(

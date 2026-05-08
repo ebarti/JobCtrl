@@ -28,13 +28,20 @@ class EnrichActivityOutput:
 @activity.defn(name="enrich")
 async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
     """Run the enrichment stage via ``run_pipeline``."""
-    activity.heartbeat("enrich starting")
+    from jobhunter.infrastructure.temporal.run_in_activity import (
+        run_blocking_with_heartbeat,
+    )
     from jobhunter.pipeline import run_pipeline
 
-    result = run_pipeline(
-        stages=["enrich"],
-        workers=payload.workers,
-        limit=payload.limit,
+    def _do() -> dict[str, Any]:
+        return run_pipeline(
+            stages=["enrich"], workers=payload.workers, limit=payload.limit
+        )
+
+    result = await run_blocking_with_heartbeat(
+        _do,
+        starting_message="enrich starting",
+        progress_message="enrich still running",
     )
     stages = list(result.get("stages") or [])
     errors = dict(result.get("errors") or {})
