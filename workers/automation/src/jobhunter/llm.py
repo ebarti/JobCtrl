@@ -15,6 +15,8 @@ import time
 
 import httpx
 
+from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -134,15 +136,28 @@ class LLMClient:
             payload["systemInstruction"] = {"parts": system_parts}
 
         url = f"{_GEMINI_NATIVE_BASE}/models/{self.model}:generateContent"
-        resp = self._client.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            params={"key": self.api_key},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        params = {"temperature": temperature, "max_tokens": max_tokens}
+        # Pass the key as a header (not a URL query param) so it never lands in
+        # OTel's `http.url` span attribute and gets shipped to Langfuse.
+        with llm_generation_span(model=self.model, messages=messages, params=params) as record:
+            resp = self._client.post(
+                url,
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self.api_key,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            usage = data.get("usageMetadata") or {}
+            record(
+                text,
+                input_tokens=usage.get("promptTokenCount"),
+                output_tokens=usage.get("candidatesTokenCount"),
+            )
+            return text
 
     # -- OpenAI-compat API --------------------------------------------------
 
@@ -164,24 +179,29 @@ class LLMClient:
             "max_tokens": max_tokens,
         }
 
-        resp = self._client.post(
-            f"{self.base_url}/chat/completions",
-            json=payload,
-            headers=headers,
-        )
+        params = {"temperature": temperature, "max_tokens": max_tokens}
+        with llm_generation_span(model=self.model, messages=messages, params=params) as record:
+            resp = self._client.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
 
-        # 403 on Gemini compat = model not available on compat layer.
-        # Raise a specific sentinel so chat() can switch to native API.
-        if resp.status_code == 403 and self._is_gemini:
-            raise _GeminiCompatForbidden(resp)
+            # 403 on Gemini compat = model not available on compat layer.
+            # Raise a specific sentinel so chat() can switch to native API.
+            if resp.status_code == 403 and self._is_gemini:
+                raise _GeminiCompatForbidden(resp)
 
-        return self._handle_compat_response(resp)
-
-    @staticmethod
-    def _handle_compat_response(resp: httpx.Response) -> str:
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+            resp.raise_for_status()
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
+            usage = data.get("usage") or {}
+            record(
+                text,
+                input_tokens=usage.get("prompt_tokens"),
+                output_tokens=usage.get("completion_tokens"),
+            )
+            return text
 
     # -- public API ---------------------------------------------------------
 

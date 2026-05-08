@@ -293,6 +293,12 @@ Common environment variables:
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
 - `JOBHUNTER_API_HOST`, `JOBHUNTER_API_PORT`: local TypeScript API bind
   settings.
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`:
+  enable OpenTelemetry export of LLM, workflow, and JSON-RPC spans to a
+  Langfuse instance. When any of these is unset the worker runs normally
+  without exporting. Set `LANGFUSE_DISABLE=1` to opt out even when
+  credentials are present. Enabling this exports every LLM prompt and
+  completion to the configured Langfuse instance.
 
 ## Development
 

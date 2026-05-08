@@ -8,6 +8,7 @@ import logging
 import time
 from typing import Optional
 
+import httpx
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -65,6 +66,13 @@ def _bootstrap() -> None:
     load_env()
     ensure_dirs()
     init_db()
+    # Bootstrap OTel as early as possible so every span emitted by the
+    # rest of this CLI invocation flows to the configured Langfuse instance.
+    # init_otel() is idempotent and degrades gracefully when env vars are
+    # absent, so it's safe to call from every command.
+    from jobhunter.infrastructure.observability import init_otel
+
+    init_otel()
     try:
         # Pass a thread-local connection factory so the wildcard
         # subscriber (which fires on whichever thread published the
@@ -1184,7 +1192,14 @@ def worker(
         )
         await worker.run()
 
-    asyncio.run(_run())
+    from jobhunter.infrastructure.observability import shutdown_otel
+
+    try:
+        asyncio.run(_run())
+    finally:
+        # Flush any in-flight spans so the BatchSpanProcessor doesn't drop
+        # them on Ctrl-C.
+        shutdown_otel()
 
 
 @app.command()
@@ -1308,6 +1323,41 @@ def doctor() -> None:
     except (Exception, asyncio.TimeoutError):  # noqa: BLE001 — any failure ⇒ unreachable
         results.append(("Temporal", fail_mark,
                         "unreachable (start with: temporal server start-dev)"))
+
+    # Langfuse OTLP ingest (observability target)
+    # Skip the network probe entirely if LANGFUSE_DISABLE is set — it's the
+    # opt-out switch users flip when they don't want export running and they
+    # shouldn't see a misleading "MISSING" or "unreachable" row.
+    from jobhunter.infrastructure.observability import langfuse_disabled
+
+    if langfuse_disabled():
+        results.append(("Langfuse", "[dim]disabled[/dim]", "LANGFUSE_DISABLE=1"))
+    else:
+        lf_pub = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
+        lf_sec = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
+        lf_url = os.environ.get("LANGFUSE_BASE_URL", "").strip().rstrip("/")
+        if not (lf_pub and lf_sec and lf_url):
+            results.append((
+                "Langfuse",
+                fail_mark,
+                "MISSING (set LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)",
+            ))
+        else:
+            try:
+                resp = httpx.head(f"{lf_url}/api/public/otel/v1/traces", timeout=2.0)
+                # Any non-server-error response means the endpoint is alive.
+                # 405 (Method Not Allowed on HEAD) and 401 (auth required) both
+                # confirm the route exists.
+                if resp.status_code < 500:
+                    results.append(("Langfuse", ok_mark, "reachable"))
+                else:
+                    results.append((
+                        "Langfuse",
+                        fail_mark,
+                        f"unreachable (status={resp.status_code})",
+                    ))
+            except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
+                results.append(("Langfuse", fail_mark, "unreachable"))
 
     # --- Render results ---
     console.print()

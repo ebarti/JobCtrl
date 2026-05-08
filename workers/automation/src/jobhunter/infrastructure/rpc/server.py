@@ -24,6 +24,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, TextIO
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from jobhunter.domain.rpc.messages import (
     INTERNAL_ERROR,
     INVALID_PARAMS,
@@ -80,34 +83,45 @@ class JsonRpcServer:
         handlers should be driven via :meth:`serve` instead of this entry
         point.
         """
-        spec = self._handlers.get(request.method)
-        if spec is None:
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(METHOD_NOT_FOUND, f"Method not found: {request.method}"),
-            )
+        tracer = trace.get_tracer("jobhunter.rpc")
+        with tracer.start_as_current_span(f"rpc.{request.method}") as span:
+            span.set_attribute("rpc.method", request.method)
+            span.set_attribute("rpc.id", "" if request.id is None else str(request.id))
+            span.set_attribute("langfuse.trace.name", request.method)
+            span.set_attribute("langfuse.observation.type", "span")
 
-        if spec.mode == "workflow":
-            return self._dispatch_workflow(request, spec)
+            spec = self._handlers.get(request.method)
+            if spec is None:
+                span.set_status(Status(StatusCode.ERROR, "method not found"))
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(METHOD_NOT_FOUND, f"Method not found: {request.method}"),
+                )
 
-        # sync — streaming is handled separately in serve()
-        try:
-            result = spec.fn(request.params)
-        except _RpcParamError as exc:
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(INVALID_PARAMS, str(exc)),
-            )
-        except Exception as exc:  # noqa: BLE001 — surface as INTERNAL_ERROR
-            logger.exception("Handler %s raised", request.method)
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
-            )
-        if request.id is None:
-            # Notification — no response.
-            return None
-        return JsonRpcResponse.success(request.id, result)
+            if spec.mode == "workflow":
+                return self._dispatch_workflow(request, spec)
+
+            # sync — streaming is handled separately in serve()
+            try:
+                result = spec.fn(request.params)
+            except _RpcParamError as exc:
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(INVALID_PARAMS, str(exc)),
+                )
+            except Exception as exc:  # noqa: BLE001 — surface as INTERNAL_ERROR
+                logger.exception("Handler %s raised", request.method)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                return JsonRpcResponse.failure(
+                    request.id,
+                    JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
+                )
+            if request.id is None:
+                # Notification — no response.
+                return None
+            return JsonRpcResponse.success(request.id, result)
 
     # ------------------------------------------------------------------ workflow
 
@@ -116,8 +130,14 @@ class JsonRpcServer:
         request: JsonRpcRequest,
         spec: HandlerSpec,
     ) -> JsonRpcResponse | None:
+        # The dispatch() caller already opened the rpc.<method> span; we mark
+        # ERROR status on it from each early-return failure branch so the
+        # exported trace tells the truth about failed workflow dispatches.
+        span = trace.get_current_span()
+
         if self._workflow_starter is None:
             logger.error("Workflow handler %s invoked without a workflow_starter", request.method)
+            span.set_status(Status(StatusCode.ERROR, "workflow_starter not configured"))
             return JsonRpcResponse.failure(
                 request.id,
                 JsonRpcError(
@@ -130,30 +150,34 @@ class JsonRpcServer:
         try:
             start_spec = spec.fn(request.params)
         except _RpcParamError as exc:
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
             return JsonRpcResponse.failure(
                 request.id,
                 JsonRpcError(INVALID_PARAMS, str(exc)),
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow handler %s raised while building spec", request.method)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
             return JsonRpcResponse.failure(
                 request.id,
                 JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
             )
 
         if not isinstance(start_spec, WorkflowStartSpec):
+            msg = f"Workflow handler {request.method} did not return a WorkflowStartSpec"
+            span.set_status(Status(StatusCode.ERROR, msg))
             return JsonRpcResponse.failure(
                 request.id,
-                JsonRpcError(
-                    INTERNAL_ERROR,
-                    f"Workflow handler {request.method} did not return a WorkflowStartSpec",
-                ),
+                JsonRpcError(INTERNAL_ERROR, msg),
             )
 
         try:
             handle = asyncio.run(self._workflow_starter(start_spec))
         except Exception as exc:  # noqa: BLE001
             logger.exception("Workflow start failed for %s", request.method)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
             return JsonRpcResponse.failure(
                 request.id,
                 JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)),
@@ -217,38 +241,51 @@ class JsonRpcServer:
         spec: HandlerSpec,
         stdout: TextIO,
     ) -> JsonRpcResponse | None:
-        try:
-            stream = spec.fn(request.params)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Streaming handler %s failed to start", request.method)
-            return JsonRpcResponse.failure(request.id, JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)))
-        if not isinstance(stream, Iterable):
-            return JsonRpcResponse.failure(
-                request.id,
-                JsonRpcError(
-                    INTERNAL_ERROR,
-                    f"Streaming handler {request.method} did not return iterable",
-                ),
-            )
+        tracer = trace.get_tracer("jobhunter.rpc")
+        with tracer.start_as_current_span(f"rpc.{request.method}") as span:
+            span.set_attribute("rpc.method", request.method)
+            span.set_attribute("rpc.id", "" if request.id is None else str(request.id))
+            span.set_attribute("langfuse.trace.name", request.method)
+            span.set_attribute("langfuse.observation.type", "span")
 
-        final: Any = None
-        try:
-            for item in stream:
-                # Each yielded item is sent as a JSON-RPC notification.
-                notification = {
-                    "jsonrpc": "2.0",
-                    "method": f"{request.method}.progress",
-                    "params": item,
-                }
-                stdout.write(json.dumps(notification) + "\n")
-                stdout.flush()
-                final = item
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Streaming handler %s raised mid-stream", request.method)
-            return JsonRpcResponse.failure(request.id, JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc)))
-        if request.id is None:
-            return None
-        return JsonRpcResponse.success(request.id, final)
+            try:
+                stream = spec.fn(request.params)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Streaming handler %s failed to start", request.method)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                return JsonRpcResponse.failure(
+                    request.id, JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc))
+                )
+            if not isinstance(stream, Iterable):
+                msg = f"Streaming handler {request.method} did not return iterable"
+                span.set_status(Status(StatusCode.ERROR, msg))
+                return JsonRpcResponse.failure(
+                    request.id, JsonRpcError(INTERNAL_ERROR, msg)
+                )
+
+            final: Any = None
+            try:
+                for item in stream:
+                    # Each yielded item is sent as a JSON-RPC notification.
+                    notification = {
+                        "jsonrpc": "2.0",
+                        "method": f"{request.method}.progress",
+                        "params": item,
+                    }
+                    stdout.write(json.dumps(notification) + "\n")
+                    stdout.flush()
+                    final = item
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Streaming handler %s raised mid-stream", request.method)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                return JsonRpcResponse.failure(
+                    request.id, JsonRpcError(INTERNAL_ERROR, "Internal error", data=str(exc))
+                )
+            if request.id is None:
+                return None
+            return JsonRpcResponse.success(request.id, final)
 
 
 class _RpcParamError(ValueError):
