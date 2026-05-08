@@ -121,3 +121,36 @@ def test_shutdown_otel_resets_state(monkeypatch):
     otel_mod.shutdown_otel()
     assert otel_mod._provider is None
     assert otel_mod.is_otel_enabled() is False
+
+
+def test_init_otel_sets_resource_attributes(monkeypatch):
+    """The TracerProvider's Resource must carry the service identity Langfuse keys on."""
+    _set_creds(monkeypatch)
+    monkeypatch.setenv("JOBHUNTER_ENV", "test")
+
+    from jobhunter import __version__ as JOBHUNTER_VERSION
+    from jobhunter.infrastructure.observability import otel as otel_mod
+
+    otel_mod.init_otel()
+
+    provider = otel_mod._provider
+    assert provider is not None
+    attrs = dict(provider.resource.attributes)
+    assert attrs["service.name"] == "jobhunter"
+    assert attrs["service.version"] == JOBHUNTER_VERSION
+    assert attrs["deployment.environment"] == "test"
+
+    # Reset and re-init without JOBHUNTER_ENV — defaults to "local".
+    otel_mod.shutdown_otel()
+    monkeypatch.delenv("JOBHUNTER_ENV", raising=False)
+    # Allow set_tracer_provider to succeed again.
+    from opentelemetry import trace as trace_api
+    from opentelemetry.util._once import Once
+
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER_SET_ONCE", Once())
+    monkeypatch.setattr(trace_api, "_TRACER_PROVIDER", None)
+
+    otel_mod.init_otel()
+    provider = otel_mod._provider
+    assert provider is not None
+    assert dict(provider.resource.attributes)["deployment.environment"] == "local"
