@@ -8,6 +8,10 @@ from typing import Any
 from temporalio import workflow
 from temporalio.client import Client
 from temporalio.worker import Worker
+from temporalio.worker.workflow_sandbox import (
+    SandboxedWorkflowRunner,
+    SandboxRestrictions,
+)
 
 from jobhunter.infrastructure.temporal.task_queues import JOBHUNTER_TASK_QUEUE
 
@@ -19,6 +23,26 @@ class _BootstrapNoOpWorkflow:
     @workflow.run
     async def run(self) -> str:
         return "noop"
+
+
+# Pass the entire ``jobhunter`` package through the workflow sandbox.
+#
+# Why: workflow code constructs activity-input dataclasses (e.g.
+# ``EnrichActivityInput(...)``) at the workflow boundary. Those dataclasses
+# live in ``jobhunter.<context>.activities`` modules; without passthrough the
+# sandbox proxies them, and constructing instances of frozen dataclasses
+# imported through ``imports_passed_through()`` raises
+# ``RuntimeError: Restriction state not present. Using subclasses of proxied
+# objects is unsupported.``
+#
+# Why broad: a narrower scope would have to enumerate every activity-input
+# dataclass module (and every future one), coupling the worker bootstrap to
+# the activity layer. The package-wide passthrough trades that coupling for a
+# single-line policy. Activities run outside the sandbox, so determinism is
+# preserved on the workflow code that actually executes inside the sandbox.
+_PASSTHROUGH_RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules(
+    "jobhunter"
+)
 
 
 def build_worker(
@@ -38,4 +62,7 @@ def build_worker(
         task_queue=task_queue,
         workflows=workflow_list,
         activities=activity_list,
+        workflow_runner=SandboxedWorkflowRunner(
+            restrictions=_PASSTHROUGH_RESTRICTIONS,
+        ),
     )

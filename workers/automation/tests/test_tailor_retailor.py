@@ -83,7 +83,7 @@ def test_count_pending_retailor_includes_already_tailored_jobs(tmp_path, monkeyp
             tailor_attempts=9,
         )
 
-        monkeypatch.setattr("jobhunter.pipeline.get_connection", lambda: get_connection(db_path))
+        monkeypatch.setattr("jobhunter.pipeline.runner.get_connection", lambda: get_connection(db_path))
 
         assert _count_pending("tailor", min_score=7) == 1
         assert _count_pending("tailor", min_score=7, retailor=True) == 2

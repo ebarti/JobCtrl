@@ -342,14 +342,45 @@ engine for the Python worker. The infrastructure split lives under
 - `client.py` — `get_temporal_client()` connects to `TEMPORAL_ADDRESS`
   (default `localhost:7233`) and `TEMPORAL_NAMESPACE` (default `default`).
 - `worker.py` — `build_worker(client, *, workflows, activities)` returns a
-  `temporalio.worker.Worker` bound to `JOBHUNTER_TASK_QUEUE`.
+  `temporalio.worker.Worker` bound to `JOBHUNTER_TASK_QUEUE`. The worker
+  uses a `SandboxedWorkflowRunner` with `with_passthrough_modules("jobhunter")`
+  so workflow code can construct activity-input dataclasses at the workflow
+  boundary (the sandbox proxy mechanism otherwise refuses to instantiate
+  frozen dataclasses imported through `imports_passed_through()`).
 - `task_queues.py` — single `JOBHUNTER_TASK_QUEUE = "jobhunter-default"`.
+- `registry.py` — single source of truth for `WORKFLOWS` and `ACTIVITIES`.
+  The CLI imports both lists and passes them to `build_worker`; new
+  workflows / activities are added by appending here.
+
+Each pipeline stage (discover, enrich, score, tailor, cover, pdf, apply,
+profile_import) ships as a Temporal **Activity** under the owning bounded
+context's package — e.g. `jobhunter/scoring/activities.py`,
+`jobhunter/materials/activities.py`. Activities are thin adapters: they
+defer heavy imports inside the activity body and forward to the existing
+stage runner (`run_pipeline` / `apply_main` / `run_local_action`).
+
+Two production workflows live alongside the activities:
+
+- `JobPipelineWorkflow` (`jobhunter/pipeline/workflow.py`) — drives the
+  configured stage list serially in **batch mode** against eligible jobs in
+  the local DB. Stage eligibility is owned by the underlying runner via
+  `state.set_stage_state`, not by the workflow. Passing `"apply"` is
+  rejected with a non-retryable `ApplicationError` that points callers at
+  `ApplyWorkflow`.
+- `ApplyWorkflow` (`jobhunter/apply/workflow.py`) — single-activity,
+  **per-job** workflow with its own retry policy (`max_attempts=2`) and
+  parameter shape. `apply_activity` re-raises transient failures so the
+  retry policy fires; `LookupError` is wrapped in a non-retryable
+  `ApplicationError` so operator errors fail fast.
+
+The pipeline package (`jobhunter/pipeline/`) is split into `runner.py`
+(the existing batch orchestrator that the activities call) and
+`workflow.py` (the Temporal workflow). `__init__.py` re-exports
+`run_pipeline` so existing imports keep working.
 
 `jobhunter worker` is the long-lived process that runs the worker loop.
-Pipeline workflows + activities are introduced in later PRs of this stack;
-this layer is the substrate they bind to. Live workflow state — running
-workflows, history, signals, retries — is visible at
-`http://127.0.0.1:8233` in the Temporal Web UI.
+Live workflow state — running workflows, history, signals, retries — is
+visible at `http://127.0.0.1:8233` in the Temporal Web UI.
 
 ### SQLite And Files
 

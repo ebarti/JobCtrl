@@ -205,10 +205,11 @@ def test_pipeline_count_pending_score_excludes_repository_rows(
     ``get_jobs_by_stage('pending_score')`` — the streaming runner's
     progress counter would otherwise be permanently off-by-N."""
     from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline"
     _seed_enriched_job(conn, url)
-    monkeypatch.setattr(pipeline, "get_connection", lambda: conn)
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     assert pipeline._count_pending("score") == 1
     _save_score(conn, url, fit=8)
@@ -219,10 +220,11 @@ def test_pipeline_count_pending_tailor_picks_repository_scores(
     conn: sqlite3.Connection, monkeypatch
 ) -> None:
     from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
 
     url = "https://example.com/job/pipeline-tailor"
     _seed_enriched_job(conn, url)
     _save_score(conn, url, fit=8)
-    monkeypatch.setattr(pipeline, "get_connection", lambda: conn)
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     assert pipeline._count_pending("tailor", min_score=7) == 1
