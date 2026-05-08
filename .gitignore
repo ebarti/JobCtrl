@@ -18,6 +18,7 @@ chrome-workers/
 apply-workers/
 apply_logs/
 logs/
+.dev/
 
 # Local design and planning scratchpads
 handoff_from_design/
