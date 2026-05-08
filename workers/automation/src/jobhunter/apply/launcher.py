@@ -1,21 +1,19 @@
 """Apply orchestration — thin shell over the Apply Automation domain.
 
-Phase 8 (S-30): the launcher is now a thin orchestrator over
-``SubmitBatchUseCase`` + ``SubmitApplicationUseCase``. The legacy
-public surface (``main``, ``run_job``, ``worker_loop``,
-``acquire_job``, ``mark_result``, ``release_lock``, ``gen_prompt``,
-``mark_job``, ``reset_failed``) is preserved so callers
-(``cli.py``, ``actions.py``, ``pipeline.py``, regression tests) keep
-working.
+PR 4 of the Temporal stack collapsed the bespoke ``apply_runs`` table
+into the workflow run history. The launcher now drives apply lifecycle
+state via:
 
-Crucially per the no-strangler memory: **new code does NOT write the
-legacy ``jobs.applied_at`` / ``apply_status`` / ``apply_error`` /
-``apply_attempts`` / ``agent_id`` / ``last_attempted_at`` /
-``apply_duration_ms`` / ``apply_task_id`` / ``verification_confidence``
-columns.** All apply state goes to the ``ApplyRun`` aggregate
-(``apply_runs`` + ``apply_run_events`` tables) plus the canonical
-``job_stage_states`` row. The TS read-model swap to read apply state
-from ``apply_runs`` lives in S-30's read-side updates.
+  * ``job_stage_states.apply`` — the canonical "is this job locked /
+    succeeded / failed" row (already maintained by ``state.set_stage_state``).
+  * ``record_job_event(stage='apply', payload={"run_id": ...})`` — the
+    durable event stream the projection builder consumes to materialise
+    ``apply_run_projections``.
+
+The legacy public surface (``main``, ``run_job``, ``worker_loop``,
+``acquire_job``, ``mark_result``, ``release_lock``, ``gen_prompt``,
+``mark_job``, ``reset_failed``) is preserved so callers (``cli.py``,
+``actions.py``, ``pipeline.py``, regression tests) keep working.
 
 The Rich dashboard from ``apply/dashboard.py`` continues to drive the
 CLI display. The launcher refreshes it directly from the saga events
@@ -74,34 +72,9 @@ from jobhunter.database import (
     _LATEST_SCORE_JOIN,
     get_connection,
 )
-from jobhunter.domain.apply.aggregate import ApplyRun, ApplyRunStatus
-from jobhunter.domain.apply.process_manager import ApplySaga
-from jobhunter.domain.apply.services import (
-    ApplyEligibilityChecker,
-    ApplyPromptBuilder,
-)
-from jobhunter.domain.apply.use_cases import SubmitApplicationUseCase
-from jobhunter.domain.apply.value_objects import (
-    Applied,
-    ApplyPrompt,
-    ApplyRunId,
-    Captcha,
-    DryRunComplete,
-    Expired,
-    Failed,
-    LoginIssue,
-    Manual,
-    SubmissionResult,
-    new_apply_run_id,
-)
-from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.apply.services import ApplyPromptBuilder
+from jobhunter.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
-from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.apply import (
-    ClaudeCodeCliAdapter,
-    LocalChromeAdapter,
-    SqliteApplyRunRepository,
-)
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 logger = logging.getLogger(__name__)
@@ -127,45 +100,42 @@ def _utc_now() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Aggregate-driven acquire / release / mark helpers
+# Stage-state-driven acquire / release / mark helpers
 # ---------------------------------------------------------------------------
 
 
-def _has_active_apply_run(conn, url: str) -> bool:
-    """Return True when an apply_runs row is still open for ``url``.
+def _has_active_apply(conn, url: str) -> bool:
+    """True when ``job_stage_states.apply.state == 'running'`` for ``url``.
 
-    The ``ApplyRunRepository.list_active`` helper is the canonical
-    answer per §8.1, but this scoped query (job_url + status) lets
-    ``acquire_job`` enforce the §4.6 "at most one in_progress per
-    JobId" invariant atomically inside the BEGIN IMMEDIATE block.
+    The §4.6 invariant — at most one in-progress apply per JobId —
+    is enforced by checking the canonical stage state row.
     """
     row = conn.execute(
-        """
-        SELECT 1 FROM apply_runs
-        WHERE job_url = ? AND status IN (?, ?)
-        LIMIT 1
-        """,
-        (url, ApplyRunStatus.STARTING, ApplyRunStatus.IN_PROGRESS),
+        "SELECT 1 FROM job_stage_states "
+        "WHERE job_url = ? AND stage = 'apply' AND state = 'running' LIMIT 1",
+        (url,),
     ).fetchone()
     return row is not None
 
 
-def _has_succeeded_apply_run(conn, url: str) -> bool:
-    """Return True when ``url`` already has a succeeded apply_runs row."""
+def _has_succeeded_apply(conn, url: str) -> bool:
+    """True when the canonical apply stage row is succeeded for ``url``."""
     row = conn.execute(
-        "SELECT 1 FROM apply_runs WHERE job_url = ? AND status = ? LIMIT 1",
-        (url, ApplyRunStatus.SUCCEEDED),
+        "SELECT 1 FROM job_stage_states "
+        "WHERE job_url = ? AND stage = 'apply' AND state = 'succeeded' LIMIT 1",
+        (url,),
     ).fetchone()
     return row is not None
 
 
 def _attempt_count_for(conn, url: str) -> int:
-    """Count apply_runs rows for ``url`` (includes terminal failures)."""
+    """Return the canonical attempt count from ``job_stage_states.apply``."""
     row = conn.execute(
-        "SELECT COUNT(*) FROM apply_runs WHERE job_url = ?",
+        "SELECT attempt_count FROM job_stage_states "
+        "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
         (url,),
     ).fetchone()
-    return int(row[0]) if row else 0
+    return int(row[0] or 0) if row else 0
 
 
 def _load_blocked():
@@ -189,26 +159,21 @@ def acquire_job(
 ) -> dict | None:
     """Atomically acquire the next job to apply to.
 
-    The lock is taken on ``apply_runs`` (a freshly INSERTed row in
-    ``starting`` state) — not on ``jobs.apply_status`` like the legacy
-    launcher. The aggregate is the source of truth from S-30 onward;
-    the legacy column is read for back-compat only.
+    The lock is taken on ``job_stage_states.apply.state == 'running'`` —
+    PR 4 of the Temporal stack made the canonical stage row the only
+    apply lock; the bespoke ``apply_runs`` table is gone. The
+    ``ApplyRunStarted`` event is published on the same transaction so
+    the projection builder materialises the corresponding
+    ``apply_run_projections`` row on the next refresh.
     """
     conn = get_connection()
-    repository = SqliteApplyRunRepository(conn)
     try:
         conn.execute("BEGIN IMMEDIATE")
 
-        # Round-1 review M1: read ``applied_at`` / ``apply_status`` /
-        # ``apply_attempts`` through the new apply_runs join so the
-        # downstream eligibility checker (and any caller that reads
-        # the row dict) sees canonical values rather than the
-        # always-NULL legacy columns. ``apply_attempts`` is a
-        # correlated count over apply_runs — that's the same number
-        # the launcher's _attempt_count_for helper computes.
         attempts_subquery = (
-            "(SELECT COUNT(*) FROM apply_runs ar_count "
-            "WHERE ar_count.job_url = jobs.url) AS apply_attempts"
+            "(SELECT COALESCE(jss_a.attempt_count, 0) "
+            "FROM job_stage_states jss_a "
+            "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1) AS apply_attempts"
         )
         common_columns = (
             f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
@@ -243,9 +208,6 @@ def acquire_job(
         else:
             blocked_sites, blocked_patterns = _load_blocked()
             params: list[Any] = [
-                ApplyRunStatus.STARTING,
-                ApplyRunStatus.IN_PROGRESS,
-                ApplyRunStatus.SUCCEEDED,
                 config.DEFAULTS["max_apply_attempts"],
                 min_score,
             ]
@@ -268,13 +230,15 @@ def acquire_job(
                   AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL
                   AND {_EFFECTIVE_APPLICATION_URL} != ''
                   AND NOT EXISTS (
-                      SELECT 1 FROM apply_runs ar_active
-                      WHERE ar_active.job_url = jobs.url
-                        AND ar_active.status IN (?, ?, ?)
+                      SELECT 1 FROM job_stage_states jss_active
+                      WHERE jss_active.job_url = jobs.url
+                        AND jss_active.stage = 'apply'
+                        AND jss_active.state IN ('running', 'succeeded')
                   )
-                  AND (
-                      SELECT COUNT(*) FROM apply_runs ar_attempts
-                      WHERE ar_attempts.job_url = jobs.url
+                  AND COALESCE(
+                      (SELECT jss_a.attempt_count FROM job_stage_states jss_a
+                       WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply'
+                       LIMIT 1), 0
                   ) < ?
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
                   {site_clause}
@@ -307,6 +271,7 @@ def acquire_job(
                 error_message="manual ATS",
                 retryable=False,
             )
+            run_id = new_apply_run_id()
             record_job_event(
                 conn,
                 url,
@@ -314,36 +279,26 @@ def acquire_job(
                 "ApplyManualSkip",
                 level="info",
                 message="manual ATS",
+                payload={
+                    "run_id": str(run_id),
+                    "result": "manual",
+                    "started_at": now,
+                    "finished_at": now,
+                    "duration_ms": 0,
+                    "worker_id": worker_id,
+                },
             )
-            # Also persist a Manual-result aggregate so the queue
-            # selectors stop returning this job.
-            run = ApplyRun.start(
-                tenant_id=LOCAL_TENANT,
-                run_id=new_apply_run_id(),
-                job_id=JobId(str(url)),
-                started_at=now,
-                worker_id=worker_id,
-                model=None,
-                dry_run=False,
-                headless=False,
-                attempts=1,
-            ).complete(
-                result=Manual(reason="manual_ats"),
-                finished_at=now,
-                duration_ms=0,
-            )
-            repository.save(run)
             conn.commit()
             logger.info("Skipping manual ATS: %s", url[:80])
             return None
 
-        # Targeted-mode also enforces the no-active-run + max-attempts
+        # Targeted-mode also enforces the no-active + max-attempts
         # invariants (the SELECT above is permissive on target_url so
         # we can surface "no such job" errors clearly).
-        if _has_active_apply_run(conn, url):
+        if _has_active_apply(conn, url):
             conn.rollback()
             return None
-        if _has_succeeded_apply_run(conn, url):
+        if _has_succeeded_apply(conn, url):
             conn.rollback()
             return None
         attempts = _attempt_count_for(conn, url)
@@ -355,20 +310,23 @@ def acquire_job(
         run_id = ApplyRunId(
             (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
         )
-        starting_run = ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=run_id,
-            job_id=JobId(str(url)),
-            started_at=now,
-            worker_id=worker_id,
-            model=(run_ctx.get("model") if run_ctx else None),
-            dry_run=bool(run_ctx.get("dry_run")) if run_ctx else False,
-            headless=bool(run_ctx.get("headless")) if run_ctx else False,
-            attempts=attempts + 1,
-        )
-        repository.save(starting_run)
-
         ensure_job_stage_rows(conn, url)
+        # Reset prior terminal state (failed / exhausted / canceled /
+        # skipped) back to pending so the §8.5 state machine accepts
+        # the pending → running transition.
+        prior_row = conn.execute(
+            "SELECT state FROM job_stage_states "
+            "WHERE job_url = ? AND stage = 'apply' LIMIT 1",
+            (url,),
+        ).fetchone()
+        if prior_row is not None and prior_row[0] not in {"pending", "running"}:
+            set_stage_state(
+                conn,
+                url,
+                "apply",
+                "pending",
+                validate_transition=False,
+            )
         set_stage_state(
             conn,
             url,
@@ -381,8 +339,17 @@ def acquire_job(
             conn,
             url,
             "apply",
-            "StageStarted",
+            "ApplyRunStarted",
             message="Apply agent acquired job",
+            payload={
+                "run_id": str(run_id),
+                "model": (run_ctx.get("model") if run_ctx else None),
+                "dry_run": bool(run_ctx.get("dry_run")) if run_ctx else False,
+                "worker_id": worker_id,
+                "started_at": now,
+                "headless": bool(run_ctx.get("headless")) if run_ctx else False,
+                "attempts": attempts + 1,
+            },
         )
         conn.commit()
 
@@ -396,59 +363,6 @@ def acquire_job(
         raise
 
 
-def _save_terminal_aggregate(
-    *,
-    url: str,
-    run_id: str | None,
-    submission_result: SubmissionResult,
-    duration_ms: int | None,
-    dry_run: bool = False,
-    worker_id: int | None = None,
-    model: str | None = None,
-) -> ApplyRun:
-    """Promote the active apply_runs row to a terminal state.
-
-    If a starting/in-progress aggregate already exists for ``run_id``
-    we load it and call ``complete``; otherwise we synthesise a fresh
-    aggregate (manual marks via ``mark_job`` follow this path).
-    """
-    conn = get_connection()
-    repository = SqliteApplyRunRepository(conn)
-    now = _utc_now()
-    run: ApplyRun | None = None
-    if run_id:
-        run = repository.load(LOCAL_TENANT, ApplyRunId(run_id))
-    if run is None:
-        # Reuse the most recent active row for this URL if one exists.
-        for active in repository.list_active(LOCAL_TENANT):
-            if str(active.job_id) == url:
-                run = active
-                break
-    if run is None:
-        run = ApplyRun.start(
-            tenant_id=LOCAL_TENANT,
-            run_id=ApplyRunId(run_id or new_apply_run_id()),
-            job_id=JobId(url),
-            started_at=now,
-            worker_id=worker_id,
-            model=model,
-            dry_run=dry_run,
-            headless=False,
-            attempts=1,
-        )
-    if run.is_terminal:
-        return run
-    if not run.is_in_progress:
-        run = run.transition_to_in_progress(worker_id=worker_id)
-    completed = run.complete(
-        result=submission_result,
-        finished_at=now,
-        duration_ms=duration_ms,
-    )
-    repository.save(completed)
-    return completed
-
-
 def mark_result(
     url: str,
     status: str,
@@ -460,43 +374,47 @@ def mark_result(
 ) -> None:
     """Update a job's apply outcome.
 
-    NEW: writes go to ``apply_runs`` + ``job_stage_states`` only —
-    legacy ``jobs.apply_status`` / ``applied_at`` / ``apply_error`` /
-    ``apply_attempts`` / ``apply_duration_ms`` / ``apply_task_id``
-    columns are NOT touched.
+    Writes go to ``job_stage_states.apply`` (canonical lifecycle row)
+    and a terminal ``ApplicationSubmitted`` / ``ApplicationFailed`` /
+    ``DryRunCompleted`` event whose payload feeds
+    ``apply_run_projections``. The legacy ``jobs.apply_*`` columns are
+    NOT touched.
     """
     conn = get_connection()
     now = _utc_now()
     ensure_job_stage_rows(conn, url)
 
+    run_id = (
+        task_id
+        or (run_ctx.get("run_id") if run_ctx else None)
+        or new_apply_run_id()
+    )
+    worker_id = run_ctx.get("worker_id") if run_ctx else None
+    model = run_ctx.get("model") if run_ctx else None
+    dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
+
     if status == "applied":
-        result: SubmissionResult = Applied(applied_at=now, verification_confidence=1.0)
-        _save_terminal_aggregate(
-            url=url,
-            run_id=task_id,
-            submission_result=result,
-            duration_ms=duration_ms,
-            dry_run=False,
-            worker_id=run_ctx.get("worker_id") if run_ctx else None,
-            model=run_ctx.get("model") if run_ctx else None,
-        )
         set_stage_state(
             conn, url, "apply", "succeeded", finished_at=now, duration_ms=duration_ms
         )
         record_job_event(
-            conn, url, "apply", "StageCompleted", message="Application submitted"
+            conn,
+            url,
+            "apply",
+            "ApplicationSubmitted",
+            message="Application submitted",
+            payload={
+                "run_id": str(run_id),
+                "result": "applied",
+                "finished_at": now,
+                "duration_ms": duration_ms,
+                "worker_id": worker_id,
+                "model": model,
+            },
         )
     elif status == "dry_run":
-        result = DryRunComplete(navigated_to=url)
-        _save_terminal_aggregate(
-            url=url,
-            run_id=task_id,
-            submission_result=result,
-            duration_ms=duration_ms,
-            dry_run=True,
-            worker_id=run_ctx.get("worker_id") if run_ctx else None,
-            model=run_ctx.get("model") if run_ctx else None,
-        )
+        # Launcher owns lock-release policy: Running -> Skipped is a launcher
+        # convention (dry-run completed), not in the canonical §8.5 table.
         set_stage_state(
             conn,
             url,
@@ -508,6 +426,7 @@ def mark_result(
             error_message="Dry run completed without submitting.",
             retryable=True,
             next_action=f"jobhunter apply --url {url}",
+            validate_transition=False,
         )
         record_job_event(
             conn,
@@ -515,28 +434,18 @@ def mark_result(
             "apply",
             "DryRunCompleted",
             message="Dry run completed without submitting",
+            payload={
+                "run_id": str(run_id),
+                "result": "dry_run_complete",
+                "finished_at": now,
+                "duration_ms": duration_ms,
+                "worker_id": worker_id,
+                "model": model,
+                "dry_run": True,
+            },
         )
     else:
         reason = (error or "unknown").strip()
-        if reason == "captcha":
-            term: SubmissionResult = Captcha(details=reason)
-        elif reason == "expired":
-            term = Expired()
-        elif reason == "login_issue":
-            term = LoginIssue(details=reason)
-        elif reason.startswith("manual"):
-            term = Manual(reason=reason)
-        else:
-            term = Failed(error=reason, retryable=not permanent)
-        _save_terminal_aggregate(
-            url=url,
-            run_id=task_id,
-            submission_result=term,
-            duration_ms=duration_ms,
-            dry_run=run_ctx.get("dry_run", False) if run_ctx else False,
-            worker_id=run_ctx.get("worker_id") if run_ctx else None,
-            model=run_ctx.get("model") if run_ctx else None,
-        )
         set_stage_state(
             conn,
             url,
@@ -553,57 +462,115 @@ def mark_result(
             conn,
             url,
             "apply",
-            "StageFailed",
+            "ApplicationFailed",
             level="error",
             message=reason,
+            payload={
+                "run_id": str(run_id),
+                "result": reason,
+                "finished_at": now,
+                "duration_ms": duration_ms,
+                "worker_id": worker_id,
+                "model": model,
+                "dry_run": dry_run,
+            },
         )
 
     conn.commit()
 
 
-def release_lock(url: str, run_ctx: dict | None = None) -> None:
-    """Release any active apply_runs row for ``url`` without recording a result.
+def _latest_apply_run_started_run_id(conn, url: str) -> str | None:
+    """Look up the run_id of the most recent ``ApplyRunStarted`` event for ``url``.
 
-    Marks the active aggregate as a Failed (retryable, ORPHANED) row
-    so the queue selectors don't keep blocking on it. Resets the
+    Used by orphan rescue (and any caller without a ``run_ctx``) to
+    close the SAME run row instead of minting a phantom new uuid that
+    leaves the original run stuck in ``status='starting'`` forever.
+    """
+    row = conn.execute(
+        "SELECT payload_json FROM job_events "
+        "WHERE job_url = ? AND stage = 'apply' AND event_type = 'ApplyRunStarted' "
+        "ORDER BY event_id DESC LIMIT 1",
+        (url,),
+    ).fetchone()
+    if row is None:
+        return None
+    payload_json = row["payload_json"] if not isinstance(row, tuple) else row[0]
+    if not payload_json:
+        return None
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = payload.get("run_id")
+    return str(run_id) if run_id else None
+
+
+def release_lock(url: str, run_ctx: dict | None = None) -> None:
+    """Release any active apply stage row for ``url`` without recording a result.
+
+    Records an ``ApplicationFailed`` event with an ORPHANED reason so
+    the projection treats the run as failed (retryable). Resets the
     ``job_stage_states`` row to pending.
+
+    When the caller doesn't pass a ``run_ctx`` (orphan-rescue path), we
+    look up the prior ``ApplyRunStarted`` event for the URL and reuse
+    its ``run_id`` so the terminal event closes the SAME row in
+    ``apply_run_projections`` instead of minting a phantom new run.
     """
     conn = get_connection()
-    repository = SqliteApplyRunRepository(conn)
     now = _utc_now()
-    for active in repository.list_active(LOCAL_TENANT):
-        if str(active.job_id) != url:
-            continue
-        completed = active.complete(
-            result=Failed(error="ORPHANED: lock released by launcher", retryable=True),
-            finished_at=now,
-            duration_ms=0,
+    ctx_run_id = run_ctx.get("run_id") if run_ctx else None
+    run_id = (
+        ctx_run_id
+        or _latest_apply_run_started_run_id(conn, url)
+        or new_apply_run_id()
+    )
+    if _has_active_apply(conn, url):
+        record_job_event(
+            conn,
+            url,
+            "apply",
+            "ApplicationFailed",
+            level="warning",
+            message="Apply lock released",
+            payload={
+                "run_id": str(run_id),
+                "result": "ORPHANED: lock released by launcher",
+                "finished_at": now,
+                "duration_ms": 0,
+            },
         )
-        repository.save(completed)
+    # Launcher owns lock-release policy: Running -> Pending is a launcher
+    # convention, not in the canonical §8.5 state-machine table.
     set_stage_state(
         conn,
         url,
         "apply",
         "pending",
         next_action=f"jobhunter apply --url {url}",
+        validate_transition=False,
     )
     record_job_event(
-        conn, url, "apply", "LockReleased", message="Apply lock released"
+        conn,
+        url,
+        "apply",
+        "LockReleased",
+        message="Apply lock released",
+        payload={"run_id": str(run_id)},
     )
     conn.commit()
 
 
 # ---------------------------------------------------------------------------
-# Manual mark / reset helpers — operate on the aggregate, never on the
-# legacy jobs.apply_* columns.
+# Manual mark / reset helpers — operate on the canonical stage row +
+# event stream, never on the legacy jobs.apply_* columns.
 # ---------------------------------------------------------------------------
 
 
 def mark_job(url: str, status: str, reason: str | None = None) -> None:
-    """Manually mark a job's apply status.
-
-    Writes to ``apply_runs`` + ``job_stage_states`` only.
-    """
+    """Manually mark a job's apply status."""
     if status == "applied":
         mark_result(url, "applied", duration_ms=0)
     else:
@@ -619,74 +586,38 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
 def reset_failed() -> int:
     """Reset failed jobs so they can be retried.
 
-    NEW: deletes the failed/manual ``apply_runs`` rows for each affected
-    job (so the attempt counter and queue selectors restart cleanly)
-    and resets the ``job_stage_states.apply`` row to ``pending``.
-    Returns the number of jobs reset.
+    Re-queues every job whose canonical apply stage state is ``failed``
+    by flipping it back to ``pending`` and zeroing the attempt counter.
+    The historical event stream is preserved (no audit history is
+    purged); only the live state row is rewound. Returns the number of
+    jobs reset.
     """
     conn = get_connection()
-    repository = SqliteApplyRunRepository(conn)
     rows = conn.execute(
         """
-        SELECT DISTINCT job_url FROM apply_runs
-        WHERE status NOT IN (?, ?, ?)
-        """,
-        (
-            ApplyRunStatus.SUCCEEDED,
-            ApplyRunStatus.STARTING,
-            ApplyRunStatus.IN_PROGRESS,
-        ),
+        SELECT job_url FROM job_stage_states
+        WHERE stage = 'apply' AND state IN ('failed', 'exhausted')
+        """
     ).fetchall()
     count = 0
     for row in rows:
         url = row["job_url"]
-        # Only reset jobs that have NO succeeded run.
-        succeeded_row = conn.execute(
-            "SELECT 1 FROM apply_runs WHERE job_url = ? AND status = ? LIMIT 1",
-            (url, ApplyRunStatus.SUCCEEDED),
-        ).fetchone()
-        if succeeded_row:
+        # Skip jobs that already succeeded on a prior run.
+        if _has_succeeded_apply(conn, url):
             continue
-        conn.execute(
-            """
-            DELETE FROM apply_run_events
-            WHERE run_id IN (
-                SELECT run_id FROM apply_runs
-                WHERE job_url = ? AND status NOT IN (?, ?, ?)
-            )
-            """,
-            (
-                url,
-                ApplyRunStatus.SUCCEEDED,
-                ApplyRunStatus.STARTING,
-                ApplyRunStatus.IN_PROGRESS,
-            ),
-        )
-        conn.execute(
-            """
-            DELETE FROM apply_runs
-            WHERE job_url = ? AND status NOT IN (?, ?, ?)
-            """,
-            (
-                url,
-                ApplyRunStatus.SUCCEEDED,
-                ApplyRunStatus.STARTING,
-                ApplyRunStatus.IN_PROGRESS,
-            ),
-        )
         ensure_job_stage_rows(conn, url)
         set_stage_state(
             conn,
             url,
             "apply",
             "pending",
+            attempt_count=0,
+            error_code=None,
+            error_message=None,
             next_action=f"jobhunter apply --url {url}",
         )
         count += 1
     conn.commit()
-    # Suppress the "repository unused" lint (kept on the function so
-    # tests can swap a fake without monkey-patching internal queries).
-    _ = repository
     return count
 
 
@@ -714,13 +645,7 @@ def gen_prompt(
     worker_id: int = 0,
     snapshot: ProfileSnapshot | None = None,
 ) -> Path | None:
-    """Render the prompt + MCP config for one job for manual debugging.
-
-    This is the only acquire-then-release helper kept on the legacy
-    surface (the wizard still relies on it). It uses the new
-    ``ApplyPromptBuilder`` so the rendered text matches what the
-    use case would send.
-    """
+    """Render the prompt + MCP config for one job for manual debugging."""
     job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
     if not job:
         return None
@@ -758,43 +683,169 @@ def gen_prompt(
 
 # ---------------------------------------------------------------------------
 # run_job — kept on the public surface for the regression tests +
-# pipeline.apply_jobs single-job flow. Delegates to
-# ClaudeCodeCliAdapter.
+# pipeline.apply_jobs single-job flow. Delegates to the apply use case.
 # ---------------------------------------------------------------------------
 
 
-def _build_use_case() -> SubmitApplicationUseCase:
-    """Construct the canonical local-mode use case wiring."""
-    conn = get_connection()
-    repository = SqliteApplyRunRepository(conn)
+def _build_use_case():
+    """Construct the canonical local-mode use case wiring.
+
+    Imported lazily — the use case pulls the `Applied`/`Failed` value
+    objects, which only the run-job path needs.
+
+    The process-wide ``InProcessEventBus`` is wired in as the publisher
+    so the use case's ``ApplyRunStarted`` / ``ApplyRunEventRecorded`` /
+    ``ApplicationSubmitted`` / ``ApplicationFailed`` events fan out to
+    the bus, which drives the projection builder's wildcard
+    subscriber.  Saga events are also persisted to ``job_events`` from
+    ``run_job`` after the use case returns, so the projection's
+    ``_collect_apply_events_by_run`` sees the full timeline.
+    """
+    from jobhunter.domain.apply.process_manager import ApplySaga
+    from jobhunter.domain.apply.services import ApplyEligibilityChecker
+    from jobhunter.domain.apply.use_cases import SubmitApplicationUseCase
+    from jobhunter.infrastructure.apply import (
+        ClaudeCodeCliAdapter,
+        LocalChromeAdapter,
+    )
+    from jobhunter.infrastructure.events import get_default_publisher
+
     browser_port = LocalChromeAdapter()
     agent_port = ClaudeCodeCliAdapter()
     saga = ApplySaga(
         browser_port=browser_port,
         agent_port=agent_port,
-        repository=repository,
+        repository=_NoopApplyRunRepository(),
         timeout_seconds=int(config.DEFAULTS.get("apply_timeout", 300)),
     )
     return SubmitApplicationUseCase(
-        repository=repository,
+        repository=_NoopApplyRunRepository(),
         browser_port=browser_port,
         agent_port=agent_port,
         eligibility_checker=ApplyEligibilityChecker(
             max_attempts=int(config.DEFAULTS["max_apply_attempts"])
         ),
         prompt_builder=ApplyPromptBuilder(),
+        publisher=get_default_publisher(),
         saga=saga,
         timeout_seconds=int(config.DEFAULTS.get("apply_timeout", 300)),
     )
 
 
-def _result_to_status_string(result: SubmissionResult) -> str:
-    """Map a ``SubmissionResult`` variant back to the legacy status string.
+class _NoopApplyRunRepository:
+    """No-op stand-in for the deleted ``SqliteApplyRunRepository``.
 
-    The CLI / regression tests assert on the string form returned by
-    ``run_job`` ("applied" / "dry_run" / "expired" / "captcha" /
-    "login_issue" / "failed:reason"). Keep that contract intact.
+    PR 4 of the Temporal stack removed the bespoke ``apply_runs`` table.
+    The ``ApplyRun`` aggregate stays in-memory inside
+    ``SubmitApplicationUseCase`` / ``ApplySaga``; persistence happens
+    via ``record_job_event`` (the launcher emits ``ApplyRunStarted`` /
+    ``ApplicationSubmitted`` / ``ApplicationFailed`` events whose
+    payloads feed ``apply_run_projections``). The repository port is
+    no longer needed but the saga signature still accepts one — this
+    no-op satisfies the protocol without writing anywhere.
     """
+
+    def save(self, run) -> None:  # pragma: no cover — trivial
+        return None
+
+    def load(self, tenant_id, run_id):  # pragma: no cover — trivial
+        return None
+
+    def list_active(self, tenant_id):  # pragma: no cover — trivial
+        return []
+
+    def list_recent(self, tenant_id, *, limit: int = 50):  # pragma: no cover
+        return []
+
+
+# Inverted from a safelist (round-2 review): the saga buffer carries
+# both its own wrappers (``SagaStarted`` / ``BrowserLaunched`` /
+# ``AgentStarted`` / ``AgentResult`` / ...) AND the agent stream events
+# the Claude CLI adapter emits (``ClaudeLaunched`` / ``AssistantText`` /
+# ``ToolUse`` / ...).  We want every observed event in
+# ``apply_run_projections.events_json`` so the operator-facing timeline
+# is complete; we only filter the small set of lifecycle events the
+# launcher already wrote directly to ``job_events`` (would otherwise
+# duplicate).
+_LAUNCHER_OWNED_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "ApplyRunStarted",        # acquire_job
+        "ApplicationSubmitted",   # mark_result(applied)
+        "ApplicationFailed",      # mark_result(failed) + release_lock(orphan)
+        "DryRunCompleted",        # mark_result(dry_run)
+        "ApplyManualSkip",        # acquire_job (manual ATS)
+        "LockReleased",           # release_lock
+    }
+)
+
+
+def _persist_saga_event_timeline(apply_run, *, run_id: str) -> None:
+    """Persist the saga's intermediate timeline into ``job_events``.
+
+    The saga records events on the in-memory ``ApplyRun`` aggregate
+    (``SagaStarted`` / ``BrowserLaunched`` / ``AgentStarted`` /
+    ``AgentTimedOut`` / ``AgentCrashed`` / ``AgentResult`` plus the raw
+    agent-stream events forwarded by the Claude CLI adapter —
+    ``ClaudeLaunched`` / ``AssistantText`` / ``ToolUse``).  The launcher
+    mirrors **every** such event into ``job_events`` keyed by
+    ``run_id`` so the projection's ``_collect_apply_events_by_run``
+    materialises a complete ``apply_run_projections.events_json``
+    timeline.
+
+    Lifecycle events the launcher already wrote directly
+    (``_LAUNCHER_OWNED_EVENT_TYPES``) are filtered out to avoid
+    duplicate rows in ``job_events``.
+    """
+    if apply_run is None:
+        return
+    events = list(getattr(apply_run, "events", []) or [])
+    if not events:
+        return
+    job_url = str(apply_run.job_id)
+    if not job_url:
+        return
+
+    conn = get_connection()
+    try:
+        for event in events:
+            event_type = str(getattr(event, "event_type", "") or "")
+            if not event_type or event_type in _LAUNCHER_OWNED_EVENT_TYPES:
+                continue
+            payload = dict(getattr(event, "payload", {}) or {})
+            payload["run_id"] = str(run_id)
+            record_job_event(
+                conn,
+                job_url,
+                "apply",
+                event_type,
+                level=str(getattr(event, "level", "info") or "info"),
+                message=getattr(event, "message", None),
+                payload=payload,
+                occurred_at=str(getattr(event, "occurred_at", "") or "") or None,
+            )
+        conn.commit()
+    except Exception:  # noqa: BLE001 — timeline persistence must never break the run
+        logger.exception(
+            "Failed to persist saga event timeline for run %s", run_id
+        )
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _result_to_status_string(result) -> str:
+    """Map a ``SubmissionResult`` variant back to the legacy status string."""
+    from jobhunter.domain.apply.value_objects import (
+        Applied,
+        Captcha,
+        DryRunComplete,
+        Expired,
+        Failed,
+        LoginIssue,
+        Manual,
+    )
+
     if isinstance(result, Applied):
         return "applied"
     if isinstance(result, DryRunComplete):
@@ -828,7 +879,7 @@ def run_job(
 
     Returns ``(status_string, duration_ms)`` for back-compat with the
     legacy launcher tests + ``pipeline.apply_jobs`` single-job flow.
-    All persistence happens through the new use case; the
+    All persistence happens via ``mark_result`` / events; the
     ``status_string`` is derived from the saga's terminal
     ``SubmissionResult``.
     """
@@ -876,6 +927,12 @@ def run_job(
         run_id=ApplyRunId(run_id),
         worker_dir=worker_dir,
     )
+    # Persist the saga's intermediate event timeline (SagaStarted /
+    # BrowserLaunched / AgentStarted / AgentResult / per-AgentEvent) into
+    # ``job_events`` so the projection's ``_collect_apply_events_by_run``
+    # sees them.  The use case publishes these to the bus too, but the
+    # projection re-reads from ``job_events`` to derive ``apply_run_projections``.
+    _persist_saga_event_timeline(outcome.apply_run, run_id=run_id)
     duration_ms = int((time.time() - start) * 1000)
     if outcome.skipped:
         return "skipped", duration_ms
@@ -941,14 +998,7 @@ def worker_loop(
     dry_run: bool = False,
     snapshot: ProfileSnapshot | None = None,
 ) -> tuple[int, int]:
-    """Run jobs sequentially until ``limit`` is reached or the queue is empty.
-
-    The loop drives ``acquire_job`` → ``run_job`` → ``mark_result`` /
-    ``release_lock`` and updates the Rich dashboard. The legacy
-    launcher's per-stage telemetry calls are replaced by the saga's
-    own event recording (the dashboard reads the same state via the
-    ``update_state`` calls in ``run_job``).
-    """
+    """Run jobs sequentially until ``limit`` is reached or the queue is empty."""
     applied = 0
     failed = 0
     continuous = limit == 0
@@ -1123,21 +1173,10 @@ def main(
             snapshot = None
 
     # Sweep orphaned in-progress runs from a prior crashed process
-    # before starting new workers (per §8.3 compensation).
-    try:
-        repository = SqliteApplyRunRepository(get_connection())
-        saga = ApplySaga(
-            browser_port=LocalChromeAdapter(),
-            agent_port=ClaudeCodeCliAdapter(),
-            repository=repository,
-        )
-        rescued = saga.mark_orphans_as_failed(tenant_id=LOCAL_TENANT)
-        if rescued:
-            console.print(
-                f"[yellow]Rescued {len(rescued)} orphaned apply run(s) from prior crash[/yellow]"
-            )
-    except Exception:  # noqa: BLE001 — orphan sweep is best-effort
-        logger.exception("Orphan sweep failed")
+    # before starting new workers (per §8.3 compensation). The
+    # canonical lock is now ``job_stage_states.apply.state == 'running'``;
+    # rescue any rows still showing ``running`` from a previous PID.
+    rescued = _rescue_orphaned_running_apply(console)
 
     if continuous:
         effective_limit = 0
@@ -1261,7 +1300,50 @@ def main(
     finally:
         _stop_event.set()
         kill_all_chrome()
+    _ = rescued
     return total_applied, total_failed
+
+
+def _rescue_orphaned_running_apply(console: Console) -> int:
+    """Mark any ``apply.state == 'running'`` row as failed/orphaned.
+
+    Per-row failures are caught + logged so one bad row doesn't poison
+    the whole sweep — a single corrupt payload (or a row whose
+    ``release_lock`` raises) must not strand every other orphan in
+    ``running`` forever.
+    """
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT job_url FROM job_stage_states "
+            "WHERE stage = 'apply' AND state = 'running'"
+        ).fetchall()
+        if not rows:
+            return 0
+        rescued = 0
+        for row in rows:
+            url = row["job_url"]
+            try:
+                release_lock(url)
+                rescued += 1
+            except Exception:  # noqa: BLE001 — keep sweeping past per-row failures
+                logger.exception(
+                    "Orphan rescue: release_lock failed for %s", url
+                )
+                continue
+        if rescued:
+            console.print(
+                f"[yellow]Rescued {rescued} orphaned apply run(s) from prior crash[/yellow]"
+            )
+        return rescued
+    except Exception:  # noqa: BLE001 — orphan sweep is best-effort
+        logger.exception("Orphan sweep failed")
+        return 0
+
+
+# Re-import LOCAL_TENANT lazily to avoid an import cycle (use_cases pulls
+# in the launcher transitively through the apply package init).
+from jobhunter.domain.tenant import LOCAL_TENANT  # noqa: E402
 
 
 __all__ = [

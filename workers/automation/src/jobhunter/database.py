@@ -140,12 +140,12 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 
     # Run migrations for any columns added after initial schema
     ensure_columns(conn)
-    ensure_observability_tables(conn)
     ensure_state_tables(conn)
     ensure_score_tables(conn)
     ensure_materials_tables(conn)
     ensure_enrichment_tables(conn)
     ensure_projection_tables_in_db(conn)
+    drop_legacy_apply_runs_tables(conn)
 
     return conn
 
@@ -247,84 +247,19 @@ def ensure_columns(conn: sqlite3.Connection | None = None) -> list[str]:
     return added
 
 
-def ensure_observability_tables(conn: sqlite3.Connection | None = None) -> list[str]:
-    """Create the apply-agent observability tables if they do not exist.
+def drop_legacy_apply_runs_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Drop the legacy bespoke apply-runs tables.
 
-    Returns:
-        List of table names that were ensured.
+    Per PR 4 of the Temporal stack: the Temporal workflow run is the
+    canonical record of an apply lifecycle; ``apply_run_projections``
+    (sourced from ``job_events``) is the read-side. Both ``apply_runs``
+    and ``apply_run_events`` are removed in a one-shot migration. Single
+    user, no production data — wipe accepted per ``feedback_no_strangler``.
     """
     if conn is None:
         conn = get_connection()
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS apply_runs (
-            run_id              TEXT PRIMARY KEY,
-            job_url             TEXT NOT NULL,
-            site                TEXT,
-            title               TEXT,
-            application_url     TEXT,
-            worker_id           INTEGER,
-            worker_name         TEXT,
-            model               TEXT,
-            pid                 INTEGER,
-            chrome_pid          INTEGER,
-            status              TEXT NOT NULL DEFAULT 'starting',
-            result              TEXT,
-            error               TEXT,
-            dry_run             INTEGER DEFAULT 0,
-            headless            INTEGER DEFAULT 0,
-            attempts            INTEGER DEFAULT 1,
-            started_at          TEXT NOT NULL,
-            updated_at          TEXT NOT NULL,
-            finished_at         TEXT,
-            duration_ms         INTEGER,
-            prompt_path         TEXT,
-            mcp_config_path     TEXT,
-            log_path            TEXT,
-            output_path         TEXT,
-            resume_path         TEXT,
-            cover_letter_path   TEXT,
-            task_id             TEXT,
-            input_tokens        INTEGER,
-            output_tokens       INTEGER,
-            cache_read_tokens   INTEGER,
-            cache_create_tokens INTEGER,
-            cost_usd            REAL,
-            extra_json          TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS apply_run_events (
-            event_id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id          TEXT NOT NULL,
-            occurred_at     TEXT NOT NULL,
-            worker_id       INTEGER,
-            event_type      TEXT NOT NULL,
-            level           TEXT NOT NULL DEFAULT 'info',
-            message         TEXT,
-            payload_json    TEXT
-        )
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_apply_runs_job_url_started
-        ON apply_runs(job_url, started_at DESC)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_apply_runs_status_started
-        ON apply_runs(status, started_at DESC)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_apply_runs_worker_started
-        ON apply_runs(worker_id, started_at DESC)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_apply_run_events_run_event
-        ON apply_run_events(run_id, event_id)
-    """)
-    conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_apply_run_events_run_time
-        ON apply_run_events(run_id, occurred_at, event_id)
-    """)
+    conn.execute("DROP TABLE IF EXISTS apply_run_events")
+    conn.execute("DROP TABLE IF EXISTS apply_runs")
     conn.commit()
     return ["apply_runs", "apply_run_events"]
 
@@ -1275,37 +1210,32 @@ _EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
 
 
 # ---------------------------------------------------------------------------
-# Phase 8 (S-30): apply read-side. The legacy launcher wrote
-# ``jobs.applied_at`` / ``jobs.apply_status`` / ``jobs.apply_error`` etc.;
-# the new launcher (and the ``ApplyRunRepository``) write ONLY to
-# ``apply_runs`` + ``apply_run_events``. This LEFT JOIN promotes the
-# latest apply_runs row's status / finished_at into the legacy column
-# slots so the queue selectors (``pending_apply``, ``applied``) and
-# ``get_stats`` see new aggregate writes without re-querying through
-# the repository at every read site.
+# Apply read-side (PR 4 of the Temporal stack). The bespoke
+# ``apply_runs`` table is gone; ``apply_run_projections`` (built from
+# ``job_events`` by the projection builder) is the canonical apply
+# lifecycle row. This LEFT JOIN promotes the latest projection row's
+# status / finished_at into the legacy column slots so queue selectors
+# (``pending_apply``, ``applied``) and ``get_stats`` see new writes
+# without re-deriving from events at every read site.
 # ---------------------------------------------------------------------------
 
-# Round-1 review L1: tie-break by run_id when two apply_runs rows
-# share the same ``started_at`` (same-second collisions are possible
-# with ``_utc_now()``-stamped retries). The correlated subquery picks
-# the latest row deterministically — ORDER BY started_at DESC,
-# run_id DESC + LIMIT 1.
+# Tie-break by run_id when two apply runs share the same ``started_at``.
 _LATEST_APPLY_RUN_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT ar.job_url AS ar_job_url, ar.status AS ar_status, "
+    "SELECT ar.job_id AS ar_job_url, ar.status AS ar_status, "
     "ar.result AS ar_result, ar.finished_at AS ar_finished_at, "
     "ar.started_at AS ar_started_at, ar.run_id AS ar_run_id "
-    "FROM apply_runs ar "
+    "FROM apply_run_projections ar "
     "WHERE ar.run_id = ("
-    "SELECT run_id FROM apply_runs ar_inner "
-    "WHERE ar_inner.job_url = ar.job_url "
+    "SELECT run_id FROM apply_run_projections ar_inner "
+    "WHERE ar_inner.job_id = ar.job_id "
     "ORDER BY ar_inner.started_at DESC, ar_inner.run_id DESC "
     "LIMIT 1"
     ")"
     ") ar ON ar.ar_job_url = jobs.url"
 )
 
-# Applied = any apply_run with status='succeeded' for the job (we
+# Applied = any apply run with status='succeeded' for the job (we
 # COALESCE with the legacy column so historical rows stay visible).
 _EFFECTIVE_APPLIED_AT: str = (
     "CASE WHEN ar.ar_status = 'succeeded' THEN ar.ar_finished_at "
@@ -1440,10 +1370,9 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND ({_EFFECTIVE_COVER_ATTEMPTS} >= 5 OR jss_c.jss_c_state = 'exhausted')"
     ).fetchone()[0]
 
-    # Application stage — Phase 8 (S-30): read through the
-    # ``apply_runs`` join so dashboard counts reflect new ApplyRun
-    # writes (jobs.applied_at / apply_status / apply_error are NULL
-    # on the new write path).
+    # Application stage (PR 4) — read through the ``apply_run_projections``
+    # join so dashboard counts reflect lifecycle events (jobs.applied_at /
+    # apply_status / apply_error are NULL on the new write path).
     stats["applied"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} "
         f"WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL"
@@ -1529,14 +1458,13 @@ def load_job_with_enrichment(
 ) -> dict | None:
     """Load one job row with the canonical enrichment fields promoted.
 
-    Phase 7 (S-26 round-1 review B6). The legacy
-    ``SELECT * FROM jobs WHERE url = ?`` reads NULL for
+    The legacy ``SELECT * FROM jobs WHERE url = ?`` reads NULL for
     ``full_description`` / ``application_url`` / ``detail_scraped_at``
     on the new write path. This helper LEFT JOINs ``job_enrichments``
-    and promotes the joined values into the legacy column slots so
-    callers (manual ``apply_jobs`` flow, ``apply/launcher`` snapshots)
-    keep reading via the existing keys without an extra round-trip
-    through the repository.
+    and ``apply_run_projections`` and promotes the joined values into
+    the legacy column slots so callers (manual ``apply_jobs`` flow,
+    ``apply/launcher`` snapshots) keep reading via the existing keys
+    without an extra round-trip through the repository.
 
     Returns the row dict, or ``None`` if no job row exists for ``url``.
     """
@@ -1570,7 +1498,8 @@ def load_job_with_enrichment(
         record["application_url"] = je_app
     if je_at is not None:
         record["detail_scraped_at"] = je_at
-    # Phase 8 (S-30): promote apply_runs columns.
+    # PR 4 of the Temporal stack: promote ``apply_run_projections``
+    # columns into the legacy column slots.
     record.pop("ar_status", None)
     record.pop("ar_finished_at", None)
     ar_applied = record.pop("effective_applied_at", None)
@@ -1672,9 +1601,9 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
             f"OR ({_EFFECTIVE_COVER_PATH} IS NOT NULL AND jm.jm_cover_pdf_path IS NULL)"
         ),
         "tailored": f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
-        # Phase 8 (S-30): pending_apply / applied read through
-        # ``apply_runs`` so the new write path (which leaves
-        # jobs.applied_at NULL) is visible.
+        # PR 4 of the Temporal stack: pending_apply / applied read
+        # through ``apply_run_projections`` so the new write path
+        # (which leaves jobs.applied_at NULL) is visible.
         "pending_apply": (
             f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
             f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
@@ -1789,10 +1718,11 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
             record["application_url"] = je_app
         if je_at is not None:
             record["detail_scraped_at"] = je_at
-        # Phase 8 (S-30): promote apply_runs columns into the legacy
-        # column slots so consumers (TS read-model, Rich dashboard,
-        # legacy CLI) that still read ``applied_at`` / ``apply_status``
-        # see canonical values written by ``ApplyRunRepository``.
+        # PR 4 of the Temporal stack: promote ``apply_run_projections``
+        # columns into the legacy column slots so consumers (TS
+        # read-model, Rich dashboard, legacy CLI) that still read
+        # ``applied_at`` / ``apply_status`` see canonical values written
+        # by the projection builder.
         ar_applied = record.pop("effective_applied_at", None)
         ar_status = record.pop("effective_apply_status", None)
         record.pop("ar_status", None)

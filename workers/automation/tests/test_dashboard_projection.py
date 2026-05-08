@@ -53,7 +53,7 @@ def _dashboard(conn: sqlite3.Connection) -> sqlite3.Row | None:
 
 
 def test_dashboard_starts_empty(conn: sqlite3.Connection) -> None:
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     assert row is not None
     assert _row_value(row, "total_jobs", 0) == 0
@@ -65,7 +65,7 @@ def test_total_jobs_reflects_active_jobs(conn: sqlite3.Connection) -> None:
     record_job_event(conn, "https://example.com/a", "discover", "JobDiscovered")
     record_job_event(conn, "https://example.com/b", "discover", "JobDiscovered")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     assert _row_value(row, "total_jobs") == 2
 
@@ -78,7 +78,7 @@ def test_failures_count_includes_failed_and_exhausted(conn: sqlite3.Connection) 
     set_stage_state(conn, url, "score", "failed", validate_transition=False)
     record_job_event(conn, url, "score", "StageFailed")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     assert _row_value(row, "failures") == 1
 
@@ -92,24 +92,31 @@ def test_blocked_count(conn: sqlite3.Connection) -> None:
     set_stage_state(conn, url, "tailor", "blocked", validate_transition=False)
     record_job_event(conn, url, "tailor", "StageBlocked")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     assert _row_value(row, "blocked") == 1
 
 
 def test_applied_count_via_apply_status(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/e")
-    conn.execute(
-        """
-        INSERT INTO apply_runs (run_id, job_url, status, started_at,
-                                updated_at, finished_at)
-        VALUES (?, ?, 'succeeded', ?, ?, ?)
-        """,
-        ("run-e", "https://example.com/e", utc_now(), utc_now(), utc_now()),
+    started = utc_now()
+    finished = utc_now()
+    record_job_event(
+        conn,
+        "https://example.com/e",
+        "apply",
+        "ApplyRunStarted",
+        payload={"run_id": "run-e", "started_at": started},
     )
-    record_job_event(conn, "https://example.com/e", "apply", "ApplicationSubmitted")
+    record_job_event(
+        conn,
+        "https://example.com/e",
+        "apply",
+        "ApplicationSubmitted",
+        payload={"run_id": "run-e", "finished_at": finished, "result": "applied"},
+    )
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     assert _row_value(row, "applied") == 1
 
@@ -131,7 +138,7 @@ def test_score_distribution_groups_by_score(conn: sqlite3.Connection) -> None:
         )
         record_job_event(conn, url, "score", "JobScored")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     distribution = json.loads(_row_value(row, "score_distribution_json", "[]"))
     distribution_by_score = {entry[0]: entry[1] for entry in distribution}
@@ -148,7 +155,7 @@ def test_funnel_counts_per_stage(conn: sqlite3.Connection) -> None:
     set_stage_state(conn, url, "tailor", "running")
     record_job_event(conn, url, "tailor", "StageStarted")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = _dashboard(conn)
     funnel = json.loads(_row_value(row, "funnel_json", "[]"))
@@ -167,7 +174,7 @@ def test_by_source_counts(conn: sqlite3.Connection) -> None:
     for url in ("https://example.com/x", "https://example.com/y", "https://example.com/z"):
         record_job_event(conn, url, "discover", "JobDiscovered")
     conn.commit()
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = _dashboard(conn)
     by_source = json.loads(_row_value(row, "by_source_json", "[]"))

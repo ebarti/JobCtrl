@@ -11,8 +11,14 @@
  * ``event_watermarks``.  Either side can advance the watermark
  * independently — both produce the same projection state because both
  * derive from the canonical aggregate tables (jobs, job_stage_states,
- * job_scores, job_materials, job_enrichments, apply_runs,
+ * job_scores, job_materials, job_enrichments,
  * jobhunter_deleted_jobs, job_artifacts, job_materials_artifacts).
+ *
+ * PR 4 of the Temporal stack collapsed the bespoke ``apply_runs``
+ * table; the Python projection builder now sources
+ * ``apply_run_projections`` from the ``job_events`` stream. This TS
+ * refresher reads the projection table directly and no longer
+ * materialises it.
  */
 import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
@@ -405,7 +411,11 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
     rebuildJobProjections(db, tenantId, jobUrl);
   }
   if (dirtyJobs.size > 0) {
-    rebuildApplyRunProjections(db, tenantId);
+    // PR 4 of the Temporal stack: ``apply_run_projections`` is now
+    // owned by the Python projection builder (sourced from
+    // ``job_events``); the TS refresher reads it directly via
+    // ``loadLatestApplyRun`` / ``recentApplyRuns`` and no longer
+    // materialises the table itself.
     rebuildDashboardProjection(db, tenantId);
   }
 
@@ -562,21 +572,12 @@ function loadLatestApplyRun(db: SqliteDatabase, jobUrl: string): ApplyLatest {
     dryRun: false,
     durationMs: null,
   };
-  if (!tableExists(db, "apply_runs")) return empty;
-  const columns = new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(apply_runs)").map((row) => row.name),
-  );
-  const select = ["run_id", "status"];
-  if (columns.has("result")) select.push("result");
-  if (columns.has("started_at")) select.push("started_at");
-  if (columns.has("finished_at")) select.push("finished_at");
-  if (columns.has("worker_id")) select.push("worker_id");
-  if (columns.has("model")) select.push("model");
-  if (columns.has("dry_run")) select.push("dry_run");
-  if (columns.has("duration_ms")) select.push("duration_ms");
+  if (!tableExists(db, "apply_run_projections")) return empty;
   const row = getRow<Record<string, unknown>>(
     db,
-    `SELECT ${select.join(", ")} FROM apply_runs WHERE job_url = ?
+    `SELECT run_id, status, result, started_at, finished_at, worker_id,
+            model, dry_run, duration_ms
+     FROM apply_run_projections WHERE job_id = ?
      ORDER BY started_at DESC, run_id DESC LIMIT 1`,
     [jobUrl],
   );
@@ -981,86 +982,6 @@ function pdfSibling(value: string | null | undefined): string | null {
   return `${value.replace(/\.[^.]+$/, "")}.pdf`;
 }
 
-function rebuildApplyRunProjections(db: SqliteDatabase, tenantId: string): void {
-  if (!tableExists(db, "apply_runs")) return;
-  const columns = new Set(
-    allRows<{ name: string }>(db, "PRAGMA table_info(apply_runs)").map((row) => row.name),
-  );
-  const select = ["run_id", "job_url"];
-  for (const col of [
-    "site",
-    "title",
-    "status",
-    "result",
-    "dry_run",
-    "worker_id",
-    "model",
-    "started_at",
-    "finished_at",
-    "duration_ms",
-  ]) {
-    if (columns.has(col)) select.push(col);
-  }
-  const rows = allRows<Record<string, unknown>>(
-    db,
-    `SELECT ${select.join(", ")} FROM apply_runs ORDER BY started_at DESC`,
-  );
-  const insert = db.prepare(
-    `INSERT INTO apply_run_projections (
-       run_id, tenant_id, job_id, job_title, job_employer, status, result,
-       dry_run, worker_id, model, started_at, finished_at, duration_ms,
-       events_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(run_id) DO UPDATE SET
-       tenant_id    = excluded.tenant_id,
-       job_id       = excluded.job_id,
-       job_title    = excluded.job_title,
-       job_employer = excluded.job_employer,
-       status       = excluded.status,
-       result       = excluded.result,
-       dry_run      = excluded.dry_run,
-       worker_id    = excluded.worker_id,
-       model        = excluded.model,
-       started_at   = excluded.started_at,
-       finished_at  = excluded.finished_at,
-       duration_ms  = excluded.duration_ms,
-       events_json  = excluded.events_json`,
-  );
-  for (const row of rows) {
-    const runId = String(row.run_id ?? "");
-    if (!runId) continue;
-    const jobUrl = String(row.job_url ?? "");
-    const title = stringField(row.title) || "Untitled";
-    const employer = companyName(stringField(row.site), jobUrl);
-    const events = loadApplyRunEvents(db, runId);
-    insert.run(
-      runId,
-      tenantId,
-      jobUrl,
-      title,
-      employer,
-      stringField(row.status) || "unknown",
-      nullableString(row.result),
-      row.dry_run ? 1 : 0,
-      nullableNumber(row.worker_id),
-      nullableString(row.model),
-      nullableString(row.started_at),
-      nullableString(row.finished_at),
-      nullableNumber(row.duration_ms),
-      JSON.stringify(events),
-    );
-  }
-}
-
-function loadApplyRunEvents(db: SqliteDatabase, runId: string): Record<string, unknown>[] {
-  if (!tableExists(db, "apply_run_events")) return [];
-  return allRows<Record<string, unknown>>(
-    db,
-    "SELECT * FROM apply_run_events WHERE run_id = ? ORDER BY rowid ASC",
-    [runId],
-  );
-}
-
 function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void {
   const rows = allRows<{
     job_id: string;
@@ -1091,19 +1012,19 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     (row) => row.applied_at || row.apply_status === "applied",
   ).length;
   let dryRuns = 0;
-  if (tableExists(db, "apply_runs")) {
+  if (tableExists(db, "apply_run_projections")) {
     if (tableExists(db, "jobhunter_deleted_jobs")) {
       const dryRunsRow = getRow<{ c: number }>(
         db,
-        `SELECT COUNT(*) AS c FROM apply_runs ar
-         LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ar.job_url AND d.restored_at IS NULL
-         WHERE ar.dry_run = 1 AND d.job_url IS NULL`,
+        `SELECT COUNT(*) AS c FROM apply_run_projections arp
+         LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL
+         WHERE arp.dry_run = 1 AND d.job_url IS NULL`,
       );
       dryRuns = dryRunsRow ? Number(dryRunsRow.c) : 0;
     } else {
       const dryRunsRow = getRow<{ c: number }>(
         db,
-        "SELECT COUNT(*) AS c FROM apply_runs WHERE dry_run = 1",
+        "SELECT COUNT(*) AS c FROM apply_run_projections WHERE dry_run = 1",
       );
       dryRuns = dryRunsRow ? Number(dryRunsRow.c) : 0;
     }

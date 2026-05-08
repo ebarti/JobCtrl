@@ -6,19 +6,16 @@ See ddd-target.md §5.6. Local-mode adapters live here:
                                      lifecycle behind ``BrowserPort``.
     ``ClaudeCodeCliAdapter``      — wraps the ``claude`` subprocess
                                      behind ``AutonomousAgentPort``.
-    ``SqliteApplyRunRepository``  — round-trips ``ApplyRun`` aggregates
-                                     against the existing ``apply_runs``
-                                     + ``apply_run_events`` tables.
+
+PR 4 of the Temporal stack removed the ``SqliteApplyRunRepository``;
+``apply_run_projections`` (sourced from ``job_events``) is now the
+canonical apply lifecycle row.
 """
 
 from jobhunter.infrastructure.apply.claude_code_cli import ClaudeCodeCliAdapter
 from jobhunter.infrastructure.apply.local_chrome import LocalChromeAdapter
-from jobhunter.infrastructure.apply.sqlite_apply_run_repository import (
-    SqliteApplyRunRepository,
-)
 
 __all__ = [
     "ClaudeCodeCliAdapter",
     "LocalChromeAdapter",
-    "SqliteApplyRunRepository",
 ]

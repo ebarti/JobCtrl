@@ -548,3 +548,40 @@ Consequences:
   import of one `contexts/*` from another (other than `operations/`) is
   a violation.
 - Cites: `docs/frontend-target.md` §3.10, §11.
+
+## 2026-05-07: Collapse `apply_runs` into the Temporal workflow run
+
+Status: accepted
+
+Decision: drop the bespoke `apply_runs` + `apply_run_events` SQLite
+tables. The Temporal workflow run is the canonical record of an apply
+lifecycle; `apply_run_projections` (sourced from `job_events` by the
+Python `ProjectionBuilder`) is the read-side. The TypeScript API
+reads `apply_run_projections` directly and no longer materialises it.
+
+Rationale:
+
+- The bespoke `apply_runs` write path duplicated state already kept in
+  `job_stage_states` (the canonical "is this job locked / succeeded /
+  failed" row) and `job_events` (the durable event stream).
+- A single source of truth for `apply_run_projections` removes the
+  dual-write that the no-strangler memo forbids.
+- The TS `apply_runs → apply_run_projections` projector and the Python
+  `SqliteApplyRunRepository` are deleted, not feature-flagged.
+
+Consequences:
+
+- Existing local apply-run history is wiped on the next `init_db`
+  (single-user codebase, no production users — accepted per
+  `feedback_no_strangler.md`).
+- The launcher's queue locks now live on
+  `job_stage_states.apply.state == 'running'`; `acquire_job` /
+  `mark_result` / `release_lock` / `reset_failed` write canonical
+  stage state plus an `ApplyRunStarted` / `ApplicationSubmitted` /
+  `ApplicationFailed` / `DryRunCompleted` event whose payload feeds
+  the projection.
+- The `ApplyRun` aggregate stays in-memory inside
+  `SubmitApplicationUseCase` / `ApplySaga`; persistence happens via
+  `record_job_event`.
+
+Cites: `docs/plans/proposed/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.

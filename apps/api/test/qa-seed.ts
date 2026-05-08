@@ -223,16 +223,21 @@ export function seedQaDatabase(dbPath: string): void {
       occurred_at TEXT NOT NULL,
       payload_json TEXT
     );
-    CREATE TABLE apply_runs (
-      run_id TEXT,
-      job_url TEXT,
-      title TEXT,
-      site TEXT,
-      status TEXT,
+    CREATE TABLE apply_run_projections (
+      run_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_id TEXT NOT NULL,
+      job_title TEXT NOT NULL DEFAULT '',
+      job_employer TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT '',
       result TEXT,
-      dry_run INTEGER,
+      dry_run INTEGER NOT NULL DEFAULT 0,
+      worker_id INTEGER,
+      model TEXT,
       started_at TEXT,
-      finished_at TEXT
+      finished_at TEXT,
+      duration_ms INTEGER,
+      events_json TEXT NOT NULL DEFAULT '[]'
     );
   `);
 
@@ -299,7 +304,7 @@ export function seedQaDatabase(dbPath: string): void {
   insertEvent(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "error", "QA score action failed");
   insertEvent(db, "https://motorolasolutions.com/careers/qa-command-center", "tailor", "info", "QA tailor blocked by fit score");
   db.prepare(
-    "INSERT INTO apply_runs (run_id, job_url, title, site, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "qa-run-1",
     "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",

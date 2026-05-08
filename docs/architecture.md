@@ -399,12 +399,17 @@ on the local filesystem. They are registered in `job_artifacts` and
    stages.
 3. Each domain operation publishes events through `InProcessEventBus`.
 4. Workers record events in `job_events` and update per-aggregate tables
-   (`job_scores`, `job_materials`, `job_enrichments`, `apply_runs`).
+   (`job_scores`, `job_materials`, `job_enrichments`). The apply lifecycle
+   is observable via `apply_run_projections`, sourced from `job_events`
+   by the projection builder — the bespoke `apply_runs` table was
+   collapsed into the Temporal workflow run history (PR 4 of the
+   Temporal stack).
 5. Generated files are registered in `job_artifacts` /
    `job_materials_artifacts`.
 6. `ProjectionBuilder` (Python) and `refreshProjections` (TS) consume new
    `job_events` rows and rebuild affected projection rows from canonical
-   aggregate state.
+   aggregate state. The Python builder owns `apply_run_projections`;
+   the TS API reads it directly.
 7. The UI reads from the projection tables via the TS read-model — no joins.
 8. UI actions are routed through JSON-RPC for complex commands or executed
    inline for simple state transitions.

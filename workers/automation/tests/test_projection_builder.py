@@ -48,7 +48,7 @@ def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
     record_job_event(conn, "https://example.com/a", "discover", "JobDiscovered")
     conn.commit()
 
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     builder.refresh()
 
     repo = SqliteEventWatermarkRepository(conn)
@@ -61,7 +61,7 @@ def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
     record_job_event(conn, "https://example.com/r1", "discover", "JobDiscovered")
     conn.commit()
 
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     builder.refresh()
 
     # Add another event for a new job; watermark should advance only by
@@ -85,7 +85,7 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/legacy-2")
     # No record_job_event calls.
 
-    ProjectionBuilder(conn).refresh()
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     rows = conn.execute(
         "SELECT job_id FROM job_list_projections ORDER BY job_id"
@@ -99,7 +99,7 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
 def test_subscribes_to_event_bus(conn: sqlite3.Connection) -> None:
     """Wiring the builder to the bus refreshes projections on publish."""
     _seed_job(conn, "https://example.com/bus")
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     bus = InProcessEventBus()
     builder.subscribe_to(bus)
 
@@ -120,7 +120,7 @@ def test_subscribes_to_event_bus(conn: sqlite3.Connection) -> None:
 
 def test_unsubscribe_stops_refreshes(conn: sqlite3.Connection) -> None:
     _seed_job(conn, "https://example.com/sub")
-    builder = ProjectionBuilder(conn)
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
     bus = InProcessEventBus()
     sub = builder.subscribe_to(bus)
     sub.unsubscribe()

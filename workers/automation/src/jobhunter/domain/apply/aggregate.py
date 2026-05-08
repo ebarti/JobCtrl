@@ -59,8 +59,8 @@ from jobhunter.domain.tenant import TenantId
 class ApplyRunStatus:
     """Pseudo-enum of the eight aggregate-level states from §4.6.
 
-    Implemented as bare string constants so the SQLite adapter can
-    round-trip through the existing ``apply_runs.status`` TEXT column
+    Implemented as bare string constants so the projection layer can
+    round-trip through the ``apply_run_projections.status`` TEXT column
     without an extra converter.
     """
 

@@ -1,11 +1,15 @@
-"""Phase 8 (S-30): SubmitApplicationUseCase + SubmitBatchUseCase happy
-paths, failure variants, dry-run semantics, and event publishing."""
+"""SubmitApplicationUseCase + SubmitBatchUseCase happy paths, failure
+variants, dry-run semantics, and event publishing.
 
-from pathlib import Path
+PR 4 of the Temporal stack removed ``SqliteApplyRunRepository``; the
+use case now exercises the ``ApplyRun`` aggregate against an in-memory
+fake repository (the launcher persists lifecycle state via
+``record_job_event`` per ``test_apply_regressions``).
+"""
 
 import pytest
 
-from jobhunter.database import close_connection, get_connection, init_db
+from jobhunter.domain.apply import ApplyRun, ApplyRunStatus
 from jobhunter.domain.apply.services import (
     ApplyEligibilityChecker,
     ApplyPromptBuilder,
@@ -26,7 +30,30 @@ from jobhunter.domain.ports.apply import (
     BrowserSession,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.apply import SqliteApplyRunRepository
+
+
+class _InMemoryApplyRunRepository:
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], ApplyRun] = {}
+
+    def save(self, run: ApplyRun) -> None:
+        self._store[(str(run.tenant_id), str(run.run_id))] = run
+
+    def load(self, tenant_id, run_id) -> ApplyRun | None:
+        return self._store.get((str(tenant_id), str(run_id)))
+
+    def list_active(self, tenant_id) -> list[ApplyRun]:
+        return [
+            run
+            for (t, _), run in self._store.items()
+            if t == str(tenant_id)
+            and run.status
+            in (ApplyRunStatus.STARTING, ApplyRunStatus.IN_PROGRESS)
+        ]
+
+    def list_recent(self, tenant_id, *, limit: int = 50) -> list[ApplyRun]:
+        runs = [run for (t, _), run in self._store.items() if t == str(tenant_id)]
+        return runs[: max(int(limit), 0)]
 
 
 class _FakeBrowser:
@@ -65,12 +92,8 @@ class _FakeSnapshot:
 
 
 @pytest.fixture()
-def repo(tmp_path):
-    db_path = Path(tmp_path) / "jobs.db"
-    init_db(db_path)
-    conn = get_connection(db_path)
-    yield SqliteApplyRunRepository(conn)
-    close_connection(db_path)
+def repo():
+    return _InMemoryApplyRunRepository()
 
 
 def _build_use_case(repo, *, agent_result=None, publisher=None) -> SubmitApplicationUseCase:
