@@ -18,6 +18,7 @@ from typing import Any
 
 from jobhunter import config
 from jobhunter.domain.events.base import create_domain_event
+from jobhunter.domain.pipeline.aggregate import OptimisticLockError
 from jobhunter.domain.pipeline.state_machine import is_valid_transition
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.tenant import LOCAL_TENANT
@@ -180,6 +181,7 @@ def set_stage_state(
     next_action: str | None = None,
     metadata: dict[str, Any] | None = None,
     validate_transition: bool = True,
+    expected_version: int | None = None,
 ) -> None:
     """Upsert one job/stage state row.
 
@@ -188,6 +190,14 @@ def set_stage_state(
     per the §8.5 state machine table.  If the transition is invalid, a
     ``ValueError`` is raised.  Pass ``validate_transition=False`` to bypass
     (e.g. during initial row creation or legacy migration).
+
+    When *expected_version* is supplied, the write is guarded by the row's
+    current ``version`` column (optimistic locking) and the new row is written
+    at ``version = expected_version + 1``.  If the existing row's version does
+    not match, ``OptimisticLockError`` is raised.  If no row exists yet the
+    INSERT is performed at the same bumped version.  Callers leave this as
+    ``None`` (the default) for the unguarded UPSERT path used by stage
+    runners.
     """
     if stage not in STAGE_ORDER:
         raise ValueError(f"unknown stage: {stage}")
@@ -201,14 +211,28 @@ def set_stage_state(
     max_attempts = MAX_ATTEMPTS.get(stage) if max_attempts is None else max_attempts
     retry_value = None if retryable is None else int(retryable)
     duration = duration_ms if duration_ms is not None else _duration_ms(started_at, finished_at)
+    blocked_by_json = _json_dumps(blocked_by)
+    metadata_json = _json_dumps(metadata)
 
-    conn.execute(
-        """
+    new_version = 0 if expected_version is None else expected_version + 1
+    version_guard = (
+        " WHERE job_stage_states.version = :expected_version"
+        if expected_version is not None
+        else ""
+    )
+
+    cur = conn.execute(
+        f"""
         INSERT INTO job_stage_states (
             job_url, stage, state, attempt_count, max_attempts, started_at, updated_at,
             finished_at, duration_ms, error_code, error_message, retryable,
-            blocked_by_json, next_action, metadata_json
-        ) VALUES (?, ?, ?, COALESCE(?, 0), ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?)
+            blocked_by_json, next_action, metadata_json, version
+        ) VALUES (
+            :job_url, :stage, :state, COALESCE(:attempt_count, 0), :max_attempts,
+            :started_at, :now, :finished_at, :duration, :error_code, :error_message,
+            COALESCE(:retry_value, 1), :blocked_by_json, :next_action, :metadata_json,
+            :new_version
+        )
         ON CONFLICT(job_url, stage) DO UPDATE SET
             state = excluded.state,
             attempt_count = COALESCE(excluded.attempt_count, job_stage_states.attempt_count),
@@ -222,26 +246,43 @@ def set_stage_state(
             retryable = excluded.retryable,
             blocked_by_json = excluded.blocked_by_json,
             next_action = excluded.next_action,
-            metadata_json = excluded.metadata_json
+            metadata_json = excluded.metadata_json,
+            version = CASE
+                WHEN :expected_version IS NULL THEN job_stage_states.version
+                ELSE excluded.version
+            END
+        {version_guard}
         """,
-        (
-            job_url,
-            stage,
-            state,
-            attempt_count,
-            max_attempts,
-            started_at,
-            now,
-            finished_at,
-            duration,
-            error_code,
-            error_message,
-            retry_value,
-            _json_dumps(blocked_by),
-            next_action,
-            _json_dumps(metadata),
-        ),
+        {
+            "job_url": job_url,
+            "stage": stage,
+            "state": state,
+            "attempt_count": attempt_count,
+            "max_attempts": max_attempts,
+            "started_at": started_at,
+            "now": now,
+            "finished_at": finished_at,
+            "duration": duration,
+            "error_code": error_code,
+            "error_message": error_message,
+            "retry_value": retry_value,
+            "blocked_by_json": blocked_by_json,
+            "next_action": next_action,
+            "metadata_json": metadata_json,
+            "new_version": new_version,
+            "expected_version": expected_version,
+        },
     )
+
+    if expected_version is not None and cur.rowcount == 0:
+        existing = conn.execute(
+            "SELECT version FROM job_stage_states WHERE job_url = ? AND stage = ?",
+            (job_url, stage),
+        ).fetchone()
+        actual = 0 if existing is None else (
+            existing[0] if not isinstance(existing, dict) else existing["version"]
+        )
+        raise OptimisticLockError(job_url, expected_version, actual or 0)
 
 
 def record_job_event(
