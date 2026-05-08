@@ -31,12 +31,18 @@ class DiscoverActivityOutput:
 @activity.defn(name="discover")
 async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityOutput:
     """Run the discovery stage via ``run_pipeline``."""
-    activity.heartbeat("discover starting")
+    from jobhunter.infrastructure.temporal.run_in_activity import (
+        run_blocking_with_heartbeat,
+    )
     from jobhunter.pipeline import run_pipeline
 
-    result = run_pipeline(
-        stages=["discover"],
-        workers=payload.workers,
+    def _do() -> dict[str, Any]:
+        return run_pipeline(stages=["discover"], workers=payload.workers)
+
+    result = await run_blocking_with_heartbeat(
+        _do,
+        starting_message="discover starting",
+        progress_message="discover still running",
     )
     stages = list(result.get("stages") or [])
     errors = dict(result.get("errors") or {})

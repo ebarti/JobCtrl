@@ -180,11 +180,18 @@ export const ApplyParamsSchema = z
   .strict();
 export type ApplyParams = z.infer<typeof ApplyParamsSchema>;
 
-export const ApplyResultSchema = z
-  .object({
-    runId: z.string(),
-  })
-  .strict();
+// PR 3 cut over to ``mode="workflow"``; the worker now returns three IDs:
+// ``runId`` (kept as the canonical handle so the existing TS contract and
+// SSE / dashboard wiring stays compatible) plus ``workflowId`` and
+// ``firstExecutionRunId``. ``workflowId`` is a duplicate of ``runId`` for
+// the apply path today but the field stays for forward compatibility with
+// future workflows whose run id and workflow id diverge. NOT ``.strict()``
+// because future Temporal versions may add more identifiers.
+export const ApplyResultSchema = z.object({
+  runId: z.string(),
+  workflowId: z.string().optional(),
+  firstExecutionRunId: z.string().optional(),
+});
 export type ApplyResult = z.infer<typeof ApplyResultSchema>;
 
 /* --- cooperative workflow cancellation ----------------------------------- */

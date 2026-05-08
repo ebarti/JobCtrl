@@ -168,7 +168,18 @@ def run_scoring(
         ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
         started_at = utc_now()
         started_ats[job["url"]] = started_at
-        set_stage_state(conn, job["url"], "score", "running", started_at=started_at)
+        # Runner owns the restart policy: a job that previously failed
+        # scoring is re-selected here, so allow Failed -> Running even
+        # though the canonical state machine table only permits Failed ->
+        # Pending (via Reset). Skip validation; the writer is the runner.
+        set_stage_state(
+            conn,
+            job["url"],
+            "score",
+            "running",
+            started_at=started_at,
+            validate_transition=False,
+        )
         record_job_event(conn, job["url"], "score", "StageStarted", message="Scoring started")
 
     t0 = time.time()

@@ -1,17 +1,21 @@
-"""Module-scope Temporal client cache in ``workflow_starter``.
+"""``default_workflow_starter`` / ``default_workflow_canceler`` connect-per-call.
 
-The ``jobhunter rpc`` server is long-lived; opening a fresh gRPC connection
-on every ``apply`` / ``cancel_run`` JSON-RPC call would burn a TCP / TLS /
-namespace-describe handshake per request.  ``default_workflow_starter`` and
-``default_workflow_canceler`` must reuse a single cached :class:`Client`.
+The earlier module-scope ``Client`` cache plus ``asyncio.Lock`` was bound
+to the first event loop that touched it; ``JsonRpcServer.dispatch`` opens
+a fresh loop via ``asyncio.run(...)`` per request, so the cache crashed
+on the second JSON-RPC call with
+``RuntimeError: <Lock ...> is bound to a different event loop``.
+
+The cache was removed; correctness > a few-ms TCP handshake. These tests
+pin the new behaviour: every call constructs a fresh client via
+``get_temporal_client()``, and the second call across a fresh event loop
+succeeds.
 """
 
 from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.infrastructure.rpc import workflow_starter as ws
@@ -21,16 +25,13 @@ class _FakeWorkflow:
     pass
 
 
-@pytest.fixture(autouse=True)
-def _clear_client_cache():
-    """Drop the cached client before and after every test."""
-    asyncio.run(ws._reset_cached_client_for_tests())
-    yield
-    asyncio.run(ws._reset_cached_client_for_tests())
+def test_starter_connects_per_call() -> None:
+    """Each ``default_workflow_starter`` call must invoke ``get_temporal_client``.
 
-
-def test_repeated_starter_calls_reuse_single_client() -> None:
-    """``default_workflow_starter`` must call ``get_temporal_client`` exactly once."""
+    The previous cache was correctness-broken under per-request
+    ``asyncio.run`` loops — see the module docstring for the failure
+    mode. Reconnecting per call is the trade-off.
+    """
     handle = MagicMock()
     fake_client = MagicMock()
     fake_client.start_workflow = AsyncMock(return_value=handle)
@@ -47,49 +48,48 @@ def test_repeated_starter_calls_reuse_single_client() -> None:
 
         asyncio.run(_drive())
 
-    assert connect_mock.await_count == 1
+    assert connect_mock.await_count == 3
     assert fake_client.start_workflow.await_count == 3
 
 
-def test_starter_and_canceler_share_cached_client() -> None:
-    """``default_workflow_canceler`` must reuse the same client the starter cached."""
+def test_canceler_connects_per_call() -> None:
+    """Each ``default_workflow_canceler`` call must invoke ``get_temporal_client`` too."""
     handle = MagicMock()
     handle.cancel = AsyncMock(return_value=None)
     fake_client = MagicMock()
-    fake_client.start_workflow = AsyncMock(return_value=handle)
     fake_client.get_workflow_handle = MagicMock(return_value=handle)
 
     with patch.object(
         ws, "get_temporal_client", AsyncMock(return_value=fake_client)
     ) as connect_mock:
-        spec = WorkflowStartSpec(workflow=_FakeWorkflow, args=())
-
         async def _drive() -> None:
-            await ws.default_workflow_starter(spec)
-            await ws.default_workflow_canceler("wf-123")
-
-        asyncio.run(_drive())
-
-    assert connect_mock.await_count == 1
-    fake_client.get_workflow_handle.assert_called_once_with("wf-123")
-    handle.cancel.assert_awaited_once()
-
-
-def test_reset_cache_helper_forces_reconnect() -> None:
-    """``_reset_cached_client_for_tests`` must clear the cache between runs."""
-    fake_client = MagicMock()
-    fake_client.start_workflow = AsyncMock(return_value=MagicMock())
-
-    with patch.object(
-        ws, "get_temporal_client", AsyncMock(return_value=fake_client)
-    ) as connect_mock:
-        spec = WorkflowStartSpec(workflow=_FakeWorkflow, args=())
-
-        async def _drive() -> None:
-            await ws.default_workflow_starter(spec)
-            await ws._reset_cached_client_for_tests()
-            await ws.default_workflow_starter(spec)
+            await ws.default_workflow_canceler("wf-1")
+            await ws.default_workflow_canceler("wf-2")
 
         asyncio.run(_drive())
 
     assert connect_mock.await_count == 2
+    assert handle.cancel.await_count == 2
+
+
+def test_starter_survives_cross_loop_invocation() -> None:
+    """The original bug: two ``asyncio.run(...)`` calls back-to-back.
+
+    With the broken cache, the second loop hit
+    ``RuntimeError: <Lock ...> is bound to a different event loop``.
+    Now each call connects fresh and the second loop succeeds.
+    """
+    handle = MagicMock()
+    fake_client = MagicMock()
+    fake_client.start_workflow = AsyncMock(return_value=handle)
+
+    with patch.object(
+        ws, "get_temporal_client", AsyncMock(return_value=fake_client)
+    ):
+        spec = WorkflowStartSpec(workflow=_FakeWorkflow, args=())
+
+        # Each asyncio.run owns its own loop — exactly the JSON-RPC dispatch path.
+        asyncio.run(ws.default_workflow_starter(spec))
+        asyncio.run(ws.default_workflow_starter(spec))
+
+    assert fake_client.start_workflow.await_count == 2

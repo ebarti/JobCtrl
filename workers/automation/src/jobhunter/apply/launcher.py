@@ -427,8 +427,14 @@ def mark_result(
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
 
     if status == "applied":
+        # Launcher owns lock-release policy: if a competing process raced
+        # the row out of `running` (orphan rescue, mark-skipped, etc.) we
+        # still want to record this completion. Skip canonical validation;
+        # the launcher is the writer.
         set_stage_state(
-            conn, url, "apply", "succeeded", finished_at=now, duration_ms=duration_ms
+            conn, url, "apply", "succeeded",
+            finished_at=now, duration_ms=duration_ms,
+            validate_transition=False,
         )
         record_job_event(
             conn,
@@ -479,6 +485,8 @@ def mark_result(
         )
     else:
         reason = (error or "unknown").strip()
+        # Same launcher-policy reasoning as the applied branch above:
+        # the writer is the launcher, transitions are runner-owned.
         set_stage_state(
             conn,
             url,
@@ -490,6 +498,7 @@ def mark_result(
             error_message=reason,
             retryable=not permanent,
             next_action=f"jobhunter apply --url {url}" if not permanent else None,
+            validate_transition=False,
         )
         record_job_event(
             conn,
@@ -642,17 +651,28 @@ def reset_failed() -> int:
         if _has_succeeded_apply(conn, url):
             continue
         ensure_job_stage_rows(conn, url)
-        set_stage_state(
-            conn,
-            url,
-            "apply",
-            "pending",
-            attempt_count=0,
-            error_code=None,
-            error_message=None,
-            next_action=f"jobhunter apply --url {url}",
-        )
-        count += 1
+        # Per-row try/except so one race-induced failure (e.g., another
+        # worker flipped the row to ``running`` between the SELECT and
+        # this write) doesn't strand every subsequent row in the batch
+        # without a commit. Admin-initiated rewind so the runner owns the
+        # transition policy: validate_transition=False bypasses the
+        # canonical state-machine table (Failed -> Pending is fine but
+        # Running -> Pending is not).
+        try:
+            set_stage_state(
+                conn,
+                url,
+                "apply",
+                "pending",
+                attempt_count=0,
+                error_code=None,
+                error_message=None,
+                next_action=f"jobhunter apply --url {url}",
+                validate_transition=False,
+            )
+            count += 1
+        except Exception as exc:  # noqa: BLE001 — keep batch reset alive
+            logger.warning("reset_failed: skipping %s — %s", url, exc)
     conn.commit()
     return count
 

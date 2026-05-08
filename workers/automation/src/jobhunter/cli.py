@@ -778,6 +778,10 @@ def apply(
         raise typer.Exit(code=1)
 
     # Check 3: Tailored resumes exist (skip for --gen with --url)
+    # ``ready`` is the count of jobs eligible for apply; default to 0 so the
+    # downstream ``effective_limit = ready`` reference is unambiguous to
+    # static analysers when the gen+url shortcut early-returns.
+    ready: int = 0
     if not (gen and url):
         conn = get_connection()
         ready = conn.execute(
@@ -1145,6 +1149,7 @@ def rpc() -> None:
     ``run_stage``, ``apply``, ``profile_import``.
     """
     _bootstrap()
+    from jobhunter.infrastructure.observability import shutdown_otel
     from jobhunter.infrastructure.rpc.handlers import register_default_handlers
     from jobhunter.infrastructure.rpc.server import JsonRpcServer
     from jobhunter.infrastructure.rpc.workflow_starter import (
@@ -1154,7 +1159,13 @@ def rpc() -> None:
 
     server = JsonRpcServer(workflow_starter=default_workflow_starter)
     register_default_handlers(server, canceler=default_workflow_canceler)
-    server.serve()
+    try:
+        server.serve()
+    finally:
+        # Flush queued OTel spans before stdin EOF kills the process —
+        # without this the BatchSpanProcessor drops in-flight rpc.<method>
+        # spans and Langfuse loses the JSON-RPC trace tail.
+        shutdown_otel()
 
 
 @app.command()
@@ -1254,8 +1265,15 @@ def doctor() -> None:
         results.append(("searches.yaml", warn_mark, "Will use example config — run 'jobhunter init'"))
 
     # jobspy (discovery dep installed separately)
+    # The package is intentionally NOT in pyproject.toml so the worker venv
+    # stays slim — it ships only when the user opts into LinkedIn / Indeed
+    # discovery. ``importlib.import_module`` here keeps pyright from
+    # flagging the conditional import as missing on machines that haven't
+    # installed it yet.
     try:
-        import jobspy  # noqa: F401
+        import importlib
+
+        importlib.import_module("jobspy")
         results.append(("python-jobspy", ok_mark, "Job board scraping available"))
     except ImportError:
         results.append(("python-jobspy", warn_mark,

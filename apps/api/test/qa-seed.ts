@@ -372,13 +372,14 @@ function insertArtifact(db: Database.Database, jobUrl: string, type: string, fil
 }
 
 function insertEvent(db: Database.Database, jobUrl: string, stage: string, level: string, message: string): void {
-  db.prepare("INSERT INTO job_events (job_url, stage, level, message, occurred_at) VALUES (?, ?, ?, ?, ?)").run(
-    jobUrl,
-    stage,
-    level,
-    message,
-    QA_NOW,
-  );
+  // ``event_type`` defaults to '' in the schema, but the SSE writer
+  // (``apps/api/src/event-stream.ts``) skips rows where the column is
+  // empty — without this column being set, every QA-seeded event is
+  // silently dropped from /v1/events/stream and any test that depends
+  // on the SSE pipeline against qa-seed data sees nothing.
+  db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(jobUrl, stage, "QaInfo", level, message, QA_NOW);
 }
 
 function artifactStage(type: string): string {

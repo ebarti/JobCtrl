@@ -29,14 +29,23 @@ class ScoreActivityOutput:
 @activity.defn(name="score")
 async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
     """Run the scoring stage via ``run_pipeline``."""
-    activity.heartbeat("score starting")
+    from jobhunter.infrastructure.temporal.run_in_activity import (
+        run_blocking_with_heartbeat,
+    )
     from jobhunter.pipeline import run_pipeline
 
-    result = run_pipeline(
-        stages=["score"],
-        workers=payload.workers,
-        limit=payload.limit,
-        rescore=payload.rescore,
+    def _do() -> dict[str, Any]:
+        return run_pipeline(
+            stages=["score"],
+            workers=payload.workers,
+            limit=payload.limit,
+            rescore=payload.rescore,
+        )
+
+    result = await run_blocking_with_heartbeat(
+        _do,
+        starting_message="score starting",
+        progress_message="score still running",
     )
     stages = list(result.get("stages") or [])
     errors = dict(result.get("errors") or {})

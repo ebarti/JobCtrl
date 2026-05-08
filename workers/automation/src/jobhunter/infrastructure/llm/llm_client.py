@@ -53,6 +53,8 @@ class LlmAdapter:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_schema: dict | None = None,
+        thinking_budget: int | None = None,
     ) -> str:
         if model is not None and model != self._client.model:
             raise ValueError(
@@ -69,7 +71,36 @@ class LlmAdapter:
             kwargs["temperature"] = temperature
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if response_schema is not None:
+            kwargs["response_schema"] = response_schema
+        if thinking_budget is not None:
+            kwargs["thinking_budget"] = thinking_budget
         return self._client.chat(payload, **kwargs)
+
+    def chat_json(
+        self,
+        messages: list[LlmMessage],
+        *,
+        response_schema: dict,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking_budget: int | None = None,
+    ) -> dict:
+        if model is not None and model != self._client.model:
+            raise ValueError(
+                f"LlmAdapter is bound to model={self._client.model!r}; "
+                f"cannot satisfy request for model={model!r}."
+            )
+        payload = [{"role": message.role, "content": message.content} for message in messages]
+        kwargs: dict[str, Any] = {"response_schema": response_schema}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if thinking_budget is not None:
+            kwargs["thinking_budget"] = thinking_budget
+        return self._client.chat_json(payload, **kwargs)
 
     def ask(self, prompt: str, **kwargs: Any) -> str:
         message = LlmMessage(role="user", content=prompt)

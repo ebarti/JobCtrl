@@ -57,23 +57,66 @@ log = logging.getLogger(__name__)
 
 SCORE_PROMPT = """You are a job fit evaluator. Given a candidate's resume and a job description, score how well the candidate fits the role.
 
-SCORING CRITERIA:
+SCORING CRITERIA (overall `score`, 1..10):
 - 9-10: Perfect match. Candidate has direct experience in nearly all required skills and qualifications.
 - 7-8: Strong match. Candidate has most required skills, minor gaps easily bridged.
 - 5-6: Moderate match. Candidate has some relevant skills but missing key requirements.
 - 3-4: Weak match. Significant skill gaps, would need substantial ramp-up.
 - 1-2: Poor match. Completely different field or experience level.
 
-IMPORTANT FACTORS:
-- Weight technical skills heavily (programming languages, frameworks, tools)
-- Consider transferable experience (automation, scripting, API work)
-- Factor in the candidate's project experience
-- Be realistic about experience level vs. job requirements (years of experience, seniority)
+DIMENSION SCORES (0..10 each — be strict, do not anchor on the overall score):
+- `technical_fit`: alignment of programming languages, frameworks, tools, and platforms.
+- `experience_fit`: alignment of years / seniority level / domain depth.
+- `role_fit`: alignment of role responsibilities and the candidate's recent role focus.
 
-RESPOND IN EXACTLY THIS FORMAT (no other text):
-SCORE: [1-10]
-KEYWORDS: [comma-separated ATS keywords from the job description that match or could match the candidate]
-REASONING: [2-3 sentences explaining the score]"""
+KEYWORDS: list ATS keywords from the job description that match or could match the candidate. At least one keyword is required.
+
+REASONING: 2-3 sentence justification.
+
+Respond as a JSON object conforming to the provided schema. Do not wrap the JSON in markdown fences and do not include any prose outside the JSON object."""
+
+
+SCORE_SCHEMA: dict = {
+    "title": "JobFitScore",
+    "type": "object",
+    "properties": {
+        "score": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Overall fit score 1..10",
+        },
+        "technical_fit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Technical skill / tooling alignment 0..10",
+        },
+        "experience_fit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Years / seniority / domain depth alignment 0..10",
+        },
+        "role_fit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Role responsibility alignment 0..10",
+        },
+        "keywords": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "ATS keywords from the job that overlap with the candidate",
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "2-3 sentence justification",
+        },
+    },
+    "required": ["score", "technical_fit", "experience_fit", "role_fit", "keywords", "reasoning"],
+}
 
 
 def _utc_now() -> str:
@@ -256,8 +299,17 @@ class ScoreJobUseCase:
                 ),
             ),
         ]
+        # Structured outputs: the LLM gateway returns a JSON object that
+        # already conforms to SCORE_SCHEMA. max_tokens is generous because
+        # Gemini 3.x preview models spend invisible tokens on internal
+        # reasoning before emitting the schema fill.
         try:
-            response = self._llm.chat(messages, max_tokens=512, temperature=0.2)
+            payload = self._llm.chat_json(
+                messages,
+                response_schema=SCORE_SCHEMA,
+                max_tokens=4096,
+                temperature=0.2,
+            )
         except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
             log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)
             # Sentinel keyword keeps the ``MatchedKeywords`` non-empty
@@ -271,7 +323,7 @@ class ScoreJobUseCase:
                 error=f"LLM error: {exc}",
             )
 
-        return self._parser.parse(response)
+        return self._parser.parse_json(payload)
 
     def _build_aggregate(
         self,

@@ -48,6 +48,8 @@ class LlmPort(Protocol):
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        response_schema: dict | None = None,
+        thinking_budget: int | None = None,
     ) -> str:
         """Send a chat completion and return the assistant's text reply.
 
@@ -55,6 +57,33 @@ class LlmPort(Protocol):
         "use the adapter's default for this tenant". Temperature/max_tokens
         are passed through to the provider; ``None`` means "use the
         provider default".
+
+        ``response_schema`` enables structured outputs — providers that
+        support it return a JSON document conforming to the schema.
+        Use :meth:`chat_json` for the parsed-dict convenience.
+
+        ``thinking_budget`` (Gemini-only) caps internal reasoning tokens.
+        Set to ``0`` to skip thinking entirely on Gemini 3.x preview models
+        whose default budget can swallow the entire ``max_tokens`` allotment
+        before any visible content is produced.
+        """
+        ...
+
+    def chat_json(
+        self,
+        messages: list[LlmMessage],
+        *,
+        response_schema: dict,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking_budget: int | None = None,
+    ) -> dict:
+        """Like :meth:`chat` but returns a parsed JSON dict.
+
+        ``response_schema`` is required — without it the provider has no
+        structured-output contract and the call MUST fail at the adapter
+        boundary rather than silently returning free text.
         """
         ...
 

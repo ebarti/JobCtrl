@@ -241,15 +241,20 @@ def run_tailoring(
     """Generate tailored resumes for high-scoring jobs.
 
     Each job is processed inside a :class:`ThreadPoolExecutor` task; the
-    LLM call happens in the worker thread. Results are persisted back
-    through the use case on the main thread (sqlite connections are not
-    thread-safe across statements).
+    use case (LLM call + materials persistence) runs in the worker thread.
+    SQLite connections are not safe to share across threads, so each
+    worker builds its own use case (and therefore its own thread-local
+    connection via ``get_connection()``). The main thread keeps a separate
+    connection only for the per-job stage-state writes around the worker
+    pool's lifetime.
     """
     if snapshot is None:
         from jobhunter.infrastructure.profile import get_profile_repository
         snapshot = get_profile_repository().load_snapshot(tenant_id)
 
     conn = get_connection()
+    # ``repository`` is accepted for test injection but MUST NOT be passed
+    # into worker-thread tasks — sqlite connections are thread-bound.
     if repository is None:
         repository = SqliteMaterialsRepository(conn)
 
@@ -281,13 +286,10 @@ def run_tailoring(
     results: list[dict] = []
     stats: dict[str, int] = {"approved": 0, "failed_validation": 0, "failed_judge": 0, "error": 0}
 
-    # We want one use case shared across jobs so the repository connection
-    # stays consistent. The LLM call runs in worker threads.
-    use_case = _build_use_case(
-        repository=repository,
-        llm_port=llm_port,
-        publisher=publisher,
-    )
+    # ``use_case`` is built lazily per-worker inside _tailor_one_job so the
+    # repository connection lives in the worker thread that uses it. The
+    # main-thread ``repository`` constructed above is intentionally
+    # ignored by the workers (sqlite connections are thread-bound).
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
 
@@ -296,7 +298,19 @@ def run_tailoring(
         ensure_job_stage_rows(conn, job["url"], discovered_at=job.get("discovered_at"))
         started_at = utc_now()
         started_ats[job["url"]] = started_at
-        set_stage_state(conn, job["url"], "tailor", "running", started_at=started_at)
+        # The runner owns the restart policy: a job that failed last time is
+        # eligible for retailoring per ``get_jobs_by_stage``, so the
+        # transition Failed -> Running needs to be permitted even though
+        # the canonical state machine table only allows Failed -> Pending
+        # (via Reset). Skip validation here; the writer is the runner.
+        set_stage_state(
+            conn,
+            job["url"],
+            "tailor",
+            "running",
+            started_at=started_at,
+            validate_transition=False,
+        )
         record_job_event(conn, job["url"], "tailor", "StageStarted", message="Tailoring started")
 
     future_to_job: dict = {}
@@ -308,7 +322,11 @@ def run_tailoring(
                 "",  # legacy resume_text param — unused
                 snapshot,
                 validation_mode,
-                use_case=use_case,
+                # use_case=None: worker builds its own with a thread-local
+                # SQLite connection. Passing the main-thread use case would
+                # crash with "SQLite objects created in a thread can only
+                # be used in that same thread".
+                use_case=None,
                 pdf_renderer=pdf_renderer,
                 retailor=retailor,
                 tenant_id=tenant_id,

@@ -291,6 +291,15 @@ class ProjectionBuilder:
         if not dirty_jobs and max_event_id == watermark and dashboard_exists:
             return 0
 
+        # ``record_job_event`` invokes the wildcard subscriber inside the
+        # caller's open transaction (e.g. ``acquire_job``'s
+        # ``BEGIN IMMEDIATE`` block). Issuing our own ``commit()`` mid-
+        # transaction would prematurely release the row lock and break
+        # the caller's rollback path. Detect the in-transaction case and
+        # let the caller flush both writes; standalone refreshes (the
+        # CLI / tests) commit themselves.
+        defer_commit = bool(getattr(self._conn, "in_transaction", False))
+
         if not dirty_jobs:
             # Watermark advanced past events with no job_url (e.g.
             # system events) OR first-run: bump the watermark + ensure
@@ -299,7 +308,8 @@ class ProjectionBuilder:
                 self._watermarks.set(PROJECTION_NAME, max_event_id)
             if not dashboard_exists:
                 self._rebuild_dashboard()
-            self._conn.commit()
+            if not defer_commit:
+                self._conn.commit()
             return 0
 
         # PR 4 of the Temporal stack: rebuild ``apply_run_projections``
@@ -311,7 +321,8 @@ class ProjectionBuilder:
         self._rebuild_dashboard()
         if max_event_id > watermark:
             self._watermarks.set(PROJECTION_NAME, max_event_id)
-        self._conn.commit()
+        if not defer_commit:
+            self._conn.commit()
         return len(dirty_jobs)
 
     # -------------------------------------------------------------- builders
@@ -474,10 +485,10 @@ class ProjectionBuilder:
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
-        explicit: dict[str, sqlite3.Row] = {
-            (row["stage"] if not isinstance(row, tuple) else row[1]): row
-            for row in rows
-        }
+        # ``sqlite3.Row`` (configured via ``row_factory``) is always mapping-like,
+        # never a plain tuple — drop the dead isinstance branch so the dict's
+        # key type narrows to ``str`` for static analyzers.
+        explicit: dict[str, sqlite3.Row] = {row["stage"]: row for row in rows}
         result: list[StageProjection] = []
         for stage in STAGE_ORDER:
             row = explicit.get(stage)
@@ -929,8 +940,19 @@ class ProjectionBuilder:
         "ApplicationSubmitted": ("succeeded", "applied"),
         "DryRunCompleted": ("dry_run_complete", "dry_run_complete"),
         "ApplyManualSkip": ("manual", "manual"),
+        # ``LockReleased`` is the orphan-rescue terminal: only treat it as
+        # failure when no prior terminal event for the run was observed
+        # (see ``_apply_lock_released_event`` below). The event itself
+        # carries no result; preserving the prior result keeps captcha /
+        # login_issue / expired distinct from generic 'failed'.
         "LockReleased": ("failed", "failed"),
     }
+
+    # Event types that carry a real terminal verdict (used to gate the
+    # LockReleased fallback so it doesn't clobber more-specific results).
+    _AUTHORITATIVE_TERMINAL_EVENTS: frozenset[str] = frozenset(
+        {"ApplicationSubmitted", "DryRunCompleted", "ApplyManualSkip", "ApplicationFailed"}
+    )
 
     _STATUS_FROM_RESULT: dict[str, str] = {
         "applied": "succeeded",
@@ -988,6 +1010,15 @@ class ProjectionBuilder:
                 if status == "starting":
                     status = "in_progress"
             elif event_type in self._TERMINAL_EVENT_STATUS:
+                # LockReleased is the orphan-rescue fallback: when an
+                # authoritative terminal event already fired (Submitted /
+                # DryRunCompleted / ApplyManualSkip / ApplicationFailed),
+                # do NOT overwrite its more-specific result. Otherwise
+                # captcha / login_issue / expired runs that get rescued
+                # by ``release_lock`` would surface as plain 'failed' in
+                # ``apply_run_projections.result``.
+                if event_type == "LockReleased" and result is not None:
+                    continue
                 term_status, term_result = self._TERMINAL_EVENT_STATUS[event_type]
                 status = term_status
                 result = (
@@ -1095,6 +1126,8 @@ def _row_nullable_str(row: object, key: str) -> str | None:
 def _row_nullable_int(row: object, key: str) -> int | None:
     value = _row_get(row, key)
     if value is None or value == "":
+        return None
+    if not isinstance(value, (int, str, float, bytes)):
         return None
     try:
         return int(value)

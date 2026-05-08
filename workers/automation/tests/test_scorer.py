@@ -21,14 +21,55 @@ from jobhunter.scoring import scorer as scorer_module
 
 
 class _ScriptedLlm:
-    def __init__(self, *responses: str) -> None:
+    """Test double for ``LlmPort`` — returns scripted JSON payloads to
+    ``chat_json``. Use ``invalid=...`` to script raw strings the parser
+    will reject (e.g. for the failure-state coverage)."""
+
+    _DRAIN: dict = {
+        "score": 0,
+        "technical_fit": 0,
+        "experience_fit": 0,
+        "role_fit": 0,
+        "keywords": [],
+        "reasoning": "drained",
+    }
+
+    def __init__(self, *responses: dict | str) -> None:
         self._queue = list(responses)
 
-    def chat(self, messages, *, model=None, temperature=None, max_tokens=None) -> str:
-        return self._queue.pop(0) if self._queue else "SCORE: 0\nKEYWORDS:\nREASONING: drained"
+    def chat(  # pragma: no cover — structured-output cutover routes through chat_json
+        self,
+        messages,
+        *,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        response_schema=None,
+        thinking_budget=None,
+    ) -> str:
+        raise AssertionError("ScoreJobUseCase should use chat_json after the structured-output cutover")
+
+    def chat_json(
+        self,
+        messages,
+        *,
+        response_schema,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        thinking_budget=None,
+    ) -> dict:
+        if not self._queue:
+            return self._DRAIN
+        next_payload = self._queue.pop(0)
+        if isinstance(next_payload, str):
+            # Scripted-error path: pretend the JSON came back as a non-dict
+            # so the parser can flip ok=False without a network round-trip.
+            return next_payload  # type: ignore[return-value]
+        return dict(next_payload)
 
     def ask(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
-        return self.chat([])
+        raise AssertionError("ScoreJobUseCase should not call ask()")
 
 
 @pytest.fixture()
@@ -75,7 +116,16 @@ def test_score_job_writes_only_to_job_scores(
     url = "https://example.com/job/single"
     _seed_pending_job(conn, url)
     repo = SqliteScoreRepository(conn)
-    llm = _ScriptedLlm("SCORE: 8\nKEYWORDS: python\nREASONING: ok")
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "keywords": ["python"],
+            "reasoning": "ok",
+        }
+    )
 
     job_dict = dict(conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone())
     outcome = scorer_module.score_job(
@@ -112,7 +162,16 @@ def test_run_scoring_persists_via_repository_only(
     url = "https://example.com/job/batch"
     _seed_pending_job(conn, url)
     repo = SqliteScoreRepository(conn)
-    llm = _ScriptedLlm("SCORE: 7\nKEYWORDS: python\nREASONING: ok")
+    llm = _ScriptedLlm(
+        {
+            "score": 7,
+            "technical_fit": 7,
+            "experience_fit": 7,
+            "role_fit": 7,
+            "keywords": ["python"],
+            "reasoning": "ok",
+        }
+    )
 
     # The default ``run_scoring`` path constructs an SqliteScoreRepository
     # against ``get_connection()``; for tests we inject our tmp connection
@@ -154,7 +213,16 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
     url = "https://example.com/job/bad"
     _seed_pending_job(conn, url)
     repo = SqliteScoreRepository(conn)
-    llm = _ScriptedLlm("SCORE: 99\nKEYWORDS:\nREASONING: invalid")
+    llm = _ScriptedLlm(
+        {
+            "score": 99,  # out of [1, 10] → parser flags ok=False
+            "technical_fit": 0,
+            "experience_fit": 0,
+            "role_fit": 0,
+            "keywords": [],
+            "reasoning": "invalid",
+        }
+    )
 
     monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
     summary = scorer_module.run_scoring(

@@ -8,20 +8,24 @@ flow in ``pipeline.py``.
 
 Two services live here:
 
-  ``ScoreParser``        — turns the LLM's free-text ``SCORE/KEYWORDS/REASONING``
-                           response into the value objects required by
-                           ``JobScore``. Failures are signalled via the
-                           ``ok`` flag on the returned ``ScoreParseResult``
-                           rather than exceptions, because the caller wants
-                           to record an error event but keep going.
+  ``ScoreParser``        — turns the LLM's structured-output JSON payload
+                           into the value objects required by ``JobScore``.
+                           The LLM is invoked with a JSON schema (see
+                           ``SCORE_SCHEMA`` in ``use_cases``); the parser
+                           validates the dict shape and clamps invariants
+                           the LLM violated. Failures are signalled via
+                           the ``ok`` flag on the returned
+                           ``ScoreParseResult`` rather than exceptions —
+                           the caller wants to record an error event but
+                           keep going.
   ``EligibilityChecker`` — gates downstream tailoring per
                            ``ScoringCriteria.min_fit_score``.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from typing import Any
 
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
@@ -38,13 +42,13 @@ from jobhunter.domain.scoring.value_objects import (
 
 @dataclass(frozen=True)
 class ScoreParseResult:
-    """Outcome of ``ScoreParser.parse``.
+    """Outcome of ``ScoreParser.parse_json``.
 
     When ``ok`` is True, ``fit_score``, ``breakdown``, and ``keywords`` are
     populated with the parsed values. When ``ok`` is False, ``fit_score``
     is ``None`` and ``error`` carries a human-readable reason; the
-    breakdown still preserves the raw response so the caller can persist it
-    as ``reasoning`` for forensic inspection.
+    breakdown still preserves whatever rationale arrived (or a stringified
+    payload) so the caller can persist it for forensic inspection.
     """
 
     ok: bool
@@ -55,123 +59,73 @@ class ScoreParseResult:
 
 
 class ScoreParser:
-    """Parses the canonical ``SCORE/KEYWORDS/REASONING`` LLM response."""
+    """Parses a structured-output JSON payload from ``LlmPort.chat_json``.
 
-    # The legacy prompt format used in ``scoring/scorer.py``:
-    #   SCORE: 8
-    #   KEYWORDS: python, fastapi, postgres
-    #   REASONING: ...
-    #
-    # The "between colon and content" whitespace is ``[ \t]*`` rather than
-    # ``\s*`` so the regex doesn't greedily consume a trailing newline and
-    # accidentally absorb the next line's content. Without this, an empty
-    # ``KEYWORDS:`` line followed by ``REASONING: …`` would have the
-    # parser capture "REASONING: …" as the keywords list.
-    _SCORE_LINE = re.compile(r"^[ \t]*SCORE[ \t]*:[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
-    _KEYWORDS_LINE = re.compile(r"^[ \t]*KEYWORDS[ \t]*:[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
-    _REASONING_LINE = re.compile(
-        r"^[ \t]*REASONING[ \t]*:[ \t]*(.*)$",
-        re.IGNORECASE | re.MULTILINE | re.DOTALL,
-    )
-    _DIGIT = re.compile(r"\d+")
+    The schema landed by the structured-outputs cutover (see
+    ``use_cases.SCORE_SCHEMA``) is::
 
-    def parse(self, response: str) -> ScoreParseResult:
-        """Parse a raw LLM response into ``FitScore``/``ScoreBreakdown``/``MatchedKeywords``.
+        {
+          "score":          int 1..10,
+          "technical_fit":  int 0..10,
+          "experience_fit": int 0..10,
+          "role_fit":       int 0..10,
+          "keywords":       [str, ...]   (≥1 entry),
+          "reasoning":      str
+        }
 
-        Returns ``ok=False`` when the score line is missing, the integer
-        is out of range, or the LLM produced no keywords. In failure
-        cases the breakdown still carries the raw response as
-        ``reasoning`` so the caller can persist it for diagnosis.
+    Invariants the parser still enforces (because providers occasionally
+    drift on ``response_format=json_schema``):
 
-        Component dimensions in ``ScoreBreakdown``
-        (``technical_fit``/``experience_fit``/``role_fit``) are left at
-        their default zero values: the legacy
-        ``SCORE/KEYWORDS/REASONING`` prompt the worker still emits does
-        not separate the score by dimension. The typed fields exist as a
-        forward seam for the structured-output prompt cutover; once that
-        lands, this parser will populate them and the keywords-required
-        invariant tightens further. (Round-1 review M2.)
-        """
-        text = response or ""
-        score_match = self._SCORE_LINE.search(text)
-        keywords_match = self._KEYWORDS_LINE.search(text)
-        reasoning_match = self._REASONING_LINE.search(text)
+      * ``score`` is an int in [1, 10] — anything else flips ``ok=False``.
+      * Component dimensions clamp into [0, 10] silently; out-of-range
+        values are recorded as parse-error reasoning rather than persisted.
+      * ``keywords`` must contain at least one non-empty entry; the
+        legacy ``["legacy"]`` sentinel is reserved for backfilled rows
+        and is never produced by the structured-output path.
+    """
 
-        reasoning = (
-            reasoning_match.group(1).strip()
-            if reasoning_match
-            else text.strip()
-        )
-        # Empty / missing keywords need a sentinel because
-        # ``MatchedKeywords`` enforces a non-empty invariant (round-1
-        # review M1). On a successful SCORE we still flag the absence as
-        # a parse failure below — the ``ok=False`` branch is what
-        # callers use to decide whether to persist the score at all.
-        keywords_csv = keywords_match.group(1).strip() if keywords_match else ""
-        keywords = MatchedKeywords.from_csv(keywords_csv)
-        keywords_present = bool(keywords_csv)
-
-        if not score_match:
+    def parse_json(self, payload: Any) -> ScoreParseResult:
+        """Parse the structured-output payload into the scoring value objects."""
+        if not isinstance(payload, dict):
             return ScoreParseResult(
                 ok=False,
                 fit_score=None,
-                breakdown=ScoreBreakdown(reasoning=reasoning),
-                keywords=keywords,
-                error="LLM response missing SCORE: line",
+                breakdown=ScoreBreakdown(reasoning=str(payload)[:2000]),
+                keywords=MatchedKeywords(),
+                error=f"LLM payload was {type(payload).__name__}, expected dict",
             )
 
-        digit_match = self._DIGIT.search(score_match.group(1))
-        if not digit_match:
-            return ScoreParseResult(
-                ok=False,
-                fit_score=None,
-                breakdown=ScoreBreakdown(reasoning=reasoning),
-                keywords=keywords,
-                error="LLM SCORE: line had no integer",
-            )
+        reasoning = str(payload.get("reasoning") or "").strip()
+        keywords_raw = payload.get("keywords") or []
+        keywords = MatchedKeywords.from_iterable(keywords_raw)
+        keywords_present = bool(keywords_raw)
 
-        try:
-            value = int(digit_match.group())
-        except ValueError:
-            return ScoreParseResult(
-                ok=False,
-                fit_score=None,
-                breakdown=ScoreBreakdown(reasoning=reasoning),
-                keywords=keywords,
-                error="LLM SCORE: integer parse failed",
-            )
-
-        # The legacy scorer clamped 0/11+ silently; we treat clamped values
-        # as parse failures and return ok=False so the caller logs an
-        # actual error rather than silently downgrading. Values inside
-        # [1, 10] are accepted directly.
-        fit_score = FitScore.from_optional(value)
+        score_raw = payload.get("score")
+        fit_score = FitScore.from_optional(score_raw)
         if fit_score is None:
             return ScoreParseResult(
                 ok=False,
                 fit_score=None,
-                breakdown=ScoreBreakdown(reasoning=reasoning),
+                breakdown=ScoreBreakdown(reasoning=reasoning or str(payload)[:2000]),
                 keywords=keywords,
-                error=f"SCORE {value} outside [1, 10]",
+                error=f"score {score_raw!r} missing or outside [1, 10]",
             )
 
-        # Round-1 review M1: a successful SCORE with no KEYWORDS line is
-        # incomplete by §4.4 — a job's score must carry the ATS keywords
-        # the LLM matched. The aggregate would still construct (the
-        # keywords field falls back to the ``["legacy"]`` sentinel), but
-        # that sentinel is reserved for backfilled rows; live scoring
-        # MUST surface the failure so the operator sees the malformed
-        # response.
         if not keywords_present:
             return ScoreParseResult(
                 ok=False,
                 fit_score=None,
-                breakdown=ScoreBreakdown(reasoning=reasoning),
+                breakdown=ScoreBreakdown(reasoning=reasoning or str(payload)[:2000]),
                 keywords=keywords,
-                error="LLM response missing KEYWORDS: line",
+                error="LLM payload missing 'keywords' (required by schema)",
             )
 
-        breakdown = ScoreBreakdown(reasoning=reasoning)
+        breakdown = ScoreBreakdown(
+            technical_fit=_clamp_dim(payload.get("technical_fit")),
+            experience_fit=_clamp_dim(payload.get("experience_fit")),
+            role_fit=_clamp_dim(payload.get("role_fit")),
+            reasoning=reasoning,
+        )
         return ScoreParseResult(
             ok=True,
             fit_score=fit_score,
@@ -179,6 +133,25 @@ class ScoreParser:
             keywords=keywords,
             error="",
         )
+
+
+def _clamp_dim(value: Any) -> int:
+    """Clamp a single component dimension into ``[0, 10]``.
+
+    Out-of-range / non-integer values become 0 rather than raising — the
+    overall ``ScoreParseResult.ok`` flag is owned by the score field, and
+    we'd rather persist a partially-typed breakdown than reject the row
+    over a single bad dimension.
+    """
+    try:
+        ivalue = int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return 0
+    if ivalue < 0:
+        return 0
+    if ivalue > 10:
+        return 10
+    return ivalue
 
 
 # ---------------------------------------------------------------------------

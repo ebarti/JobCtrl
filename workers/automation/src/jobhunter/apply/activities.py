@@ -77,27 +77,53 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
     apply_task = loop.run_in_executor(None, _run_apply)
 
     try:
-        while True:
+        try:
+            while True:
+                try:
+                    applied, failed = await asyncio.wait_for(
+                        asyncio.shield(apply_task), timeout=15.0
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    activity.heartbeat("apply still running")
+        except asyncio.CancelledError:
+            # Signal the launcher's run-forever loop to stop so the
+            # executor thread releases Chrome / DB connections instead of
+            # leaking past activity cancellation. ``asyncio.shield`` keeps
+            # the task running otherwise — Temporal would think the
+            # activity died but the worker_loop polls on, draining tokens.
+            activity.logger.info("apply_activity cancelled — signalling launcher stop")
             try:
-                applied, failed = await asyncio.wait_for(asyncio.shield(apply_task), timeout=15.0)
-                break
-            except asyncio.TimeoutError:
-                activity.heartbeat("apply still running")
-    except asyncio.CancelledError:
-        activity.logger.info("apply_activity cancelled")
-        raise
-    except LookupError as exc:
-        # Missing job URL or other lookup misses are operator errors; do not
-        # retry — surface them immediately to the workflow.
-        raise ApplicationError(str(exc), type=type(exc).__name__, non_retryable=True) from exc
+                from jobhunter.apply.launcher import _stop_event
 
-    status = "ok" if failed == 0 else "failed"
-    return ApplyActivityOutput(
-        status=status,
-        applied=int(applied),
-        failed=int(failed),
-        error=None,
-    )
+                _stop_event.set()
+            except Exception:  # noqa: BLE001 — never let cleanup mask the cancel
+                activity.logger.exception(
+                    "apply_activity: failed to set launcher _stop_event during cancel"
+                )
+            raise
+        except LookupError as exc:
+            # Missing job URL or other lookup misses are operator errors;
+            # do not retry — surface them immediately to the workflow.
+            raise ApplicationError(
+                str(exc), type=type(exc).__name__, non_retryable=True
+            ) from exc
+
+        status = "ok" if failed == 0 else "failed"
+        return ApplyActivityOutput(
+            status=status,
+            applied=int(applied),
+            failed=int(failed),
+            error=None,
+        )
+    finally:
+        # Final heartbeat so a future heartbeat-timeout regression
+        # (post-iteration delay > heartbeat_timeout) doesn't surface as
+        # a phantom dead activity.
+        try:
+            activity.heartbeat("apply done")
+        except Exception:  # noqa: BLE001 — heartbeat outside activity ctx is fine
+            pass
 
 
 # Re-exported for the registry; activity decorator metadata is preserved.

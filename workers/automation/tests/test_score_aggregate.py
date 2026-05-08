@@ -215,46 +215,76 @@ def test_job_score_rejects_zero_version() -> None:
 
 
 def test_score_parser_happy_path() -> None:
-    response = (
-        "SCORE: 8\n"
-        "KEYWORDS: python, fastapi, postgres\n"
-        "REASONING: Strong technical overlap with the role."
-    )
-    result = ScoreParser().parse(response)
+    payload = {
+        "score": 8,
+        "technical_fit": 8,
+        "experience_fit": 7,
+        "role_fit": 9,
+        "keywords": ["python", "fastapi", "postgres"],
+        "reasoning": "Strong technical overlap with the role.",
+    }
+    result = ScoreParser().parse_json(payload)
     assert result.ok is True
     assert result.fit_score is not None and result.fit_score.value == 8
     assert result.keywords.values == ("python", "fastapi", "postgres")
     assert "Strong technical overlap" in result.breakdown.reasoning
+    # Structured-output cutover populates the dimension breakdown.
+    assert result.breakdown.technical_fit == 8
+    assert result.breakdown.experience_fit == 7
+    assert result.breakdown.role_fit == 9
 
 
-def test_score_parser_rejects_missing_score_line() -> None:
-    result = ScoreParser().parse("KEYWORDS: a\nREASONING: nope")
+def test_score_parser_rejects_missing_score_field() -> None:
+    result = ScoreParser().parse_json({"keywords": ["a"], "reasoning": "nope"})
     assert result.ok is False
     assert result.fit_score is None
-    assert "missing" in result.error.lower()
+    assert "score" in result.error.lower()
 
 
 def test_score_parser_rejects_out_of_range_score() -> None:
-    result = ScoreParser().parse("SCORE: 11\nKEYWORDS:\nREASONING: too high")
+    result = ScoreParser().parse_json(
+        {"score": 11, "keywords": [], "reasoning": "too high"}
+    )
     assert result.ok is False
     assert result.fit_score is None
     assert "outside" in result.error.lower()
 
 
 def test_score_parser_rejects_successful_score_with_no_keywords() -> None:
-    """Round-1 review M1: a SCORE line with no KEYWORDS line is not a
-    valid scoring per §4.4 — the parser surfaces it as ``ok=False`` so
-    the caller doesn't accidentally persist a sentinel-keyword score."""
-    result = ScoreParser().parse("SCORE: 7\nREASONING: missing the keywords line")
+    """Round-1 review M1: a score with no keywords is not a valid scoring
+    per §4.4 — the parser surfaces it as ``ok=False`` so the caller
+    doesn't accidentally persist a sentinel-keyword score."""
+    result = ScoreParser().parse_json(
+        {"score": 7, "keywords": [], "reasoning": "missing the keywords"}
+    )
     assert result.ok is False
     assert result.fit_score is None
     assert "keywords" in result.error.lower()
 
 
-def test_score_parser_rejects_empty_keywords_line() -> None:
-    result = ScoreParser().parse("SCORE: 7\nKEYWORDS:\nREASONING: empty list")
+def test_score_parser_rejects_non_dict_payload() -> None:
+    result = ScoreParser().parse_json("just a string, not a JSON object")
     assert result.ok is False
-    assert "keywords" in result.error.lower()
+    assert "expected dict" in result.error.lower()
+
+
+def test_score_parser_clamps_out_of_range_dimensions() -> None:
+    """Per the SCORE_SCHEMA dimensions are 0..10 — providers occasionally
+    return values outside that range. Clamp silently rather than rejecting
+    the row over a single bad dimension; ``ok`` remains True."""
+    payload = {
+        "score": 7,
+        "technical_fit": 99,
+        "experience_fit": -3,
+        "role_fit": "not a number",
+        "keywords": ["python"],
+        "reasoning": "ok",
+    }
+    result = ScoreParser().parse_json(payload)
+    assert result.ok is True
+    assert result.breakdown.technical_fit == 10
+    assert result.breakdown.experience_fit == 0
+    assert result.breakdown.role_fit == 0
 
 
 def test_eligibility_checker_threshold() -> None:

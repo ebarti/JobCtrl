@@ -193,7 +193,17 @@ def run_cover_letters(
         url = job["url"]
         ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
         started_at = utc_now()
-        set_stage_state(conn, url, "cover", "running", started_at=started_at)
+        # Runner owns the restart policy: failed-cover jobs are re-selected
+        # for retry, so allow Failed -> Running. Canonical state machine
+        # table only permits Failed -> Pending (via Reset).
+        set_stage_state(
+            conn,
+            url,
+            "cover",
+            "running",
+            started_at=started_at,
+            validate_transition=False,
+        )
         record_job_event(conn, url, "cover", "StageStarted", message="Cover letter generation started")
 
         try:
