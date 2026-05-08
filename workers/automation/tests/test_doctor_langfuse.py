@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from typer.testing import CliRunner
@@ -17,15 +17,21 @@ def _set_creds(monkeypatch):
 
 
 def _stub_temporal():
-    """Pin Temporal to ``reachable`` so the test focuses on the Langfuse row."""
+    """Pin Temporal to ``reachable`` so the test focuses on the Langfuse row.
+
+    Patches ``get_temporal_client`` (the function the doctor awaits) rather
+    than ``Client.connect`` so we never construct unawaited coroutines on
+    the side_effect path. Earlier versions used a lambda that produced a
+    fresh coroutine — pytest then warned ``coroutine '...' was never
+    awaited`` because the Mock machinery wrapped the call in a way that
+    occasionally dropped the coroutine before ``await`` consumed it.
+    """
+    # cli.py imports ``get_temporal_client`` lazily inside the doctor command,
+    # so the patch target is the source module — not the cli namespace.
     return patch(
-        "jobhunter.infrastructure.temporal.client.Client.connect",
-        side_effect=lambda *_args, **_kwargs: _async_sentinel(),
+        "jobhunter.infrastructure.temporal.client.get_temporal_client",
+        new=AsyncMock(return_value=object()),
     )
-
-
-async def _async_sentinel():
-    return object()
 
 
 def test_doctor_reports_langfuse_reachable(monkeypatch):

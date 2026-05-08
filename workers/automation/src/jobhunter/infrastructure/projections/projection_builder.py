@@ -474,10 +474,10 @@ class ProjectionBuilder:
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
-        explicit: dict[str, sqlite3.Row] = {
-            (row["stage"] if not isinstance(row, tuple) else row[1]): row
-            for row in rows
-        }
+        # ``sqlite3.Row`` (configured via ``row_factory``) is always mapping-like,
+        # never a plain tuple — drop the dead isinstance branch so the dict's
+        # key type narrows to ``str`` for static analyzers.
+        explicit: dict[str, sqlite3.Row] = {row["stage"]: row for row in rows}
         result: list[StageProjection] = []
         for stage in STAGE_ORDER:
             row = explicit.get(stage)
@@ -1095,6 +1095,8 @@ def _row_nullable_str(row: object, key: str) -> str | None:
 def _row_nullable_int(row: object, key: str) -> int | None:
     value = _row_get(row, key)
     if value is None or value == "":
+        return None
+    if not isinstance(value, (int, str, float, bytes)):
         return None
     try:
         return int(value)
