@@ -72,30 +72,72 @@ class _MemoryRepo:
 
 
 class _ScriptedLlm:
-    """Deterministic ``LlmPort`` returning canned responses in order."""
+    """Deterministic ``LlmPort`` returning canned structured-output payloads."""
 
-    def __init__(self, *responses: str) -> None:
-        self._queue: list[str] = list(responses)
+    def __init__(self, *responses: dict) -> None:
+        self._queue: list[dict] = [dict(r) for r in responses]
         self.calls: list[list[LlmMessage]] = []
 
-    def chat(self, messages, *, model=None, temperature=None, max_tokens=None) -> str:
+    def chat(  # pragma: no cover — structured-output cutover routes through chat_json
+        self,
+        messages,
+        *,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        response_schema=None,
+        thinking_budget=None,
+    ) -> str:
+        raise AssertionError("ScoreJobUseCase should use chat_json after the structured-output cutover")
+
+    def chat_json(
+        self,
+        messages,
+        *,
+        response_schema,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        thinking_budget=None,
+    ) -> dict:
         self.calls.append(list(messages))
         if not self._queue:
             raise AssertionError("ScriptedLlm exhausted")
         return self._queue.pop(0)
 
     def ask(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
-        return self.chat([LlmMessage(role="user", content=prompt)], **kwargs)
+        raise AssertionError("ScoreJobUseCase should not call ask()")
 
 
 class _ExplodingLlm:
     """``LlmPort`` that always raises — exercises error handling."""
 
-    def chat(self, messages, *, model=None, temperature=None, max_tokens=None) -> str:
+    def chat(  # pragma: no cover
+        self,
+        messages,
+        *,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        response_schema=None,
+        thinking_budget=None,
+    ) -> str:
+        raise RuntimeError("provider down")
+
+    def chat_json(
+        self,
+        messages,
+        *,
+        response_schema,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        thinking_budget=None,
+    ) -> dict:
         raise RuntimeError("provider down")
 
     def ask(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
-        return self.chat([LlmMessage(role="user", content=prompt)], **kwargs)
+        raise RuntimeError("provider down")
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +187,14 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
     sub: Subscription = bus.subscribe("JobScored", _capture)
     try:
         llm = _ScriptedLlm(
-            "SCORE: 8\nKEYWORDS: python, fastapi\nREASONING: Strong overlap."
+            {
+                "score": 8,
+                "technical_fit": 8,
+                "experience_fit": 7,
+                "role_fit": 8,
+                "keywords": ["python", "fastapi"],
+                "reasoning": "Strong overlap.",
+            }
         )
         use_case = ScoreJobUseCase(repository=repo, llm=llm, publisher=bus)
         outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
@@ -167,7 +216,8 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
 
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:
     repo = _MemoryRepo()
-    llm = _ScriptedLlm("KEYWORDS: a\nREASONING: missing score")
+    # Payload missing the required ``score`` field — parser flags ok=False.
+    llm = _ScriptedLlm({"keywords": ["a"], "reasoning": "missing score"})
     use_case = ScoreJobUseCase(repository=repo, llm=llm)
 
     outcome = use_case.score(job=_job(), profile_snapshot=profile_snapshot)
@@ -190,8 +240,22 @@ def test_score_job_handles_llm_error_as_parse_failure(profile_snapshot) -> None:
 def test_score_job_bumps_version_on_rescore(profile_snapshot) -> None:
     repo = _MemoryRepo()
     llm = _ScriptedLlm(
-        "SCORE: 7\nKEYWORDS: python\nREASONING: first pass.",
-        "SCORE: 9\nKEYWORDS: python, fastapi\nREASONING: rescored.",
+        {
+            "score": 7,
+            "technical_fit": 7,
+            "experience_fit": 7,
+            "role_fit": 7,
+            "keywords": ["python"],
+            "reasoning": "first pass.",
+        },
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 8,
+            "role_fit": 9,
+            "keywords": ["python", "fastapi"],
+            "reasoning": "rescored.",
+        },
     )
     use_case = ScoreJobUseCase(repository=repo, llm=llm)
     use_case.score(job=_job(), profile_snapshot=profile_snapshot)
