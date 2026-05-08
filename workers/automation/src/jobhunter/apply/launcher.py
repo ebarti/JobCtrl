@@ -672,7 +672,7 @@ def reset_failed() -> int:
             )
             count += 1
         except Exception as exc:  # noqa: BLE001 — keep batch reset alive
-            log.warning("reset_failed: skipping %s — %s", url, exc)
+            logger.warning("reset_failed: skipping %s — %s", url, exc)
     conn.commit()
     return count
 
