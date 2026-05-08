@@ -41,11 +41,16 @@ This is the authoritative roadmap. Keep detailed historical proposals under
   workflows (PR 4 / per-job runners) gets cooperative cancel for free; a
   shorter-term option is to add a cancel token surface for the in-process
   sync handlers.
-- Record generated logs and reports as artifacts. `record_job_artifact`
-  (`workers/automation/src/jobhunter/state.py:304`) exists but is never
-  called; apply log files are only kept on disk and stored as a string in
-  `apply_runs.log_path`. Wire the helper into the apply / materials /
-  scoring writers so logs and reports show up in the artifacts list.
+- Record `score_report` artifacts. PR 7 of the Temporal stack wired
+  `state.record_job_artifact` into `apply.launcher.mark_result` so the
+  per-worker agent log (`LOG_DIR/worker-{worker_id}.log`) lands in
+  `job_artifacts` as kind `apply_log`; tailor / cover_letter / PDF were
+  already registering their primary outputs through
+  `SqliteMaterialsRepository`. Scoring still writes no on-disk files —
+  reasoning lives in `job_scores` only — so a dedicated `score_report`
+  artifact requires a behaviour change (introducing a per-job report
+  file) that PR 7 deliberately did not take. File this when an operator
+  asks for an exportable score report.
 - Refactor non-apply stage runners to accept a single `job_url` so
   `JobPipelineWorkflow` can drive per-job batches. Today the runners are
   batch-only — they walk DB selectors over the entire `jobs` table — and
