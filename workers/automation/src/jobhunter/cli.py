@@ -778,6 +778,10 @@ def apply(
         raise typer.Exit(code=1)
 
     # Check 3: Tailored resumes exist (skip for --gen with --url)
+    # ``ready`` is the count of jobs eligible for apply; default to 0 so the
+    # downstream ``effective_limit = ready`` reference is unambiguous to
+    # static analysers when the gen+url shortcut early-returns.
+    ready: int = 0
     if not (gen and url):
         conn = get_connection()
         ready = conn.execute(
@@ -1254,8 +1258,15 @@ def doctor() -> None:
         results.append(("searches.yaml", warn_mark, "Will use example config — run 'jobhunter init'"))
 
     # jobspy (discovery dep installed separately)
+    # The package is intentionally NOT in pyproject.toml so the worker venv
+    # stays slim — it ships only when the user opts into LinkedIn / Indeed
+    # discovery. ``importlib.import_module`` here keeps pyright from
+    # flagging the conditional import as missing on machines that haven't
+    # installed it yet.
     try:
-        import jobspy  # noqa: F401
+        import importlib
+
+        importlib.import_module("jobspy")
         results.append(("python-jobspy", ok_mark, "Job board scraping available"))
     except ImportError:
         results.append(("python-jobspy", warn_mark,

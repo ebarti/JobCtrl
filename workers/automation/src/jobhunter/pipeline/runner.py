@@ -16,6 +16,7 @@ import logging
 import threading
 import time
 from datetime import datetime
+from typing import Any, Callable
 
 from rich.console import Console
 from rich.panel import Panel
@@ -207,8 +208,10 @@ def _run_pdf(limit: int = 0) -> dict:
         return {"status": f"error: {e}"}
 
 
-# Map stage names to their runner functions
-_STAGE_RUNNERS: dict[str, callable] = {
+# Map stage names to their runner functions. ``Callable`` (lowercase
+# ``callable`` is the runtime predicate, not a generic type alias).
+_StageRunner = Callable[..., dict[str, Any]]
+_STAGE_RUNNERS: dict[str, _StageRunner] = {
     "discover": _run_discover,
     "enrich":   _run_enrich,
     "score":    _run_score,

@@ -59,7 +59,7 @@ from jobhunter.infrastructure.enrichment.playwright_fetcher import (
     _collect_main_content,
 )
 from jobhunter.infrastructure.network.proxy import ProxyConfig, parse_proxy
-from jobhunter.llm import get_client
+from jobhunter.infrastructure.llm import get_llm_adapter
 
 log = logging.getLogger(__name__)
 
@@ -349,12 +349,14 @@ def scrape_detail_page(page, url: str) -> dict:
 
 
 def _make_llm_extractor() -> LlmExtractor:
-    """Build a Tier-3 extractor backed by the legacy LlmClient.
+    """Build a Tier-3 extractor backed by the canonical LlmAdapter.
 
-    Factored out so tests can swap a stub LlmPort.
+    Factored out so tests can swap a stub LlmPort. The adapter is the only
+    LlmPort-shaped wrapper around the underlying LLMClient — calling
+    LLMClient directly would now violate the port's signature (model kw,
+    chat_json, etc.).
     """
-    client = get_client()
-    return LlmExtractor(llm=client)
+    return LlmExtractor(llm=get_llm_adapter())
 
 
 # ---------------------------------------------------------------------------

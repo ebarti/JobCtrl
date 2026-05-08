@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Callable
 
 from jobhunter.domain.pipeline_types import (
     Blocked,
@@ -195,8 +196,13 @@ def _stale_to_pending(current: Stale, **kwargs) -> Pending:
     )
 
 
-# Dispatch table keyed by (current_kind, trigger).
-_HANDLERS: dict[tuple[str, StageTransition], object] = {
+# Dispatch table keyed by (current_kind, trigger). Each handler is an
+# ``(StageState, **kwargs) -> StageState`` callable; the type ignore on the
+# row signatures is acceptable here because the dispatch is value-based and
+# the handlers themselves enforce the input ``StageState`` subclass at call
+# time via positional typing.
+_Handler = Callable[..., StageState]
+_HANDLERS: dict[tuple[str, StageTransition], _Handler] = {
     # Row 1:  Pending  -> Queued   (Enqueue)
     ("Pending", StageTransition.Enqueue): _pending_to_queued,
     # Row 2:  Pending  -> Running  (Start)

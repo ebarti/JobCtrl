@@ -187,6 +187,13 @@ def _validate_master_json_fields(
     if errors:
         return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))
 
+    # ``errors`` was empty so the isinstance/non-empty guards above already
+    # established that experience_updates and skill_updates are real lists.
+    # Narrow the types explicitly so static analysers don't flag the
+    # iteration sites below as "object of type None is not iterable".
+    assert isinstance(experience_updates, list)
+    assert isinstance(skill_updates, list)
+
     all_experience_ids = {entry.get("id") for entry in get_experience_entries(profile)}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
     required_skill_ids = set(get_required_skill_category_ids(profile))

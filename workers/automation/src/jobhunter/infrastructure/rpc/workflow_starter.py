@@ -14,7 +14,7 @@ factory; caching is a workflow-starter concern.
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable
+from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
 from temporalio.client import Client, WorkflowHandle
@@ -23,8 +23,14 @@ from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.infrastructure.temporal.client import get_temporal_client
 from jobhunter.infrastructure.temporal.task_queues import JOBHUNTER_TASK_QUEUE
 
-WorkflowStarter = Callable[[WorkflowStartSpec], Awaitable[WorkflowHandle]]
-WorkflowCanceler = Callable[[str], Awaitable[None]]
+# ``Coroutine[Any, Any, T]`` rather than ``Awaitable[T]`` so ``asyncio.run``
+# accepts the return value without a static-type complaint. Only async-def
+# callables satisfy this — adapters that return a hand-rolled
+# ``Awaitable`` (e.g., a custom ``__await__`` object) would need wrapping
+# in ``asyncio.ensure_future`` first; the local Temporal-backed defaults
+# are async-def so the constraint is free.
+WorkflowStarter = Callable[[WorkflowStartSpec], Coroutine[Any, Any, WorkflowHandle]]
+WorkflowCanceler = Callable[[str], Coroutine[Any, Any, None]]
 
 
 _cached_client: Client | None = None
