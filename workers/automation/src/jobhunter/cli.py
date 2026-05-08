@@ -1328,8 +1328,9 @@ def doctor() -> None:
     # Skip the network probe entirely if LANGFUSE_DISABLE is set — it's the
     # opt-out switch users flip when they don't want export running and they
     # shouldn't see a misleading "MISSING" or "unreachable" row.
-    lf_disabled = os.environ.get("LANGFUSE_DISABLE", "").strip().lower() in {"1", "true", "yes"}
-    if lf_disabled:
+    from jobhunter.infrastructure.observability import langfuse_disabled
+
+    if langfuse_disabled():
         results.append(("Langfuse", "[dim]disabled[/dim]", "LANGFUSE_DISABLE=1"))
     else:
         lf_pub = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()

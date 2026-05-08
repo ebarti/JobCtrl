@@ -28,6 +28,12 @@ _provider: TracerProvider | None = None
 _exporter: OTLPSpanExporter | None = None
 
 _OTLP_PATH = "/api/public/otel/v1/traces"
+_DISABLE_TRUTHY = frozenset({"1", "true", "yes"})
+
+
+def langfuse_disabled() -> bool:
+    """Single source of truth for the LANGFUSE_DISABLE opt-out flag."""
+    return os.environ.get("LANGFUSE_DISABLE", "").strip().lower() in _DISABLE_TRUTHY
 
 
 def init_otel(*, service_name: str = "jobhunter", environment: str | None = None) -> None:
@@ -37,7 +43,7 @@ def init_otel(*, service_name: str = "jobhunter", environment: str | None = None
     if _initialized:
         return
 
-    if os.environ.get("LANGFUSE_DISABLE", "").strip().lower() in ("1", "true"):
+    if langfuse_disabled():
         log.info("Langfuse export disabled via LANGFUSE_DISABLE.")
         _initialized = True
         return
@@ -107,7 +113,7 @@ def _scrub_url_credentials(span, request) -> None:  # type: ignore[no-untyped-de
         url = str(request.url)
     except Exception:  # noqa: BLE001 — defensive: never break the request path
         return
-    if "key=" not in url:
+    if "key=" not in url.lower():
         return
     from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 
