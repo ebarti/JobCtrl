@@ -1325,31 +1325,38 @@ def doctor() -> None:
                         "unreachable (start with: temporal server start-dev)"))
 
     # Langfuse OTLP ingest (observability target)
-    lf_pub = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
-    lf_sec = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
-    lf_url = os.environ.get("LANGFUSE_BASE_URL", "").strip().rstrip("/")
-    if not (lf_pub and lf_sec and lf_url):
-        results.append((
-            "Langfuse",
-            fail_mark,
-            "MISSING (set LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)",
-        ))
+    # Skip the network probe entirely if LANGFUSE_DISABLE is set — it's the
+    # opt-out switch users flip when they don't want export running and they
+    # shouldn't see a misleading "MISSING" or "unreachable" row.
+    lf_disabled = os.environ.get("LANGFUSE_DISABLE", "").strip().lower() in {"1", "true", "yes"}
+    if lf_disabled:
+        results.append(("Langfuse", "[dim]disabled[/dim]", "LANGFUSE_DISABLE=1"))
     else:
-        try:
-            resp = httpx.head(f"{lf_url}/api/public/otel/v1/traces", timeout=2.0)
-            # Any non-server-error response means the endpoint is alive.
-            # 405 (Method Not Allowed on HEAD) and 401 (auth required) both
-            # confirm the route exists.
-            if resp.status_code < 500:
-                results.append(("Langfuse", ok_mark, "reachable"))
-            else:
-                results.append((
-                    "Langfuse",
-                    fail_mark,
-                    f"unreachable (status={resp.status_code})",
-                ))
-        except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
-            results.append(("Langfuse", fail_mark, "unreachable"))
+        lf_pub = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
+        lf_sec = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
+        lf_url = os.environ.get("LANGFUSE_BASE_URL", "").strip().rstrip("/")
+        if not (lf_pub and lf_sec and lf_url):
+            results.append((
+                "Langfuse",
+                fail_mark,
+                "MISSING (set LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)",
+            ))
+        else:
+            try:
+                resp = httpx.head(f"{lf_url}/api/public/otel/v1/traces", timeout=2.0)
+                # Any non-server-error response means the endpoint is alive.
+                # 405 (Method Not Allowed on HEAD) and 401 (auth required) both
+                # confirm the route exists.
+                if resp.status_code < 500:
+                    results.append(("Langfuse", ok_mark, "reachable"))
+                else:
+                    results.append((
+                        "Langfuse",
+                        fail_mark,
+                        f"unreachable (status={resp.status_code})",
+                    ))
+            except Exception:  # noqa: BLE001 — any failure ⇒ unreachable
+                results.append(("Langfuse", fail_mark, "unreachable"))
 
     # --- Render results ---
     console.print()
