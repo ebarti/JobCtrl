@@ -6,9 +6,11 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from jobhunter.database import ensure_profile_tables
 from jobhunter.domain.events.base import DomainEvent
-from jobhunter.domain.profile.aggregate import Profile
+from jobhunter.domain.profile.aggregate import InvalidProfileError, Profile
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
 from jobhunter.infrastructure.profile.sqlite_repository import SqliteProfileRepository
@@ -165,3 +167,26 @@ def test_legacy_profile_json_seeds_sqlite_once_and_writes_stay_in_sqlite(tmp_pat
     assert json.loads(legacy_profile.read_text(encoding="utf-8"))["personal"]["full_name"] == "Legacy File Changed"
     assert repo.load(LOCAL_TENANT).personal.full_name == "SQLite Updated"  # type: ignore[union-attr]
     assert repo.load_rendering_settings(LOCAL_TENANT)["template_text"] == "\\documentclass{moderncv}"
+
+
+def test_save_rejects_unsupported_top_level_profile_fields(tmp_path):
+    repo, conn, _ = _new_repo(tmp_path)
+    raw = _valid_profile()
+    raw["custom_section"] = {"future": "thing"}
+
+    with pytest.raises(InvalidProfileError, match="unsupported top-level profile field\\(s\\): custom_section"):
+        repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
+
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 0
+
+
+def test_legacy_profile_rejects_unsupported_top_level_fields_before_import(tmp_path):
+    repo, conn, _ = _new_repo(tmp_path)
+    legacy = _valid_profile()
+    legacy["custom_section"] = {"future": "thing"}
+    (tmp_path / "profile.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+    with pytest.raises(InvalidProfileError, match="unsupported top-level profile field\\(s\\): custom_section"):
+        repo.load(LOCAL_TENANT)
+
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 0

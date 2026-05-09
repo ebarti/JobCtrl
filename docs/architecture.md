@@ -430,9 +430,10 @@ distributed-trace propagation across the TS↔Python JSON-RPC boundary
 ### SQLite And Files
 
 SQLite in `~/.jobhunter/jobhunter.db` is the local source of truth for jobs,
-stage states, events, artifacts, settings, normalized Candidate Profile data,
-profile rendering settings/template text, and run visibility. The five
-projection tables (above) are also stored here.
+stage states, events, artifacts, normalized Candidate Profile data, profile
+rendering settings/template text, and run visibility. The five projection
+tables (above) are also stored here. Dashboard settings remain file-backed
+until their own storage migration.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and

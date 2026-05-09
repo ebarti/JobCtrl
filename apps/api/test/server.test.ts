@@ -1029,6 +1029,43 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("seeds a default resume template when the legacy template file is missing", async () => {
+    fs.rmSync(options.resumeTemplatePath, { force: true });
+    const app = buildApp(options);
+    const initial = await app.inject({ method: "GET", url: "/v1/profile" });
+
+    expect(initial.statusCode, initial.body).toBe(200);
+    const initialBody = initial.json();
+    expect(initialBody.templateText).toContain("{{ personal_data }}");
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: validProfileFixture("Template Save"),
+        style: initialBody.style,
+        templateText: initialBody.templateText,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profile: { personal: { full_name: "Template Save" } },
+    });
+    const db = new Database(options.dbPath);
+    try {
+      const row = db.prepare("SELECT resume_template_text FROM candidate_profiles").get() as {
+        resume_template_text: string;
+      };
+      expect(row.resume_template_text).toContain("{{ personal_data }}");
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
   it("persists profile, style, and template updates to relational rows without rewriting legacy files", async () => {
     const app = buildApp(options);
     const originalLegacyProfile = fs.readFileSync(options.profilePath, "utf8");
@@ -1068,6 +1105,69 @@ describe("local TypeScript API", () => {
     } finally {
       db.close();
     }
+
+    await app.close();
+  });
+
+  it("preserves existing non-default style fields during partial style updates", async () => {
+    fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "roman", moderncv_color: "blue" }));
+    const app = buildApp(options);
+    await app.inject({ method: "GET", url: "/v1/profile" });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        style: { moderncv_style: "classic" },
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      style: {
+        font_family: "roman",
+        moderncv_color: "blue",
+        moderncv_style: "classic",
+      },
+    });
+
+    await app.close();
+  });
+
+  it("rejects unsupported top-level profile fields before storing updates", async () => {
+    const app = buildApp(options);
+    const profile = { ...validProfileFixture("Future Candidate"), custom_section: { future: "thing" } };
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "invalid_profile",
+    });
+    expect(response.json().message).toContain("unsupported top-level profile field(s): custom_section");
+
+    await app.close();
+  });
+
+  it("rejects unsupported top-level legacy profile fields before import", async () => {
+    fs.writeFileSync(
+      options.profilePath,
+      JSON.stringify({ ...validProfileFixture("Future Legacy"), custom_section: { future: "thing" } }),
+    );
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/profile" });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "invalid_profile",
+    });
+    expect(response.json().message).toContain("unsupported top-level profile field(s): custom_section");
 
     await app.close();
   });

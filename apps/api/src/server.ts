@@ -633,6 +633,14 @@ function withDb<T>(
     db = openDatabase(dbPath);
     return read(db);
   } catch (error) {
+    if (error instanceof ProfileInputError) {
+      void reply.code(400);
+      return {
+        ok: false,
+        error: "invalid_profile",
+        message: error.message,
+      };
+    }
     const opened = db !== null;
     void reply.code(opened ? 500 : 503);
     return {

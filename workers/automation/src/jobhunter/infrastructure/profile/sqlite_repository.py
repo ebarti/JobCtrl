@@ -48,6 +48,8 @@ _CHILD_TABLES = (
     "candidate_profile_resume_constraint_metrics",
 )
 
+_IGNORED_LEGACY_TOP_LEVEL_FIELDS = {"schema_version"}
+
 
 class SqliteProfileRepository:
     """SQLite-backed implementation of ``ProfileRepository``."""
@@ -88,6 +90,7 @@ class SqliteProfileRepository:
         previous_dict = previous.to_dict() if previous is not None else {}
 
         validated = Profile.from_dict(tenant_id, profile.to_dict(), profile_id=profile.profile_id or self._profile_id)
+        _reject_unsupported_top_level_fields(validated)
         row = self._profile_row(tenant_id)
         version = int(row["version"]) + 1 if row is not None else 1
         rendering = self.load_rendering_settings(tenant_id)
@@ -202,6 +205,7 @@ class SqliteProfileRepository:
             return
         data = self._read_legacy_profile()
         profile = Profile.from_dict(tenant_id, data, profile_id=self._profile_id)
+        _reject_unsupported_top_level_fields(profile)
         style = self._read_legacy_style()
         template_text = self._read_legacy_template()
         self._replace_profile(
@@ -822,6 +826,18 @@ def _root_values(
         version,
         updated_at,
     )
+
+
+def _reject_unsupported_top_level_fields(profile: Profile) -> None:
+    unsupported = sorted(str(key) for key in profile.extra if key not in _IGNORED_LEGACY_TOP_LEVEL_FIELDS)
+    if unsupported:
+        raise InvalidProfileError(
+            [
+                "profile contains unsupported top-level profile field(s): "
+                f"{', '.join(unsupported)}. SQLite profile storage only supports "
+                "normalized Candidate Profile sections."
+            ]
+        )
 
 
 def _style_from_row(row: sqlite3.Row) -> dict[str, Any]:

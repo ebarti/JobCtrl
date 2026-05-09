@@ -49,6 +49,46 @@ const DEFAULT_STYLE = {
   body_alignment: "justified",
 };
 
+const DEFAULT_RESUME_TEMPLATE = String.raw`\documentclass[11pt,a4paper,sans]{moderncv}
+
+\moderncvstyle{banking}
+\moderncvcolor{black}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[scale=0.85]{geometry}
+\usepackage{enumitem}
+
+\setlength{\hintscolumnwidth}{3cm}
+
+{{ personal_data }}
+
+\begin{document}
+
+\makecvtitle
+\vspace*{-1.5em}
+
+{{ resume_body }}
+
+\end{document}
+`;
+
+const SUPPORTED_PROFILE_TOP_LEVEL_KEYS = new Set([
+  "personal",
+  "work_authorization",
+  "availability",
+  "compensation",
+  "experience",
+  "eeo_voluntary",
+  "resume",
+  "resume_constraints",
+  // Legacy file metadata, not Candidate Profile data.
+  "schema_version",
+  // Legacy snapshot-only fields are derived from normalized profile sections.
+  "skills_boundary",
+  "resume_facts",
+]);
+
 const ROOT_COLUMNS = [
   "tenant_id",
   "profile_id",
@@ -286,13 +326,13 @@ export function readProfileConfig(db: SqliteDatabase, paths: ProfilePaths): Prof
   importLegacyProfileIfNeeded(db, paths);
   const row = getProfileRow(db);
   if (!row) {
-    return { ok: true, profile: {}, style: DEFAULT_STYLE, templateText: "" };
+    return { ok: true, profile: {}, style: DEFAULT_STYLE, templateText: DEFAULT_RESUME_TEMPLATE };
   }
   return {
     ok: true,
     profile: rowToProfile(db, row),
     style: styleFromRow(row),
-    templateText: String(row.resume_template_text ?? ""),
+    templateText: String(row.resume_template_text || DEFAULT_RESUME_TEMPLATE),
   };
 }
 
@@ -306,7 +346,7 @@ export function writeProfileConfig(
 
   let wrote = false;
   let profile: ProfileShape | undefined;
-  let style: Record<string, string | number> | undefined;
+  let stylePatch: Record<string, unknown> | undefined;
   let templateText: string | undefined;
 
   if (request.profile !== undefined || request.profileText !== undefined) {
@@ -314,7 +354,7 @@ export function writeProfileConfig(
     wrote = true;
   }
   if (request.style !== undefined || request.styleText !== undefined) {
-    style = normalizeStyle(parseJsonObjectInput(request.style, request.styleText, "resume style settings"));
+    stylePatch = parseJsonObjectInput(request.style, request.styleText, "resume style settings");
     wrote = true;
   }
   if (request.templateText !== undefined) {
@@ -333,8 +373,11 @@ export function writeProfileConfig(
     throw new ProfileInputError("profile must be initialized before updating style or template settings.");
   }
   const nextProfile = profile ?? rowToProfile(db, existing as ProfileRow);
-  const nextStyle = style ?? (existing ? styleFromRow(existing) : DEFAULT_STYLE);
-  const nextTemplate = templateText ?? (existing ? String(existing.resume_template_text ?? "") : "");
+  const existingStyle = existing ? styleFromRow(existing) : DEFAULT_STYLE;
+  const nextStyle = stylePatch ? normalizeStyle({ ...existingStyle, ...stylePatch }) : existingStyle;
+  const nextTemplate =
+    templateText ??
+    (existing ? String(existing.resume_template_text || DEFAULT_RESUME_TEMPLATE) : DEFAULT_RESUME_TEMPLATE);
   const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
 
   replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
@@ -351,8 +394,8 @@ function importLegacyProfileIfNeeded(db: SqliteDatabase, paths: ProfilePaths): v
     : DEFAULT_STYLE;
   const templateText = fs.existsSync(paths.resumeTemplatePath)
     ? fs.readFileSync(paths.resumeTemplatePath, "utf8")
-    : "";
-  replaceProfile(db, profile, style, templateText, 1);
+    : DEFAULT_RESUME_TEMPLATE;
+  replaceProfile(db, profile, style, templateText.trim() ? templateText : DEFAULT_RESUME_TEMPLATE, 1);
 }
 
 function replaceProfile(
@@ -794,6 +837,7 @@ function boundedNumber(key: string, value: unknown, min: number, max: number): n
 
 function parseProfileInput(profile: unknown, profileText: string | undefined): ProfileShape {
   const candidate = parseJsonObjectInput(profile, profileText, "profile data");
+  rejectUnsupportedProfileTopLevelFields(candidate);
   const validated = ProfileSchema.safeParse(candidate);
   if (!validated.success) {
     const issue = validated.error.issues[0];
@@ -801,6 +845,18 @@ function parseProfileInput(profile: unknown, profileText: string | undefined): P
     throw new ProfileInputError(`profile validation failed at ${path}: ${issue?.message ?? "invalid input"}`);
   }
   return validated.data;
+}
+
+function rejectUnsupportedProfileTopLevelFields(candidate: Record<string, unknown>): void {
+  const unsupported = Object.keys(candidate)
+    .filter((key) => !SUPPORTED_PROFILE_TOP_LEVEL_KEYS.has(key))
+    .sort();
+  if (unsupported.length) {
+    throw new ProfileInputError(
+      `profile contains unsupported top-level profile field(s): ${unsupported.join(", ")}. ` +
+        "SQLite profile storage only supports normalized Candidate Profile sections.",
+    );
+  }
 }
 
 function parseJsonObjectInput(value: unknown, textValue: string | undefined, label: string): Record<string, unknown> {
