@@ -144,6 +144,29 @@ export function formatProfileDateRange(value: ProfileDateRangeValue): string {
   return start || end;
 }
 
+export function isProfileDateRangeChronological(value: ProfileDateRangeValue): boolean {
+  if (value.present || !value.start.year || !value.end.year) {
+    return true;
+  }
+  const startYear = Number(value.start.year);
+  const endYear = Number(value.end.year);
+  if (!Number.isInteger(startYear) || !Number.isInteger(endYear)) {
+    return true;
+  }
+  if (endYear !== startYear) {
+    return endYear > startYear;
+  }
+  if (!value.start.month || !value.end.month) {
+    return true;
+  }
+  const startMonth = Number(value.start.month);
+  const endMonth = Number(value.end.month);
+  if (!Number.isInteger(startMonth) || !Number.isInteger(endMonth)) {
+    return true;
+  }
+  return endMonth >= startMonth;
+}
+
 function normalizeMonthNumber(value: string): string {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric < 1 || numeric > 12) {

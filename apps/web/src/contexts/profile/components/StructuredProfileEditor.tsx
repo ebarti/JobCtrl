@@ -1,9 +1,11 @@
+import { useEffect, useRef } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import {
   asTextArray,
   cloneJsonRecord,
   defaultRepeatItem,
+  editableTextArrayAt,
   getPathValue,
   type JsonRecord,
   lines,
@@ -20,6 +22,7 @@ import {
   emptyProfileMonth,
   formatProfileDateRange,
   formatProfileMonth,
+  isProfileDateRangeChronological,
   parseProfileDateRange,
   parseProfileMonth,
   PROFILE_MONTHS,
@@ -44,12 +47,41 @@ export function StructuredProfileEditor({
 }: StructuredProfileEditorProps) {
   const profile = parseJsonRecord(profileText);
   const style = parseJsonRecord(styleText);
+  const focusTargetsRef = useRef(new Map<string, HTMLInputElement | HTMLSelectElement>());
+  const pendingFocusKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const focusKey = pendingFocusKeyRef.current;
+    if (!focusKey) {
+      return;
+    }
+    const element = focusTargetsRef.current.get(focusKey);
+    if (!element) {
+      return;
+    }
+    pendingFocusKeyRef.current = null;
+    element.focus();
+    if (element instanceof HTMLInputElement) {
+      element.select();
+    }
+  }, [profileText]);
+
+  const registerFocusTarget = (key: string) => (element: HTMLInputElement | HTMLSelectElement | null) => {
+    if (element) {
+      focusTargetsRef.current.set(key, element);
+    } else {
+      focusTargetsRef.current.delete(key);
+    }
+  };
+
+  const focusAfterDraftUpdate = (key: string) => {
+    pendingFocusKeyRef.current = key;
+  };
 
   if (!profile || !style) {
     return (
       <div className="banner inline">
-        The structured editor needs valid JSON. Switch to source, fix the invalid file, then return
-        to fields.
+        The structured editor needs valid profile data. Reload the profile after fixing the saved data.
       </div>
     );
   }
@@ -140,7 +172,7 @@ export function StructuredProfileEditor({
   const addBullet = (entryIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.experience_entries.${entryIndex}.bullets`;
-      setPathValue(draft, path, [...textArrayAt(draft, path), ""]);
+      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
     });
   };
 
@@ -150,7 +182,7 @@ export function StructuredProfileEditor({
       setPathValue(
         draft,
         path,
-        textArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
+        editableTextArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
       );
     });
   };
@@ -158,7 +190,7 @@ export function StructuredProfileEditor({
   const addSkill = (categoryIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.skill_categories.${categoryIndex}.items`;
-      setPathValue(draft, path, [...textArrayAt(draft, path), ""]);
+      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
     });
   };
 
@@ -168,7 +200,7 @@ export function StructuredProfileEditor({
       setPathValue(
         draft,
         path,
-        textArrayAt(draft, path).filter((_, index) => index !== skillIndex),
+        editableTextArrayAt(draft, path).filter((_, index) => index !== skillIndex),
       );
     });
   };
@@ -271,20 +303,18 @@ export function StructuredProfileEditor({
 
   const dateRangeField = (path: string, label: string) => {
     const value = parseProfileDateRange(textAt(profile, path));
+    const hasError = !isProfileDateRangeChronological(value);
     const updateDateRange = (next: Partial<typeof value>) => {
       updateProfilePath(path, formatProfileDateRange({ ...value, ...next }));
     };
     return (
-      <div className="field date-range-field">
+      <div className="field date-range-field wide">
         <span>{label}</span>
-        <div className="date-range-body">
+        <div className={`date-range-body${hasError ? " invalid" : ""}`}>
           {monthSelector("Start", value.start, (start) => updateDateRange({ start }))}
-          {monthSelector(
-            "End",
-            value.present ? emptyProfileMonth() : value.end,
-            (end) => updateDateRange({ end, present: false }),
-            value.present,
-          )}
+          {value.present
+            ? null
+            : monthSelector("End", value.end, (end) => updateDateRange({ end, present: false }))}
           <label className="choice date-range-present">
             <input
               type="checkbox"
@@ -313,6 +343,7 @@ export function StructuredProfileEditor({
             clear
           </button>
         </div>
+        {hasError ? <span className="field-error">End date must be after start date.</span> : null}
       </div>
     );
   };
@@ -373,6 +404,179 @@ export function StructuredProfileEditor({
     </label>
   );
 
+  const delimitedListField = (
+    path: string,
+    label: string,
+    addLabel: string,
+    options: { compact?: boolean } = {},
+  ) => {
+    const values = delimitedListAt(textAt(profile, path));
+    const focusKey = (index: number) => `${path}:${index}`;
+    const updateValues = (next: string[]) => {
+      updateProfilePath(path, next.join("; "));
+    };
+    const insertValueAfter = (index: number, currentValue: string) => {
+      const insertionIndex = index + 1;
+      const next = [...values];
+      next[index] = currentValue;
+      next.splice(insertionIndex, 0, "");
+      focusAfterDraftUpdate(focusKey(insertionIndex));
+      updateValues(next);
+    };
+    const appendValue = () => {
+      focusAfterDraftUpdate(focusKey(values.length));
+      updateValues([...values, ""]);
+    };
+    return (
+      <div className="field wide inline-list-field">
+        <span>{label}</span>
+        <div className={`inline-list${options.compact ? " compact" : ""}`}>
+          {values.map((value, index) => (
+            <div className="inline-list-row" key={`${path}-${index}`}>
+              <input
+                aria-label={`${label} ${index + 1}`}
+                ref={registerFocusTarget(focusKey(index))}
+                value={value}
+                onChange={(event) => {
+                  const next = [...values];
+                  next[index] = event.target.value;
+                  updateProfilePath(path, next.join("; "));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") {
+                    return;
+                  }
+                  event.preventDefault();
+                  insertValueAfter(index, event.currentTarget.value);
+                }}
+              />
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}
+                title="Remove"
+                onClick={() => updateValues(values.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          <button className="tab add-bullet" type="button" onClick={appendValue}>
+            <Plus size={14} aria-hidden="true" />
+            {addLabel}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const targetLocationWorkModelField = () => {
+    const locationPath = "experience.target_locations";
+    const workModelPath = "experience.target_work_models";
+    const locations = delimitedListAt(textAt(profile, locationPath));
+    const workModels = delimitedListAt(textAt(profile, workModelPath));
+    const rowCount = Math.max(locations.length, workModels.length, 1);
+    const rows = Array.from({ length: rowCount }, (_, index) => ({
+      location: locations[index] ?? "",
+      workModel: workModels[index] ?? "",
+    }));
+    const locationFocusKey = (index: number) => `${locationPath}:location:${index}`;
+    const workModelOptions = ["Remote", "Hybrid", "On-site"];
+
+    const updateRows = (nextRows: Array<{ location: string; workModel: string }>) => {
+      updateProfileDraft((draft) => {
+        setPathValue(draft, locationPath, nextRows.map((row) => row.location).join("; "));
+        setPathValue(draft, workModelPath, nextRows.map((row) => row.workModel).join("; "));
+      });
+    };
+    const insertRowAfter = (index: number, rowPatch: Partial<{ location: string; workModel: string }>) => {
+      const insertionIndex = index + 1;
+      const next = [...rows];
+      next[index] = { ...next[index], ...rowPatch };
+      next.splice(insertionIndex, 0, { location: "", workModel: "" });
+      focusAfterDraftUpdate(locationFocusKey(insertionIndex));
+      updateRows(next);
+    };
+    const appendRow = () => {
+      focusAfterDraftUpdate(locationFocusKey(rows.length));
+      updateRows([...rows, { location: "", workModel: "" }]);
+    };
+    const toggleWorkModel = (index: number, value: string, checked: boolean) => {
+      const selected = new Set(commaListAt(rows[index]?.workModel ?? ""));
+      if (checked) {
+        selected.add(value);
+      } else {
+        selected.delete(value);
+      }
+      const next = [...rows];
+      next[index] = { ...next[index], workModel: Array.from(selected).join(", ") };
+      updateRows(next);
+    };
+
+    return (
+      <div className="field wide target-location-model-field">
+        <span>Target location: target work model</span>
+        <div className="target-location-model-list">
+          {rows.map((row, index) => (
+            <div className="target-location-model-row" key={`${locationPath}-${index}`}>
+              <input
+                aria-label={`Target location ${index + 1}`}
+                ref={registerFocusTarget(locationFocusKey(index))}
+                value={row.location}
+                placeholder="Location"
+                onChange={(event) => {
+                  const next = [...rows];
+                  next[index] = { ...row, location: event.target.value };
+                  updateRows(next);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") {
+                    return;
+                  }
+                  event.preventDefault();
+                  insertRowAfter(index, { location: event.currentTarget.value });
+                }}
+              />
+              <fieldset className="target-work-model-group" aria-label={`Target work model ${index + 1}`}>
+                {workModelOptions.map((value) => {
+                  const checkboxId = `target-work-model-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+                  return (
+                    <label className="target-work-model-option" key={value} htmlFor={checkboxId}>
+                      <input
+                        id={checkboxId}
+                        type="checkbox"
+                        checked={commaListAt(row.workModel).includes(value)}
+                        onChange={(event) => toggleWorkModel(index, value, event.target.checked)}
+                      />
+                      <span>{value}</span>
+                    </label>
+                  );
+                })}
+              </fieldset>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={`Remove target location ${index + 1}`}
+                title="Remove"
+                onClick={() => updateRows(rows.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          <button
+            className="tab add-bullet"
+            type="button"
+            onClick={appendRow}
+          >
+            <Plus size={14} aria-hidden="true" />
+            add location
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const styleSelect = (path: string, label: string, options: Array<[string, string]>) => (
     <label className="field">
       <span>{label}</span>
@@ -426,9 +630,6 @@ export function StructuredProfileEditor({
               {textField("personal.full_name", "Full name", "text", { required: true })}
               {textField("personal.preferred_name", "Preferred name")}
               {textField("personal.email", "Email", "email", { required: true })}
-              {textField("personal.password", "Application password", "password", {
-                autoComplete: "new-password",
-              })}
               {textField("personal.phone", "Phone", "tel")}
               {textField("personal.address", "Address")}
               {textField("personal.city", "City")}
@@ -452,9 +653,16 @@ export function StructuredProfileEditor({
               {textField("experience.education_level", "Education level")}
               {textField("experience.current_job_title", "Current job title")}
               {textField("experience.current_company", "Current company")}
+              {textField(
+                "resume.tailoring_rules.max_experience_bullets",
+                "Max bullets per role",
+                "number",
+                { min: 1, max: 99, step: 1 },
+              )}
             </div>
             <div className="field-grid one">
               {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
+              {listField("resume_constraints.real_metrics", "Verified resume metrics")}
             </div>
           </section>
 
@@ -463,7 +671,7 @@ export function StructuredProfileEditor({
         <div className="repeat-list">
           {experienceEntries.map((entry, index) => {
             const entryId = textFrom(entry["id"]);
-            const bullets = asTextArray(entry["bullets"]);
+            const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
             const requiredBullets = new Set(
               asTextArray(
                 recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
@@ -499,7 +707,6 @@ export function StructuredProfileEditor({
                   </div>
                 </div>
                 <div className="field-grid">
-                  {textField(`resume.experience_entries.${index}.id`, "Entry ID")}
                   {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
                   {textField(`resume.experience_entries.${index}.title`, "Title")}
                   {textField(`resume.experience_entries.${index}.company`, "Company")}
@@ -596,7 +803,6 @@ export function StructuredProfileEditor({
                   </div>
                 </div>
                 <div className="field-grid">
-                  {textField(`resume.education_entries.${index}.id`, "Entry ID")}
                   {monthField(`resume.education_entries.${index}.date`, "Completion month")}
                   {textField(`resume.education_entries.${index}.degree`, "Degree")}
                   {textField(`resume.education_entries.${index}.institution`, "Institution")}
@@ -620,7 +826,7 @@ export function StructuredProfileEditor({
         <div className="repeat-list">
           {skillCategories.map((entry, index) => {
             const entryId = textFrom(entry["id"]);
-            const skills = asTextArray(entry["items"]);
+            const skills = editableTextArrayAt(profile, `resume.skill_categories.${index}.items`);
             const requiredSkills = new Set(
               asTextArray(
                 recordAt(profile, "resume.tailoring_rules.required_skills_by_category_id")[entryId],
@@ -656,7 +862,6 @@ export function StructuredProfileEditor({
                   </div>
                 </div>
                 <div className="field-grid">
-                  {textField(`resume.skill_categories.${index}.id`, "Category ID")}
                   {textField(`resume.skill_categories.${index}.label`, "Label")}
                 </div>
                 <div className="skill-list">
@@ -735,6 +940,9 @@ export function StructuredProfileEditor({
               ])}
               {selectField("work_authorization.require_sponsorship", "Requires sponsorship", ["No", "Yes"])}
               {textField("work_authorization.work_permit_type", "Work permit type")}
+              {textField("personal.password", "Job-site login password", "password", {
+                autoComplete: "new-password",
+              })}
               {textField("availability.earliest_start_date", "Earliest start date", "date")}
               {selectField("availability.available_for_full_time", "Available full-time", ["Yes", "No"])}
               {selectField("availability.available_for_contract", "Available for contract", ["No", "Yes"])}
@@ -756,18 +964,10 @@ export function StructuredProfileEditor({
           </section>
 
           <section className="form-section">
-            <h3>Target preferences</h3>
-            <div className="field-grid">
-              {textField("experience.target_role", "Target role")}
-              {textField(
-                "resume.tailoring_rules.max_experience_bullets",
-                "Max bullets per role",
-                "number",
-                { min: 1, max: 99, step: 1 },
-              )}
-            </div>
-            <div className="field-grid one">
-              {listField("resume_constraints.real_metrics", "Real metrics the AI may reuse")}
+            <h3>Target search</h3>
+            <div className="target-preferences-grid">
+              {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
+              {targetLocationWorkModelField()}
             </div>
           </section>
 
@@ -881,4 +1081,19 @@ export function StructuredProfileEditor({
       )}
     </div>
   );
+}
+
+function delimitedListAt(value: string): string[] {
+  const withoutLegacyLabel = value.replace(/^\s*Target roles?:\s*/i, "");
+  if (!withoutLegacyLabel.trim()) {
+    return [""];
+  }
+  return withoutLegacyLabel.split(";").map((item) => item.trim());
+}
+
+function commaListAt(value: string): string[] {
+  if (!value.trim()) {
+    return [];
+  }
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
 }

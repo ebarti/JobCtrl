@@ -741,8 +741,10 @@ def apply(
     """Launch auto-apply to submit job applications."""
     _bootstrap()
 
-    from jobhunter.config import check_tier, PROFILE_PATH as _profile_path
+    from jobhunter.config import APP_DIR as _app_dir, check_tier
     from jobhunter.database import get_connection
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.profile import get_profile_repository
 
     # --- Utility modes (no Chrome/Claude needed) ---
 
@@ -770,7 +772,11 @@ def apply(
     check_tier(3, "auto-apply")
 
     # Check 2: Profile exists
-    if not _profile_path.exists():
+    try:
+        profile = get_profile_repository().load(LOCAL_TENANT)
+    except FileNotFoundError:
+        profile = None
+    if profile is None:
         console.print(
             "[red]Profile not found.[/red]\n"
             "Run [bold]jobhunter init[/bold] to create your profile first."
@@ -807,7 +813,7 @@ def apply(
         if not prompt_file:
             console.print("[red]No matching job found for that URL.[/red]")
             raise typer.Exit(code=1)
-        mcp_path = _profile_path.parent / ".mcp-apply-0.json"
+        mcp_path = _app_dir / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
         console.print("\n[bold]Run manually:[/bold]")
         console.print(
@@ -1218,9 +1224,11 @@ def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
     from jobhunter.config import (
-        load_env, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
+        load_env, DB_PATH, RESUME_PATH, RESUME_PDF_PATH,
         RESUME_TEMPLATE_PATH, SEARCH_CONFIG_PATH, get_chrome_path,
     )
+    from jobhunter.domain.tenant import LOCAL_TENANT
+    from jobhunter.infrastructure.profile import get_profile_repository
 
     load_env()
 
@@ -1232,10 +1240,16 @@ def doctor() -> None:
 
     # --- Tier 1 checks ---
     # Profile
-    if PROFILE_PATH.exists():
-        results.append(("profile.json", ok_mark, str(PROFILE_PATH)))
-    else:
-        results.append(("profile.json", fail_mark, "Run 'jobhunter init' to create"))
+    try:
+        profile = get_profile_repository().load(LOCAL_TENANT)
+        if profile is None:
+            results.append(("candidate profile", fail_mark, "Run 'jobhunter init' to create"))
+        else:
+            results.append(("candidate profile", ok_mark, f"SQLite source of truth at {DB_PATH}"))
+    except FileNotFoundError:
+        results.append(("candidate profile", fail_mark, "Run 'jobhunter init' to create"))
+    except Exception:  # noqa: BLE001 - doctor should report validation problems instead of crashing
+        results.append(("candidate profile", fail_mark, "Profile exists but failed validation"))
 
     # Resume
     if RESUME_PATH.exists():

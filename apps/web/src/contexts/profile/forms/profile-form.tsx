@@ -1,16 +1,18 @@
-import { ProfileSchema, type ProfileUpdateRequest } from "@jobhunter/contracts";
+import { ProfileSchema, type ProfileShape, type ProfileUpdateRequest } from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Empty } from "../../../shared/ui/empty.js";
-import { Editor } from "../components/Editor.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
+import {
+  isProfileDateRangeChronological,
+  parseProfileDateRange,
+} from "../lib/profile-date-fields.js";
 
 export type ProfileSection = "profile" | "preferences";
-export type ProfileMode = "fields" | "source";
 
 export interface ProfileFormValues {
   profileText: string;
@@ -45,15 +47,30 @@ function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false;
 function validateProfileForm(values: ProfileFormValues): string | undefined {
   const parsedProfile = tryParseJson(values.profileText);
   if (!parsedProfile.ok) {
-    return `profile.json: ${parsedProfile.error}`;
+    return `Profile data: ${parsedProfile.error}`;
   }
   const profileResult = ProfileSchema.safeParse(parsedProfile.value);
   if (!profileResult.success) {
-    return `profile.json: ${profileResult.error.issues[0]?.message ?? "invalid profile"}`;
+    return `Profile data: ${profileResult.error.issues[0]?.message ?? "invalid profile"}`;
+  }
+  const profileDateError = validateProfileDateRanges(profileResult.data);
+  if (profileDateError) {
+    return profileDateError;
   }
   const parsedStyle = tryParseJson(values.styleText);
   if (!parsedStyle.ok) {
-    return `resume_style.json: ${parsedStyle.error}`;
+    return `Resume style settings: ${parsedStyle.error}`;
+  }
+  return undefined;
+}
+
+function validateProfileDateRanges(profile: ProfileShape): string | undefined {
+  const entries = profile.resume.experience_entries;
+  for (const [index, entry] of entries.entries()) {
+    if (!isProfileDateRangeChronological(parseProfileDateRange(entry.date_range))) {
+      const label = entry.title || `Experience ${index + 1}`;
+      return `${label}: End date must be after start date.`;
+    }
   }
   return undefined;
 }
@@ -68,7 +85,6 @@ function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
 
 export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
-  const [mode, setMode] = useState<ProfileMode>("fields");
   const [statusMessage, setStatusMessage] = useState("");
   const isProfileSection = section === "profile";
 
@@ -129,71 +145,17 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
           </div>
         )}
       </form.Subscribe>
-      {isProfileSection ? (
-        <div className="profile-mode-tabs">
-          <button
-            className={`tab ${mode === "fields" ? "on" : ""}`}
-            type="button"
-            onClick={() => setMode("fields")}
-          >
-            fields
-          </button>
-          <button
-            className={`tab ${mode === "source" ? "on" : ""}`}
-            type="button"
-            onClick={() => setMode("source")}
-          >
-            source
-          </button>
-        </div>
-      ) : null}
       <form.Field name="profileText">
         {(profileField) => (
           <form.Field name="styleText">
             {(styleField) => (
-              <form.Field name="templateText">
-                {(templateField) =>
-                  !isProfileSection || mode !== "source" ? (
-                    <StructuredProfileEditor
-                      mode={section}
-                      profileText={profileField.state.value}
-                      styleText={styleField.state.value}
-                      onProfileTextChange={(value) => profileField.handleChange(value)}
-                      onStyleTextChange={(value) => styleField.handleChange(value)}
-                    />
-                  ) : (
-                    <>
-                      <Editor
-                        dirty={profileField.state.meta.isDirty}
-                        label="profile.json"
-                        saving={updateProfile.isPending}
-                        value={profileField.state.value}
-                        onChange={(value) => profileField.handleChange(value)}
-                        onDiscard={() => profileField.handleChange(initial.profile ? JSON.stringify(initial.profile, null, 2) : "")}
-                        onSave={() => void form.handleSubmit()}
-                      />
-                      <Editor
-                        dirty={styleField.state.meta.isDirty}
-                        label="resume_style.json"
-                        saving={updateProfile.isPending}
-                        value={styleField.state.value}
-                        onChange={(value) => styleField.handleChange(value)}
-                        onDiscard={() => styleField.handleChange(initial.style ? JSON.stringify(initial.style, null, 2) : "")}
-                        onSave={() => void form.handleSubmit()}
-                      />
-                      <Editor
-                        dirty={templateField.state.meta.isDirty}
-                        label="resume_template.tex"
-                        saving={updateProfile.isPending}
-                        value={templateField.state.value}
-                        onChange={(value) => templateField.handleChange(value)}
-                        onDiscard={() => templateField.handleChange(initial.templateText)}
-                        onSave={() => void form.handleSubmit()}
-                      />
-                    </>
-                  )
-                }
-              </form.Field>
+              <StructuredProfileEditor
+                mode={section}
+                profileText={profileField.state.value}
+                styleText={styleField.state.value}
+                onProfileTextChange={(value) => profileField.handleChange(value)}
+                onStyleTextChange={(value) => styleField.handleChange(value)}
+              />
             )}
           </form.Field>
         )}

@@ -51,11 +51,12 @@ By default, JobHunter writes user data under:
 
 Important local files include:
 
-- `profile.json`: structured candidate and application data.
+- `jobhunter.db`: local SQLite database, including normalized candidate profile,
+  jobs, events, projections, and artifact metadata.
 - `searches.yaml`: search targets and discovery configuration.
 - `.env`: API keys and local runtime settings.
-- `jobhunter.db`: local SQLite database.
-- `resume_template.tex` and `resume_style.json`: PDF rendering inputs.
+- `profile.json`, `resume_template.tex`, and `resume_style.json`: legacy
+  profile/rendering seed files imported into SQLite when no profile row exists.
 - `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts.
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
 
@@ -275,8 +276,11 @@ edits.
 
 JobHunter uses local user configuration plus package-shipped registries:
 
-- `~/.jobhunter/profile.json`: candidate data, application defaults, resume
-  baseline, tailoring controls.
+- `~/.jobhunter/jobhunter.db`: candidate profile source of truth, application
+  defaults, resume baseline, tailoring controls, rendering settings, jobs,
+  events, and projections.
+- `~/.jobhunter/profile.json`: legacy seed path for first-time import when the
+  profile tables are empty.
 - `~/.jobhunter/searches.yaml`: searches and source settings.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
 - `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.

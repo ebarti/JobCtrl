@@ -14,6 +14,28 @@ import { buildApp, type BuildAppOptions } from "../src/server.js";
 let tempDir = "";
 let options: BuildAppOptions;
 
+function validProfileFixture(fullName: string): Record<string, unknown> {
+  return {
+    personal: { full_name: fullName, email: "jordan@example.com" },
+    resume: {
+      executive_profile: { baseline_text: "Experienced platform leader." },
+      experience_entries: [
+        {
+          id: "role_1",
+          title: "Engineer",
+          company: "Example",
+          date_range: "2024 -- Present",
+          location: "Remote",
+          bullets: ["Shipped reliable systems."],
+        },
+      ],
+      education_entries: [],
+      skill_categories: [],
+      tailoring_rules: {},
+    },
+  };
+}
+
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-"));
   options = {
@@ -24,8 +46,8 @@ beforeEach(() => {
     settingsPath: path.join(tempDir, "dashboard.json"),
   };
   seedDatabase(options.dbPath);
-  fs.writeFileSync(options.profilePath, JSON.stringify({ personal: { full_name: "Jordan Candidate" } }));
-  fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "moderncv" }));
+  fs.writeFileSync(options.profilePath, JSON.stringify(validProfileFixture("Jordan Candidate")));
+  fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "sans" }));
   fs.writeFileSync(options.resumeTemplatePath, "\\documentclass{article}");
   fs.writeFileSync(
     options.settingsPath,
@@ -980,7 +1002,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("returns local profile, style, and template configuration", async () => {
+  it("imports legacy profile files once and returns relational profile configuration", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/profile" });
 
@@ -989,37 +1011,71 @@ describe("local TypeScript API", () => {
     expect(body).toMatchObject({
       ok: true,
       profile: { personal: { full_name: "Jordan Candidate" } },
-      style: { font_family: "moderncv" },
+      style: { font_family: "sans" },
       templateText: "\\documentclass{article}",
     });
     expect(body.paths).toBeUndefined();
+    const db = new Database(options.dbPath);
+    try {
+      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profiles").get()).toMatchObject({ count: 1 });
+      const rootColumns = db.prepare("PRAGMA table_info(candidate_profiles)").all() as Array<{ name: string }>;
+      expect(rootColumns.map((column) => column.name)).not.toEqual(
+        expect.arrayContaining(["profile_json", "style_json", "payload_json"]),
+      );
+    } finally {
+      db.close();
+    }
 
     await app.close();
   });
 
-  it("persists profile, style, and template updates with JSON validation", async () => {
+  it("seeds a default resume template when the legacy template file is missing", async () => {
+    fs.rmSync(options.resumeTemplatePath, { force: true });
     const app = buildApp(options);
-    const validProfile = {
-      personal: { full_name: "Taylor Updated" },
-      resume: {
-        experience_entries: [
-          {
-            id: "role_1",
-            title: "Engineer",
-            company: "Example",
-            date_range: "2024 -- Present",
-            location: "Remote",
-            bullets: ["Shipped reliable systems."],
-          },
-        ],
-      },
-    };
+    const initial = await app.inject({ method: "GET", url: "/v1/profile" });
+
+    expect(initial.statusCode, initial.body).toBe(200);
+    const initialBody = initial.json();
+    expect(initialBody.templateText).toContain("{{ personal_data }}");
+
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: {
-        profileText: JSON.stringify(validProfile),
-        styleText: JSON.stringify({ font_family: "classic" }),
+        profile: validProfileFixture("Template Save"),
+        style: initialBody.style,
+        templateText: initialBody.templateText,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profile: { personal: { full_name: "Template Save" } },
+    });
+    const db = new Database(options.dbPath);
+    try {
+      const row = db.prepare("SELECT resume_template_text FROM candidate_profiles").get() as {
+        resume_template_text: string;
+      };
+      expect(row.resume_template_text).toContain("{{ personal_data }}");
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("persists profile, style, and template updates to relational rows without rewriting legacy files", async () => {
+    const app = buildApp(options);
+    const originalLegacyProfile = fs.readFileSync(options.profilePath, "utf8");
+    const validProfile = validProfileFixture("Taylor Updated");
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: validProfile,
+        style: { moderncv_style: "classic" },
         templateText: "\\documentclass{moderncv}",
       },
     });
@@ -1028,12 +1084,90 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       profile: { personal: { full_name: "Taylor Updated" } },
-      style: { font_family: "classic" },
+      style: { moderncv_style: "classic" },
       templateText: "\\documentclass{moderncv}",
     });
-    expect(JSON.parse(fs.readFileSync(options.profilePath, "utf8"))).toMatchObject({
-      personal: { full_name: "Taylor Updated" },
+    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalLegacyProfile);
+    const db = new Database(options.dbPath);
+    try {
+      expect(
+        db.prepare(
+          "SELECT personal_full_name, resume_style_font_family, resume_style_moderncv_style, resume_template_text FROM candidate_profiles",
+        ).get(),
+      ).toMatchObject({
+        personal_full_name: "Taylor Updated",
+        resume_style_moderncv_style: "classic",
+        resume_template_text: "\\documentclass{moderncv}",
+      });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_experience_bullets").get()).toMatchObject({
+        count: 1,
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("preserves existing non-default style fields during partial style updates", async () => {
+    fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "roman", moderncv_color: "blue" }));
+    const app = buildApp(options);
+    await app.inject({ method: "GET", url: "/v1/profile" });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        style: { moderncv_style: "classic" },
+      },
     });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      style: {
+        font_family: "roman",
+        moderncv_color: "blue",
+        moderncv_style: "classic",
+      },
+    });
+
+    await app.close();
+  });
+
+  it("rejects unsupported top-level profile fields before storing updates", async () => {
+    const app = buildApp(options);
+    const profile = { ...validProfileFixture("Future Candidate"), custom_section: { future: "thing" } };
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "invalid_profile",
+    });
+    expect(response.json().message).toContain("unsupported top-level profile field(s): custom_section");
+
+    await app.close();
+  });
+
+  it("rejects unsupported top-level legacy profile fields before import", async () => {
+    fs.writeFileSync(
+      options.profilePath,
+      JSON.stringify({ ...validProfileFixture("Future Legacy"), custom_section: { future: "thing" } }),
+    );
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/profile" });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "invalid_profile",
+    });
+    expect(response.json().message).toContain("unsupported top-level profile field(s): custom_section");
 
     await app.close();
   });
@@ -1052,15 +1186,18 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("validates all profile update inputs before writing any files", async () => {
+  it("validates all profile update inputs before changing relational rows", async () => {
     const app = buildApp(options);
     const originalProfile = fs.readFileSync(options.profilePath, "utf8");
     const originalStyle = fs.readFileSync(options.resumeStylePath, "utf8");
+    await app.inject({ method: "GET", url: "/v1/profile" });
+    const db = new Database(options.dbPath);
+    const before = db.prepare("SELECT personal_full_name FROM candidate_profiles").get();
     const response = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
       payload: {
-        profileText: JSON.stringify({ personal: { full_name: "Should Not Persist" } }),
+        profile: validProfileFixture("Should Not Persist"),
         styleText: "{",
       },
     });
@@ -1069,6 +1206,8 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile" });
     expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
     expect(fs.readFileSync(options.resumeStylePath, "utf8")).toBe(originalStyle);
+    expect(db.prepare("SELECT personal_full_name FROM candidate_profiles").get()).toEqual(before);
+    db.close();
 
     await app.close();
   });
@@ -1139,9 +1278,8 @@ describe("local TypeScript API", () => {
     expect(response.rawPayload.subarray(0, 5).toString()).toBe("%PDF-");
     expect(renderer).toHaveBeenCalledWith(
       {
-        profilePath: options.profilePath,
-        resumeStylePath: options.resumeStylePath,
-        resumeTemplatePath: options.resumeTemplatePath,
+        profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
+        templateText: "\\documentclass{article}",
       },
       expect.objectContaining({ appDir: tempDir }),
     );

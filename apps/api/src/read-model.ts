@@ -28,7 +28,6 @@ import type {
   JobListQuery,
   JobSummary,
   PaginatedResponse,
-  ProfileConfigResponse,
   ProfileShape,
   SettingsResponse,
   Stage,
@@ -323,26 +322,8 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
   return { ok: true, artifact: rowToArtifactSummary(row) };
 }
 
-export function readProfileConfig(paths: {
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
-}): ProfileConfigResponse {
-  return {
-    ok: true,
-    // Read returns the raw JSON so the web UI can edit even malformed
-    // profile.json files. Schema validation is enforced on PATCH (see
-    // ``writeProfileConfig``) — programmatic consumers should re-parse via
-    // ``ProfileSchema``.
-    profile: readJson(paths.profilePath, {}),
-    style: readJson(paths.resumeStylePath, {}),
-    templateText: readText(paths.resumeTemplatePath),
-  };
-}
-
 /** Validate a candidate profile JSON. Used by callers (e.g. tests, future
- * SDK helpers) that want to assert canonical shape before posting. Stays
- * unused by the GET path so corrupt profile.json files remain editable. */
+ * SDK helpers) that want to assert canonical shape before posting. */
 export function parseProfileShape(value: unknown): ProfileShape | null {
   const parsed = ProfileSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
@@ -857,14 +838,6 @@ function readJson(filePath: string, fallback: unknown): unknown {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch {
     return fallback;
-  }
-}
-
-function readText(filePath: string): string {
-  try {
-    return fs.readFileSync(filePath, "utf8");
-  } catch {
-    return "";
   }
 }
 

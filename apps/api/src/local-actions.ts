@@ -76,9 +76,8 @@ export type ProfileImporter = (
 ) => Promise<ProfileImportResult>;
 
 export interface ProfilePreviewInput {
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
+  profile: unknown;
+  templateText: string;
 }
 
 export type ProfilePreviewRenderer = (
@@ -189,8 +188,14 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
 
 export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-profile-preview-"));
+  const profilePath = path.join(tempDir, "profile.json");
+  const templatePath = path.join(tempDir, "resume_template.tex");
   const outputPath = path.join(tempDir, "resume-preview.pdf");
   try {
+    fs.writeFileSync(profilePath, JSON.stringify(input.profile), "utf8");
+    if (input.templateText.trim()) {
+      fs.writeFileSync(templatePath, input.templateText, "utf8");
+    }
     await runCommand(
       "uv",
       [
@@ -200,8 +205,8 @@ export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (inpu
         "python",
         "-c",
         PROFILE_PREVIEW_SCRIPT,
-        input.profilePath,
-        input.resumeTemplatePath,
+        profilePath,
+        templatePath,
         outputPath,
       ],
       context.appDir,

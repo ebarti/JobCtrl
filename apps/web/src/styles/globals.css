@@ -293,6 +293,17 @@ textarea {
   grid-template-columns: 1fr;
 }
 
+.target-preferences-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  padding: 14px 16px;
+}
+
+.target-preferences-grid .field.wide {
+  grid-column: auto;
+}
+
 .field {
   display: flex;
   min-width: 0;
@@ -1186,6 +1197,85 @@ textarea {
   gap: 8px;
 }
 
+.inline-list-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inline-list.compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.inline-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-list-row .icon-button {
+  grid-area: auto;
+}
+
+.inline-list.compact .add-bullet {
+  width: 100%;
+  min-height: 32px;
+  align-self: stretch;
+  justify-content: center;
+}
+
+.target-location-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.target-location-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.9fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.target-location-model-row .icon-button {
+  grid-area: auto;
+}
+
+.target-work-model-group {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.target-work-model-option {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 6px 9px;
+  color: var(--muted);
+}
+
+.target-work-model-option input {
+  width: auto;
+}
+
 .skill-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1214,20 +1304,39 @@ textarea {
 }
 
 .date-range-body {
+  align-items: stretch;
   flex-wrap: wrap;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  padding: 8px;
+}
+
+.date-range-body.invalid {
+  border-color: var(--danger);
+}
+
+.date-range-field .field-error {
+  color: var(--danger);
+  font-size: 12px;
 }
 
 .month-selector {
   display: flex;
-  min-width: 190px;
-  flex: 1 1 210px;
+  min-width: 180px;
+  flex: 1 1 220px;
   flex-direction: column;
   gap: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 8px;
 }
 
 .month-selector > span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .month-selector select {
@@ -1243,8 +1352,12 @@ textarea {
 }
 
 .date-range-present {
+  align-self: center;
   min-height: 32px;
-  padding-bottom: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 8px 10px;
 }
 
 .icon-button {
@@ -1415,11 +1528,24 @@ textarea {
   .kpis,
   .dashboard-grid,
   .field-grid,
+  .target-preferences-grid,
   .config-form,
   .import-panel,
   .credential-row,
   .credential-row-form {
     grid-template-columns: 1fr;
+  }
+
+  .inline-list.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .target-location-model-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .target-work-model-group {
+    grid-column: 1 / -1;
   }
 
   .drawer {

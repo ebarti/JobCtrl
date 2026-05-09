@@ -134,6 +134,8 @@ class ExperienceMetadata:
     current_job_title: str = ""
     current_company: str = ""
     target_role: str = ""
+    target_locations: str = ""
+    target_work_models: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ExperienceMetadata":

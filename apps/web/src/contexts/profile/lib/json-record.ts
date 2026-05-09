@@ -62,6 +62,11 @@ export function textArrayAt(source: unknown, path: string): string[] {
   return asTextArray(getPathValue(source, path));
 }
 
+export function editableTextArrayAt(source: unknown, path: string): string[] {
+  const value = getPathValue(source, path);
+  return Array.isArray(value) ? value.map(textFrom) : [];
+}
+
 export function asTextArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(textFrom).filter((item) => item.length > 0) : [];
 }

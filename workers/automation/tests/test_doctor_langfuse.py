@@ -54,7 +54,7 @@ def test_doctor_reports_langfuse_missing_when_creds_absent(monkeypatch):
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
 
-    with _stub_temporal():
+    with _stub_temporal(), patch("jobhunter.config.load_env", lambda: None):
         result = CliRunner().invoke(app, ["doctor"])
 
     assert result.exit_code == 0, result.output

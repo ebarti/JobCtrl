@@ -2,10 +2,17 @@
 
 The local TypeScript API is the runnable backend app under `apps/api`.
 
-It owns product-facing JSON endpoints, reads the local SQLite database and
-local profile/style/template files, and invokes Python automation through the
-JSON-RPC 2.0 protocol over a long-lived `jobhunter rpc` subprocess. It is
-intentionally local-first and binds to `127.0.0.1` by default.
+It owns product-facing JSON endpoints, reads the local SQLite database, and
+invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
+`jobhunter rpc` subprocess. It is intentionally local-first and binds to
+`127.0.0.1` by default.
+
+`GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
+Profile tables in `jobhunter.db` as the source of truth. When the profile
+tables are empty, the API can seed them once from legacy `profile.json`,
+`resume_style.json`, and `resume_template.tex`; subsequent writes update only
+SQLite and reconstruct the existing response object shape for frontend/client
+compatibility.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the five `*_projections` tables

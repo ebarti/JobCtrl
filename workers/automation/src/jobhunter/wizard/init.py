@@ -2,7 +2,7 @@
 
 Interactive flow that creates ~/.jobhunter/ with:
   - resume.txt (and optionally resume.pdf)
-  - profile.json
+  - candidate profile in jobhunter.db
   - searches.yaml
   - .env (LLM API key)
 """
@@ -19,8 +19,8 @@ from rich.prompt import Confirm, Prompt
 
 from jobhunter.config import (
     APP_DIR,
+    DB_PATH,
     ENV_PATH,
-    PROFILE_PATH,
     RESUME_PATH,
     RESUME_PDF_PATH,
     SEARCH_CONFIG_PATH,
@@ -115,7 +115,7 @@ def _setup_structured_resume(profile: dict) -> None:
     console.print("\n[bold cyan]Structured Resume Template[/bold cyan]")
     console.print(
         "[dim]This is the canonical resume JobHunter tailors and renders with LaTeX. "
-        "You can edit profile.json later for more entries.[/dim]"
+        "You can edit the profile later in the local UI.[/dim]"
     )
 
     baseline = _prompt_required(
@@ -318,7 +318,7 @@ def _setup_profile() -> dict:
     repository = get_profile_repository()
     aggregate = Profile.from_dict(LOCAL_TENANT, profile)
     repository.save(LOCAL_TENANT, aggregate)
-    console.print(f"\n[green]Profile saved to {PROFILE_PATH}[/green]")
+    console.print(f"\n[green]Profile saved to SQLite at {DB_PATH}[/green]")
     return profile
 
 
