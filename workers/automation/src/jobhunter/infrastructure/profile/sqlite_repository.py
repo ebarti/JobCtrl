@@ -252,7 +252,8 @@ class SqliteProfileRepository:
                     compensation_currency_note,
                     experience_years_total, experience_education_level,
                     experience_current_job_title, experience_current_company,
-                    experience_target_role,
+                    experience_target_role, experience_target_locations,
+                    experience_target_work_models,
                     availability_earliest_start_date, availability_full_time,
                     availability_contract,
                     eeo_gender, eeo_race_ethnicity, eeo_veteran_status,
@@ -274,7 +275,7 @@ class SqliteProfileRepository:
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(tenant_id, profile_id) DO UPDATE SET
                     personal_full_name = excluded.personal_full_name,
@@ -304,6 +305,8 @@ class SqliteProfileRepository:
                     experience_current_job_title = excluded.experience_current_job_title,
                     experience_current_company = excluded.experience_current_company,
                     experience_target_role = excluded.experience_target_role,
+                    experience_target_locations = excluded.experience_target_locations,
+                    experience_target_work_models = excluded.experience_target_work_models,
                     availability_earliest_start_date = excluded.availability_earliest_start_date,
                     availability_full_time = excluded.availability_full_time,
                     availability_contract = excluded.availability_contract,
@@ -505,6 +508,8 @@ class SqliteProfileRepository:
                 "current_job_title": row["experience_current_job_title"],
                 "current_company": row["experience_current_company"],
                 "target_role": row["experience_target_role"],
+                "target_locations": row["experience_target_locations"],
+                "target_work_models": row["experience_target_work_models"],
             },
             "eeo_voluntary": {
                 "gender": row["eeo_gender"],
@@ -793,6 +798,8 @@ def _root_values(
         _text(experience.get("current_job_title")),
         _text(experience.get("current_company")),
         _text(experience.get("target_role")),
+        _text(experience.get("target_locations")),
+        _text(experience.get("target_work_models")),
         _text(availability.get("earliest_start_date")),
         _text(availability.get("available_for_full_time")),
         _text(availability.get("available_for_contract")),

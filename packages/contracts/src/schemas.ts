@@ -191,6 +191,8 @@ const ProfileExperienceMetadataSchema = z
     current_job_title: z.string().default(""),
     current_company: z.string().default(""),
     target_role: z.string().default(""),
+    target_locations: z.string().default(""),
+    target_work_models: z.string().default(""),
   })
   .partial();
 

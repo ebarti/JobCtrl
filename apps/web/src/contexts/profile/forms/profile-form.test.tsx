@@ -83,8 +83,10 @@ describe("<ProfileForm>", () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
 
     expect(await screen.findByRole("heading", { name: "Application defaults" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Target roles" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Target search" })).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Target locations 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Remote")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 

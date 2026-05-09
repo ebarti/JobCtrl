@@ -119,6 +119,8 @@ const ROOT_COLUMNS = [
   "experience_current_job_title",
   "experience_current_company",
   "experience_target_role",
+  "experience_target_locations",
+  "experience_target_work_models",
   "availability_earliest_start_date",
   "availability_full_time",
   "availability_contract",
@@ -188,6 +190,8 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       experience_current_job_title TEXT NOT NULL DEFAULT '',
       experience_current_company TEXT NOT NULL DEFAULT '',
       experience_target_role TEXT NOT NULL DEFAULT '',
+      experience_target_locations TEXT NOT NULL DEFAULT '',
+      experience_target_work_models TEXT NOT NULL DEFAULT '',
       availability_earliest_start_date TEXT NOT NULL DEFAULT '',
       availability_full_time TEXT NOT NULL DEFAULT '',
       availability_contract TEXT NOT NULL DEFAULT '',
@@ -319,6 +323,26 @@ export function ensureProfileTables(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_candidate_profile_skill_order
       ON candidate_profile_skill_categories(tenant_id, profile_id, position_index);
   `);
+  ensureCandidateProfileColumns(db);
+}
+
+const CANDIDATE_PROFILE_COLUMN_MIGRATIONS: Record<string, string> = {
+  experience_target_locations: "TEXT NOT NULL DEFAULT ''",
+  experience_target_work_models: "TEXT NOT NULL DEFAULT ''",
+};
+
+function ensureCandidateProfileColumns(db: SqliteDatabase): void {
+  const existingColumns = new Set(
+    (db.prepare("PRAGMA table_info(candidate_profiles)").all() as Array<{ name: string }>).map(
+      (column) => column.name,
+    ),
+  );
+
+  for (const [column, definition] of Object.entries(CANDIDATE_PROFILE_COLUMN_MIGRATIONS)) {
+    if (!existingColumns.has(column)) {
+      db.exec(`ALTER TABLE candidate_profiles ADD COLUMN ${column} ${definition}`);
+    }
+  }
 }
 
 export function readProfileConfig(db: SqliteDatabase, paths: ProfilePaths): ProfileConfigResponse {
@@ -572,6 +596,8 @@ function rowToProfile(db: SqliteDatabase, row: ProfileRow): ProfileShape {
       current_job_title: stringColumn(row.experience_current_job_title),
       current_company: stringColumn(row.experience_current_company),
       target_role: stringColumn(row.experience_target_role),
+      target_locations: stringColumn(row.experience_target_locations),
+      target_work_models: stringColumn(row.experience_target_work_models),
     },
     eeo_voluntary: {
       gender: stringColumn(row.eeo_gender, "Decline to self-identify"),
@@ -754,6 +780,8 @@ function rootValues(
     text(experience.current_job_title),
     text(experience.current_company),
     text(experience.target_role),
+    text(experience.target_locations),
+    text(experience.target_work_models),
     text(availability.earliest_start_date),
     text(availability.available_for_full_time),
     text(availability.available_for_contract),

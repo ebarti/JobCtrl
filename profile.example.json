@@ -37,7 +37,9 @@
     "education_level": "Bachelor's Degree",
     "current_job_title": "Software Engineer",
     "current_company": "Example Corp",
-    "target_role": "backend software engineer"
+    "target_role": "backend software engineer",
+    "target_locations": "Remote; Barcelona",
+    "target_work_models": "Remote; Hybrid"
   },
   "resume": {
     "executive_profile": {

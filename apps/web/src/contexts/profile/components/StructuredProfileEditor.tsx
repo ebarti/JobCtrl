@@ -373,7 +373,12 @@ export function StructuredProfileEditor({
     </label>
   );
 
-  const delimitedListField = (path: string, label: string, addLabel: string) => {
+  const delimitedListField = (
+    path: string,
+    label: string,
+    addLabel: string,
+    options: { compact?: boolean } = {},
+  ) => {
     const values = delimitedListAt(textAt(profile, path));
     const updateValues = (next: string[]) => {
       updateProfilePath(path, next.join("; "));
@@ -381,7 +386,7 @@ export function StructuredProfileEditor({
     return (
       <div className="field wide inline-list-field">
         <span>{label}</span>
-        <div className="inline-list">
+        <div className={`inline-list${options.compact ? " compact" : ""}`}>
           {values.map((value, index) => (
             <div className="inline-list-row" key={`${path}-${index}`}>
               <input
@@ -390,7 +395,7 @@ export function StructuredProfileEditor({
                 onChange={(event) => {
                   const next = [...values];
                   next[index] = event.target.value;
-                  updateValues(next);
+                  updateProfilePath(path, next.join("; "));
                 }}
               />
               <button
@@ -408,6 +413,38 @@ export function StructuredProfileEditor({
             <Plus size={14} aria-hidden="true" />
             {addLabel}
           </button>
+        </div>
+      </div>
+    );
+  };
+
+  const workModelField = () => {
+    const path = "experience.target_work_models";
+    const selected = new Set(delimitedListAt(textAt(profile, path)).filter(Boolean));
+    const updateWorkModels = (value: string, checked: boolean) => {
+      const next = new Set(selected);
+      if (checked) {
+        next.add(value);
+      } else {
+        next.delete(value);
+      }
+      updateProfilePath(path, Array.from(next).join("; "));
+    };
+
+    return (
+      <div className="field wide target-work-models">
+        <span>Target work model</span>
+        <div className="work-model-options">
+          {["Remote", "Hybrid", "On-site"].map((value) => (
+            <label className="work-model-choice" key={value}>
+              <input
+                type="checkbox"
+                checked={selected.has(value)}
+                onChange={(event) => updateWorkModels(value, event.target.checked)}
+              />
+              <span>{value}</span>
+            </label>
+          ))}
         </div>
       </div>
     );
@@ -800,9 +837,13 @@ export function StructuredProfileEditor({
           </section>
 
           <section className="form-section">
-            <h3>Target roles</h3>
-            <div className="field-grid one">
-              {delimitedListField("experience.target_role", "Target roles", "add role")}
+            <h3>Target search</h3>
+            <div className="target-preferences-grid">
+              {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
+              {delimitedListField("experience.target_locations", "Target locations", "add location", {
+                compact: true,
+              })}
+              {workModelField()}
             </div>
           </section>
 

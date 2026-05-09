@@ -454,6 +454,8 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             experience_current_job_title      TEXT NOT NULL DEFAULT '',
             experience_current_company        TEXT NOT NULL DEFAULT '',
             experience_target_role            TEXT NOT NULL DEFAULT '',
+            experience_target_locations       TEXT NOT NULL DEFAULT '',
+            experience_target_work_models     TEXT NOT NULL DEFAULT '',
             availability_earliest_start_date  TEXT NOT NULL DEFAULT '',
             availability_full_time            TEXT NOT NULL DEFAULT '',
             availability_contract             TEXT NOT NULL DEFAULT '',
@@ -627,6 +629,7 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         ON candidate_profile_skill_categories(tenant_id, profile_id, position_index)
         """
     )
+    _ensure_candidate_profile_columns(conn)
     conn.commit()
     return [
         "candidate_profiles",
@@ -642,6 +645,19 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         "candidate_profile_required_skills",
         "candidate_profile_resume_constraint_metrics",
     ]
+
+
+_PROFILE_COLUMN_MIGRATIONS: dict[str, str] = {
+    "experience_target_locations": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_work_models": "TEXT NOT NULL DEFAULT ''",
+}
+
+
+def _ensure_candidate_profile_columns(conn: sqlite3.Connection) -> None:
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
+    for column, definition in _PROFILE_COLUMN_MIGRATIONS.items():
+        if column not in existing_cols:
+            conn.execute(f"ALTER TABLE candidate_profiles ADD COLUMN {column} {definition}")
 
 
 def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:

@@ -293,6 +293,17 @@ textarea {
   grid-template-columns: 1fr;
 }
 
+.target-preferences-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  padding: 14px 16px;
+}
+
+.target-preferences-grid .field.wide {
+  grid-column: auto;
+}
+
 .field {
   display: flex;
   min-width: 0;
@@ -1198,11 +1209,54 @@ textarea {
   gap: 8px;
 }
 
+.inline-list.compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 8px;
+}
+
 .inline-list-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+}
+
+.inline-list-row .icon-button {
+  grid-area: auto;
+}
+
+.inline-list.compact .add-bullet {
+  width: 100%;
+  min-height: 32px;
+  align-self: stretch;
+  justify-content: center;
+}
+
+.target-preferences-grid .target-work-models {
+  grid-column: 1 / -1;
+}
+
+.work-model-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.work-model-choice {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 6px 10px;
+  color: var(--muted);
+}
+
+.work-model-choice input {
+  width: auto;
 }
 
 .skill-row {
@@ -1457,10 +1511,15 @@ textarea {
   .kpis,
   .dashboard-grid,
   .field-grid,
+  .target-preferences-grid,
   .config-form,
   .import-panel,
   .credential-row,
   .credential-row-form {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-list.compact {
     grid-template-columns: 1fr;
   }
 
