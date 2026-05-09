@@ -1233,30 +1233,21 @@ textarea {
   justify-content: center;
 }
 
-.target-preferences-grid .target-work-models {
-  grid-column: 1 / -1;
-}
-
-.work-model-options {
+.target-location-model-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 8px;
 }
 
-.work-model-choice {
-  display: inline-flex;
-  min-height: 32px;
+.target-location-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
+  gap: 8px;
   align-items: center;
-  gap: 6px;
-  border: 1px solid var(--rule);
-  border-radius: 5px;
-  background: var(--paper-2);
-  padding: 6px 10px;
-  color: var(--muted);
 }
 
-.work-model-choice input {
-  width: auto;
+.target-location-model-row .icon-button {
+  grid-area: auto;
 }
 
 .skill-row {
@@ -1521,6 +1512,10 @@ textarea {
 
   .inline-list.compact {
     grid-template-columns: 1fr;
+  }
+
+  .target-location-model-row {
+    grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
   }
 
   .drawer {

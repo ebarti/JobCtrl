@@ -418,33 +418,73 @@ export function StructuredProfileEditor({
     );
   };
 
-  const workModelField = () => {
-    const path = "experience.target_work_models";
-    const selected = new Set(delimitedListAt(textAt(profile, path)).filter(Boolean));
-    const updateWorkModels = (value: string, checked: boolean) => {
-      const next = new Set(selected);
-      if (checked) {
-        next.add(value);
-      } else {
-        next.delete(value);
-      }
-      updateProfilePath(path, Array.from(next).join("; "));
+  const targetLocationWorkModelField = () => {
+    const locationPath = "experience.target_locations";
+    const workModelPath = "experience.target_work_models";
+    const locations = delimitedListAt(textAt(profile, locationPath));
+    const workModels = delimitedListAt(textAt(profile, workModelPath));
+    const rowCount = Math.max(locations.length, workModels.length, 1);
+    const rows = Array.from({ length: rowCount }, (_, index) => ({
+      location: locations[index] ?? "",
+      workModel: workModels[index] ?? "",
+    }));
+
+    const updateRows = (nextRows: Array<{ location: string; workModel: string }>) => {
+      updateProfileDraft((draft) => {
+        setPathValue(draft, locationPath, nextRows.map((row) => row.location).join("; "));
+        setPathValue(draft, workModelPath, nextRows.map((row) => row.workModel).join("; "));
+      });
     };
 
     return (
-      <div className="field wide target-work-models">
-        <span>Target work model</span>
-        <div className="work-model-options">
-          {["Remote", "Hybrid", "On-site"].map((value) => (
-            <label className="work-model-choice" key={value}>
+      <div className="field wide target-location-model-field">
+        <span>Target location: target work model</span>
+        <div className="target-location-model-list">
+          {rows.map((row, index) => (
+            <div className="target-location-model-row" key={`${locationPath}-${index}`}>
               <input
-                type="checkbox"
-                checked={selected.has(value)}
-                onChange={(event) => updateWorkModels(value, event.target.checked)}
+                aria-label={`Target location ${index + 1}`}
+                value={row.location}
+                placeholder="Location"
+                onChange={(event) => {
+                  const next = [...rows];
+                  next[index] = { ...row, location: event.target.value };
+                  updateRows(next);
+                }}
               />
-              <span>{value}</span>
-            </label>
+              <select
+                aria-label={`Target work model ${index + 1}`}
+                value={row.workModel}
+                onChange={(event) => {
+                  const next = [...rows];
+                  next[index] = { ...row, workModel: event.target.value };
+                  updateRows(next);
+                }}
+              >
+                <option value="">Work model</option>
+                <option value="Remote">Remote</option>
+                <option value="Hybrid">Hybrid</option>
+                <option value="On-site">On-site</option>
+              </select>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={`Remove target location ${index + 1}`}
+                title="Remove"
+                onClick={() => updateRows(rows.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </button>
+            </div>
           ))}
+          <button
+            className="tab add-bullet"
+            type="button"
+            onClick={() => updateRows([...rows, { location: "", workModel: "" }])}
+          >
+            <Plus size={14} aria-hidden="true" />
+            add location
+          </button>
         </div>
       </div>
     );
@@ -840,10 +880,7 @@ export function StructuredProfileEditor({
             <h3>Target search</h3>
             <div className="target-preferences-grid">
               {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
-              {delimitedListField("experience.target_locations", "Target locations", "add location", {
-                compact: true,
-              })}
-              {workModelField()}
+              {targetLocationWorkModelField()}
             </div>
           </section>
 
