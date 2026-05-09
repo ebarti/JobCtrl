@@ -90,6 +90,25 @@ describe("<ProfileForm>", () => {
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 
+  it("adds and focuses the next target role with Enter", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+
+    await user.type(await screen.findByLabelText("Target roles 1"), "Director{Enter}");
+
+    expect(screen.getByLabelText("Target roles 2")).toHaveFocus();
+  });
+
+  it("adds and focuses the next target location with Enter", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+
+    await user.type(await screen.findByLabelText("Target location 1"), "Barcelona{Enter}");
+
+    expect(screen.getByLabelText("Target location 2")).toHaveFocus();
+    expect(screen.getByLabelText("Target work model 2")).toBeInTheDocument();
+  });
+
   it("clamps max bullets to the allowed positive range", async () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />);
     const input = await screen.findByLabelText("Max bullets per role");

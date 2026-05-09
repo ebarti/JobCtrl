@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import {
@@ -46,6 +47,36 @@ export function StructuredProfileEditor({
 }: StructuredProfileEditorProps) {
   const profile = parseJsonRecord(profileText);
   const style = parseJsonRecord(styleText);
+  const focusTargetsRef = useRef(new Map<string, HTMLInputElement | HTMLSelectElement>());
+  const pendingFocusKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const focusKey = pendingFocusKeyRef.current;
+    if (!focusKey) {
+      return;
+    }
+    const element = focusTargetsRef.current.get(focusKey);
+    if (!element) {
+      return;
+    }
+    pendingFocusKeyRef.current = null;
+    element.focus();
+    if (element instanceof HTMLInputElement) {
+      element.select();
+    }
+  }, [profileText]);
+
+  const registerFocusTarget = (key: string) => (element: HTMLInputElement | HTMLSelectElement | null) => {
+    if (element) {
+      focusTargetsRef.current.set(key, element);
+    } else {
+      focusTargetsRef.current.delete(key);
+    }
+  };
+
+  const focusAfterDraftUpdate = (key: string) => {
+    pendingFocusKeyRef.current = key;
+  };
 
   if (!profile || !style) {
     return (
@@ -380,8 +411,21 @@ export function StructuredProfileEditor({
     options: { compact?: boolean } = {},
   ) => {
     const values = delimitedListAt(textAt(profile, path));
+    const focusKey = (index: number) => `${path}:${index}`;
     const updateValues = (next: string[]) => {
       updateProfilePath(path, next.join("; "));
+    };
+    const insertValueAfter = (index: number, currentValue: string) => {
+      const insertionIndex = index + 1;
+      const next = [...values];
+      next[index] = currentValue;
+      next.splice(insertionIndex, 0, "");
+      focusAfterDraftUpdate(focusKey(insertionIndex));
+      updateValues(next);
+    };
+    const appendValue = () => {
+      focusAfterDraftUpdate(focusKey(values.length));
+      updateValues([...values, ""]);
     };
     return (
       <div className="field wide inline-list-field">
@@ -391,11 +435,19 @@ export function StructuredProfileEditor({
             <div className="inline-list-row" key={`${path}-${index}`}>
               <input
                 aria-label={`${label} ${index + 1}`}
+                ref={registerFocusTarget(focusKey(index))}
                 value={value}
                 onChange={(event) => {
                   const next = [...values];
                   next[index] = event.target.value;
                   updateProfilePath(path, next.join("; "));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") {
+                    return;
+                  }
+                  event.preventDefault();
+                  insertValueAfter(index, event.currentTarget.value);
                 }}
               />
               <button
@@ -409,7 +461,7 @@ export function StructuredProfileEditor({
               </button>
             </div>
           ))}
-          <button className="tab add-bullet" type="button" onClick={() => updateValues([...values, ""])}>
+          <button className="tab add-bullet" type="button" onClick={appendValue}>
             <Plus size={14} aria-hidden="true" />
             {addLabel}
           </button>
@@ -428,12 +480,25 @@ export function StructuredProfileEditor({
       location: locations[index] ?? "",
       workModel: workModels[index] ?? "",
     }));
+    const locationFocusKey = (index: number) => `${locationPath}:location:${index}`;
 
     const updateRows = (nextRows: Array<{ location: string; workModel: string }>) => {
       updateProfileDraft((draft) => {
         setPathValue(draft, locationPath, nextRows.map((row) => row.location).join("; "));
         setPathValue(draft, workModelPath, nextRows.map((row) => row.workModel).join("; "));
       });
+    };
+    const insertRowAfter = (index: number, rowPatch: Partial<{ location: string; workModel: string }>) => {
+      const insertionIndex = index + 1;
+      const next = [...rows];
+      next[index] = { ...next[index], ...rowPatch };
+      next.splice(insertionIndex, 0, { location: "", workModel: "" });
+      focusAfterDraftUpdate(locationFocusKey(insertionIndex));
+      updateRows(next);
+    };
+    const appendRow = () => {
+      focusAfterDraftUpdate(locationFocusKey(rows.length));
+      updateRows([...rows, { location: "", workModel: "" }]);
     };
 
     return (
@@ -444,12 +509,20 @@ export function StructuredProfileEditor({
             <div className="target-location-model-row" key={`${locationPath}-${index}`}>
               <input
                 aria-label={`Target location ${index + 1}`}
+                ref={registerFocusTarget(locationFocusKey(index))}
                 value={row.location}
                 placeholder="Location"
                 onChange={(event) => {
                   const next = [...rows];
                   next[index] = { ...row, location: event.target.value };
                   updateRows(next);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") {
+                    return;
+                  }
+                  event.preventDefault();
+                  insertRowAfter(index, { location: event.currentTarget.value });
                 }}
               />
               <select
@@ -459,6 +532,13 @@ export function StructuredProfileEditor({
                   const next = [...rows];
                   next[index] = { ...row, workModel: event.target.value };
                   updateRows(next);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") {
+                    return;
+                  }
+                  event.preventDefault();
+                  insertRowAfter(index, { workModel: event.currentTarget.value });
                 }}
               >
                 <option value="">Work model</option>
@@ -480,7 +560,7 @@ export function StructuredProfileEditor({
           <button
             className="tab add-bullet"
             type="button"
-            onClick={() => updateRows([...rows, { location: "", workModel: "" }])}
+            onClick={appendRow}
           >
             <Plus size={14} aria-hidden="true" />
             add location
