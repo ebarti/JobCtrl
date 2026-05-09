@@ -1,4 +1,4 @@
-import { ProfileSchema, type ProfileUpdateRequest } from "@jobhunter/contracts";
+import { ProfileSchema, type ProfileShape, type ProfileUpdateRequest } from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
@@ -7,6 +7,10 @@ import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
+import {
+  isProfileDateRangeChronological,
+  parseProfileDateRange,
+} from "../lib/profile-date-fields.js";
 
 export type ProfileSection = "profile" | "preferences";
 
@@ -49,9 +53,24 @@ function validateProfileForm(values: ProfileFormValues): string | undefined {
   if (!profileResult.success) {
     return `Profile data: ${profileResult.error.issues[0]?.message ?? "invalid profile"}`;
   }
+  const profileDateError = validateProfileDateRanges(profileResult.data);
+  if (profileDateError) {
+    return profileDateError;
+  }
   const parsedStyle = tryParseJson(values.styleText);
   if (!parsedStyle.ok) {
     return `Resume style settings: ${parsedStyle.error}`;
+  }
+  return undefined;
+}
+
+function validateProfileDateRanges(profile: ProfileShape): string | undefined {
+  const entries = profile.resume.experience_entries;
+  for (const [index, entry] of entries.entries()) {
+    if (!isProfileDateRangeChronological(parseProfileDateRange(entry.date_range))) {
+      const label = entry.title || `Experience ${index + 1}`;
+      return `${label}: End date must be after start date.`;
+    }
   }
   return undefined;
 }

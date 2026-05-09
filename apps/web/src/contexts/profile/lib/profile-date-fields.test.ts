@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatProfileDateRange,
   formatProfileMonth,
+  isProfileDateRangeChronological,
   parseProfileDateRange,
   parseProfileMonth,
 } from "./profile-date-fields.js";
@@ -34,5 +35,15 @@ describe("profile date field helpers", () => {
       present: false,
     });
     expect(formatProfileDateRange(parsed)).toBe("2022 -- 2025");
+  });
+
+  it("detects end dates that are before start dates", () => {
+    expect(isProfileDateRangeChronological(parseProfileDateRange("Sep 2020 -- Jan 2017"))).toBe(
+      false,
+    );
+    expect(isProfileDateRangeChronological(parseProfileDateRange("Sep 2020 -- Present"))).toBe(true);
+    expect(isProfileDateRangeChronological(parseProfileDateRange("Sep 2020 -- Oct 2020"))).toBe(
+      true,
+    );
   });
 });

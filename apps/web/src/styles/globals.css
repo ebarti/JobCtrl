@@ -1214,20 +1214,39 @@ textarea {
 }
 
 .date-range-body {
+  align-items: stretch;
   flex-wrap: wrap;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  padding: 8px;
+}
+
+.date-range-body.invalid {
+  border-color: var(--danger);
+}
+
+.date-range-field .field-error {
+  color: var(--danger);
+  font-size: 12px;
 }
 
 .month-selector {
   display: flex;
-  min-width: 190px;
-  flex: 1 1 210px;
+  min-width: 180px;
+  flex: 1 1 220px;
   flex-direction: column;
   gap: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 8px;
 }
 
 .month-selector > span {
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .month-selector select {
@@ -1243,8 +1262,12 @@ textarea {
 }
 
 .date-range-present {
+  align-self: center;
   min-height: 32px;
-  padding-bottom: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 8px 10px;
 }
 
 .icon-button {

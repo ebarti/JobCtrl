@@ -4,6 +4,7 @@ import {
   asTextArray,
   cloneJsonRecord,
   defaultRepeatItem,
+  editableTextArrayAt,
   getPathValue,
   type JsonRecord,
   lines,
@@ -20,6 +21,7 @@ import {
   emptyProfileMonth,
   formatProfileDateRange,
   formatProfileMonth,
+  isProfileDateRangeChronological,
   parseProfileDateRange,
   parseProfileMonth,
   PROFILE_MONTHS,
@@ -139,7 +141,7 @@ export function StructuredProfileEditor({
   const addBullet = (entryIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.experience_entries.${entryIndex}.bullets`;
-      setPathValue(draft, path, [...textArrayAt(draft, path), ""]);
+      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
     });
   };
 
@@ -149,7 +151,7 @@ export function StructuredProfileEditor({
       setPathValue(
         draft,
         path,
-        textArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
+        editableTextArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
       );
     });
   };
@@ -157,7 +159,7 @@ export function StructuredProfileEditor({
   const addSkill = (categoryIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.skill_categories.${categoryIndex}.items`;
-      setPathValue(draft, path, [...textArrayAt(draft, path), ""]);
+      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
     });
   };
 
@@ -167,7 +169,7 @@ export function StructuredProfileEditor({
       setPathValue(
         draft,
         path,
-        textArrayAt(draft, path).filter((_, index) => index !== skillIndex),
+        editableTextArrayAt(draft, path).filter((_, index) => index !== skillIndex),
       );
     });
   };
@@ -270,20 +272,18 @@ export function StructuredProfileEditor({
 
   const dateRangeField = (path: string, label: string) => {
     const value = parseProfileDateRange(textAt(profile, path));
+    const hasError = !isProfileDateRangeChronological(value);
     const updateDateRange = (next: Partial<typeof value>) => {
       updateProfilePath(path, formatProfileDateRange({ ...value, ...next }));
     };
     return (
-      <div className="field date-range-field">
+      <div className="field date-range-field wide">
         <span>{label}</span>
-        <div className="date-range-body">
+        <div className={`date-range-body${hasError ? " invalid" : ""}`}>
           {monthSelector("Start", value.start, (start) => updateDateRange({ start }))}
-          {monthSelector(
-            "End",
-            value.present ? emptyProfileMonth() : value.end,
-            (end) => updateDateRange({ end, present: false }),
-            value.present,
-          )}
+          {value.present
+            ? null
+            : monthSelector("End", value.end, (end) => updateDateRange({ end, present: false }))}
           <label className="choice date-range-present">
             <input
               type="checkbox"
@@ -312,6 +312,7 @@ export function StructuredProfileEditor({
             clear
           </button>
         </div>
+        {hasError ? <span className="field-error">End date must be after start date.</span> : null}
       </div>
     );
   };
@@ -425,9 +426,6 @@ export function StructuredProfileEditor({
               {textField("personal.full_name", "Full name", "text", { required: true })}
               {textField("personal.preferred_name", "Preferred name")}
               {textField("personal.email", "Email", "email", { required: true })}
-              {textField("personal.password", "Application password", "password", {
-                autoComplete: "new-password",
-              })}
               {textField("personal.phone", "Phone", "tel")}
               {textField("personal.address", "Address")}
               {textField("personal.city", "City")}
@@ -462,7 +460,7 @@ export function StructuredProfileEditor({
         <div className="repeat-list">
           {experienceEntries.map((entry, index) => {
             const entryId = textFrom(entry["id"]);
-            const bullets = asTextArray(entry["bullets"]);
+            const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
             const requiredBullets = new Set(
               asTextArray(
                 recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
@@ -498,7 +496,6 @@ export function StructuredProfileEditor({
                   </div>
                 </div>
                 <div className="field-grid">
-                  {textField(`resume.experience_entries.${index}.id`, "Entry ID")}
                   {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
                   {textField(`resume.experience_entries.${index}.title`, "Title")}
                   {textField(`resume.experience_entries.${index}.company`, "Company")}
@@ -595,7 +592,6 @@ export function StructuredProfileEditor({
                   </div>
                 </div>
                 <div className="field-grid">
-                  {textField(`resume.education_entries.${index}.id`, "Entry ID")}
                   {monthField(`resume.education_entries.${index}.date`, "Completion month")}
                   {textField(`resume.education_entries.${index}.degree`, "Degree")}
                   {textField(`resume.education_entries.${index}.institution`, "Institution")}
@@ -619,7 +615,7 @@ export function StructuredProfileEditor({
         <div className="repeat-list">
           {skillCategories.map((entry, index) => {
             const entryId = textFrom(entry["id"]);
-            const skills = asTextArray(entry["items"]);
+            const skills = editableTextArrayAt(profile, `resume.skill_categories.${index}.items`);
             const requiredSkills = new Set(
               asTextArray(
                 recordAt(profile, "resume.tailoring_rules.required_skills_by_category_id")[entryId],
@@ -655,7 +651,6 @@ export function StructuredProfileEditor({
                   </div>
                 </div>
                 <div className="field-grid">
-                  {textField(`resume.skill_categories.${index}.id`, "Category ID")}
                   {textField(`resume.skill_categories.${index}.label`, "Label")}
                 </div>
                 <div className="skill-list">
@@ -734,6 +729,9 @@ export function StructuredProfileEditor({
               ])}
               {selectField("work_authorization.require_sponsorship", "Requires sponsorship", ["No", "Yes"])}
               {textField("work_authorization.work_permit_type", "Work permit type")}
+              {textField("personal.password", "Job-site login password", "password", {
+                autoComplete: "new-password",
+              })}
               {textField("availability.earliest_start_date", "Earliest start date", "date")}
               {selectField("availability.available_for_full_time", "Available full-time", ["Yes", "No"])}
               {selectField("availability.available_for_contract", "Available for contract", ["No", "Yes"])}
