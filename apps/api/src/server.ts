@@ -45,9 +45,13 @@ import {
   listArtifacts,
   listJobs,
   listWorkflowRuns,
-  readProfileConfig,
   readSettingsConfig,
 } from "./read-model.js";
+import {
+  ProfileInputError,
+  readProfileConfig,
+  writeProfileConfig,
+} from "./profile-store.js";
 import {
   cancelJobAction,
   InputError,
@@ -59,7 +63,6 @@ import {
   resolveJobUrl,
   softDeleteJob,
   softDeleteJobs,
-  writeProfileConfig,
   writeSettingsConfig,
 } from "./write-model.js";
 
@@ -401,21 +404,32 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     };
   });
 
-  app.get("/v1/profile", async () =>
-    readProfileConfig({
-      profilePath: options.profilePath,
-      resumeStylePath: options.resumeStylePath,
-      resumeTemplatePath: options.resumeTemplatePath,
-    }),
+  app.get("/v1/profile", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) =>
+      readProfileConfig(db, {
+        profilePath: options.profilePath,
+        resumeStylePath: options.resumeStylePath,
+        resumeTemplatePath: options.resumeTemplatePath,
+      }),
+    ),
   );
 
   app.get("/v1/profile/preview.pdf", async (_request, reply) => {
     try {
-      const pdfBytes = await profilePreviewRenderer(
-        {
+      const profileConfig = withDb(reply, options.dbPath, (db) =>
+        readProfileConfig(db, {
           profilePath: options.profilePath,
           resumeStylePath: options.resumeStylePath,
           resumeTemplatePath: options.resumeTemplatePath,
+        }),
+      );
+      if ("ok" in profileConfig && profileConfig.ok === false) {
+        return profileConfig;
+      }
+      const pdfBytes = await profilePreviewRenderer(
+        {
+          profile: profileConfig.profile,
+          templateText: profileConfig.templateText,
         },
         actionContext,
       );
@@ -438,8 +452,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+    }
+    const db = openDatabase(options.dbPath);
     try {
       return writeProfileConfig(
+        db,
         {
           profilePath: options.profilePath,
           resumeStylePath: options.resumeStylePath,
@@ -448,11 +468,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         body,
       );
     } catch (error) {
-      if (error instanceof InputError) {
+      if (error instanceof InputError || error instanceof ProfileInputError) {
         void reply.code(400);
         return { ok: false, error: "invalid_profile", message: error.message };
       }
       throw error;
+    } finally {
+      db.close();
     }
   });
 

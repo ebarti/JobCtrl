@@ -1,16 +1,17 @@
 import { test, expect } from "@playwright/test";
 
-test("Profile edit + PDF preview: edit a field, save, iframe src updates with a new cache key", async ({
+test("Profile edit + PDF preview: edit a field, save, preview URL updates with a new cache key", async ({
   page,
 }) => {
   await page.goto("/profile");
 
   await expect(page.getByText(/Full name/i).first()).toBeVisible({ timeout: 30_000 });
 
-  const iframe = page.locator("iframe.pdf-preview-frame");
-  await expect(iframe).toBeVisible({ timeout: 30_000 });
-  const initialSrc = await iframe.getAttribute("src");
-  expect(initialSrc).toBeTruthy();
+  const previewLink = page.getByRole("link", { name: /open PDF/i });
+  await expect(page.getByText("Resume preview", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(previewLink).toBeVisible({ timeout: 30_000 });
+  const initialHref = await previewLink.getAttribute("href");
+  expect(initialHref).toContain("/v1/profile/preview.pdf");
 
   const fullNameLabel = page.getByText(/Full name/i).first();
   const fullNameInput = fullNameLabel.locator("xpath=following-sibling::input").first();
@@ -24,6 +25,6 @@ test("Profile edit + PDF preview: edit a field, save, iframe src updates with a 
   await expect(saveButton).toBeDisabled({ timeout: 30_000 });
 
   await expect
-    .poll(async () => iframe.getAttribute("src"), { timeout: 30_000 })
-    .not.toBe(initialSrc);
+    .poll(async () => previewLink.getAttribute("href"), { timeout: 30_000 })
+    .not.toBe(initialHref);
 });

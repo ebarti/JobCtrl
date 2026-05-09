@@ -141,6 +141,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     # Run migrations for any columns added after initial schema
     ensure_columns(conn)
     ensure_state_tables(conn)
+    ensure_profile_tables(conn)
     ensure_score_tables(conn)
     ensure_materials_tables(conn)
     ensure_enrichment_tables(conn)
@@ -408,6 +409,239 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     _backfill_legacy_stage_states(conn)
     conn.commit()
     return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks"]
+
+
+def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create normalized Candidate Profile tables.
+
+    The canonical profile source now lives in relational rows.  The schema
+    deliberately has no ``profile_json`` / ``style_json`` escape hatch:
+    aggregate value objects live as typed columns on ``candidate_profiles``;
+    repeatable child entities and rule lists live in child tables.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profiles (
+            tenant_id                         TEXT NOT NULL DEFAULT 'local',
+            profile_id                        TEXT NOT NULL DEFAULT 'default',
+            personal_full_name                TEXT NOT NULL DEFAULT '',
+            personal_preferred_name           TEXT NOT NULL DEFAULT '',
+            personal_email                    TEXT NOT NULL DEFAULT '',
+            personal_phone                    TEXT NOT NULL DEFAULT '',
+            personal_address                  TEXT NOT NULL DEFAULT '',
+            personal_city                     TEXT NOT NULL DEFAULT '',
+            personal_province_state           TEXT NOT NULL DEFAULT '',
+            personal_country                  TEXT NOT NULL DEFAULT '',
+            personal_postal_code              TEXT NOT NULL DEFAULT '',
+            personal_linkedin_url             TEXT NOT NULL DEFAULT '',
+            personal_github_url               TEXT NOT NULL DEFAULT '',
+            personal_portfolio_url            TEXT NOT NULL DEFAULT '',
+            personal_website_url              TEXT NOT NULL DEFAULT '',
+            personal_password                 TEXT NOT NULL DEFAULT '',
+            work_legally_authorized_to_work   TEXT NOT NULL DEFAULT '',
+            work_require_sponsorship          TEXT NOT NULL DEFAULT '',
+            work_work_permit_type             TEXT NOT NULL DEFAULT '',
+            compensation_salary_expectation   TEXT NOT NULL DEFAULT '',
+            compensation_salary_currency      TEXT NOT NULL DEFAULT 'USD',
+            compensation_salary_range_min     TEXT NOT NULL DEFAULT '',
+            compensation_salary_range_max     TEXT NOT NULL DEFAULT '',
+            compensation_currency_note        TEXT NOT NULL DEFAULT '',
+            experience_years_total            TEXT NOT NULL DEFAULT '',
+            experience_education_level        TEXT NOT NULL DEFAULT '',
+            experience_current_job_title      TEXT NOT NULL DEFAULT '',
+            experience_current_company        TEXT NOT NULL DEFAULT '',
+            experience_target_role            TEXT NOT NULL DEFAULT '',
+            availability_earliest_start_date  TEXT NOT NULL DEFAULT '',
+            availability_full_time            TEXT NOT NULL DEFAULT '',
+            availability_contract             TEXT NOT NULL DEFAULT '',
+            eeo_gender                        TEXT NOT NULL DEFAULT 'Decline to self-identify',
+            eeo_race_ethnicity                TEXT NOT NULL DEFAULT 'Decline to self-identify',
+            eeo_veteran_status                TEXT NOT NULL DEFAULT 'Decline to self-identify',
+            eeo_disability_status             TEXT NOT NULL DEFAULT 'Decline to self-identify',
+            resume_baseline_text              TEXT NOT NULL DEFAULT '',
+            tailoring_mode                    TEXT NOT NULL DEFAULT 'balanced',
+            tailoring_allow_title_reframing   INTEGER NOT NULL DEFAULT 0,
+            tailoring_allow_achievement_rewriting INTEGER NOT NULL DEFAULT 1,
+            tailoring_allow_skill_reordering  INTEGER NOT NULL DEFAULT 1,
+            tailoring_allow_summary_rewrite   INTEGER NOT NULL DEFAULT 1,
+            tailoring_allow_minor_inference   INTEGER NOT NULL DEFAULT 0,
+            writing_tone                      TEXT NOT NULL DEFAULT 'direct',
+            writing_bullet_style              TEXT NOT NULL DEFAULT 'balanced',
+            writing_verbosity                 TEXT NOT NULL DEFAULT 'balanced',
+            writing_keyword_density           TEXT NOT NULL DEFAULT 'natural',
+            writing_avoid_first_person        INTEGER NOT NULL DEFAULT 1,
+            max_experience_bullets            INTEGER NOT NULL DEFAULT 4,
+            custom_tailoring_prompt           TEXT NOT NULL DEFAULT '',
+            resume_style_document_font_size   TEXT NOT NULL DEFAULT '11pt',
+            resume_style_paper_size           TEXT NOT NULL DEFAULT 'a4paper',
+            resume_style_font_family          TEXT NOT NULL DEFAULT 'sans',
+            resume_style_moderncv_style       TEXT NOT NULL DEFAULT 'banking',
+            resume_style_moderncv_color       TEXT NOT NULL DEFAULT 'black',
+            resume_style_page_scale           REAL NOT NULL DEFAULT 0.85,
+            resume_style_hints_column_width_cm REAL NOT NULL DEFAULT 3.0,
+            resume_style_body_alignment       TEXT NOT NULL DEFAULT 'justified',
+            resume_template_text              TEXT NOT NULL DEFAULT '',
+            version                           INTEGER NOT NULL DEFAULT 1,
+            updated_at                        TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_experience_entries (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            entry_id        TEXT NOT NULL,
+            position_index  INTEGER NOT NULL,
+            date_range      TEXT NOT NULL DEFAULT '',
+            title           TEXT NOT NULL DEFAULT '',
+            company         TEXT NOT NULL DEFAULT '',
+            location        TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (tenant_id, profile_id, entry_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_experience_bullets (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            entry_id        TEXT NOT NULL,
+            bullet_index    INTEGER NOT NULL,
+            bullet_text     TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_education_entries (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            entry_id        TEXT NOT NULL,
+            position_index  INTEGER NOT NULL,
+            date            TEXT NOT NULL DEFAULT '',
+            degree          TEXT NOT NULL DEFAULT '',
+            institution     TEXT NOT NULL DEFAULT '',
+            location        TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (tenant_id, profile_id, entry_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_skill_categories (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            category_id     TEXT NOT NULL,
+            position_index  INTEGER NOT NULL,
+            label           TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (tenant_id, profile_id, category_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_skill_items (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            category_id     TEXT NOT NULL,
+            item_index      INTEGER NOT NULL,
+            item_text       TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+        )
+        """
+    )
+
+    for table, column in (
+        ("candidate_profile_required_experience_entries", "entry_id"),
+        ("candidate_profile_required_education_entries", "entry_id"),
+        ("candidate_profile_required_skill_categories", "category_id"),
+    ):
+        conn.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {table} (
+                tenant_id       TEXT NOT NULL,
+                profile_id      TEXT NOT NULL,
+                position_index  INTEGER NOT NULL,
+                {column}        TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, profile_id, position_index)
+            )
+            """
+        )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_required_bullets (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            entry_id        TEXT NOT NULL,
+            bullet_index    INTEGER NOT NULL,
+            bullet_text     TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_required_skills (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            category_id     TEXT NOT NULL,
+            skill_index     INTEGER NOT NULL,
+            skill_text      TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id, category_id, skill_index)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_resume_constraint_metrics (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            metric_index    INTEGER NOT NULL,
+            metric_text     TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, profile_id, metric_index)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_candidate_profile_experience_order
+        ON candidate_profile_experience_entries(tenant_id, profile_id, position_index)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_candidate_profile_education_order
+        ON candidate_profile_education_entries(tenant_id, profile_id, position_index)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_candidate_profile_skill_order
+        ON candidate_profile_skill_categories(tenant_id, profile_id, position_index)
+        """
+    )
+    conn.commit()
+    return [
+        "candidate_profiles",
+        "candidate_profile_experience_entries",
+        "candidate_profile_experience_bullets",
+        "candidate_profile_education_entries",
+        "candidate_profile_skill_categories",
+        "candidate_profile_skill_items",
+        "candidate_profile_required_experience_entries",
+        "candidate_profile_required_education_entries",
+        "candidate_profile_required_skill_categories",
+        "candidate_profile_required_bullets",
+        "candidate_profile_required_skills",
+        "candidate_profile_resume_constraint_metrics",
+    ]
 
 
 def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:

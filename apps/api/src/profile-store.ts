@@ -1,0 +1,853 @@
+import fs from "node:fs";
+
+import type { ProfileConfigResponse, ProfileShape, ProfileUpdateRequest } from "./contracts.js";
+import { ProfileSchema } from "./contracts.js";
+import type { SqliteDatabase } from "./db.js";
+
+const TENANT_ID = "local";
+const PROFILE_ID = "default";
+
+export class ProfileInputError extends Error {}
+
+export interface ProfilePaths {
+  profilePath: string;
+  resumeStylePath: string;
+  resumeTemplatePath: string;
+}
+
+const CHILD_TABLES = [
+  "candidate_profile_experience_bullets",
+  "candidate_profile_experience_entries",
+  "candidate_profile_education_entries",
+  "candidate_profile_skill_items",
+  "candidate_profile_skill_categories",
+  "candidate_profile_required_experience_entries",
+  "candidate_profile_required_education_entries",
+  "candidate_profile_required_skill_categories",
+  "candidate_profile_required_bullets",
+  "candidate_profile_required_skills",
+  "candidate_profile_resume_constraint_metrics",
+] as const;
+
+const STYLE_CHOICES = {
+  document_font_size: new Set(["10pt", "11pt", "12pt"]),
+  paper_size: new Set(["a4paper", "letterpaper"]),
+  font_family: new Set(["sans", "roman"]),
+  moderncv_style: new Set(["banking", "classic", "casual", "oldstyle", "fancy"]),
+  moderncv_color: new Set(["black", "blue", "burgundy", "green", "grey", "orange", "purple", "red"]),
+  body_alignment: new Set(["justified", "left"]),
+};
+
+const DEFAULT_STYLE = {
+  document_font_size: "11pt",
+  paper_size: "a4paper",
+  font_family: "sans",
+  moderncv_style: "banking",
+  moderncv_color: "black",
+  page_scale: 0.85,
+  hints_column_width_cm: 3.0,
+  body_alignment: "justified",
+};
+
+const ROOT_COLUMNS = [
+  "tenant_id",
+  "profile_id",
+  "personal_full_name",
+  "personal_preferred_name",
+  "personal_email",
+  "personal_phone",
+  "personal_address",
+  "personal_city",
+  "personal_province_state",
+  "personal_country",
+  "personal_postal_code",
+  "personal_linkedin_url",
+  "personal_github_url",
+  "personal_portfolio_url",
+  "personal_website_url",
+  "personal_password",
+  "work_legally_authorized_to_work",
+  "work_require_sponsorship",
+  "work_work_permit_type",
+  "compensation_salary_expectation",
+  "compensation_salary_currency",
+  "compensation_salary_range_min",
+  "compensation_salary_range_max",
+  "compensation_currency_note",
+  "experience_years_total",
+  "experience_education_level",
+  "experience_current_job_title",
+  "experience_current_company",
+  "experience_target_role",
+  "availability_earliest_start_date",
+  "availability_full_time",
+  "availability_contract",
+  "eeo_gender",
+  "eeo_race_ethnicity",
+  "eeo_veteran_status",
+  "eeo_disability_status",
+  "resume_baseline_text",
+  "tailoring_mode",
+  "tailoring_allow_title_reframing",
+  "tailoring_allow_achievement_rewriting",
+  "tailoring_allow_skill_reordering",
+  "tailoring_allow_summary_rewrite",
+  "tailoring_allow_minor_inference",
+  "writing_tone",
+  "writing_bullet_style",
+  "writing_verbosity",
+  "writing_keyword_density",
+  "writing_avoid_first_person",
+  "max_experience_bullets",
+  "custom_tailoring_prompt",
+  "resume_style_document_font_size",
+  "resume_style_paper_size",
+  "resume_style_font_family",
+  "resume_style_moderncv_style",
+  "resume_style_moderncv_color",
+  "resume_style_page_scale",
+  "resume_style_hints_column_width_cm",
+  "resume_style_body_alignment",
+  "resume_template_text",
+  "version",
+  "updated_at",
+] as const;
+
+type RootColumn = (typeof ROOT_COLUMNS)[number];
+type ProfileRow = Record<RootColumn, string | number | null>;
+
+export function ensureProfileTables(db: SqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS candidate_profiles (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      profile_id TEXT NOT NULL DEFAULT 'default',
+      personal_full_name TEXT NOT NULL DEFAULT '',
+      personal_preferred_name TEXT NOT NULL DEFAULT '',
+      personal_email TEXT NOT NULL DEFAULT '',
+      personal_phone TEXT NOT NULL DEFAULT '',
+      personal_address TEXT NOT NULL DEFAULT '',
+      personal_city TEXT NOT NULL DEFAULT '',
+      personal_province_state TEXT NOT NULL DEFAULT '',
+      personal_country TEXT NOT NULL DEFAULT '',
+      personal_postal_code TEXT NOT NULL DEFAULT '',
+      personal_linkedin_url TEXT NOT NULL DEFAULT '',
+      personal_github_url TEXT NOT NULL DEFAULT '',
+      personal_portfolio_url TEXT NOT NULL DEFAULT '',
+      personal_website_url TEXT NOT NULL DEFAULT '',
+      personal_password TEXT NOT NULL DEFAULT '',
+      work_legally_authorized_to_work TEXT NOT NULL DEFAULT '',
+      work_require_sponsorship TEXT NOT NULL DEFAULT '',
+      work_work_permit_type TEXT NOT NULL DEFAULT '',
+      compensation_salary_expectation TEXT NOT NULL DEFAULT '',
+      compensation_salary_currency TEXT NOT NULL DEFAULT 'USD',
+      compensation_salary_range_min TEXT NOT NULL DEFAULT '',
+      compensation_salary_range_max TEXT NOT NULL DEFAULT '',
+      compensation_currency_note TEXT NOT NULL DEFAULT '',
+      experience_years_total TEXT NOT NULL DEFAULT '',
+      experience_education_level TEXT NOT NULL DEFAULT '',
+      experience_current_job_title TEXT NOT NULL DEFAULT '',
+      experience_current_company TEXT NOT NULL DEFAULT '',
+      experience_target_role TEXT NOT NULL DEFAULT '',
+      availability_earliest_start_date TEXT NOT NULL DEFAULT '',
+      availability_full_time TEXT NOT NULL DEFAULT '',
+      availability_contract TEXT NOT NULL DEFAULT '',
+      eeo_gender TEXT NOT NULL DEFAULT 'Decline to self-identify',
+      eeo_race_ethnicity TEXT NOT NULL DEFAULT 'Decline to self-identify',
+      eeo_veteran_status TEXT NOT NULL DEFAULT 'Decline to self-identify',
+      eeo_disability_status TEXT NOT NULL DEFAULT 'Decline to self-identify',
+      resume_baseline_text TEXT NOT NULL DEFAULT '',
+      tailoring_mode TEXT NOT NULL DEFAULT 'balanced',
+      tailoring_allow_title_reframing INTEGER NOT NULL DEFAULT 0,
+      tailoring_allow_achievement_rewriting INTEGER NOT NULL DEFAULT 1,
+      tailoring_allow_skill_reordering INTEGER NOT NULL DEFAULT 1,
+      tailoring_allow_summary_rewrite INTEGER NOT NULL DEFAULT 1,
+      tailoring_allow_minor_inference INTEGER NOT NULL DEFAULT 0,
+      writing_tone TEXT NOT NULL DEFAULT 'direct',
+      writing_bullet_style TEXT NOT NULL DEFAULT 'balanced',
+      writing_verbosity TEXT NOT NULL DEFAULT 'balanced',
+      writing_keyword_density TEXT NOT NULL DEFAULT 'natural',
+      writing_avoid_first_person INTEGER NOT NULL DEFAULT 1,
+      max_experience_bullets INTEGER NOT NULL DEFAULT 4,
+      custom_tailoring_prompt TEXT NOT NULL DEFAULT '',
+      resume_style_document_font_size TEXT NOT NULL DEFAULT '11pt',
+      resume_style_paper_size TEXT NOT NULL DEFAULT 'a4paper',
+      resume_style_font_family TEXT NOT NULL DEFAULT 'sans',
+      resume_style_moderncv_style TEXT NOT NULL DEFAULT 'banking',
+      resume_style_moderncv_color TEXT NOT NULL DEFAULT 'black',
+      resume_style_page_scale REAL NOT NULL DEFAULT 0.85,
+      resume_style_hints_column_width_cm REAL NOT NULL DEFAULT 3.0,
+      resume_style_body_alignment TEXT NOT NULL DEFAULT 'justified',
+      resume_template_text TEXT NOT NULL DEFAULT '',
+      version INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_experience_entries (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      date_range TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      company TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, entry_id)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_experience_bullets (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      bullet_index INTEGER NOT NULL,
+      bullet_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_education_entries (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      date TEXT NOT NULL DEFAULT '',
+      degree TEXT NOT NULL DEFAULT '',
+      institution TEXT NOT NULL DEFAULT '',
+      location TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, entry_id)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_skill_categories (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, profile_id, category_id)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_skill_items (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      item_index INTEGER NOT NULL,
+      item_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_required_experience_entries (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      entry_id TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, position_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_required_education_entries (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      entry_id TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, position_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_required_skill_categories (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      category_id TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, position_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_required_bullets (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      bullet_index INTEGER NOT NULL,
+      bullet_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_required_skills (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      skill_index INTEGER NOT NULL,
+      skill_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, category_id, skill_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_resume_constraint_metrics (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      metric_index INTEGER NOT NULL,
+      metric_text TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, profile_id, metric_index)
+    );
+    CREATE INDEX IF NOT EXISTS idx_candidate_profile_experience_order
+      ON candidate_profile_experience_entries(tenant_id, profile_id, position_index);
+    CREATE INDEX IF NOT EXISTS idx_candidate_profile_education_order
+      ON candidate_profile_education_entries(tenant_id, profile_id, position_index);
+    CREATE INDEX IF NOT EXISTS idx_candidate_profile_skill_order
+      ON candidate_profile_skill_categories(tenant_id, profile_id, position_index);
+  `);
+}
+
+export function readProfileConfig(db: SqliteDatabase, paths: ProfilePaths): ProfileConfigResponse {
+  ensureProfileTables(db);
+  importLegacyProfileIfNeeded(db, paths);
+  const row = getProfileRow(db);
+  if (!row) {
+    return { ok: true, profile: {}, style: DEFAULT_STYLE, templateText: "" };
+  }
+  return {
+    ok: true,
+    profile: rowToProfile(db, row),
+    style: styleFromRow(row),
+    templateText: String(row.resume_template_text ?? ""),
+  };
+}
+
+export function writeProfileConfig(
+  db: SqliteDatabase,
+  paths: ProfilePaths,
+  request: ProfileUpdateRequest,
+): ProfileConfigResponse {
+  ensureProfileTables(db);
+  importLegacyProfileIfNeeded(db, paths);
+
+  let wrote = false;
+  let profile: ProfileShape | undefined;
+  let style: Record<string, string | number> | undefined;
+  let templateText: string | undefined;
+
+  if (request.profile !== undefined || request.profileText !== undefined) {
+    profile = parseProfileInput(request.profile, request.profileText);
+    wrote = true;
+  }
+  if (request.style !== undefined || request.styleText !== undefined) {
+    style = normalizeStyle(parseJsonObjectInput(request.style, request.styleText, "resume style settings"));
+    wrote = true;
+  }
+  if (request.templateText !== undefined) {
+    if (!request.templateText.trim()) {
+      throw new ProfileInputError("resume template cannot be empty.");
+    }
+    templateText = request.templateText;
+    wrote = true;
+  }
+  if (!wrote) {
+    throw new ProfileInputError("At least one profile, style, or template field is required.");
+  }
+
+  const existing = getProfileRow(db);
+  if (!existing && !profile) {
+    throw new ProfileInputError("profile must be initialized before updating style or template settings.");
+  }
+  const nextProfile = profile ?? rowToProfile(db, existing as ProfileRow);
+  const nextStyle = style ?? (existing ? styleFromRow(existing) : DEFAULT_STYLE);
+  const nextTemplate = templateText ?? (existing ? String(existing.resume_template_text ?? "") : "");
+  const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
+
+  replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
+  return readProfileConfig(db, paths);
+}
+
+function importLegacyProfileIfNeeded(db: SqliteDatabase, paths: ProfilePaths): void {
+  if (getProfileRow(db) || !fs.existsSync(paths.profilePath)) {
+    return;
+  }
+  const profile = parseProfileInput(undefined, fs.readFileSync(paths.profilePath, "utf8"));
+  const style = fs.existsSync(paths.resumeStylePath)
+    ? normalizeStyle(parseJsonObjectInput(undefined, fs.readFileSync(paths.resumeStylePath, "utf8"), "resume style settings"))
+    : DEFAULT_STYLE;
+  const templateText = fs.existsSync(paths.resumeTemplatePath)
+    ? fs.readFileSync(paths.resumeTemplatePath, "utf8")
+    : "";
+  replaceProfile(db, profile, style, templateText, 1);
+}
+
+function replaceProfile(
+  db: SqliteDatabase,
+  profile: ProfileShape,
+  style: Record<string, string | number>,
+  templateText: string,
+  version: number,
+): void {
+  const transaction = db.transaction(() => {
+    for (const table of CHILD_TABLES) {
+      db.prepare(`DELETE FROM ${table} WHERE tenant_id = ? AND profile_id = ?`).run(TENANT_ID, PROFILE_ID);
+    }
+
+    const assignments = ROOT_COLUMNS
+      .filter((column) => column !== "tenant_id" && column !== "profile_id")
+      .map((column) => `${column} = excluded.${column}`)
+      .join(", ");
+    db.prepare(`
+      INSERT INTO candidate_profiles (${ROOT_COLUMNS.join(", ")})
+      VALUES (${ROOT_COLUMNS.map(() => "?").join(", ")})
+      ON CONFLICT(tenant_id, profile_id) DO UPDATE SET ${assignments}
+    `).run(...rootValues(profile, style, templateText, version));
+
+    insertChildren(db, profile);
+  });
+  transaction();
+}
+
+function insertChildren(db: SqliteDatabase, profile: ProfileShape): void {
+  const experienceEntries = asRecordArray(record(profile.resume).experience_entries);
+  const insertExperience = db.prepare(`
+    INSERT INTO candidate_profile_experience_entries (
+      tenant_id, profile_id, entry_id, position_index, date_range, title, company, location
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertBullet = db.prepare(`
+    INSERT INTO candidate_profile_experience_bullets (
+      tenant_id, profile_id, entry_id, bullet_index, bullet_text
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+  experienceEntries.forEach((entry, index) => {
+    const entryId = text(entry.id);
+    insertExperience.run(
+      TENANT_ID,
+      PROFILE_ID,
+      entryId,
+      index,
+      text(entry.date_range),
+      text(entry.title),
+      text(entry.company),
+      text(entry.location),
+    );
+    asTextArray(entry.bullets).forEach((bullet, bulletIndex) => {
+      insertBullet.run(TENANT_ID, PROFILE_ID, entryId, bulletIndex, bullet);
+    });
+  });
+
+  const insertEducation = db.prepare(`
+    INSERT INTO candidate_profile_education_entries (
+      tenant_id, profile_id, entry_id, position_index, date, degree, institution, location
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  asRecordArray(record(profile.resume).education_entries).forEach((entry, index) => {
+    insertEducation.run(
+      TENANT_ID,
+      PROFILE_ID,
+      text(entry.id),
+      index,
+      text(entry.date),
+      text(entry.degree),
+      text(entry.institution),
+      text(entry.location),
+    );
+  });
+
+  const insertCategory = db.prepare(`
+    INSERT INTO candidate_profile_skill_categories (
+      tenant_id, profile_id, category_id, position_index, label
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+  const insertSkillItem = db.prepare(`
+    INSERT INTO candidate_profile_skill_items (
+      tenant_id, profile_id, category_id, item_index, item_text
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+  asRecordArray(record(profile.resume).skill_categories).forEach((category, index) => {
+    const categoryId = text(category.id);
+    insertCategory.run(TENANT_ID, PROFILE_ID, categoryId, index, text(category.label));
+    asTextArray(category.items).forEach((item, itemIndex) => {
+      insertSkillItem.run(TENANT_ID, PROFILE_ID, categoryId, itemIndex, item);
+    });
+  });
+
+  const rules = record(record(profile.resume).tailoring_rules);
+  insertRequiredIds(db, "candidate_profile_required_experience_entries", "entry_id", asTextArray(rules.required_experience_entry_ids));
+  insertRequiredIds(db, "candidate_profile_required_education_entries", "entry_id", asTextArray(rules.required_education_entry_ids));
+  insertRequiredIds(db, "candidate_profile_required_skill_categories", "category_id", asTextArray(rules.required_skill_category_ids));
+
+  const insertRequiredBullet = db.prepare(`
+    INSERT INTO candidate_profile_required_bullets (
+      tenant_id, profile_id, entry_id, bullet_index, bullet_text
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const [entryId, bullets] of Object.entries(record(rules.required_bullets_by_experience_id))) {
+    asTextArray(bullets).forEach((bullet, index) => insertRequiredBullet.run(TENANT_ID, PROFILE_ID, entryId, index, bullet));
+  }
+
+  const insertRequiredSkill = db.prepare(`
+    INSERT INTO candidate_profile_required_skills (
+      tenant_id, profile_id, category_id, skill_index, skill_text
+    ) VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const [categoryId, skills] of Object.entries(record(rules.required_skills_by_category_id))) {
+    asTextArray(skills).forEach((skill, index) => insertRequiredSkill.run(TENANT_ID, PROFILE_ID, categoryId, index, skill));
+  }
+
+  const insertMetric = db.prepare(`
+    INSERT INTO candidate_profile_resume_constraint_metrics (
+      tenant_id, profile_id, metric_index, metric_text
+    ) VALUES (?, ?, ?, ?)
+  `);
+  asTextArray(record(profile.resume_constraints).real_metrics).forEach((metric, index) => {
+    insertMetric.run(TENANT_ID, PROFILE_ID, index, metric);
+  });
+}
+
+function insertRequiredIds(db: SqliteDatabase, table: string, column: string, values: string[]): void {
+  const statement = db.prepare(`
+    INSERT INTO ${table} (tenant_id, profile_id, position_index, ${column})
+    VALUES (?, ?, ?, ?)
+  `);
+  values.forEach((value, index) => statement.run(TENANT_ID, PROFILE_ID, index, value));
+}
+
+function rowToProfile(db: SqliteDatabase, row: ProfileRow): ProfileShape {
+  const profile = {
+    personal: {
+      full_name: stringColumn(row.personal_full_name),
+      preferred_name: stringColumn(row.personal_preferred_name),
+      email: stringColumn(row.personal_email),
+      phone: stringColumn(row.personal_phone),
+      address: stringColumn(row.personal_address),
+      city: stringColumn(row.personal_city),
+      province_state: stringColumn(row.personal_province_state),
+      country: stringColumn(row.personal_country),
+      postal_code: stringColumn(row.personal_postal_code),
+      linkedin_url: stringColumn(row.personal_linkedin_url),
+      github_url: stringColumn(row.personal_github_url),
+      portfolio_url: stringColumn(row.personal_portfolio_url),
+      website_url: stringColumn(row.personal_website_url),
+      password: stringColumn(row.personal_password),
+    },
+    work_authorization: {
+      legally_authorized_to_work: stringColumn(row.work_legally_authorized_to_work),
+      require_sponsorship: stringColumn(row.work_require_sponsorship),
+      work_permit_type: stringColumn(row.work_work_permit_type),
+    },
+    availability: {
+      earliest_start_date: stringColumn(row.availability_earliest_start_date),
+      available_for_full_time: stringColumn(row.availability_full_time),
+      available_for_contract: stringColumn(row.availability_contract),
+    },
+    compensation: {
+      salary_expectation: stringColumn(row.compensation_salary_expectation),
+      salary_currency: stringColumn(row.compensation_salary_currency, "USD"),
+      salary_range_min: stringColumn(row.compensation_salary_range_min),
+      salary_range_max: stringColumn(row.compensation_salary_range_max),
+      currency_conversion_note: stringColumn(row.compensation_currency_note),
+    },
+    experience: {
+      years_of_experience_total: stringColumn(row.experience_years_total),
+      education_level: stringColumn(row.experience_education_level),
+      current_job_title: stringColumn(row.experience_current_job_title),
+      current_company: stringColumn(row.experience_current_company),
+      target_role: stringColumn(row.experience_target_role),
+    },
+    eeo_voluntary: {
+      gender: stringColumn(row.eeo_gender, "Decline to self-identify"),
+      race_ethnicity: stringColumn(row.eeo_race_ethnicity, "Decline to self-identify"),
+      veteran_status: stringColumn(row.eeo_veteran_status, "Decline to self-identify"),
+      disability_status: stringColumn(row.eeo_disability_status, "Decline to self-identify"),
+    },
+    resume: {
+      executive_profile: { baseline_text: stringColumn(row.resume_baseline_text) },
+      experience_entries: experienceRows(db),
+      education_entries: educationRows(db),
+      skill_categories: skillRows(db),
+      tailoring_rules: tailoringRules(db, row),
+    },
+    resume_constraints: {
+      real_metrics: orderedValues(db, "candidate_profile_resume_constraint_metrics", "metric_text", "metric_index"),
+    },
+  };
+  return ProfileSchema.parse(profile);
+}
+
+function experienceRows(db: SqliteDatabase): Array<Record<string, unknown>> {
+  const rows = db.prepare(`
+    SELECT entry_id, date_range, title, company, location
+    FROM candidate_profile_experience_entries
+    WHERE tenant_id = ? AND profile_id = ?
+    ORDER BY position_index, entry_id
+  `).all(TENANT_ID, PROFILE_ID) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: text(row.entry_id),
+    date_range: text(row.date_range),
+    title: text(row.title),
+    company: text(row.company),
+    location: text(row.location),
+    bullets: orderedValues(db, "candidate_profile_experience_bullets", "bullet_text", "bullet_index", "entry_id = ?", [text(row.entry_id)]),
+  }));
+}
+
+function educationRows(db: SqliteDatabase): Array<Record<string, unknown>> {
+  return (db.prepare(`
+    SELECT entry_id, date, degree, institution, location
+    FROM candidate_profile_education_entries
+    WHERE tenant_id = ? AND profile_id = ?
+    ORDER BY position_index, entry_id
+  `).all(TENANT_ID, PROFILE_ID) as Array<Record<string, unknown>>).map((row) => ({
+    id: text(row.entry_id),
+    date: text(row.date),
+    degree: text(row.degree),
+    institution: text(row.institution),
+    location: text(row.location),
+  }));
+}
+
+function skillRows(db: SqliteDatabase): Array<Record<string, unknown>> {
+  const rows = db.prepare(`
+    SELECT category_id, label
+    FROM candidate_profile_skill_categories
+    WHERE tenant_id = ? AND profile_id = ?
+    ORDER BY position_index, category_id
+  `).all(TENANT_ID, PROFILE_ID) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: text(row.category_id),
+    label: text(row.label),
+    items: orderedValues(db, "candidate_profile_skill_items", "item_text", "item_index", "category_id = ?", [text(row.category_id)]),
+  }));
+}
+
+function tailoringRules(db: SqliteDatabase, row: ProfileRow): Record<string, unknown> {
+  return {
+    required_experience_entry_ids: orderedValues(db, "candidate_profile_required_experience_entries", "entry_id", "position_index"),
+    required_education_entry_ids: orderedValues(db, "candidate_profile_required_education_entries", "entry_id", "position_index"),
+    required_skill_category_ids: orderedValues(db, "candidate_profile_required_skill_categories", "category_id", "position_index"),
+    required_bullets_by_experience_id: groupedValues(db, "candidate_profile_required_bullets", "entry_id", "bullet_text", "bullet_index"),
+    required_skills_by_category_id: groupedValues(db, "candidate_profile_required_skills", "category_id", "skill_text", "skill_index"),
+    max_experience_bullets: Number(row.max_experience_bullets ?? 4),
+    custom_tailoring_prompt: stringColumn(row.custom_tailoring_prompt),
+    tailoring_policy: {
+      mode: stringColumn(row.tailoring_mode, "balanced"),
+      allow_title_reframing: Boolean(Number(row.tailoring_allow_title_reframing ?? 0)),
+      allow_achievement_rewriting: Boolean(Number(row.tailoring_allow_achievement_rewriting ?? 1)),
+      allow_skill_reordering: Boolean(Number(row.tailoring_allow_skill_reordering ?? 1)),
+      allow_summary_rewrite: Boolean(Number(row.tailoring_allow_summary_rewrite ?? 1)),
+      allow_minor_inference: Boolean(Number(row.tailoring_allow_minor_inference ?? 0)),
+    },
+    writing_style: {
+      tone: stringColumn(row.writing_tone, "direct"),
+      bullet_style: stringColumn(row.writing_bullet_style, "balanced"),
+      verbosity: stringColumn(row.writing_verbosity, "balanced"),
+      keyword_density: stringColumn(row.writing_keyword_density, "natural"),
+      avoid_first_person: Boolean(Number(row.writing_avoid_first_person ?? 1)),
+    },
+  };
+}
+
+function orderedValues(
+  db: SqliteDatabase,
+  table: string,
+  valueColumn: string,
+  orderColumn: string,
+  extraWhere = "",
+  extraParams: string[] = [],
+): string[] {
+  const where = extraWhere ? ` AND ${extraWhere}` : "";
+  const rows = db.prepare(`
+    SELECT ${valueColumn} AS value
+    FROM ${table}
+    WHERE tenant_id = ? AND profile_id = ?${where}
+    ORDER BY ${orderColumn}
+  `).all(TENANT_ID, PROFILE_ID, ...extraParams) as Array<{ value: unknown }>;
+  return rows.map((row) => text(row.value));
+}
+
+function groupedValues(
+  db: SqliteDatabase,
+  table: string,
+  keyColumn: string,
+  valueColumn: string,
+  orderColumn: string,
+): Record<string, string[]> {
+  const rows = db.prepare(`
+    SELECT ${keyColumn} AS key, ${valueColumn} AS value
+    FROM ${table}
+    WHERE tenant_id = ? AND profile_id = ?
+    ORDER BY ${keyColumn}, ${orderColumn}
+  `).all(TENANT_ID, PROFILE_ID) as Array<{ key: unknown; value: unknown }>;
+  const grouped: Record<string, string[]> = {};
+  for (const row of rows) {
+    const key = text(row.key);
+    grouped[key] = grouped[key] ?? [];
+    grouped[key].push(text(row.value));
+  }
+  return grouped;
+}
+
+function rootValues(
+  profile: ProfileShape,
+  style: Record<string, string | number>,
+  templateText: string,
+  version: number,
+): unknown[] {
+  const personal = record(profile.personal);
+  const work = record(profile.work_authorization);
+  const compensation = record(profile.compensation);
+  const experience = record(profile.experience);
+  const availability = record(profile.availability);
+  const eeo = record(profile.eeo_voluntary);
+  const resume = record(profile.resume);
+  const executive = record(resume.executive_profile);
+  const rules = record(resume.tailoring_rules);
+  const policy = record(rules.tailoring_policy);
+  const writing = record(rules.writing_style);
+
+  return [
+    TENANT_ID,
+    PROFILE_ID,
+    text(personal.full_name),
+    text(personal.preferred_name),
+    text(personal.email),
+    text(personal.phone),
+    text(personal.address),
+    text(personal.city),
+    text(personal.province_state),
+    text(personal.country),
+    text(personal.postal_code),
+    text(personal.linkedin_url),
+    text(personal.github_url),
+    text(personal.portfolio_url),
+    text(personal.website_url),
+    text(personal.password),
+    text(work.legally_authorized_to_work),
+    text(work.require_sponsorship),
+    text(work.work_permit_type),
+    text(compensation.salary_expectation),
+    text(compensation.salary_currency, "USD"),
+    text(compensation.salary_range_min),
+    text(compensation.salary_range_max),
+    text(compensation.currency_conversion_note),
+    text(experience.years_of_experience_total),
+    text(experience.education_level),
+    text(experience.current_job_title),
+    text(experience.current_company),
+    text(experience.target_role),
+    text(availability.earliest_start_date),
+    text(availability.available_for_full_time),
+    text(availability.available_for_contract),
+    text(eeo.gender, "Decline to self-identify"),
+    text(eeo.race_ethnicity, "Decline to self-identify"),
+    text(eeo.veteran_status, "Decline to self-identify"),
+    text(eeo.disability_status, "Decline to self-identify"),
+    text(executive.baseline_text),
+    text(policy.mode, "balanced"),
+    boolInt(policy.allow_title_reframing, false),
+    boolInt(policy.allow_achievement_rewriting, true),
+    boolInt(policy.allow_skill_reordering, true),
+    boolInt(policy.allow_summary_rewrite, true),
+    boolInt(policy.allow_minor_inference, false),
+    text(writing.tone, "direct"),
+    text(writing.bullet_style, "balanced"),
+    text(writing.verbosity, "balanced"),
+    text(writing.keyword_density, "natural"),
+    boolInt(writing.avoid_first_person, true),
+    Number(rules.max_experience_bullets ?? 4),
+    text(rules.custom_tailoring_prompt),
+    style.document_font_size,
+    style.paper_size,
+    style.font_family,
+    style.moderncv_style,
+    style.moderncv_color,
+    style.page_scale,
+    style.hints_column_width_cm,
+    style.body_alignment,
+    templateText,
+    version,
+    new Date().toISOString(),
+  ];
+}
+
+function styleFromRow(row: ProfileRow): Record<string, string | number> {
+  return normalizeStyle({
+    document_font_size: row.resume_style_document_font_size,
+    paper_size: row.resume_style_paper_size,
+    font_family: row.resume_style_font_family,
+    moderncv_style: row.resume_style_moderncv_style,
+    moderncv_color: row.resume_style_moderncv_color,
+    page_scale: row.resume_style_page_scale,
+    hints_column_width_cm: row.resume_style_hints_column_width_cm,
+    body_alignment: row.resume_style_body_alignment,
+  });
+}
+
+function normalizeStyle(value: Record<string, unknown>): Record<string, string | number> {
+  const merged = { ...DEFAULT_STYLE, ...value };
+  return {
+    document_font_size: pickStyle("document_font_size", merged.document_font_size),
+    paper_size: pickStyle("paper_size", merged.paper_size),
+    font_family: pickStyle("font_family", merged.font_family),
+    moderncv_style: pickStyle("moderncv_style", merged.moderncv_style),
+    moderncv_color: pickStyle("moderncv_color", merged.moderncv_color),
+    page_scale: boundedNumber("page_scale", merged.page_scale, 0.7, 1.0),
+    hints_column_width_cm: boundedNumber("hints_column_width_cm", merged.hints_column_width_cm, 1.5, 5.0),
+    body_alignment: pickStyle("body_alignment", merged.body_alignment),
+  };
+}
+
+function pickStyle(key: keyof typeof STYLE_CHOICES, value: unknown): string {
+  const normalized = text(value, String(DEFAULT_STYLE[key]));
+  if (!STYLE_CHOICES[key].has(normalized)) {
+    throw new ProfileInputError(`${key} must be one of: ${[...STYLE_CHOICES[key]].sort().join(", ")}.`);
+  }
+  return normalized;
+}
+
+function boundedNumber(key: string, value: unknown, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new ProfileInputError(`${key} must be a number.`);
+  }
+  if (parsed < min || parsed > max) {
+    throw new ProfileInputError(`${key} must be between ${min} and ${max}.`);
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
+function parseProfileInput(profile: unknown, profileText: string | undefined): ProfileShape {
+  const candidate = parseJsonObjectInput(profile, profileText, "profile data");
+  const validated = ProfileSchema.safeParse(candidate);
+  if (!validated.success) {
+    const issue = validated.error.issues[0];
+    const path = issue?.path.length ? issue.path.join(".") : "profile";
+    throw new ProfileInputError(`profile validation failed at ${path}: ${issue?.message ?? "invalid input"}`);
+  }
+  return validated.data;
+}
+
+function parseJsonObjectInput(value: unknown, textValue: string | undefined, label: string): Record<string, unknown> {
+  let candidate = value;
+  if (textValue !== undefined) {
+    try {
+      candidate = JSON.parse(textValue) as unknown;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "invalid JSON";
+      throw new ProfileInputError(`${label} is not valid JSON: ${message}`);
+    }
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new ProfileInputError(`${label} must be a JSON object.`);
+  }
+  return candidate as Record<string, unknown>;
+}
+
+function getProfileRow(db: SqliteDatabase): ProfileRow | undefined {
+  return db
+    .prepare("SELECT * FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?")
+    .get(TENANT_ID, PROFILE_ID) as ProfileRow | undefined;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asRecordArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
+}
+
+function asTextArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
+}
+
+function text(value: unknown, fallback = ""): string {
+  return value === undefined || value === null ? fallback : String(value);
+}
+
+function stringColumn(value: string | number | null, fallback = ""): string {
+  return value === undefined || value === null || value === "" ? fallback : String(value);
+}
+
+function boolInt(value: unknown, fallback: boolean): number {
+  if (value === undefined || value === null) return fallback ? 1 : 0;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") return ["true", "yes", "y", "1", "on"].includes(value.trim().toLowerCase()) ? 1 : 0;
+  return value ? 1 : 0;
+}

@@ -279,9 +279,10 @@ policies, and writing style preferences.
 
 **Boundary justification:** Profile is a single-user, single-document aggregate
 with its own lifecycle (user edits it independently of any job). Consuming
-contexts need a stable read-only view. *Current pain point addressed:*
-`profile.json` is loaded as a raw dict and threaded through tailor, cover,
-apply, wizard, and profile_import with no invariants enforced (briefing point 8).
+contexts need a stable read-only view. *Historical pain point addressed:*
+legacy `profile.json` was loaded as a raw dict and threaded through tailor,
+cover, apply, wizard, and profile_import with no invariants enforced (briefing
+point 8).
 
 ---
 
@@ -999,11 +1000,11 @@ Playwright for a hosted browser fleet without changing extraction logic.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `ProfileRepository` | `JsonFileProfileRepository` (reads/writes `profile.json`) | `PostgresProfileRepository` (RDS Postgres, keyed by `(tenant_id, profile_id)`) |
+| `ProfileRepository` | `SqliteProfileRepository` (normalized `candidate_profile*` tables; legacy profile/rendering files can seed empty tables once) | `PostgresProfileRepository` (RDS Postgres, keyed by `(tenant_id, profile_id)`) |
 | `PdfParserPort` | `PyPdfAdapter` | `PyPdfAdapter` (same library, runs in worker pod; no cloud service needed) |
 
-**Seam justification:** Profile storage is the simplest migration: `profile.json`
-becomes a Postgres row. The repository port makes this transparent.
+**Seam justification:** Profile storage is isolated behind the repository port:
+local SQLite and hosted Postgres adapters expose the same aggregate contract.
 
 ### 5.4 Scoring Context
 
@@ -1021,7 +1022,7 @@ becomes a Postgres row. The repository port makes this transparent.
 |---|---|---|
 | `LlmPort` | `GeminiAdapter`, `OpenAiAdapter`, `LocalLlmAdapter` | `CloudLlmGatewayAdapter` (see Enrichment; shared gateway service) |
 | `ScoreRepository` | `SqliteScoreRepository` | `PostgresScoreRepository` (RDS Postgres, tenant-scoped) |
-| `ProfileSnapshotPort` | `LocalProfileSnapshotAdapter` (reads profile.json) | `ProfileServiceGrpcClient` (internal **gRPC** call to Profile service; tenant context propagated via gRPC metadata) |
+| `ProfileSnapshotPort` | `LocalProfileSnapshotAdapter` (reads the SQLite-backed Profile repository) | `ProfileServiceGrpcClient` (internal **gRPC** call to Profile service; tenant context propagated via gRPC metadata) |
 
 ### 5.5 Materials Generation Context
 
@@ -1395,7 +1396,7 @@ commands are dispatched to the Python worker via JSON-RPC.
 | `markJobSkipped` | `SkipJobUseCase` (Pipeline Orchestration) | **TS API** | Simple stage state update. |
 | `softDeleteJob` | `DeleteJobUseCase` (Discovery) | **TS API** | Tombstone write. No Python needed. |
 | `restoreJob` | `RestoreJobUseCase` (Discovery) | **TS API** | Tombstone removal. |
-| `updateProfile` | `UpdateProfileUseCase` (Profile) | **TS API** | JSON validation and file write. |
+| `updateProfile` | `UpdateProfileUseCase` (Profile) | **TS API** | Shared schema validation and normalized SQLite write. |
 | pipeline run / discover / enrich / score / tailor / cover / apply | Stage commands via `StageCommandDispatcher` | **Python worker** (via JSON-RPC) | Requires LLM, browser, scraping infrastructure. |
 | profile import from PDF | `ImportProfileUseCase` (Profile) | **Python worker** (via JSON-RPC) | Requires `pypdf` + LLM extraction. |
 
@@ -1422,7 +1423,7 @@ commands go through Temporal instead of subprocess.
 |---|---|---|---|
 | `Job` (Discovery) | `JobRepository` | `jobs` (discovery columns only) | `jobs` (narrowed: jobId, postingUrl, employer, source, title, salary, description, location, discoveredAt) |
 | `JobEnrichment` | `EnrichmentRepository` | `jobs` (enrichment columns) | `job_enrichments` (new: jobId, fullDescription, applicationUrl, extractionTier, enrichedAt, error) |
-| `Profile` | `ProfileRepository` | `profile.json` file | `profile.json` (local) / `profiles` table (hosted) |
+| `Profile` | `ProfileRepository` | `candidate_profiles` + child `candidate_profile_*` tables | `profiles` + child profile tables (hosted) |
 | `JobScore` | `ScoreRepository` | `jobs` (scoring columns) | `job_scores` (new: jobId, version, fitScore, breakdown, keywords, scoredAt, correction) |
 | `MaterialsSet` | `MaterialsRepository` | `jobs` (tailor/cover columns) + `job_artifacts` | `job_materials` (new) + `job_artifacts` (existing, enriched) |
 | `ApplyRun` | `ApplyRunRepository` | `apply_runs` + `apply_run_events` | `apply_runs` + `apply_run_events` (existing, largely correct) |
@@ -1831,7 +1832,7 @@ cloud" (circular), but measurable conditions.
 | In-process synchronous event bus | Transactional outbox + SQS FIFO | Multi-process deployment (> 1 API instance **OR** > 1 worker instance) | In-process dispatch cannot cross process boundaries. The outbox pattern is the minimum viable distributed event bus. |
 | Subprocess JSON-RPC (`uv run jobhunter rpc`) | HTTP JSON-RPC / Temporal activities | Worker fleet > 1 machine **OR** apply queue depth consistently > 10 pending jobs **OR** pipeline run > 30 min (exceeds saga recovery window of subprocess) | Subprocess can't survive host restarts. Temporal provides durable retry. |
 | Local Chrome on CDP ports | Browserbase managed sessions | **Any** cloud deployment | Chrome requires elevated container privileges or `--no-sandbox` (security risk). Browserbase eliminates this entirely. This is a day-1 cloud blocker, not a gradual migration. |
-| `profile.json` file | Postgres `profiles` table | Multi-tenant deployment **OR** concurrent profile editors | Single JSON file has no concurrency control. |
+| SQLite Candidate Profile tables | Postgres `profiles` + child profile tables | Multi-tenant deployment **OR** concurrent profile editors | Local SQLite has a single-writer limit; hosted profile editing needs tenant-scoped concurrency control. |
 | `LocalFilesystemAdapter` (tailored resumes, PDFs) | S3 with tenant-prefixed keys | Multi-node deployment (no shared filesystem) **OR** artifact size > 1 GB per tenant | Local filesystem doesn't span nodes. |
 | macOS Keychain / `.env` | AWS Secrets Manager | Non-macOS deployment **OR** multi-tenant **OR** credential rotation requirement | Keychain is macOS-only. `.env` is unencrypted. |
 | `TenantId = "local"` (constant) | `TenantId` from JWT claims | Multi-tenant deployment | Domain types already carry `TenantId`. Only the source of the value changes (constant → JWT). Mechanical change. |

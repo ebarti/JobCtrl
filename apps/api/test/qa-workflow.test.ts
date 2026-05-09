@@ -201,7 +201,10 @@ describe("seeded local QA workflow", () => {
       payload: { profileText: JSON.stringify(profileDraft, null, 2) },
     });
     expect(updateProfile.statusCode, updateProfile.body).toBe(200);
-    expect(JSON.parse(fs.readFileSync(workspace.profilePath, "utf8")).personal.full_name).toBe("QA Candidate Edited");
+    const profileAfterUpdate = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
+    expect(profileAfterUpdate.json().profile.personal.full_name).toBe("QA Candidate Edited");
+    expect(JSON.parse(fs.readFileSync(workspace.profilePath, "utf8")).personal.full_name).toBe("QA Candidate");
 
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);

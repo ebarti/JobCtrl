@@ -6,30 +6,22 @@ import type {
   DeleteJobRequest,
   JobMutationResponse,
   MarkJobActionRequest,
-  ProfileConfigResponse,
-  ProfileUpdateRequest,
   SettingsResponse,
   SettingsUpdateRequest,
   Stage,
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { ProfileSchema, STAGES } from "./contracts.js";
+import { STAGES } from "./contracts.js";
 import {
   isValidTransition,
   deserializeStageStateKind,
   type StageStateKind,
 } from "@jobhunter/domain-types";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
-import { matchingJobKeys, readProfileConfig, readSettingsConfig } from "./read-model.js";
+import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
 
 export class InputError extends Error {}
-
-interface ProfilePaths {
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
-}
 
 const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   discover: 1,
@@ -297,49 +289,6 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
   });
   transaction(jobKeys);
   return { ok: true, count: jobKeys.length, jobKeys };
-}
-
-export function writeProfileConfig(paths: ProfilePaths, request: ProfileUpdateRequest): ProfileConfigResponse {
-  let wrote = false;
-  let profile: Record<string, unknown> | undefined;
-  let style: Record<string, unknown> | undefined;
-  let templateText: string | undefined;
-
-  if (request.profile !== undefined || request.profileText !== undefined) {
-    const candidate = parseJsonObjectInput(request.profile, request.profileText, "profile.json");
-    const validated = ProfileSchema.safeParse(candidate);
-    if (!validated.success) {
-      const issue = validated.error.issues[0];
-      const path = issue?.path.length ? issue.path.join(".") : "profile";
-      throw new InputError(`profile.json validation failed at ${path}: ${issue?.message ?? "invalid input"}`);
-    }
-    profile = validated.data as Record<string, unknown>;
-    wrote = true;
-  }
-  if (request.style !== undefined || request.styleText !== undefined) {
-    style = parseJsonObjectInput(request.style, request.styleText, "resume_style.json");
-    wrote = true;
-  }
-  if (request.templateText !== undefined) {
-    if (!request.templateText.trim()) {
-      throw new InputError("resume_template.tex cannot be empty.");
-    }
-    templateText = request.templateText;
-    wrote = true;
-  }
-  if (!wrote) {
-    throw new InputError("At least one profile, style, or template field is required.");
-  }
-  if (profile !== undefined) {
-    writeJson(paths.profilePath, profile);
-  }
-  if (style !== undefined) {
-    writeJson(paths.resumeStylePath, style);
-  }
-  if (templateText !== undefined) {
-    writeText(paths.resumeTemplatePath, templateText);
-  }
-  return readProfileConfig(paths);
 }
 
 export function writeSettingsConfig(paths: { settingsPath: string }, request: SettingsUpdateRequest): SettingsResponse {

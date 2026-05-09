@@ -48,8 +48,7 @@ export function StructuredProfileEditor({
   if (!profile || !style) {
     return (
       <div className="banner inline">
-        The structured editor needs valid JSON. Switch to source, fix the invalid file, then return
-        to fields.
+        The structured editor needs valid profile data. Reload the profile after fixing the saved data.
       </div>
     );
   }

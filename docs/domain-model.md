@@ -40,6 +40,9 @@ writing style.
 - **Domain events:** `ProfileUpdated`, `ProfileImported`
 - **Code:** `workers/automation/src/jobhunter/domain/profile/`,
   `workers/automation/src/jobhunter/infrastructure/profile/`
+- **Local adapter:** `SqliteProfileRepository` stores the aggregate in
+  normalized `candidate_profile*` tables and can seed them once from legacy
+  profile/rendering files when empty.
 
 ### Scoring (§3.4, §4.4)
 

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 interface ProfileImportState {
   filename: string;
@@ -18,6 +18,37 @@ const initialState = {
   importStyle: true,
 };
 
+function createMemoryStorage(): StateStorage {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: (key) => {
+      values.delete(key);
+    },
+  };
+}
+
+const fallbackStorage = createMemoryStorage();
+
+function getStorage(): StateStorage {
+  if (typeof window === "undefined") {
+    return fallbackStorage;
+  }
+  const storage = window.localStorage as Partial<StateStorage> | undefined;
+  if (
+    storage &&
+    typeof storage.getItem === "function" &&
+    typeof storage.setItem === "function" &&
+    typeof storage.removeItem === "function"
+  ) {
+    return storage as StateStorage;
+  }
+  return fallbackStorage;
+}
+
 export const useProfileImportStore = create<ProfileImportState>()(
   persist(
     (set) => ({
@@ -28,6 +59,7 @@ export const useProfileImportStore = create<ProfileImportState>()(
     }),
     {
       name: "jh:profile-import",
+      storage: createJSONStorage(getStorage),
       version: 1,
     },
   ),
