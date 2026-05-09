@@ -481,6 +481,7 @@ export function StructuredProfileEditor({
       workModel: workModels[index] ?? "",
     }));
     const locationFocusKey = (index: number) => `${locationPath}:location:${index}`;
+    const workModelOptions = ["Remote", "Hybrid", "On-site"];
 
     const updateRows = (nextRows: Array<{ location: string; workModel: string }>) => {
       updateProfileDraft((draft) => {
@@ -499,6 +500,17 @@ export function StructuredProfileEditor({
     const appendRow = () => {
       focusAfterDraftUpdate(locationFocusKey(rows.length));
       updateRows([...rows, { location: "", workModel: "" }]);
+    };
+    const toggleWorkModel = (index: number, value: string, checked: boolean) => {
+      const selected = new Set(commaListAt(rows[index]?.workModel ?? ""));
+      if (checked) {
+        selected.add(value);
+      } else {
+        selected.delete(value);
+      }
+      const next = [...rows];
+      next[index] = { ...next[index], workModel: Array.from(selected).join(", ") };
+      updateRows(next);
     };
 
     return (
@@ -525,27 +537,22 @@ export function StructuredProfileEditor({
                   insertRowAfter(index, { location: event.currentTarget.value });
                 }}
               />
-              <select
-                aria-label={`Target work model ${index + 1}`}
-                value={row.workModel}
-                onChange={(event) => {
-                  const next = [...rows];
-                  next[index] = { ...row, workModel: event.target.value };
-                  updateRows(next);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") {
-                    return;
-                  }
-                  event.preventDefault();
-                  insertRowAfter(index, { workModel: event.currentTarget.value });
-                }}
-              >
-                <option value="">Work model</option>
-                <option value="Remote">Remote</option>
-                <option value="Hybrid">Hybrid</option>
-                <option value="On-site">On-site</option>
-              </select>
+              <fieldset className="target-work-model-group" aria-label={`Target work model ${index + 1}`}>
+                {workModelOptions.map((value) => {
+                  const checkboxId = `target-work-model-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+                  return (
+                    <label className="target-work-model-option" key={value} htmlFor={checkboxId}>
+                      <input
+                        id={checkboxId}
+                        type="checkbox"
+                        checked={commaListAt(row.workModel).includes(value)}
+                        onChange={(event) => toggleWorkModel(index, value, event.target.checked)}
+                      />
+                      <span>{value}</span>
+                    </label>
+                  );
+                })}
+              </fieldset>
               <button
                 className="icon-button"
                 type="button"
@@ -1082,4 +1089,11 @@ function delimitedListAt(value: string): string[] {
     return [""];
   }
   return withoutLegacyLabel.split(";").map((item) => item.trim());
+}
+
+function commaListAt(value: string): string[] {
+  if (!value.trim()) {
+    return [];
+  }
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
 }

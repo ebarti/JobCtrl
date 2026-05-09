@@ -1241,13 +1241,39 @@ textarea {
 
 .target-location-model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.9fr) auto;
   gap: 8px;
   align-items: center;
 }
 
 .target-location-model-row .icon-button {
   grid-area: auto;
+}
+
+.target-work-model-group {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.target-work-model-option {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 6px 9px;
+  color: var(--muted);
+}
+
+.target-work-model-option input {
+  width: auto;
 }
 
 .skill-row {
@@ -1515,7 +1541,11 @@ textarea {
   }
 
   .target-location-model-row {
-    grid-template-columns: minmax(0, 1fr) minmax(108px, 132px) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .target-work-model-group {
+    grid-column: 1 / -1;
   }
 
   .drawer {

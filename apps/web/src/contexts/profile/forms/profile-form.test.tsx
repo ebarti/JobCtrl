@@ -86,7 +86,9 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("heading", { name: "Target search" })).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target location 1")).toBeInTheDocument();
-    expect(screen.getByLabelText("Target work model 1")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Remote")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hybrid")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 
@@ -106,7 +108,18 @@ describe("<ProfileForm>", () => {
     await user.type(await screen.findByLabelText("Target location 1"), "Barcelona{Enter}");
 
     expect(screen.getByLabelText("Target location 2")).toHaveFocus();
-    expect(screen.getByLabelText("Target work model 2")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Target work model 2" })).toBeInTheDocument();
+  });
+
+  it("allows multiple work models for a target location", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+
+    await user.click(await screen.findByLabelText("Remote"));
+    await user.click(screen.getByLabelText("Hybrid"));
+
+    expect(screen.getByLabelText("Remote")).toBeChecked();
+    expect(screen.getByLabelText("Hybrid")).toBeChecked();
   });
 
   it("clamps max bullets to the allowed positive range", async () => {
