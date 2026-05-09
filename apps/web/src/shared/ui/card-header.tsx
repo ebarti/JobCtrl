@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
+
 export interface CardHeaderProps {
   title: string;
-  meta?: string;
+  meta?: ReactNode;
 }
 
 export function CardHeader({ title, meta }: CardHeaderProps) {

@@ -101,6 +101,16 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Target roles 2")).toHaveFocus();
   });
 
+  it("preserves spaces while editing target roles", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+
+    const input = await screen.findByLabelText("Target roles 1");
+    await user.type(input, "Director of Engineering");
+
+    expect(input).toHaveValue("Director of Engineering");
+  });
+
   it("adds and focuses the next target location with Enter", async () => {
     const user = userEvent.setup();
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
