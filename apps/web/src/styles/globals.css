@@ -1186,6 +1186,25 @@ textarea {
   gap: 8px;
 }
 
+.inline-list-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inline-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .skill-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

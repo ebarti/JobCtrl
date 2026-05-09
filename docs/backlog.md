@@ -189,6 +189,10 @@ Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
   renderer. The spike should compare PDF fidelity, browser preview quality,
   editable profile UX, local packaging, performance, generated artifact
   compatibility, and migration cost.
+- Auto-suggest target roles in the Profile preferences editor based on the
+  candidate's experience entries, current title, and imported resume text.
+  Keep suggestions optional and user-editable so the target-role list remains
+  explicit profile data.
 - Add React component tests for persisted profile field save/discard
   behavior. `apps/web/src/contexts/profile/forms/` only has `*.a11y.test.tsx`
   files today (axe-only); the `useUpdateProfileMutation` /

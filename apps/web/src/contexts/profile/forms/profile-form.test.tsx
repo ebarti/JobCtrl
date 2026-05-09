@@ -83,13 +83,13 @@ describe("<ProfileForm>", () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
 
     expect(await screen.findByRole("heading", { name: "Application defaults" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Target preferences" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Target role")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Target roles" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 
   it("clamps max bullets to the allowed positive range", async () => {
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />);
     const input = await screen.findByLabelText("Max bullets per role");
 
     fireEvent.change(input, { target: { value: "-1" } });

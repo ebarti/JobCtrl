@@ -373,6 +373,46 @@ export function StructuredProfileEditor({
     </label>
   );
 
+  const delimitedListField = (path: string, label: string, addLabel: string) => {
+    const values = delimitedListAt(textAt(profile, path));
+    const updateValues = (next: string[]) => {
+      updateProfilePath(path, next.join("; "));
+    };
+    return (
+      <div className="field wide inline-list-field">
+        <span>{label}</span>
+        <div className="inline-list">
+          {values.map((value, index) => (
+            <div className="inline-list-row" key={`${path}-${index}`}>
+              <input
+                aria-label={`${label} ${index + 1}`}
+                value={value}
+                onChange={(event) => {
+                  const next = [...values];
+                  next[index] = event.target.value;
+                  updateValues(next);
+                }}
+              />
+              <button
+                className="icon-button"
+                type="button"
+                aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}
+                title="Remove"
+                onClick={() => updateValues(values.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+          <button className="tab add-bullet" type="button" onClick={() => updateValues([...values, ""])}>
+            <Plus size={14} aria-hidden="true" />
+            {addLabel}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const styleSelect = (path: string, label: string, options: Array<[string, string]>) => (
     <label className="field">
       <span>{label}</span>
@@ -449,9 +489,16 @@ export function StructuredProfileEditor({
               {textField("experience.education_level", "Education level")}
               {textField("experience.current_job_title", "Current job title")}
               {textField("experience.current_company", "Current company")}
+              {textField(
+                "resume.tailoring_rules.max_experience_bullets",
+                "Max bullets per role",
+                "number",
+                { min: 1, max: 99, step: 1 },
+              )}
             </div>
             <div className="field-grid one">
               {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
+              {listField("resume_constraints.real_metrics", "Verified resume metrics")}
             </div>
           </section>
 
@@ -753,18 +800,9 @@ export function StructuredProfileEditor({
           </section>
 
           <section className="form-section">
-            <h3>Target preferences</h3>
-            <div className="field-grid">
-              {textField("experience.target_role", "Target role")}
-              {textField(
-                "resume.tailoring_rules.max_experience_bullets",
-                "Max bullets per role",
-                "number",
-                { min: 1, max: 99, step: 1 },
-              )}
-            </div>
+            <h3>Target roles</h3>
             <div className="field-grid one">
-              {listField("resume_constraints.real_metrics", "Real metrics the AI may reuse")}
+              {delimitedListField("experience.target_role", "Target roles", "add role")}
             </div>
           </section>
 
@@ -878,4 +916,12 @@ export function StructuredProfileEditor({
       )}
     </div>
   );
+}
+
+function delimitedListAt(value: string): string[] {
+  const withoutLegacyLabel = value.replace(/^\s*Target roles?:\s*/i, "");
+  if (!withoutLegacyLabel.trim()) {
+    return [""];
+  }
+  return withoutLegacyLabel.split(";").map((item) => item.trim());
 }
