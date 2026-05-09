@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# scripts/dev — JobHunter local dev fleet launcher.
+#
+# Daemonizes api / web / worker into background processes, tracks each by
+# PID file under .dev/pids/, captures stdout+stderr to .dev/logs/, and
+# exposes individual start/stop/restart/logs so you can bounce one
+# without nuking the others.
+#
+# Usage:
+#   scripts/dev start [name...]    Start named processes (or all if none given)
+#   scripts/dev stop  [name...]    Stop named (or all)
+#   scripts/dev restart [name...]  Stop then start
+#   scripts/dev status             Show pid + alive state for all known
+#   scripts/dev logs <name>        tail -f the log file for one process
+#   scripts/dev list               Print the process registry
+#   scripts/dev help               Show this message
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEV_DIR="$ROOT/.dev"
+PID_DIR="$DEV_DIR/pids"
+LOG_DIR="$DEV_DIR/logs"
+mkdir -p "$PID_DIR" "$LOG_DIR"
+
+# Process registry. To add a process: extend `process_names` and add a
+# matching arm in `process_command`.
+process_names() { echo "api web worker"; }
+
+process_command() {
+  case "$1" in
+    api)    echo "pnpm --filter @jobhunter/api dev" ;;
+    web)    echo "pnpm --filter @jobhunter/web dev" ;;
+    worker) echo "uv --project workers/automation run jobhunter worker" ;;
+    *)      return 1 ;;
+  esac
+}
+
+is_known() { process_command "$1" >/dev/null 2>&1; }
+
+pid_file()  { echo "$PID_DIR/$1.pid"; }
+log_file()  { echo "$LOG_DIR/$1.log"; }
+
+read_pid() {
+  local f
+  f=$(pid_file "$1")
+  [[ -f "$f" ]] || return 1
+  cat "$f"
+}
+
+is_running() {
+  local pid
+  pid=$(read_pid "$1") || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+# Recursive process-tree kill. tsx-watch, vite, and `uv run` all spawn
+# children — killing only the wrapper PID would leave node/python
+# zombies bound to the dev ports.
+kill_tree() {
+  local pid="$1" sig="${2:-TERM}"
+  local children
+  children=$(pgrep -P "$pid" 2>/dev/null || true)
+  for child in $children; do
+    kill_tree "$child" "$sig"
+  done
+  kill "-$sig" "$pid" 2>/dev/null || true
+}
+
+# Load $ROOT/.env into the current shell so spawned children inherit
+# secrets (Langfuse keys, Gemini keys, etc.). Node and Python do not
+# auto-source .env at startup — leaving this off would silently disable
+# observability in the dev fleet.
+load_env_file() {
+  [[ -f "$ROOT/.env" ]] || return 0
+  set -a
+  # shellcheck disable=SC1090,SC1091
+  source "$ROOT/.env"
+  set +a
+}
+
+start_one() {
+  local name="$1"
+  if ! is_known "$name"; then
+    echo "dev: unknown process '$name' (try: $(process_names))" >&2
+    return 1
+  fi
+  if is_running "$name"; then
+    echo "$name: already running (pid $(read_pid "$name"))"
+    return 0
+  fi
+  rm -f "$(pid_file "$name")"
+  local cmd log
+  cmd=$(process_command "$name")
+  log=$(log_file "$name")
+  : > "$log"
+  # Use `nohup` so the child survives the launching shell; `bash -c`
+  # gives the command a single PID we can track and tree-kill later.
+  ( cd "$ROOT" && nohup bash -c "exec $cmd" >>"$log" 2>&1 ) &
+  local pid=$!
+  disown "$pid" 2>/dev/null || true
+  echo "$pid" > "$(pid_file "$name")"
+  echo "$name: started (pid $pid, logs $log)"
+}
+
+stop_one() {
+  local name="$1"
+  if ! is_known "$name"; then
+    echo "dev: unknown process '$name'" >&2
+    return 1
+  fi
+  if ! is_running "$name"; then
+    rm -f "$(pid_file "$name")"
+    echo "$name: not running"
+    return 0
+  fi
+  local pid
+  pid=$(read_pid "$name")
+  kill_tree "$pid" TERM
+  # Wait up to 5s for graceful shutdown before SIGKILL.
+  local i
+  for i in $(seq 1 50); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill_tree "$pid" KILL
+  fi
+  rm -f "$(pid_file "$name")"
+  echo "$name: stopped"
+}
+
+cmd_start() {
+  load_env_file
+  local targets=("$@")
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    for n in $(process_names); do targets+=("$n"); done
+  fi
+  for n in "${targets[@]}"; do start_one "$n"; done
+}
+
+cmd_stop() {
+  local targets=("$@")
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    for n in $(process_names); do targets+=("$n"); done
+  fi
+  for n in "${targets[@]}"; do stop_one "$n"; done
+}
+
+cmd_restart() {
+  cmd_stop "$@"
+  cmd_start "$@"
+}
+
+cmd_status() {
+  printf "%-10s %-8s %-8s %s\n" NAME STATE PID LOG
+  for n in $(process_names); do
+    local state pid log
+    if is_running "$n"; then
+      state="up"
+      pid=$(read_pid "$n")
+    else
+      state="down"
+      pid="-"
+    fi
+    log=$(log_file "$n")
+    printf "%-10s %-8s %-8s %s\n" "$n" "$state" "$pid" "$log"
+  done
+}
+
+cmd_logs() {
+  local name="${1:-}"
+  if [[ -z "$name" ]]; then
+    echo "dev: logs requires a process name (try: $(process_names))" >&2
+    exit 2
+  fi
+  if ! is_known "$name"; then
+    echo "dev: unknown process '$name'" >&2
+    exit 2
+  fi
+  local log
+  log=$(log_file "$name")
+  [[ -f "$log" ]] || : > "$log"
+  exec tail -F "$log"
+}
+
+cmd_list() {
+  for n in $(process_names); do
+    printf "%-10s %s\n" "$n" "$(process_command "$n")"
+  done
+}
+
+cmd_help() {
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+main() {
+  local sub="${1:-help}"
+  shift || true
+  case "$sub" in
+    start)   cmd_start "$@" ;;
+    stop)    cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
+    status)  cmd_status ;;
+    logs)    cmd_logs "$@" ;;
+    list)    cmd_list ;;
+    help|-h|--help) cmd_help ;;
+    *) echo "dev: unknown command '$sub'" >&2; cmd_help; exit 2 ;;
+  esac
+}
+
+main "$@"

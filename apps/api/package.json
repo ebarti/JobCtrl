@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "check": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run test",
