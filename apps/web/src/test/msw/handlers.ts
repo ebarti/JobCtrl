@@ -72,6 +72,20 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/actions/mark-skipped", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "mark_skipped")),
   ),
+  http.post("*/v1/pipeline/actions/run-stage", async ({ request }) => {
+    const body = (await request.json()) as { stages?: string[] };
+    return HttpResponse.json({
+      ok: true,
+      action: "run_stage",
+      status: "queued",
+      jobKey: "pipeline",
+      count: body.stages?.length ?? 0,
+      command: body,
+      actions: (body.stages ?? []).map((stage) =>
+        actionRunResponse("pipeline", stage === "apply" ? "apply" : "run_stage"),
+      ),
+    });
+  }),
 
   http.get("*/v1/workflow-runs", () => HttpResponse.json(makeWorkflowRunsPage())),
 

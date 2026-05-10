@@ -492,7 +492,7 @@ export function StructuredProfileEditor({
     const insertRowAfter = (index: number, rowPatch: Partial<{ location: string; workModel: string }>) => {
       const insertionIndex = index + 1;
       const next = [...rows];
-      next[index] = { ...next[index], ...rowPatch };
+      next[index] = { ...(next[index] ?? { location: "", workModel: "" }), ...rowPatch };
       next.splice(insertionIndex, 0, { location: "", workModel: "" });
       focusAfterDraftUpdate(locationFocusKey(insertionIndex));
       updateRows(next);
@@ -509,7 +509,10 @@ export function StructuredProfileEditor({
         selected.delete(value);
       }
       const next = [...rows];
-      next[index] = { ...next[index], workModel: Array.from(selected).join(", ") };
+      next[index] = {
+        ...(next[index] ?? { location: "", workModel: "" }),
+        workModel: Array.from(selected).join(", "),
+      };
       updateRows(next);
     };
 

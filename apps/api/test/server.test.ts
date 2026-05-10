@@ -968,6 +968,114 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("dispatches global pipeline stage runs with shared stage options and safe apply defaults", async () => {
+    const dispatch = vi.fn(async (command) => ({
+      status: "queued",
+      runId: `run-${command.stage}`,
+      actionId: `act-${command.stage}`,
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: {
+        stages: ["score", "tailor", "apply"],
+        limit: 12,
+        workers: 3,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: true,
+        rescore: true,
+        retailor: true,
+        headless: true,
+        model: "sonnet",
+        continuous: true,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "run_stage",
+      status: "queued",
+      jobKey: "pipeline",
+      count: 3,
+      actions: [
+        {
+          action: "run_stage",
+          status: "queued",
+          jobKey: "pipeline",
+          command: {
+            action: "run_stage",
+            jobKey: "pipeline",
+            stage: "score",
+            limit: 12,
+            workers: 3,
+            minScore: 8,
+            validationMode: "strict",
+            dryRun: true,
+            rescore: true,
+          },
+        },
+        {
+          action: "run_stage",
+          command: {
+            stage: "tailor",
+            retailor: true,
+          },
+        },
+        {
+          action: "apply",
+          command: {
+            action: "apply",
+            stage: "apply",
+            dryRun: true,
+            headless: true,
+            model: "sonnet",
+            continuous: true,
+          },
+        },
+      ],
+    });
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatch).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ action: "apply", stage: "apply", dryRun: true, jobKey: "pipeline" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("defaults global apply stage starts to dry-run when dryRun is omitted", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", runId: "run-apply" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["apply"] },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      actions: [{ action: "apply", command: { dryRun: true, limit: 25, workers: 1, minScore: 7 } }],
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "pipeline" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
   it("marks jobs applied and skipped through structured actions", async () => {
     const app = buildApp(options);
     const appliedKey = encodeURIComponent("https://example.com/jobs/ready");

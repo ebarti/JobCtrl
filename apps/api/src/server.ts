@@ -10,6 +10,8 @@ import {
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
   CancelJobActionRequestSchema,
+  PIPELINE_ACTION_JOB_KEY,
+  type PipelineStageRunResponse,
   CredentialKeys,
   CredentialUpdateRequestSchema,
   DeleteJobRequestSchema,
@@ -21,6 +23,7 @@ import {
   ProfileImportRequestSchema,
   ProfileUpdateRequestSchema,
   RetryStageRequestSchema,
+  RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
@@ -129,6 +132,54 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
   );
+
+  app.post("/v1/pipeline/actions/run-stage", async (request, reply) => {
+    const body = parseBody(reply, RunPipelineStagesRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    const actions = [];
+    for (const stage of body.stages) {
+      const command: ActionCommandPayload =
+        stage === "apply"
+          ? {
+              action: "apply" as const,
+              jobKey: PIPELINE_ACTION_JOB_KEY,
+              stage,
+              limit: body.limit,
+              workers: body.workers,
+              minScore: body.minScore,
+              dryRun: body.dryRun,
+              headless: body.headless,
+              model: body.model,
+              continuous: body.continuous,
+            }
+          : {
+              action: "run_stage" as const,
+              jobKey: PIPELINE_ACTION_JOB_KEY,
+              stage,
+              limit: body.limit,
+              workers: body.workers,
+              minScore: body.minScore,
+              validationMode: body.validationMode,
+              dryRun: body.dryRun,
+              rescore: body.rescore,
+              retailor: body.retailor,
+            };
+      const dispatch = await actionDispatcher(command, actionContext);
+      actions.push(buildActionResponse(command, dispatch));
+    }
+    void reply.code(202);
+    return {
+      ok: true,
+      action: "run_stage",
+      status: actions.every((action) => action.status === "queued") ? "queued" : "accepted",
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+      count: actions.length,
+      command: body,
+      actions,
+    } satisfies PipelineStageRunResponse;
+  });
 
   app.get("/v1/jobs", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),

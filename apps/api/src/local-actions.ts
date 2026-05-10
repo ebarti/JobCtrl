@@ -22,7 +22,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import type { ActionCommandPayload, ActionRunResponse, RpcMethod } from "./contracts.js";
+import {
+  PIPELINE_ACTION_JOB_KEY,
+  type ActionCommandPayload,
+  type ActionRunResponse,
+  type RpcMethod,
+} from "./contracts.js";
 import { ProfileSchema } from "./contracts.js";
 import {
   getDefaultJsonRpcDispatcher,
@@ -250,6 +255,10 @@ interface RpcCall {
 }
 
 function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
+  if (command.action === "run_stage") {
+    if (!command.stage) return null;
+    return { method: "run_stage", params: runStageRpcParams(command) };
+  }
   if (command.action === "retry_stage") {
     if (!command.stage || !command.runAfter) return null;
     if (command.stage === "apply") {
@@ -276,15 +285,39 @@ function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
   return null;
 }
 
-function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> {
-  return {
+function runStageRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+  const params: Record<string, unknown> = {
     tenantId: "local",
-    jobUrl: command.jobKey,
+    stage: command.stage,
+    limit: command.limit ?? 25,
+    workers: command.workers ?? 1,
+    minScore: command.minScore ?? 7,
+    validationMode: command.validationMode ?? "normal",
+    dryRun: command.dryRun ?? false,
+    rescore: Boolean(command.rescore),
+    retailor: Boolean(command.retailor),
+  };
+  if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
+    params.jobUrl = command.jobKey;
+  }
+  return params;
+}
+
+function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    tenantId: "local",
     limit: command.limit ?? 1,
+    workers: command.workers ?? 1,
+    minScore: command.minScore ?? 7,
     model: command.model ?? "haiku",
     dryRun: command.dryRun !== false,
     headless: Boolean(command.headless),
+    continuous: Boolean(command.continuous),
   };
+  if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
+    params.jobUrl = command.jobKey;
+  }
+  return params;
 }
 
 function extractRunId(result: unknown): string | null {

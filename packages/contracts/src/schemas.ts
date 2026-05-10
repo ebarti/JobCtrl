@@ -2,9 +2,12 @@ import { z } from "zod";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "pdf", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
+export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 
 export const MATERIAL_STAGES = ["tailor", "cover", "pdf"] as const;
 export type MaterialStage = (typeof MATERIAL_STAGES)[number];
+export const PIPELINE_VALIDATION_MODES = ["strict", "normal", "lenient"] as const;
+export type PipelineValidationMode = (typeof PIPELINE_VALIDATION_MODES)[number];
 
 export const STAGE_STATES = [
   "pending",
@@ -75,6 +78,27 @@ export const ApplyJobRequestSchema = z
   })
   .strict();
 export type ApplyJobRequest = z.infer<typeof ApplyJobRequestSchema>;
+
+export const RunPipelineStagesRequestSchema = z
+  .object({
+    stages: z.array(z.enum(STAGES)).min(1).max(STAGES.length),
+    limit: z.coerce.number().int().min(1).max(500).default(25),
+    workers: z.coerce.number().int().min(1).max(16).default(1),
+    minScore: z.coerce.number().int().min(0).max(10).default(7),
+    validationMode: z.enum(PIPELINE_VALIDATION_MODES).default("normal"),
+    dryRun: z.boolean().default(true),
+    rescore: z.boolean().default(false),
+    retailor: z.boolean().default(false),
+    headless: z.boolean().default(false),
+    model: z.string().trim().min(1).max(80).default("haiku"),
+    continuous: z.boolean().default(false),
+  })
+  .strict()
+  .refine((value) => new Set(value.stages).size === value.stages.length, {
+    message: "stages must be unique.",
+    path: ["stages"],
+  });
+export type RunPipelineStagesRequest = z.infer<typeof RunPipelineStagesRequestSchema>;
 
 export const CancelJobActionRequestSchema = z
   .object({
@@ -604,6 +628,7 @@ export interface ProfileImportResponse {
 
 export interface ActionCommandPayload {
   action:
+    | "run_stage"
     | "retry_stage"
     | "generate_materials"
     | "apply"
@@ -618,8 +643,14 @@ export interface ActionCommandPayload {
   runAfter?: boolean;
   dryRun?: boolean;
   limit?: number;
+  workers?: number;
+  minScore?: number;
+  validationMode?: PipelineValidationMode;
+  rescore?: boolean;
+  retailor?: boolean;
   model?: string;
   headless?: boolean;
+  continuous?: boolean;
   runId?: string;
   reason?: string;
 }
@@ -634,6 +665,18 @@ export interface ActionRunResponse {
   command: ActionCommandPayload;
   stage?: StageSummary;
   result?: unknown;
+  eventCursor?: string | null;
+  message?: string;
+}
+
+export interface PipelineStageRunResponse {
+  ok: true;
+  action: "run_stage";
+  status: string;
+  jobKey: typeof PIPELINE_ACTION_JOB_KEY;
+  count: number;
+  command: RunPipelineStagesRequest;
+  actions: ActionRunResponse[];
   eventCursor?: string | null;
   message?: string;
 }

@@ -123,7 +123,9 @@ describe("<ProfileForm>", () => {
   });
 
   it("clamps max bullets to the allowed positive range", async () => {
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />);
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
+      withRouter: true,
+    });
     const input = await screen.findByLabelText("Max bullets per role");
 
     fireEvent.change(input, { target: { value: "-1" } });

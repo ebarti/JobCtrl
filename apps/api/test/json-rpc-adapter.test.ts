@@ -87,6 +87,78 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(result.status).toBe("queued");
   });
 
+  it("maps a global run-stage action to the run_stage RPC method", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        stage: "score",
+        limit: 20,
+        workers: 4,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: true,
+        rescore: true,
+        retailor: false,
+      },
+      { appDir: "/tmp" },
+    );
+
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toEqual({
+      method: "run_stage",
+      params: {
+        tenantId: "local",
+        stage: "score",
+        limit: 20,
+        workers: 4,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: true,
+        rescore: true,
+        retailor: false,
+      },
+    });
+    expect(result).toMatchObject({ status: "queued" });
+  });
+
+  it("maps a global apply action without passing the pipeline command key as a jobUrl", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "apply",
+        jobKey: "pipeline",
+        stage: "apply",
+        limit: 10,
+        workers: 2,
+        minScore: 9,
+        dryRun: true,
+        model: "sonnet",
+        headless: true,
+        continuous: true,
+      },
+      { appDir: "/tmp" },
+    );
+
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]?.method).toBe("apply");
+    expect(fake.calls[0]?.params).toEqual({
+      tenantId: "local",
+      limit: 10,
+      workers: 2,
+      minScore: 9,
+      dryRun: true,
+      model: "sonnet",
+      headless: true,
+      continuous: true,
+    });
+  });
+
   it("returns reset for retry_stage without runAfter (no RPC call)", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);

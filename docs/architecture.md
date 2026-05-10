@@ -182,7 +182,7 @@ truth per fact; components consume state through hooks (never raw stores or the
 | `scoring/` | `<ScoreBadge>`, `<ScoreBreakdown>`; future `useCorrectScoreMutation`. | Scoring |
 | `materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation`, generate / open buttons. | Materials Generation |
 | `apply/` | `useApplyJobMutation`, `useDryRunApplyMutation`, `useCancelApplyMutation`, `<ApplyButton>`, `<DryRunButton>`, `<ApplyRunBadge>`, `<ApplyRunTimeline>`, `<ApplyHistory>`. | Apply Automation |
-| `pipeline/` | `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`, `<StageBadge>`, `<StageTimeline>`, `<JobActions>`. | Pipeline Orchestration |
+| `pipeline/` | `useRunPipelineStagesMutation`, `useRetryStageMutation`, `useCancelStageMutation`, `useMarkAppliedMutation`, `useMarkSkippedMutation`, `<StageTriggerPanel>`, `<StageBadge>`, `<StageTimeline>`, `<JobActions>`. | Pipeline Orchestration |
 | `operations/` | All projection-typed read hooks (`useDashboardSummaryQuery`, `useJobsListQuery`, `useJobDetailQuery`, `useArtifactsListQuery`, `useArtifactDetailQuery`, `useApplyRunsListQuery`, `useApplyRunQuery`); query-key registry; SSE subscription; invalidation router. | Operations / Read-Side |
 
 `views/dashboard/`, `views/jobs/`, and `views/artifacts/` are **composers, not
@@ -305,6 +305,7 @@ Current responsibilities:
 - resume PDF import draft endpoint (via JSON-RPC `profile_import`)
 - structured job action endpoints for retry, material generation, dry-run apply,
   cancel, mark-applied, mark-skipped
+- global/batch pipeline stage actions via `POST /v1/pipeline/actions/run-stage`
 - pagination, filtering, and global sorting
 - read-model projection refresh on every request
 

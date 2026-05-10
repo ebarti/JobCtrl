@@ -23,7 +23,9 @@ import type {
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
+  PipelineStageRunResponse,
   RetryStageRequest,
+  RunPipelineStagesRequest,
   SettingsResponse,
   SettingsUpdateRequest,
   WorkflowRunSummary,
@@ -60,6 +62,7 @@ export interface ApiClientPort {
 
   settings(): Promise<SettingsResponse>;
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse>;
+  runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse>;
 
   credentials(): Promise<CredentialsResponse>;
   updateCredential(body: CredentialUpdateRequest): Promise<CredentialsResponse>;
