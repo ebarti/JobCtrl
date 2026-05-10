@@ -43,6 +43,17 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "apply_run_projections",
 )
 
+SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("job_list_projections", "score_breakdown_json", "TEXT"),
+    ("job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job_list_projections", "score_version", "INTEGER"),
+    ("job_list_projections", "scored_at", "TEXT"),
+    ("job_detail_projections", "score_breakdown_json", "TEXT"),
+    ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job_detail_projections", "score_version", "INTEGER"),
+    ("job_detail_projections", "scored_at", "TEXT"),
+)
+
 
 def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
     """Create the projection tables if they do not exist (idempotent)."""
@@ -168,14 +179,16 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         )
         """
     )
-    _ensure_column(conn, "job_list_projections", "score_breakdown_json", "TEXT")
-    _ensure_column(conn, "job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'")
-    _ensure_column(conn, "job_list_projections", "score_version", "INTEGER")
-    _ensure_column(conn, "job_list_projections", "scored_at", "TEXT")
-    _ensure_column(conn, "job_detail_projections", "score_breakdown_json", "TEXT")
-    _ensure_column(conn, "job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'")
-    _ensure_column(conn, "job_detail_projections", "score_version", "INTEGER")
-    _ensure_column(conn, "job_detail_projections", "scored_at", "TEXT")
+    score_evidence_schema_changed = False
+    for table_name, column_name, definition in SCORE_EVIDENCE_COLUMNS:
+        score_evidence_schema_changed = (
+            _ensure_column(conn, table_name, column_name, definition)
+            or score_evidence_schema_changed
+        )
+    if score_evidence_schema_changed:
+        # Projection rows are fully derived; resetting them lets the next
+        # refresh rebuild migrated rows from canonical job_scores evidence.
+        _reset_score_evidence_projections(conn)
     conn.commit()
     return list(PROJECTION_TABLES)
 
@@ -185,13 +198,20 @@ def _ensure_column(
     table_name: str,
     column_name: str,
     definition: str,
-) -> None:
+) -> bool:
     columns = {
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
     if column_name not in columns:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+        return True
+    return False
+
+
+def _reset_score_evidence_projections(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM job_list_projections")
+    conn.execute("DELETE FROM job_detail_projections")
 
 
 class SqliteProjectionStore:

@@ -8,8 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter.database import close_connection, init_db
-from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobhunter.database import close_connection, ensure_projection_tables_in_db, init_db
+from jobhunter.infrastructure.events.watermark import SqliteEventWatermarkRepository
+from jobhunter.infrastructure.projections.projection_builder import (
+    PROJECTION_NAME,
+    ProjectionBuilder,
+)
 from jobhunter.state import record_job_event, set_stage_state, utc_now
 
 
@@ -53,6 +57,60 @@ def _row_value(row, key, default=None):
     except (KeyError, IndexError, TypeError):
         return default
     return value if value is not None else default
+
+
+def _replace_score_evidence_projection_schema_with_legacy_shape(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute("DROP TABLE job_list_projections")
+    conn.execute(
+        """
+        CREATE TABLE job_list_projections (
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            job_id                 TEXT NOT NULL,
+            title                  TEXT NOT NULL DEFAULT '',
+            employer               TEXT NOT NULL DEFAULT '',
+            source                 TEXT NOT NULL DEFAULT '',
+            strategy               TEXT NOT NULL DEFAULT '',
+            location               TEXT NOT NULL DEFAULT '',
+            salary                 TEXT NOT NULL DEFAULT '',
+            application_url        TEXT,
+            discovered_at          TEXT,
+            description            TEXT NOT NULL DEFAULT '',
+            full_description       TEXT NOT NULL DEFAULT '',
+            fit_score              INTEGER,
+            score_reasoning        TEXT NOT NULL DEFAULT '',
+            current_stage          TEXT NOT NULL DEFAULT 'discover',
+            current_state          TEXT NOT NULL DEFAULT 'pending',
+            current_error_code     TEXT,
+            current_error_message  TEXT,
+            current_next_action    TEXT,
+            has_resume             INTEGER NOT NULL DEFAULT 0,
+            has_cover_letter       INTEGER NOT NULL DEFAULT 0,
+            has_pdf                INTEGER NOT NULL DEFAULT 0,
+            apply_status           TEXT,
+            applied_at             TEXT,
+            artifact_count         INTEGER NOT NULL DEFAULT 0,
+            deleted_at             TEXT,
+            last_updated_at        TEXT,
+            PRIMARY KEY (tenant_id, job_id)
+        )
+        """
+    )
+    conn.execute("DROP TABLE job_detail_projections")
+    conn.execute(
+        """
+        CREATE TABLE job_detail_projections (
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            job_id                 TEXT NOT NULL,
+            description_preview    TEXT NOT NULL DEFAULT '',
+            score_reasoning        TEXT NOT NULL DEFAULT '',
+            stages_json            TEXT NOT NULL DEFAULT '[]',
+            last_updated_at        TEXT,
+            PRIMARY KEY (tenant_id, job_id)
+        )
+        """
+    )
 
 
 def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
@@ -160,6 +218,82 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     assert json.loads(_row_value(detail, "score_keywords_json")) == ["python", "fastapi"]
     assert _row_value(detail, "score_version") == 1
     assert _row_value(detail, "scored_at")
+
+
+def test_score_evidence_schema_migration_backfills_existing_projection(
+    conn: sqlite3.Connection,
+) -> None:
+    url = "https://example.com/jobs/scored-before-migration"
+    _seed_job(conn, url)
+    conn.execute(
+        """
+        INSERT INTO job_scores (job_url, version, tenant_id, fit_score,
+                                breakdown_json, keywords_json, scored_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            url,
+            1,
+            "local",
+            9,
+            json.dumps(
+                {
+                    "technical_fit": 8,
+                    "experience_fit": 9,
+                    "role_fit": 10,
+                    "reasoning": "Evidence should be projected",
+                }
+            ),
+            json.dumps(["python", "sqlite"]),
+            "2026-05-05T10:00:00+00:00",
+        ),
+    )
+    record_job_event(conn, url, "score", "JobScored")
+    latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
+    _replace_score_evidence_projection_schema_with_legacy_shape(conn)
+    conn.execute(
+        """
+        INSERT INTO job_list_projections (
+            tenant_id, job_id, title, employer, fit_score, score_reasoning
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        ("local", url, "Engineer", "ExampleCo", 9, "Legacy reasoning"),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_detail_projections (
+            tenant_id, job_id, description_preview, score_reasoning
+        ) VALUES (?, ?, ?, ?)
+        """,
+        ("local", url, "Short job description", "Legacy reasoning"),
+    )
+    conn.execute(
+        "INSERT INTO dashboard_projections (tenant_id, generated_at) VALUES (?, ?)",
+        ("local", "2026-05-05T09:00:00+00:00"),
+    )
+    conn.commit()
+    SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
+
+    ensure_projection_tables_in_db(conn)
+    processed = ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    assert processed == 1
+    row = conn.execute(
+        """
+        SELECT score_breakdown_json, score_keywords_json, score_version, scored_at
+        FROM job_list_projections WHERE job_id = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert json.loads(_row_value(row, "score_breakdown_json")) == {
+        "technicalFit": 8,
+        "experienceFit": 9,
+        "roleFit": 10,
+        "reasoning": "Evidence should be projected",
+    }
+    assert json.loads(_row_value(row, "score_keywords_json")) == ["python", "sqlite"]
+    assert _row_value(row, "score_version") == 1
+    assert _row_value(row, "scored_at") == "2026-05-05T10:00:00+00:00"
 
 
 def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:
