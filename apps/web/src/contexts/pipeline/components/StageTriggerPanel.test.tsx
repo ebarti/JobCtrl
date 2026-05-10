@@ -20,7 +20,7 @@ describe("StageTriggerPanel", () => {
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
-      status: "queued",
+      status: "accepted",
       jobKey: "pipeline",
       count: 2,
       command: {
@@ -71,6 +71,6 @@ describe("StageTriggerPanel", () => {
       model: "sonnet",
       continuous: false,
     });
-    expect(await screen.findByText("queued 2 stage actions")).toBeInTheDocument();
+    expect(await screen.findByText("accepted 2 stage actions")).toBeInTheDocument();
   });
 });

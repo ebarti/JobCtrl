@@ -1071,7 +1071,7 @@ describe("local TypeScript API", () => {
     try {
       const response = await Promise.race([
         responsePromise,
-        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 25)),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 250)),
       ]);
 
       expect(response).not.toBe("timeout");

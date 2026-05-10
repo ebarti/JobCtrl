@@ -20,6 +20,10 @@ function numberValue(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function stageRunStatusLine(status: string, count: number): string {
+  return `${status} ${count} ${count === 1 ? "stage action" : "stage actions"}`;
+}
+
 export function StageTriggerPanel() {
   const runStages = useRunPipelineStagesMutation();
   const [selectedStages, setSelectedStages] = useState<Stage[]>([]);
@@ -158,7 +162,9 @@ export function StageTriggerPanel() {
             <Play aria-hidden="true" size={16} />
             {runStages.isPending ? "Starting" : "Run selected stages"}
           </Button>
-          {runStages.data ? <span className="status-line">queued {runStages.data.count} stage actions</span> : null}
+          {runStages.data ? (
+            <span className="status-line">{stageRunStatusLine(runStages.data.status, runStages.data.count)}</span>
+          ) : null}
           {runStages.error ? <span className="status-line danger-action">{runStages.error.message}</span> : null}
         </div>
       </form>
