@@ -127,15 +127,6 @@ export function createActionDispatcher(dispatcher?: JsonRpcDispatcher): ActionDi
       if (runId) result.runId = runId;
       return result;
     }
-    if (rpcCall.method === "run_stage") {
-      const result: ActionDispatchResult = {
-        status: extractStatus(response.result) ?? "succeeded",
-        result: response.result,
-      };
-      const actionId = extractActionId(response.result);
-      if (actionId) result.actionId = actionId;
-      return result;
-    }
     return {
       status: "queued",
       result: response.result,
@@ -333,18 +324,6 @@ function extractRunId(result: unknown): string | null {
   if (!isRecord(result)) return null;
   const runId = result.runId;
   return typeof runId === "string" ? runId : null;
-}
-
-function extractActionId(result: unknown): string | null {
-  if (!isRecord(result)) return null;
-  const actionId = result.action_id ?? result.actionId;
-  return typeof actionId === "string" ? actionId : null;
-}
-
-function extractStatus(result: unknown): string | null {
-  if (!isRecord(result)) return null;
-  const status = result.status;
-  return typeof status === "string" && status.trim() ? status : null;
 }
 
 function openerCommand(artifactPath: string): { command: string; args: string[] } {

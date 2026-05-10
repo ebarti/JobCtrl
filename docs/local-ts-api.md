@@ -34,12 +34,7 @@ from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
 apply flags (`headless`, `model`, `continuous`). The route dispatches
 non-apply stages to JSON-RPC `run_stage` and global apply to JSON-RPC `apply`;
 it uses the command key `pipeline` only as the local action response handle,
-not as a fake job URL. Non-apply-only batches are synchronous and return
-`200` with the worker's real action statuses (`dry_run`, `succeeded`, or
-`failed`). Batches that include `apply` still return `202` because `apply`
-starts the workflow asynchronously; any completed non-apply actions in that
-response keep their synchronous statuses. `dryRun` defaults to `true`,
-preserving apply safety.
+not as a fake job URL. `dryRun` defaults to `true`, preserving apply safety.
 
 ## Related Packages
 

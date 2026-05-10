@@ -970,7 +970,7 @@ describe("local TypeScript API", () => {
 
   it("dispatches global pipeline stage runs with shared stage options and safe apply defaults", async () => {
     const dispatch = vi.fn(async (command) => ({
-      status: command.stage === "apply" ? "queued" : "dry_run",
+      status: "queued",
       runId: `run-${command.stage}`,
       actionId: `act-${command.stage}`,
     }));
@@ -998,13 +998,13 @@ describe("local TypeScript API", () => {
     expect(response.json()).toMatchObject({
       ok: true,
       action: "run_stage",
-      status: "accepted",
+      status: "queued",
       jobKey: "pipeline",
       count: 3,
       actions: [
         {
           action: "run_stage",
-          status: "dry_run",
+          status: "queued",
           jobKey: "pipeline",
           command: {
             action: "run_stage",
@@ -1020,7 +1020,6 @@ describe("local TypeScript API", () => {
         },
         {
           action: "run_stage",
-          status: "dry_run",
           command: {
             stage: "tailor",
             retailor: true,
@@ -1054,41 +1053,56 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("returns synchronous non-apply global stage results as 200", async () => {
-    const dispatch = vi.fn(async () => ({
-      status: "dry_run",
-      actionId: "act-score",
-      result: { planned: { stage: "score" } },
-    }));
+  it("returns immediately for non-apply global stage starts while dispatch continues in the background", async () => {
+    let resolveDispatch: ((value: { status: string; actionId: string; runId: string }) => void) | undefined;
+    const dispatch = vi.fn(
+      () =>
+        new Promise<{ status: string; actionId: string; runId: string }>((resolve) => {
+          resolveDispatch = resolve;
+        }),
+    );
     const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const response = await app.inject({
+    const responsePromise = app.inject({
       method: "POST",
       url: "/v1/pipeline/actions/run-stage",
       payload: { stages: ["score"], dryRun: true },
     });
 
-    expect(response.statusCode, response.body).toBe(200);
-    expect(response.json()).toMatchObject({
-      ok: true,
-      status: "dry_run",
-      count: 1,
-      actions: [
-        {
-          action: "run_stage",
-          status: "dry_run",
-          actionId: "act-score",
-          jobKey: "pipeline",
-          command: { action: "run_stage", stage: "score", dryRun: true },
-          result: { planned: { stage: "score" } },
-        },
-      ],
-    });
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
-      expect.objectContaining({ appDir: tempDir }),
-    );
+    try {
+      const response = await Promise.race([
+        responsePromise,
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 250)),
+      ]);
 
-    await app.close();
+      expect(response).not.toBe("timeout");
+      if (response === "timeout") {
+        return;
+      }
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        status: "queued",
+        count: 1,
+        actions: [
+          {
+            action: "run_stage",
+            status: "queued",
+            jobKey: "pipeline",
+            command: { action: "run_stage", stage: "score", dryRun: true },
+          },
+        ],
+      });
+      expect(response.json().actions[0].actionId).toMatch(/^act-/);
+      expect(response.json().actions[0].actionId).not.toBe("act-late");
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
+        expect.objectContaining({ appDir: tempDir }),
+      );
+    } finally {
+      resolveDispatch?.({ status: "succeeded", actionId: "act-late", runId: "run-late" });
+      await responsePromise.catch(() => undefined);
+      await app.close();
+    }
   });
 
   it("defaults global apply stage starts to dry-run when dryRun is omitted", async () => {
