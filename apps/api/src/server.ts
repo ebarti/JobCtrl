@@ -166,8 +166,19 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
               rescore: body.rescore,
               retailor: body.retailor,
             };
-      const dispatch = await actionDispatcher(command, actionContext);
-      actions.push(buildActionResponse(command, dispatch));
+      if (stage === "apply") {
+        const dispatch = await actionDispatcher(command, actionContext);
+        actions.push(buildActionResponse(command, dispatch));
+        continue;
+      }
+      try {
+        void actionDispatcher(command, actionContext).catch((error: unknown) => {
+          app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
+        });
+      } catch (error) {
+        app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
+      }
+      actions.push(buildActionResponse(command, { status: "queued" }));
     }
     void reply.code(202);
     return {
