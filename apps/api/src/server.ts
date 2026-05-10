@@ -6,6 +6,7 @@ import { type ZodType } from "zod";
 
 import {
   type ActionCommandPayload,
+  type ActionRunResponse,
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
@@ -167,6 +168,32 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             };
       return { command, stage };
     });
+    const includesApply = commands.some(({ command }) => command.action === "apply");
+    if (includesApply) {
+      const actions: ActionRunResponse[] = [];
+      let applyQueued = false;
+      for (const { command } of commands) {
+        const dispatch = await actionDispatcher(command, actionContext);
+        actions.push(buildActionResponse(command, dispatch));
+        if (command.action === "apply" && dispatch.status === "queued") {
+          applyQueued = true;
+        }
+        if (dispatch.status === "failed") {
+          break;
+        }
+      }
+      void reply.code(applyQueued ? 202 : 200);
+      return {
+        ok: true,
+        action: "run_stage",
+        status: stageRunStatus(actions),
+        jobKey: PIPELINE_ACTION_JOB_KEY,
+        count: actions.length,
+        command: body,
+        actions,
+      } satisfies PipelineStageRunResponse;
+    }
+
     const actions = commands.map(({ command }) => buildActionResponse(command, { status: "queued" }));
     void (async () => {
       for (const { command, stage } of commands) {
@@ -754,6 +781,24 @@ function parseBody<T>(reply: { code: (statusCode: number) => unknown }, schema: 
   }
   void reply.code(400);
   return null;
+}
+
+function stageRunStatus(actions: ActionRunResponse[]): string {
+  if (actions.length === 0) {
+    return "accepted";
+  }
+  const statuses = actions.map((action) => action.status);
+  if (statuses.some((status) => status === "failed")) {
+    return "failed";
+  }
+  const firstStatus = statuses[0];
+  if (!firstStatus) {
+    return "accepted";
+  }
+  if (statuses.every((status) => status === firstStatus)) {
+    return firstStatus;
+  }
+  return "accepted";
 }
 
 function resolveExistingJob(
