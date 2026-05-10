@@ -246,7 +246,7 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
 }
 
 /** Idempotently create the projection tables. Mirrors the Python schema. */
-export function ensureProjectionTables(db: SqliteDatabase): void {
+export function ensureProjectionTables(db: SqliteDatabase): boolean {
   db.exec(`
     CREATE TABLE IF NOT EXISTS event_watermarks (
       projection_name     TEXT PRIMARY KEY,
@@ -267,7 +267,11 @@ export function ensureProjectionTables(db: SqliteDatabase): void {
       description            TEXT NOT NULL DEFAULT '',
       full_description       TEXT NOT NULL DEFAULT '',
       fit_score              INTEGER,
+      score_breakdown_json   TEXT,
+      score_keywords_json    TEXT NOT NULL DEFAULT '[]',
       score_reasoning        TEXT NOT NULL DEFAULT '',
+      score_version          INTEGER,
+      scored_at              TEXT,
       current_stage          TEXT NOT NULL DEFAULT 'discover',
       current_state          TEXT NOT NULL DEFAULT 'pending',
       current_error_code     TEXT,
@@ -300,7 +304,11 @@ export function ensureProjectionTables(db: SqliteDatabase): void {
       tenant_id              TEXT NOT NULL DEFAULT 'local',
       job_id                 TEXT NOT NULL,
       description_preview    TEXT NOT NULL DEFAULT '',
+      score_breakdown_json   TEXT,
+      score_keywords_json    TEXT NOT NULL DEFAULT '[]',
       score_reasoning        TEXT NOT NULL DEFAULT '',
+      score_version          INTEGER,
+      scored_at              TEXT,
       stages_json            TEXT NOT NULL DEFAULT '[]',
       last_updated_at        TEXT,
       PRIMARY KEY (tenant_id, job_id)
@@ -335,6 +343,37 @@ export function ensureProjectionTables(db: SqliteDatabase): void {
       events_json            TEXT NOT NULL DEFAULT '[]'
     );
   `);
+  let schemaChanged = false;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'") ||
+    schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_version", "INTEGER") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "scored_at", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_detail_projections", "score_breakdown_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'") ||
+    schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_version", "INTEGER") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "scored_at", "TEXT") || schemaChanged;
+  return schemaChanged;
+}
+
+function ensureProjectionColumn(
+  db: SqliteDatabase,
+  tableName: string,
+  columnName: string,
+  definition: string,
+): boolean {
+  const columns = new Set(
+    allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name),
+  );
+  if (!columns.has(columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+    return true;
+  }
+  return false;
 }
 
 /** Read the watermark; returns 0 when missing. */
@@ -365,7 +404,7 @@ function setWatermark(db: SqliteDatabase, projection: string, eventId: number): 
  * worker writes (which also bump ``job_events``).
  */
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
-  ensureProjectionTables(db);
+  const projectionSchemaChanged = ensureProjectionTables(db);
   backfillLegacyStageStates(db);
 
   const watermark = readWatermark(db, PROJECTION_WATERMARK_NAME);
@@ -398,6 +437,12 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       for (const job of jobs) {
         if (job.url) dirtyJobs.add(job.url);
       }
+    }
+  }
+  if (projectionSchemaChanged && tableExists(db, "jobs")) {
+    const jobs = allRows<{ url: string }>(db, "SELECT url FROM jobs");
+    for (const job of jobs) {
+      if (job.url) dirtyJobs.add(job.url);
     }
   }
 
@@ -480,36 +525,119 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   return latest;
 }
 
+interface ScoreBreakdownLatest {
+  technicalFit: number;
+  experienceFit: number;
+  roleFit: number;
+  reasoning: string;
+}
+
 interface ScoreLatest {
   fitScore: number | null;
+  breakdown: ScoreBreakdownLatest | null;
+  keywords: string[];
   reasoning: string;
+  version: number | null;
+  scoredAt: string | null;
 }
 
 function loadLatestScore(db: SqliteDatabase, jobUrl: string): ScoreLatest {
   if (!tableExists(db, "job_scores")) {
-    return { fitScore: null, reasoning: "" };
+    return emptyScore();
   }
-  const row = getRow<{ fit_score: number; breakdown_json: string | null }>(
+  const row = getRow<{
+    fit_score: number;
+    version: number;
+    breakdown_json: string | null;
+    keywords_json: string | null;
+    scored_at: string | null;
+  }>(
     db,
-    "SELECT fit_score, breakdown_json FROM job_scores WHERE job_url = ? ORDER BY version DESC LIMIT 1",
+    `SELECT fit_score, version, breakdown_json, keywords_json, scored_at
+     FROM job_scores WHERE job_url = ? ORDER BY version DESC LIMIT 1`,
     [jobUrl],
   );
   if (!row) {
-    return { fitScore: null, reasoning: "" };
+    return emptyScore();
   }
-  let reasoning = "";
-  if (row.breakdown_json) {
-    try {
-      const parsed: unknown = JSON.parse(row.breakdown_json);
-      if (parsed && typeof parsed === "object" && "reasoning" in parsed) {
-        const r = (parsed as { reasoning?: unknown }).reasoning;
-        if (typeof r === "string") reasoning = r;
-      }
-    } catch {
-      // ignore — broken JSON in job_scores doesn't take down the dashboard
-    }
+  const parsedBreakdown = parseScoreBreakdown(row.breakdown_json);
+  const keywords = parseScoreKeywords(row.keywords_json);
+  return {
+    fitScore: Number(row.fit_score),
+    breakdown: parsedBreakdown.legacy ? null : parsedBreakdown.breakdown,
+    keywords: parsedBreakdown.legacy && keywords.length === 1 && keywords[0] === "legacy" ? [] : keywords,
+    reasoning: parsedBreakdown.reasoning,
+    version: nullableNumber(row.version),
+    scoredAt: nullableString(row.scored_at),
+  };
+}
+
+function emptyScore(): ScoreLatest {
+  return {
+    fitScore: null,
+    breakdown: null,
+    keywords: [],
+    reasoning: "",
+    version: null,
+    scoredAt: null,
+  };
+}
+
+function parseScoreBreakdown(
+  value: string | null,
+): { breakdown: ScoreBreakdownLatest | null; reasoning: string; legacy: boolean } {
+  let parsed: unknown = null;
+  try {
+    parsed = value ? JSON.parse(value) : null;
+  } catch {
+    return { breakdown: null, reasoning: "", legacy: false };
   }
-  return { fitScore: Number(row.fit_score), reasoning };
+  if (!parsed || typeof parsed !== "object") {
+    return { breakdown: null, reasoning: "", legacy: false };
+  }
+  const record = parsed as Record<string, unknown>;
+  const reasoning = typeof record.reasoning === "string" ? record.reasoning : "";
+  if (record.legacy === true) {
+    return { breakdown: null, reasoning, legacy: true };
+  }
+  return {
+    breakdown: {
+      technicalFit: scoreDimension(record.technical_fit ?? record.technicalFit),
+      experienceFit: scoreDimension(record.experience_fit ?? record.experienceFit),
+      roleFit: scoreDimension(record.role_fit ?? record.roleFit),
+      reasoning,
+    },
+    reasoning,
+    legacy: false,
+  };
+}
+
+function parseScoreKeywords(value: string | null): string[] {
+  let parsed: unknown = [];
+  try {
+    parsed = value ? JSON.parse(value) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of parsed) {
+    const keyword = String(raw ?? "").trim();
+    const key = keyword.toLowerCase();
+    if (!keyword || seen.has(key)) continue;
+    seen.add(key);
+    out.push(keyword);
+  }
+  return out;
+}
+
+function scoreDimension(value: unknown): number {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 10) return 10;
+  return Math.trunc(n);
 }
 
 interface EnrichmentLatest {
@@ -732,6 +860,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   const fitScore = score.fitScore ?? nullableNumber(job.fit_score);
   const scoreReasoning = score.reasoning || stringField(job.score_reasoning);
+  const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
+  const scoreKeywordsJson = JSON.stringify(score.keywords);
 
   const tailorPath = materials.tailorPath ?? nullableString(job.tailored_resume_path);
   const coverPath = materials.coverPath ?? nullableString(job.cover_letter_path);
@@ -751,13 +881,14 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   db.prepare(
     `INSERT INTO job_list_projections (
-       tenant_id, job_id, title, employer, source, strategy, location,
-       salary, application_url, discovered_at, description, full_description,
-       fit_score, score_reasoning, current_stage, current_state,
+     tenant_id, job_id, title, employer, source, strategy, location,
+     salary, application_url, discovered_at, description, full_description,
+       fit_score, score_breakdown_json, score_keywords_json, score_reasoning,
+       score_version, scored_at, current_stage, current_state,
        current_error_code, current_error_message, current_next_action,
        has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
        artifact_count, deleted_at, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        title                 = excluded.title,
        employer              = excluded.employer,
@@ -770,7 +901,11 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        description           = excluded.description,
        full_description      = excluded.full_description,
        fit_score             = excluded.fit_score,
+       score_breakdown_json  = excluded.score_breakdown_json,
+       score_keywords_json   = excluded.score_keywords_json,
        score_reasoning       = excluded.score_reasoning,
+       score_version         = excluded.score_version,
+       scored_at             = excluded.scored_at,
        current_stage         = excluded.current_stage,
        current_state         = excluded.current_state,
        current_error_code    = excluded.current_error_code,
@@ -798,7 +933,11 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     description,
     fullDescription,
     fitScore,
+    scoreBreakdownJson,
+    scoreKeywordsJson,
     scoreReasoning,
+    score.version,
+    score.scoredAt,
     firstActionable?.stage ?? "discover",
     firstActionable?.state ?? "pending",
     firstActionable?.error_code ?? null,
@@ -816,19 +955,28 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   db.prepare(
     `INSERT INTO job_detail_projections (
-       tenant_id, job_id, description_preview, score_reasoning, stages_json,
-       last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?)
+       tenant_id, job_id, description_preview, score_breakdown_json,
+       score_keywords_json, score_reasoning, score_version, scored_at,
+       stages_json, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-       description_preview = excluded.description_preview,
-       score_reasoning     = excluded.score_reasoning,
-       stages_json         = excluded.stages_json,
-       last_updated_at     = excluded.last_updated_at`,
+       description_preview  = excluded.description_preview,
+       score_breakdown_json = excluded.score_breakdown_json,
+       score_keywords_json  = excluded.score_keywords_json,
+       score_reasoning      = excluded.score_reasoning,
+       score_version        = excluded.score_version,
+       scored_at            = excluded.scored_at,
+       stages_json          = excluded.stages_json,
+       last_updated_at      = excluded.last_updated_at`,
   ).run(
     tenantId,
     jobUrl,
     previewText(fullDescription || description, 6000),
+    scoreBreakdownJson,
+    scoreKeywordsJson,
     scoreReasoning,
+    score.version,
+    score.scoredAt,
     JSON.stringify(stages),
     lastUpdatedAt,
   );

@@ -7,6 +7,7 @@
  * Pure data shapes — no I/O.
  */
 import type { TenantId } from "../tenant.js";
+import type { ScoreBreakdown } from "../scoring/index.js";
 
 export interface StageProjection {
   readonly stage: string;
@@ -38,7 +39,11 @@ export interface JobListProjection {
   readonly description: string;
   readonly fullDescription: string;
   readonly fitScore: number | null;
+  readonly scoreBreakdown: ScoreBreakdown | null;
+  readonly scoreKeywords: readonly string[];
   readonly scoreReasoning: string;
+  readonly scoreVersion: number | null;
+  readonly scoredAt: string | null;
   readonly currentStage: string;
   readonly currentState: string;
   readonly currentErrorCode: string | null;
@@ -82,7 +87,11 @@ export interface JobDetailProjection {
   readonly tenantId: TenantId;
   readonly jobId: string;
   readonly descriptionPreview: string;
+  readonly scoreBreakdown: ScoreBreakdown | null;
+  readonly scoreKeywords: readonly string[];
   readonly scoreReasoning: string;
+  readonly scoreVersion: number | null;
+  readonly scoredAt: string | null;
   readonly stages: readonly StageProjection[];
   readonly lastUpdatedAt: string | null;
 }

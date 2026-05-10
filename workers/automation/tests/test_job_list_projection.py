@@ -112,8 +112,15 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
             1,
             "local",
             8,
-            json.dumps({"reasoning": "Strong fit"}),
-            json.dumps([]),
+            json.dumps(
+                {
+                    "technical_fit": 9,
+                    "experience_fit": 7,
+                    "role_fit": 8,
+                    "reasoning": "Strong fit",
+                }
+            ),
+            json.dumps(["python", "fastapi"]),
             utc_now(),
         ),
     )
@@ -123,11 +130,36 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     row = conn.execute(
-        "SELECT fit_score, score_reasoning FROM job_list_projections WHERE job_id = ?",
+        """
+        SELECT fit_score, score_breakdown_json, score_keywords_json,
+               score_reasoning, score_version, scored_at
+        FROM job_list_projections WHERE job_id = ?
+        """,
         (url,),
     ).fetchone()
     assert _row_value(row, "fit_score") == 8
     assert _row_value(row, "score_reasoning") == "Strong fit"
+    assert json.loads(_row_value(row, "score_breakdown_json")) == {
+        "technicalFit": 9,
+        "experienceFit": 7,
+        "roleFit": 8,
+        "reasoning": "Strong fit",
+    }
+    assert json.loads(_row_value(row, "score_keywords_json")) == ["python", "fastapi"]
+    assert _row_value(row, "score_version") == 1
+    assert _row_value(row, "scored_at")
+
+    detail = conn.execute(
+        """
+        SELECT score_breakdown_json, score_keywords_json, score_version, scored_at
+        FROM job_detail_projections WHERE job_id = ?
+        """,
+        (url,),
+    ).fetchone()
+    assert json.loads(_row_value(detail, "score_breakdown_json"))["technicalFit"] == 9
+    assert json.loads(_row_value(detail, "score_keywords_json")) == ["python", "fastapi"]
+    assert _row_value(detail, "score_version") == 1
+    assert _row_value(detail, "scored_at")
 
 
 def test_apply_run_succeeded_marks_applied(conn: sqlite3.Connection) -> None:

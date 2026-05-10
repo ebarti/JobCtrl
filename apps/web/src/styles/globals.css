@@ -819,6 +819,31 @@ textarea {
   color: var(--muted);
 }
 
+.score-dimensions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.score-dimension {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.score-dimension span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.score-dimension b {
+  font-size: 14px;
+}
+
 .keyword-list {
   display: flex;
   flex-wrap: wrap;

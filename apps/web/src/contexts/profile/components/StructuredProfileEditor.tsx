@@ -489,11 +489,12 @@ export function StructuredProfileEditor({
         setPathValue(draft, workModelPath, nextRows.map((row) => row.workModel).join("; "));
       });
     };
+    const emptyRow = { location: "", workModel: "" };
     const insertRowAfter = (index: number, rowPatch: Partial<{ location: string; workModel: string }>) => {
       const insertionIndex = index + 1;
       const next = [...rows];
-      next[index] = { ...next[index], ...rowPatch };
-      next.splice(insertionIndex, 0, { location: "", workModel: "" });
+      next[index] = { ...(next[index] ?? emptyRow), ...rowPatch };
+      next.splice(insertionIndex, 0, emptyRow);
       focusAfterDraftUpdate(locationFocusKey(insertionIndex));
       updateRows(next);
     };
@@ -509,7 +510,7 @@ export function StructuredProfileEditor({
         selected.delete(value);
       }
       const next = [...rows];
-      next[index] = { ...next[index], workModel: Array.from(selected).join(", ") };
+      next[index] = { ...(next[index] ?? emptyRow), workModel: Array.from(selected).join(", ") };
       updateRows(next);
     };
 
