@@ -6,6 +6,7 @@ import { type ZodType } from "zod";
 
 import {
   type ActionCommandPayload,
+  type ActionRunResponse,
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
@@ -138,7 +139,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    const actions = [];
+    const actions: ActionRunResponse[] = [];
     for (const stage of body.stages) {
       const command: ActionCommandPayload =
         stage === "apply"
@@ -166,25 +167,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
               rescore: body.rescore,
               retailor: body.retailor,
             };
-      if (stage === "apply") {
-        const dispatch = await actionDispatcher(command, actionContext);
-        actions.push(buildActionResponse(command, dispatch));
-        continue;
-      }
-      try {
-        void actionDispatcher(command, actionContext).catch((error: unknown) => {
-          app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
-        });
-      } catch (error) {
-        app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
-      }
-      actions.push(buildActionResponse(command, { status: "queued" }));
+      const dispatch = await actionDispatcher(command, actionContext);
+      actions.push(buildActionResponse(command, dispatch));
     }
-    void reply.code(202);
+    void reply.code(body.stages.includes("apply") ? 202 : 200);
     return {
       ok: true,
       action: "run_stage",
-      status: actions.every((action) => action.status === "queued") ? "queued" : "accepted",
+      status: stageRunStatus(actions),
       jobKey: PIPELINE_ACTION_JOB_KEY,
       count: actions.length,
       command: body,
@@ -752,6 +742,24 @@ function parseBody<T>(reply: { code: (statusCode: number) => unknown }, schema: 
   }
   void reply.code(400);
   return null;
+}
+
+function stageRunStatus(actions: ActionRunResponse[]): string {
+  if (actions.length === 0) {
+    return "accepted";
+  }
+  const statuses = actions.map((action) => action.status);
+  if (statuses.some((status) => status === "failed")) {
+    return "failed";
+  }
+  const firstStatus = statuses[0];
+  if (!firstStatus) {
+    return "accepted";
+  }
+  if (statuses.every((status) => status === firstStatus)) {
+    return firstStatus;
+  }
+  return "accepted";
 }
 
 function resolveExistingJob(

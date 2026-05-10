@@ -89,6 +89,18 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
 
   it("maps a global run-stage action to the run_stage RPC method", async () => {
     const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ok: true,
+        action_id: "act-worker",
+        stage: "score",
+        status: "dry_run",
+        dry_run: true,
+        result: { planned: { stage: "score" } },
+      },
+    } as JsonRpcResponse);
     const dispatcher = createActionDispatcher(fake);
 
     const result = await dispatcher(
@@ -122,7 +134,14 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         retailor: false,
       },
     });
-    expect(result).toMatchObject({ status: "queued" });
+    expect(result).toMatchObject({
+      status: "dry_run",
+      actionId: "act-worker",
+      result: {
+        status: "dry_run",
+        result: { planned: { stage: "score" } },
+      },
+    });
   });
 
   it("maps a global apply action without passing the pipeline command key as a jobUrl", async () => {

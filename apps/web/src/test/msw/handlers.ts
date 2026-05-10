@@ -13,16 +13,22 @@ import {
   sampleSettingsResponse,
 } from "../fixtures/projections.js";
 
-function actionRunResponse(jobKey: string, action: string) {
+function actionRunResponse(jobKey: string, action: string, status = "queued") {
   return {
     ok: true,
     runId: `run-${jobKey}-${Date.now()}`,
     actionId: `action-${jobKey}-${Date.now()}`,
     action,
-    status: "queued",
+    status,
     jobKey,
     command: { action, jobKey },
   };
+}
+
+function aggregateActionStatus(actions: Array<{ status: string }>): string {
+  if (actions.some((action) => action.status === "failed")) return "failed";
+  const first = actions[0]?.status ?? "accepted";
+  return actions.every((action) => action.status === first) ? first : "accepted";
 }
 
 function jobMutationResponse(jobKeys: string[]) {
@@ -73,18 +79,27 @@ export const handlers = [
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "mark_skipped")),
   ),
   http.post("*/v1/pipeline/actions/run-stage", async ({ request }) => {
-    const body = (await request.json()) as { stages?: string[] };
-    return HttpResponse.json({
-      ok: true,
-      action: "run_stage",
-      status: "queued",
-      jobKey: "pipeline",
-      count: body.stages?.length ?? 0,
-      command: body,
-      actions: (body.stages ?? []).map((stage) =>
-        actionRunResponse("pipeline", stage === "apply" ? "apply" : "run_stage"),
+    const body = (await request.json()) as { dryRun?: boolean; stages?: string[] };
+    const stages = body.stages ?? [];
+    const actions = stages.map((stage) =>
+      actionRunResponse(
+        "pipeline",
+        stage === "apply" ? "apply" : "run_stage",
+        stage === "apply" ? "queued" : body.dryRun === false ? "succeeded" : "dry_run",
       ),
-    });
+    );
+    return HttpResponse.json(
+      {
+        ok: true,
+        action: "run_stage",
+        status: aggregateActionStatus(actions),
+        jobKey: "pipeline",
+        count: stages.length,
+        command: body,
+        actions,
+      },
+      { status: stages.includes("apply") ? 202 : 200 },
+    );
   }),
 
   http.get("*/v1/workflow-runs", () => HttpResponse.json(makeWorkflowRunsPage())),
