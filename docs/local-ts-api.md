@@ -34,12 +34,13 @@ from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
 apply flags (`headless`, `model`, `continuous`). The route dispatches
 non-apply stages to JSON-RPC `run_stage` and global apply to JSON-RPC `apply`;
 it uses the command key `pipeline` only as the local action response handle,
-not as a fake job URL. Non-apply-only batches return `202` immediately with
-queued action handles, then run the selected commands as one ordered background
-chain. Batches that include `apply` run selected commands in request order until
-the apply dispatch result is known; they return `202` only when apply is
-actually queued, and otherwise return the dispatcher-derived failed action in a
-non-accepted response. `dryRun` defaults to `true`, preserving apply safety.
+not as a fake job URL. Selected stages run in request order. Non-apply-only
+batches are synchronous and return `200` with the worker's real action IDs,
+statuses (`dry_run`, `succeeded`, or `failed`), and results. Batches that
+include `apply` first run preceding non-apply stages synchronously, then return
+`202` only if the apply workflow is actually queued; if apply dispatch fails,
+the response is `200` and preserves the dispatcher-derived failed apply action.
+`dryRun` defaults to `true`, preserving apply safety.
 
 ## Related Packages
 

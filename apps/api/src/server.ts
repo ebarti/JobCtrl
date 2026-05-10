@@ -139,7 +139,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    const commands = body.stages.map((stage) => {
+    const actions: ActionRunResponse[] = [];
+    let applyQueued = false;
+    for (const stage of body.stages) {
       const command: ActionCommandPayload =
         stage === "apply"
           ? {
@@ -166,54 +168,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
               rescore: body.rescore,
               retailor: body.retailor,
             };
-      return { command, stage };
-    });
-    const includesApply = commands.some(({ command }) => command.action === "apply");
-    if (includesApply) {
-      const actions: ActionRunResponse[] = [];
-      let applyQueued = false;
-      for (const { command } of commands) {
-        const dispatch = await actionDispatcher(command, actionContext);
-        actions.push(buildActionResponse(command, dispatch));
-        if (command.action === "apply" && dispatch.status === "queued") {
-          applyQueued = true;
-        }
-        if (dispatch.status === "failed") {
-          break;
-        }
+      const dispatch = await actionDispatcher(command, actionContext);
+      actions.push(buildActionResponse(command, dispatch));
+      if (command.action === "apply" && dispatch.status === "queued") {
+        applyQueued = true;
       }
-      void reply.code(applyQueued ? 202 : 200);
-      return {
-        ok: true,
-        action: "run_stage",
-        status: stageRunStatus(actions),
-        jobKey: PIPELINE_ACTION_JOB_KEY,
-        count: actions.length,
-        command: body,
-        actions,
-      } satisfies PipelineStageRunResponse;
+      if (dispatch.status === "failed") {
+        break;
+      }
     }
-
-    const actions = commands.map(({ command }) => buildActionResponse(command, { status: "queued" }));
-    void (async () => {
-      for (const { command, stage } of commands) {
-        try {
-          const dispatch = await actionDispatcher(command, actionContext);
-          if (dispatch.status === "failed") {
-            app.log.error({ dispatch, stage }, "Background pipeline stage dispatch failed.");
-            return;
-          }
-        } catch (error) {
-          app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
-          return;
-        }
-      }
-    })();
-    void reply.code(202);
+    void reply.code(applyQueued ? 202 : 200);
     return {
       ok: true,
       action: "run_stage",
-      status: "queued",
+      status: stageRunStatus(actions),
       jobKey: PIPELINE_ACTION_JOB_KEY,
       count: actions.length,
       command: body,
