@@ -166,12 +166,11 @@ Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
 - Populate and expose the typed `ScoreBreakdown` dimensions
   (`technical_fit` / `experience_fit` / `role_fit`,
   `workers/automation/src/jobhunter/domain/scoring/value_objects.py:103-105`).
-  Today the parser leaves the components at zero
-  (`scoring/services.py:86-94, 174`); the contract only ships
-  `scoreReasoning: string` (`packages/contracts/src/schemas.ts:498`); and
-  the frontend `ScoreBreakdown.tsx` just wraps free text. Write the
-  components in the scorer, add them to the contract, and render them in
-  the jobs drawer.
+  The scorer now parses and stores those components in `job_scores`, but the
+  projection contract still collapses them to `scoreReasoning: string`
+  (`packages/contracts/src/schemas.ts:498`) and the frontend
+  `ScoreBreakdown.tsx` just wraps free text. Add the typed dimensions and
+  keywords to the read model contract and render them in the jobs drawer.
 - Wire the user-correctable score path end-to-end. The `ScoreCorrected`
   domain event and `JobScore.with_correction` exist; the frontend has a
   handler (`apps/web/src/contexts/scoring/handlers.ts:13`); but
@@ -180,6 +179,9 @@ Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
   there is no API endpoint in `apps/api/src/server.ts`, and no UI form.
   Once the surface lands, define which signals (job text, employer, score
   delta, rationale tokens) feed back into scoring for remaining jobs.
+- Execute the proposed scoring-intelligence stack in
+  `docs/plans/proposed/2026-05-10-job-scoring-intelligence.md`, starting with
+  exposing the persisted score evidence before changing the scorer's rubric.
 
 ### UI Quality
 
