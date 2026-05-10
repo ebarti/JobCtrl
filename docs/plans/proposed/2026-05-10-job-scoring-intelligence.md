@@ -6,7 +6,7 @@
 
 ## Goal
 
-Move JobHunter scoring from a single LLM-generated 1-10 fit grade into an explainable, criteria-aware, feedback-calibrated fit assessment that is useful for job-seeker triage and safe enough to gate downstream tailoring or apply automation.
+Move JobHunter scoring from a single opaque LLM-generated fit grade into an explainable, criteria-aware final fit score that is useful for job-seeker triage and safe enough to gate downstream tailoring or apply automation.
 
 ## Executive Summary
 
@@ -22,7 +22,7 @@ Practical job matching is not done as an opaque LLM grade. The common pattern is
 - Show evidence and missing qualifications, not just a number.
 - Evaluate ranking quality offline and monitor it over time.
 
-The recommended direction is to keep the DDD `JobScore` aggregate but expand the scoring language from "score plus reasoning" to "fit assessment": eligibility, weighted dimensions, evidence, gaps, confidence, criteria version, and correction feedback.
+The recommended direction is to keep the DDD `JobScore` aggregate and still resolve one final score for sorting, filtering, and gating. The change is how that score is produced: expand the scoring language from "score plus reasoning" to "final score backed by a fit assessment": eligibility, weighted dimensions, evidence, gaps, confidence, criteria version, and later correction feedback.
 
 ## Current Implementation
 
@@ -102,7 +102,7 @@ Implication for JobHunter: every score should be traceable to criteria, evidence
 
 Keep `JobScore` as the aggregate root, but evolve its payload toward a `FitAssessment` shape:
 
-- `overallFitScore`: 1..10 display score derived from weighted dimensions.
+- `overallFitScore`: the final resolved score users sort, filter, and gate on. The current domain enforces 1..10; if the product wants a true 0..10 scale, PR 2 must explicitly migrate `FitScore`, contracts, UI copy, fixtures, and downstream threshold semantics. Until then, 0 should mean "unscored/not applicable" only outside the persisted `FitScore` value object.
 - `fitBand`: `excellent | strong | plausible | stretch | poor`.
 - `eligibility`: hard constraints that can independently block or warn, such as work authorization, location/work model, compensation, application language, seniority floor, and explicit exclusions.
 - `dimensions`: fixed scoring dimensions with normalized 0..10 values, weights, evidence, and gap notes.
@@ -111,7 +111,7 @@ Keep `JobScore` as the aggregate root, but evolve its payload toward a `FitAsses
 - `transferableSignals`: adjacent experience that explains why a mismatch may still be plausible.
 - `confidence`: `high | medium | low`, based on description quality, profile completeness, extraction agreement, and LLM parser quality.
 - `criteriaVersion`: identifies the rubric text, weights, prompt version, model, and profile snapshot version used.
-- `correction`: user override plus rationale, already modeled in the domain.
+- `correction`: user override plus rationale, already modeled in the domain. Corrections should later calibrate future scores once the feedback capability exists.
 
 ### Recommended Dimensions
 
@@ -127,7 +127,7 @@ Initial weights should be simple and user-configurable later:
 | Preferences and constraints | 15 | Location, remote/hybrid, compensation, authorization, availability, and exclusions. Hard blockers stay separate from this soft score. |
 | Application leverage | 10 | Whether tailoring can credibly produce strong materials without fabrication. |
 
-The 1..10 score should be a derived display value. Downstream gating should use both `overallFitScore >= minFitScore` and `eligibility.status != blocked`.
+The final score should be resolved and stored, not left as a UI-only decoration. It should be computed or validated from the structured assessment instead of accepted as an unsupported LLM opinion. Downstream gating should use both `overallFitScore >= minFitScore` and `eligibility.status != blocked`.
 
 ### LLM Role
 
@@ -169,6 +169,7 @@ Branch: `scoring/criteria-aware`.
 - Pass `ScoringCriteria` into `ScoreJobUseCase`.
 - Update `SCORE_SCHEMA` to include `eligibility`, `missing_signals`, `transferable_signals`, and `confidence`.
 - Add deterministic prechecks for work authorization, target location/work model, compensation, and explicit exclusions before the LLM score is accepted.
+- Decide whether the final persisted `FitScore` remains 1..10 or migrates to explicit 0..10 semantics. If it changes, update contracts, fixtures, threshold copy, and downstream selectors in the same PR.
 - Persist `criteria_json` or an equivalent criteria snapshot on `job_scores`.
 - Tests:
   - red/green parser tests for eligibility and confidence.
@@ -233,7 +234,7 @@ Branch: `scoring/hybrid-ranking`.
   - generated materials approved or discarded,
   - dry-run apply completed,
   - actual apply submitted.
-- Start with transparent weight adjustments and few-shot correction examples before any trained ranker.
+- Start with transparent weight adjustments and few-shot correction examples before any trained ranker. Feedback should calibrate the final score, not replace the explainable assessment.
 - Tests:
   - repository tests for signal persistence.
   - deterministic similarity adapter tests with fake vectors.
