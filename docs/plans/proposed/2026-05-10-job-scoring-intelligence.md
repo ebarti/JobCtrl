@@ -35,7 +35,7 @@ The recommended direction is to keep the DDD `JobScore` aggregate but expand the
   - `technical_fit`, `experience_fit`, and `role_fit`,
   - matched `keywords`,
   - short `reasoning`.
-- `ScoreParser` validates the overall score and required keywords, clamps component dimensions into 0..10, and returns typed value objects.
+- `ScoreParser` validates the overall score, requires the raw keyword field to be present, clamps component dimensions into 0..10, and returns typed value objects. A follow-up should harden blank-only keyword arrays so they cannot normalize to the legacy sentinel.
 - `job_scores` stores versioned scores with `breakdown_json`, `keywords_json`, `scored_at`, and optional correction metadata.
 - `CorrectScoreUseCase` exists and emits `ScoreCorrected`.
 
@@ -149,8 +149,10 @@ Branch: `scoring/evidence-contract`.
 - Extend `packages/contracts` and `packages/domain-types` read-model types to expose these fields.
 - Replace web free-text parsing with typed rendering in `apps/web/src/contexts/scoring/components/ScoreBreakdown.tsx`.
 - Keep `scoreReasoning` as compatibility output only while projections and fixtures migrate.
+- Harden `ScoreParser` so blank-only keyword arrays fail parsing instead of normalizing to the `legacy` sentinel used for backfilled rows.
 - Tests:
   - `apps/api/test/projections.test.ts` for typed dimensions and keywords.
+  - parser regression coverage for missing, empty, and blank-only keywords.
   - contract/type tests for the new read-model shape.
   - React component tests and Storybook stories for populated, missing, and legacy score states.
 - QA:
