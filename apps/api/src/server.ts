@@ -138,8 +138,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    const actions = [];
-    for (const stage of body.stages) {
+    const commands = body.stages.map((stage) => {
       const command: ActionCommandPayload =
         stage === "apply"
           ? {
@@ -166,25 +165,28 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
               rescore: body.rescore,
               retailor: body.retailor,
             };
-      if (stage === "apply") {
-        const dispatch = await actionDispatcher(command, actionContext);
-        actions.push(buildActionResponse(command, dispatch));
-        continue;
-      }
-      try {
-        void actionDispatcher(command, actionContext).catch((error: unknown) => {
+      return { command, stage };
+    });
+    const actions = commands.map(({ command }) => buildActionResponse(command, { status: "queued" }));
+    void (async () => {
+      for (const { command, stage } of commands) {
+        try {
+          const dispatch = await actionDispatcher(command, actionContext);
+          if (dispatch.status === "failed") {
+            app.log.error({ dispatch, stage }, "Background pipeline stage dispatch failed.");
+            return;
+          }
+        } catch (error) {
           app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
-        });
-      } catch (error) {
-        app.log.error({ err: error, stage }, "Background pipeline stage dispatch failed.");
+          return;
+        }
       }
-      actions.push(buildActionResponse(command, { status: "queued" }));
-    }
+    })();
     void reply.code(202);
     return {
       ok: true,
       action: "run_stage",
-      status: actions.every((action) => action.status === "queued") ? "queued" : "accepted",
+      status: "queued",
       jobKey: PIPELINE_ACTION_JOB_KEY,
       count: actions.length,
       command: body,
