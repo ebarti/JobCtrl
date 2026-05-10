@@ -168,7 +168,7 @@ Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
   `workers/automation/src/jobhunter/domain/scoring/value_objects.py:103-105`).
   The scorer now parses and stores those components in `job_scores`, but the
   projection contract still collapses them to `scoreReasoning: string`
-  (`packages/contracts/src/schemas.ts:498`) and the frontend
+  (`packages/contracts/src/schemas.ts:566`) and the frontend
   `ScoreBreakdown.tsx` just wraps free text. Add the typed dimensions and
   keywords to the read model contract and render them in the jobs drawer.
 - Wire the user-correctable score path end-to-end. The `ScoreCorrected`
