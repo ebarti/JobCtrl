@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 
 import { databaseExists, openDatabase, type SqliteDatabase } from "./db.js";
+import { resolveLoopbackCorsOrigin } from "./local-origin.js";
 
 const POLL_DEFAULT_MS = 250;
 const KEEPALIVE_DEFAULT_MS = 15_000;
@@ -206,14 +207,20 @@ export function registerEventStreamRoute(app: FastifyInstance, options: EventStr
   app.get("/v1/events/stream", async (request, reply) => {
     const tenantId = resolveTenantId(request);
     const requestedResume = parseResumePosition(request);
-
-    reply.hijack();
-    reply.raw.writeHead(200, {
+    const corsOrigin = resolveLoopbackCorsOrigin(request.headers.origin);
+    const headers: Record<string, string> = {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
       Connection: "keep-alive",
-    });
+    };
+    if (corsOrigin) {
+      headers["Access-Control-Allow-Origin"] = corsOrigin;
+      headers.Vary = "Origin";
+    }
+
+    reply.hijack();
+    reply.raw.writeHead(200, headers);
     reply.raw.write(`retry: ${RETRY_BASELINE_MS}\n\n`);
 
     const connection = getDb();

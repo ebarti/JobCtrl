@@ -145,6 +145,25 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("allows loopback browser access to the event stream", async () => {
+    const app = buildApp(options);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected local test server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/events/stream?tenantId=local`, {
+      headers: { origin: "http://127.0.0.1:5175" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5175");
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    await response.body?.cancel();
+    await app.close();
+  });
+
   it("allows loopback browser preflight for local profile saves", async () => {
     const app = buildApp(options);
     const response = await app.inject({
