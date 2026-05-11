@@ -1218,10 +1218,10 @@ fetches the new page (or returns it from cache if visited recently).
 
 ### 5.3 Optimistic Updates
 
-The mutation invalidation strategy (§8.3) governs *async* (202) actions.
-**Synchronous mutations** (delete job, restore job, mark applied, mark
-skipped, retry stage with `runAfter: false`, cancel stage, update
-profile, update settings, update/delete credential) take the
+The mutation invalidation strategy (§8.3) separates synchronous HTTP results
+from *async* (202) actions. **Synchronous mutations** (delete job, restore
+job, mark applied, mark skipped, retry stage with `runAfter: false`, cancel
+stage, update profile, update settings, update/delete credential) take the
 **optimistic update** path:
 
 1. `onMutate`: snapshot affected query data; apply the optimistic patch.
@@ -1233,6 +1233,11 @@ profile, update settings, update/delete credential) take the
 This pattern is implemented in each context's mutation hooks. The
 `onMutate` patcher is a pure function; it is unit-tested separately from
 the hook.
+
+Synchronous mutations that do not patch a specific cached row still reconcile
+through `onSettled` invalidation. Non-apply-only global/batch pipeline stage
+starts use that path: the API returns HTTP 200 with worker action results, then
+the mutation invalidates operational reads on settle.
 
 ### 5.4 Stale Time and Garbage Collection
 
@@ -1778,9 +1783,10 @@ For *synchronous* mutations (return value is the final state):
 | `useCancelStageMutation({ jobId, stage })` | Same |
 | `useMarkAppliedMutation({ jobId })` | `jobsKeys.detail(tenantId, jobId)`, `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)` |
 | `useMarkSkippedMutation({ jobId })` | Same |
+| `useRunPipelineStagesMutation({ stages })` without `apply` | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)`, `workflowRunsKeys.lists(tenantId)`, `applyRunsKeys.lists(tenantId)` on settle after the HTTP 200 worker action results return |
 
-For *async* (202) mutations (return value is `{ runId }`; final state
-arrives via SSE):
+For *async* (202) mutation responses (the queued work's final state arrives
+via SSE):
 
 | Mutation | Immediate invalidation | Eventual invalidation (via SSE) |
 |---|---|---|
@@ -1788,19 +1794,23 @@ arrives via SSE):
 | `useApplyJobMutation({ jobId })` | `jobsKeys.detail(tenantId, jobId)`, `applyRunsKeys.list(tenantId)` (to show new run as "starting") | `ApplyRunStarted` → optimistic cache patch with worker info; `ApplicationSubmitted`/`ApplicationFailed` → invalidate `jobsKeys.detail`, `dashboardKeys.summary` |
 | `useDryRunApplyMutation({ jobId })` | Same | Same |
 | `useRetryStageMutation({ jobId, stage, runAfter: true })` | `jobsKeys.detail(tenantId, jobId)` | Same as the async equivalent |
-| `useRunPipelineStagesMutation({ stages })` | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)`, `workflowRunsKeys.lists(tenantId)`, `applyRunsKeys.lists(tenantId)` | Stage/apply events fan out through the invalidation router |
+| `useRunPipelineStagesMutation({ stages })` when `apply` queues | `jobsKeys.lists(tenantId)`, `dashboardKeys.summary(tenantId)`, `workflowRunsKeys.lists(tenantId)`, `applyRunsKeys.lists(tenantId)` on settle after the 202 response | Apply events fan out through the invalidation router; preceding non-apply stage results were already returned synchronously |
 
 ### 8.3 The Hybrid Strategy (resolves §6 question 5)
 
 **Decision:** Hybrid by mutation type:
 
-- **Sync mutations:** optimistic updates (§5.3) + `invalidateQueries` on
-  settle. The user sees instant feedback; the cache reconciles to the
-  server response.
+- **Sync mutations:** optimistic updates where applicable (§5.3) +
+  `invalidateQueries` on settle. The user sees instant feedback; the cache
+  reconciles to the server response. Global/batch pipeline stage starts
+  without `apply` are in this bucket: the API returns HTTP 200 with worker
+  action results, and the mutation uses normal settled invalidation.
 - **Async mutations (202 Accepted):** *no* eager invalidation of "the
   result." A small immediate invalidation of "the request queued" view
   (so the user sees "queued" state). The real result arrives via the SSE
-  invalidation router.
+  invalidation router. Global/batch pipeline requests enter this bucket only
+  when the `apply` dispatch actually queues; earlier non-apply stages in the
+  same request have already completed synchronously.
 - **Default mutation options** do *not* invalidate broadly. Each mutation
   declares its invalidation set. The reasons:
   - "Invalidate everything" thrashes the network.
