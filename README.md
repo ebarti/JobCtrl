@@ -252,11 +252,12 @@ pnpm web:dev
 The Vite dev server proxies `/v1/*` to the local API by default. Set
 `VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
 
-The dashboard includes a pipeline actions panel for global stage starts. Pick
-one or more stages (`discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`,
-`apply`), set limits/workers/score and validation options, and submit the batch
-through the local API. The panel defaults to dry-run mode so apply automation
-does not submit applications unless you explicitly clear dry run.
+The dashboard includes a pipeline actions panel for global stage starts. Each
+stage (`discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has
+its own tab with persisted local limits/workers/score and validation options.
+Running a tab submits that stage through the local API. Tabs default to dry-run
+mode so apply automation does not submit applications unless you explicitly
+clear dry run.
 
 ## Inspecting Progress
 

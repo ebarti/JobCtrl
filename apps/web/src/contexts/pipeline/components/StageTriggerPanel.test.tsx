@@ -1,21 +1,27 @@
 import type { PipelineStageRunResponse } from "@jobhunter/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
+import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
 import { StageTriggerPanel } from "./StageTriggerPanel.js";
 
 describe("StageTriggerPanel", () => {
-  it("defaults to dry-run and disables submission until at least one stage is selected", () => {
+  beforeEach(() => {
+    window.localStorage.removeItem?.("jh:stage-trigger-config");
+    useStageTriggerStore.getState().reset();
+  });
+
+  it("defaults to the Discover tab with dry-run enabled", () => {
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByLabelText("Dry run")).toBeChecked();
-    expect(screen.getByRole("button", { name: /Run selected stages/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
   });
 
-  it("submits selected stages and options through the pipeline mutation", async () => {
+  it("submits the active stage and its persisted options through the pipeline mutation", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
@@ -42,8 +48,7 @@ describe("StageTriggerPanel", () => {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.click(screen.getByLabelText("Score"));
-    await user.click(screen.getByLabelText("Apply"));
+    await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "12");
     await user.clear(screen.getByLabelText("Workers"));
@@ -55,11 +60,11 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByLabelText("Headless browser"));
     await user.clear(screen.getByLabelText("Apply model"));
     await user.type(screen.getByLabelText("Apply model"), "sonnet");
-    await user.click(screen.getByRole("button", { name: /Run selected stages/i }));
+    await user.click(screen.getByRole("button", { name: "Run Apply" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
     expect(runPipelineStages).toHaveBeenCalledWith({
-      stages: ["score", "apply"],
+      stages: ["apply"],
       limit: 12,
       workers: 3,
       minScore: 8,
@@ -72,5 +77,33 @@ describe("StageTriggerPanel", () => {
       continuous: false,
     });
     expect(await screen.findByText("accepted 2 stage actions")).toBeInTheDocument();
+  });
+
+  it("keeps separate per-stage tab config and restores it after remount", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderWithProviders(<StageTriggerPanel />);
+
+    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
+    await user.clear(screen.getByLabelText("Limit"));
+    await user.type(screen.getByLabelText("Limit"), "5");
+
+    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.clear(screen.getByLabelText("Limit"));
+    await user.type(screen.getByLabelText("Limit"), "13");
+    await user.click(screen.getByLabelText("Retailor"));
+
+    await user.click(screen.getByRole("tab", { name: "Discover" }));
+    expect(screen.getByLabelText("Limit")).toHaveValue(5);
+    expect(screen.getByLabelText("Retailor")).not.toBeChecked();
+
+    unmount();
+    renderWithProviders(<StageTriggerPanel />);
+
+    expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Limit")).toHaveValue(5);
+
+    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    expect(screen.getByLabelText("Limit")).toHaveValue(13);
+    expect(screen.getByLabelText("Retailor")).toBeChecked();
   });
 });

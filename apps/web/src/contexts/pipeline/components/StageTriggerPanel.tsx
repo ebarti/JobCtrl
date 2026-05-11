@@ -5,11 +5,13 @@ import {
   type Stage,
 } from "@jobhunter/contracts";
 import { Play } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
+import { Tabs, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
+import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
 
 function labelForStage(stage: Stage): string {
   return stage === "pdf" ? "PDF" : `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
@@ -26,70 +28,68 @@ function stageRunStatusLine(status: string, count: number): string {
 
 export function StageTriggerPanel() {
   const runStages = useRunPipelineStagesMutation();
-  const [selectedStages, setSelectedStages] = useState<Stage[]>([]);
-  const [limit, setLimit] = useState("25");
-  const [workers, setWorkers] = useState("1");
-  const [minScore, setMinScore] = useState("7");
-  const [validationMode, setValidationMode] = useState<PipelineValidationMode>("normal");
-  const [dryRun, setDryRun] = useState(true);
-  const [rescore, setRescore] = useState(false);
-  const [retailor, setRetailor] = useState(false);
-  const [headless, setHeadless] = useState(false);
-  const [model, setModel] = useState("haiku");
-  const [continuous, setContinuous] = useState(false);
+  const activeStage = useStageTriggerStore((state) => state.activeStage);
+  const config = useStageTriggerStore((state) => state.configs[state.activeStage]);
+  const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
+  const patchStageConfig = useStageTriggerStore((state) => state.patchStageConfig);
 
-  const toggleStage = (stage: Stage, checked: boolean) => {
-    const next = new Set(selectedStages);
-    if (checked) {
-      next.add(stage);
-    } else {
-      next.delete(stage);
-    }
-    setSelectedStages(STAGES.filter((item) => next.has(item)));
+  const patchConfig = (patch: Partial<StageTriggerConfig>) => {
+    patchStageConfig(activeStage, patch);
   };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (selectedStages.length === 0) {
-      return;
-    }
     runStages.mutate({
-      stages: selectedStages,
-      limit: numberValue(limit, 25),
-      workers: numberValue(workers, 1),
-      minScore: numberValue(minScore, 7),
-      validationMode,
-      dryRun,
-      rescore,
-      retailor,
-      headless,
-      model: model.trim() || "haiku",
-      continuous,
+      stages: [activeStage],
+      limit: numberValue(config.limit, 25),
+      workers: numberValue(config.workers, 1),
+      minScore: numberValue(config.minScore, 7),
+      validationMode: config.validationMode,
+      dryRun: config.dryRun,
+      rescore: config.rescore,
+      retailor: config.retailor,
+      headless: config.headless,
+      model: config.model.trim() || "haiku",
+      continuous: config.continuous,
     });
   };
 
   return (
     <section className="card full stage-trigger-panel">
       <CardHeader title="Pipeline actions" meta={runStages.data?.status ?? "ready"} />
-      <form className="stage-trigger-form" onSubmit={submit}>
-        <fieldset className="stage-trigger-stages">
-          <legend>Stages</legend>
+      <Tabs
+        className="stage-trigger-tabs"
+        value={activeStage}
+        onValueChange={(value) => {
+          if (STAGES.includes(value as Stage)) {
+            setActiveStage(value as Stage);
+          }
+        }}
+      >
+        <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
           {STAGES.map((stage) => (
-            <label className="stage-trigger-check" key={stage}>
-              <input
-                type="checkbox"
-                checked={selectedStages.includes(stage)}
-                onChange={(event) => toggleStage(stage, event.currentTarget.checked)}
-              />
-              <span>{labelForStage(stage)}</span>
-            </label>
+            <TabsTrigger key={stage} value={stage}>
+              {labelForStage(stage)}
+            </TabsTrigger>
           ))}
-        </fieldset>
+        </TabsList>
+      </Tabs>
+      <form className="stage-trigger-form" onSubmit={submit}>
+        <div className="stage-trigger-active">
+          <span className="muted">Configuring</span>
+          <strong>{labelForStage(activeStage)}</strong>
+        </div>
 
         <div className="stage-trigger-grid">
           <label className="field">
             <span>Limit</span>
-            <input min={1} max={500} type="number" value={limit} onChange={(event) => setLimit(event.target.value)} />
+            <input
+              min={1}
+              max={500}
+              type="number"
+              value={config.limit}
+              onChange={(event) => patchConfig({ limit: event.target.value })}
+            />
           </label>
           <label className="field">
             <span>Workers</span>
@@ -97,8 +97,8 @@ export function StageTriggerPanel() {
               min={1}
               max={16}
               type="number"
-              value={workers}
-              onChange={(event) => setWorkers(event.target.value)}
+              value={config.workers}
+              onChange={(event) => patchConfig({ workers: event.target.value })}
             />
           </label>
           <label className="field">
@@ -107,15 +107,15 @@ export function StageTriggerPanel() {
               min={0}
               max={10}
               type="number"
-              value={minScore}
-              onChange={(event) => setMinScore(event.target.value)}
+              value={config.minScore}
+              onChange={(event) => patchConfig({ minScore: event.target.value })}
             />
           </label>
           <label className="field">
             <span>Validation mode</span>
             <select
-              value={validationMode}
-              onChange={(event) => setValidationMode(event.target.value as PipelineValidationMode)}
+              value={config.validationMode}
+              onChange={(event) => patchConfig({ validationMode: event.target.value as PipelineValidationMode })}
             >
               {PIPELINE_VALIDATION_MODES.map((mode) => (
                 <option key={mode} value={mode}>
@@ -126,41 +126,57 @@ export function StageTriggerPanel() {
           </label>
           <label className="field">
             <span>Apply model</span>
-            <input value={model} onChange={(event) => setModel(event.target.value)} />
+            <input value={config.model} onChange={(event) => patchConfig({ model: event.target.value })} />
           </label>
         </div>
 
         <div className="stage-trigger-options">
           <label className="stage-trigger-check">
-            <input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.currentTarget.checked)} />
+            <input
+              type="checkbox"
+              checked={config.dryRun}
+              onChange={(event) => patchConfig({ dryRun: event.currentTarget.checked })}
+            />
             <span>Dry run</span>
           </label>
           <label className="stage-trigger-check">
-            <input type="checkbox" checked={rescore} onChange={(event) => setRescore(event.currentTarget.checked)} />
+            <input
+              type="checkbox"
+              checked={config.rescore}
+              onChange={(event) => patchConfig({ rescore: event.currentTarget.checked })}
+            />
             <span>Rescore</span>
           </label>
           <label className="stage-trigger-check">
-            <input type="checkbox" checked={retailor} onChange={(event) => setRetailor(event.currentTarget.checked)} />
+            <input
+              type="checkbox"
+              checked={config.retailor}
+              onChange={(event) => patchConfig({ retailor: event.currentTarget.checked })}
+            />
             <span>Retailor</span>
           </label>
           <label className="stage-trigger-check">
-            <input type="checkbox" checked={headless} onChange={(event) => setHeadless(event.currentTarget.checked)} />
+            <input
+              type="checkbox"
+              checked={config.headless}
+              onChange={(event) => patchConfig({ headless: event.currentTarget.checked })}
+            />
             <span>Headless browser</span>
           </label>
           <label className="stage-trigger-check">
             <input
               type="checkbox"
-              checked={continuous}
-              onChange={(event) => setContinuous(event.currentTarget.checked)}
+              checked={config.continuous}
+              onChange={(event) => patchConfig({ continuous: event.currentTarget.checked })}
             />
             <span>Continuous</span>
           </label>
         </div>
 
         <div className="stage-trigger-actions">
-          <Button disabled={selectedStages.length === 0 || runStages.isPending} type="submit">
+          <Button disabled={runStages.isPending} type="submit">
             <Play aria-hidden="true" size={16} />
-            {runStages.isPending ? "Starting" : "Run selected stages"}
+            {runStages.isPending ? "Starting" : `Run ${labelForStage(activeStage)}`}
           </Button>
           {runStages.data ? (
             <span className="status-line">{stageRunStatusLine(runStages.data.status, runStages.data.count)}</span>
