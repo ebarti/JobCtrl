@@ -374,6 +374,10 @@ class ProjectionBuilder:
         if fit_score is None:
             fit_score = _row_nullable_int(job_row, "fit_score")
         score_reasoning = score.get("reasoning") or _row_str(job_row, "score_reasoning")
+        score_breakdown_json = score.get("breakdown_json")
+        score_keywords_json = score.get("keywords_json") or "[]"
+        score_version = score.get("version")
+        scored_at = score.get("scored_at")
 
         # Materials presence:
         tailor_path = materials.get("tailor_path") or _row_nullable_str(
@@ -424,7 +428,11 @@ class ProjectionBuilder:
             description=description,
             full_description=full_description,
             fit_score=fit_score,
+            score_breakdown_json=score_breakdown_json,
+            score_keywords_json=score_keywords_json,
             score_reasoning=score_reasoning,
+            score_version=score_version,
+            scored_at=scored_at,
             current_stage=current_stage,
             current_state=current_state,
             current_error_code=current_error_code,
@@ -448,7 +456,11 @@ class ProjectionBuilder:
             description_preview=_preview_text(
                 full_description or description, 6000
             ),
+            score_breakdown_json=score_breakdown_json,
+            score_keywords_json=score_keywords_json,
             score_reasoning=score_reasoning,
+            score_version=score_version,
+            scored_at=scored_at,
             stages=tuple(stages),
             last_updated_at=last_updated_at,
         )
@@ -528,7 +540,8 @@ class ProjectionBuilder:
         try:
             row = self._conn.execute(
                 """
-                SELECT s.fit_score, s.scored_at, s.breakdown_json
+                SELECT s.version, s.fit_score, s.scored_at, s.breakdown_json,
+                       s.keywords_json
                 FROM job_scores s
                 WHERE s.job_url = ?
                 ORDER BY s.version DESC
@@ -542,11 +555,18 @@ class ProjectionBuilder:
             return {}
         breakdown = _json_loads(_row_nullable_str(row, "breakdown_json"), {})
         reasoning = ""
-        if isinstance(breakdown, dict) and isinstance(breakdown.get("reasoning"), str):
-            reasoning = breakdown["reasoning"]
+        legacy = False
+        if isinstance(breakdown, dict):
+            legacy = breakdown.get("legacy") is True
+            if isinstance(breakdown.get("reasoning"), str):
+                reasoning = breakdown["reasoning"]
+        keywords = _normalize_keywords(_json_loads(_row_nullable_str(row, "keywords_json"), []))
         return {
+            "version": _row_nullable_int(row, "version"),
             "fit_score": _row_nullable_int(row, "fit_score"),
             "scored_at": _row_nullable_str(row, "scored_at"),
+            "breakdown_json": None if legacy else json.dumps(_camel_score_breakdown(breakdown)),
+            "keywords_json": json.dumps([] if legacy and keywords == ["legacy"] else keywords),
             "reasoning": reasoning,
         }
 
@@ -1163,6 +1183,43 @@ def _preview_text(value: str, limit: int) -> str:
     if not value:
         return ""
     return value if len(value) <= limit else f"{value[:limit]}..."
+
+
+def _camel_score_breakdown(value) -> dict:
+    data = value if isinstance(value, dict) else {}
+    return {
+        "technicalFit": _score_dimension(data.get("technical_fit", data.get("technicalFit"))),
+        "experienceFit": _score_dimension(data.get("experience_fit", data.get("experienceFit"))),
+        "roleFit": _score_dimension(data.get("role_fit", data.get("roleFit"))),
+        "reasoning": data.get("reasoning") if isinstance(data.get("reasoning"), str) else "",
+    }
+
+
+def _score_dimension(value) -> int:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if number < 0:
+        return 0
+    if number > 10:
+        return 10
+    return number
+
+
+def _normalize_keywords(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    seen: set[str] = set()
+    keywords: list[str] = []
+    for raw in value:
+        keyword = str(raw or "").strip()
+        key = keyword.lower()
+        if not keyword or key in seen:
+            continue
+        seen.add(key)
+        keywords.append(keyword)
+    return keywords
 
 
 def _company_name(site: str, posting_url: str) -> str:

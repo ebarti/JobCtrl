@@ -31,6 +31,16 @@ export const sampleJob: JobSummary = {
   discoveredAt: "2026-05-01T12:00:00Z",
   applicationUrl: "https://example.com/apply/1",
   fitScore: 8,
+  scoreBreakdown: {
+    technicalFit: 9,
+    experienceFit: 7,
+    roleFit: 8,
+    reasoning: "Strong fit on platform reliability.",
+  },
+  scoreKeywords: ["platform reliability", "sre"],
+  scoreReasoning: "Strong fit on platform reliability.",
+  scoreVersion: 2,
+  scoredAt: "2026-05-05T09:30:00Z",
   currentStage: "tailor",
   currentState: "running",
   errorCode: null,
@@ -78,7 +88,7 @@ export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
     job: {
       ...job,
       descriptionPreview: "Lead the platform engineering team...",
-      scoreReasoning: "Strong fit on platform reliability.",
+      scoreReasoning: job.scoreReasoning,
     },
     stages: [
       {

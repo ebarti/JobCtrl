@@ -489,11 +489,12 @@ export function StructuredProfileEditor({
         setPathValue(draft, workModelPath, nextRows.map((row) => row.workModel).join("; "));
       });
     };
+    const emptyRow = { location: "", workModel: "" };
     const insertRowAfter = (index: number, rowPatch: Partial<{ location: string; workModel: string }>) => {
       const insertionIndex = index + 1;
       const next = [...rows];
-      next[index] = { ...(next[index] ?? { location: "", workModel: "" }), ...rowPatch };
-      next.splice(insertionIndex, 0, { location: "", workModel: "" });
+      next[index] = { ...(next[index] ?? emptyRow), ...rowPatch };
+      next.splice(insertionIndex, 0, emptyRow);
       focusAfterDraftUpdate(locationFocusKey(insertionIndex));
       updateRows(next);
     };
@@ -509,10 +510,7 @@ export function StructuredProfileEditor({
         selected.delete(value);
       }
       const next = [...rows];
-      next[index] = {
-        ...(next[index] ?? { location: "", workModel: "" }),
-        workModel: Array.from(selected).join(", "),
-      };
+      next[index] = { ...(next[index] ?? emptyRow), workModel: Array.from(selected).join(", ") };
       updateRows(next);
     };
 
@@ -1088,10 +1086,12 @@ export function StructuredProfileEditor({
 
 function delimitedListAt(value: string): string[] {
   const withoutLegacyLabel = value.replace(/^\s*Target roles?:\s*/i, "");
-  if (!withoutLegacyLabel.trim()) {
+  if (!withoutLegacyLabel) {
     return [""];
   }
-  return withoutLegacyLabel.split(";").map((item) => item.trim());
+  return withoutLegacyLabel
+    .split(";")
+    .map((item, index) => (index === 0 ? item : item.replace(/^\s+/, "")));
 }
 
 function commaListAt(value: string): string[] {

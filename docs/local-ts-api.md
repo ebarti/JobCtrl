@@ -21,6 +21,11 @@ maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
 
+`/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
+from `job_scores` as additive read-model fields: `scoreBreakdown`,
+`scoreKeywords`, `scoreVersion`, and `scoredAt`. `scoreReasoning` remains on
+the wire as a compatibility summary during the scoring evidence migration.
+
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal
 workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`

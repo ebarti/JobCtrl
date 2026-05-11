@@ -490,6 +490,13 @@ export interface StageSummary {
   nextAction: string | null;
 }
 
+export interface ScoreBreakdown {
+  technicalFit: number;
+  experienceFit: number;
+  roleFit: number;
+  reasoning: string;
+}
+
 export interface JobSummary {
   jobKey: string;
   url: string;
@@ -502,6 +509,11 @@ export interface JobSummary {
   discoveredAt: string | null;
   applicationUrl: string | null;
   fitScore: number | null;
+  scoreBreakdown: ScoreBreakdown | null;
+  scoreKeywords: string[];
+  scoreReasoning: string;
+  scoreVersion: number | null;
+  scoredAt: string | null;
   currentStage: Stage;
   currentState: StageState;
   errorCode: string | null;

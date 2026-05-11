@@ -22,6 +22,7 @@ describe("<ProfileEditor>", () => {
 
     expect(await screen.findByRole("heading", { name: "Preferences" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Application defaults" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum fit score")).toHaveValue(7);
     expect(screen.queryByText("Resume preview")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Resize profile and PDF preview panes")).not.toBeInTheDocument();
   });
