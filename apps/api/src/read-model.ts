@@ -29,6 +29,7 @@ import type {
   JobSummary,
   PaginatedResponse,
   ProfileShape,
+  ScoreBreakdown,
   SettingsResponse,
   Stage,
   StageState,
@@ -90,7 +91,11 @@ interface JobListProjectionRow extends Record<string, unknown> {
   description: string;
   full_description: string;
   fit_score: number | null;
+  score_breakdown_json: string | null;
+  score_keywords_json: string;
   score_reasoning: string;
+  score_version: number | null;
+  scored_at: string | null;
   current_stage: string;
   current_state: string;
   current_error_code: string | null;
@@ -110,7 +115,11 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   tenant_id: string;
   job_id: string;
   description_preview: string;
+  score_breakdown_json: string | null;
+  score_keywords_json: string;
   score_reasoning: string;
+  score_version: number | null;
+  scored_at: string | null;
   stages_json: string;
   last_updated_at: string | null;
 }
@@ -353,6 +362,11 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     discoveredAt: row.discovered_at,
     applicationUrl: row.application_url,
     fitScore: row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score),
+    scoreBreakdown: parseScoreBreakdown(row.score_breakdown_json),
+    scoreKeywords: parseScoreKeywords(row.score_keywords_json),
+    scoreReasoning: row.score_reasoning ?? "",
+    scoreVersion: nullableNumber(row.score_version),
+    scoredAt: nullableString(row.scored_at),
     currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
     currentState: (isStageState(row.current_state) ? row.current_state : "pending") as StageState,
     errorCode: row.current_error_code,
@@ -363,6 +377,50 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     appliedAt: row.applied_at,
     deletedAt: row.deleted_at,
   };
+}
+
+function parseScoreBreakdown(value: string | null): ScoreBreakdown | null {
+  let parsed: unknown = null;
+  try {
+    parsed = value ? JSON.parse(value) : null;
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+  return {
+    technicalFit: scoreDimension(parsed.technicalFit),
+    experienceFit: scoreDimension(parsed.experienceFit),
+    roleFit: scoreDimension(parsed.roleFit),
+    reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+  };
+}
+
+function parseScoreKeywords(value: string | null): string[] {
+  let parsed: unknown = [];
+  try {
+    parsed = value ? JSON.parse(value) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const seen = new Set<string>();
+  const keywords: string[] = [];
+  for (const raw of parsed) {
+    const keyword = String(raw ?? "").trim();
+    const key = keyword.toLowerCase();
+    if (!keyword || seen.has(key)) continue;
+    seen.add(key);
+    keywords.push(keyword);
+  }
+  return keywords;
+}
+
+function scoreDimension(value: unknown): number {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 10) return 10;
+  return Math.trunc(n);
 }
 
 function rowToArtifactSummary(row: ArtifactProjectionRow): ArtifactSummary {

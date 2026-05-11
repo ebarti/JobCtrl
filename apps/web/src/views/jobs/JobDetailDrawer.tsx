@@ -71,8 +71,12 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
             </Section>
             <Section title="Score breakdown">
               <ScoreBreakdown
-                scoreReasoning={detail.job.scoreReasoning}
                 fitScore={detail.job.fitScore}
+                scoreBreakdown={detail.job.scoreBreakdown}
+                scoreKeywords={detail.job.scoreKeywords}
+                scoreReasoning={detail.job.scoreReasoning}
+                scoreVersion={detail.job.scoreVersion}
+                scoredAt={detail.job.scoredAt}
               />
             </Section>
             <Section title="Description">

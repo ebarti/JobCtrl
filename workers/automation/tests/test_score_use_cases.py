@@ -21,6 +21,7 @@ from jobhunter.domain.scoring import (
     MatchedKeywords,
     ScoreBreakdown,
 )
+from jobhunter.domain.scoring.services import ScoreParser
 from jobhunter.domain.scoring.use_cases import (
     CorrectScoreUseCase,
     ScoreJobUseCase,
@@ -169,6 +170,58 @@ def _job(url: str = "https://example.com/job/1") -> dict[str, Any]:
         "location": "Remote",
         "full_description": "We need a Python and FastAPI engineer.",
     }
+
+
+# ---------------------------------------------------------------------------
+# ScoreParser
+# ---------------------------------------------------------------------------
+
+
+def test_score_parser_rejects_missing_keyword_field() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "reasoning": "Strong overlap.",
+        }
+    )
+
+    assert result.ok is False
+    assert "keywords" in result.error
+
+
+def test_score_parser_rejects_empty_keyword_array() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "keywords": [],
+            "reasoning": "Strong overlap.",
+        }
+    )
+
+    assert result.ok is False
+    assert "keywords" in result.error
+
+
+def test_score_parser_rejects_blank_only_keyword_array() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "keywords": [" ", "\t", "\n"],
+            "reasoning": "Strong overlap.",
+        }
+    )
+
+    assert result.ok is False
+    assert "keywords" in result.error
 
 
 # ---------------------------------------------------------------------------

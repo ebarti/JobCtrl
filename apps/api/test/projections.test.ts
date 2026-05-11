@@ -102,15 +102,59 @@ function seedSchema(dbPath: string): void {
       duration_ms INTEGER,
       events_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE job_scores (
+      job_url TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      fit_score INTEGER NOT NULL,
+      breakdown_json TEXT NOT NULL,
+      keywords_json TEXT NOT NULL,
+      scored_at TEXT NOT NULL,
+      correction_json TEXT,
+      PRIMARY KEY (job_url, version)
+    );
   `);
   db.prepare(
-    "INSERT INTO jobs (url, title, site, fit_score, application_url) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO jobs (url, title, site, fit_score, score_reasoning, application_url) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(
     "https://example.com/jobs/event-driven",
     "Event-Driven Engineer",
     "ExampleCo",
     9,
+    "Legacy reasoning kept for old callers.",
     "https://example.com/apply/event",
+  );
+  db.prepare(
+    "INSERT INTO job_scores (job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    "https://example.com/jobs/event-driven",
+    1,
+    "local",
+    7,
+    JSON.stringify({
+      technical_fit: 7,
+      experience_fit: 6,
+      role_fit: 7,
+      reasoning: "Older score evidence.",
+    }),
+    JSON.stringify(["python"]),
+    "2026-05-04T11:00:00+00:00",
+  );
+  db.prepare(
+    "INSERT INTO job_scores (job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    "https://example.com/jobs/event-driven",
+    2,
+    "local",
+    8,
+    JSON.stringify({
+      technical_fit: 9,
+      experience_fit: 7,
+      role_fit: 8,
+      reasoning: "Latest structured score evidence.",
+    }),
+    JSON.stringify(["python", "fastapi"]),
+    "2026-05-05T09:30:00+00:00",
   );
   db.prepare(
     "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -179,6 +223,63 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(item).toBeDefined();
         expect(item.applyStatus).toBe("applied");
         expect(item.appliedAt).toBe("2026-05-04T13:05:00+00:00");
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("jobs endpoints expose latest score evidence from job_scores", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await app.inject({ method: "GET", url: "/v1/jobs" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+        const item = listRes
+          .json()
+          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/event-driven");
+        expect(item).toMatchObject({
+          fitScore: 8,
+          scoreBreakdown: {
+            technicalFit: 9,
+            experienceFit: 7,
+            roleFit: 8,
+            reasoning: "Latest structured score evidence.",
+          },
+          scoreKeywords: ["python", "fastapi"],
+          scoreReasoning: "Latest structured score evidence.",
+          scoreVersion: 2,
+          scoredAt: "2026-05-05T09:30:00+00:00",
+        });
+
+        const detailRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs/https%3A%2F%2Fexample.com%2Fjobs%2Fevent-driven",
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+        expect(detailRes.json().job).toMatchObject({
+          fitScore: 8,
+          scoreBreakdown: {
+            technicalFit: 9,
+            experienceFit: 7,
+            roleFit: 8,
+            reasoning: "Latest structured score evidence.",
+          },
+          scoreKeywords: ["python", "fastapi"],
+          scoreReasoning: "Latest structured score evidence.",
+          scoreVersion: 2,
+          scoredAt: "2026-05-05T09:30:00+00:00",
+        });
       } finally {
         await app.close();
       }

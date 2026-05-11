@@ -75,7 +75,11 @@ class JobListProjection:
     description: str = ""
     full_description: str = ""
     fit_score: int | None = None
+    score_breakdown_json: str | None = None
+    score_keywords_json: str = "[]"
     score_reasoning: str = ""
+    score_version: int | None = None
+    scored_at: str | None = None
     current_stage: str = "discover"
     current_state: str = "pending"
     current_error_code: str | None = None
@@ -131,7 +135,11 @@ class JobDetailProjection:
     tenant_id: TenantId
     job_id: str
     description_preview: str = ""
+    score_breakdown_json: str | None = None
+    score_keywords_json: str = "[]"
     score_reasoning: str = ""
+    score_version: int | None = None
+    scored_at: str | None = None
     stages: tuple[StageProjection, ...] = ()
     last_updated_at: str | None = None
 

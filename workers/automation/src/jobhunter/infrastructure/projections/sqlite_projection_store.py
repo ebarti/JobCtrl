@@ -43,6 +43,17 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "apply_run_projections",
 )
 
+SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("job_list_projections", "score_breakdown_json", "TEXT"),
+    ("job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job_list_projections", "score_version", "INTEGER"),
+    ("job_list_projections", "scored_at", "TEXT"),
+    ("job_detail_projections", "score_breakdown_json", "TEXT"),
+    ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job_detail_projections", "score_version", "INTEGER"),
+    ("job_detail_projections", "scored_at", "TEXT"),
+)
+
 
 def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
     """Create the projection tables if they do not exist (idempotent)."""
@@ -63,7 +74,11 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             description            TEXT NOT NULL DEFAULT '',
             full_description       TEXT NOT NULL DEFAULT '',
             fit_score              INTEGER,
+            score_breakdown_json   TEXT,
+            score_keywords_json    TEXT NOT NULL DEFAULT '[]',
             score_reasoning        TEXT NOT NULL DEFAULT '',
+            score_version          INTEGER,
+            scored_at              TEXT,
             current_stage          TEXT NOT NULL DEFAULT 'discover',
             current_state          TEXT NOT NULL DEFAULT 'pending',
             current_error_code     TEXT,
@@ -110,7 +125,11 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             tenant_id              TEXT NOT NULL DEFAULT 'local',
             job_id                 TEXT NOT NULL,
             description_preview    TEXT NOT NULL DEFAULT '',
+            score_breakdown_json   TEXT,
+            score_keywords_json    TEXT NOT NULL DEFAULT '[]',
             score_reasoning        TEXT NOT NULL DEFAULT '',
+            score_version          INTEGER,
+            scored_at              TEXT,
             stages_json            TEXT NOT NULL DEFAULT '[]',
             last_updated_at        TEXT,
             PRIMARY KEY (tenant_id, job_id)
@@ -160,8 +179,39 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         )
         """
     )
+    score_evidence_schema_changed = False
+    for table_name, column_name, definition in SCORE_EVIDENCE_COLUMNS:
+        score_evidence_schema_changed = (
+            _ensure_column(conn, table_name, column_name, definition)
+            or score_evidence_schema_changed
+        )
+    if score_evidence_schema_changed:
+        # Projection rows are fully derived; resetting them lets the next
+        # refresh rebuild migrated rows from canonical job_scores evidence.
+        _reset_score_evidence_projections(conn)
     conn.commit()
     return list(PROJECTION_TABLES)
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    definition: str,
+) -> bool:
+    columns = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+        return True
+    return False
+
+
+def _reset_score_evidence_projections(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM job_list_projections")
+    conn.execute("DELETE FROM job_detail_projections")
 
 
 class SqliteProjectionStore:
@@ -179,14 +229,16 @@ class SqliteProjectionStore:
             INSERT INTO job_list_projections (
                 tenant_id, job_id, title, employer, source, strategy, location,
                 salary, application_url, discovered_at, description,
-                full_description, fit_score, score_reasoning, current_stage,
-                current_state, current_error_code, current_error_message,
-                current_next_action, has_resume, has_cover_letter, has_pdf,
-                apply_status, applied_at, artifact_count, deleted_at,
+                full_description, fit_score, score_breakdown_json,
+                score_keywords_json, score_reasoning, score_version, scored_at,
+                current_stage, current_state, current_error_code,
+                current_error_message, current_next_action, has_resume,
+                has_cover_letter, has_pdf, apply_status, applied_at,
+                artifact_count, deleted_at,
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -200,7 +252,11 @@ class SqliteProjectionStore:
                 description           = excluded.description,
                 full_description      = excluded.full_description,
                 fit_score             = excluded.fit_score,
+                score_breakdown_json  = excluded.score_breakdown_json,
+                score_keywords_json   = excluded.score_keywords_json,
                 score_reasoning       = excluded.score_reasoning,
+                score_version         = excluded.score_version,
+                scored_at             = excluded.scored_at,
                 current_stage         = excluded.current_stage,
                 current_state         = excluded.current_state,
                 current_error_code    = excluded.current_error_code,
@@ -229,7 +285,11 @@ class SqliteProjectionStore:
                 projection.description,
                 projection.full_description,
                 projection.fit_score,
+                projection.score_breakdown_json,
+                projection.score_keywords_json,
                 projection.score_reasoning,
+                projection.score_version,
+                projection.scored_at,
                 projection.current_stage,
                 projection.current_state,
                 projection.current_error_code,
@@ -304,20 +364,29 @@ class SqliteProjectionStore:
         self._conn.execute(
             """
             INSERT INTO job_detail_projections (
-                tenant_id, job_id, description_preview, score_reasoning,
+                tenant_id, job_id, description_preview, score_breakdown_json,
+                score_keywords_json, score_reasoning, score_version, scored_at,
                 stages_json, last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-                description_preview = excluded.description_preview,
-                score_reasoning     = excluded.score_reasoning,
-                stages_json         = excluded.stages_json,
-                last_updated_at     = excluded.last_updated_at
+                description_preview  = excluded.description_preview,
+                score_breakdown_json = excluded.score_breakdown_json,
+                score_keywords_json  = excluded.score_keywords_json,
+                score_reasoning      = excluded.score_reasoning,
+                score_version        = excluded.score_version,
+                scored_at            = excluded.scored_at,
+                stages_json          = excluded.stages_json,
+                last_updated_at      = excluded.last_updated_at
             """,
             (
                 str(projection.tenant_id),
                 projection.job_id,
                 projection.description_preview,
+                projection.score_breakdown_json,
+                projection.score_keywords_json,
                 projection.score_reasoning,
+                projection.score_version,
+                projection.scored_at,
                 json.dumps(
                     [
                         {

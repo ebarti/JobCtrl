@@ -96,9 +96,10 @@ class ScoreParser:
             )
 
         reasoning = str(payload.get("reasoning") or "").strip()
-        keywords_raw = payload.get("keywords") or []
-        keywords = MatchedKeywords.from_iterable(keywords_raw)
-        keywords_present = bool(keywords_raw)
+        keywords_raw = payload.get("keywords", [])
+        keywords = MatchedKeywords.from_iterable(
+            keywords_raw if isinstance(keywords_raw, list) else None
+        )
 
         score_raw = payload.get("score")
         fit_score = FitScore.from_optional(score_raw)
@@ -111,13 +112,29 @@ class ScoreParser:
                 error=f"score {score_raw!r} missing or outside [1, 10]",
             )
 
-        if not keywords_present:
+        if "keywords" not in payload:
             return ScoreParseResult(
                 ok=False,
                 fit_score=None,
                 breakdown=ScoreBreakdown(reasoning=reasoning or str(payload)[:2000]),
                 keywords=keywords,
                 error="LLM payload missing 'keywords' (required by schema)",
+            )
+        if not isinstance(keywords_raw, list):
+            return ScoreParseResult(
+                ok=False,
+                fit_score=None,
+                breakdown=ScoreBreakdown(reasoning=reasoning or str(payload)[:2000]),
+                keywords=keywords,
+                error="LLM payload 'keywords' must be an array",
+            )
+        if not _has_non_blank_keyword(keywords_raw):
+            return ScoreParseResult(
+                ok=False,
+                fit_score=None,
+                breakdown=ScoreBreakdown(reasoning=reasoning or str(payload)[:2000]),
+                keywords=keywords,
+                error="LLM payload 'keywords' must contain at least one non-blank entry",
             )
 
         breakdown = ScoreBreakdown(
@@ -152,6 +169,10 @@ def _clamp_dim(value: Any) -> int:
     if ivalue > 10:
         return 10
     return ivalue
+
+
+def _has_non_blank_keyword(values: list[Any]) -> bool:
+    return any(raw is not None and str(raw).strip() for raw in values)
 
 
 # ---------------------------------------------------------------------------
