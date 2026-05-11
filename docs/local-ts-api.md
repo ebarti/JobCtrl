@@ -33,6 +33,20 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `/runs` deep-links each row to the local Temporal Web UI
 (`http://127.0.0.1:8233`).
 
+`POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
+from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
+`validationMode`, `dryRun`, score/tailor flags (`rescore`, `retailor`), and
+apply flags (`headless`, `model`, `continuous`). The route dispatches
+non-apply stages to JSON-RPC `run_stage` and global apply to JSON-RPC `apply`;
+it uses the command key `pipeline` only as the local action response handle,
+not as a fake job URL. Selected stages run in request order. Non-apply-only
+batches are synchronous and return `200` with the worker's real action IDs,
+statuses (`dry_run`, `succeeded`, or `failed`), and results. Batches that
+include `apply` first run preceding non-apply stages synchronously, then return
+`202` only if the apply workflow is actually queued; if apply dispatch fails,
+the response is `200` and preserves the dispatcher-derived failed apply action.
+`dryRun` defaults to `true`, preserving apply safety.
+
 ## Related Packages
 
 - `apps/api`: Fastify API app.

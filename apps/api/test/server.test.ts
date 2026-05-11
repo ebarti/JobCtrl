@@ -4,11 +4,11 @@ import path from "node:path";
 import Database from "better-sqlite3";
 
 import { createJobHunterApiClient } from "@jobhunter/api-client";
-import { CredentialKeys, type CredentialKey } from "@jobhunter/contracts";
+import { CredentialKeys, type ActionCommandPayload, type CredentialKey } from "@jobhunter/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
-import { defaultActionDispatcher } from "../src/local-actions.js";
+import { defaultActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
@@ -34,6 +34,29 @@ function validProfileFixture(fullName: string): Record<string, unknown> {
       tailoring_rules: {},
     },
   };
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForExpectation(assertion: () => void, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      assertion();
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  assertion();
 }
 
 beforeEach(() => {
@@ -962,6 +985,339 @@ describe("local TypeScript API", () => {
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("dispatches global pipeline stage runs with shared stage options and safe apply defaults", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: {
+        stages: ["score", "tailor", "apply"],
+        limit: 12,
+        workers: 3,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: true,
+        rescore: true,
+        retailor: true,
+        headless: true,
+        model: "sonnet",
+        continuous: true,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "run_stage",
+      status: "queued",
+      jobKey: "pipeline",
+      count: 3,
+      actions: [
+        {
+          action: "run_stage",
+          status: "queued",
+          jobKey: "pipeline",
+          command: {
+            action: "run_stage",
+            jobKey: "pipeline",
+            stage: "score",
+            limit: 12,
+            workers: 3,
+            minScore: 8,
+            validationMode: "strict",
+            dryRun: true,
+            rescore: true,
+          },
+        },
+        {
+          action: "run_stage",
+          command: {
+            stage: "tailor",
+            retailor: true,
+          },
+        },
+        {
+          action: "apply",
+          command: {
+            action: "apply",
+            stage: "apply",
+            dryRun: true,
+            headless: true,
+            model: "sonnet",
+            continuous: true,
+          },
+        },
+      ],
+    });
+    await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(3));
+    expect(dispatch).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ action: "apply", stage: "apply", dryRun: true, jobKey: "pipeline" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("returns synchronous non-apply global stage results as 200", async () => {
+    const dispatch = vi.fn(async () => ({
+      status: "dry_run",
+      actionId: "act-worker-score",
+      result: { planned: 4 },
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["score"], dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      status: "dry_run",
+      count: 1,
+      actions: [
+        {
+          action: "run_stage",
+          actionId: "act-worker-score",
+          runId: "act-worker-score",
+          status: "dry_run",
+          result: { planned: 4 },
+          command: { action: "run_stage", stage: "score", dryRun: true },
+        },
+      ],
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
+      expect.objectContaining({ appDir: tempDir }),
+    );
+
+    await app.close();
+  });
+
+  it("runs selected non-apply global stages sequentially before queuing apply", async () => {
+    const dispatches = {
+      score: deferred<ActionDispatchResult>(),
+      tailor: deferred<ActionDispatchResult>(),
+      apply: deferred<ActionDispatchResult>(),
+    };
+    const dispatch = vi.fn((command: ActionCommandPayload) => {
+      if (command.stage === "score") return dispatches.score.promise;
+      if (command.stage === "tailor") return dispatches.tailor.promise;
+      if (command.stage === "apply") return dispatches.apply.promise;
+      throw new Error(`Unexpected stage ${String(command.stage)}`);
+    });
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const responsePromise = app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["score", "tailor", "apply"], dryRun: true },
+    });
+
+    try {
+      await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(1));
+      expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ action: "run_stage", stage: "score" });
+
+      dispatches.score.resolve({ status: "dry_run", actionId: "act-score", result: { planned: 2 } });
+      await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(2));
+      expect(dispatch.mock.calls[1]?.[0]).toMatchObject({ action: "run_stage", stage: "tailor" });
+
+      dispatches.tailor.resolve({ status: "succeeded", actionId: "act-tailor", result: { updated: 2 } });
+      await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(3));
+      expect(dispatch.mock.calls[2]?.[0]).toMatchObject({ action: "apply", stage: "apply", dryRun: true });
+
+      dispatches.apply.resolve({ status: "queued", actionId: "act-apply", runId: "run-apply" });
+      const response = await responsePromise;
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        status: "accepted",
+        count: 3,
+        actions: [
+          {
+            action: "run_stage",
+            actionId: "act-score",
+            status: "dry_run",
+            result: { planned: 2 },
+            command: { action: "run_stage", stage: "score", dryRun: true },
+          },
+          {
+            action: "run_stage",
+            actionId: "act-tailor",
+            status: "succeeded",
+            result: { updated: 2 },
+            command: { action: "run_stage", stage: "tailor", dryRun: true },
+          },
+          {
+            action: "apply",
+            actionId: "act-apply",
+            runId: "run-apply",
+            status: "queued",
+            command: { action: "apply", stage: "apply", dryRun: true },
+          },
+        ],
+      });
+    } finally {
+      dispatches.score.resolve({ status: "dry_run", actionId: "act-score" });
+      dispatches.tailor.resolve({ status: "succeeded", actionId: "act-tailor" });
+      dispatches.apply.resolve({ status: "queued", actionId: "act-apply", runId: "run-apply" });
+      await responsePromise.catch(() => undefined);
+      await app.close();
+    }
+  });
+
+  it("queues apply only after preceding non-apply global stages resolve", async () => {
+    const scoreDispatch = deferred<ActionDispatchResult>();
+    const applyDispatch = deferred<ActionDispatchResult>();
+    const dispatch = vi.fn((command: ActionCommandPayload) => {
+      if (command.action === "run_stage") {
+        return scoreDispatch.promise;
+      }
+      return applyDispatch.promise;
+    });
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const responsePromise = app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["score", "apply"], dryRun: true },
+    });
+
+    try {
+      await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(1));
+      expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ action: "run_stage", stage: "score" });
+
+      const earlyResponse = await Promise.race([
+        responsePromise,
+        new Promise<"not-yet">((resolve) => setTimeout(() => resolve("not-yet"), 50)),
+      ]);
+      expect(earlyResponse).toBe("not-yet");
+
+      scoreDispatch.resolve({ status: "succeeded", actionId: "act-score", result: { updated: 1 } });
+      await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(2));
+      expect(dispatch.mock.calls[1]?.[0]).toMatchObject({ action: "apply", stage: "apply" });
+
+      applyDispatch.resolve({ status: "queued", actionId: "act-apply", runId: "run-apply" });
+      const response = await responsePromise;
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json()).toMatchObject({
+        ok: true,
+        status: "accepted",
+        count: 2,
+        actions: [
+          {
+            action: "run_stage",
+            actionId: "act-score",
+            status: "succeeded",
+            result: { updated: 1 },
+            command: { action: "run_stage", stage: "score", dryRun: true },
+          },
+          {
+            action: "apply",
+            status: "queued",
+            jobKey: "pipeline",
+            actionId: "act-apply",
+            runId: "run-apply",
+            command: { action: "apply", stage: "apply", dryRun: true },
+          },
+        ],
+      });
+      expect(dispatch.mock.calls.map(([command]) => command.action)).toEqual(["run_stage", "apply"]);
+    } finally {
+      scoreDispatch.resolve({ status: "succeeded", actionId: "act-score" });
+      applyDispatch.resolve({ status: "queued", actionId: "act-apply", runId: "run-apply" });
+      await responsePromise.catch(() => undefined);
+      await app.close();
+    }
+  });
+
+  it("does not return accepted when mixed apply dispatch fails", async () => {
+    const dispatch = vi.fn(async (command: ActionCommandPayload): Promise<ActionDispatchResult> => {
+      if (command.action === "run_stage") {
+        return { status: "succeeded", actionId: "act-score", result: { updated: 1 } };
+      }
+      return {
+        status: "failed",
+        message: "Temporal workflow start failed.",
+        result: { code: "TEMPORAL_UNAVAILABLE" },
+      };
+    });
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["score", "apply"], dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      status: "failed",
+      count: 2,
+      actions: [
+        {
+          action: "run_stage",
+          actionId: "act-score",
+          status: "succeeded",
+          result: { updated: 1 },
+          command: { action: "run_stage", stage: "score", dryRun: true },
+        },
+        {
+          action: "apply",
+          status: "failed",
+          message: "Temporal workflow start failed.",
+          result: { code: "TEMPORAL_UNAVAILABLE" },
+          command: { action: "apply", stage: "apply", dryRun: true },
+        },
+      ],
+    });
+    expect(dispatch.mock.calls.map(([command]) => command.action)).toEqual(["run_stage", "apply"]);
+
+    await app.close();
+  });
+
+  it("defaults global apply stage starts to dry-run when dryRun is omitted", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-apply", runId: "run-apply" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["apply"] },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      status: "queued",
+      actions: [
+        {
+          action: "apply",
+          actionId: "act-apply",
+          runId: "run-apply",
+          status: "queued",
+          command: { dryRun: true, limit: 25, workers: 1, minScore: 7 },
+        },
+      ],
+    });
+    await waitForExpectation(() => expect(dispatch).toHaveBeenCalled());
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "pipeline" }),
       expect.objectContaining({ appDir: tempDir }),
     );
 

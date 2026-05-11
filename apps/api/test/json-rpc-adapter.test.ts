@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildActionResponse,
   createActionDispatcher,
   type ActionDispatchResult,
 } from "../src/local-actions.js";
@@ -85,6 +86,200 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
 
     expect(fake.calls[0]?.method).toBe("apply");
     expect(result.status).toBe("queued");
+  });
+
+  it("maps a global run-stage action to the run_stage RPC method", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ok: true,
+        action_id: "act-worker-score",
+        stage: "score",
+        status: "dry_run",
+        started_at: "2026-05-10T11:00:00.000Z",
+        finished_at: "2026-05-10T11:00:00.000Z",
+        duration_ms: 0,
+        dry_run: true,
+        result: { planned: 3 },
+      },
+    } as JsonRpcResponse);
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        stage: "score",
+        limit: 20,
+        workers: 4,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: true,
+        rescore: true,
+        retailor: false,
+      },
+      { appDir: "/tmp" },
+    );
+
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toEqual({
+      method: "run_stage",
+      params: {
+        tenantId: "local",
+        stage: "score",
+        limit: 20,
+        workers: 4,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: true,
+        rescore: true,
+        retailor: false,
+      },
+    });
+    expect(result).toMatchObject({
+      actionId: "act-worker-score",
+      status: "dry_run",
+      result: {
+        status: "dry_run",
+        result: { planned: 3 },
+      },
+    });
+  });
+
+  it("maps a failed global run-stage LocalActionResult error into the action message", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ok: false,
+        action_id: "act-worker-score",
+        stage: "score",
+        status: "failed",
+        started_at: "2026-05-10T11:00:00.000Z",
+        finished_at: "2026-05-10T11:00:01.000Z",
+        duration_ms: 1000,
+        dry_run: true,
+        result: {},
+        error: "Scoring worker unavailable.",
+      },
+    } as JsonRpcResponse);
+    const dispatcher = createActionDispatcher(fake);
+    const command = {
+      action: "run_stage" as const,
+      jobKey: "pipeline",
+      stage: "score" as const,
+      dryRun: true,
+    };
+
+    const result = await dispatcher(command, { appDir: "/tmp" });
+    const response = buildActionResponse(command, result);
+
+    expect(result).toMatchObject({
+      actionId: "act-worker-score",
+      status: "failed",
+      message: "Scoring worker unavailable.",
+      result: {
+        status: "failed",
+        error: "Scoring worker unavailable.",
+      },
+    });
+    expect(response).toMatchObject({
+      actionId: "act-worker-score",
+      runId: "act-worker-score",
+      status: "failed",
+      message: "Scoring worker unavailable.",
+    });
+  });
+
+  it("maps nested failed run-stage result errors into the dashboard action message", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ok: false,
+        action_id: "act-worker-score",
+        stage: "score",
+        status: "failed",
+        started_at: "2026-05-10T11:00:00.000Z",
+        finished_at: "2026-05-10T11:00:01.000Z",
+        duration_ms: 1000,
+        dry_run: false,
+        result: {
+          errors: {
+            score: "error: scoring unavailable",
+          },
+        },
+        error: null,
+      },
+    } as JsonRpcResponse);
+    const dispatcher = createActionDispatcher(fake);
+    const command = {
+      action: "run_stage" as const,
+      jobKey: "pipeline",
+      stage: "score" as const,
+      dryRun: false,
+    };
+
+    const result = await dispatcher(command, { appDir: "/tmp" });
+    const response = buildActionResponse(command, result);
+
+    expect(result).toMatchObject({
+      actionId: "act-worker-score",
+      status: "failed",
+      message: "error: scoring unavailable",
+      result: {
+        status: "failed",
+        result: {
+          errors: {
+            score: "error: scoring unavailable",
+          },
+        },
+      },
+    });
+    expect(response).toMatchObject({
+      actionId: "act-worker-score",
+      runId: "act-worker-score",
+      status: "failed",
+      message: "error: scoring unavailable",
+    });
+  });
+
+  it("maps a global apply action without passing the pipeline command key as a jobUrl", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "apply",
+        jobKey: "pipeline",
+        stage: "apply",
+        limit: 10,
+        workers: 2,
+        minScore: 9,
+        dryRun: true,
+        model: "sonnet",
+        headless: true,
+        continuous: true,
+      },
+      { appDir: "/tmp" },
+    );
+
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]?.method).toBe("apply");
+    expect(fake.calls[0]?.params).toEqual({
+      tenantId: "local",
+      limit: 10,
+      workers: 2,
+      minScore: 9,
+      dryRun: true,
+      model: "sonnet",
+      headless: true,
+      continuous: true,
+    });
   });
 
   it("returns reset for retry_stage without runAfter (no RPC call)", async () => {

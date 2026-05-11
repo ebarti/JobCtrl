@@ -472,6 +472,87 @@ textarea {
   font-size: 11px;
 }
 
+.stage-trigger-panel {
+  margin: 0 0 18px;
+}
+
+.stage-trigger-tabs {
+  padding: 14px 16px 0;
+}
+
+.stage-trigger-tab-list {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+.stage-trigger-tab-panel {
+  margin-top: 0;
+}
+
+.stage-trigger-tab-panel .stage-trigger-form {
+  padding: 14px 0;
+}
+
+.stage-trigger-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.stage-trigger-active {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.stage-trigger-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.stage-trigger-stages legend {
+  width: 100%;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.stage-trigger-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.stage-trigger-check input {
+  width: auto;
+}
+
+.stage-trigger-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.stage-trigger-options,
+.stage-trigger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
 .rows,
 .table {
   display: flex;
@@ -1568,6 +1649,7 @@ textarea {
   .kpis,
   .dashboard-grid,
   .field-grid,
+  .stage-trigger-grid,
   .target-preferences-grid,
   .config-form,
   .import-panel,

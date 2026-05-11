@@ -23,7 +23,9 @@ import type {
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
+  PipelineStageRunResponse,
   RetryStageRequest,
+  RunPipelineStagesRequest,
   SettingsUpdateRequest,
   SettingsResponse,
   WorkflowRunSummary,
@@ -123,6 +125,10 @@ export class JobHunterApiClient {
 
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse> {
     return this.patch("/v1/settings", body);
+  }
+
+  runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse> {
+    return this.post("/v1/pipeline/actions/run-stage", body);
   }
 
   credentials(): Promise<CredentialsResponse> {

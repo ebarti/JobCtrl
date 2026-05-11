@@ -22,7 +22,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-import type { ActionCommandPayload, ActionRunResponse, RpcMethod } from "./contracts.js";
+import {
+  PIPELINE_ACTION_JOB_KEY,
+  type ActionCommandPayload,
+  type ActionRunResponse,
+  type RpcMethod,
+} from "./contracts.js";
 import { ProfileSchema } from "./contracts.js";
 import {
   getDefaultJsonRpcDispatcher,
@@ -120,6 +125,18 @@ export function createActionDispatcher(dispatcher?: JsonRpcDispatcher): ActionDi
         result: response.result,
       };
       if (runId) result.runId = runId;
+      return result;
+    }
+    if (rpcCall.method === "run_stage") {
+      const status = extractStatus(response.result) ?? "succeeded";
+      const result: ActionDispatchResult = {
+        status,
+        result: response.result,
+      };
+      const actionId = extractActionId(response.result);
+      if (actionId) result.actionId = actionId;
+      const message = status === "failed" ? extractResultMessage(response.result) : null;
+      if (message) result.message = message;
       return result;
     }
     return {
@@ -250,6 +267,10 @@ interface RpcCall {
 }
 
 function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
+  if (command.action === "run_stage") {
+    if (!command.stage) return null;
+    return { method: "run_stage", params: runStageRpcParams(command) };
+  }
   if (command.action === "retry_stage") {
     if (!command.stage || !command.runAfter) return null;
     if (command.stage === "apply") {
@@ -276,21 +297,86 @@ function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
   return null;
 }
 
-function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> {
-  return {
+function runStageRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+  const params: Record<string, unknown> = {
     tenantId: "local",
-    jobUrl: command.jobKey,
+    stage: command.stage,
+    limit: command.limit ?? 25,
+    workers: command.workers ?? 1,
+    minScore: command.minScore ?? 7,
+    validationMode: command.validationMode ?? "normal",
+    dryRun: command.dryRun ?? false,
+    rescore: Boolean(command.rescore),
+    retailor: Boolean(command.retailor),
+  };
+  if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
+    params.jobUrl = command.jobKey;
+  }
+  return params;
+}
+
+function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    tenantId: "local",
     limit: command.limit ?? 1,
+    workers: command.workers ?? 1,
+    minScore: command.minScore ?? 7,
     model: command.model ?? "haiku",
     dryRun: command.dryRun !== false,
     headless: Boolean(command.headless),
+    continuous: Boolean(command.continuous),
   };
+  if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
+    params.jobUrl = command.jobKey;
+  }
+  return params;
 }
 
 function extractRunId(result: unknown): string | null {
   if (!isRecord(result)) return null;
   const runId = result.runId;
   return typeof runId === "string" ? runId : null;
+}
+
+function extractActionId(result: unknown): string | null {
+  if (!isRecord(result)) return null;
+  const actionId = result.action_id ?? result.actionId;
+  return typeof actionId === "string" ? actionId : null;
+}
+
+function extractStatus(result: unknown): string | null {
+  if (!isRecord(result)) return null;
+  const status = result.status;
+  return typeof status === "string" && status.trim() ? status : null;
+}
+
+function extractResultMessage(result: unknown): string | null {
+  if (!isRecord(result)) return null;
+  const message = result.error ?? result.message;
+  if (typeof message === "string" && message.trim()) return message;
+  const nestedResult = result.result;
+  if (!isRecord(nestedResult)) return null;
+  return extractErrorText(nestedResult.errors);
+}
+
+function extractErrorText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (Array.isArray(value)) {
+    const messages = value.map(extractErrorText).filter((message): message is string => Boolean(message));
+    return messages.length ? messages.join("; ") : null;
+  }
+  if (isRecord(value)) {
+    const directMessage = extractErrorText(value.error) ?? extractErrorText(value.message);
+    if (directMessage) return directMessage;
+    const messages = Object.values(value)
+      .map(extractErrorText)
+      .filter((message): message is string => Boolean(message));
+    return messages.length ? messages.join("; ") : null;
+  }
+  return null;
 }
 
 function openerCommand(artifactPath: string): { command: string; args: string[] } {
