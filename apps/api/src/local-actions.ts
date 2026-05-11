@@ -353,7 +353,30 @@ function extractStatus(result: unknown): string | null {
 function extractResultMessage(result: unknown): string | null {
   if (!isRecord(result)) return null;
   const message = result.error ?? result.message;
-  return typeof message === "string" && message.trim() ? message : null;
+  if (typeof message === "string" && message.trim()) return message;
+  const nestedResult = result.result;
+  if (!isRecord(nestedResult)) return null;
+  return extractErrorText(nestedResult.errors);
+}
+
+function extractErrorText(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (Array.isArray(value)) {
+    const messages = value.map(extractErrorText).filter((message): message is string => Boolean(message));
+    return messages.length ? messages.join("; ") : null;
+  }
+  if (isRecord(value)) {
+    const directMessage = extractErrorText(value.error) ?? extractErrorText(value.message);
+    if (directMessage) return directMessage;
+    const messages = Object.values(value)
+      .map(extractErrorText)
+      .filter((message): message is string => Boolean(message));
+    return messages.length ? messages.join("; ") : null;
+  }
+  return null;
 }
 
 function openerCommand(artifactPath: string): { command: string; args: string[] } {

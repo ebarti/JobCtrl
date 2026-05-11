@@ -194,6 +194,60 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     });
   });
 
+  it("maps nested failed run-stage result errors into the dashboard action message", async () => {
+    const fake = new FakeDispatcher();
+    fake.setResponse({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        ok: false,
+        action_id: "act-worker-score",
+        stage: "score",
+        status: "failed",
+        started_at: "2026-05-10T11:00:00.000Z",
+        finished_at: "2026-05-10T11:00:01.000Z",
+        duration_ms: 1000,
+        dry_run: false,
+        result: {
+          errors: {
+            score: "error: scoring unavailable",
+          },
+        },
+        error: null,
+      },
+    } as JsonRpcResponse);
+    const dispatcher = createActionDispatcher(fake);
+    const command = {
+      action: "run_stage" as const,
+      jobKey: "pipeline",
+      stage: "score" as const,
+      dryRun: false,
+    };
+
+    const result = await dispatcher(command, { appDir: "/tmp" });
+    const response = buildActionResponse(command, result);
+
+    expect(result).toMatchObject({
+      actionId: "act-worker-score",
+      status: "failed",
+      message: "error: scoring unavailable",
+      result: {
+        status: "failed",
+        result: {
+          errors: {
+            score: "error: scoring unavailable",
+          },
+        },
+      },
+    });
+    expect(response).toMatchObject({
+      actionId: "act-worker-score",
+      runId: "act-worker-score",
+      status: "failed",
+      message: "error: scoring unavailable",
+    });
+  });
+
   it("maps a global apply action without passing the pipeline command key as a jobUrl", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);
