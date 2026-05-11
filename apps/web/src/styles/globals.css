@@ -419,6 +419,21 @@ textarea {
   font-size: 11px;
 }
 
+.min-fit-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.min-fit-control input {
+  width: 48px;
+  height: 26px;
+  padding: 4px 6px;
+  text-align: center;
+}
+
 .bar {
   display: flex;
   height: 10px;

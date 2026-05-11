@@ -1085,10 +1085,12 @@ export function StructuredProfileEditor({
 
 function delimitedListAt(value: string): string[] {
   const withoutLegacyLabel = value.replace(/^\s*Target roles?:\s*/i, "");
-  if (!withoutLegacyLabel.trim()) {
+  if (!withoutLegacyLabel) {
     return [""];
   }
-  return withoutLegacyLabel.split(";").map((item) => item.trim());
+  return withoutLegacyLabel
+    .split(";")
+    .map((item, index) => (index === 0 ? item : item.replace(/^\s+/, "")));
 }
 
 function commaListAt(value: string): string[] {
