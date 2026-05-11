@@ -128,12 +128,15 @@ export function createActionDispatcher(dispatcher?: JsonRpcDispatcher): ActionDi
       return result;
     }
     if (rpcCall.method === "run_stage") {
+      const status = extractStatus(response.result) ?? "succeeded";
       const result: ActionDispatchResult = {
-        status: extractStatus(response.result) ?? "succeeded",
+        status,
         result: response.result,
       };
       const actionId = extractActionId(response.result);
       if (actionId) result.actionId = actionId;
+      const message = status === "failed" ? extractResultMessage(response.result) : null;
+      if (message) result.message = message;
       return result;
     }
     return {
@@ -345,6 +348,12 @@ function extractStatus(result: unknown): string | null {
   if (!isRecord(result)) return null;
   const status = result.status;
   return typeof status === "string" && status.trim() ? status : null;
+}
+
+function extractResultMessage(result: unknown): string | null {
+  if (!isRecord(result)) return null;
+  const message = result.error ?? result.message;
+  return typeof message === "string" && message.trim() ? message : null;
 }
 
 function openerCommand(artifactPath: string): { command: string; args: string[] } {
