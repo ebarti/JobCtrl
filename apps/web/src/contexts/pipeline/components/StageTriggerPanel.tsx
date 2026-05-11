@@ -1,11 +1,13 @@
 import {
   PIPELINE_VALIDATION_MODES,
   STAGES,
+  type ActionRunResponse,
+  type PipelineStageRunResponse,
   type PipelineValidationMode,
   type Stage,
 } from "@jobhunter/contracts";
 import { Play } from "lucide-react";
-import { type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
@@ -26,8 +28,52 @@ function numberValue(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function stageRunStatusLine(status: string, count: number): string {
-  return `${status} ${count} ${count === 1 ? "stage action" : "stage actions"}`;
+function stageActionCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "stage action" : "stage actions"}`;
+}
+
+function actionReference(action: ActionRunResponse | undefined): string | null {
+  return action?.runId ?? action?.actionId ?? null;
+}
+
+function statusLabel(status: string): string {
+  return status.replaceAll("_", " ");
+}
+
+function pendingStageStatusLine(stage: Stage): string {
+  return `Starting ${labelForStage(stage)}... waiting for local worker response.`;
+}
+
+function pipelineRunStatusLine(stage: Stage, response: PipelineStageRunResponse): string {
+  const stageLabel = labelForStage(stage);
+  const firstAction = response.actions[0];
+  const failedAction = response.actions.find((action) => action.status === "failed") ?? firstAction;
+  const firstActionReference = actionReference(firstAction);
+
+  if (response.status === "queued") {
+    return firstActionReference
+      ? `${stageLabel} queued successfully (run ${firstActionReference}).`
+      : `${stageLabel} queued successfully.`;
+  }
+  if (response.status === "failed") {
+    const message = failedAction?.message ?? response.message;
+    return message ? `${stageLabel} failed to start: ${message}` : `${stageLabel} failed to start.`;
+  }
+  if (response.status === "succeeded") {
+    return `${stageLabel} completed successfully (${stageActionCountLabel(response.count)}).`;
+  }
+  if (response.status === "dry_run") {
+    return `${stageLabel} dry run completed (${stageActionCountLabel(response.count)}).`;
+  }
+  if (response.status === "accepted") {
+    return `${stageLabel} request accepted (${stageActionCountLabel(response.count)}).`;
+  }
+
+  return `${stageLabel} ${statusLabel(response.status)} (${stageActionCountLabel(response.count)}).`;
+}
+
+function pipelineRequestErrorLine(stage: Stage, error: Error): string {
+  return `${labelForStage(stage)} failed to start: ${error.message}`;
 }
 
 const APPLY_MODEL_OPTIONS = ["haiku", "sonnet", "opus"] as const;
@@ -90,12 +136,15 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
 
 export function StageTriggerPanel() {
   const runStages = useRunPipelineStagesMutation();
+  const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const activeStage = useStageTriggerStore((state) => state.activeStage);
   const config = useStageTriggerStore((state) => state.configs[state.activeStage]);
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
   const patchStageConfig = useStageTriggerStore((state) => state.patchStageConfig);
   const controls = STAGE_CONTROLS[activeStage];
   const selectedApplyModel = applyModelValue(config.model);
+  const statusStage = submittedStage ?? activeStage;
+  const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
@@ -103,6 +152,7 @@ export function StageTriggerPanel() {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setSubmittedStage(activeStage);
     runStages.mutate({
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
@@ -120,7 +170,7 @@ export function StageTriggerPanel() {
 
   return (
     <section className="card full stage-trigger-panel">
-      <CardHeader title="Pipeline actions" meta={runStages.data?.status ?? "ready"} />
+      <CardHeader title="Pipeline actions" meta={headerMeta} />
       <Tabs
         className="stage-trigger-tabs"
         value={activeStage}
@@ -264,12 +314,21 @@ export function StageTriggerPanel() {
         <div className="stage-trigger-actions">
           <Button disabled={runStages.isPending} type="submit">
             <Play aria-hidden="true" size={16} />
-            {runStages.isPending ? "Starting" : `Run ${labelForStage(activeStage)}`}
+            {runStages.isPending ? `Starting ${labelForStage(statusStage)}` : `Run ${labelForStage(activeStage)}`}
           </Button>
-          {runStages.data ? (
-            <span className="status-line">{stageRunStatusLine(runStages.data.status, runStages.data.count)}</span>
+          {runStages.isPending ? (
+            <span className="status-line" role="status">
+              {pendingStageStatusLine(statusStage)}
+            </span>
+          ) : runStages.data ? (
+            <span className={runStages.data.status === "failed" ? "status-line danger-action" : "status-line"} role="status">
+              {pipelineRunStatusLine(statusStage, runStages.data)}
+            </span>
+          ) : runStages.error ? (
+            <span className="status-line danger-action" role="status">
+              {pipelineRequestErrorLine(statusStage, runStages.error)}
+            </span>
           ) : null}
-          {runStages.error ? <span className="status-line danger-action">{runStages.error.message}</span> : null}
         </div>
       </form>
     </section>

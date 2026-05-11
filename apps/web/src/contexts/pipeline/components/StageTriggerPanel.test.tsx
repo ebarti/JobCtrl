@@ -87,23 +87,44 @@ describe("StageTriggerPanel", () => {
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
-      status: "accepted",
+      status: "queued",
       jobKey: "pipeline",
-      count: 2,
+      count: 1,
       command: {
-        stages: ["score", "apply"],
+        stages: ["apply"],
         limit: 12,
         workers: 3,
         minScore: 8,
-        validationMode: "strict" as const,
+        validationMode: "normal" as const,
         dryRun: true,
-        rescore: true,
+        rescore: false,
         retailor: false,
         headless: true,
         model: "sonnet",
-        continuous: false,
+        continuous: true,
       },
-      actions: [],
+      actions: [
+        {
+          ok: true as const,
+          runId: "apply-run-123",
+          actionId: "apply-run-123",
+          action: "apply",
+          status: "queued",
+          jobKey: "pipeline",
+          command: {
+            action: "apply",
+            jobKey: "pipeline",
+            stage: "apply",
+            limit: 12,
+            workers: 3,
+            minScore: 8,
+            dryRun: true,
+            headless: true,
+            model: "sonnet",
+            continuous: true,
+          },
+        },
+      ],
     }));
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({ api: { runPipelineStages } }),
@@ -135,7 +156,76 @@ describe("StageTriggerPanel", () => {
       model: "sonnet",
       continuous: true,
     });
-    expect(await screen.findByText("accepted 2 stage actions")).toBeInTheDocument();
+    expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
+  });
+
+  it("shows a live starting status while the worker request is pending", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Starting Discover... waiting for local worker response.",
+    );
+  });
+
+  it("surfaces failed worker action responses", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "failed",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["score"],
+        limit: 12,
+        workers: 1,
+        minScore: 7,
+        validationMode: "normal" as const,
+        dryRun: true,
+        rescore: false,
+        retailor: false,
+        headless: false,
+        model: "haiku",
+        continuous: false,
+      },
+      actions: [
+        {
+          ok: true as const,
+          runId: "action-score",
+          actionId: "action-score",
+          action: "run_stage",
+          status: "failed",
+          jobKey: "pipeline",
+          command: {
+            action: "run_stage",
+            jobKey: "pipeline",
+            stage: "score",
+            limit: 12,
+            workers: 1,
+            minScore: 7,
+            validationMode: "normal",
+            dryRun: true,
+            rescore: false,
+            retailor: false,
+          },
+          message: "Worker unavailable.",
+        },
+      ],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Score" }));
+    await user.click(screen.getByRole("button", { name: "Run Score" }));
+
+    expect(await screen.findByText("Score failed to start: Worker unavailable.")).toBeInTheDocument();
   });
 
   it("keeps separate per-stage tab config and restores it after remount", async () => {
