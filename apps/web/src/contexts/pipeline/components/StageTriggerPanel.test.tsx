@@ -1,4 +1,4 @@
-import type { PipelineStageRunResponse } from "@jobhunter/contracts";
+import { STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,22 @@ describe("StageTriggerPanel", () => {
 
     expect(screen.getByLabelText("Dry run")).toBeChecked();
     expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("renders a matching tabpanel for every stage trigger", () => {
+    renderWithProviders(<StageTriggerPanel />);
+
+    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(STAGES.length);
+
+    for (const tab of screen.getAllByRole("tab")) {
+      const panelId = tab.getAttribute("aria-controls");
+
+      if (panelId === null) {
+        throw new Error(`Expected ${tab.textContent ?? "stage"} tab to control a panel`);
+      }
+
+      expect(document.getElementById(panelId)).toBeInTheDocument();
+    }
   });
 
   it("only shows controls that apply to the active stage", async () => {

@@ -488,6 +488,14 @@ textarea {
   gap: 4px;
 }
 
+.stage-trigger-tab-panel {
+  margin-top: 0;
+}
+
+.stage-trigger-tab-panel .stage-trigger-form {
+  padding: 14px 0;
+}
+
 .stage-trigger-form {
   display: flex;
   flex-direction: column;

@@ -11,7 +11,7 @@ import { type FormEvent, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
-import { Tabs, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
 
@@ -168,6 +168,152 @@ export function StageTriggerPanel() {
     });
   };
 
+  const stageForm = (
+    <form className="stage-trigger-form" onSubmit={submit}>
+      <div className="stage-trigger-active">
+        <span className="muted">Configuring</span>
+        <strong>{labelForStage(activeStage)}</strong>
+      </div>
+
+      <div className="stage-trigger-grid">
+        {controls.limit ? (
+          <label className="field">
+            <span>Limit</span>
+            <input
+              min={1}
+              max={500}
+              type="number"
+              value={config.limit}
+              onChange={(event) => patchConfig({ limit: event.target.value })}
+            />
+          </label>
+        ) : null}
+        {controls.workers ? (
+          <label className="field">
+            <span>Workers</span>
+            <input
+              min={1}
+              max={16}
+              type="number"
+              value={config.workers}
+              onChange={(event) => patchConfig({ workers: event.target.value })}
+            />
+          </label>
+        ) : null}
+        {controls.minScore ? (
+          <label className="field">
+            <span>Minimum score</span>
+            <input
+              min={0}
+              max={10}
+              type="number"
+              value={config.minScore}
+              onChange={(event) => patchConfig({ minScore: event.target.value })}
+            />
+          </label>
+        ) : null}
+        {controls.validationMode ? (
+          <label className="field">
+            <span>Validation mode</span>
+            <select
+              value={config.validationMode}
+              onChange={(event) => patchConfig({ validationMode: event.target.value as PipelineValidationMode })}
+            >
+              {PIPELINE_VALIDATION_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {mode}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {controls.applyModel ? (
+          <label className="field">
+            <span>Apply model</span>
+            <select value={selectedApplyModel} onChange={(event) => patchConfig({ model: event.target.value })}>
+              {APPLY_MODEL_OPTIONS.map((model) => (
+                <option key={model} value={model}>
+                  {labelForModel(model)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
+
+      <div className="stage-trigger-options">
+        <label className="stage-trigger-check">
+          <input
+            type="checkbox"
+            checked={config.dryRun}
+            onChange={(event) => patchConfig({ dryRun: event.currentTarget.checked })}
+          />
+          <span>Dry run</span>
+        </label>
+        {controls.rescore ? (
+          <label className="stage-trigger-check">
+            <input
+              type="checkbox"
+              checked={config.rescore}
+              onChange={(event) => patchConfig({ rescore: event.currentTarget.checked })}
+            />
+            <span>Rescore</span>
+          </label>
+        ) : null}
+        {controls.retailor ? (
+          <label className="stage-trigger-check">
+            <input
+              type="checkbox"
+              checked={config.retailor}
+              onChange={(event) => patchConfig({ retailor: event.currentTarget.checked })}
+            />
+            <span>Retailor</span>
+          </label>
+        ) : null}
+        {controls.headless ? (
+          <label className="stage-trigger-check">
+            <input
+              type="checkbox"
+              checked={config.headless}
+              onChange={(event) => patchConfig({ headless: event.currentTarget.checked })}
+            />
+            <span>Headless browser</span>
+          </label>
+        ) : null}
+        {controls.continuous ? (
+          <label className="stage-trigger-check">
+            <input
+              type="checkbox"
+              checked={config.continuous}
+              onChange={(event) => patchConfig({ continuous: event.currentTarget.checked })}
+            />
+            <span>Continuous</span>
+          </label>
+        ) : null}
+      </div>
+
+      <div className="stage-trigger-actions">
+        <Button disabled={runStages.isPending} type="submit">
+          <Play aria-hidden="true" size={16} />
+          {runStages.isPending ? `Starting ${labelForStage(statusStage)}` : `Run ${labelForStage(activeStage)}`}
+        </Button>
+        {runStages.isPending ? (
+          <span className="status-line" role="status">
+            {pendingStageStatusLine(statusStage)}
+          </span>
+        ) : runStages.data ? (
+          <span className={runStages.data.status === "failed" ? "status-line danger-action" : "status-line"} role="status">
+            {pipelineRunStatusLine(statusStage, runStages.data)}
+          </span>
+        ) : runStages.error ? (
+          <span className="status-line danger-action" role="status">
+            {pipelineRequestErrorLine(statusStage, runStages.error)}
+          </span>
+        ) : null}
+      </div>
+    </form>
+  );
+
   return (
     <section className="card full stage-trigger-panel">
       <CardHeader title="Pipeline actions" meta={headerMeta} />
@@ -187,150 +333,12 @@ export function StageTriggerPanel() {
             </TabsTrigger>
           ))}
         </TabsList>
+        {STAGES.map((stage) => (
+          <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
+            {stage === activeStage ? stageForm : null}
+          </TabsContent>
+        ))}
       </Tabs>
-      <form className="stage-trigger-form" onSubmit={submit}>
-        <div className="stage-trigger-active">
-          <span className="muted">Configuring</span>
-          <strong>{labelForStage(activeStage)}</strong>
-        </div>
-
-        <div className="stage-trigger-grid">
-          {controls.limit ? (
-            <label className="field">
-              <span>Limit</span>
-              <input
-                min={1}
-                max={500}
-                type="number"
-                value={config.limit}
-                onChange={(event) => patchConfig({ limit: event.target.value })}
-              />
-            </label>
-          ) : null}
-          {controls.workers ? (
-            <label className="field">
-              <span>Workers</span>
-              <input
-                min={1}
-                max={16}
-                type="number"
-                value={config.workers}
-                onChange={(event) => patchConfig({ workers: event.target.value })}
-              />
-            </label>
-          ) : null}
-          {controls.minScore ? (
-            <label className="field">
-              <span>Minimum score</span>
-              <input
-                min={0}
-                max={10}
-                type="number"
-                value={config.minScore}
-                onChange={(event) => patchConfig({ minScore: event.target.value })}
-              />
-            </label>
-          ) : null}
-          {controls.validationMode ? (
-            <label className="field">
-              <span>Validation mode</span>
-              <select
-                value={config.validationMode}
-                onChange={(event) => patchConfig({ validationMode: event.target.value as PipelineValidationMode })}
-              >
-                {PIPELINE_VALIDATION_MODES.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {mode}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {controls.applyModel ? (
-            <label className="field">
-              <span>Apply model</span>
-              <select value={selectedApplyModel} onChange={(event) => patchConfig({ model: event.target.value })}>
-                {APPLY_MODEL_OPTIONS.map((model) => (
-                  <option key={model} value={model}>
-                    {labelForModel(model)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </div>
-
-        <div className="stage-trigger-options">
-          <label className="stage-trigger-check">
-            <input
-              type="checkbox"
-              checked={config.dryRun}
-              onChange={(event) => patchConfig({ dryRun: event.currentTarget.checked })}
-            />
-            <span>Dry run</span>
-          </label>
-          {controls.rescore ? (
-            <label className="stage-trigger-check">
-              <input
-                type="checkbox"
-                checked={config.rescore}
-                onChange={(event) => patchConfig({ rescore: event.currentTarget.checked })}
-              />
-              <span>Rescore</span>
-            </label>
-          ) : null}
-          {controls.retailor ? (
-            <label className="stage-trigger-check">
-              <input
-                type="checkbox"
-                checked={config.retailor}
-                onChange={(event) => patchConfig({ retailor: event.currentTarget.checked })}
-              />
-              <span>Retailor</span>
-            </label>
-          ) : null}
-          {controls.headless ? (
-            <label className="stage-trigger-check">
-              <input
-                type="checkbox"
-                checked={config.headless}
-                onChange={(event) => patchConfig({ headless: event.currentTarget.checked })}
-              />
-              <span>Headless browser</span>
-            </label>
-          ) : null}
-          {controls.continuous ? (
-            <label className="stage-trigger-check">
-              <input
-                type="checkbox"
-                checked={config.continuous}
-                onChange={(event) => patchConfig({ continuous: event.currentTarget.checked })}
-              />
-              <span>Continuous</span>
-            </label>
-          ) : null}
-        </div>
-
-        <div className="stage-trigger-actions">
-          <Button disabled={runStages.isPending} type="submit">
-            <Play aria-hidden="true" size={16} />
-            {runStages.isPending ? `Starting ${labelForStage(statusStage)}` : `Run ${labelForStage(activeStage)}`}
-          </Button>
-          {runStages.isPending ? (
-            <span className="status-line" role="status">
-              {pendingStageStatusLine(statusStage)}
-            </span>
-          ) : runStages.data ? (
-            <span className={runStages.data.status === "failed" ? "status-line danger-action" : "status-line"} role="status">
-              {pipelineRunStatusLine(statusStage, runStages.data)}
-            </span>
-          ) : runStages.error ? (
-            <span className="status-line danger-action" role="status">
-              {pipelineRequestErrorLine(statusStage, runStages.error)}
-            </span>
-          ) : null}
-        </div>
-      </form>
     </section>
   );
 }
