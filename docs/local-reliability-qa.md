@@ -38,6 +38,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Targeted apply skips fresh jobs | `workers/automation/tests/test_apply_regressions.py` |
 | Stages cannot be retried individually | `workers/automation/tests/test_state_dashboard.py` |
 | Explicit stage state loses to legacy columns | `workers/automation/tests/test_state_dashboard.py` |
+| Pipeline actions write events to a different DB or hide running stages | `apps/api/test/json-rpc-adapter.test.ts`; `workers/automation/tests/test_pipeline_observability.py`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
 | PDF conversion publishes stray files | `workers/automation/tests/test_pdf_targets.py` |
 | Cover letters use the wrong resume | `workers/automation/tests/test_cover_requirements.py` |
 | Profile PDF import corrupts defaults | `workers/automation/tests/test_profile_import.py` |

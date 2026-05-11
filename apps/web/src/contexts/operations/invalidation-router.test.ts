@@ -103,7 +103,11 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
-  StageStarted: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  StageStarted: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   StageCompleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),

@@ -260,8 +260,11 @@ the local API. The panel reports when the request is waiting on the local
 worker, whether the start was queued, completed, dry-run, or failed, and the
 returned run/action id when one is available. Longer-running progress appears in
 the dashboard pipeline, apply runs, and recent activity cards after the API
-invalidates those read models. Tabs default to dry-run mode so apply automation
-does not submit applications unless you explicitly clear dry run.
+invalidates those read models. Non-apply stages emit pipeline lifecycle events;
+Discover also emits source-step events for JobSpy, Workday, and Smart Extract
+so a stuck source is visible before the request finishes. Tabs default to
+dry-run mode so apply automation does not submit applications unless you
+explicitly clear dry run.
 
 ## Inspecting Progress
 
@@ -314,6 +317,8 @@ Common environment variables:
   without exporting. Set `LANGFUSE_DISABLE=1` to opt out even when
   credentials are present. Enabling this exports every LLM prompt and
   completion to the configured Langfuse instance.
+- `LANGFUSE_OTEL_TIMEOUT_SECONDS`: optional OTLP/HTTP export timeout for
+  Langfuse; defaults to `5.0`.
 
 ## Development
 

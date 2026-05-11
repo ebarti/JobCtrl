@@ -27,6 +27,7 @@ export const ErrorActivity: Story = {
       activity: [
         {
           eventId: "evt-2",
+          eventType: "StageFailed",
           jobKey: "job-1",
           title: "Staff Software Engineer",
           company: "Acme Corp",

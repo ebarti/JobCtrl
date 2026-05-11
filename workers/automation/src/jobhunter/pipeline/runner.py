@@ -18,6 +18,8 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -26,9 +28,12 @@ from jobhunter import config
 from jobhunter.config import load_env, ensure_dirs
 from jobhunter import database as db_module
 from jobhunter.database import init_db, get_connection, get_stats
+from jobhunter.state import record_job_event, utc_now
 
 log = logging.getLogger(__name__)
 console = Console()
+
+_PIPELINE_JOB_ID = "pipeline"
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +64,255 @@ _UPSTREAMS: dict[str, tuple[str, ...]] = {
 
 
 # ---------------------------------------------------------------------------
+# Observability helpers
+# ---------------------------------------------------------------------------
+
+def _pipeline_tracer():
+    return trace.get_tracer("jobhunter.pipeline")
+
+
+def _record_pipeline_event(
+    stage: str,
+    event_type: str,
+    level: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Emit a durable pipeline-level event plus a short Langfuse event observation."""
+    now = utc_now()
+    enriched = _pipeline_event_payload(stage, event_type, now, payload)
+    _record_pipeline_observation_event(stage, event_type, level, message, enriched)
+
+    try:
+        conn = get_connection()
+        record_job_event(
+            conn,
+            None,
+            stage,
+            event_type,
+            level=level,
+            message=message,
+            payload=enriched,
+        )
+        conn.commit()
+    except Exception:
+        log.exception("Failed to record pipeline event %s for stage %s", event_type, stage)
+
+
+def _pipeline_event_payload(
+    stage: str,
+    event_type: str,
+    occurred_at: str,
+    payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    enriched: dict[str, Any] = {
+        "jobId": _PIPELINE_JOB_ID,
+        "stage": stage,
+        "component": "pipeline",
+        **(payload or {}),
+    }
+    if event_type == "StageStarted":
+        enriched.setdefault("attemptNumber", int(enriched.get("passNumber") or 1))
+        enriched.setdefault("startedAt", occurred_at)
+    elif event_type == "StageCompleted":
+        enriched.setdefault("finishedAt", occurred_at)
+        enriched.setdefault("durationMs", int(enriched.get("durationMs") or 0))
+    elif event_type == "StageFailed":
+        enriched.setdefault("errorCode", "pipeline_stage_failed")
+        enriched.setdefault("errorMessage", str(enriched.get("error") or "Pipeline stage failed"))
+        enriched.setdefault("retryable", True)
+        enriched.setdefault("attemptNumber", int(enriched.get("passNumber") or 1))
+    return enriched
+
+
+def _record_pipeline_observation_event(
+    stage: str,
+    event_type: str,
+    level: str,
+    message: str,
+    payload: dict[str, Any],
+) -> None:
+    try:
+        with _pipeline_tracer().start_as_current_span(f"pipeline.event.{stage}.{event_type}") as span:
+            _set_pipeline_span_attributes(span, stage, observation_type="event")
+            span.set_attribute("jobhunter.pipeline.event_type", event_type)
+            span.set_attribute("jobhunter.pipeline.message", message)
+            span.set_attribute("langfuse.observation.level", _langfuse_level(level))
+            span.set_attribute("langfuse.observation.status_message", message)
+            for key, value in payload.items():
+                if isinstance(value, str | int | float | bool):
+                    span.set_attribute(f"langfuse.observation.metadata.{key}", value)
+    except Exception:
+        log.debug("Failed to emit pipeline OTel event for %s/%s", stage, event_type, exc_info=True)
+
+
+def _set_pipeline_span_attributes(span, stage: str, *, observation_type: str = "span") -> None:  # type: ignore[no-untyped-def]
+    span.set_attribute("jobhunter.pipeline.stage", stage)
+    span.set_attribute("jobhunter.pipeline.job_id", _PIPELINE_JOB_ID)
+    span.set_attribute("langfuse.trace.name", "jobhunter.pipeline")
+    span.set_attribute("langfuse.observation.type", observation_type)
+    span.set_attribute("langfuse.observation.metadata.stage", stage)
+    span.set_attribute("langfuse.observation.metadata.job_id", _PIPELINE_JOB_ID)
+
+
+def _langfuse_level(level: str) -> str:
+    normalized = level.strip().lower()
+    if normalized == "error":
+        return "ERROR"
+    if normalized in {"warn", "warning"}:
+        return "WARNING"
+    if normalized == "debug":
+        return "DEBUG"
+    return "DEFAULT"
+
+
+def _stage_status(stage: str, result: dict[str, Any] | None) -> str:
+    status = "ok"
+    if isinstance(result, dict):
+        status = str(result.get("status", "ok"))
+        if stage == "discover":
+            sub_errors = [
+                f"{k}: {v}" for k, v in result.items()
+                if isinstance(v, str) and v.startswith("error")
+            ]
+            if sub_errors:
+                status = "partial"
+    return status
+
+
+def _run_stage_observed(
+    stage: str,
+    runner: _StageRunner,
+    kwargs: dict[str, Any],
+    *,
+    mode: str,
+    pass_number: int = 1,
+) -> tuple[dict[str, Any], float, str]:
+    """Run one pipeline stage with durable events and Langfuse-compatible spans."""
+    started = utc_now()
+    _record_pipeline_event(
+        stage,
+        "StageStarted",
+        "info",
+        f"{stage} stage started",
+        {"mode": mode, "passNumber": pass_number, "startedAt": started},
+    )
+    t0 = time.time()
+    with _pipeline_tracer().start_as_current_span(f"pipeline.stage.{stage}") as span:
+        _set_pipeline_span_attributes(span, stage)
+        span.set_attribute("jobhunter.pipeline.mode", mode)
+        span.set_attribute("jobhunter.pipeline.pass_number", pass_number)
+        try:
+            result = runner(**kwargs)
+        except Exception as exc:
+            elapsed = time.time() - t0
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            _record_pipeline_event(
+                stage,
+                "StageFailed",
+                "error",
+                f"{stage} stage failed: {exc}",
+                {
+                    "mode": mode,
+                    "passNumber": pass_number,
+                    "durationMs": int(elapsed * 1000),
+                    "error": str(exc),
+                    "errorCode": type(exc).__name__,
+                    "errorMessage": str(exc),
+                },
+            )
+            raise
+
+        elapsed = time.time() - t0
+        status = _stage_status(stage, result)
+        span.set_attribute("jobhunter.pipeline.status", status)
+        span.set_attribute("jobhunter.pipeline.duration_ms", int(elapsed * 1000))
+        if status not in ("ok", "partial", "skipped"):
+            span.set_status(Status(StatusCode.ERROR, status))
+            _record_pipeline_event(
+                stage,
+                "StageFailed",
+                "error",
+                f"{stage} stage failed: {status}",
+                {
+                    "mode": mode,
+                    "passNumber": pass_number,
+                    "durationMs": int(elapsed * 1000),
+                    "error": status,
+                    "errorCode": "stage_status_failed",
+                    "errorMessage": status,
+                },
+            )
+        else:
+            _record_pipeline_event(
+                stage,
+                "StageCompleted",
+                "warn" if status == "partial" else "info",
+                f"{stage} stage {status}",
+                {
+                    "mode": mode,
+                    "passNumber": pass_number,
+                    "durationMs": int(elapsed * 1000),
+                    "status": status,
+                },
+            )
+        return result, elapsed, status
+
+
+def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> str:
+    _record_pipeline_event(
+        "discover",
+        "StageStarted",
+        "info",
+        f"Discovery source {source} started",
+        {"source": source, "sourceLabel": label},
+    )
+    t0 = time.time()
+    with _pipeline_tracer().start_as_current_span(f"pipeline.source.discover.{source}") as span:
+        _set_pipeline_span_attributes(span, "discover")
+        span.set_attribute("jobhunter.pipeline.source", source)
+        try:
+            status = run()
+        except Exception as exc:
+            elapsed = time.time() - t0
+            log.error("%s failed: %s", label, exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            _record_pipeline_event(
+                "discover",
+                "StageFailed",
+                "error",
+                f"Discovery source {source} failed: {exc}",
+                {
+                    "source": source,
+                    "sourceLabel": label,
+                    "durationMs": int(elapsed * 1000),
+                    "error": str(exc),
+                    "errorCode": type(exc).__name__,
+                    "errorMessage": str(exc),
+                },
+            )
+            return f"error: {exc}"
+
+        elapsed = time.time() - t0
+        span.set_attribute("jobhunter.pipeline.source_status", status)
+        _record_pipeline_event(
+            "discover",
+            "StageCompleted",
+            "info",
+            f"Discovery source {source} {status}",
+            {
+                "source": source,
+                "sourceLabel": label,
+                "durationMs": int(elapsed * 1000),
+                "status": status,
+            },
+        )
+        return status
+
+
+# ---------------------------------------------------------------------------
 # Individual stage runners
 # ---------------------------------------------------------------------------
 
@@ -68,44 +322,48 @@ def _run_discover(workers: int = 1) -> dict:
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
-    if search_cfg.get("disable_jobspy", False):
-        console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
-        stats["jobspy"] = "disabled"
-    else:
+    def run_jobspy() -> str:
+        if search_cfg.get("disable_jobspy", False):
+            console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
+            return "disabled"
         console.print("  [cyan]JobSpy full crawl...[/cyan]")
         try:
             from jobhunter.discovery.jobspy import run_discovery
-            run_discovery()
-            stats["jobspy"] = "ok"
         except ImportError:
             console.print("  [dim]JobSpy not installed — skipping[/dim]")
-            stats["jobspy"] = "not_installed"
-        except Exception as e:
-            log.error("JobSpy crawl failed: %s", e)
-            console.print(f"  [red]JobSpy error:[/red] {e}")
-            stats["jobspy"] = f"error: {e}"
+            return "not_installed"
+        run_discovery()
+        return "ok"
+
+    stats["jobspy"] = _run_discovery_source("jobspy", "JobSpy", run_jobspy)
+    if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
+        console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
 
     # Workday corporate scraper
-    console.print("  [cyan]Workday corporate scraper...[/cyan]")
-    try:
+    def run_workday() -> str:
+        console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
         run_workday_discovery(workers=workers)
-        stats["workday"] = "ok"
-    except Exception as e:
-        log.error("Workday scraper failed: %s", e)
-        console.print(f"  [red]Workday error:[/red] {e}")
-        stats["workday"] = f"error: {e}"
+        return "ok"
+
+    stats["workday"] = _run_discovery_source("workday", "Workday scraper", run_workday)
+    if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
+        console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
 
     # Smart extract
-    console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
-    try:
+    def run_smart_extract_source() -> str:
+        console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         from jobhunter.discovery.smartextract import run_smart_extract
         run_smart_extract(workers=workers)
-        stats["smartextract"] = "ok"
-    except Exception as e:
-        log.error("Smart extract failed: %s", e)
-        console.print(f"  [red]Smart extract error:[/red] {e}")
-        stats["smartextract"] = f"error: {e}"
+        return "ok"
+
+    stats["smartextract"] = _run_discovery_source(
+        "smartextract",
+        "Smart extract",
+        run_smart_extract_source,
+    )
+    if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):
+        console.print(f"  [red]Smart extract error:[/red] {stats['smartextract'][7:]}")
 
     return stats
 
@@ -440,7 +698,13 @@ def _run_stage_streaming(
     if stage == "discover":
         # Discover runs once (its sub-scrapers already do their full crawl)
         try:
-            result = runner(**kwargs)
+            result, _elapsed, _status = _run_stage_observed(
+                stage,
+                runner,
+                kwargs,
+                mode="streaming",
+                pass_number=1,
+            )
             tracker.mark_done(stage, result)
         except Exception as e:
             log.exception("Stage '%s' crashed", stage)
@@ -456,7 +720,13 @@ def _run_stage_streaming(
 
         if pending > 0:
             try:
-                runner(**kwargs)
+                _result, _elapsed, _status = _run_stage_observed(
+                    stage,
+                    runner,
+                    kwargs,
+                    mode="streaming",
+                    pass_number=passes + 1,
+                )
                 passes += 1
                 after = _count_pending(stage, min_score, retailor=retailor)
                 if upstream_done and after >= pending:
@@ -524,19 +794,13 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                 rescore=rescore,
                 retailor=retailor,
             )
-            result = runner(**kwargs)
-            elapsed = time.time() - t0
-
-            status = "ok"
-            if isinstance(result, dict):
-                status = result.get("status", "ok")
-                if name == "discover":
-                    sub_errors = [
-                        f"{k}: {v}" for k, v in result.items()
-                        if isinstance(v, str) and v.startswith("error")
-                    ]
-                    if sub_errors:
-                        status = "partial"
+            result, elapsed, status = _run_stage_observed(
+                name,
+                runner,
+                kwargs,
+                mode="sequential",
+                pass_number=1,
+            )
 
         except Exception as e:
             elapsed = time.time() - t0

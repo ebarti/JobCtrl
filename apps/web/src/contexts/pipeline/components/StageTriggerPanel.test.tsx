@@ -4,6 +4,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
+import { sampleDashboardSummary } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
 import { StageTriggerPanel } from "./StageTriggerPanel.js";
@@ -186,6 +187,69 @@ describe("StageTriggerPanel", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Starting Discover... waiting for local worker response.",
+    );
+  });
+
+  it("replaces the local starting label with the latest backend stage event", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            activity: [
+              {
+                eventId: "538",
+                eventType: "StageStarted",
+                jobKey: "pipeline",
+                title: null,
+                company: null,
+                stage: "discover",
+                level: "info",
+                message: "Discovery source workday started",
+                at: new Date().toISOString(),
+              },
+            ],
+          })),
+          runPipelineStages,
+        },
+      }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover in progress: Discovery source workday started (#538).",
+    );
+  });
+
+  it("shows the latest backend stage event even without local mutation state", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            activity: [
+              {
+                eventId: "539",
+                eventType: "StageStarted",
+                jobKey: "pipeline",
+                title: null,
+                company: null,
+                stage: "discover",
+                level: "info",
+                message: "Discovery source smart extract started",
+                at: new Date().toISOString(),
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover in progress: Discovery source smart extract started (#539).",
     );
   });
 

@@ -29,6 +29,7 @@ _exporter: OTLPSpanExporter | None = None
 
 _OTLP_PATH = "/api/public/otel/v1/traces"
 _DISABLE_TRUTHY = frozenset({"1", "true", "yes"})
+_DEFAULT_EXPORT_TIMEOUT_SECONDS = 5.0
 
 
 def langfuse_disabled() -> bool:
@@ -80,6 +81,7 @@ def init_otel(*, service_name: str = "jobhunter", environment: str | None = None
             "Authorization": f"Basic {auth}",
             "x-langfuse-ingestion-version": "4",
         },
+        timeout=_export_timeout_seconds(),
     )
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(BatchSpanProcessor(exporter))
@@ -147,3 +149,18 @@ def shutdown_otel() -> None:
 def is_otel_enabled() -> bool:
     """True iff ``init_otel()`` configured a real provider."""
     return _provider is not None
+
+
+def _export_timeout_seconds() -> float:
+    raw = os.environ.get("LANGFUSE_OTEL_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_EXPORT_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        log.warning("Invalid LANGFUSE_OTEL_TIMEOUT_SECONDS=%r; using %.1fs.", raw, _DEFAULT_EXPORT_TIMEOUT_SECONDS)
+        return _DEFAULT_EXPORT_TIMEOUT_SECONDS
+    if value <= 0:
+        log.warning("LANGFUSE_OTEL_TIMEOUT_SECONDS must be positive; using %.1fs.", _DEFAULT_EXPORT_TIMEOUT_SECONDS)
+        return _DEFAULT_EXPORT_TIMEOUT_SECONDS
+    return value

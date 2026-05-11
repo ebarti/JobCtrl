@@ -179,6 +179,7 @@ export const sampleDashboardSummary: DashboardSummary = {
   activity: [
     {
       eventId: "evt-1",
+      eventType: "JobScored",
       jobKey: "job-1",
       title: sampleJob.title,
       company: sampleJob.company,

@@ -291,6 +291,7 @@ describe("local TypeScript API", () => {
     });
     expect(body.activity[0]).toMatchObject({
       eventId: "1",
+      eventType: "ActionFailed",
       jobKey: "https://example.com/jobs/failed-score",
       title: "Backend Engineer",
       company: "ExampleCo",
@@ -1923,6 +1924,7 @@ function seedDatabase(dbPath: string): void {
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
       job_url TEXT,
       stage TEXT,
+      event_type TEXT NOT NULL DEFAULT '',
       level TEXT,
       message TEXT,
       occurred_at TEXT
@@ -1999,9 +2001,12 @@ function seedDatabase(dbPath: string): void {
     "2026-04-29T10:05:00+00:00",
     12,
   );
-  db.prepare("INSERT INTO job_events (job_url, stage, level, message, occurred_at) VALUES (?, ?, ?, ?, ?)").run(
+  db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
     "https://example.com/jobs/failed-score",
     "score",
+    "ActionFailed",
     "error",
     "Score failed",
     "2026-04-29T10:10:00+00:00",
