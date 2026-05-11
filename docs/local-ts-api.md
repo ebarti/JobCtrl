@@ -47,6 +47,13 @@ include `apply` first run preceding non-apply stages synchronously, then return
 the response is `200` and preserves the dispatcher-derived failed apply action.
 `dryRun` defaults to `true`, preserving apply safety.
 
+The `limit` field is forwarded to every stage. For `discover`, the Python
+runner passes it into JobSpy, Workday, and Smart Extract and forces bounded
+source crawls to run sequentially, skipping remaining sources once the cap is
+reached so `limit: 1` is usable for local debugging. For `enrich`, the same
+field caps pending detail jobs instead of falling back to the enrichment default
+batch size.
+
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. Non-apply pipeline runs also emit pipeline-level

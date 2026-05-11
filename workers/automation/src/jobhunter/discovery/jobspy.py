@@ -94,13 +94,15 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
 
-def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tuple[int, int]:
+def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit: int = 0) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
 
     for _, row in df.iterrows():
+        if limit > 0 and new + existing >= limit:
+            break
         url = str(row.get("job_url", ""))
         if not url or url == "nan":
             continue
@@ -171,6 +173,7 @@ def _run_one_search(
     accept_locs: list[str],
     reject_locs: list[str],
     glassdoor_map: dict,
+    limit: int = 0,
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -253,7 +256,7 @@ def _run_one_search(
     filtered = before - len(df)
 
     conn = get_connection()
-    new, existing = store_jobspy_results(conn, df, s["query"])
+    new, existing = store_jobspy_results(conn, df, s["query"], limit=limit)
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
     if filtered:
@@ -342,10 +345,13 @@ def _full_crawl(
     hours_old: int = 72,
     proxy: str | None = None,
     max_retries: int = 2,
+    limit: int = 0,
 ) -> dict:
     """Run all search queries from search config across all locations."""
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
+    if limit > 0 and sites:
+        sites = sites[:1]
 
     # Build search combinations from config
     queries = search_cfg.get("queries", [])
@@ -384,10 +390,14 @@ def _full_crawl(
     completed = 0
 
     for s in searches:
+        remaining = max(limit - (total_new + total_existing), 0) if limit > 0 else 0
+        if limit > 0 and remaining <= 0:
+            break
         result = _run_one_search(
-            s, sites, results_per_site, hours_old,
+            s, sites, min(results_per_site, remaining) if limit > 0 else results_per_site, hours_old,
             proxy_config, defaults, max_retries,
             accept_locs, reject_locs, glassdoor_map,
+            limit=remaining if limit > 0 else 0,
         )
         completed += 1
         total_new += result["new"]
@@ -410,13 +420,13 @@ def _full_crawl(
         "existing": total_existing,
         "errors": total_errors,
         "db_total": db_total,
-        "queries": len(searches),
+        "queries": completed,
     }
 
 
 # -- Public entry point ------------------------------------------------------
 
-def run_discovery(cfg: dict | None = None) -> dict:
+def run_discovery(cfg: dict | None = None, limit: int = 0) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
     Loads search queries and locations from the user's search config YAML,
@@ -451,4 +461,5 @@ def run_discovery(cfg: dict | None = None) -> dict:
         results_per_site=results_per_site,
         hours_old=hours_old,
         proxy=proxy,
+        limit=limit,
     )

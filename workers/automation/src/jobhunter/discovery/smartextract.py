@@ -90,6 +90,7 @@ def _store_jobs_filtered(
     strategy: str,
     accept_locs: list[str],
     reject_locs: list[str],
+    limit: int = 0,
 ) -> tuple[int, int]:
     """Store jobs with location filtering. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
@@ -98,6 +99,8 @@ def _store_jobs_filtered(
     filtered = 0
 
     for job in jobs:
+        if limit > 0 and new + existing >= limit:
+            break
         url = job.get("url")
         if not url:
             continue
@@ -998,6 +1001,7 @@ def _run_all(
     accept_locs: list[str],
     reject_locs: list[str],
     workers: int = 1,
+    limit: int = 0,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1013,13 +1017,21 @@ def _run_all(
     total_new = 0
     total_existing = 0
 
+    if limit > 0:
+        workers = 1
+        targets = targets[:limit]
+
     def _process_result(r: dict, target: dict) -> None:
         nonlocal total_new, total_existing
+        remaining = max(limit - (total_new + total_existing), 0) if limit > 0 else 0
+        if limit > 0 and remaining <= 0:
+            return
         jobs = r.get("jobs", [])
         if jobs:
             new, existing = _store_jobs_filtered(conn, jobs, target["name"],
                                                   r.get("strategy", "?"),
-                                                  accept_locs, reject_locs)
+                                                  accept_locs, reject_locs,
+                                                  limit=remaining if limit > 0 else 0)
             total_new += new
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
@@ -1039,6 +1051,8 @@ def _run_all(
     else:
         # Sequential mode (default)
         for i, target in enumerate(targets):
+            if limit > 0 and total_new + total_existing >= limit:
+                break
             label = target["name"]
             if target.get("query"):
                 label = f"{target['name']} [{target['query']}]"
@@ -1069,6 +1083,7 @@ def _run_all(
 def run_smart_extract(
     sites: list[dict] | None = None,
     workers: int = 1,
+    limit: int = 0,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1096,4 +1111,4 @@ def run_smart_extract(
     log.info("Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
              search_sites, static_sites, len(targets), workers)
 
-    return _run_all(targets, accept_locs, reject_locs, workers=workers)
+    return _run_all(targets, accept_locs, reject_locs, workers=workers, limit=limit)

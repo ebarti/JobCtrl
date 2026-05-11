@@ -262,9 +262,11 @@ returned run/action id when one is available. Longer-running progress appears in
 the dashboard pipeline, apply runs, and recent activity cards after the API
 invalidates those read models. Non-apply stages emit pipeline lifecycle events;
 Discover also emits source-step events for JobSpy, Workday, and Smart Extract
-so a stuck source is visible before the request finishes. Tabs default to
-dry-run mode so apply automation does not submit applications unless you
-explicitly clear dry run.
+so a stuck source is visible before the request finishes. The `limit` control
+is honored by every stage tab, including `discover` and `enrich`, so local
+debug runs can be bounded to one job. A bounded Discover run stops remaining
+sources once the cap is reached. Tabs default to dry-run mode so apply
+automation does not submit applications unless you explicitly clear dry run.
 
 ## Inspecting Progress
 

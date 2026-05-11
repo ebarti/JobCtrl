@@ -312,13 +312,61 @@ def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> st
         return status
 
 
+def _skip_discovery_source(source: str, label: str, reason: str) -> str:
+    status = "skipped_limit"
+    _record_pipeline_event(
+        "discover",
+        "StageCompleted",
+        "info",
+        f"Discovery source {source} skipped: {reason}",
+        {"source": source, "sourceLabel": label, "status": status, "reason": reason},
+    )
+    return status
+
+
+def _pipeline_job_count() -> int:
+    try:
+        conn = get_connection()
+        row = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()
+        return int(row[0] or 0) if row else 0
+    except Exception:
+        log.debug("Failed to count jobs for bounded discover limit", exc_info=True)
+        return 0
+
+
+def _discover_limit_reached(start_count: int, limit: int) -> bool:
+    return limit > 0 and _pipeline_job_count() - start_count >= limit
+
+
+def _discovery_result_count(result: Any) -> int:
+    if not isinstance(result, dict):
+        return 0
+    if "found" in result:
+        return int(result.get("found") or 0)
+    count = 0
+    for key in ("new", "existing", "total_new", "total_existing"):
+        count += int(result.get(key) or 0)
+    return count
+
+
+def _discover_limit_consumed(start_count: int, limit: int, source_result: Any = None) -> bool:
+    if limit <= 0:
+        return False
+    if _discovery_result_count(source_result) >= limit:
+        return True
+    return _discover_limit_reached(start_count, limit)
+
+
 # ---------------------------------------------------------------------------
 # Individual stage runners
 # ---------------------------------------------------------------------------
 
-def _run_discover(workers: int = 1) -> dict:
+def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
+    source_results: dict[str, Any] = {}
+    bounded_workers = 1 if limit > 0 else workers
+    start_count = _pipeline_job_count() if limit > 0 else 0
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
@@ -332,29 +380,36 @@ def _run_discover(workers: int = 1) -> dict:
         except ImportError:
             console.print("  [dim]JobSpy not installed — skipping[/dim]")
             return "not_installed"
-        run_discovery()
+        source_results["jobspy"] = run_discovery(limit=limit)
         return "ok"
 
     stats["jobspy"] = _run_discovery_source("jobspy", "JobSpy", run_jobspy)
     if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
         console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
+    if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
+        stats["workday"] = _skip_discovery_source("workday", "Workday scraper", "limit reached")
+        stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
+        return stats
 
     # Workday corporate scraper
     def run_workday() -> str:
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
-        run_workday_discovery(workers=workers)
+        source_results["workday"] = run_workday_discovery(workers=bounded_workers, limit=limit)
         return "ok"
 
     stats["workday"] = _run_discovery_source("workday", "Workday scraper", run_workday)
     if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
         console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
+    if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
+        stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
+        return stats
 
     # Smart extract
     def run_smart_extract_source() -> str:
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         from jobhunter.discovery.smartextract import run_smart_extract
-        run_smart_extract(workers=workers)
+        source_results["smartextract"] = run_smart_extract(workers=bounded_workers, limit=limit)
         return "ok"
 
     stats["smartextract"] = _run_discovery_source(
@@ -368,11 +423,11 @@ def _run_discover(workers: int = 1) -> dict:
     return stats
 
 
-def _run_enrich(workers: int = 1) -> dict:
+def _run_enrich(workers: int = 1, limit: int = 0) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     try:
         from jobhunter.enrichment.detail import run_enrichment
-        run_enrichment(workers=workers)
+        run_enrichment(limit=limit, workers=workers)
         return {"status": "ok"}
     except Exception as e:
         log.error("Enrichment failed: %s", e)
@@ -494,8 +549,9 @@ def _build_stage_kwargs(
 
     if stage in ("discover", "enrich", "score"):
         kwargs["workers"] = workers
-    if stage == "score":
+    if stage in ("discover", "enrich", "score"):
         kwargs["limit"] = limit
+    if stage == "score":
         kwargs["rescore"] = rescore
     elif stage in ("tailor", "cover"):
         kwargs["min_score"] = min_score

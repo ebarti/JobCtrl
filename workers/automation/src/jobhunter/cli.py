@@ -570,6 +570,7 @@ def run(
     ),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
+    limit: int = typer.Option(0, "--limit", help="Maximum records to process per stage. 0 means no explicit cap."),
     validation: str = typer.Option(
         "normal",
         "--validation",
@@ -623,6 +624,7 @@ def run(
         stream=stream,
         workers=workers,
         validation_mode=validation,
+        limit=limit,
         retailor=retailor,
     )
 
@@ -633,19 +635,21 @@ def run(
 @app.command()
 def discover(
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery backends."),
+    limit: int = typer.Option(0, "--limit", help="Maximum jobs to discover. 0 means all eligible jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
     """Run only the discovery stage."""
-    _run_stage_command("discover", workers=workers, dry_run=dry_run)
+    _run_stage_command("discover", workers=workers, limit=limit, dry_run=dry_run)
 
 
 @app.command()
 def enrich(
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for detail enrichment."),
+    limit: int = typer.Option(0, "--limit", help="Maximum jobs to enrich. 0 means all eligible jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
     """Run only the enrichment stage."""
-    _run_stage_command("enrich", workers=workers, dry_run=dry_run)
+    _run_stage_command("enrich", workers=workers, limit=limit, dry_run=dry_run)
 
 
 @app.command()

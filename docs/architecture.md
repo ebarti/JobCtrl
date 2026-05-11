@@ -419,7 +419,10 @@ Pipeline stages and Discover source steps also emit short
 `StageStarted` / `StageCompleted` / `StageFailed` lifecycle records. The same
 lifecycle records are persisted to `job_events`, which makes long-running or
 stuck stages visible through SSE/recent activity even before the synchronous
-JSON-RPC request returns.
+JSON-RPC request returns. The stage runner forwards the caller's `limit` to
+every stage. Discovery sources use that limit as a bounded debug crawl cap,
+switch to sequential source execution when a cap is present, and skip remaining
+sources after the cap is reached.
 
 The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/client.py`) and worker-side

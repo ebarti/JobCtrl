@@ -138,8 +138,8 @@ const BASE_CONTROLS: StageControlSet = {
 };
 
 const STAGE_CONTROLS: Record<Stage, StageControlSet> = {
-  discover: { ...BASE_CONTROLS, workers: true },
-  enrich: { ...BASE_CONTROLS, workers: true },
+  discover: { ...BASE_CONTROLS, limit: true, workers: true },
+  enrich: { ...BASE_CONTROLS, limit: true, workers: true },
   score: { ...BASE_CONTROLS, limit: true, workers: true, rescore: true },
   tailor: {
     ...BASE_CONTROLS,
