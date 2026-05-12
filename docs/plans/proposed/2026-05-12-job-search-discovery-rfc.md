@@ -52,8 +52,8 @@ Important gaps:
   `sites`; source selection is therefore not yet a clean product contract.
 - Source health is implicit in logs rather than stored as queryable data.
 - Discovery stores a posting, but canonical verification and full content
-  acquisition are split across later enrichment paths without a first-class
-  content snapshot model.
+  acquisition are split across later enrichment paths without a versioned
+  content snapshot inside the existing `JobEnrichment` aggregate.
 - Smart Extract has useful reach, but arbitrary web extraction should be
   source-health gated and policy-labeled so it does not pollute the job set.
 - Broad boards can produce stale, duplicated, incomplete, or redirected jobs;
@@ -131,6 +131,30 @@ Expected behavior:
   coverage.
 - Feeds user corrections back into the locator so future source discovery gets
   better.
+
+### Locator Policy Guardrails
+
+The locator runs before a promoted source has a `SourcePolicy`, so it needs its
+own conservative policy envelope:
+
+- Honor robots.txt under RFC 9309 before probing non-API paths. If robots rules
+  are unavailable or ambiguous, fall back to the lowest probe budget and queue
+  the candidate for review instead of widening the crawl.
+- Use a declared JobHunter user agent. The locator must not mask itself as a
+  different crawler, rotate proxies, or manipulate browser fingerprints to reach
+  blocked content.
+- Enforce a locator-level per-domain budget independent of
+  `SourcePolicy.max_pages_per_run`. The default should be a small number of
+  HEAD/GET requests per domain per run with backoff on 429, 403, CAPTCHA, or
+  bot-detection responses.
+- Run autonomous search-result discovery and aggregator backtraces only when a
+  domain allowlist, user-enabled broad-discovery mode, or high-confidence
+  employer-domain match is present. Otherwise, store a candidate for manual
+  confirmation.
+- Treat protected, internal, login-only, or multi-tenant admin surfaces as
+  manual-review candidates. The locator may record the evidence that such a
+  system exists, but it must not collect private postings without user-provided
+  authorization.
 
 ## Source Hierarchy
 
@@ -222,8 +246,16 @@ general crawler.
 
 Rules:
 
-- Require an explicit source registry entry.
-- Use deterministic extraction before LLM extraction.
+- Require an explicit source registry entry, but do not break existing
+  `sites.yaml` behavior. PR 1 should migrate current `sites.yaml` entries into
+  generated `SourceRegistryEntry` records with `state=experimental` and
+  `policy=smart_extract_experimental`; user-provided arbitrary URLs keep working
+  through that compatibility path until promoted or rejected.
+- Use deterministic extraction before LLM extraction. For arbitrary URLs this
+  means: fetch allowed structured data first, parse JSON-LD/schema.org JobPosting
+  and embedded application state when present, apply any configured selectors,
+  then fall back to stable visible-DOM heuristics. LLM extraction is only the
+  final mapping step when deterministic evidence exists but is messy.
 - Store extraction strategy, confidence, selector/API evidence, and content
   snapshot hash.
 - Quarantine low-confidence results until verified.
@@ -297,7 +329,8 @@ flowchart TD
     Boards["Broad Board Lead Adapters"]
     Smart["Smart Extract Adapter"]
     Acquire["Content Acquisition Service"]
-    Canon["Canonicalization + Active Verification"]
+    Active["Enrichment Active Verification"]
+    Canon["Discovery Canonicalization"]
     IdentityDedup["Discovery Identity Dedupe"]
     ContentDedup["Enrichment Content Dedupe"]
     Store["Discovery + Enrichment Stores"]
@@ -315,7 +348,8 @@ flowchart TD
     ATS --> Acquire
     Boards --> Acquire
     Smart --> Acquire
-    Acquire --> Canon
+    Acquire --> Active
+    Active --> Canon
     Canon --> IdentityDedup
     IdentityDedup --> Store
     Store --> ContentDedup
@@ -338,7 +372,8 @@ flowchart TD
 | Discovery Scheduler | Chooses what to crawl based on source priority, freshness, prior yield, crawl budget, and source health. |
 | Source Adapters | Implement source-specific listing and detail fetches behind `JobBoardScraperPort`. |
 | Content Acquisition Service | Retrieves full descriptions and apply URLs through API, structured data, selectors, rendered browser, or LLM extraction. |
-| Canonicalization Service | Resolves employer, ATS, source-native ID, canonical posting URL, and active/closed state. |
+| Enrichment Active Verification | Enrichment-owned check that records whether the detail/apply path is active, closed, expired, removed, or incompatible, then emits state changes for Discovery, Scoring, Apply, and Operations consumers. |
+| Canonicalization Service | Discovery-owned identity service that resolves employer, ATS, source-native ID, and canonical posting URL. It consumes Enrichment-owned active state; it does not own active/closed state. |
 | Discovery Identity Dedupe | The first authoritative duplicate gate. It collapses listings by tenant, source-native ID, canonical URL, ATS identity, and normalized employer/title/location before a new Job aggregate is created. |
 | Enrichment Content Dedupe | The second-pass merge after full content exists. It catches duplicates missed at listing time through description hashes, apply URLs, and high-confidence content similarity. |
 | Hybrid Search Index | Supports keyword and semantic retrieval for ranking, review, and future evals. |
@@ -346,27 +381,53 @@ flowchart TD
 
 ## Domain Model Additions
 
-The current DDD model should remain: Discovery owns job discovery metadata,
-Enrichment owns full descriptions/application URLs, Scoring owns fit, and
-Operations owns projections. The RFC adds explicit records around source
-quality and content snapshots.
+The current DDD model should remain: Discovery owns job discovery metadata and
+identity, Enrichment owns full descriptions, application URLs, content snapshots,
+and active state, Scoring owns fit, and Operations owns projections. The RFC
+adds explicit records around source discovery, source observations, source
+quality, and content snapshots without creating co-owned aggregates.
 
 Proposed entities/value objects:
 
-| Name | Context | Purpose |
-| --- | --- | --- |
-| `SourceLocationCandidate` | Discovery | Candidate career system discovered from the public web, a source seed, or an aggregator backtrace, with detected source kind, URL, confidence, and promotion state. |
-| `SourceDiscoveryEvidence` | Discovery | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, and validation fetch result. |
-| `SourceRegistryEntry` | Discovery | Source ID, kind, display name, owner, policy, priority, and adapter config. |
-| `SourcePolicy` | Discovery | Allowed methods, rate budget, robots handling, auth mode, attribution, and filter override rules. |
-| `DiscoveryRun` | Discovery/Operations | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. |
-| `DiscoveredPosting` | Discovery | Raw source result with source-native ID, listing URL, title/company/location, and strategy. |
-| `CanonicalJobIdentity` | Discovery | Canonical URL, ATS type, employer identity, source-native ID, and dedupe keys. |
-| `JobSourceObservation` | Discovery | Per-source evidence for a canonical job, preserving broad-board leads, ATS records, run IDs, source URLs, timestamps, and raw metadata without creating duplicate jobs. |
-| `DuplicateJobLink` | Discovery/Enrichment | Records a duplicate relationship, merge reason, confidence, surviving canonical job, and superseded source/job reference. |
-| `PostingContentSnapshot` | Enrichment | Full description, structured fields, raw/cleaned text hashes, extraction method, and confidence. |
-| `SourceQualityStats` | Operations | Rolling active rate, duplicate rate, detail success, apply URL success, stale rate, and user approval/dismissal. |
-| `DiscoveryFeedback` | Discovery/Operations | User or system feedback: saved, applied, dismissed, bad source, duplicate, stale, irrelevant. |
+| Name | Kind | Owning context | Purpose |
+| --- | --- | --- | --- |
+| `SourceLocationCandidate` | Entity | Discovery | Candidate career system discovered from the public web, a source seed, or an aggregator backtrace, with detected source kind, URL, confidence, and promotion state. |
+| `SourceDiscoveryEvidence` | Value object | Discovery | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, robots result, and validation fetch result. |
+| `SourceRegistryEntry` | Aggregate | Discovery | Source ID, kind, display name, owner, policy, priority, adapter config, and source state. |
+| `SourcePolicy` | Value object | Discovery | Allowed methods, locator/crawl rate budgets, robots handling, auth mode, attribution, and filter override rules. |
+| `DiscoveryRun` | Aggregate | Discovery | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. Operations builds read-side run projections from Discovery events. |
+| `DiscoveredPosting` | Value object | Discovery | Raw source result with source-native ID, listing URL, title/company/location, and strategy. |
+| `CanonicalJobIdentity` | Value object | Discovery | Canonical URL, ATS type, employer identity, source-native ID, and dedupe keys. |
+| `JobSourceObservation` | Entity | Discovery | Per-source evidence for a canonical job, preserving broad-board leads, ATS records, run IDs, source URLs, timestamps, and raw metadata without creating duplicate jobs. |
+| `DuplicateJobLink` | Aggregate | Discovery | Records a duplicate relationship, merge reason, confidence, surviving canonical job, and superseded source/job reference. Enrichment may propose content duplicate candidates, but Discovery confirms or rejects the link. |
+| `PostingContentSnapshot` | Value object | Enrichment | Versioned value object inside the existing `JobEnrichment` aggregate. It extends `JobEnrichment`; it does not replace `JobEnrichment`, `EnrichmentAttempt`, `JobEnriched`, or `job_enrichments`. |
+| `SourceQualityStats` | Projection | Operations | Rolling active rate, duplicate rate, detail success, apply URL success, stale rate, user approval/dismissal, and cost/latency summaries derived from events and spans. |
+| `DiscoveryFeedback` | Aggregate | Discovery | User or system feedback: saved, applied, dismissed, bad source, duplicate, stale, irrelevant. Operations projects it for dashboards. |
+
+### Domain Events
+
+New domain events must be enumerated before implementation so Operations
+projections and the SSE invalidation router can stay exhaustive.
+
+| Event | Owner | Payload sketch | Consumers |
+| --- | --- | --- | --- |
+| `SourceLocationCandidateDiscovered` | Discovery | `tenantId`, `candidateId`, `candidateUrl`, `sourceKind`, `confidence`, `evidenceRef`, `discoveredAt` | Operations source-locator projection. |
+| `SourceLocationCandidatePromoted` | Discovery | `tenantId`, `candidateId`, `sourceId`, `promotedAt` | Discovery scheduler, Operations source registry projection. |
+| `SourceRegistryEntryCreated` | Discovery | `tenantId`, `sourceId`, `kind`, `policyId`, `state`, `createdAt` | Scheduler, Operations, web source registry invalidation. |
+| `SourceRegistryEntryUpdated` | Discovery | `tenantId`, `sourceId`, `changedFields`, `updatedAt` | Scheduler, Operations. |
+| `SourceStateChanged` | Discovery | `tenantId`, `sourceId`, `fromState`, `toState`, `reason`, `changedAt` | Scheduler, Operations, web source-health invalidation. |
+| `DiscoveryRunStarted` | Discovery | `tenantId`, `runId`, `sourceIds`, `profileSnapshotId`, `startedAt` | Operations, observability correlation. |
+| `JobSourceObserved` | Discovery | `tenantId`, `jobId`, `sourceObservationId`, `sourceId`, `sourceNativeId`, `observedUrl`, `runId`, `observedAt` | Operations, source quality aggregation, canonical job projections. |
+| `CanonicalJobIdentityResolved` | Discovery | `tenantId`, `jobId`, `canonicalUrl`, `atsKind`, `sourceNativeId`, `confidence` | Operations, dedupe diagnostics. |
+| `DuplicateJobLinked` | Discovery | `tenantId`, `duplicateLinkId`, `survivingJobId`, `supersededJobOrObservationId`, `reason`, `confidence` | Operations, source quality aggregation, web job-list invalidation. |
+| `DuplicateJobLinkRejected` | Discovery | `tenantId`, `duplicateLinkId`, `candidateIds`, `reason`, `rejectedAt` | Operations, dedupe diagnostics. |
+| `DiscoveryFeedbackRecorded` | Discovery | `tenantId`, `feedbackId`, `jobId`, `sourceId`, `kind`, `recordedAt` | Source quality aggregation, ranking, Operations. |
+| `DiscoveryRunCompleted` | Discovery | `tenantId`, `runId`, `counts`, `errorClasses`, `completedAt` | Operations source run projection, source quality aggregation. |
+| `DiscoveryRunFailed` | Discovery | `tenantId`, `runId`, `sourceId`, `errorClass`, `retryable`, `failedAt` | Scheduler, Operations, source quality aggregation. |
+| `JobEnriched` | Enrichment | Existing event, extended only if needed with `contentSnapshotRef`, `extractionTier`, `enrichedAt` | Scoring, Pipeline Orchestration, Operations. |
+| `EnrichmentFailed` | Enrichment | Existing event with `tenantId`, `jobId`, `error`, `attemptNumber` | Pipeline Orchestration, Operations. |
+| `JobActiveStateChanged` | Enrichment | `tenantId`, `jobId`, `activeState`, `previousState`, `verificationMethod`, `verifiedAt` | Discovery, Scoring, Apply, Operations, source quality aggregation. |
+| `ContentDuplicateCandidateDetected` | Enrichment | `tenantId`, `jobId`, `candidateJobId`, `evidence`, `confidence`, `detectedAt` | Discovery dedupe use case, Operations diagnostics. |
 
 ## Deduplication Boundary
 
@@ -376,8 +437,9 @@ Deduplication should happen in two places, with different authority:
    `DiscoveredPosting` becomes a new Job aggregate, Discovery resolves
    `CanonicalJobIdentity` and checks tenant-scoped identity keys. Existing
    behavior already rejects duplicate posting URLs; the target model should
-   extend that to source-native IDs, ATS identity, canonical apply/detail URLs,
-   and normalized employer/title/location candidates.
+   extend that to source-native IDs, ATS identity, canonical detail URLs, and
+   normalized employer/title/location candidates. Enrichment-owned apply URL
+   evidence may confirm identity but remains owned by Enrichment.
 2. **Enrichment content boundary:** this is the second-pass merge. After the
    full description and apply URL are fetched, Enrichment can catch duplicates
    that listing metadata could not prove, using cleaned-description hashes,
@@ -388,6 +450,30 @@ Adapters may dedupe within one response page or one run for efficiency, but
 adapter-level dedupe is not authoritative. It can only reduce noise before the
 Discovery use case decides whether a posting is new, an update to an existing
 canonical job, or another source observation for a job already known.
+
+This RFC explicitly authorizes changing the current `Job` aggregate URL-dedupe
+invariant, but only through a backwards-compatible cutover. Today, a `Job` has
+exactly one `PostingUrl` and duplicate `(tenant_id, posting_url)` is rejected.
+The target model keeps `jobs.posting_url` as the canonical/display posting URL
+during the migration window and moves observed-source URL uniqueness to
+`JobSourceObservation`.
+
+Cutover rules:
+
+- Add `job_source_observations` before changing existing `jobs` uniqueness.
+- Backfill exactly one `JobSourceObservation` for every existing `jobs` row using
+  its current `posting_url`, source, discovery metadata, and discovered time.
+- Keep `Job.postingUrl` non-null through the compatibility window; after
+  canonicalization is available it represents the surviving canonical posting
+  URL, not every observed board URL.
+- Enforce uniqueness on observations with `(tenant_id, normalized_observed_url)`
+  and, when present, `(tenant_id, source_id, source_native_id)`.
+- Keep `load_by_url` resolving both the canonical `jobs.posting_url` and
+  observation URLs for at least one release so existing callers and local
+  databases continue to work.
+- Keep `JobDiscovered.postingUrl` as the canonical URL in the published language;
+  add `JobSourceObserved` for additional source URLs instead of silently changing
+  the existing event shape.
 
 Canonical record rules:
 
@@ -407,16 +493,22 @@ Recommended identity checks, in order:
 | Stage | Key | Owner |
 | --- | --- | --- |
 | Listing ingest | `(tenant_id, source_id, source_native_id)` | Discovery |
-| Canonical URL | normalized employer/ATS detail URL and apply URL | Discovery |
+| Canonical URL | normalized employer/ATS detail URL; Enrichment-originated apply URL can confirm identity evidence | Discovery |
 | ATS identity | ATS kind plus board/tenant/posting ID | Discovery |
 | Metadata candidate | normalized company, title, location/work-mode, and posted date window | Discovery quarantine unless high confidence |
 | Content candidate | cleaned description hash, structured field overlap, and apply URL | Enrichment |
-| User correction | manual duplicate confirmation or rejection | Discovery/Operations feedback loop |
+| User correction | manual duplicate confirmation or rejection | Discovery |
 
 ## Content Acquisition Pipeline
 
-The content pipeline should be deterministic first and LLM-assisted only when
-needed.
+The content pipeline is Enrichment-owned. It should extend the existing
+`JobEnrichment` aggregate with versioned `PostingContentSnapshot` value objects,
+not create a parallel aggregate. A successful snapshot write is a successful
+enrichment attempt and still emits `JobEnriched`; failed extraction still emits
+`EnrichmentFailed`. If version history requires a child table, it remains behind
+the `JobEnrichment` repository and does not bypass `EnrichmentAttempt`.
+
+The pipeline should be deterministic first and LLM-assisted only when needed.
 
 1. **Listing capture:** collect source-native ID, listing URL, title, company,
    locations, remote flags, posted date, and source timestamp.
@@ -430,12 +522,14 @@ needed.
    where content is rendered client-side.
 6. **LLM extraction:** map messy visible content into a strict schema with
    evidence and confidence.
-7. **Active verification:** confirm the posting is not closed, expired, removed,
-   location-incompatible, or redirecting to an unrelated application.
+7. **Active verification:** Enrichment confirms the posting is not closed,
+   expired, removed, location-incompatible, or redirecting to an unrelated
+   application. State changes emit `JobActiveStateChanged`.
 8. **Snapshot persistence:** store raw text hash, cleaned text hash, extracted
    fields, extraction method, source policy ID, and confidence.
-9. **Quarantine:** hold low-confidence, policy-overridden, or broad-board-only
-   results until canonical verification passes or the user approves them.
+9. **Quarantine:** hold low-confidence, policy-overridden, broad-board-only, or
+   unknown-active-state results until canonical identity plus Enrichment-owned
+   active verification passes or the user approves them for manual review.
 
 Required extraction schema:
 
@@ -501,6 +595,46 @@ Source states:
 - `quarantined`: results require review before scoring/downstream actions.
 - `disabled`: repeated failure, policy conflict, or user-disabled.
 
+`SourceQualityStats` is an Operations projection, not a domain aggregate. It is
+computed from `DiscoveryRunCompleted`, `DiscoveryRunFailed`,
+`JobSourceObserved`, `DuplicateJobLinked`, `DiscoveryFeedbackRecorded`,
+`JobEnriched`, `EnrichmentFailed`, and `JobActiveStateChanged`, with span
+attributes used for latency, cost, retry, and error-class rollups.
+
+### Observability
+
+Discovery must integrate with the existing OpenTelemetry -> Langfuse layer
+documented in `docs/architecture.md`.
+
+Required spans:
+
+| Stage | Span name | Required non-sensitive attributes |
+| --- | --- | --- |
+| Locator probe | `discovery.locator.probe` | `tenant.id`, `source.candidate_id`, `url.domain`, `robots.result`, `locator.method`, `http.status_code`, `confidence` |
+| Source validation | `discovery.source.validate` | `tenant.id`, `source.id`, `source.kind`, `policy.id`, `validation.result` |
+| Scheduled run | `discovery.run` | `tenant.id`, `run.id`, `source.ids`, `profile.snapshot_id`, `source.count` |
+| Adapter fetch | `discovery.adapter.fetch` | `tenant.id`, `run.id`, `source.id`, `adapter.kind`, `page.count`, `result.count`, `error.class` |
+| Content acquisition | `enrichment.content.acquire` | `tenant.id`, `job.id`, `source.id`, `extraction.tier`, `policy.id`, `snapshot.hash` |
+| Rendered browser extraction | `enrichment.content.render` | `tenant.id`, `job.id`, `source.id`, `render.result`, `http.status_code` |
+| LLM fallback extraction | `llm.<model>` through `llm_generation_span` | GenAI semantic-convention attributes plus `tenant.id`, `job.id`, `source.id`, `extraction.tier=llm_assisted`, `schema.version`, `parse.result` |
+| Discovery canonicalization | `discovery.canonicalize` | `tenant.id`, `job.id`, `source.id`, `canonical.url.present`, `ats.kind`, `confidence` |
+| Discovery dedupe | `discovery.dedupe` | `tenant.id`, `job.id`, `dedupe.stage`, `dedupe.result`, `confidence` |
+| Active verification | `enrichment.active.verify` | `tenant.id`, `job.id`, `source.id`, `active.state`, `verification.method`, `http.status_code` |
+| Source quality aggregation | `operations.source_quality.aggregate` | `tenant.id`, `source.id`, `window`, `event.count`, `span.count` |
+
+LLM fallback extraction must reuse `llm_generation_span(...)` so
+`langfuse.observation.type=generation`, `gen_ai.request.model`,
+`gen_ai.response.model`, `gen_ai.usage.input_tokens`, and
+`gen_ai.usage.output_tokens` remain populated. The extraction span must not carry
+raw job text, private notes, resumes, cover letters, or credentials; it should
+carry only IDs, schema versions, parse result, token/cost metadata, and source
+attribution.
+
+Temporal activities and workflows should keep using
+`temporalio.contrib.opentelemetry.TracingInterceptor` on both client and worker
+paths so trace context propagates across locator, scheduler, adapter, content
+acquisition, canonicalization, dedupe, and active-verification activities.
+
 ## Product Experience
 
 The product should expose discovery controls without turning source management
@@ -529,7 +663,10 @@ Minimum UX:
 Local-first behavior remains the default:
 
 - job data stays in the user's local database;
-- source credentials stay local unless the user opts into a hosted integration;
+- source credentials stay local through the `SecretPort` adapter. Local storage
+  should use macOS Keychain where available or `.env` for developer setups;
+  credentials must not be stored in SQLite, snapshots, logs, traces, or generated
+  artifacts;
 - source runs execute locally;
 - generated artifacts stay local.
 
@@ -541,21 +678,117 @@ Hosted future:
 - hosted scheduling for users who opt in;
 - per-tenant policy controls and entitlements.
 
+## Success Metrics
+
+RFC implementation is successful when the discovery stack improves usable job
+quality without reducing local safety or breaking existing local data.
+
+Target metrics for the first complete rollout:
+
+| Metric | Target |
+| --- | --- |
+| Tier 1/2 `canonical_url_rate` | >= 90% of surviving canonical jobs have an employer, ATS, official API, or licensed-feed canonical URL. |
+| Broad-board canonicalization | >= 75% of Tier 4 leads are either matched to a canonical source, quarantined, or explicitly user-approved before scoring. |
+| Duplicate aggregate reduction | >= 50% reduction in duplicate `Job` aggregates on the regression fixture set compared with current URL-only dedupe. |
+| Full-description success | >= 85% of canonical active jobs have a `JobEnrichment` snapshot with usable description text. |
+| Active-state coverage | <= 10% of scoreable jobs remain `unknown` after Enrichment active verification. |
+| Source demotion accuracy | Repeated stale/closed or low-confidence sources move to `quarantined` or `disabled` without disabling trusted canonical sources in fixtures. |
+| Regression safety | Existing `sites.yaml`, `employers.yaml`, and user `searches.yaml` examples load during the compatibility window. |
+
+These targets should be validated with synthetic and redacted fixtures before
+any live-source dogfood. Live-source runs may be used for smoke evidence, but
+they should not be the only acceptance gate.
+
+## Rollout And Rollback
+
+The rollout must be additive first, then migratory:
+
+1. **Source registry compatibility:** PR 1 creates the source registry and
+   backfills generated entries from packaged `sites.yaml`, `employers.yaml`, and
+   JobSpy board settings. Existing YAML remains loadable while the registry is
+   introduced.
+2. **`boards` / `sites` compatibility:** PR 1 chooses the stable public key and
+   accepts both `boards` and `sites` for at least one release. It must document
+   the canonical key in `README.md`, add a migration/regression row to
+   `docs/local-reliability-qa.md`, and warn rather than fail when the legacy key
+   is used.
+3. **Job identity migration:** PR 2 adds `job_source_observations`, backfills one
+   observation per existing `jobs` row, and keeps `jobs.posting_url` plus
+   `load_by_url` compatibility until all callers can resolve both canonical and
+   observed URLs.
+4. **Enrichment snapshot migration:** PR 3 extends `JobEnrichment` persistence
+   rather than replacing it. Existing `job_enrichments` rows remain valid and
+   can be treated as snapshot version 1 during reads.
+5. **Operations projections:** PR 4 builds read-side source quality from domain
+   events and spans. Projection rebuilds must be idempotent because rollback can
+   drop and rebuild projection tables without losing domain data.
+6. **UI rollout:** PR 6 ships source registry, preview, and quarantine controls
+   behind normal local API/web verification and product-level QA.
+
+Rollback rules:
+
+- Schema PRs must be backward-readable by the previous release until the
+  compatibility window ends.
+- Rollback of source quality projections may discard projections, not domain
+  events or source observations.
+- Rollback of a misbehaving source should set the source to `disabled` or
+  `quarantined`; it should not delete source observations or user feedback.
+- Breaking removal of legacy config keys requires a separate PR that explicitly
+  removes compatibility after the documented window.
+
+## Failure Modes
+
+| Failure | Mitigation |
+| --- | --- |
+| Locator floods a domain or triggers blocking | Locator-level per-domain budgets, RFC 9309 checks, clear user agent, exponential backoff, and automatic source quarantine after 429, CAPTCHA, bot-detection, or repeated 403 responses. |
+| Search-result discovery finds the wrong employer domain | Require employer-domain evidence and confidence thresholds before promotion; otherwise queue for manual review. |
+| Canonicalization merges distinct jobs | Only high-confidence identity matches auto-merge. Fuzzy metadata/content matches create duplicate candidates, not confirmed links. `DuplicateJobLink` must be reversible and auditable. |
+| A duplicate link points to a job the user later dismisses | Keep all `JobSourceObservation` records. User feedback can reject the duplicate link or split the candidate so the alternate observation can survive as its own canonical job. |
+| Broad-board-only lead reaches downstream automation | Broad-board-only or unknown-active-state results stay quarantined unless the user explicitly approves scoring/review for that run. Apply automation remains gated by canonical identity, active state, materials policy, and existing safety controls. |
+| Permissioned credentials fail or expire | `SecretPort` returns a typed unavailable/expired error. The source moves to manual action or disabled state without logging the secret or retrying aggressively. |
+| LLM extraction invents fields | Parser requires evidence references and confidence. Unsupported fields lower confidence or quarantine the snapshot; traces record parse outcome without raw private text. |
+
+## Security Considerations
+
+- Permissioned source credentials are retrieved through `SecretPort` only. Local
+  adapters read macOS Keychain or `.env`; hosted adapters read AWS Secrets
+  Manager. Credentials are never stored in SQLite, source snapshots, source
+  registry rows, traces, logs, screenshots, or generated artifacts.
+- A source that needs credentials must require explicit user approval, source ID,
+  credential name, allowed method, and attribution/terms metadata before it can
+  run.
+- Source policies must keep `third_party_control_bypass=false`. CAPTCHA,
+  paywall, login, rate-limit, bot-detection, and access-control evasion remain
+  out of scope.
+- User-provided saved HTML, URLs, exports, or emails stay local unless the user
+  explicitly opts into a hosted integration. They must be labeled as user import,
+  not redistributed as shared source content.
+- Observability must not leak resumes, cover letters, generated materials,
+  private job text, browser profile paths, credentials, or application logs.
+- Hosted source-health aggregation may collect source IDs, domains, coarse error
+  classes, latency, and aggregate rates, but not user job content or application
+  artifacts.
+
 ## Proposed PR Stack
 
 ### PR 1: Source Locator, Registry, And Config Contract
 
 - Add a source locator model that turns public web/source seeds into
   `SourceLocationCandidate` records with evidence and confidence.
+- Enforce locator policy guardrails: RFC 9309/robots handling, declared user
+  agent, locator-level per-domain budgets, and manual-review thresholds for
+  autonomous search/backtrace results.
 - Add a typed source registry model that covers current `sites.yaml`,
   `employers.yaml`, and JobSpy board selection.
 - Resolve `boards` versus `sites` naming so `searches.yaml` is a stable product
-  contract.
+  contract while accepting both keys for at least one release.
+- Auto-generate `SourceRegistryEntry` records from existing `sites.yaml` entries
+  with `state=experimental` so Smart Extract compatibility is preserved.
 - Add `SourcePolicy`, source states, and source-quality placeholders.
 - Add tests for locator candidate validation, config loading, policy validation,
   and migration from existing packaged YAML.
-- Documentation: update README and `docs/local-reliability-qa.md` only if the
-  user-facing config surface changes in the PR.
+- Documentation: update README for the stable config key and update
+  `docs/local-reliability-qa.md` with the compatibility-window regression.
 
 ### PR 2: Canonical ATS API Adapters
 
@@ -568,13 +801,17 @@ Hosted future:
 - Add Discovery identity dedupe so repeated source-native IDs, canonical URLs,
   and ATS identities update or attach `JobSourceObservation` records instead of
   creating duplicate Job aggregates.
+- Add the additive `job_source_observations` migration, backfill observations
+  from existing `jobs` rows, and preserve `load_by_url` compatibility.
 
 ### PR 3: Content Snapshot And Active Verification
 
-- Add `PostingContentSnapshot` persistence in the Enrichment context.
+- Add `PostingContentSnapshot` as a versioned value object inside the existing
+  `JobEnrichment` aggregate and repository.
 - Move full-description/apply-URL extraction into a reusable content acquisition
   service.
-- Add active/closed verification and quarantine states.
+- Add Enrichment-owned active/closed verification, `JobActiveStateChanged`, and
+  quarantine states.
 - Add Enrichment content dedupe for cleaned-description hashes, apply URL
   matches, and high-confidence content similarity.
 - Add policy-compliant internal filter override logging.
@@ -586,6 +823,10 @@ Hosted future:
 - Persist `DiscoveryRun` and `SourceQualityStats`.
 - Use source quality to schedule crawl budgets and demote bad sources.
 - Add Operations projections/API fields so the web app can show source health.
+- Add event handlers and SSE invalidation coverage for new Discovery and
+  Enrichment events.
+- Add OTel/Langfuse span coverage for locator, adapter, acquisition,
+  canonicalization, dedupe, active verification, and source-quality aggregation.
 - Tests: source-quality aggregation and scheduling decisions.
 
 ### PR 5: Hybrid Search Index
@@ -608,17 +849,40 @@ Hosted future:
 
 For implementation PRs:
 
-- Unit tests for source config parsing, source policy validation, adapter
-  parsing, content extraction, active-state detection, dedupe, and source-health
-  aggregation.
+- Unit tests for source config parsing, source policy validation, locator robots
+  handling, locator rate budgets, adapter parsing, content extraction,
+  active-state detection, dedupe, and source-health aggregation.
+- Migration tests for existing `jobs` rows, generated `JobSourceObservation`
+  rows, existing `sites.yaml` / `employers.yaml`, and `boards` / `sites`
+  compatibility in user `searches.yaml`.
 - Integration tests with mocked HTTP/Playwright responses; no live scraping in
   normal unit tests.
-- Contract tests for API/read-model additions.
-- Web component/hook tests for source registry, quarantine queue, and feedback
-  actions.
-- Product-level QA for any user-facing source-management or discovery workflow.
+- JSON-RPC contract tests for source registry, discovery preview, quarantine,
+  feedback, source health, and any changed job/enrichment read-model payloads.
+- API/read-model tests proving Operations projections rebuild from
+  `DiscoveryRunCompleted`, `JobSourceObserved`, `DuplicateJobLinked`,
+  `JobActiveStateChanged`, and feedback events.
+- Event parity tests: update `DomainEventUnion`, add invalidation handlers for
+  every new event type, and keep `every-event-has-handler.test.ts` passing.
+- Repository/use-case tests covering the `Job` invariant migration:
+  `jobs.posting_url` remains readable, observation URL uniqueness is enforced,
+  and `load_by_url` resolves both canonical and observed URLs during the
+  compatibility window.
+- Enrichment aggregate tests proving `PostingContentSnapshot` is persisted
+  through `JobEnrichment`, successful snapshots emit `JobEnriched`, active-state
+  changes emit `JobActiveStateChanged`, and failures still emit
+  `EnrichmentFailed`.
+- Observability tests with a fake OTel exporter proving locator, adapter,
+  acquisition, LLM fallback, canonicalization, dedupe, active verification, and
+  source-quality spans are emitted without private text or credentials.
+- Web component/hook tests for source registry, quarantine queue, feedback
+  actions, and source-health projections.
+- Product-level QA for any user-facing source-management or discovery workflow:
+  add or enable a source, run discovery against mocked/local fixtures, review
+  quarantined jobs, mark stale/duplicate, and verify source-health updates.
 - A small redacted evaluation set with synthetic jobs and profiles to measure
-  active rate, duplicate rate, full-description success, and top-k relevance.
+  active rate, duplicate rate, full-description success, canonical URL rate, and
+  top-k relevance.
 
 ## Research References
 
