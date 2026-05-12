@@ -8,22 +8,29 @@
 
 ## Decision Summary
 
-Adopt a direct-source-first discovery architecture: index canonical employer
-career systems and official job APIs before broad job boards, treat broad boards
-as lead generators that must be verified against canonical postings, and make
-source quality observable enough that low-yield sources can be demoted or
-quarantined automatically.
+Adopt an aggregator-assisted, source-verified discovery architecture: use
+aggregators and broad boards to find wide job leads quickly, then verify the
+surviving leads against canonical employer career systems, ATS APIs, or official
+posting pages before scoring or downstream automation. Source quality must be
+observable enough that low-yield sources can be demoted or quarantined
+automatically.
 
-The ideal setup has five operating principles:
+The ideal setup has six operating principles:
 
-1. Prefer employer-owned or ATS-owned postings over aggregator copies.
+1. Use aggregators for breadth, but prefer employer-owned or ATS-owned postings
+   as the verified canonical record.
 2. Keep full posting content as a versioned enrichment artifact, not a lossy
    scraper side effect.
 3. Separate "can discover a lead" from "can verify an active, applyable job".
 4. Use policy-controlled content acquisition, including internal filter
    overrides, but do not evade third-party access controls.
-5. Measure source quality continuously: active rate, duplicate rate, full
-   description rate, canonical URL rate, apply URL success, and user feedback.
+5. For v1, prioritize jobs relevant to the project owner: Barcelona, Spain, and
+   tech leadership roles. Non-local, non-Spain, and non-tech-leadership source
+   work belongs in a low-priority backlog unless it directly improves this
+   search.
+6. Measure source usefulness continuously: lead yield, verified-active rate,
+   duplicate rate, full-description rate, canonical URL rate, apply URL success,
+   and user feedback.
 
 ## Current State
 
@@ -62,7 +69,7 @@ Important gaps:
 ## Goals
 
 - Maximize high-quality jobs that are active, canonical, applyable, and relevant
-  to the user's search profile.
+  to the project owner's immediate search: Barcelona, Spain tech leadership.
 - Expand source coverage without letting low-quality or blocked sources degrade
   the database.
 - Capture enough posting content to support scoring, tailoring, deduplication,
@@ -86,14 +93,16 @@ Important gaps:
 
 The source locator is pre-indexing infrastructure, not a source tier. Its job
 is to answer: "where do job lists live on the public and permissioned web?"
-JobHunter should use it to expand source coverage broadly before any
-personalized role/company targeting is applied.
+For v1, locator work should be optimized for Barcelona, Spain tech-leadership
+coverage. Broader source discovery is useful only insofar as it helps find or
+verify those jobs.
 
 The locator should not require the user to know target companies, roles, ATS
-slugs, or careers-page URLs. User-provided companies or domains are useful
-optional seeds, but discovery should also expand from public web discovery,
-known ATS patterns, broad-board backtraces, government/open data, and licensed
-feeds.
+slugs, or careers-page URLs. Aggregators solve most of the breadth problem:
+JobHunter should pull leads from aggregators first, then use locator logic to
+find and verify the canonical employer/ATS source for promising leads.
+User-provided companies or domains are useful optional seeds, but they are not
+the boundary of discovery.
 
 Locator outputs are source registry candidates with evidence and confidence:
 ATS board tokens, Workday tenant URLs, official careers pages, official APIs,
@@ -103,9 +112,12 @@ Locator methods:
 
 - **Known-pattern probing:** check common careers paths such as `/careers`,
   `/jobs`, `/company/careers`, `/about/careers`, and sitemap links.
+- **Aggregator-led discovery:** pull broad leads from aggregators, job boards,
+  and feed APIs, then backtrace each promising lead to the employer career page,
+  ATS board, or official posting URL.
 - **Search-result discovery:** query the open web for career pages,
-  ATS-hosted boards, and job-list indexes, then verify candidates against
-  employer domains when a specific employer is known.
+  ATS-hosted boards, and job-list indexes when aggregator coverage is missing or
+  a lead needs canonical-source verification.
 - **ATS fingerprinting:** detect Workday, Greenhouse, Lever, Ashby,
   SmartRecruiters, Workable, Recruitee, Teamtailor, iCIMS, Taleo, Oracle, and
   BambooHR from links, scripts, forms, redirects, and embedded data.
@@ -125,8 +137,9 @@ Expected behavior:
 - Stores evidence: matched URL, page title, detected ATS kind, source-native
   token, employer-domain match, redirect chain, and confidence.
 - Requires confidence thresholds before promoting a candidate into crawling.
-- Does not use target roles or target companies as prefilters; those are
-  inferred and applied later by ranking, scoring, and feedback loops.
+- Uses Barcelona/Spain tech-leadership as the v1 source-build priority, but does
+  not require the user to hand-enumerate target companies. Target companies are
+  inferred later from recurring high-fit employers and user feedback.
 - Lets the user provide optional seeds without making seeds the definition of
   coverage.
 - Feeds user corrections back into the locator so future source discovery gets
@@ -155,6 +168,11 @@ own conservative policy envelope:
   manual-review candidates. The locator may record the evidence that such a
   system exists, but it must not collect private postings without user-provided
   authorization.
+- If a useful source is blocked for autonomous probing, create a manual action
+  item instead of dropping it. The user can then open the URL in their own local
+  browser session, authenticate or handle any interactive challenge themselves,
+  and import or capture the visible page for JobHunter to process as
+  user-provided content.
 
 ## Source Hierarchy
 
@@ -192,11 +210,14 @@ terms, rate limits, and attribution requirements.
 
 Initial targets:
 
-- USAJOBS Search API for U.S. federal roles.
-- Adzuna API for broad indexed jobs and standardized metadata.
+- Spain/Barcelona-relevant official, licensed, or feed-backed sources first.
+- Adzuna API for broad indexed jobs and standardized metadata, constrained to
+  Spain/Barcelona and tech-leadership query slices.
 - Remotive public API for remote roles, respecting attribution and frequency
-  guidance.
-- Job Bank Canada or other government/official job APIs where available.
+  guidance, but only as a low-priority fallback for roles compatible with
+  Barcelona-based work.
+- USAJOBS, Job Bank Canada, and other non-Spain official feeds belong in the
+  low-priority backlog unless they directly improve the owner's search.
 - Paid or partner feeds for sources that block general scraping but offer a
   legitimate data route.
 
@@ -208,12 +229,14 @@ Rules:
 
 ### Tier 3: Curated Niche Boards
 
-These are useful when they are high signal for the user's role and produce
-fresh, complete postings.
+These are useful when they are high signal for Barcelona/Spain tech leadership
+or produce remote roles compatible with being based in Barcelona.
 
 Examples from the current registry include RemoteOK, WeWorkRemotely, Remotive,
 Hacker News Jobs, BuiltIn Remote, Startup.jobs, Wellfound, Arc.dev, Otta,
-Jobspresso, and FlexJobs.
+Jobspresso, FlexJobs, and Simplify. Spain-specific boards such as InfoJobs,
+Tecnoempleo, Barcelona Activa/Cibernarium job surfaces, Jobfluent, and
+Welcome to the Jungle Spain should be evaluated before generic non-local boards.
 
 Rules:
 
@@ -229,6 +252,11 @@ JobSpy should remain a useful lead generator, not the canonical source of truth.
 Indeed, LinkedIn, ZipRecruiter, and similar boards can surface opportunities
 that canonical ATS/API coverage misses, but they also produce more duplication,
 redirects, and incomplete descriptions.
+
+For v1, broad-board usage should focus on the owner's immediate market:
+Barcelona, Spain, tech leadership, and remote roles compatible with that base.
+Broad non-local boards remain useful as discovery accelerators only when they
+produce leads that can be verified against a canonical employer or ATS source.
 
 Rules:
 
@@ -251,6 +279,11 @@ Rules:
   generated `SourceRegistryEntry` records with `state=experimental` and
   `policy=smart_extract_experimental`; user-provided arbitrary URLs keep working
   through that compatibility path until promoted or rejected.
+- Smart Extract candidates come from four places: migrated `sites.yaml` entries,
+  aggregator leads that need canonical-source verification, locator-discovered
+  career pages, and explicit user source seeds. The RFC does not require humans
+  to know every source in advance; it requires every source to become explicit
+  before repeated crawling.
 - Use deterministic extraction before LLM extraction. For arbitrary URLs this
   means: fetch allowed structured data first, parse JSON-LD/schema.org JobPosting
   and embedded application state when present, apply any configured selectors,
@@ -292,6 +325,30 @@ Not allowed:
 - Collecting private/internal postings that the user is not authorized to view.
 - Bulk redistributing provider content against API or site terms.
 
+### Human-In-The-Loop Blocked Source Path
+
+Blocked sources should not become dead ends. When a lead looks useful but the
+autonomous path hits CAPTCHA, login, paywall, bot-detection, robots disallow,
+rate-limit, or another access boundary, JobHunter should create a
+`manual_action_required` item instead of silently discarding the lead.
+
+The manual path:
+
+1. Preserve the lead URL, source, reason, and retry context.
+2. Show the item in a local manual-capture queue.
+3. Let the user open the page in their own local browser session.
+4. Let the user complete any login, CAPTCHA, consent, or navigation step
+   themselves.
+5. Accept one of these user-provided inputs: capture current visible page, saved
+   HTML, copied URL, exported job record, email, or pasted job text.
+6. Run normal content extraction, dedupe, active verification, scoring, and
+   provenance labeling on that user-provided artifact.
+
+Manual capture is not an automated bypass mode. It is a user-mediated import
+path for content the user can access and provide locally. Provenance must record
+`source_kind=user_mediated_capture`, the originating URL, capture timestamp,
+and whether the source still needs future manual action.
+
 Proposed source policy fields:
 
 ```yaml
@@ -306,6 +363,10 @@ sources:
     robots_policy: honor
     max_pages_per_run: 500
     max_run_frequency: "PT6H"
+    manual_intervention:
+      allowed: true
+      triggers: [captcha, login_required, paywall, bot_detection, robots_disallow]
+      capture_modes: [current_page, saved_html, copied_url, pasted_text, email_import]
     content_filter_override:
       allowed: true
       requires_reason: true
@@ -321,7 +382,7 @@ API, licensed feed, manual import, or user-mediated capture flow.
 
 ```mermaid
 flowchart TD
-    Seeds["Public Web + Source Seeds"]
+    Seeds["Aggregators + Source Seeds"]
     Locator["Source Locator"]
     Registry["Source Registry + Policy"]
     Scheduler["Discovery Scheduler"]
@@ -367,7 +428,7 @@ flowchart TD
 
 | Component | Responsibility |
 | --- | --- |
-| Source Locator | Resolves public web/source seeds into candidate ATS boards, official career pages, APIs, feeds, or manual-review candidates. |
+| Source Locator | Resolves aggregator leads, public web results, and source seeds into candidate ATS boards, official career pages, APIs, feeds, or manual-review candidates. |
 | Source Registry | Declarative catalog of source type, policy, credentials mode, crawl budget, and quality state. |
 | Discovery Scheduler | Chooses what to crawl based on source priority, freshness, prior yield, crawl budget, and source health. |
 | Source Adapters | Implement source-specific listing and detail fetches behind `JobBoardScraperPort`. |
@@ -584,7 +645,9 @@ The discovery store should support search and ranking separately from scoring:
 ## Source Quality Metrics
 
 Every discovery run should emit metrics that can be inspected locally and later
-aggregated in a hosted control plane.
+aggregated in a hosted control plane. These metrics measure the source and
+pipeline's ability to produce usable job leads for the target search, not the
+user's manual search ability.
 
 | Metric | Why It Matters |
 | --- | --- |
@@ -659,6 +722,9 @@ Minimum UX:
 - Source-seed intake where the user can optionally add company domains, ATS
   URLs, board URLs, feeds, or imported lists without making those seeds the
   boundary of discovery.
+- Owner-search settings for v1: Barcelona, Spain; tech leadership; local,
+  hybrid, or remote-compatible roles. These settings prioritize source-build
+  work and source budgets before generic global expansion.
 - Source locator review with candidate careers pages, detected ATS type,
   evidence, confidence, and promote/reject actions.
 - Source registry view with source status, last run, yield, error class, and
@@ -667,6 +733,9 @@ Minimum UX:
   work modes, industries, companies, excluded titles, and source preferences.
 - Discovery preview before a new source is promoted from `experimental`.
 - Quarantine queue for low-confidence or policy-overridden postings.
+- Manual-capture queue for blocked but useful leads where the user can open the
+  page locally, complete interactive steps, and import or capture the visible
+  posting.
 - Feedback actions: save, dismiss, mark stale, mark duplicate, wrong company,
   wrong location, bad source, and source is useful.
 - Per-source policy labels: official API, permissioned API, public page,
@@ -697,11 +766,14 @@ Hosted future:
 RFC implementation is successful when the discovery stack improves usable job
 quality without reducing local safety or breaking existing local data.
 
-Target metrics for the first complete rollout:
+Target metrics for the first complete Barcelona/Spain tech-leadership rollout:
 
 | Metric | Target |
 | --- | --- |
+| Barcelona/Spain-compatible share | >= 80% of surfaced jobs are local, Spain-based, or remote-compatible from Barcelona. |
+| Tech-leadership relevance | >= 70% of surfaced jobs match leadership, staff-plus, engineering management, founder/early-team, platform, AI, or adjacent senior technical leadership criteria. |
 | Tier 1/2 `canonical_url_rate` | >= 90% of surviving canonical jobs have an employer, ATS, official API, or licensed-feed canonical URL. |
+| Aggregator lead verification | >= 75% of aggregator/broad-board leads are matched to canonical employer/ATS sources, quarantined, or explicitly user-approved before scoring. |
 | Broad-board canonicalization | >= 75% of Tier 4 leads are either matched to a canonical source, quarantined, or explicitly user-approved before scoring. |
 | Duplicate aggregate reduction | >= 50% reduction in duplicate `Job` aggregates on the regression fixture set compared with current URL-only dedupe. |
 | Full-description success | >= 85% of canonical active jobs have a `JobEnrichment` snapshot with usable description text. |
@@ -755,12 +827,13 @@ Rollback rules:
 
 | Failure | Mitigation |
 | --- | --- |
-| Locator floods a domain or triggers blocking | Locator-level per-domain budgets, RFC 9309 checks, clear user agent, exponential backoff, and automatic source quarantine after 429, CAPTCHA, bot-detection, or repeated 403 responses. |
+| Locator floods a domain or triggers blocking | Locator-level per-domain budgets, RFC 9309 checks for autonomous probes, clear user agent, exponential backoff, automatic source quarantine after 429, CAPTCHA, bot-detection, or repeated 403 responses, and `manual_action_required` for useful blocked leads. |
 | Search-result discovery finds the wrong employer domain | Require employer-domain evidence and confidence thresholds before promotion; otherwise queue for manual review. |
 | Canonicalization merges distinct jobs | Only high-confidence identity matches auto-merge. Fuzzy metadata/content matches create duplicate candidates, not confirmed links. `DuplicateJobLink` must be reversible and auditable. |
 | A duplicate link points to a job the user later dismisses | Keep all `JobSourceObservation` records. User feedback can reject the duplicate link or split the candidate so the alternate observation can survive as its own canonical job. |
 | Broad-board-only lead reaches downstream automation | Broad-board-only or unknown-active-state results stay quarantined unless the user explicitly approves scoring/review for that run. Apply automation remains gated by canonical identity, active state, materials policy, and existing safety controls. |
 | Permissioned credentials fail or expire | `SecretPort` returns a typed unavailable/expired error. The source moves to manual action or disabled state without logging the secret or retrying aggressively. |
+| Useful source requires interactive access | Move the lead to the manual-capture queue. The user opens the page locally, completes interactive steps, and imports visible content as user-provided evidence. |
 | LLM extraction invents fields | Parser requires evidence references and confidence. Unsupported fields lower confidence or quarantine the snapshot; traces record parse outcome without raw private text. |
 
 ## Security Considerations
@@ -774,7 +847,8 @@ Rollback rules:
   run.
 - Source policies must keep `third_party_control_bypass=false`. CAPTCHA,
   paywall, login, rate-limit, bot-detection, and access-control evasion remain
-  out of scope.
+  out of scope for autonomous collection. User-mediated capture is the supported
+  path when an otherwise useful lead requires interactive access.
 - User-provided saved HTML, URLs, exports, or emails stay local unless the user
   explicitly opts into a hosted integration. They must be labeled as user import,
   not redistributed as shared source content.
@@ -788,11 +862,15 @@ Rollback rules:
 
 ### PR 1: Source Locator, Registry, And Config Contract
 
-- Add a source locator model that turns public web/source seeds into
-  `SourceLocationCandidate` records with evidence and confidence.
+- Add a source locator model that turns aggregator leads, public web results, and
+  source seeds into `SourceLocationCandidate` records with evidence and
+  confidence.
 - Enforce locator policy guardrails: RFC 9309/robots handling, declared user
   agent, locator-level per-domain budgets, and manual-review thresholds for
   autonomous search/backtrace results.
+- Add `manual_action_required` and manual-capture provenance fields for useful
+  leads that hit CAPTCHA, login, paywall, bot-detection, robots disallow,
+  rate-limit, or other access boundaries.
 - Add a typed source registry model that covers current `sites.yaml`,
   `employers.yaml`, and JobSpy board selection.
 - Resolve `boards` versus `sites` naming so `searches.yaml` is a stable product
@@ -873,6 +951,9 @@ Rollback rules:
 
 - Add source registry/status UI.
 - Add discovery preview and quarantine review UI.
+- Add manual-capture queue UI for blocked leads, including open-in-local-browser,
+  current-page capture/import, saved HTML/text/email import, and provenance
+  labeling.
 - Add feedback actions that feed source-quality metrics.
 - QA: browser path for adding/enabling a source, running discovery, reviewing
   quarantined jobs, and confirming source health updates.
@@ -911,9 +992,14 @@ For implementation PRs:
   source-quality spans are emitted without private text or credentials.
 - Web component/hook tests for source registry, quarantine queue, feedback
   actions, and source-health projections.
+- Web/API tests for manual-capture queue behavior: blocked lead creates
+  `manual_action_required`, user import attaches provenance, extraction runs on
+  the user-provided artifact, and no credentials or raw private content enter
+  traces/logs.
 - Product-level QA for any user-facing source-management or discovery workflow:
   add or enable a source, run discovery against mocked/local fixtures, review
-  quarantined jobs, mark stale/duplicate, and verify source-health updates.
+  quarantined jobs, complete one manual-capture import, mark stale/duplicate, and
+  verify source-health updates.
 - A small redacted evaluation set with synthetic jobs and profiles to measure
   active rate, duplicate rate, full-description success, canonical URL rate, and
   top-k relevance.
