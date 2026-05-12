@@ -82,42 +82,38 @@ Important gaps:
   browser profiles, or generated PDFs in any shared index.
 - This RFC does not make broad job boards the source of truth for job identity.
 
-## Source Hierarchy
+## Source Locator
 
-### Tier 0: Source Location Discovery
+The source locator is pre-indexing infrastructure, not a source tier. Its job
+is to answer: "where do job lists live on the public and permissioned web?"
+JobHunter should use it to expand source coverage broadly before any
+personalized role/company targeting is applied.
 
-This tier is not a job source. It is the resolver that answers: "where does
-this employer or target market publish its jobs?"
+The locator should not require the user to know target companies, roles, ATS
+slugs, or careers-page URLs. User-provided companies or domains are useful
+optional seeds, but discovery should also expand from public web discovery,
+known ATS patterns, broad-board backtraces, government/open data, and licensed
+feeds.
 
-The input is usually incomplete target intelligence: employer names, company
-domains, industries, sectors, geographies, role families, or broad preferences.
-The output is a set of source registry candidates with evidence and confidence:
+Locator outputs are source registry candidates with evidence and confidence:
 ATS board tokens, Workday tenant URLs, official careers pages, official APIs,
 licensed feeds, or manual-review candidates.
-
-Examples:
-
-- target employer lists;
-- company domains or LinkedIn/company-profile URLs;
-- role profiles such as "staff platform engineer", "AI infrastructure", or
-  "security engineering";
-- hard exclusions such as staffing agencies, onsite-only roles, or unwanted
-  geographies.
 
 Locator methods:
 
 - **Known-pattern probing:** check common careers paths such as `/careers`,
   `/jobs`, `/company/careers`, `/about/careers`, and sitemap links.
-- **Search-result discovery:** query the open web for official career pages and
-  ATS-hosted boards, then verify candidates against the employer domain.
+- **Search-result discovery:** query the open web for career pages,
+  ATS-hosted boards, and job-list indexes, then verify candidates against
+  employer domains when a specific employer is known.
 - **ATS fingerprinting:** detect Workday, Greenhouse, Lever, Ashby,
   SmartRecruiters, Workable, Recruitee, Teamtailor, iCIMS, Taleo, Oracle, and
   BambooHR from links, scripts, forms, redirects, and embedded data.
 - **API endpoint derivation:** turn a discovered board token or tenant URL into
   the source-specific listing/detail API and validate it with a low-volume
   metadata or listing fetch.
-- **Aggregator backtrace:** use broad boards only to discover the canonical
-  employer or ATS URL, not as final job identity.
+- **Aggregator backtrace:** use broad boards to discover canonical employer or
+  ATS URLs, not as final job identity.
 - **Manual confirmation:** if the locator finds several plausible career
   systems or a protected/internal site, queue it for user review before adding
   it to the active source registry.
@@ -128,12 +124,15 @@ Expected behavior:
   for scoring.
 - Stores evidence: matched URL, page title, detected ATS kind, source-native
   token, employer-domain match, redirect chain, and confidence.
-- Requires confidence thresholds before promoting a candidate into Tier 1, 2, or
-  3 crawling.
-- Lets the user seed target companies without already knowing where their job
-  lists live.
-- Feeds user corrections back into the locator so future target discovery gets
+- Requires confidence thresholds before promoting a candidate into crawling.
+- Does not use target roles or target companies as prefilters; those are
+  inferred and applied later by ranking, scoring, and feedback loops.
+- Lets the user provide optional seeds without making seeds the definition of
+  coverage.
+- Feeds user corrections back into the locator so future source discovery gets
   better.
+
+## Source Hierarchy
 
 ### Tier 1: Canonical ATS And Employer APIs
 
@@ -194,8 +193,8 @@ Jobspresso, and FlexJobs.
 
 Rules:
 
-- Add a source only with an owner, expected role fit, expected geography fit,
-  and an initial health budget.
+- Add a source only with an owner, expected coverage category, expected
+  geography coverage, and an initial health budget.
 - Promote sources that produce canonical, active, user-approved jobs.
 - Demote sources that produce stale links, poor descriptions, spam, duplicates,
   or frequent extraction failures.
@@ -204,8 +203,8 @@ Rules:
 
 JobSpy should remain a useful lead generator, not the canonical source of truth.
 Indeed, LinkedIn, ZipRecruiter, and similar boards can surface opportunities
-the target list misses, but they also produce more duplication, redirects, and
-incomplete descriptions.
+that canonical ATS/API coverage misses, but they also produce more duplication,
+redirects, and incomplete descriptions.
 
 Rules:
 
@@ -290,7 +289,7 @@ API, licensed feed, manual import, or user-mediated capture flow.
 
 ```mermaid
 flowchart TD
-    Profile["Search Profile"]
+    Seeds["Public Web + Source Seeds"]
     Locator["Source Locator"]
     Registry["Source Registry + Policy"]
     Scheduler["Discovery Scheduler"]
@@ -302,12 +301,12 @@ flowchart TD
     Dedup["URL + Content Dedupe"]
     Store["Discovery + Enrichment Stores"]
     Index["Hybrid Search Index"]
+    Profile["Inferred/User Search Profile"]
     Score["Scoring + Ranking"]
     Feedback["User Feedback + Source Health"]
 
-    Profile --> Locator
+    Seeds --> Locator
     Locator --> Registry
-    Profile --> Scheduler
     Registry --> Scheduler
     Scheduler --> ATS
     Scheduler --> Boards
@@ -320,6 +319,7 @@ flowchart TD
     Dedup --> Store
     Store --> Index
     Index --> Score
+    Profile --> Score
     Score --> Feedback
     Feedback --> Locator
     Feedback --> Registry
@@ -330,9 +330,9 @@ flowchart TD
 
 | Component | Responsibility |
 | --- | --- |
-| Source Locator | Resolves target employers/domains/markets into candidate ATS boards, official career pages, APIs, feeds, or manual-review candidates. |
+| Source Locator | Resolves public web/source seeds into candidate ATS boards, official career pages, APIs, feeds, or manual-review candidates. |
 | Source Registry | Declarative catalog of source type, policy, credentials mode, crawl budget, and quality state. |
-| Discovery Scheduler | Chooses what to crawl based on source priority, freshness, prior yield, and user search profile. |
+| Discovery Scheduler | Chooses what to crawl based on source priority, freshness, prior yield, crawl budget, and source health. |
 | Source Adapters | Implement source-specific listing and detail fetches behind `JobBoardScraperPort`. |
 | Content Acquisition Service | Retrieves full descriptions and apply URLs through API, structured data, selectors, rendered browser, or LLM extraction. |
 | Canonicalization Service | Resolves employer, ATS, source-native ID, canonical posting URL, and active/closed state. |
@@ -351,7 +351,7 @@ Proposed entities/value objects:
 
 | Name | Context | Purpose |
 | --- | --- | --- |
-| `SourceLocationCandidate` | Discovery | Candidate career system discovered from a target company/domain, with detected source kind, URL, confidence, and promotion state. |
+| `SourceLocationCandidate` | Discovery | Candidate career system discovered from the public web, a source seed, or an aggregator backtrace, with detected source kind, URL, confidence, and promotion state. |
 | `SourceDiscoveryEvidence` | Discovery | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, and validation fetch result. |
 | `SourceRegistryEntry` | Discovery | Source ID, kind, display name, owner, policy, priority, and adapter config. |
 | `SourcePolicy` | Discovery | Allowed methods, rate budget, robots handling, auth mode, attribution, and filter override rules. |
@@ -457,14 +457,15 @@ into a raw YAML-only workflow.
 
 Minimum UX:
 
-- Target-company intake where the user can enter employer names/domains without
-  already knowing each ATS board or careers URL.
+- Source-seed intake where the user can optionally add company domains, ATS
+  URLs, board URLs, feeds, or imported lists without making those seeds the
+  boundary of discovery.
 - Source locator review with candidate careers pages, detected ATS type,
   evidence, confidence, and promote/reject actions.
 - Source registry view with source status, last run, yield, error class, and
   quality trend.
-- Search profile editor for target roles, locations, work modes, industries,
-  companies, excluded titles, and source preferences.
+- Search profile editor for inferred and user-edited target roles, locations,
+  work modes, industries, companies, excluded titles, and source preferences.
 - Discovery preview before a new source is promoted from `experimental`.
 - Quarantine queue for low-confidence or policy-overridden postings.
 - Feedback actions: save, dismiss, mark stale, mark duplicate, wrong company,
@@ -493,7 +494,7 @@ Hosted future:
 
 ### PR 1: Source Locator, Registry, And Config Contract
 
-- Add a source locator model that turns target employers/domains into
+- Add a source locator model that turns public web/source seeds into
   `SourceLocationCandidate` records with evidence and confidence.
 - Add a typed source registry model that covers current `sites.yaml`,
   `employers.yaml`, and JobSpy board selection.
@@ -581,9 +582,10 @@ For implementation PRs:
 
 ## Open Questions
 
-- Which geographies and role families should be optimized first?
-- Should the first ATS expansion prioritize target companies or broad slug
-  discovery?
+- Which geography/source-family crawl budgets should be prioritized first while
+  broad coverage ramps up?
+- Which ATS families should the first source-locator probes support beyond
+  Workday, Greenhouse, Lever, and Ashby?
 - Are paid APIs or licensed feeds acceptable for high-value blocked sources?
 - Should source health be visible in the main dashboard or only in an
   operations/settings view?
