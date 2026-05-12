@@ -150,30 +150,16 @@ Expected behavior:
 The locator runs before a promoted source has a `SourcePolicy`, so it needs its
 own conservative policy envelope:
 
-- Honor robots.txt under RFC 9309 before probing non-API paths. If robots rules
-  are unavailable or ambiguous, fall back to the lowest probe budget and queue
-  the candidate for review instead of widening the crawl.
-- Use a declared JobHunter user agent. The locator must not mask itself as a
-  different crawler, rotate proxies, or manipulate browser fingerprints to reach
-  blocked content.
+- Use a declared regular browser user agent. 
 - Enforce a locator-level per-domain budget independent of
   `SourcePolicy.max_pages_per_run`. The default should be a small number of
-  HEAD/GET requests per domain per run with backoff on 429, 403, CAPTCHA, or
-  bot-detection responses.
+  HEAD/GET requests per domain per run with backoff on 429, 403.
 - Run autonomous search-result discovery and aggregator backtraces only when a
   domain allowlist, user-enabled broad-discovery mode, or high-confidence
   employer-domain match is present. Otherwise, store a candidate for manual
   confirmation.
-- Treat protected, internal, login-only, or multi-tenant admin surfaces as
-  manual-review candidates. The locator may record the evidence that such a
-  system exists, but it must not collect private postings without user-provided
-  authorization.
-- If a useful source is blocked for autonomous probing, create a manual action
-  item instead of dropping it. The user can then open the URL in their own local
-  browser session, authenticate or handle any interactive challenge themselves,
-  and import or capture the visible page for JobHunter to process as
-  user-provided content.
 
+  
 ## Source Hierarchy
 
 ### Tier 1: Canonical ATS And Employer APIs
