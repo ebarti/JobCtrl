@@ -84,27 +84,56 @@ Important gaps:
 
 ## Source Hierarchy
 
-### Tier 0: User-Curated Targets
+### Tier 0: Source Location Discovery
 
-These are the user's known target employers, sectors, geographies, and role
-families. They should drive the crawl plan instead of being only post-hoc score
-filters.
+This tier is not a job source. It is the resolver that answers: "where does
+this employer or target market publish its jobs?"
+
+The input is usually incomplete target intelligence: employer names, company
+domains, industries, sectors, geographies, role families, or broad preferences.
+The output is a set of source registry candidates with evidence and confidence:
+ATS board tokens, Workday tenant URLs, official careers pages, official APIs,
+licensed feeds, or manual-review candidates.
 
 Examples:
 
 - target employer lists;
-- target ATS slugs such as Greenhouse board tokens, Lever site names, Ashby job
-  board names, or Workday tenant URLs;
+- company domains or LinkedIn/company-profile URLs;
 - role profiles such as "staff platform engineer", "AI infrastructure", or
   "security engineering";
 - hard exclusions such as staffing agencies, onsite-only roles, or unwanted
   geographies.
 
+Locator methods:
+
+- **Known-pattern probing:** check common careers paths such as `/careers`,
+  `/jobs`, `/company/careers`, `/about/careers`, and sitemap links.
+- **Search-result discovery:** query the open web for official career pages and
+  ATS-hosted boards, then verify candidates against the employer domain.
+- **ATS fingerprinting:** detect Workday, Greenhouse, Lever, Ashby,
+  SmartRecruiters, Workable, Recruitee, Teamtailor, iCIMS, Taleo, Oracle, and
+  BambooHR from links, scripts, forms, redirects, and embedded data.
+- **API endpoint derivation:** turn a discovered board token or tenant URL into
+  the source-specific listing/detail API and validate it with a low-volume
+  metadata or listing fetch.
+- **Aggregator backtrace:** use broad boards only to discover the canonical
+  employer or ATS URL, not as final job identity.
+- **Manual confirmation:** if the locator finds several plausible career
+  systems or a protected/internal site, queue it for user review before adding
+  it to the active source registry.
+
 Expected behavior:
 
-- Highest priority in scheduling.
-- Strict active-job verification.
-- User feedback directly tunes future crawl budgets.
+- Produces `SourceRegistryEntry` candidates; it does not directly enqueue jobs
+  for scoring.
+- Stores evidence: matched URL, page title, detected ATS kind, source-native
+  token, employer-domain match, redirect chain, and confidence.
+- Requires confidence thresholds before promoting a candidate into Tier 1, 2, or
+  3 crawling.
+- Lets the user seed target companies without already knowing where their job
+  lists live.
+- Feeds user corrections back into the locator so future target discovery gets
+  better.
 
 ### Tier 1: Canonical ATS And Employer APIs
 
@@ -262,6 +291,7 @@ API, licensed feed, manual import, or user-mediated capture flow.
 ```mermaid
 flowchart TD
     Profile["Search Profile"]
+    Locator["Source Locator"]
     Registry["Source Registry + Policy"]
     Scheduler["Discovery Scheduler"]
     ATS["Canonical ATS/API Adapters"]
@@ -275,6 +305,8 @@ flowchart TD
     Score["Scoring + Ranking"]
     Feedback["User Feedback + Source Health"]
 
+    Profile --> Locator
+    Locator --> Registry
     Profile --> Scheduler
     Registry --> Scheduler
     Scheduler --> ATS
@@ -289,6 +321,7 @@ flowchart TD
     Store --> Index
     Index --> Score
     Score --> Feedback
+    Feedback --> Locator
     Feedback --> Registry
     Feedback --> Scheduler
 ```
@@ -297,6 +330,7 @@ flowchart TD
 
 | Component | Responsibility |
 | --- | --- |
+| Source Locator | Resolves target employers/domains/markets into candidate ATS boards, official career pages, APIs, feeds, or manual-review candidates. |
 | Source Registry | Declarative catalog of source type, policy, credentials mode, crawl budget, and quality state. |
 | Discovery Scheduler | Chooses what to crawl based on source priority, freshness, prior yield, and user search profile. |
 | Source Adapters | Implement source-specific listing and detail fetches behind `JobBoardScraperPort`. |
@@ -317,6 +351,8 @@ Proposed entities/value objects:
 
 | Name | Context | Purpose |
 | --- | --- | --- |
+| `SourceLocationCandidate` | Discovery | Candidate career system discovered from a target company/domain, with detected source kind, URL, confidence, and promotion state. |
+| `SourceDiscoveryEvidence` | Discovery | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, and validation fetch result. |
 | `SourceRegistryEntry` | Discovery | Source ID, kind, display name, owner, policy, priority, and adapter config. |
 | `SourcePolicy` | Discovery | Allowed methods, rate budget, robots handling, auth mode, attribution, and filter override rules. |
 | `DiscoveryRun` | Discovery/Operations | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. |
@@ -421,6 +457,10 @@ into a raw YAML-only workflow.
 
 Minimum UX:
 
+- Target-company intake where the user can enter employer names/domains without
+  already knowing each ATS board or careers URL.
+- Source locator review with candidate careers pages, detected ATS type,
+  evidence, confidence, and promote/reject actions.
 - Source registry view with source status, last run, yield, error class, and
   quality trend.
 - Search profile editor for target roles, locations, work modes, industries,
@@ -451,15 +491,17 @@ Hosted future:
 
 ## Proposed PR Stack
 
-### PR 1: Source Registry And Config Contract
+### PR 1: Source Locator, Registry, And Config Contract
 
+- Add a source locator model that turns target employers/domains into
+  `SourceLocationCandidate` records with evidence and confidence.
 - Add a typed source registry model that covers current `sites.yaml`,
   `employers.yaml`, and JobSpy board selection.
 - Resolve `boards` versus `sites` naming so `searches.yaml` is a stable product
   contract.
 - Add `SourcePolicy`, source states, and source-quality placeholders.
-- Add tests for config loading, policy validation, and migration from existing
-  packaged YAML.
+- Add tests for locator candidate validation, config loading, policy validation,
+  and migration from existing packaged YAML.
 - Documentation: update README and `docs/local-reliability-qa.md` only if the
   user-facing config surface changes in the PR.
 
