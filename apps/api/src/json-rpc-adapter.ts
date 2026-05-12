@@ -179,10 +179,24 @@ export class SubprocessJsonRpcAdapter implements JsonRpcDispatcher {
  * ``buildApp`` and never touch the singleton.
  */
 let _defaultDispatcher: SubprocessJsonRpcAdapter | null = null;
+let _defaultDispatcherKey: string | null = null;
 
-export function getDefaultJsonRpcDispatcher(): SubprocessJsonRpcAdapter {
-  if (_defaultDispatcher === null) {
-    _defaultDispatcher = new SubprocessJsonRpcAdapter();
+function dispatcherKey(options: JsonRpcCallOptions = {}): string {
+  return JSON.stringify({
+    appDir: options.appDir ?? AUTOMATION_PROJECT_DIR,
+    projectDir: options.projectDir ?? AUTOMATION_PROJECT_DIR,
+    uvBinary: options.uvBinary ?? "uv",
+  });
+}
+
+export function getDefaultJsonRpcDispatcher(options: JsonRpcCallOptions = {}): SubprocessJsonRpcAdapter {
+  const key = dispatcherKey(options);
+  if (_defaultDispatcher === null || _defaultDispatcherKey !== key) {
+    if (_defaultDispatcher !== null) {
+      void _defaultDispatcher.close();
+    }
+    _defaultDispatcher = new SubprocessJsonRpcAdapter(options);
+    _defaultDispatcherKey = key;
   }
   return _defaultDispatcher;
 }
@@ -193,4 +207,5 @@ export function resetDefaultJsonRpcDispatcher(): void {
     void _defaultDispatcher.close();
   }
   _defaultDispatcher = null;
+  _defaultDispatcherKey = null;
 }

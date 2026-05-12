@@ -2,7 +2,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from jobhunter import actions
+from jobhunter import actions, cli
 from jobhunter.actions import LocalActionRequest, run_local_action
 from jobhunter.apply import launcher
 from jobhunter.cli import app
@@ -238,6 +238,26 @@ def test_action_cli_prints_json(tmp_path, monkeypatch):
         assert '"ok": true' in result.stdout
     finally:
         close_connection(db_path)
+
+
+def test_stage_cli_commands_accept_limits(monkeypatch):
+    calls = []
+
+    def fake_pipeline(**kwargs):
+        calls.append(kwargs)
+        stage = kwargs["stages"][0]
+        return {"stages": [{"stage": stage, "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(cli, "run_pipeline", fake_pipeline)
+
+    runner = CliRunner()
+    for command in (["discover", "--limit", "1"], ["enrich", "--limit", "1"], ["run", "discover", "--limit", "1"]):
+        result = runner.invoke(app, command)
+        assert result.exit_code == 0
+
+    assert [call["stages"] for call in calls] == [["discover"], ["enrich"], ["discover"]]
+    assert [call["limit"] for call in calls] == [1, 1, 1]
 
 
 def test_action_cli_reports_validation_errors_without_traceback(tmp_path, monkeypatch):

@@ -52,7 +52,7 @@ async def test_discover_activity_invokes_run_pipeline_with_discover_stage():
             ):
                 output: DiscoverActivityOutput = await env.client.execute_workflow(
                     _DiscoverHarness.run,
-                    DiscoverActivityInput(tenant_id="local", workers=2),
+                    DiscoverActivityInput(tenant_id="local", limit=5, workers=2),
                     id=f"discover-wf-{uuid.uuid4()}",
                     task_queue=queue,
                 )
@@ -61,5 +61,6 @@ async def test_discover_activity_invokes_run_pipeline_with_discover_stage():
     kwargs = runner_mock.call_args.kwargs
     assert kwargs["stages"] == ["discover"]
     assert kwargs["workers"] == 2
+    assert kwargs["limit"] == 5
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.1)

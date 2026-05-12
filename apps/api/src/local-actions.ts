@@ -53,6 +53,7 @@ export type ActionDispatcher = (
   command: ActionCommandPayload,
   context: ActionDispatchContext,
 ) => Promise<ActionDispatchResult>;
+export type JsonRpcDispatcherFactory = (context: ActionDispatchContext) => JsonRpcDispatcher;
 
 export type ArtifactOpener = (artifactPath: string) => Promise<void>;
 
@@ -91,9 +92,13 @@ export type ProfilePreviewRenderer = (
 ) => Promise<Buffer>;
 
 /** Build the production action dispatcher backed by ``SubprocessJsonRpcAdapter``. */
-export function createActionDispatcher(dispatcher?: JsonRpcDispatcher): ActionDispatcher {
-  return async (command, _context) => {
-    const rpc = dispatcher ?? getDefaultJsonRpcDispatcher();
+export function createActionDispatcher(
+  dispatcher?: JsonRpcDispatcher,
+  dispatcherFactory: JsonRpcDispatcherFactory = (context) =>
+    getDefaultJsonRpcDispatcher({ appDir: context.appDir }),
+): ActionDispatcher {
+  return async (command, context) => {
+    const rpc = dispatcher ?? dispatcherFactory(context);
     if (command.action === "retry_stage" && !command.runAfter) {
       // Pure-reset path — handled by write-model.ts.  The dispatcher is
       // only invoked when ``runAfter`` is set (i.e. user explicitly
@@ -168,7 +173,7 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
       jobKey: "profile",
     };
     const actionId = `act-${randomUUID()}`;
-    const dispatcher = getDefaultJsonRpcDispatcher();
+    const dispatcher = getDefaultJsonRpcDispatcher({ appDir: context.appDir });
     const response = await dispatcher.call("profile_import", {
       tenantId: "local",
       pdfPath,

@@ -300,13 +300,15 @@ def fetch_details(employer: dict, jobs: list[dict]) -> list[dict]:
 
 # -- DB storage --------------------------------------------------------------
 
-def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -> tuple[int, int]:
+def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict, limit: int = 0) -> tuple[int, int]:
     """Store corporate jobs in DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
 
     for job in jobs:
+        if limit > 0 and new + existing >= limit:
+            break
         url = job.get("apply_url", "")
         if not url:
             emp = employers.get(job.get("employer_key", ""), {})
@@ -347,6 +349,7 @@ def _process_one(
     location_filter: bool,
     accept_locs: list[str],
     reject_locs: list[str],
+    limit: int = 0,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -355,6 +358,7 @@ def _process_one(
         jobs = search_employer(
             employer_key, emp, search_text,
             location_filter=location_filter,
+            max_results=limit,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
         )
@@ -373,7 +377,7 @@ def _process_one(
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
 
     conn = get_connection()
-    new, existing = store_results(conn, jobs, employers)
+    new, existing = store_results(conn, jobs, employers, limit=limit)
     log.info("%s: %d new, %d already in DB", emp["name"], new, existing)
 
     return {"employer": emp["name"], "query": search_text,
@@ -391,6 +395,7 @@ def scrape_employers(
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
     workers: int = 1,
+    limit: int = 0,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -416,6 +421,9 @@ def scrape_employers(
 
     valid_keys = [k for k in employer_keys if k in employers]
 
+    if limit > 0:
+        workers = 1
+
     if workers > 1 and len(valid_keys) > 1:
         # Parallel mode
         completed = 0
@@ -424,6 +432,7 @@ def scrape_employers(
                 pool.submit(
                     _process_one, key, employers, search_text,
                     location_filter, accept_locs, reject_locs,
+                    0,
                 ): key
                 for key in valid_keys
             }
@@ -444,9 +453,13 @@ def scrape_employers(
         # Sequential mode (default)
         completed = 0
         for key in valid_keys:
+            remaining = max(limit - total_found, 0) if limit > 0 else 0
+            if limit > 0 and remaining <= 0:
+                break
             result = _process_one(
                 key, employers, search_text,
                 location_filter, accept_locs, reject_locs,
+                remaining if limit > 0 else 0,
             )
             completed += 1
             total_new += result["new"]
@@ -469,7 +482,7 @@ def scrape_employers(
 
 # -- Public entry point ------------------------------------------------------
 
-def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> dict:
+def run_workday_discovery(employers: dict | None = None, workers: int = 1, limit: int = 0) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
     Loads employer registry from config/employers.yaml (or uses the provided
@@ -519,6 +532,9 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     grand_found = 0
 
     for i, query in enumerate(queries, 1):
+        remaining = max(limit - grand_found, 0) if limit > 0 else 0
+        if limit > 0 and remaining <= 0:
+            break
         log.info("Query %d/%d: \"%s\"", i, len(queries), query)
         result = scrape_employers(
             search_text=query,
@@ -527,6 +543,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             workers=workers,
+            limit=remaining if limit > 0 else 0,
         )
         grand_new += result["new"]
         grand_existing += result["existing"]

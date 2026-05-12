@@ -116,7 +116,11 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
     if stage == "discover":
         return await workflow.execute_activity(
             discover_activity,
-            DiscoverActivityInput(tenant_id=payload.tenant_id, workers=payload.workers),
+            DiscoverActivityInput(
+                tenant_id=payload.tenant_id,
+                workers=payload.workers,
+                limit=payload.limit,
+            ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,

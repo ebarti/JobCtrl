@@ -396,6 +396,8 @@ Langfuse instance for LLM tracing. The wiring lives under
   `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` is
   unset, init logs a warning and the worker continues without exporting.
   `LANGFUSE_DISABLE=1` opts out even when credentials are present.
+  `LANGFUSE_OTEL_TIMEOUT_SECONDS` bounds each OTLP export request and defaults
+  to `5.0`.
 - `llm_spans.py` — `llm_generation_span(...)` context manager that opens a
   `langfuse.observation.type=generation` span around each LLM call. It also
   sets the GenAI semantic-conventions attributes (`gen_ai.request.model`,
@@ -409,6 +411,18 @@ Three sources emit spans:
 | Every LLM call (`jobhunter.llm.LLMClient.chat`) | `llm.<model>` | `generation` |
 | Every Temporal workflow + activity (via `temporalio.contrib.opentelemetry.TracingInterceptor`) | workflow / activity name | `span` (default) |
 | Every JSON-RPC dispatch (`jobhunter.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
+| Every pipeline stage (`jobhunter.pipeline.runner`) | `pipeline.stage.<stage>` | `span` |
+| Discover source steps (`jobspy`, `workday`, `smartextract`) | `pipeline.source.discover.<source>` | `span` |
+
+Pipeline stages and Discover source steps also emit short
+`langfuse.observation.type=event` observations for their
+`StageStarted` / `StageCompleted` / `StageFailed` lifecycle records. The same
+lifecycle records are persisted to `job_events`, which makes long-running or
+stuck stages visible through SSE/recent activity even before the synchronous
+JSON-RPC request returns. The stage runner forwards the caller's `limit` to
+every stage. Discovery sources use that limit as a bounded debug crawl cap,
+switch to sequential source execution when a cap is present, and skip remaining
+sources after the cap is reached.
 
 The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/client.py`) and worker-side
@@ -470,7 +484,9 @@ event (PR 7 of the Temporal stack).
    `apply_run_projections` via `GET /v1/workflow-runs` and deep-links each
    row to the local Temporal Web UI (`http://127.0.0.1:8233`).
 8. UI actions are routed through JSON-RPC for complex commands or executed
-   inline for simple state transitions.
+   inline for simple state transitions. JSON-RPC worker subprocesses inherit
+   the API runtime `JOBHUNTER_DIR`, so action writes land in the same
+   database the API and web UI read.
 
 ## Local Commands
 

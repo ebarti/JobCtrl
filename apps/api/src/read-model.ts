@@ -752,6 +752,8 @@ function paginateWithTotal<T>(
 
 function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
   if (!tableExists(db, "job_events")) return [];
+  const eventColumns = columnNames(db, "job_events");
+  const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
   const hideDeletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = e.job_url AND d.restored_at IS NULL"
     : "";
@@ -759,6 +761,7 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
   const sql = `
     SELECT
       e.event_id,
+      ${eventTypeSelect},
       e.job_url,
       e.stage,
       e.level,
@@ -774,6 +777,7 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     LIMIT 20`;
   return allRows<Record<string, unknown>>(db, sql, [DEFAULT_TENANT]).map((row) => ({
     eventId: stringField(row.event_id),
+    eventType: stringField(row.event_type) || "Event",
     jobKey: nullableString(row.job_url),
     title: nullableString(row.title),
     company: nullableString(row.employer),
@@ -782,6 +786,11 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     message: stringField(row.message) || "event",
     at: nullableString(row.occurred_at),
   }));
+}
+
+function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
+  if (!tableExists(db, tableName)) return new Set();
+  return new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name));
 }
 
 /**

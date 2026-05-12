@@ -59,6 +59,18 @@ def test_init_otel_with_full_creds_configures_provider(monkeypatch):
     expected = base64.b64encode(b"pk-test:sk-test").decode("ascii")
     assert _header(otel_mod._exporter, "Authorization") == f"Basic {expected}"
     assert _header(otel_mod._exporter, "x-langfuse-ingestion-version") == "4"
+    assert otel_mod._exporter._timeout == 5.0
+
+
+def test_init_otel_honors_export_timeout_env(monkeypatch):
+    _set_creds(monkeypatch)
+    monkeypatch.setenv("LANGFUSE_OTEL_TIMEOUT_SECONDS", "1.5")
+    from jobhunter.infrastructure.observability import otel as otel_mod
+
+    otel_mod.init_otel()
+
+    assert otel_mod._exporter is not None
+    assert otel_mod._exporter._timeout == 1.5
 
 
 def test_init_otel_is_idempotent(monkeypatch):

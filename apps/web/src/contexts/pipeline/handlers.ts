@@ -16,6 +16,7 @@ import { jobsKeys } from "../operations/jobsKeys.js";
 export const stageStartedHandler = (event: StageStarted): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
 export const stageCompletedHandler = (

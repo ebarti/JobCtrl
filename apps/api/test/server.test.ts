@@ -145,6 +145,25 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("allows loopback browser access to the event stream", async () => {
+    const app = buildApp(options);
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected local test server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/events/stream?tenantId=local`, {
+      headers: { origin: "http://127.0.0.1:5175" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5175");
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    await response.body?.cancel();
+    await app.close();
+  });
+
   it("allows loopback browser preflight for local profile saves", async () => {
     const app = buildApp(options);
     const response = await app.inject({
@@ -291,6 +310,7 @@ describe("local TypeScript API", () => {
     });
     expect(body.activity[0]).toMatchObject({
       eventId: "1",
+      eventType: "ActionFailed",
       jobKey: "https://example.com/jobs/failed-score",
       title: "Backend Engineer",
       company: "ExampleCo",
@@ -1923,6 +1943,7 @@ function seedDatabase(dbPath: string): void {
       event_id INTEGER PRIMARY KEY AUTOINCREMENT,
       job_url TEXT,
       stage TEXT,
+      event_type TEXT NOT NULL DEFAULT '',
       level TEXT,
       message TEXT,
       occurred_at TEXT
@@ -1999,9 +2020,12 @@ function seedDatabase(dbPath: string): void {
     "2026-04-29T10:05:00+00:00",
     12,
   );
-  db.prepare("INSERT INTO job_events (job_url, stage, level, message, occurred_at) VALUES (?, ?, ?, ?, ?)").run(
+  db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
     "https://example.com/jobs/failed-score",
     "score",
+    "ActionFailed",
     "error",
     "Score failed",
     "2026-04-29T10:10:00+00:00",

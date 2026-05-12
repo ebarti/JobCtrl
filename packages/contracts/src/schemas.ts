@@ -576,6 +576,7 @@ export interface DashboardSummary {
   }>;
   activity: Array<{
     eventId: string;
+    eventType: string;
     jobKey: string | null;
     title: string | null;
     company: string | null;

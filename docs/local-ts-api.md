@@ -47,6 +47,26 @@ include `apply` first run preceding non-apply stages synchronously, then return
 the response is `200` and preserves the dispatcher-derived failed apply action.
 `dryRun` defaults to `true`, preserving apply safety.
 
+The `limit` field is forwarded to every stage. For `discover`, the Python
+runner passes it into JobSpy, Workday, and Smart Extract and forces bounded
+source crawls to run sequentially, skipping remaining sources once the cap is
+reached so `limit: 1` is usable for local debugging. For `enrich`, the same
+field caps pending detail jobs instead of falling back to the enrichment default
+batch size.
+
+The JSON-RPC worker is launched with the API runtime `appDir` as
+`JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
+local SQLite database. Non-apply pipeline runs also emit pipeline-level
+`StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
+the same lifecycle rows for its JobSpy, Workday, and Smart Extract source
+steps. Those event types are part of the SSE domain catalog, so the dashboard
+can refresh recent activity while a long synchronous stage request is still
+running.
+
+`GET /v1/dashboard/summary` includes `activity[].eventType` for those rows so
+the web UI can render started, completed, and failed stage states from backend
+events instead of local button state alone.
+
 ## Related Packages
 
 - `apps/api`: Fastify API app.

@@ -4,6 +4,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
+import { sampleDashboardSummary } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
 import { StageTriggerPanel } from "./StageTriggerPanel.js";
@@ -42,8 +43,8 @@ describe("StageTriggerPanel", () => {
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByLabelText("Workers")).toBeInTheDocument();
+    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
     expect(screen.getByLabelText("Dry run")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Limit")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
@@ -51,6 +52,14 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Enrich" }));
+    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Score" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
@@ -96,6 +105,54 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+  });
+
+  it("submits a bounded Discover run from the stage tab", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "succeeded",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["discover"],
+        limit: 1,
+        workers: 1,
+        minScore: 7,
+        validationMode: "normal" as const,
+        dryRun: false,
+        rescore: false,
+        retailor: false,
+        headless: false,
+        model: "haiku",
+        continuous: false,
+      },
+      actions: [],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.clear(screen.getByLabelText("Limit"));
+    await user.type(screen.getByLabelText("Limit"), "1");
+    await user.click(screen.getByLabelText("Dry run"));
+    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
+    expect(runPipelineStages).toHaveBeenCalledWith({
+      stages: ["discover"],
+      limit: 1,
+      workers: 1,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: false,
+      rescore: false,
+      retailor: false,
+      headless: false,
+      model: "haiku",
+      continuous: false,
+    });
   });
 
   it("submits the active stage and its persisted options through the pipeline mutation", async () => {
@@ -186,6 +243,69 @@ describe("StageTriggerPanel", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Starting Discover... waiting for local worker response.",
+    );
+  });
+
+  it("replaces the local starting label with the latest backend stage event", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            activity: [
+              {
+                eventId: "538",
+                eventType: "StageStarted",
+                jobKey: "pipeline",
+                title: null,
+                company: null,
+                stage: "discover",
+                level: "info",
+                message: "Discovery source workday started",
+                at: new Date().toISOString(),
+              },
+            ],
+          })),
+          runPipelineStages,
+        },
+      }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover in progress: Discovery source workday started (#538).",
+    );
+  });
+
+  it("shows the latest backend stage event even without local mutation state", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            activity: [
+              {
+                eventId: "539",
+                eventType: "StageStarted",
+                jobKey: "pipeline",
+                title: null,
+                company: null,
+                stage: "discover",
+                level: "info",
+                message: "Discovery source smart extract started",
+                at: new Date().toISOString(),
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover in progress: Discovery source smart extract started (#539).",
     );
   });
 

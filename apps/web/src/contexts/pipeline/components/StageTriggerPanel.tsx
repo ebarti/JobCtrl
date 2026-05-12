@@ -12,8 +12,12 @@ import { type FormEvent, useState } from "react";
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
+import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
+import type { DashboardSummary } from "../../operations/types.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
+
+type StageActivity = DashboardSummary["activity"][number];
 
 function labelForStage(stage: Stage): string {
   return stage === "pdf" ? "PDF" : `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
@@ -76,6 +80,37 @@ function pipelineRequestErrorLine(stage: Stage, error: Error): string {
   return `${labelForStage(stage)} failed to start: ${error.message}`;
 }
 
+function latestStageActivity(summary: DashboardSummary | undefined, stage: Stage): StageActivity | null {
+  return summary?.activity.find((activity) => activity.stage === stage) ?? null;
+}
+
+function isActivityAfter(activity: StageActivity, timestamp: number | null): boolean {
+  if (timestamp === null || activity.at === null) return true;
+  const occurredAt = Date.parse(activity.at);
+  return Number.isNaN(occurredAt) || occurredAt >= timestamp - 5000;
+}
+
+function isRunningActivity(activity: StageActivity): boolean {
+  return activity.eventType === "ActionStarted" || activity.eventType === "StageStarted";
+}
+
+function isFailedActivity(activity: StageActivity): boolean {
+  return activity.level === "error" || activity.eventType === "ActionFailed" || activity.eventType === "StageFailed";
+}
+
+function stageActivityStatusLine(stage: Stage, activity: StageActivity): string {
+  const stageLabel = labelForStage(stage);
+  const eventReference = activity.eventId ? ` (#${activity.eventId})` : "";
+
+  if (isRunningActivity(activity)) {
+    return `${stageLabel} in progress: ${activity.message}${eventReference}.`;
+  }
+  if (isFailedActivity(activity)) {
+    return `${stageLabel} latest failure: ${activity.message}${eventReference}.`;
+  }
+  return `${stageLabel} latest event: ${activity.message}${eventReference}.`;
+}
+
 const APPLY_MODEL_OPTIONS = ["haiku", "sonnet", "opus"] as const;
 
 interface StageControlSet {
@@ -103,8 +138,8 @@ const BASE_CONTROLS: StageControlSet = {
 };
 
 const STAGE_CONTROLS: Record<Stage, StageControlSet> = {
-  discover: { ...BASE_CONTROLS, workers: true },
-  enrich: { ...BASE_CONTROLS, workers: true },
+  discover: { ...BASE_CONTROLS, limit: true, workers: true },
+  enrich: { ...BASE_CONTROLS, limit: true, workers: true },
   score: { ...BASE_CONTROLS, limit: true, workers: true, rescore: true },
   tailor: {
     ...BASE_CONTROLS,
@@ -137,6 +172,8 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
 export function StageTriggerPanel() {
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
+  const [submittedAt, setSubmittedAt] = useState<number | null>(null);
+  const dashboardSummary = useDashboardSummaryQuery();
   const activeStage = useStageTriggerStore((state) => state.activeStage);
   const config = useStageTriggerStore((state) => state.configs[state.activeStage]);
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
@@ -144,6 +181,10 @@ export function StageTriggerPanel() {
   const controls = STAGE_CONTROLS[activeStage];
   const selectedApplyModel = applyModelValue(config.model);
   const statusStage = submittedStage ?? activeStage;
+  const stageActivity = latestStageActivity(dashboardSummary.data, statusStage);
+  const relevantPendingActivity =
+    runStages.isPending && stageActivity && isActivityAfter(stageActivity, submittedAt) ? stageActivity : null;
+  const visibleStageActivity = relevantPendingActivity ?? (!runStages.isPending ? stageActivity : null);
   const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
@@ -153,6 +194,7 @@ export function StageTriggerPanel() {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmittedStage(activeStage);
+    setSubmittedAt(Date.now());
     runStages.mutate({
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
@@ -299,7 +341,9 @@ export function StageTriggerPanel() {
         </Button>
         {runStages.isPending ? (
           <span className="status-line" role="status">
-            {pendingStageStatusLine(statusStage)}
+            {relevantPendingActivity
+              ? stageActivityStatusLine(statusStage, relevantPendingActivity)
+              : pendingStageStatusLine(statusStage)}
           </span>
         ) : runStages.data ? (
           <span className={runStages.data.status === "failed" ? "status-line danger-action" : "status-line"} role="status">
@@ -308,6 +352,10 @@ export function StageTriggerPanel() {
         ) : runStages.error ? (
           <span className="status-line danger-action" role="status">
             {pipelineRequestErrorLine(statusStage, runStages.error)}
+          </span>
+        ) : visibleStageActivity ? (
+          <span className={isFailedActivity(visibleStageActivity) ? "status-line danger-action" : "status-line"} role="status">
+            {stageActivityStatusLine(statusStage, visibleStageActivity)}
           </span>
         ) : null}
       </div>

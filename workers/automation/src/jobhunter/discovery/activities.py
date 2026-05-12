@@ -17,6 +17,7 @@ class DiscoverActivityInput:
     # ``tenant_id`` is currently informational; runners read from
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
+    limit: int = 0
     workers: int = 1
 
 
@@ -37,7 +38,7 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
     from jobhunter.pipeline import run_pipeline
 
     def _do() -> dict[str, Any]:
-        return run_pipeline(stages=["discover"], workers=payload.workers)
+        return run_pipeline(stages=["discover"], workers=payload.workers, limit=payload.limit)
 
     result = await run_blocking_with_heartbeat(
         _do,

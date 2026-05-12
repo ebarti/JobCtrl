@@ -11,6 +11,7 @@ import {
   buildActionResponse,
   createActionDispatcher,
   type ActionDispatchResult,
+  type JsonRpcDispatcherFactory,
 } from "../src/local-actions.js";
 import type {
   JsonRpcDispatcher,
@@ -146,6 +147,25 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         result: { planned: 3 },
       },
     });
+  });
+
+  it("creates the production JSON-RPC dispatcher with the API runtime appDir", async () => {
+    const fake = new FakeDispatcher();
+    const factory = vi.fn<JsonRpcDispatcherFactory>(() => fake);
+    const dispatcher = createActionDispatcher(undefined, factory);
+
+    await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        stage: "discover",
+        dryRun: false,
+      },
+      { appDir: "/tmp/jobhunter-runtime" },
+    );
+
+    expect(factory).toHaveBeenCalledWith({ appDir: "/tmp/jobhunter-runtime" });
+    expect(fake.calls[0]?.method).toBe("run_stage");
   });
 
   it("maps a failed global run-stage LocalActionResult error into the action message", async () => {
