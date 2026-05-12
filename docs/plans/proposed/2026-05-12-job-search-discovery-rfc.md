@@ -298,7 +298,8 @@ flowchart TD
     Smart["Smart Extract Adapter"]
     Acquire["Content Acquisition Service"]
     Canon["Canonicalization + Active Verification"]
-    Dedup["URL + Content Dedupe"]
+    IdentityDedup["Discovery Identity Dedupe"]
+    ContentDedup["Enrichment Content Dedupe"]
     Store["Discovery + Enrichment Stores"]
     Index["Hybrid Search Index"]
     Profile["Inferred/User Search Profile"]
@@ -315,8 +316,10 @@ flowchart TD
     Boards --> Acquire
     Smart --> Acquire
     Acquire --> Canon
-    Canon --> Dedup
-    Dedup --> Store
+    Canon --> IdentityDedup
+    IdentityDedup --> Store
+    Store --> ContentDedup
+    ContentDedup --> Store
     Store --> Index
     Index --> Score
     Profile --> Score
@@ -336,7 +339,8 @@ flowchart TD
 | Source Adapters | Implement source-specific listing and detail fetches behind `JobBoardScraperPort`. |
 | Content Acquisition Service | Retrieves full descriptions and apply URLs through API, structured data, selectors, rendered browser, or LLM extraction. |
 | Canonicalization Service | Resolves employer, ATS, source-native ID, canonical posting URL, and active/closed state. |
-| Dedupe Service | Collapses duplicates by canonical URL, source-native ID, normalized title/company/location, and content hash. |
+| Discovery Identity Dedupe | The first authoritative duplicate gate. It collapses listings by tenant, source-native ID, canonical URL, ATS identity, and normalized employer/title/location before a new Job aggregate is created. |
+| Enrichment Content Dedupe | The second-pass merge after full content exists. It catches duplicates missed at listing time through description hashes, apply URLs, and high-confidence content similarity. |
 | Hybrid Search Index | Supports keyword and semantic retrieval for ranking, review, and future evals. |
 | Source Quality Monitor | Stores per-source run metrics and feeds source demotion/promotion. |
 
@@ -358,9 +362,56 @@ Proposed entities/value objects:
 | `DiscoveryRun` | Discovery/Operations | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. |
 | `DiscoveredPosting` | Discovery | Raw source result with source-native ID, listing URL, title/company/location, and strategy. |
 | `CanonicalJobIdentity` | Discovery | Canonical URL, ATS type, employer identity, source-native ID, and dedupe keys. |
+| `JobSourceObservation` | Discovery | Per-source evidence for a canonical job, preserving broad-board leads, ATS records, run IDs, source URLs, timestamps, and raw metadata without creating duplicate jobs. |
+| `DuplicateJobLink` | Discovery/Enrichment | Records a duplicate relationship, merge reason, confidence, surviving canonical job, and superseded source/job reference. |
 | `PostingContentSnapshot` | Enrichment | Full description, structured fields, raw/cleaned text hashes, extraction method, and confidence. |
 | `SourceQualityStats` | Operations | Rolling active rate, duplicate rate, detail success, apply URL success, stale rate, and user approval/dismissal. |
 | `DiscoveryFeedback` | Discovery/Operations | User or system feedback: saved, applied, dismissed, bad source, duplicate, stale, irrelevant. |
+
+## Deduplication Boundary
+
+Deduplication should happen in two places, with different authority:
+
+1. **Discovery write boundary:** this is the first authoritative gate. Before a
+   `DiscoveredPosting` becomes a new Job aggregate, Discovery resolves
+   `CanonicalJobIdentity` and checks tenant-scoped identity keys. Existing
+   behavior already rejects duplicate posting URLs; the target model should
+   extend that to source-native IDs, ATS identity, canonical apply/detail URLs,
+   and normalized employer/title/location candidates.
+2. **Enrichment content boundary:** this is the second-pass merge. After the
+   full description and apply URL are fetched, Enrichment can catch duplicates
+   that listing metadata could not prove, using cleaned-description hashes,
+   apply URL matches, structured requirement/responsibility overlap, and
+   high-confidence content similarity.
+
+Adapters may dedupe within one response page or one run for efficiency, but
+adapter-level dedupe is not authoritative. It can only reduce noise before the
+Discovery use case decides whether a posting is new, an update to an existing
+canonical job, or another source observation for a job already known.
+
+Canonical record rules:
+
+- The user-facing job list, scoring, tailoring, materials, and apply pipeline
+  operate on the surviving canonical Job aggregate.
+- Every source hit is still preserved as a `JobSourceObservation` so source
+  quality, attribution, provenance, and broad-board backtraces are not lost.
+- A broad-board copy should usually merge into the employer/ATS canonical job
+  once the canonical URL or content evidence is available.
+- Low-confidence fuzzy matches should be quarantined as duplicate candidates
+  rather than merged automatically.
+- User feedback such as "duplicate" creates or confirms a `DuplicateJobLink`
+  and should improve future dedupe thresholds.
+
+Recommended identity checks, in order:
+
+| Stage | Key | Owner |
+| --- | --- | --- |
+| Listing ingest | `(tenant_id, source_id, source_native_id)` | Discovery |
+| Canonical URL | normalized employer/ATS detail URL and apply URL | Discovery |
+| ATS identity | ATS kind plus board/tenant/posting ID | Discovery |
+| Metadata candidate | normalized company, title, location/work-mode, and posted date window | Discovery quarantine unless high confidence |
+| Content candidate | cleaned description hash, structured field overlap, and apply URL | Enrichment |
+| User correction | manual duplicate confirmation or rejection | Discovery/Operations feedback loop |
 
 ## Content Acquisition Pipeline
 
@@ -514,6 +565,9 @@ Hosted future:
   the Discovery use case.
 - Add fixture-backed adapter tests with recorded/synthetic payloads.
 - Store source-native IDs and canonical URLs.
+- Add Discovery identity dedupe so repeated source-native IDs, canonical URLs,
+  and ATS identities update or attach `JobSourceObservation` records instead of
+  creating duplicate Job aggregates.
 
 ### PR 3: Content Snapshot And Active Verification
 
@@ -521,9 +575,11 @@ Hosted future:
 - Move full-description/apply-URL extraction into a reusable content acquisition
   service.
 - Add active/closed verification and quarantine states.
+- Add Enrichment content dedupe for cleaned-description hashes, apply URL
+  matches, and high-confidence content similarity.
 - Add policy-compliant internal filter override logging.
-- Tests: parser fixtures, active-state examples, low-confidence quarantine, and
-  override audit records.
+- Tests: parser fixtures, active-state examples, low-confidence quarantine,
+  duplicate candidate handling, and override audit records.
 
 ### PR 4: Source Quality And Scheduler
 
