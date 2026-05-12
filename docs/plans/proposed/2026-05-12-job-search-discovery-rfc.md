@@ -53,7 +53,7 @@ Important gaps:
 - Source health is implicit in logs rather than stored as queryable data.
 - Discovery stores a posting, but canonical verification and full content
   acquisition are split across later enrichment paths without a versioned
-  content snapshot inside the existing `JobEnrichment` aggregate.
+  content snapshot lifecycle.
 - Smart Extract has useful reach, but arbitrary web extraction should be
   source-health gated and policy-labeled so it does not pollute the job set.
 - Broad boards can produce stale, duplicated, incomplete, or redirected jobs;
@@ -389,20 +389,21 @@ quality, and content snapshots without creating co-owned aggregates.
 
 Proposed entities/value objects:
 
-| Name | Kind | Owning context | Purpose |
-| --- | --- | --- | --- |
-| `SourceLocationCandidate` | Entity | Discovery | Candidate career system discovered from the public web, a source seed, or an aggregator backtrace, with detected source kind, URL, confidence, and promotion state. |
-| `SourceDiscoveryEvidence` | Value object | Discovery | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, robots result, and validation fetch result. |
-| `SourceRegistryEntry` | Aggregate | Discovery | Source ID, kind, display name, owner, policy, priority, adapter config, and source state. |
-| `SourcePolicy` | Value object | Discovery | Allowed methods, locator/crawl rate budgets, robots handling, auth mode, attribution, and filter override rules. |
-| `DiscoveryRun` | Aggregate | Discovery | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. Operations builds read-side run projections from Discovery events. |
-| `DiscoveredPosting` | Value object | Discovery | Raw source result with source-native ID, listing URL, title/company/location, and strategy. |
-| `CanonicalJobIdentity` | Value object | Discovery | Canonical URL, ATS type, employer identity, source-native ID, and dedupe keys. |
-| `JobSourceObservation` | Entity | Discovery | Per-source evidence for a canonical job, preserving broad-board leads, ATS records, run IDs, source URLs, timestamps, and raw metadata without creating duplicate jobs. |
-| `DuplicateJobLink` | Aggregate | Discovery | Records a duplicate relationship, merge reason, confidence, surviving canonical job, and superseded source/job reference. Enrichment may propose content duplicate candidates, but Discovery confirms or rejects the link. |
-| `PostingContentSnapshot` | Value object | Enrichment | Versioned value object inside the existing `JobEnrichment` aggregate. It extends `JobEnrichment`; it does not replace `JobEnrichment`, `EnrichmentAttempt`, `JobEnriched`, or `job_enrichments`. |
-| `SourceQualityStats` | Projection | Operations | Rolling active rate, duplicate rate, detail success, apply URL success, stale rate, user approval/dismissal, and cost/latency summaries derived from events and spans. |
-| `DiscoveryFeedback` | Aggregate | Discovery | User or system feedback: saved, applied, dismissed, bad source, duplicate, stale, irrelevant. Operations projects it for dashboards. |
+| Name | Kind | Owning context | Identity / parent | Purpose |
+| --- | --- | --- | --- | --- |
+| `SourceLocationCandidate` | Entity | Discovery | `(TenantId, candidateId)` | Candidate career system discovered from the public web, a source seed, or an aggregator backtrace, with detected source kind, URL, confidence, and promotion state. |
+| `SourceDiscoveryEvidence` | Value object | Discovery | Owned by `SourceLocationCandidate` | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, robots result, and validation fetch result. |
+| `SourceRegistryEntry` | Aggregate | Discovery | `(TenantId, sourceId)` | Source ID, kind, display name, owner, policy, priority, adapter config, and source state. |
+| `SourcePolicy` | Value object | Discovery | Owned by `SourceRegistryEntry`; persisted by policy version when needed | Allowed methods, locator/crawl rate budgets, robots handling, auth mode, attribution, and filter override rules. |
+| `DiscoveryRun` | Aggregate | Discovery | `(TenantId, runId: UUID)` | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. Operations builds read-side run projections from Discovery events. |
+| `DiscoveredPosting` | Value object | Discovery | Owned by `DiscoveryRun` result pages | Raw source result with source-native ID, listing URL, title/company/location, and strategy. |
+| `CanonicalJobIdentity` | Value object | Discovery | Owned by the Discovery `Job` decision | Canonical URL, ATS type, employer identity, source-native ID, and dedupe keys. |
+| `JobSourceObservation` | Entity | Discovery | Child of `Job`, `(TenantId, JobId, sourceObservationId)`; persisted through `JobRepository`, not a sibling repository | Per-source evidence for a canonical job, preserving broad-board leads, ATS records, run IDs, source URLs, timestamps, and raw metadata without creating duplicate jobs. |
+| `DuplicateJobLink` | Aggregate | Discovery | `(TenantId, duplicateLinkId: UUID)` | Records a duplicate relationship, merge reason, confidence, surviving canonical job, and superseded source/job reference. Enrichment may propose content duplicate candidates, but Discovery confirms or rejects the link. |
+| `PostingSnapshotSet` | Aggregate | Enrichment | `(TenantId, JobId)` | Versioned live-state/content snapshot aggregate for one job. It owns `PostingContentSnapshot` values and recurring active-state changes without changing the terminal lifecycle of `JobEnrichment`. |
+| `PostingContentSnapshot` | Value object | Enrichment | Owned by `PostingSnapshotSet`, identified by `snapshotVersion` inside the set | Versioned detail/apply/content extraction result used for content dedupe, active-state history, and optional first-time population of `JobEnrichment`. |
+| `SourceQualityStats` | Projection | Operations | `(TenantId, sourceId, windowStart, windowEnd)` | Rolling active rate, duplicate rate, detail success, apply URL success, stale rate, user approval/dismissal, and cost/latency summaries derived from events and spans. |
+| `DiscoveryFeedback` | Aggregate | Discovery | `(TenantId, feedbackId: UUID)` | User or system feedback: saved, applied, dismissed, bad source, duplicate, stale, irrelevant. Operations projects it for dashboards. |
 
 ### Domain Events
 
@@ -424,8 +425,10 @@ projections and the SSE invalidation router can stay exhaustive.
 | `DiscoveryFeedbackRecorded` | Discovery | `tenantId`, `feedbackId`, `jobId`, `sourceId`, `kind`, `recordedAt` | Source quality aggregation, ranking, Operations. |
 | `DiscoveryRunCompleted` | Discovery | `tenantId`, `runId`, `counts`, `errorClasses`, `completedAt` | Operations source run projection, source quality aggregation. |
 | `DiscoveryRunFailed` | Discovery | `tenantId`, `runId`, `sourceId`, `errorClass`, `retryable`, `failedAt` | Scheduler, Operations, source quality aggregation. |
-| `JobEnriched` | Enrichment | Existing event, extended only if needed with `contentSnapshotRef`, `extractionTier`, `enrichedAt` | Scoring, Pipeline Orchestration, Operations. |
-| `EnrichmentFailed` | Enrichment | Existing event with `tenantId`, `jobId`, `error`, `attemptNumber` | Pipeline Orchestration, Operations. |
+| `PostingContentSnapshotCaptured` | Enrichment | `tenantId`, `jobId`, `snapshotVersion`, `snapshotRef`, `sourceId`, `extractionTier`, `capturedAt` | Enrichment content dedupe, Operations, source quality aggregation. |
+| `PostingContentSnapshotFailed` | Enrichment | `tenantId`, `jobId`, `sourceId`, `errorClass`, `retryable`, `failedAt` | Operations, source quality aggregation, scheduler retry policy. |
+| `JobEnriched` | Enrichment | Existing event, unchanged unless the first usable snapshot creates the current `JobEnrichment` summary with `fullDescription`, `applicationUrl`, `extractionTier`, `enrichedAt` | Scoring, Pipeline Orchestration, Operations. |
+| `EnrichmentFailed` | Enrichment | Existing event with `tenantId`, `jobId`, `error`, `attemptNumber`; reserved for `JobEnrichment` attempts, not every recurring snapshot refresh | Pipeline Orchestration, Operations. |
 | `JobActiveStateChanged` | Enrichment | `tenantId`, `jobId`, `activeState`, `previousState`, `verificationMethod`, `verifiedAt` | Discovery, Scoring, Apply, Operations, source quality aggregation. |
 | `ContentDuplicateCandidateDetected` | Enrichment | `tenantId`, `jobId`, `candidateJobId`, `evidence`, `confidence`, `detectedAt` | Discovery dedupe use case, Operations diagnostics. |
 
@@ -501,12 +504,21 @@ Recommended identity checks, in order:
 
 ## Content Acquisition Pipeline
 
-The content pipeline is Enrichment-owned. It should extend the existing
-`JobEnrichment` aggregate with versioned `PostingContentSnapshot` value objects,
-not create a parallel aggregate. A successful snapshot write is a successful
-enrichment attempt and still emits `JobEnriched`; failed extraction still emits
-`EnrichmentFailed`. If version history requires a child table, it remains behind
-the `JobEnrichment` repository and does not bypass `EnrichmentAttempt`.
+The content pipeline is Enrichment-owned, but versioned posting snapshots should
+not be written through the existing `JobEnrichment` aggregate. `JobEnrichment`
+keeps the canonical invariant from `docs/ddd-target.md` §4.2: once an
+`EnrichmentAttempt` succeeds, the aggregate is `Enriched` and further attempts
+are rejected unless explicitly reset.
+
+Recurring detail refreshes, active/closed-state transitions, and content-dedupe
+signals belong to the Enrichment-owned `PostingSnapshotSet` aggregate keyed by
+`(TenantId, JobId)`. `PostingSnapshotSet` owns versioned
+`PostingContentSnapshot` values and emits `PostingContentSnapshotCaptured`,
+`PostingContentSnapshotFailed`, `JobActiveStateChanged`, and
+`ContentDuplicateCandidateDetected`. A first usable snapshot may populate
+`JobEnrichment` and emit the existing `JobEnriched` event if that aggregate has
+not already reached `Enriched`; later snapshots do not bypass the
+`JobEnrichment` terminal lifecycle.
 
 The pipeline should be deterministic first and LLM-assisted only when needed.
 
@@ -525,8 +537,9 @@ The pipeline should be deterministic first and LLM-assisted only when needed.
 7. **Active verification:** Enrichment confirms the posting is not closed,
    expired, removed, location-incompatible, or redirecting to an unrelated
    application. State changes emit `JobActiveStateChanged`.
-8. **Snapshot persistence:** store raw text hash, cleaned text hash, extracted
-   fields, extraction method, source policy ID, and confidence.
+8. **Snapshot persistence:** append a `PostingContentSnapshot` in
+   `PostingSnapshotSet` with raw text hash, cleaned text hash, extracted fields,
+   extraction method, source policy ID, and confidence.
 9. **Quarantine:** hold low-confidence, policy-overridden, broad-board-only, or
    unknown-active-state results until canonical identity plus Enrichment-owned
    active verification passes or the user approves them for manual review.
@@ -598,6 +611,7 @@ Source states:
 `SourceQualityStats` is an Operations projection, not a domain aggregate. It is
 computed from `DiscoveryRunCompleted`, `DiscoveryRunFailed`,
 `JobSourceObserved`, `DuplicateJobLinked`, `DiscoveryFeedbackRecorded`,
+`PostingContentSnapshotCaptured`, `PostingContentSnapshotFailed`,
 `JobEnriched`, `EnrichmentFailed`, and `JobActiveStateChanged`, with span
 attributes used for latency, cost, retry, and error-class rollups.
 
@@ -716,9 +730,10 @@ The rollout must be additive first, then migratory:
    observation per existing `jobs` row, and keeps `jobs.posting_url` plus
    `load_by_url` compatibility until all callers can resolve both canonical and
    observed URLs.
-4. **Enrichment snapshot migration:** PR 3 extends `JobEnrichment` persistence
-   rather than replacing it. Existing `job_enrichments` rows remain valid and
-   can be treated as snapshot version 1 during reads.
+4. **Enrichment snapshot migration:** PR 3 adds `PostingSnapshotSet` alongside
+   existing `JobEnrichment` persistence rather than replacing it. Existing
+   `job_enrichments` rows remain valid and may seed snapshot version 1 during
+   reads/backfill.
 5. **Operations projections:** PR 4 builds read-side source quality from domain
    events and spans. Projection rebuilds must be idempotent because rollback can
    drop and rebuild projection tables without losing domain data.
@@ -785,6 +800,11 @@ Rollback rules:
 - Auto-generate `SourceRegistryEntry` records from existing `sites.yaml` entries
   with `state=experimental` so Smart Extract compatibility is preserved.
 - Add `SourcePolicy`, source states, and source-quality placeholders.
+- Publish the PR 1 event set in the same change:
+  `SourceLocationCandidateDiscovered`, `SourceLocationCandidatePromoted`,
+  `SourceRegistryEntryCreated`, `SourceRegistryEntryUpdated`, and
+  `SourceStateChanged`, with `DomainEventUnion` entries, operations
+  invalidation handlers, parity tests, and locator/source-validation spans.
 - Add tests for locator candidate validation, config loading, policy validation,
   and migration from existing packaged YAML.
 - Documentation: update README for the stable config key and update
@@ -803,17 +823,28 @@ Rollback rules:
   creating duplicate Job aggregates.
 - Add the additive `job_source_observations` migration, backfill observations
   from existing `jobs` rows, and preserve `load_by_url` compatibility.
+- Publish the PR 2 event set in the same change: `JobSourceObserved`,
+  `CanonicalJobIdentityResolved`, `DuplicateJobLinked`, and
+  `DuplicateJobLinkRejected`, with `DomainEventUnion` entries, operations
+  invalidation handlers, parity tests, and adapter/canonicalization/dedupe
+  spans. PR 2 must not add an event type without its handler and span coverage.
 
 ### PR 3: Content Snapshot And Active Verification
 
-- Add `PostingContentSnapshot` as a versioned value object inside the existing
-  `JobEnrichment` aggregate and repository.
+- Add `PostingSnapshotSet` as an Enrichment-owned aggregate keyed
+  `(TenantId, JobId)`, with versioned `PostingContentSnapshot` values. Keep
+  `JobEnrichment`'s terminal `Enriched` invariant unchanged.
 - Move full-description/apply-URL extraction into a reusable content acquisition
   service.
 - Add Enrichment-owned active/closed verification, `JobActiveStateChanged`, and
   quarantine states.
 - Add Enrichment content dedupe for cleaned-description hashes, apply URL
   matches, and high-confidence content similarity.
+- Publish the PR 3 event set in the same change:
+  `PostingContentSnapshotCaptured`, `PostingContentSnapshotFailed`,
+  `JobActiveStateChanged`, and `ContentDuplicateCandidateDetected`, with
+  `DomainEventUnion` entries, operations invalidation handlers, parity tests,
+  and content-acquisition/render/LLM-fallback/active-verification spans.
 - Add policy-compliant internal filter override logging.
 - Tests: parser fixtures, active-state examples, low-confidence quarantine,
   duplicate candidate handling, and override audit records.
@@ -823,10 +854,11 @@ Rollback rules:
 - Persist `DiscoveryRun` and `SourceQualityStats`.
 - Use source quality to schedule crawl budgets and demote bad sources.
 - Add Operations projections/API fields so the web app can show source health.
-- Add event handlers and SSE invalidation coverage for new Discovery and
-  Enrichment events.
-- Add OTel/Langfuse span coverage for locator, adapter, acquisition,
-  canonicalization, dedupe, active verification, and source-quality aggregation.
+- Publish the PR 4 event set in the same change: `DiscoveryRunStarted`,
+  `DiscoveryRunCompleted`, and `DiscoveryRunFailed`, with `DomainEventUnion`
+  entries, operations invalidation handlers, parity tests, scheduled-run spans,
+  and source-quality aggregation spans. PR 4 consumes the PR 1-3 events for
+  projections; it does not defer handlers for events introduced earlier.
 - Tests: source-quality aggregation and scheduling decisions.
 
 ### PR 5: Hybrid Search Index
@@ -861,17 +893,19 @@ For implementation PRs:
   feedback, source health, and any changed job/enrichment read-model payloads.
 - API/read-model tests proving Operations projections rebuild from
   `DiscoveryRunCompleted`, `JobSourceObserved`, `DuplicateJobLinked`,
-  `JobActiveStateChanged`, and feedback events.
-- Event parity tests: update `DomainEventUnion`, add invalidation handlers for
-  every new event type, and keep `every-event-has-handler.test.ts` passing.
+  `PostingContentSnapshotCaptured`, `JobActiveStateChanged`, and feedback events.
+- Event parity tests in the same PR that introduces each event type: update
+  `DomainEventUnion`, add invalidation handlers for every new event type, and
+  keep `every-event-has-handler.test.ts` passing.
 - Repository/use-case tests covering the `Job` invariant migration:
   `jobs.posting_url` remains readable, observation URL uniqueness is enforced,
   and `load_by_url` resolves both canonical and observed URLs during the
   compatibility window.
-- Enrichment aggregate tests proving `PostingContentSnapshot` is persisted
-  through `JobEnrichment`, successful snapshots emit `JobEnriched`, active-state
-  changes emit `JobActiveStateChanged`, and failures still emit
-  `EnrichmentFailed`.
+- Enrichment aggregate tests proving `PostingSnapshotSet` persists versioned
+  `PostingContentSnapshot` values, later snapshots do not bypass the existing
+  `JobEnrichment` terminal lifecycle, first-time population still emits
+  `JobEnriched`, active-state changes emit `JobActiveStateChanged`, and snapshot
+  failures emit `PostingContentSnapshotFailed`.
 - Observability tests with a fake OTel exporter proving locator, adapter,
   acquisition, LLM fallback, canonicalization, dedupe, active verification, and
   source-quality spans are emitted without private text or credentials.
