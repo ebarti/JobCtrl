@@ -14,6 +14,11 @@ import {
   jobDiscoveredHandler,
   jobRestoredHandler,
   jobUpdatedHandler,
+  sourceLocationCandidateDiscoveredHandler,
+  sourceLocationCandidatePromotedHandler,
+  sourceRegistryEntryCreatedHandler,
+  sourceRegistryEntryUpdatedHandler,
+  sourceStateChangedHandler,
 } from "../discovery/handlers.js";
 import { enrichmentFailedHandler, jobEnrichedHandler } from "../enrichment/handlers.js";
 import {
@@ -78,6 +83,11 @@ export const handlers: HandlerMap = {
   JobUpdated: jobUpdatedHandler,
   JobDeleted: jobDeletedHandler,
   JobRestored: jobRestoredHandler,
+  SourceLocationCandidateDiscovered: sourceLocationCandidateDiscoveredHandler,
+  SourceLocationCandidatePromoted: sourceLocationCandidatePromotedHandler,
+  SourceRegistryEntryCreated: sourceRegistryEntryCreatedHandler,
+  SourceRegistryEntryUpdated: sourceRegistryEntryUpdatedHandler,
+  SourceStateChanged: sourceStateChangedHandler,
   JobEnriched: jobEnrichedHandler,
   EnrichmentFailed: enrichmentFailedHandler,
   JobScored: jobScoredHandler,

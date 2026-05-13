@@ -13,6 +13,16 @@ from jobhunter.domain.events.discovery import (
     create_job_deleted,
     JobRestoredPayload,
     create_job_restored,
+    SourceLocationCandidateDiscoveredPayload,
+    create_source_location_candidate_discovered,
+    SourceLocationCandidatePromotedPayload,
+    create_source_location_candidate_promoted,
+    SourceRegistryEntryCreatedPayload,
+    create_source_registry_entry_created,
+    SourceRegistryEntryUpdatedPayload,
+    create_source_registry_entry_updated,
+    SourceStateChangedPayload,
+    create_source_state_changed,
 )
 from jobhunter.domain.events.enrichment import (
     JobEnrichedPayload,
@@ -130,6 +140,63 @@ class TestDiscoveryEvents:
             JobRestoredPayload(job_id="j1", restored_at="2025-01-01T00:00:00Z"),
         )
         assert event.event_type == "JobRestored"
+
+    def test_source_location_candidate_discovered(self) -> None:
+        event = create_source_location_candidate_discovered(
+            LOCAL_TENANT,
+            SourceLocationCandidateDiscoveredPayload(
+                candidate_id="candidate-1",
+                candidate_url="https://example.com/careers",
+                source_kind="employer_careers_page",
+                confidence=0.82,
+                evidence_ref="evidence:candidate-1",
+                discovered_at="2026-05-12T00:00:00Z",
+            ),
+        )
+        assert event.event_type == "SourceLocationCandidateDiscovered"
+        assert event.payload["source_kind"] == "employer_careers_page"
+
+    def test_source_registry_events(self) -> None:
+        created = create_source_registry_entry_created(
+            LOCAL_TENANT,
+            SourceRegistryEntryCreatedPayload(
+                source_id="smart_extract:remoteok",
+                kind="smart_extract",
+                policy_id="smart_extract_experimental",
+                state="experimental",
+                created_at="2026-05-12T00:00:00Z",
+            ),
+        )
+        updated = create_source_registry_entry_updated(
+            LOCAL_TENANT,
+            SourceRegistryEntryUpdatedPayload(
+                source_id="smart_extract:remoteok",
+                changed_fields=("state",),
+                updated_at="2026-05-12T00:00:00Z",
+            ),
+        )
+        changed = create_source_state_changed(
+            LOCAL_TENANT,
+            SourceStateChangedPayload(
+                source_id="smart_extract:remoteok",
+                from_state="experimental",
+                to_state="active",
+                reason="validated",
+                changed_at="2026-05-12T00:00:00Z",
+            ),
+        )
+        promoted = create_source_location_candidate_promoted(
+            LOCAL_TENANT,
+            SourceLocationCandidatePromotedPayload(
+                candidate_id="candidate-1",
+                source_id="smart_extract:remoteok",
+                promoted_at="2026-05-12T00:00:00Z",
+            ),
+        )
+        assert created.event_type == "SourceRegistryEntryCreated"
+        assert updated.event_type == "SourceRegistryEntryUpdated"
+        assert changed.event_type == "SourceStateChanged"
+        assert promoted.event_type == "SourceLocationCandidatePromoted"
 
 
 class TestEnrichmentEvents:
@@ -361,6 +428,16 @@ class TestAllEventsCarryTenantId:
                 LOCAL_TENANT,
                 JobDiscoveredPayload(
                     job_id="j", posting_url="u", source="s", employer="e", discovered_at="t"
+                ),
+            ),
+            create_source_registry_entry_created(
+                LOCAL_TENANT,
+                SourceRegistryEntryCreatedPayload(
+                    source_id="source-1",
+                    kind="smart_extract",
+                    policy_id="smart_extract_experimental",
+                    state="experimental",
+                    created_at="t",
                 ),
             ),
             create_job_enriched(

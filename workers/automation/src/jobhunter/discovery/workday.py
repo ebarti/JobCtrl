@@ -17,8 +17,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 
-import yaml
-
 from jobhunter import config
 from jobhunter.config import CONFIG_DIR
 from jobhunter.database import get_connection, init_db
@@ -30,11 +28,10 @@ log = logging.getLogger(__name__)
 
 def load_employers() -> dict:
     """Load Workday employer registry from config/employers.yaml."""
-    path = CONFIG_DIR / "employers.yaml"
-    if not path.exists():
-        log.warning("employers.yaml not found at %s", path)
+    data = config.load_employers_config()
+    if not data:
+        log.warning("employers.yaml not found at %s", CONFIG_DIR / "employers.yaml")
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return data.get("employers", {})
 
 

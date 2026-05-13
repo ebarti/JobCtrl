@@ -2,7 +2,14 @@ import { describe, it, expect } from "vitest";
 import { LOCAL_TENANT } from "../src/tenant.js";
 import { createDomainEvent } from "../src/events/base.js";
 import { DOMAIN_EVENT_TYPES } from "../src/events/index.js";
-import { createJobDiscovered } from "../src/events/discovery.js";
+import {
+  createJobDiscovered,
+  createSourceLocationCandidateDiscovered,
+  createSourceLocationCandidatePromoted,
+  createSourceRegistryEntryCreated,
+  createSourceRegistryEntryUpdated,
+  createSourceStateChanged,
+} from "../src/events/discovery.js";
 import { createJobEnriched } from "../src/events/enrichment.js";
 import { createJobScored } from "../src/events/scoring.js";
 import { createResumeApproved, createMaterialsExhausted } from "../src/events/materials.js";
@@ -40,6 +47,31 @@ describe("Discovery events", () => {
     expect(event.tenantId).toBe("local");
     expect(event.payload.jobId).toBe("j1");
     expect(event.payload.source).toBe("linkedin");
+  });
+
+  it("SourceLocationCandidateDiscovered carries locator fields", () => {
+    const event = createSourceLocationCandidateDiscovered(LOCAL_TENANT, {
+      candidateId: "candidate-1",
+      candidateUrl: "https://example.com/careers",
+      sourceKind: "employer_careers_page",
+      confidence: 0.82,
+      evidenceRef: "evidence:candidate-1",
+      discoveredAt: "2026-05-12T00:00:00Z",
+    });
+    expect(event.eventType).toBe("SourceLocationCandidateDiscovered");
+    expect(event.payload.sourceKind).toBe("employer_careers_page");
+  });
+
+  it("SourceRegistryEntryCreated carries source state", () => {
+    const event = createSourceRegistryEntryCreated(LOCAL_TENANT, {
+      sourceId: "smart_extract:remoteok",
+      kind: "smart_extract",
+      policyId: "smart_extract_experimental",
+      state: "experimental",
+      createdAt: "2026-05-12T00:00:00Z",
+    });
+    expect(event.eventType).toBe("SourceRegistryEntryCreated");
+    expect(event.payload.state).toBe("experimental");
   });
 });
 
@@ -185,6 +217,14 @@ describe("All events carry tenantId", () => {
         discoveredAt: "t",
       }),
     () =>
+      createSourceRegistryEntryCreated(LOCAL_TENANT, {
+        sourceId: "source-1",
+        kind: "smart_extract",
+        policyId: "smart_extract_experimental",
+        state: "experimental",
+        createdAt: "t",
+      }),
+    () =>
       createJobEnriched(LOCAL_TENANT, {
         jobId: "j1",
         fullDescription: "d",
@@ -239,7 +279,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(27);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(32);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -252,6 +292,38 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         employer: "e",
         metadata: {},
         discoveredAt: "t",
+      }).eventType,
+      createSourceLocationCandidateDiscovered(LOCAL_TENANT, {
+        candidateId: "candidate-1",
+        candidateUrl: "https://example.com/careers",
+        sourceKind: "employer_careers_page",
+        confidence: 0.8,
+        evidenceRef: "evidence:candidate-1",
+        discoveredAt: "t",
+      }).eventType,
+      createSourceLocationCandidatePromoted(LOCAL_TENANT, {
+        candidateId: "candidate-1",
+        sourceId: "source-1",
+        promotedAt: "t",
+      }).eventType,
+      createSourceRegistryEntryCreated(LOCAL_TENANT, {
+        sourceId: "source-1",
+        kind: "smart_extract",
+        policyId: "smart_extract_experimental",
+        state: "experimental",
+        createdAt: "t",
+      }).eventType,
+      createSourceRegistryEntryUpdated(LOCAL_TENANT, {
+        sourceId: "source-1",
+        changedFields: ["state"],
+        updatedAt: "t",
+      }).eventType,
+      createSourceStateChanged(LOCAL_TENANT, {
+        sourceId: "source-1",
+        fromState: "experimental",
+        toState: "active",
+        reason: "validated",
+        changedAt: "t",
       }).eventType,
       createJobEnriched(LOCAL_TENANT, {
         jobId: "j",

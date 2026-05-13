@@ -303,6 +303,23 @@ JobHunter uses local user configuration plus package-shipped registries:
 - `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
 - `workers/automation/src/jobhunter/config/searches.example.yaml`: example search file.
 
+JobSpy board selection uses `boards` in `searches.yaml`:
+
+```yaml
+boards:
+  - indeed
+  - linkedin
+  - zip_recruiter
+```
+
+The legacy `sites` key is still accepted for the compatibility window and logs
+a warning instead of failing. When both keys are present, `boards` wins. The
+worker also builds a local source registry contract from packaged
+`sites.yaml`, `employers.yaml`, and the selected JobSpy boards; migrated
+Smart Extract entries start as `experimental` with the
+`smart_extract_experimental` policy so existing arbitrary-site discovery keeps
+working while sources are promoted or rejected.
+
 Common environment variables:
 
 - `JOBHUNTER_DIR`: override the local app directory.

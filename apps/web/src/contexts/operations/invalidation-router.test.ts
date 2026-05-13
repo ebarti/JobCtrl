@@ -9,6 +9,7 @@ import { dashboardKeys } from "./dashboardKeys.js";
 import { invalidationRouter } from "./invalidation-router.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
+import { discoveryKeys } from "../discovery/queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
 
 type ExpectedKeys = readonly QueryKey[];
@@ -27,6 +28,28 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   JobRestored: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  SourceLocationCandidateDiscovered: [
+    discoveryKeys.sourceLocator(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+  ],
+  SourceLocationCandidatePromoted: [
+    discoveryKeys.sourceLocator(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  SourceRegistryEntryCreated: [
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+  ],
+  SourceRegistryEntryUpdated: [
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+  ],
+  SourceStateChanged: [
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   JobEnriched: [

@@ -44,6 +44,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Profile PDF import corrupts defaults | `workers/automation/tests/test_profile_import.py` |
 | API list filtering/sorting/pagination regresses | `apps/api/test/server.test.ts` |
 | Destructive UI workflows touch real user data | `apps/api/test/qa-workflow.test.ts` with `pnpm qa:seed` |
+| Source registry compatibility drops legacy discovery config | `workers/automation/tests/test_source_registry.py` covers packaged `sites.yaml` migration, `employers.yaml` migration, JobSpy `boards` selection, and the one-release legacy `sites` alias warning |
 
 ## Frontend QA
 
@@ -56,7 +57,7 @@ commands listed under the "Frontend" section of
 
 | Layer | Files | Purpose |
 | --- | --- | --- |
-| Unit / hook / component (Vitest + RTL + MSW) | 70 `*.test.ts(x)` files (291 tests) under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (27 handlers — one per `DomainEvent` variant), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
+| Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (32 handlers — one per `DomainEvent` variant), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
 | Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 9 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the eight Operations read hooks plus `useActivityEventQuery`. The original plan named `tsd`; the implementation uses Vitest's typecheck mode — same artifact (typed test files), same gate, integrated runner (cf. target §10.6). |
 | End-to-end (Playwright headless) | 8 specs in `apps/web/e2e/tests/` (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `settings`, `wizard`) | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `materials.spec.ts` is `test.fixme`'d pending the `GenerateMaterialsUseCase` backend exposure (tracked in `docs/backlog.md`). |
 | A11y suites (Vitest + `axe-core` + `jest-axe`) | 9 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, and command components — fails on critical violations (target §10.7). |

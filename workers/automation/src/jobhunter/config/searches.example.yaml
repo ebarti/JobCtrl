@@ -85,7 +85,7 @@ location:
 # Country for Indeed/LinkedIn/Google Jobs searches
 country: "USA"
 
-# JobSpy source boards (all available options shown)
+# JobSpy source boards (stable key; legacy "sites" is accepted with a warning)
 boards:
   - indeed
   - linkedin

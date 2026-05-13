@@ -17,6 +17,21 @@ export {
   type JobRestoredPayload,
   type JobRestored,
   createJobRestored,
+  type SourceLocationCandidateDiscoveredPayload,
+  type SourceLocationCandidateDiscovered,
+  createSourceLocationCandidateDiscovered,
+  type SourceLocationCandidatePromotedPayload,
+  type SourceLocationCandidatePromoted,
+  createSourceLocationCandidatePromoted,
+  type SourceRegistryEntryCreatedPayload,
+  type SourceRegistryEntryCreated,
+  createSourceRegistryEntryCreated,
+  type SourceRegistryEntryUpdatedPayload,
+  type SourceRegistryEntryUpdated,
+  createSourceRegistryEntryUpdated,
+  type SourceStateChangedPayload,
+  type SourceStateChanged,
+  createSourceStateChanged,
 } from "./discovery.js";
 
 export {
@@ -111,6 +126,11 @@ import type {
   JobDiscovered,
   JobRestored,
   JobUpdated,
+  SourceLocationCandidateDiscovered,
+  SourceLocationCandidatePromoted,
+  SourceRegistryEntryCreated,
+  SourceRegistryEntryUpdated,
+  SourceStateChanged,
 } from "./discovery.js";
 import type { EnrichmentFailed, JobEnriched } from "./enrichment.js";
 import type { JobScored, ScoreCorrected } from "./scoring.js";
@@ -144,6 +164,11 @@ export type DomainEventUnion =
   | JobUpdated
   | JobDeleted
   | JobRestored
+  | SourceLocationCandidateDiscovered
+  | SourceLocationCandidatePromoted
+  | SourceRegistryEntryCreated
+  | SourceRegistryEntryUpdated
+  | SourceStateChanged
   | JobEnriched
   | EnrichmentFailed
   | JobScored
@@ -175,6 +200,11 @@ export const DOMAIN_EVENT_TYPES = [
   "JobUpdated",
   "JobDeleted",
   "JobRestored",
+  "SourceLocationCandidateDiscovered",
+  "SourceLocationCandidatePromoted",
+  "SourceRegistryEntryCreated",
+  "SourceRegistryEntryUpdated",
+  "SourceStateChanged",
   "JobEnriched",
   "EnrichmentFailed",
   "JobScored",
