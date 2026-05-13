@@ -1,7 +1,9 @@
 import type {
   DiscoveryFeedbackKind,
+  DiscoveryPreviewResponse,
   ManualCaptureListResponse,
   QuarantineListResponse,
+  SourceLocatorListResponse,
   SourceRegistryEntrySummary,
 } from "@jobhunter/contracts";
 import {
@@ -9,6 +11,7 @@ import {
   Ban,
   Check,
   ExternalLink,
+  Eye,
   Plus,
   ThumbsUp,
   Upload,
@@ -18,6 +21,7 @@ import { type FormEvent, useState } from "react";
 
 import {
   useDiscoveryQuarantineQuery,
+  useDiscoverySourcePreviewQuery,
   useManualCaptureQueueQuery,
   useSourceLocatorCandidatesQuery,
   useSourceRegistryQuery,
@@ -32,11 +36,15 @@ import {
   useManualCaptureDismissMutation,
   useManualCaptureImportMutation,
   usePatchDiscoverySourceStateMutation,
+  usePromoteSourceLocatorCandidateMutation,
+  useRejectSourceLocatorCandidateMutation,
   useUpsertDiscoverySourceMutation,
 } from "../hooks/useDiscoveryProductControlMutations.js";
 
 type QuarantineEntry = QuarantineListResponse["entries"][number];
 type ManualCaptureItem = ManualCaptureListResponse["items"][number];
+type LocatorCandidate = SourceLocatorListResponse["candidates"][number];
+type PreviewLead = DiscoveryPreviewResponse["leads"][number];
 
 const SOURCE_KINDS = [
   "ats_api",
@@ -73,6 +81,14 @@ function sourceMeta(source: SourceRegistryEntrySummary): string {
   ].join(" · ");
 }
 
+function candidateEvidence(candidate: LocatorCandidate): string {
+  return [
+    candidate.employerDomainMatched ? "domain matched" : "domain unverified",
+    candidate.manualActionReason ? `manual ${label(candidate.manualActionReason)}` : "no manual blocker",
+    `discovered ${new Date(candidate.discoveredAt).toLocaleDateString()}`,
+  ].join(" · ");
+}
+
 export function DiscoveryProductControls() {
   const sources = useSourceRegistryQuery();
   const locatorCandidates = useSourceLocatorCandidatesQuery();
@@ -94,6 +110,10 @@ export function DiscoveryProductControls() {
       {message ? <div className="banner inline">{message}</div> : null}
       <div className="discovery-control-grid">
         <SourceRegistryPanel sources={sources.data?.sources ?? []} loading={sources.isLoading} />
+        <SourceLocatorPanel
+          candidates={locatorCandidates.data?.candidates ?? []}
+          loading={locatorCandidates.isLoading}
+        />
         <QuarantinePanel entries={quarantine.data?.entries ?? []} loading={quarantine.isLoading} />
         <ManualCapturePanel items={manualCapture.data?.items ?? []} loading={manualCapture.isLoading} />
       </div>
@@ -110,6 +130,8 @@ function SourceRegistryPanel({
 }) {
   const upsert = useUpsertDiscoverySourceMutation();
   const patchState = usePatchDiscoverySourceStateMutation();
+  const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
+  const preview = useDiscoverySourcePreviewQuery(previewSourceId);
   const [sourceId, setSourceId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [kind, setKind] = useState<(typeof SOURCE_KINDS)[number]>("employer_careers_page");
@@ -216,10 +238,146 @@ function SourceRegistryPanel({
               >
                 <Ban size={14} aria-hidden="true" />
               </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Preview ${source.displayName}`}
+                title="Preview observed leads"
+                disabled={preview.isFetching && previewSourceId === source.sourceId}
+                onClick={() => setPreviewSourceId(source.sourceId)}
+              >
+                <Eye size={14} aria-hidden="true" />
+              </Button>
             </div>
           </div>
         ))}
         {!sources.length ? <Empty title={loading ? "Loading sources." : "No sources registered."} /> : null}
+      </div>
+      {previewSourceId ? (
+        <SourcePreview
+          sourceId={previewSourceId}
+          leads={preview.data?.leads ?? []}
+          loading={preview.isLoading || preview.isFetching}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function SourcePreview({
+  sourceId,
+  leads,
+  loading,
+}: {
+  sourceId: string;
+  leads: PreviewLead[];
+  loading: boolean;
+}) {
+  return (
+    <div className="discovery-source-preview">
+      <div className="discovery-panel-head compact">
+        <h3>Preview</h3>
+        <span className="meta">{sourceId}</span>
+      </div>
+      <div className="rows compact">
+        {leads.map((lead) => (
+          <div className="discovery-preview-row" key={lead.candidateUrl}>
+            <span className="title-stack">
+              <b>{lead.title || lead.candidateUrl}</b>
+              <span>
+                {lead.company || "Unknown company"} · {lead.location || "Unknown location"} · confidence{" "}
+                {pct(lead.estimatedConfidence)}
+              </span>
+              <span className="mono">{lead.candidateUrl}</span>
+            </span>
+          </div>
+        ))}
+        {!leads.length ? (
+          <Empty title={loading ? "Loading source preview." : "No observed leads for this source."} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SourceLocatorPanel({
+  candidates,
+  loading,
+}: {
+  candidates: LocatorCandidate[];
+  loading: boolean;
+}) {
+  const promote = usePromoteSourceLocatorCandidateMutation();
+  const reject = useRejectSourceLocatorCandidateMutation();
+
+  return (
+    <div className="discovery-control-panel">
+      <div className="discovery-panel-head">
+        <h3>Source locator</h3>
+        <span className="meta">{candidates.length} candidates</span>
+      </div>
+      <div className="rows compact">
+        {candidates.map((candidate) => (
+          <div className="discovery-review-row" key={candidate.candidateId}>
+            <ExternalLink size={16} aria-hidden="true" />
+            <span className="title-stack">
+              <b>{candidate.candidateUrl}</b>
+              <span>
+                {label(candidate.sourceKind)} · confidence {pct(candidate.confidence)} ·{" "}
+                {candidate.detectedAtsKind ? `${candidate.detectedAtsKind} detected` : "ATS unknown"}
+              </span>
+              <span>{candidateEvidence(candidate)}</span>
+            </span>
+            <div className="row-actions">
+              <Button size="icon" variant="ghost" asChild title="Open candidate">
+                <a
+                  aria-label={`Open ${candidate.candidateUrl}`}
+                  href={candidate.candidateUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink size={14} aria-hidden="true" />
+                </a>
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Promote ${candidate.candidateUrl}`}
+                title="Promote candidate"
+                disabled={promote.isPending}
+                onClick={() =>
+                  promote.mutate({
+                    candidateId: candidate.candidateId,
+                    body: { reason: "User promoted source locator candidate from product controls." },
+                  })
+                }
+              >
+                <Check size={14} aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Reject ${candidate.candidateUrl}`}
+                title="Reject candidate"
+                disabled={reject.isPending}
+                onClick={() =>
+                  reject.mutate({
+                    candidateId: candidate.candidateId,
+                    body: { reason: "User rejected source locator candidate from product controls." },
+                  })
+                }
+              >
+                <X size={14} aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        ))}
+        {!candidates.length ? (
+          <Empty title={loading ? "Loading locator candidates." : "No source candidates."} />
+        ) : null}
       </div>
     </div>
   );

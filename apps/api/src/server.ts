@@ -30,6 +30,7 @@ import {
   RetryStageRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
+  SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
   WorkflowRunsListQuerySchema,
@@ -45,7 +46,9 @@ import {
   listSourceRegistry,
   patchSourceState,
   previewDiscoverySource,
+  promoteSourceLocatorCandidate,
   recordDiscoveryFeedback,
+  rejectSourceLocatorCandidate,
   upsertSourceRegistryEntry,
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
@@ -187,6 +190,32 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/discovery/locator-candidates", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listSourceLocatorCandidates(db)),
+  );
+
+  app.post<{ Params: { candidateId: string } }>(
+    "/v1/discovery/locator-candidates/:candidateId/promote",
+    async (request, reply) => {
+      const body = parseBody(reply, SourceLocatorDecisionSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        promoteSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+      );
+    },
+  );
+
+  app.post<{ Params: { candidateId: string } }>(
+    "/v1/discovery/locator-candidates/:candidateId/reject",
+    async (request, reply) => {
+      const body = parseBody(reply, SourceLocatorDecisionSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        rejectSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+      );
+    },
   );
 
   app.get("/v1/discovery/quarantine", async (_request, reply) =>

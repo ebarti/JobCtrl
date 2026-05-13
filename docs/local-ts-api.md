@@ -42,9 +42,15 @@ Discovery product-control endpoints are local-first and share DTOs from
 - `PATCH /v1/discovery/sources/:sourceId/state` changes local source state and
   emits `SourceStateChanged`.
 - `GET /v1/discovery/sources/:sourceId/preview` returns local preview leads
-  from quarantined rows for that source; it does not perform live scraping.
+  from recent `JobSourceObserved` history for that source; it does not perform
+  live scraping.
 - `GET /v1/discovery/locator-candidates`, `GET /v1/discovery/quarantine`, and
   `GET /v1/discovery/manual-capture` expose the local review queues.
+- `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
+  source locator candidate into an experimental source registry entry and emits
+  `SourceLocationCandidatePromoted`.
+- `POST /v1/discovery/locator-candidates/:candidateId/reject` removes a local
+  source locator candidate from the review queue.
 - `POST /v1/discovery/quarantine/:jobKey/decision` approves or rejects a
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated

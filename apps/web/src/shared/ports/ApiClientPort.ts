@@ -40,6 +40,8 @@ import type {
   SettingsResponse,
   SettingsUpdateRequest,
   SourceLocatorListResponse,
+  SourceLocatorDecisionRequest,
+  SourceLocatorDecisionResponse,
   SourceRegistryListResponse,
   SourceRegistryMutationResponse,
   SourceStatePatch,
@@ -65,6 +67,14 @@ export interface ApiClientPort {
   ): Promise<SourceRegistryMutationResponse>;
   discoverySourcePreview(sourceId: string): Promise<DiscoveryPreviewResponse>;
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse>;
+  promoteSourceLocatorCandidate(
+    candidateId: string,
+    body?: SourceLocatorDecisionRequest,
+  ): Promise<SourceLocatorDecisionResponse>;
+  rejectSourceLocatorCandidate(
+    candidateId: string,
+    body?: SourceLocatorDecisionRequest,
+  ): Promise<SourceLocatorDecisionResponse>;
   discoveryQuarantine(): Promise<QuarantineListResponse>;
   decideDiscoveryQuarantine(
     jobKey: string,

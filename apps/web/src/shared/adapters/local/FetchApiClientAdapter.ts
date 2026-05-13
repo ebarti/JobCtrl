@@ -32,6 +32,18 @@ export class FetchApiClientAdapter implements ApiClientPort {
   discoveryLocatorCandidates() {
     return this.client.discoveryLocatorCandidates();
   }
+  promoteSourceLocatorCandidate(
+    candidateId: string,
+    body: Parameters<JobHunterApiClient["promoteSourceLocatorCandidate"]>[1] = {},
+  ) {
+    return this.client.promoteSourceLocatorCandidate(candidateId, body);
+  }
+  rejectSourceLocatorCandidate(
+    candidateId: string,
+    body: Parameters<JobHunterApiClient["rejectSourceLocatorCandidate"]>[1] = {},
+  ) {
+    return this.client.rejectSourceLocatorCandidate(candidateId, body);
+  }
   discoveryQuarantine() {
     return this.client.discoveryQuarantine();
   }

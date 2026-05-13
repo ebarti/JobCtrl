@@ -181,6 +181,169 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("promotes and rejects source locator candidates", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
+      const db = new Database(dbPath);
+      db.prepare(
+        `INSERT INTO source_locator_candidates (
+           tenant_id, candidate_id, candidate_url, source_kind, confidence,
+           detected_ats_kind, employer_domain_matched, manual_action_reason, discovered_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "candidate-1",
+        "https://example.com/careers",
+        "employer_careers_page",
+        0.86,
+        "greenhouse",
+        1,
+        null,
+        "2026-05-12T10:00:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO source_locator_candidates (
+           tenant_id, candidate_id, candidate_url, source_kind, confidence,
+           detected_ats_kind, employer_domain_matched, manual_action_reason, discovered_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "candidate-2",
+        "https://bad.example.com/careers",
+        "employer_careers_page",
+        0.41,
+        null,
+        0,
+        null,
+        "2026-05-12T11:00:00+00:00",
+      );
+      db.close();
+
+      const promoted = await app.inject({
+        method: "POST",
+        url: "/v1/discovery/locator-candidates/candidate-1/promote",
+        payload: { reason: "reviewed" },
+      });
+      expect(promoted.statusCode, promoted.body).toBe(200);
+      expect(promoted.json()).toMatchObject({
+        candidateId: "candidate-1",
+        decision: "promote",
+        source: {
+          sourceId: "greenhouse:example-com",
+          displayName: "example.com",
+        },
+      });
+
+      const rejected = await app.inject({
+        method: "POST",
+        url: "/v1/discovery/locator-candidates/candidate-2/reject",
+        payload: { reason: "not a careers site" },
+      });
+      expect(rejected.statusCode, rejected.body).toBe(200);
+      expect(rejected.json()).toMatchObject({
+        candidateId: "candidate-2",
+        decision: "reject",
+        source: null,
+      });
+
+      const candidates = await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
+      expect(candidates.statusCode, candidates.body).toBe(200);
+      expect(candidates.json().candidates).toEqual([]);
+
+      const verifyDb = new Database(dbPath);
+      const event = verifyDb
+        .prepare("SELECT event_type, payload_json FROM job_events WHERE event_type = 'SourceLocationCandidatePromoted'")
+        .get() as { event_type: string; payload_json: string };
+      verifyDb.close();
+      expect(event.event_type).toBe("SourceLocationCandidatePromoted");
+      expect(JSON.parse(event.payload_json)).toMatchObject({
+        candidateId: "candidate-1",
+        sourceId: "greenhouse:example-com",
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("builds discovery preview from observed source history instead of quarantine residue", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      const db = new Database(dbPath);
+      db.prepare(
+        "INSERT INTO jobs (url, title, site, location, discovered_at) VALUES (?, ?, ?, ?, ?)",
+      ).run(
+        "https://example.com/jobs/1",
+        "Product Engineer",
+        "ExampleCo",
+        "Remote",
+        "2026-05-12T10:00:00+00:00",
+      );
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "https://example.com/jobs/1",
+        "discover",
+        "JobSourceObserved",
+        "info",
+        "Source observed",
+        "2026-05-12T10:01:00+00:00",
+        JSON.stringify({
+          jobId: "https://example.com/jobs/1",
+          sourceId: "greenhouse:example-com",
+          observedUrl: "https://example.com/jobs/1",
+          sourceObservationId: "observation-1",
+          runId: "run-1",
+          observedAt: "2026-05-12T10:01:00+00:00",
+        }),
+      );
+      db.prepare(
+        `INSERT INTO discovery_quarantine_entries (
+           tenant_id, job_id, job_key, title, company, source_id, posting_url,
+           reason, confidence, snapshot_version, captured_at, notice_text, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "quarantine-1",
+        "https://example.com/jobs/quarantined",
+        "Quarantined Lead",
+        "ExampleCo",
+        "greenhouse:example-com",
+        "https://example.com/jobs/quarantined",
+        "unknown_active_state",
+        0.4,
+        1,
+        "2026-05-12T09:00:00+00:00",
+        null,
+        "pending",
+      );
+      db.close();
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/discovery/sources/greenhouse%3Aexample-com/preview",
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().leads).toEqual([
+        {
+          candidateUrl: "https://example.com/jobs/1",
+          title: "Product Engineer",
+          company: "ExampleCo",
+          location: "Remote",
+          estimatedConfidence: 1,
+        },
+      ]);
+      expect(JSON.stringify(response.json())).not.toContain("Quarantined Lead");
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("imports manual capture provenance while storing only content metadata", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));

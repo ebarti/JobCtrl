@@ -857,6 +857,21 @@ export interface SourceLocatorListResponse {
   candidates: SourceLocatorCandidateSummary[];
 }
 
+export const SourceLocatorDecisionSchema = z
+  .object({
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type SourceLocatorDecisionRequest = z.infer<typeof SourceLocatorDecisionSchema>;
+
+export interface SourceLocatorDecisionResponse {
+  ok: true;
+  candidateId: string;
+  decision: "promote" | "reject";
+  source: SourceRegistryEntrySummary | null;
+  decidedAt: string;
+}
+
 export const QUARANTINE_REASONS = [
   "low_confidence_extraction",
   "policy_overridden",

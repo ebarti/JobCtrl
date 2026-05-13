@@ -8,6 +8,7 @@ import type {
   DiscoveryFeedbackRequest,
   ManualCaptureImportRequest,
   QuarantineDecision,
+  SourceLocatorDecisionRequest,
   SourceStatePatch,
   SourceUpsertRequest,
 } from "../../operations/types.js";
@@ -37,6 +38,39 @@ export function usePatchDiscoverySourceStateMutation() {
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
+      ]);
+    },
+  });
+}
+
+export function usePromoteSourceLocatorCandidateMutation() {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ candidateId, body = {} }: { candidateId: string; body?: SourceLocatorDecisionRequest }) =>
+      api.promoteSourceLocatorCandidate(candidateId, body),
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
+      ]);
+    },
+  });
+}
+
+export function useRejectSourceLocatorCandidateMutation() {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ candidateId, body = {} }: { candidateId: string; body?: SourceLocatorDecisionRequest }) =>
+      api.rejectSourceLocatorCandidate(candidateId, body),
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },

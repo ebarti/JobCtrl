@@ -40,6 +40,8 @@ import type {
   SettingsUpdateRequest,
   SettingsResponse,
   SourceLocatorListResponse,
+  SourceLocatorDecisionRequest,
+  SourceLocatorDecisionResponse,
   SourceRegistryListResponse,
   SourceRegistryMutationResponse,
   SourceStatePatch,
@@ -93,6 +95,26 @@ export class JobHunterApiClient {
 
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {
     return this.get("/v1/discovery/locator-candidates");
+  }
+
+  promoteSourceLocatorCandidate(
+    candidateId: string,
+    body: SourceLocatorDecisionRequest = {},
+  ): Promise<SourceLocatorDecisionResponse> {
+    return this.post(
+      `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/promote`,
+      body,
+    );
+  }
+
+  rejectSourceLocatorCandidate(
+    candidateId: string,
+    body: SourceLocatorDecisionRequest = {},
+  ): Promise<SourceLocatorDecisionResponse> {
+    return this.post(
+      `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/reject`,
+      body,
+    );
   }
 
   discoveryQuarantine(): Promise<QuarantineListResponse> {

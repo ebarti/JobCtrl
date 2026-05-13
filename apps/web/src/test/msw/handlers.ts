@@ -80,12 +80,52 @@ export const handlers = [
     HttpResponse.json({
       ok: true,
       sourceId: String(params["sourceId"]),
-      leads: [],
+      leads: [
+        {
+          candidateUrl: "https://example.com/jobs/preview",
+          title: "Product Engineer",
+          company: "ExampleCo",
+          location: "Remote",
+          estimatedConfidence: 0.91,
+        },
+      ],
       generatedAt: "2026-05-12T10:00:00+00:00",
     }),
   ),
   http.get("*/v1/discovery/locator-candidates", () =>
-    HttpResponse.json({ ok: true, candidates: [] }),
+    HttpResponse.json({
+      ok: true,
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          candidateUrl: "https://example.com/careers",
+          sourceKind: "employer_careers_page",
+          confidence: 0.86,
+          detectedAtsKind: "greenhouse",
+          employerDomainMatched: true,
+          manualActionReason: null,
+          discoveredAt: "2026-05-12T10:00:00+00:00",
+        },
+      ],
+    }),
+  ),
+  http.post("*/v1/discovery/locator-candidates/:candidateId/promote", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      candidateId: String(params["candidateId"]),
+      decision: "promote",
+      source: sampleDiscoverySource,
+      decidedAt: "2026-05-12T10:00:00+00:00",
+    }),
+  ),
+  http.post("*/v1/discovery/locator-candidates/:candidateId/reject", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      candidateId: String(params["candidateId"]),
+      decision: "reject",
+      source: null,
+      decidedAt: "2026-05-12T10:00:00+00:00",
+    }),
   ),
   http.get("*/v1/discovery/quarantine", () =>
     HttpResponse.json({

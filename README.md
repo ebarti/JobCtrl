@@ -265,13 +265,15 @@ Discover also emits source-step events and scheduled discovery-run events for
 JobSpy, Workday, and Smart Extract so a stuck or low-quality source is visible
 before the request finishes. The dashboard source-health card summarizes the
 local source-quality projection used to budget and demote future crawls. The
-dashboard also exposes Discovery controls for the local source registry,
-quarantined leads, and manual-capture queue. These controls can add an
-experimental source, enable or quarantine a source, approve or reject
-quarantined leads, record source feedback, open a blocked lead in the local
-browser, and import a user-provided URL as manual-capture provenance. Manual
-capture stores local provenance metadata and content hashes, not raw captured
-posting text in domain events. The `limit` control is honored by every stage
+dashboard also exposes Discovery controls for the local source registry, source
+locator candidates, observed-source preview, quarantined leads, and
+manual-capture queue. These controls can add an experimental source, promote or
+reject a detected careers-page candidate, preview recently observed leads for a
+source, enable or quarantine a source, approve or reject quarantined leads,
+record source feedback, open a blocked lead in the local browser, and import a
+user-provided URL as manual-capture provenance. Manual capture stores local
+provenance metadata and content hashes, not raw captured posting text in domain
+events. The `limit` control is honored by every stage
 tab, including `discover` and `enrich`, so local debug runs can be bounded to
 one job. A bounded Discover run stops remaining sources once the cap is
 reached. Tabs default to dry-run mode so apply automation does not submit

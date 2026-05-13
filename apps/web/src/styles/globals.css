@@ -482,7 +482,7 @@ textarea {
 
 .discovery-control-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(280px, 0.9fr) repeat(3, minmax(280px, 1fr));
   gap: 0;
 }
 
@@ -524,7 +524,8 @@ textarea {
 }
 
 .discovery-source-row,
-.discovery-review-row {
+.discovery-review-row,
+.discovery-preview-row {
   display: grid;
   align-items: center;
   gap: 10px;
@@ -539,6 +540,19 @@ textarea {
 
 .discovery-review-row {
   grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.discovery-preview-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.discovery-source-preview {
+  border-top: 1px solid var(--rule);
+}
+
+.discovery-panel-head.compact {
+  min-height: 32px;
+  padding-block: 7px;
 }
 
 .rows.compact .empty {
@@ -1749,6 +1763,7 @@ textarea {
   .activity-row,
   .discovery-source-row,
   .discovery-review-row,
+  .discovery-preview-row,
   .funnel-row,
   .detail-list div,
   .section .mini-row {

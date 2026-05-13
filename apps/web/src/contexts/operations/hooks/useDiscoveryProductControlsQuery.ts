@@ -6,6 +6,7 @@ import { discoveryKeys } from "../queryKeys.js";
 import type {
   ManualCaptureListResponse,
   QuarantineListResponse,
+  DiscoveryPreviewResponse,
   SourceLocatorListResponse,
   SourceRegistryListResponse,
 } from "../types.js";
@@ -26,6 +27,19 @@ export function useSourceLocatorCandidatesQuery(): UseQueryResult<SourceLocatorL
   return useQuery({
     queryKey: discoveryKeys.sourceLocator(tenantId),
     queryFn: () => api.discoveryLocatorCandidates(),
+    staleTime: 0,
+  });
+}
+
+export function useDiscoverySourcePreviewQuery(
+  sourceId: string | null,
+): UseQueryResult<DiscoveryPreviewResponse> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  return useQuery({
+    queryKey: discoveryKeys.sourcePreview(tenantId, sourceId ?? ""),
+    queryFn: () => api.discoverySourcePreview(sourceId ?? ""),
+    enabled: Boolean(sourceId),
     staleTime: 0,
   });
 }

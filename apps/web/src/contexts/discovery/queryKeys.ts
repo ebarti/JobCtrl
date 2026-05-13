@@ -6,6 +6,8 @@ export const discoveryKeys = {
     ["tenant", tenantId, "discovery", "source-locator"] as const,
   sourceRegistry: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "source-registry"] as const,
+  sourcePreview: (tenantId: TenantId, sourceId: string) =>
+    ["tenant", tenantId, "discovery", "source-preview", sourceId] as const,
   sourceQuality: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "source-quality"] as const,
   quarantine: (tenantId: TenantId) =>

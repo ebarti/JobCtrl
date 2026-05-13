@@ -13,6 +13,7 @@ import type {
   QuarantineReason,
   RecommendedSourceState,
   SourceLocatorListResponse,
+  SourceLocatorDecisionResponse,
   SourcePriorityValue,
   SourceRegistryEntrySummary,
   SourceRegistryListResponse,
@@ -77,6 +78,19 @@ interface SourceLocatorCandidateRow extends Record<string, unknown> {
   employer_domain_matched: number;
   manual_action_reason: string | null;
   discovered_at: string;
+}
+
+interface JobSourceObservedEventRow extends Record<string, unknown> {
+  job_url: string | null;
+  occurred_at: string;
+  payload_json: string | null;
+}
+
+interface PreviewJobRow extends Record<string, unknown> {
+  url: string;
+  title: string | null;
+  site: string | null;
+  location: string | null;
 }
 
 interface QuarantineEntryRow extends Record<string, unknown> {
@@ -354,6 +368,51 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
   };
 }
 
+export function promoteSourceLocatorCandidate(
+  db: SqliteDatabase,
+  candidateId: string,
+): SourceLocatorDecisionResponse {
+  ensureDiscoveryControlTables(db);
+  const candidate = getSourceLocatorCandidateRow(db, candidateId);
+  if (!candidate) {
+    throw new InputError(`Source locator candidate ${candidateId} was not found.`);
+  }
+
+  const now = new Date().toISOString();
+  const kind = sourceKind(candidate.source_kind);
+  const sourceId = sourceIdFromLocatorCandidate(candidate);
+  const source = upsertSourceRegistryEntry(db, {
+    sourceId,
+    kind,
+    displayName: sourceDisplayNameFromUrl(candidate.candidate_url),
+    priority: defaultPriority(kind),
+    state: "experimental",
+    seedUrl: candidate.candidate_url,
+  });
+  deleteSourceLocatorCandidate(db, candidateId);
+  recordEvent(db, {
+    eventType: "SourceLocationCandidatePromoted",
+    message: "Source locator candidate promoted.",
+    payload: { candidateId, sourceId, promotedAt: now },
+  });
+
+  return { ok: true, candidateId, decision: "promote", source, decidedAt: now };
+}
+
+export function rejectSourceLocatorCandidate(
+  db: SqliteDatabase,
+  candidateId: string,
+): SourceLocatorDecisionResponse {
+  ensureDiscoveryControlTables(db);
+  const candidate = getSourceLocatorCandidateRow(db, candidateId);
+  if (!candidate) {
+    throw new InputError(`Source locator candidate ${candidateId} was not found.`);
+  }
+  const now = new Date().toISOString();
+  deleteSourceLocatorCandidate(db, candidateId);
+  return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
+}
+
 export function listQuarantine(db: SqliteDatabase): QuarantineListResponse {
   ensureDiscoveryControlTables(db);
   const rows = allRows<QuarantineEntryRow>(
@@ -577,26 +636,50 @@ export function previewDiscoverySource(
   sourceId: string,
 ): DiscoveryPreviewResponse {
   ensureDiscoveryControlTables(db);
-  const rows = allRows<QuarantineEntryRow>(
+  if (!tableExists(db, "job_events")) {
+    return { ok: true, sourceId, leads: [], generatedAt: new Date().toISOString() };
+  }
+
+  const rows = allRows<JobSourceObservedEventRow>(
     db,
-    `SELECT job_id, job_key, title, company, source_id, posting_url, reason,
-            confidence, snapshot_version, captured_at, notice_text
-     FROM discovery_quarantine_entries
-     WHERE tenant_id = ? AND source_id = ?
-     ORDER BY captured_at DESC, confidence DESC
-     LIMIT 10`,
-    [DEFAULT_TENANT, sourceId],
+    `SELECT job_url, occurred_at, payload_json
+     FROM job_events
+     WHERE event_type = 'JobSourceObserved'
+     ORDER BY occurred_at DESC, event_id DESC
+     LIMIT 200`,
   );
+  const leads: DiscoveryPreviewResponse["leads"] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const payload = parseObject(row.payload_json ?? "{}");
+    if (text(payload, "sourceId", "source_id") !== sourceId) {
+      continue;
+    }
+    const candidateUrl =
+      text(payload, "observedUrl", "observed_url") ||
+      text(payload, "jobId", "job_id") ||
+      row.job_url ||
+      "";
+    if (!candidateUrl || seen.has(candidateUrl)) {
+      continue;
+    }
+    seen.add(candidateUrl);
+    const job = readPreviewJob(db, text(payload, "jobId", "job_id") || row.job_url || candidateUrl);
+    leads.push({
+      candidateUrl,
+      title: job?.title || "",
+      company: job?.site || "",
+      location: job?.location || "",
+      estimatedConfidence: 1,
+    });
+    if (leads.length >= 10) {
+      break;
+    }
+  }
   return {
     ok: true,
     sourceId,
-    leads: rows.map((row) => ({
-      candidateUrl: row.posting_url ?? row.job_key,
-      title: row.title,
-      company: row.company,
-      location: "",
-      estimatedConfidence: nullableNumber(row.confidence) ?? 0,
-    })),
+    leads,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -640,6 +723,27 @@ function getManualCaptureRow(db: SqliteDatabase, itemId: string): ManualCaptureR
   );
 }
 
+function getSourceLocatorCandidateRow(
+  db: SqliteDatabase,
+  candidateId: string,
+): SourceLocatorCandidateRow | undefined {
+  return getRow<SourceLocatorCandidateRow>(
+    db,
+    `SELECT candidate_id, candidate_url, source_kind, confidence, detected_ats_kind,
+            employer_domain_matched, manual_action_reason, discovered_at
+     FROM source_locator_candidates
+     WHERE tenant_id = ? AND candidate_id = ?`,
+    [DEFAULT_TENANT, candidateId],
+  );
+}
+
+function deleteSourceLocatorCandidate(db: SqliteDatabase, candidateId: string): void {
+  db.prepare(
+    `DELETE FROM source_locator_candidates
+     WHERE tenant_id = ? AND candidate_id = ?`,
+  ).run(DEFAULT_TENANT, candidateId);
+}
+
 function rowToSourceSummary(
   row: SourceRegistryRow,
   stats: SourceQualityRow | undefined,
@@ -671,7 +775,7 @@ function qualityOnlySourceSummary(sourceId: string, stats: SourceQualityRow): So
   const recommended = recommendedSourceState(stats.recommended_state);
   return {
     sourceId,
-    kind: "broad_board",
+    kind: sourceKindFromId(sourceId),
     displayName: sourceId,
     owner: "system",
     priority: "standard",
@@ -756,6 +860,8 @@ function sourcePriority(value: string): SourcePriorityValue {
 
 function sourceKindFromId(sourceId: string): SourceKindValue {
   if (sourceId.startsWith("workday:")) return "ats_api";
+  if (sourceId.startsWith("greenhouse:")) return "ats_api";
+  if (sourceId.startsWith("lever:")) return "ats_api";
   if (sourceId.startsWith("jobspy:")) return "broad_board";
   if (sourceId.startsWith("smart_extract:")) return "smart_extract";
   return "employer_careers_page";
@@ -805,6 +911,29 @@ function parseObject(raw: string): Record<string, unknown> {
   }
 }
 
+function text(payload: Record<string, unknown>, ...names: string[]): string {
+  for (const name of names) {
+    const value = payload[name];
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function readPreviewJob(db: SqliteDatabase, jobKey: string): PreviewJobRow | undefined {
+  if (!jobKey || !tableExists(db, "jobs")) {
+    return undefined;
+  }
+  return getRow<PreviewJobRow>(
+    db,
+    `SELECT url, title, site, location
+     FROM jobs
+     WHERE url = ?`,
+    [jobKey],
+  );
+}
+
 function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -819,4 +948,33 @@ function sha256(value: string): string {
 
 function jobKeyFromCapturedInput(input: ManualCaptureImportRequest, fallbackUrl: string): string {
   return input.capturedUrl ?? fallbackUrl;
+}
+
+function sourceIdFromLocatorCandidate(candidate: SourceLocatorCandidateRow): string {
+  const slug = slugFromUrl(candidate.candidate_url) || candidate.candidate_id;
+  const atsKind = candidate.detected_ats_kind?.trim().toLowerCase();
+  if (atsKind) {
+    return `${atsKind}:${slug}`;
+  }
+  return `${sourceKind(candidate.source_kind)}:${slug}`;
+}
+
+function sourceDisplayNameFromUrl(rawUrl: string): string {
+  const host = hostFromUrl(rawUrl);
+  return host ? host.replace(/^www\./, "") : rawUrl;
+}
+
+function slugFromUrl(rawUrl: string): string {
+  return sourceDisplayNameFromUrl(rawUrl)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function hostFromUrl(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return "";
+  }
 }
