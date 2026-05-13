@@ -82,6 +82,25 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  PostingContentSnapshotCaptured: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+  ],
+  PostingContentSnapshotFailed: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+  ],
+  JobActiveStateChanged: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  ContentDuplicateCandidateDetected: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.detail(LOCAL_TENANT, "job-2"),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   JobScored: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
