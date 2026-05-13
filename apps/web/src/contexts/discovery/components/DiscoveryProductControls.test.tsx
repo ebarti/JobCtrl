@@ -13,10 +13,14 @@ describe("DiscoveryProductControls", () => {
     await screen.findByText("Greenhouse Example");
     expect(screen.getByText("https://example.com/careers")).toBeInTheDocument();
     expect(screen.getByText("Engineering Manager")).toBeInTheDocument();
-    expect(screen.getByText("https://example.com/protected/job")).toBeInTheDocument();
+    expect(
+      screen.getByText("https://example.com/protected/job"),
+    ).toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /preview greenhouse example/i }));
+    await user.click(
+      screen.getByRole("button", { name: /preview greenhouse example/i }),
+    );
     expect(await screen.findByText("Product Engineer")).toBeInTheDocument();
   });
 
@@ -80,15 +84,31 @@ describe("DiscoveryProductControls", () => {
 
     await screen.findByText("Engineering Manager");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /promote https:\/\/example.com\/careers/i }));
-    await user.click(screen.getByRole("button", { name: /mark source greenhouse-example useful/i }));
-    await user.click(screen.getByRole("button", { name: /import https:\/\/example.com\/protected\/job/i }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /promote https:\/\/example.com\/careers/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /mark source greenhouse-example useful/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: /import https:\/\/example.com\/protected\/job/i,
+      }),
+    );
 
-    await waitFor(() => expect(promoteSourceLocatorCandidate).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(promoteSourceLocatorCandidate).toHaveBeenCalledTimes(1),
+    );
     expect(promoteSourceLocatorCandidate).toHaveBeenCalledWith("candidate-1", {
       reason: "User promoted source locator candidate from product controls.",
     });
-    await waitFor(() => expect(recordDiscoveryFeedback).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(recordDiscoveryFeedback).toHaveBeenCalledTimes(1),
+    );
     expect(recordDiscoveryFeedback).toHaveBeenCalledWith({
       jobKey: "https://example.com/jobs/quarantined",
       sourceId: "greenhouse-example",
@@ -99,6 +119,58 @@ describe("DiscoveryProductControls", () => {
       captureMode: "copied_url",
       capturedUrl: "https://example.com/protected/job",
       futureManualActionRequired: false,
+    });
+  });
+
+  it("imports pasted manual capture content with follow-up provenance", async () => {
+    const importManualCapture = vi.fn(async () => ({
+      ok: true as const,
+      itemId: "manual-1",
+      jobKey: "https://example.com/protected/job",
+      importedAt: "2026-05-12T10:00:00+00:00",
+      provenance: {
+        sourceKind: "user_mediated_capture" as const,
+        originatingUrl: "https://example.com/protected/job",
+        captureMode: "pasted_text" as const,
+        futureManualActionRequired: true,
+      },
+    }));
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({
+        api: {
+          importManualCapture,
+        },
+      }),
+    });
+
+    await screen.findByText("https://example.com/protected/job");
+    const user = userEvent.setup();
+    await user.selectOptions(
+      screen.getByLabelText("Capture mode"),
+      "pasted_text",
+    );
+    await user.type(
+      screen.getByLabelText("Pasted text"),
+      "Visible user-provided posting text.",
+    );
+    await user.type(
+      screen.getByLabelText("Note"),
+      "Captured after local login.",
+    );
+    await user.click(screen.getByLabelText("Needs manual follow-up"));
+    await user.click(
+      screen.getByRole("button", {
+        name: /import https:\/\/example.com\/protected\/job/i,
+      }),
+    );
+
+    await waitFor(() => expect(importManualCapture).toHaveBeenCalledTimes(1));
+    expect(importManualCapture).toHaveBeenCalledWith("manual-1", {
+      captureMode: "pasted_text",
+      capturedUrl: "https://example.com/protected/job",
+      contentText: "Visible user-provided posting text.",
+      note: "Captured after local login.",
+      futureManualActionRequired: true,
     });
   });
 
@@ -121,9 +193,15 @@ describe("DiscoveryProductControls", () => {
 
     await screen.findByText("https://example.com/careers");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /reject https:\/\/example.com\/careers/i }));
+    await user.click(
+      screen.getByRole("button", {
+        name: /reject https:\/\/example.com\/careers/i,
+      }),
+    );
 
-    await waitFor(() => expect(rejectSourceLocatorCandidate).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(rejectSourceLocatorCandidate).toHaveBeenCalledTimes(1),
+    );
     expect(rejectSourceLocatorCandidate).toHaveBeenCalledWith("candidate-1", {
       reason: "User rejected source locator candidate from product controls.",
     });

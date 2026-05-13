@@ -54,7 +54,8 @@ Discovery product-control endpoints are local-first and share DTOs from
 - `POST /v1/discovery/quarantine/:jobKey/decision` approves or rejects a
   quarantined lead and records feedback for source-quality aggregation.
 - `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated
-  capture provenance. Raw pasted or saved content is not copied into domain
+  capture provenance for copied URLs, current-page URLs, pasted text, saved
+  HTML, and email imports. Raw pasted or saved content is not copied into domain
   events; the API stores only local metadata such as content length and hash.
 - `POST /v1/discovery/manual-capture/:itemId/dismiss` dismisses a pending
   manual-capture item.
@@ -201,7 +202,7 @@ Each frame:
 
 ### Tenant filtering (COALESCE on the row, not the request)
 
-The server filters `job_events` with the COALESCE on the *event row's*
+The server filters `job_events` with the COALESCE on the _event row's_
 extracted tenant — falling back to the literal `'local'` string when the
 row's `payload_json` lacks a `$.tenantId` key (legacy events written before
 `tenantId` was a required payload field):
