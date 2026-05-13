@@ -1,14 +1,12 @@
 """Driven ports for the Job Discovery context.
 
-See ddd-target.md §5.1.
+See ddd-target.md §5.1 and the PR 2 section of the Job Search Discovery
+RFC (`docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`).
 
-Two ports declared here. ``JobRepository`` is materialised by
-``SqliteJobRepository`` today. ``JobBoardScraperPort`` is a
-**placeholder Protocol** — no adapter exists yet because the per-
-scraper refactor is deferred per the migration plan §8 — but the
-typed shape is published now so the future
-``JobSpyAdapter`` / ``WorkdayApiAdapter`` / ``SmartExtractAdapter``
-extraction (S-25 "Files touched") has its target.
+Three ports declared here. ``JobRepository`` is materialised by
+``SqliteJobRepository``. ``JobBoardScraperPort`` is materialised by the
+PR 2 ATS adapters (``WorkdayBoardAdapter``, ``GreenhouseBoardAdapter``,
+``LeverBoardAdapter``, ``AshbyBoardAdapter``).
 """
 
 from __future__ import annotations
@@ -17,6 +15,12 @@ from dataclasses import dataclass
 from typing import Iterable, Protocol
 
 from jobhunter.domain.discovery.aggregate import Job
+from jobhunter.domain.discovery.identity import (
+    AtsKind,
+    CanonicalJobIdentity,
+    DuplicateJobLink,
+    JobSourceObservation,
+)
 from jobhunter.domain.discovery.value_objects import (
     JobMetadata,
     PostingUrl,
@@ -31,18 +35,29 @@ from jobhunter.domain.tenant import TenantId
 class ScrapedJobPosting:
     """Raw posting hand-off from a board scraper to the Discovery context.
 
-    Pure data — the value object the future ``JobBoardScraperPort``
-    yields per result. The Discovery use case (``DiscoverJobsUseCase``)
-    is responsible for turning these into ``Job`` aggregates and
-    handing them to ``JobRepository.save``. Splitting the wire shape
-    from the aggregate keeps the scrapers free of TenantId / JobId
-    allocation concerns.
+    Pure data — the value object every ``JobBoardScraperPort`` yields per
+    result. The Discovery use case (``DiscoverJobsUseCase``) is
+    responsible for turning these into ``Job`` aggregates and handing
+    them to ``JobRepository.save``. Splitting the wire shape from the
+    aggregate keeps the scrapers free of TenantId / JobId allocation
+    concerns.
+
+    Per PR 2 the scraped value object carries the canonical-identity
+    inputs needed by the Discovery write boundary: the source-native id
+    that uniquely identifies the posting on its source, the canonical
+    URL the source advertises (typically the ATS detail URL), the ATS
+    kind detected by the adapter, and the source registry id the
+    posting was scraped from.
     """
 
     posting_url: PostingUrl
     source: Source
     metadata: JobMetadata
     strategy: SearchStrategy
+    source_id: str
+    source_native_id: str
+    canonical_url: str
+    ats_kind: AtsKind = AtsKind.OTHER
 
 
 class JobBoardScraperPort(Protocol):
@@ -155,5 +170,75 @@ class JobRepository(Protocol):
 
         Returns the updated aggregate, or ``None`` if the job did not
         exist. No-op on a non-deleted job.
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # PR 2: canonical identity, source observations, duplicate links
+    # ------------------------------------------------------------------
+
+    def find_canonical_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        source_id: str,
+        source_native_id: str,
+        canonical_url: str,
+    ) -> JobId | None:
+        """Look up the canonical Job that already owns a posting identity.
+
+        Resolution order matches the RFC §"Recommended identity checks"
+        table:
+
+          1. ``(tenant_id, source_id, source_native_id)`` — the strongest
+             match because the source guarantees its native id is unique
+             on that source.
+          2. ``(tenant_id, normalized_canonical_url)`` — catches the case
+             where two adapters resolve the same canonical URL but
+             advertise different source-native ids (rare but real).
+          3. ``(tenant_id, normalized_observed_url)`` — catches the case
+             where one source-native id is missing but the observed URL
+             matches an existing observation.
+
+        Returns the surviving ``JobId`` for the first match, or ``None``
+        when the posting is genuinely new.
+        """
+        ...
+
+    def attach_source_observation(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        observation: JobSourceObservation,
+    ) -> None:
+        """Persist an observation under an existing canonical Job.
+
+        Idempotent on ``(tenant_id, source_id, source_native_id)`` — the
+        same source emitting the same posting in a later run REPLACES
+        the previous observation row rather than appending a duplicate.
+        """
+        ...
+
+    def set_canonical_identity(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        identity: CanonicalJobIdentity,
+    ) -> None:
+        """Persist the canonical identity decision for a Job."""
+        ...
+
+    def record_duplicate_link(
+        self,
+        tenant_id: TenantId,
+        link: DuplicateJobLink,
+    ) -> None:
+        """Persist a confirmed duplicate-link audit record.
+
+        Per the RFC failure mode "A duplicate link points to a job the
+        user later dismisses", the link must be reversible. Storing the
+        link does NOT delete the superseded observation; it only records
+        the merge decision so Operations can surface it and a future
+        user correction can split the candidate back out.
         """
         ...

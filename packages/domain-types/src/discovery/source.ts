@@ -12,6 +12,9 @@ export const SOURCE_KINDS = [
 ] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
+export const ATS_KINDS = ["workday", "greenhouse", "lever", "ashby", "other"] as const;
+export type AtsKind = (typeof ATS_KINDS)[number];
+
 export const SOURCE_STATES = [
   "active",
   "experimental",

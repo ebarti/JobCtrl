@@ -145,6 +145,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_score_tables(conn)
     ensure_materials_tables(conn)
     ensure_enrichment_tables(conn)
+    ensure_source_observation_tables(conn)
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
 
@@ -1309,6 +1310,177 @@ def _backfill_one_enrichment_row(
             extraction_tier,
             json.dumps(attempts, sort_keys=True),
             detail_scraped_at or now,
+        ),
+    )
+
+
+def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create ``job_source_observations``, ``job_canonical_identities``, and ``job_duplicate_links``.
+
+    See PR 2 of the Job Search Discovery RFC
+    (`docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`).
+
+    The migration is purely additive — the legacy ``jobs.url`` PRIMARY
+    KEY remains the canonical posting URL during the compatibility
+    window so ``load_by_url`` can resolve either a canonical URL or an
+    observation URL without a coordinated cutover.
+
+    Backfill is idempotent: if ``job_source_observations`` is empty AND
+    the ``jobs`` table has rows, every existing job seeds exactly one
+    observation row using its current ``url`` / ``site`` / ``strategy``
+    / ``discovered_at`` so the source-quality projection sees its
+    history without rerunning any scrape.
+    """
+
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_source_observations (
+            tenant_id                TEXT NOT NULL DEFAULT 'local',
+            source_observation_id    TEXT NOT NULL,
+            job_url                  TEXT NOT NULL,
+            source_id                TEXT NOT NULL,
+            source_native_id         TEXT NOT NULL,
+            observed_url             TEXT NOT NULL,
+            normalized_observed_url  TEXT NOT NULL,
+            run_id                   TEXT NOT NULL DEFAULT '',
+            observed_at              TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, source_observation_id),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_source_observations_native
+        ON job_source_observations(tenant_id, source_id, source_native_id)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_job_source_observations_normalized_url
+        ON job_source_observations(tenant_id, normalized_observed_url)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_source_observations_job
+        ON job_source_observations(tenant_id, job_url)
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_canonical_identities (
+            tenant_id          TEXT NOT NULL DEFAULT 'local',
+            job_url            TEXT NOT NULL,
+            canonical_url      TEXT NOT NULL,
+            ats_kind           TEXT NOT NULL,
+            source_native_id   TEXT NOT NULL,
+            confidence         REAL NOT NULL,
+            resolved_at        TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_url),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_canonical_identities_canonical_url
+        ON job_canonical_identities(tenant_id, canonical_url)
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_duplicate_links (
+            tenant_id                              TEXT NOT NULL DEFAULT 'local',
+            duplicate_link_id                      TEXT NOT NULL,
+            surviving_job_id                       TEXT NOT NULL,
+            superseded_job_or_observation_id       TEXT NOT NULL,
+            reason                                 TEXT NOT NULL,
+            confidence                             REAL NOT NULL,
+            linked_at                              TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, duplicate_link_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_duplicate_links_surviving
+        ON job_duplicate_links(tenant_id, surviving_job_id)
+        """
+    )
+
+    # Idempotent one-shot backfill: every existing jobs row gets one
+    # observation row using its legacy URL / site / discovered_at.
+    backfilled = conn.execute(
+        "SELECT COUNT(*) FROM job_source_observations"
+    ).fetchone()[0]
+    if backfilled == 0:
+        legacy_jobs = conn.execute(
+            "SELECT url, site, strategy, discovered_at FROM jobs"
+        ).fetchall()
+        if legacy_jobs:
+            now = datetime.now(timezone.utc).isoformat()
+            for row in legacy_jobs:
+                _backfill_one_observation_row(conn, row, now)
+
+    conn.commit()
+    return [
+        "job_source_observations",
+        "job_canonical_identities",
+        "job_duplicate_links",
+    ]
+
+
+def _backfill_one_observation_row(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    now: str,
+) -> None:
+    """Backfill one legacy ``jobs`` row into ``job_source_observations``.
+
+    The legacy schema stores the source as a free-form ``site`` string
+    (e.g. ``"Greenhouse"`` for the Workday adapter, ``"linkedin"`` for
+    JobSpy). This is the only identity we have for historical rows, so
+    the backfill uses ``site`` as both the source-id and the
+    source-native-id key. New scrapes will update the row with the
+    real source-native-id once the canonical adapter resolves it.
+
+    Backfilled rows carry the sentinel ``site=='backfill'`` run-id so
+    Operations can filter them out of source-quality calculations
+    (PR 4 will gate the projection on ``run_id != 'backfill'``).
+    """
+    from jobhunter.domain.discovery.identity import normalize_observed_url
+
+    url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
+    site = (row["site"] if isinstance(row, sqlite3.Row) else row[1]) or "unknown"
+    discovered_at = (
+        row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]
+    ) or now
+    if not url:
+        return
+    source_native_id = url  # fall back to the URL when we have nothing better
+    source_observation_id = f"backfill:{url}"
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO job_source_observations (
+            tenant_id, source_observation_id, job_url, source_id,
+            source_native_id, observed_url, normalized_observed_url,
+            run_id, observed_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'backfill', ?)
+        """,
+        (
+            source_observation_id,
+            url,
+            str(site),
+            str(source_native_id),
+            url,
+            normalize_observed_url(url),
+            discovered_at,
         ),
     )
 

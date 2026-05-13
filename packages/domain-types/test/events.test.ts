@@ -3,7 +3,11 @@ import { LOCAL_TENANT } from "../src/tenant.js";
 import { createDomainEvent } from "../src/events/base.js";
 import { DOMAIN_EVENT_TYPES } from "../src/events/index.js";
 import {
+  createCanonicalJobIdentityResolved,
+  createDuplicateJobLinked,
+  createDuplicateJobLinkRejected,
   createJobDiscovered,
+  createJobSourceObserved,
   createSourceLocationCandidateDiscovered,
   createSourceLocationCandidatePromoted,
   createSourceRegistryEntryCreated,
@@ -72,6 +76,58 @@ describe("Discovery events", () => {
     });
     expect(event.eventType).toBe("SourceRegistryEntryCreated");
     expect(event.payload.state).toBe("experimental");
+  });
+
+  it("JobSourceObserved carries observation attribution", () => {
+    const event = createJobSourceObserved(LOCAL_TENANT, {
+      jobId: "j1",
+      sourceObservationId: "observation-1",
+      sourceId: "greenhouse:acme",
+      sourceNativeId: "123456",
+      observedUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+      runId: "run-1",
+      observedAt: "2026-05-12T00:00:00Z",
+    });
+    expect(event.eventType).toBe("JobSourceObserved");
+    expect(event.payload.sourceObservationId).toBe("observation-1");
+    expect(event.payload.runId).toBe("run-1");
+  });
+
+  it("CanonicalJobIdentityResolved carries ATS identity fields", () => {
+    const event = createCanonicalJobIdentityResolved(LOCAL_TENANT, {
+      jobId: "j1",
+      canonicalUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+      atsKind: "greenhouse",
+      sourceNativeId: "123456",
+      confidence: 0.98,
+    });
+    expect(event.eventType).toBe("CanonicalJobIdentityResolved");
+    expect(event.payload.atsKind).toBe("greenhouse");
+    expect(event.payload.confidence).toBe(0.98);
+  });
+
+  it("DuplicateJobLinked carries the survivor and superseded ids", () => {
+    const event = createDuplicateJobLinked(LOCAL_TENANT, {
+      duplicateLinkId: "duplicate-link-1",
+      survivingJobId: "j1",
+      supersededJobOrObservationId: "observation-2",
+      reason: "ats_identity_match",
+      confidence: 0.96,
+    });
+    expect(event.eventType).toBe("DuplicateJobLinked");
+    expect(event.payload.survivingJobId).toBe("j1");
+    expect(event.payload.supersededJobOrObservationId).toBe("observation-2");
+  });
+
+  it("DuplicateJobLinkRejected carries rejected duplicate candidates", () => {
+    const event = createDuplicateJobLinkRejected(LOCAL_TENANT, {
+      duplicateLinkId: "duplicate-link-rejected-1",
+      candidateIds: ["j1", "j2"],
+      reason: "low_confidence",
+      rejectedAt: "2026-05-12T00:00:00Z",
+    });
+    expect(event.eventType).toBe("DuplicateJobLinkRejected");
+    expect(event.payload.candidateIds).toEqual(["j1", "j2"]);
   });
 });
 
@@ -225,6 +281,16 @@ describe("All events carry tenantId", () => {
         createdAt: "t",
       }),
     () =>
+      createJobSourceObserved(LOCAL_TENANT, {
+        jobId: "j1",
+        sourceObservationId: "observation-1",
+        sourceId: "greenhouse:acme",
+        sourceNativeId: "123456",
+        observedUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+        runId: "run-1",
+        observedAt: "t",
+      }),
+    () =>
       createJobEnriched(LOCAL_TENANT, {
         jobId: "j1",
         fullDescription: "d",
@@ -279,7 +345,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(32);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(36);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -324,6 +390,35 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         toState: "active",
         reason: "validated",
         changedAt: "t",
+      }).eventType,
+      createJobSourceObserved(LOCAL_TENANT, {
+        jobId: "j",
+        sourceObservationId: "observation-1",
+        sourceId: "greenhouse:acme",
+        sourceNativeId: "123456",
+        observedUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+        runId: "run-1",
+        observedAt: "t",
+      }).eventType,
+      createCanonicalJobIdentityResolved(LOCAL_TENANT, {
+        jobId: "j",
+        canonicalUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+        atsKind: "greenhouse",
+        sourceNativeId: "123456",
+        confidence: 0.98,
+      }).eventType,
+      createDuplicateJobLinked(LOCAL_TENANT, {
+        duplicateLinkId: "duplicate-link-1",
+        survivingJobId: "j",
+        supersededJobOrObservationId: "observation-2",
+        reason: "ats_identity_match",
+        confidence: 0.96,
+      }).eventType,
+      createDuplicateJobLinkRejected(LOCAL_TENANT, {
+        duplicateLinkId: "duplicate-link-rejected-1",
+        candidateIds: ["j", "j2"],
+        reason: "low_confidence",
+        rejectedAt: "t",
       }).eventType,
       createJobEnriched(LOCAL_TENANT, {
         jobId: "j",

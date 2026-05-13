@@ -132,3 +132,104 @@ def create_source_state_changed(
     payload: SourceStateChangedPayload,
 ) -> DomainEvent:
     return create_domain_event("SourceStateChanged", tenant_id, asdict(payload))
+
+
+# -- PR 2 events: Canonical ATS adapters + identity dedupe ------------------
+# Each event shape mirrors the §"Domain Events" table in
+# docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md so the
+# Operations projections can stay exhaustive and the SSE invalidation
+# router can stay parity-safe.
+
+
+@dataclass(frozen=True)
+class JobSourceObservedPayload:
+    """Per-source evidence attached to a canonical Job aggregate.
+
+    Emitted whenever a scraper run sees a posting for an existing
+    canonical Job (same source-native id, canonical URL, ATS identity,
+    or a confirmed duplicate). A first-time observation for a new
+    canonical Job is emitted alongside ``JobDiscovered`` so source
+    quality aggregations see every hit.
+    """
+
+    job_id: str
+    source_observation_id: str
+    source_id: str
+    source_native_id: str
+    observed_url: str
+    run_id: str
+    observed_at: str
+
+
+def create_job_source_observed(
+    tenant_id: TenantId,
+    payload: JobSourceObservedPayload,
+) -> DomainEvent:
+    return create_domain_event("JobSourceObserved", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class CanonicalJobIdentityResolvedPayload:
+    """Discovery-owned identity decision for a Job.
+
+    Carries the canonical URL, ATS kind, and source-native id used to
+    deduplicate later scraper hits. Confidence is a scalar in [0, 1] so
+    Operations can chart canonicalization quality over time.
+    """
+
+    job_id: str
+    canonical_url: str
+    ats_kind: str
+    source_native_id: str
+    confidence: float
+
+
+def create_canonical_job_identity_resolved(
+    tenant_id: TenantId,
+    payload: CanonicalJobIdentityResolvedPayload,
+) -> DomainEvent:
+    return create_domain_event(
+        "CanonicalJobIdentityResolved", tenant_id, asdict(payload)
+    )
+
+
+@dataclass(frozen=True)
+class DuplicateJobLinkedPayload:
+    """A duplicate observation has been merged into a surviving Job."""
+
+    duplicate_link_id: str
+    surviving_job_id: str
+    superseded_job_or_observation_id: str
+    reason: str
+    confidence: float
+
+
+def create_duplicate_job_linked(
+    tenant_id: TenantId,
+    payload: DuplicateJobLinkedPayload,
+) -> DomainEvent:
+    return create_domain_event("DuplicateJobLinked", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class DuplicateJobLinkRejectedPayload:
+    """A proposed duplicate link was rejected by Discovery dedupe.
+
+    ``candidate_ids`` carries the ids that would have merged so the
+    Operations dedupe diagnostics can surface the rejected pairing
+    without storing the raw payloads.
+    """
+
+    duplicate_link_id: str
+    candidate_ids: tuple[str, ...]
+    reason: str
+    rejected_at: str
+
+
+def create_duplicate_job_link_rejected(
+    tenant_id: TenantId,
+    payload: DuplicateJobLinkRejectedPayload,
+) -> DomainEvent:
+    return create_domain_event(
+        "DuplicateJobLinkRejected", tenant_id, asdict(payload)
+    )

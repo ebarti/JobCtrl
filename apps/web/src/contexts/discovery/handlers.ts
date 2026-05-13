@@ -1,7 +1,11 @@
 import type {
+  CanonicalJobIdentityResolved,
+  DuplicateJobLinked,
+  DuplicateJobLinkRejected,
   JobDeleted,
   JobDiscovered,
   JobRestored,
+  JobSourceObserved,
   JobUpdated,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
@@ -34,6 +38,38 @@ export const jobDeletedHandler = (event: JobDeleted): readonly InvalidationItem[
 export const jobRestoredHandler = (event: JobRestored): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const jobSourceObservedHandler = (
+  event: JobSourceObserved,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+];
+
+export const canonicalJobIdentityResolvedHandler = (
+  event: CanonicalJobIdentityResolved,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+];
+
+export const duplicateJobLinkedHandler = (
+  event: DuplicateJobLinked,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.survivingJobId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const duplicateJobLinkRejectedHandler = (
+  event: DuplicateJobLinkRejected,
+): readonly InvalidationItem[] => [
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 

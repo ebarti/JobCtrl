@@ -8,6 +8,13 @@ the Discovery context. Adapters live under
 """
 
 from jobhunter.domain.discovery.aggregate import Job
+from jobhunter.domain.discovery.identity import (
+    AtsKind,
+    CanonicalJobIdentity,
+    DuplicateJobLink,
+    JobSourceObservation,
+    normalize_observed_url,
+)
 from jobhunter.domain.discovery.value_objects import (
     Employer,
     JobMetadata,
@@ -41,6 +48,11 @@ from jobhunter.domain.discovery.source_registry import (
 
 __all__ = [
     "Job",
+    "AtsKind",
+    "CanonicalJobIdentity",
+    "DuplicateJobLink",
+    "JobSourceObservation",
+    "normalize_observed_url",
     "Employer",
     "JobMetadata",
     "PostingUrl",
