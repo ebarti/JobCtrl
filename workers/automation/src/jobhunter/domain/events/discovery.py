@@ -290,3 +290,25 @@ def create_duplicate_job_link_rejected(
     return create_domain_event(
         "DuplicateJobLinkRejected", tenant_id, asdict(payload)
     )
+
+
+@dataclass(frozen=True)
+class DiscoveryFeedbackRecordedPayload:
+    """User/system feedback that feeds source-quality metrics.
+
+    The payload intentionally carries IDs and feedback kind only. Free-form
+    notes and raw posting content stay out of domain events.
+    """
+
+    feedback_id: str
+    job_id: str
+    source_id: str | None
+    kind: str
+    recorded_at: str
+
+
+def create_discovery_feedback_recorded(
+    tenant_id: TenantId,
+    payload: DiscoveryFeedbackRecordedPayload,
+) -> DomainEvent:
+    return create_domain_event("DiscoveryFeedbackRecorded", tenant_id, asdict(payload))

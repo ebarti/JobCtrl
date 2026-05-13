@@ -816,6 +816,11 @@ export interface SourceRegistryListResponse {
   sources: SourceRegistryEntrySummary[];
 }
 
+export interface SourceRegistryMutationResponse {
+  ok: true;
+  source: SourceRegistryEntrySummary;
+}
+
 export const MANUAL_ACTION_REASON_VALUES = [
   "captcha",
   "login_required",

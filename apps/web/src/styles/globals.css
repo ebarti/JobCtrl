@@ -476,6 +476,75 @@ textarea {
   margin: 0 0 18px;
 }
 
+.discovery-controls {
+  margin: 0 0 18px;
+}
+
+.discovery-control-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 0;
+}
+
+.discovery-control-panel {
+  min-width: 0;
+  border-right: 1px solid var(--rule);
+}
+
+.discovery-control-panel:last-child {
+  border-right: 0;
+}
+
+.discovery-panel-head {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--rule);
+  padding: 9px 12px;
+}
+
+.discovery-panel-head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.source-upsert-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border-bottom: 1px solid var(--rule);
+  padding: 12px;
+}
+
+.source-upsert-form .wide,
+.source-upsert-form button {
+  grid-column: 1 / -1;
+}
+
+.discovery-source-row,
+.discovery-review-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--row);
+  border-bottom: 1px solid var(--rule);
+  padding: 8px 12px;
+}
+
+.discovery-source-row {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.discovery-review-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.rows.compact .empty {
+  margin: 12px;
+}
+
 .stage-trigger-tabs {
   padding: 14px 16px 0;
 }
@@ -1648,6 +1717,7 @@ textarea {
 @media (max-width: 1000px) {
   .kpis,
   .dashboard-grid,
+  .discovery-control-grid,
   .field-grid,
   .stage-trigger-grid,
   .target-preferences-grid,
@@ -1677,6 +1747,8 @@ textarea {
   .data-row.job,
   .data-row.artifact,
   .activity-row,
+  .discovery-source-row,
+  .discovery-review-row,
   .funnel-row,
   .detail-list div,
   .section .mini-row {
@@ -1696,6 +1768,15 @@ textarea {
 
   .credential-row-form .status-line {
     grid-column: 1 / -1;
+  }
+
+  .discovery-control-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .discovery-control-panel:last-child {
+    border-bottom: 0;
   }
 
   .profile-layout {

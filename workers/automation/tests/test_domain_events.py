@@ -30,6 +30,8 @@ from jobhunter.domain.events.discovery import (
     create_discovery_run_completed,
     DiscoveryRunFailedPayload,
     create_discovery_run_failed,
+    DiscoveryFeedbackRecordedPayload,
+    create_discovery_feedback_recorded,
 )
 from jobhunter.domain.events.enrichment import (
     JobEnrichedPayload,
@@ -237,6 +239,20 @@ class TestDiscoveryEvents:
         assert started.event_type == "DiscoveryRunStarted"
         assert completed.payload["counts"]["new_jobs"] == 1
         assert failed.payload["error_class"] == "TimeoutError"
+
+    def test_discovery_feedback_recorded(self) -> None:
+        event = create_discovery_feedback_recorded(
+            LOCAL_TENANT,
+            DiscoveryFeedbackRecordedPayload(
+                feedback_id="feedback-1",
+                job_id="job-1",
+                source_id="greenhouse:acme",
+                kind="bad_source",
+                recorded_at="2026-05-13T00:03:00Z",
+            ),
+        )
+        assert event.event_type == "DiscoveryFeedbackRecorded"
+        assert event.payload["kind"] == "bad_source"
 
 
 class TestEnrichmentEvents:

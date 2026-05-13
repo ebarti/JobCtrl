@@ -1402,7 +1402,8 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
        'JobEnriched',
        'EnrichmentFailed',
        'JobActiveStateChanged',
-       'ContentDuplicateCandidateDetected'
+       'ContentDuplicateCandidateDetected',
+       'DiscoveryFeedbackRecorded'
      )
      ORDER BY event_id ASC`,
   );
@@ -1583,6 +1584,29 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
           duplicateByRunSource.set(key, (duplicateByRunSource.get(key) ?? 0) + 1);
         }
       }
+    } else if (row.event_type === "DiscoveryFeedbackRecorded") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const explicitSourceId = nullableText(value(payload, "source_id", "sourceId"));
+      const sourceIds = explicitSourceId ? [explicitSourceId] : [...(sourcesByJob.get(jobId) ?? [])];
+      const kind = text(payload, "kind");
+      for (const sourceId of sourceIds) {
+        const current = getStats(stats, sourceId);
+        current.observedJobs += 1;
+        if (kind === "duplicate") {
+          current.duplicateJobs += 1;
+        } else if (["stale", "wrong_company", "wrong_location", "irrelevant"].includes(kind)) {
+          current.staleJobs += 1;
+        } else if (kind === "bad_source") {
+          markDetailFailure(current, jobId);
+          current.lastErrorClass = "user_bad_source";
+        } else if (["saved", "applied", "useful"].includes(kind)) {
+          current.activeJobs += 1;
+          markDetailSuccess(current, jobId);
+          if (kind === "applied") {
+            markApplySuccess(current, jobId);
+          }
+        }
+      }
     }
   }
 
@@ -1688,7 +1712,8 @@ function hasSourceQualityHistory(db: SqliteDatabase): boolean {
        'JobEnriched',
        'EnrichmentFailed',
        'JobActiveStateChanged',
-       'ContentDuplicateCandidateDetected'
+       'ContentDuplicateCandidateDetected',
+       'DiscoveryFeedbackRecorded'
      )`,
   );
   return Number(row?.c ?? 0) > 0;

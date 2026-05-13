@@ -35,6 +35,8 @@ from jobhunter.domain.events.discovery import (
     create_duplicate_job_linked,
     DuplicateJobLinkRejectedPayload,
     create_duplicate_job_link_rejected,
+    DiscoveryFeedbackRecordedPayload,
+    create_discovery_feedback_recorded,
 )
 from jobhunter.domain.events.enrichment import (
     JobEnrichedPayload,
@@ -115,6 +117,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "CanonicalJobIdentityResolved",
     "DuplicateJobLinked",
     "DuplicateJobLinkRejected",
+    "DiscoveryFeedbackRecorded",
     "SourceLocationCandidateDiscovered",
     "SourceLocationCandidatePromoted",
     "SourceRegistryEntryCreated",
@@ -188,6 +191,8 @@ __all__ = [
     "create_duplicate_job_linked",
     "DuplicateJobLinkRejectedPayload",
     "create_duplicate_job_link_rejected",
+    "DiscoveryFeedbackRecordedPayload",
+    "create_discovery_feedback_recorded",
     # Enrichment
     "JobEnrichedPayload",
     "create_job_enriched",
