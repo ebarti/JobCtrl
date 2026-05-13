@@ -923,25 +923,15 @@ class ProjectionBuilder:
         self._store.upsert_dashboard(dashboard)
 
     def _rebuild_source_quality(self) -> None:
+        placeholders = ", ".join("?" for _ in SOURCE_QUALITY_EVENT_TYPES)
         rows = self._conn.execute(
-            """
+            f"""
             SELECT event_id, job_url, event_type, occurred_at, payload_json
             FROM job_events
-            WHERE event_type IN (
-                'DiscoveryRunStarted',
-                'DiscoveryRunCompleted',
-                'DiscoveryRunFailed',
-                'JobSourceObserved',
-                'DuplicateJobLinked',
-                'PostingContentSnapshotCaptured',
-                'PostingContentSnapshotFailed',
-                'JobEnriched',
-                'EnrichmentFailed',
-                'JobActiveStateChanged',
-                'ContentDuplicateCandidateDetected'
-            )
+            WHERE event_type IN ({placeholders})
             ORDER BY event_id ASC
-            """
+            """,
+            tuple(sorted(SOURCE_QUALITY_EVENT_TYPES)),
         ).fetchall()
         result = project_source_quality(
             tenant_id=self._tenant_id,
@@ -953,24 +943,14 @@ class ProjectionBuilder:
         self._store.replace_source_quality(str(self._tenant_id), result.stats)
 
     def _has_source_quality_history(self) -> bool:
+        placeholders = ", ".join("?" for _ in SOURCE_QUALITY_EVENT_TYPES)
         row = self._conn.execute(
-            """
+            f"""
             SELECT COUNT(*)
             FROM job_events
-            WHERE event_type IN (
-                'DiscoveryRunStarted',
-                'DiscoveryRunCompleted',
-                'DiscoveryRunFailed',
-                'JobSourceObserved',
-                'DuplicateJobLinked',
-                'PostingContentSnapshotCaptured',
-                'PostingContentSnapshotFailed',
-                'JobEnriched',
-                'EnrichmentFailed',
-                'JobActiveStateChanged',
-                'ContentDuplicateCandidateDetected'
-            )
-            """
+            WHERE event_type IN ({placeholders})
+            """,
+            tuple(sorted(SOURCE_QUALITY_EVENT_TYPES)),
         ).fetchone()
         return bool(row and int(row[0]) > 0)
 
