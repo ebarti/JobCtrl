@@ -26,10 +26,10 @@ def _stub_temporal():
     awaited`` because the Mock machinery wrapped the call in a way that
     occasionally dropped the coroutine before ``await`` consumed it.
     """
-    # cli.py imports ``get_temporal_client`` lazily inside the doctor command,
-    # so the patch target is the source module — not the cli namespace.
+    # cli.py imports ``get_temporal_client`` lazily from the package export
+    # inside the doctor command, so patch the same exported binding.
     return patch(
-        "jobhunter.infrastructure.temporal.client.get_temporal_client",
+        "jobhunter.infrastructure.temporal.get_temporal_client",
         new=AsyncMock(return_value=object()),
     )
 

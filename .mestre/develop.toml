@@ -1,0 +1,30 @@
+version = 1
+
+[develop]
+instructions = """
+Follow AGENTS.md and the referenced architecture docs before changing behavior.
+Keep all work local-first, preserve existing compatibility behavior unless the
+goal explicitly authorizes removal, and do not run auto-apply or browser
+submission flows. For user-facing product/API/UI changes, update the owning docs
+and include a QA path that exercises the product behavior.
+"""
+
+[[develop.verify]]
+name = "install-node-dependencies"
+run = ["corepack", "pnpm", "install", "--frozen-lockfile"]
+timeout_seconds = 600
+
+[[develop.verify]]
+name = "check"
+run = ["corepack", "pnpm", "check"]
+timeout_seconds = 1800
+
+[[develop.verify]]
+name = "test"
+run = ["corepack", "pnpm", "test"]
+timeout_seconds = 1800
+
+[[develop.self_test]]
+name = "doctor"
+run = ["uv", "--project", "workers/automation", "run", "jobhunter", "doctor"]
+timeout_seconds = 300
