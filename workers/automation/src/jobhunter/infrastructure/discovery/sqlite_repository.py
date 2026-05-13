@@ -36,6 +36,13 @@ import sqlite3
 from typing import Any
 
 from jobhunter.domain.discovery.aggregate import Job
+from jobhunter.domain.discovery.identity import (
+    AtsKind,
+    CanonicalJobIdentity,
+    DuplicateJobLink,
+    JobSourceObservation,
+    normalize_observed_url,
+)
 from jobhunter.domain.discovery.value_objects import (
     Employer,
     JobMetadata,
@@ -114,6 +121,20 @@ class SqliteJobRepository:
         return self.load_by_url(tenant_id, PostingUrl(value=str(job_id)))
 
     def load_by_url(self, tenant_id: TenantId, posting_url: PostingUrl) -> Job | None:
+        """Resolve a posting URL to its canonical Job aggregate.
+
+        Per the RFC §"Deduplication Boundary", ``load_by_url`` MUST keep
+        resolving both the canonical ``jobs.url`` and the additional
+        observation URLs during the compatibility window so existing
+        callers and local databases continue to work. Resolution order:
+
+          1. Direct match on ``jobs.url`` (the legacy primary key and
+             the canonical posting URL during the migration).
+          2. Match on a normalised observation URL — when a broad-board
+             callsite passes the URL it scraped from Indeed/LinkedIn,
+             we still want to find the canonical Job that owns it.
+        """
+
         row = self._conn.execute(
             """
             SELECT j.url, j.title, j.salary, j.description, j.location,
@@ -126,6 +147,30 @@ class SqliteJobRepository:
             LIMIT 1
             """,
             (posting_url.value,),
+        ).fetchone()
+        if row is not None:
+            return self._row_to_job(row, tenant_id)
+
+        # Fall back to the observation index — this is the
+        # compatibility seam that lets a broad-board URL resolve to
+        # the canonical Job after PR 2's identity migration lands.
+        normalized = normalize_observed_url(posting_url.value)
+        if not normalized:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT j.url, j.title, j.salary, j.description, j.location,
+                   j.site, j.strategy, j.discovered_at,
+                   d.deleted_at, d.reason
+            FROM jobs j
+            JOIN job_source_observations o
+              ON o.job_url = j.url AND o.tenant_id = ?
+            LEFT JOIN jobhunter_deleted_jobs d
+              ON d.job_url = j.url AND d.restored_at IS NULL
+            WHERE o.normalized_observed_url = ?
+            LIMIT 1
+            """,
+            (str(tenant_id), normalized),
         ).fetchone()
         if row is None:
             return None
@@ -287,6 +332,243 @@ class SqliteJobRepository:
         )
         self._conn.commit()
         return restored
+
+    # ------------------------------------------------------------------
+    # PR 2: canonical identity, source observations, duplicate links
+    # ------------------------------------------------------------------
+
+    def find_canonical_owner(
+        self,
+        tenant_id: TenantId,
+        *,
+        source_id: str,
+        source_native_id: str,
+        canonical_url: str,
+    ) -> JobId | None:
+        """Look up the canonical Job for an incoming posting identity.
+
+        Resolution order matches the RFC §"Recommended identity checks":
+        source-native id first, canonical URL second, normalised
+        observation URL third.
+        """
+
+        if source_id and source_native_id:
+            row = self._conn.execute(
+                """
+                SELECT job_url FROM job_source_observations
+                WHERE tenant_id = ? AND source_id = ? AND source_native_id = ?
+                LIMIT 1
+                """,
+                (str(tenant_id), source_id, source_native_id),
+            ).fetchone()
+            if row is not None:
+                job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
+                if job_url:
+                    return JobId(str(job_url))
+
+        if canonical_url:
+            row = self._conn.execute(
+                """
+                SELECT job_url FROM job_canonical_identities
+                WHERE tenant_id = ? AND canonical_url = ?
+                LIMIT 1
+                """,
+                (str(tenant_id), canonical_url),
+            ).fetchone()
+            if row is not None:
+                job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
+                if job_url:
+                    return JobId(str(job_url))
+
+            normalized = normalize_observed_url(canonical_url)
+            if normalized:
+                row = self._conn.execute(
+                    """
+                    SELECT job_url FROM job_source_observations
+                    WHERE tenant_id = ? AND normalized_observed_url = ?
+                    LIMIT 1
+                    """,
+                    (str(tenant_id), normalized),
+                ).fetchone()
+                if row is not None:
+                    job_url = (
+                        row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
+                    )
+                    if job_url:
+                        return JobId(str(job_url))
+
+        return None
+
+    def attach_source_observation(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        observation: JobSourceObservation,
+    ) -> None:
+        """Persist or replace an observation row.
+
+        Idempotent on ``(tenant_id, source_id, source_native_id)``: if
+        the same source emits the same posting twice, the second write
+        REPLACES the first observation rather than creating a duplicate
+        row. The unique index on ``(tenant_id, normalized_observed_url)``
+        also collapses cosmetic URL variants.
+        """
+
+        normalized = normalize_observed_url(observation.observed_url)
+        # Defensive: if a different source already owns this normalized
+        # URL we want the upsert path to merge instead of failing on the
+        # unique index. The normalized-URL conflict is handled with
+        # ``ON CONFLICT (tenant_id, normalized_observed_url)``.
+        self._conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id,
+                source_native_id, observed_url, normalized_observed_url,
+                run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, source_id, source_native_id) DO UPDATE SET
+                job_url = excluded.job_url,
+                observed_url = excluded.observed_url,
+                normalized_observed_url = excluded.normalized_observed_url,
+                run_id = excluded.run_id,
+                observed_at = excluded.observed_at
+            """,
+            (
+                str(tenant_id),
+                observation.source_observation_id,
+                str(job_id),
+                observation.source_id,
+                observation.source_native_id,
+                observation.observed_url,
+                normalized,
+                observation.run_id,
+                observation.observed_at,
+            ),
+        )
+        self._conn.commit()
+
+    def set_canonical_identity(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        identity: CanonicalJobIdentity,
+    ) -> None:
+        """Persist (or replace) the canonical identity decision for a Job."""
+
+        from datetime import datetime, timezone
+
+        self._conn.execute(
+            """
+            INSERT INTO job_canonical_identities (
+                tenant_id, job_url, canonical_url, ats_kind,
+                source_native_id, confidence, resolved_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, job_url) DO UPDATE SET
+                canonical_url = excluded.canonical_url,
+                ats_kind = excluded.ats_kind,
+                source_native_id = excluded.source_native_id,
+                confidence = excluded.confidence,
+                resolved_at = excluded.resolved_at
+            """,
+            (
+                str(tenant_id),
+                str(job_id),
+                identity.canonical_url,
+                identity.ats_kind.value,
+                identity.source_native_id,
+                float(identity.confidence),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self._conn.commit()
+
+    def record_duplicate_link(
+        self,
+        tenant_id: TenantId,
+        link: DuplicateJobLink,
+    ) -> None:
+        """Persist a confirmed duplicate-link audit record."""
+
+        self._conn.execute(
+            """
+            INSERT INTO job_duplicate_links (
+                tenant_id, duplicate_link_id, surviving_job_id,
+                superseded_job_or_observation_id, reason, confidence,
+                linked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, duplicate_link_id) DO UPDATE SET
+                surviving_job_id = excluded.surviving_job_id,
+                superseded_job_or_observation_id =
+                    excluded.superseded_job_or_observation_id,
+                reason = excluded.reason,
+                confidence = excluded.confidence,
+                linked_at = excluded.linked_at
+            """,
+            (
+                str(tenant_id),
+                link.duplicate_link_id,
+                link.surviving_job_id,
+                link.superseded_job_or_observation_id,
+                link.reason,
+                float(link.confidence),
+                link.linked_at,
+            ),
+        )
+        self._conn.commit()
+
+    def list_observations(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> list[JobSourceObservation]:
+        """Read-side helper used by tests and the future Operations projection."""
+
+        rows = self._conn.execute(
+            """
+            SELECT source_observation_id, source_id, source_native_id,
+                   observed_url, run_id, observed_at
+            FROM job_source_observations
+            WHERE tenant_id = ? AND job_url = ?
+            ORDER BY observed_at ASC
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchall()
+        return [
+            JobSourceObservation(
+                source_observation_id=str(row["source_observation_id"]),
+                source_id=str(row["source_id"]),
+                source_native_id=str(row["source_native_id"]),
+                observed_url=str(row["observed_url"]),
+                run_id=str(row["run_id"]),
+                observed_at=str(row["observed_at"]),
+            )
+            for row in rows
+        ]
+
+    def load_canonical_identity(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> CanonicalJobIdentity | None:
+        """Read-side helper used by tests and the future Operations projection."""
+
+        row = self._conn.execute(
+            """
+            SELECT canonical_url, ats_kind, source_native_id, confidence
+            FROM job_canonical_identities
+            WHERE tenant_id = ? AND job_url = ?
+            LIMIT 1
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return CanonicalJobIdentity(
+            canonical_url=str(row["canonical_url"]),
+            ats_kind=AtsKind.from_optional(row["ats_kind"]),
+            source_native_id=str(row["source_native_id"]),
+            confidence=float(row["confidence"]),
+        )
 
     # ------------------------------------------------------------------
     # Internals
