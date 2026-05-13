@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import Span, Status, StatusCode
 
 
 @contextmanager
@@ -27,7 +27,7 @@ def content_acquire_span(
     policy_id: str,
     snapshot_hash: str | None = None,
     scope_name: str = "jobhunter.enrichment.content",
-) -> Iterator[None]:
+) -> Iterator[Span]:
     """Span for ``ContentAcquisitionService.acquire``.
 
     The optional ``snapshot_hash`` is the SHA-256 description hash
@@ -45,7 +45,7 @@ def content_acquire_span(
         if snapshot_hash is not None:
             span.set_attribute("snapshot.hash", snapshot_hash)
         try:
-            yield
+            yield span
         except Exception as exc:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
@@ -61,7 +61,7 @@ def content_render_span(
     render_result: str,
     http_status_code: int | None = None,
     scope_name: str = "jobhunter.enrichment.content",
-) -> Iterator[None]:
+) -> Iterator[Span]:
     """Span for rendered-browser detail extraction.
 
     ``render_result`` is one of ``ok``, ``timeout``, ``not_found``,
@@ -78,7 +78,7 @@ def content_render_span(
         if http_status_code is not None:
             span.set_attribute("http.status_code", http_status_code)
         try:
-            yield
+            yield span
         except Exception as exc:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
@@ -94,7 +94,7 @@ def llm_fallback_extraction_span(
     schema_version: str,
     parse_result: str,
     scope_name: str = "jobhunter.enrichment.content.llm",
-) -> Iterator[None]:
+) -> Iterator[Span]:
     """Span for the LLM fallback extraction stage.
 
     The span carries Langfuse-friendly metadata; the actual model
@@ -112,7 +112,7 @@ def llm_fallback_extraction_span(
         span.set_attribute("schema.version", schema_version)
         span.set_attribute("parse.result", parse_result)
         try:
-            yield
+            yield span
         except Exception as exc:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
@@ -129,7 +129,7 @@ def active_verify_span(
     verification_method: str,
     http_status_code: int | None = None,
     scope_name: str = "jobhunter.enrichment.active",
-) -> Iterator[None]:
+) -> Iterator[Span]:
     """Span for ``ActiveStateVerifier.verify``."""
     tracer = trace.get_tracer(scope_name)
     with tracer.start_as_current_span("enrichment.active.verify") as span:
@@ -142,7 +142,7 @@ def active_verify_span(
         if http_status_code is not None:
             span.set_attribute("http.status_code", http_status_code)
         try:
-            yield
+            yield span
         except Exception as exc:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)

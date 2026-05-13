@@ -51,6 +51,10 @@ from jobhunter.domain.enrichment.value_objects import (
     ExtractionTier,
     FullDescription,
 )
+from jobhunter.infrastructure.observability.enrichment_spans import (
+    active_verify_span,
+    content_acquire_span,
+)
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +79,8 @@ class ContentAcquisitionResult:
     confidence: SnapshotConfidence
     quarantine_reason: QuarantineReason
     active_state: ActiveState
+    verification_method: str = "unknown"
+    http_status_code: int | None = None
     description: FullDescription | None = None
     description_hash: SnapshotDescriptionHash | None = None
     apply_url: SnapshotApplyUrl | None = None
@@ -135,9 +141,10 @@ class ActiveStateVerifier:
 
         ``verification_method`` is one of ``"http_status"``,
         ``"json_ld_valid_through"``, ``"closed_marker"``,
-        ``"removed_marker"``, or ``"unknown"``. The caller writes the
-        method onto the resulting ``JobActiveStateChanged`` event so
-        Operations can break down which signal moved which job.
+        ``"removed_marker"``, ``"default_body_present"``, or
+        ``"unknown"``. The caller writes the method onto the resulting
+        ``JobActiveStateChanged`` event so Operations can break down
+        which signal moved which job.
         """
         # 1. HTTP status is the cheapest signal.
         if page.status is not None:
@@ -296,6 +303,9 @@ class ContentAcquisitionService:
         *,
         url: str,
         source_id: str,
+        tenant_id: str = "",
+        job_id: str = "",
+        policy_id: str = "unknown",
         filter_override: FilterOverrideAudit | None = None,
     ) -> ContentAcquisitionResult:
         """Fetch and extract one detail page.
@@ -306,98 +316,123 @@ class ContentAcquisitionService:
         or ``short_description``). The override audit is propagated
         onto the resulting ``PostingContentSnapshot`` and logged.
         """
-        try:
-            page = self._fetcher.fetch(url)  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — translate into structured failure
-            log.warning(
-                "ContentAcquisitionService: fetch error source_id=%s url=%s err=%s",
-                source_id,
-                url,
-                exc,
-            )
-            return ContentAcquisitionResult(
-                ok=False,
-                extraction_tier=ExtractionTier.JSON_LD.value,
-                confidence=SnapshotConfidence.LOW,
-                quarantine_reason=QuarantineReason.NONE,
-                active_state=ActiveState.UNKNOWN,
-                error_class="FETCH_ERROR",
-                error_message=str(exc)[:500],
-                retryable=True,
-            )
-
-        active_state, _ = self._active_verifier.verify(page)
-
-        last_apply_url: SnapshotApplyUrl | None = None
-        last_tier_attempted: ExtractionTier = self._extractors[0].tier
-        for step in self._extractors:
-            last_tier_attempted = step.tier
+        with content_acquire_span(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            source_id=source_id,
+            extraction_tier="pending",
+            policy_id=policy_id,
+        ) as acquire_span:
             try:
-                result: ExtractionResult = step.extractor.extract(page)  # type: ignore[attr-defined]
-            except Exception as exc:  # noqa: BLE001 — keep walking the cascade
+                page = self._fetcher.fetch(url)  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001 — translate into structured failure
                 log.warning(
-                    "ContentAcquisitionService: extractor %s raised: %s",
-                    step.tier.value,
+                    "ContentAcquisitionService: fetch error source_id=%s url=%s err=%s",
+                    source_id,
+                    url,
                     exc,
                 )
-                continue
-            if result.application_url is not None:
-                last_apply_url = SnapshotApplyUrl(value=result.application_url.value)
-            if result.ok and result.full_description is not None:
-                final_apply = (
-                    SnapshotApplyUrl(value=result.application_url.value)
-                    if result.application_url is not None
-                    else last_apply_url
-                )
-                description = result.full_description
-                hash_ = SnapshotDescriptionHash.from_text(description.text)
-                confidence = judge_snapshot_confidence(
-                    tier=step.tier,
-                    description=description,
-                    apply_url_present=final_apply is not None,
-                )
-                quarantine = _quarantine_for_capture(
-                    confidence=confidence,
-                    active_state=active_state,
-                    has_apply_url=final_apply is not None,
-                    filter_override=filter_override,
-                )
-                evidence = _capture_evidence(
-                    tier=step.tier,
-                    apply_url_present=final_apply is not None,
-                    description_length=len(description.text),
-                )
+                acquire_span.set_attribute("extraction.tier", ExtractionTier.JSON_LD.value)
                 return ContentAcquisitionResult(
-                    ok=True,
-                    extraction_tier=step.tier.value,
-                    confidence=confidence,
-                    quarantine_reason=quarantine,
-                    active_state=active_state,
-                    description=description,
-                    description_hash=hash_,
-                    apply_url=final_apply,
-                    raw_text_hash="",  # Reserved for forensics; populated by future fetchers.
-                    evidence=evidence,
+                    ok=False,
+                    extraction_tier=ExtractionTier.JSON_LD.value,
+                    confidence=SnapshotConfidence.LOW,
+                    quarantine_reason=QuarantineReason.NONE,
+                    active_state=ActiveState.UNKNOWN,
+                    error_class="FETCH_ERROR",
+                    error_message=str(exc)[:500],
+                    retryable=True,
                 )
 
-        log.info(
-            "ContentAcquisitionService: extraction exhausted source_id=%s url=%s last_tier=%s",
-            source_id,
-            url,
-            last_tier_attempted.value,
-        )
-        return ContentAcquisitionResult(
-            ok=False,
-            extraction_tier=last_tier_attempted.value,
-            confidence=SnapshotConfidence.LOW,
-            quarantine_reason=QuarantineReason.NONE,
-            active_state=active_state,
-            error_class="EXTRACTION_EXHAUSTED",
-            error_message=(
-                f"All extraction tiers failed (last: {last_tier_attempted.value})"
-            ),
-            retryable=True,
-        )
+            with active_verify_span(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                source_id=source_id,
+                active_state=ActiveState.UNKNOWN.value,
+                verification_method="pending",
+                http_status_code=page.status,
+            ) as verify_span:
+                active_state, verification_method = self._active_verifier.verify(page)
+                verify_span.set_attribute("active.state", active_state.value)
+                verify_span.set_attribute("verification.method", verification_method)
+
+            last_apply_url: SnapshotApplyUrl | None = None
+            last_tier_attempted: ExtractionTier = self._extractors[0].tier
+            for step in self._extractors:
+                last_tier_attempted = step.tier
+                try:
+                    result: ExtractionResult = step.extractor.extract(page)  # type: ignore[attr-defined]
+                except Exception as exc:  # noqa: BLE001 — keep walking the cascade
+                    log.warning(
+                        "ContentAcquisitionService: extractor %s raised: %s",
+                        step.tier.value,
+                        exc,
+                    )
+                    continue
+                if result.application_url is not None:
+                    last_apply_url = SnapshotApplyUrl(value=result.application_url.value)
+                if result.ok and result.full_description is not None:
+                    final_apply = (
+                        SnapshotApplyUrl(value=result.application_url.value)
+                        if result.application_url is not None
+                        else last_apply_url
+                    )
+                    description = result.full_description
+                    hash_ = SnapshotDescriptionHash.from_text(description.text)
+                    confidence = judge_snapshot_confidence(
+                        tier=step.tier,
+                        description=description,
+                        apply_url_present=final_apply is not None,
+                    )
+                    quarantine = _quarantine_for_capture(
+                        confidence=confidence,
+                        active_state=active_state,
+                        has_apply_url=final_apply is not None,
+                        filter_override=filter_override,
+                    )
+                    evidence = _capture_evidence(
+                        tier=step.tier,
+                        apply_url_present=final_apply is not None,
+                        description_length=len(description.text),
+                    )
+                    acquire_span.set_attribute("extraction.tier", step.tier.value)
+                    acquire_span.set_attribute("snapshot.hash", hash_.value)
+                    return ContentAcquisitionResult(
+                        ok=True,
+                        extraction_tier=step.tier.value,
+                        confidence=confidence,
+                        quarantine_reason=quarantine,
+                        active_state=active_state,
+                        verification_method=verification_method,
+                        http_status_code=page.status,
+                        description=description,
+                        description_hash=hash_,
+                        apply_url=final_apply,
+                        raw_text_hash="",  # Reserved for forensics; populated by future fetchers.
+                        evidence=evidence,
+                    )
+
+            log.info(
+                "ContentAcquisitionService: extraction exhausted source_id=%s url=%s last_tier=%s",
+                source_id,
+                url,
+                last_tier_attempted.value,
+            )
+            acquire_span.set_attribute("extraction.tier", last_tier_attempted.value)
+            return ContentAcquisitionResult(
+                ok=False,
+                extraction_tier=last_tier_attempted.value,
+                confidence=SnapshotConfidence.LOW,
+                quarantine_reason=QuarantineReason.NONE,
+                active_state=active_state,
+                verification_method=verification_method,
+                http_status_code=page.status,
+                error_class="EXTRACTION_EXHAUSTED",
+                error_message=(
+                    f"All extraction tiers failed (last: {last_tier_attempted.value})"
+                ),
+                retryable=True,
+            )
 
 
 def _quarantine_for_capture(

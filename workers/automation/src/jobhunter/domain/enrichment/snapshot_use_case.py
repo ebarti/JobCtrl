@@ -146,6 +146,7 @@ class CapturePostingSnapshotUseCase:
         job_id: JobId,
         url: str,
         source_id: str,
+        policy_id: str = "unknown",
         filter_override: FilterOverrideAudit | None = None,
         promote_to_job_enrichment: bool = True,
     ) -> CapturePostingSnapshotOutcome:
@@ -160,6 +161,9 @@ class CapturePostingSnapshotUseCase:
         result = self._acquisition.acquire(
             url=url,
             source_id=source_id,
+            tenant_id=str(tenant_id),
+            job_id=str(job_id),
+            policy_id=policy_id,
             filter_override=filter_override,
         )
         if not result.ok:
@@ -249,6 +253,7 @@ class CapturePostingSnapshotUseCase:
                 job_id=job_id,
                 new_state=result.active_state,
                 previous_state=previous_active,
+                verification_method=result.verification_method,
                 verified_at=captured.captured_at,
             )
         for candidate in duplicate_candidates:
@@ -416,6 +421,7 @@ class CapturePostingSnapshotUseCase:
         job_id: JobId,
         new_state: ActiveState,
         previous_state: ActiveState,
+        verification_method: str,
         verified_at: str,
     ) -> None:
         if self._publisher is None:
@@ -427,7 +433,7 @@ class CapturePostingSnapshotUseCase:
                     job_id=str(job_id),
                     active_state=new_state.value,
                     previous_state=previous_state.value,
-                    verification_method="snapshot_capture",
+                    verification_method=verification_method,
                     verified_at=verified_at,
                 ),
             )
