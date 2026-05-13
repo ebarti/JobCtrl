@@ -25,12 +25,16 @@ from jobhunter.infrastructure.discovery.ats_adapters import (
 from jobhunter.infrastructure.discovery.sqlite_repository import (
     SqliteJobRepository,
 )
+from jobhunter.infrastructure.discovery.sqlite_run_repository import (
+    SqliteDiscoveryRunRepository,
+)
 
 __all__ = [
     "AshbyBoardAdapter",
     "GreenhouseBoardAdapter",
     "HttpFetcher",
     "LeverBoardAdapter",
+    "SqliteDiscoveryRunRepository",
     "SqliteJobRepository",
     "WorkdayBoardAdapter",
     "WorkdayEmployer",

@@ -172,6 +172,19 @@ function seedSchema(dbPath: string): void {
   db.close();
 }
 
+function insertEvent(
+  dbPath: string,
+  eventType: string,
+  occurredAt: string,
+  payload: Record<string, unknown>,
+): void {
+  const db = new Database(dbPath);
+  db.prepare(
+    "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(null, "discover", eventType, "info", eventType, occurredAt, JSON.stringify(payload));
+  db.close();
+}
+
 describe("apply_run_projections without legacy apply_runs table", () => {
   it("dashboard summary surfaces the projection row when apply_runs is absent", async () => {
     const { dbPath, cleanup } = withTempDb();
@@ -279,6 +292,90 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           scoreReasoning: "Latest structured score evidence.",
           scoreVersion: 2,
           scoredAt: "2026-05-05T09:30:00+00:00",
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rebuilds source health from discovery, enrichment, and content events", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertEvent(dbPath, "DiscoveryRunStarted", "2026-05-13T00:00:00Z", {
+        runId: "run-source-quality",
+        sourceIds: ["greenhouse:acme"],
+        startedAt: "2026-05-13T00:00:00Z",
+      });
+      insertEvent(dbPath, "JobSourceObserved", "2026-05-13T00:00:05Z", {
+        jobId: "job-1",
+        sourceObservationId: "obs-1",
+        sourceId: "greenhouse:acme",
+      });
+      insertEvent(dbPath, "PostingContentSnapshotCaptured", "2026-05-13T00:00:10Z", {
+        jobId: "job-1",
+        sourceId: "greenhouse:acme",
+      });
+      insertEvent(dbPath, "JobEnriched", "2026-05-13T00:00:12Z", {
+        jobId: "job-1",
+        fullDescription: "Complete posting",
+        applicationUrl: "https://acme.example/apply/1",
+      });
+      insertEvent(dbPath, "JobActiveStateChanged", "2026-05-13T00:00:15Z", {
+        jobId: "job-1",
+        activeState: "active",
+      });
+      insertEvent(dbPath, "JobSourceObserved", "2026-05-13T00:00:20Z", {
+        jobId: "job-2",
+        sourceObservationId: "obs-2",
+        sourceId: "greenhouse:acme",
+      });
+      insertEvent(dbPath, "EnrichmentFailed", "2026-05-13T00:00:25Z", {
+        jobId: "job-2",
+        error: "TimeoutError",
+        attemptNumber: 1,
+      });
+      insertEvent(dbPath, "ContentDuplicateCandidateDetected", "2026-05-13T00:00:30Z", {
+        jobId: "job-1",
+        candidateJobId: "job-2",
+        confidence: 0.91,
+      });
+      insertEvent(dbPath, "DiscoveryRunCompleted", "2026-05-13T00:01:00Z", {
+        runId: "run-source-quality",
+        counts: {
+          total: 2,
+          newJobs: 2,
+          observedJobs: 2,
+        },
+        completedAt: "2026-05-13T00:01:00Z",
+      });
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const [source] = res.json().sourceHealth;
+        expect(source).toMatchObject({
+          sourceId: "greenhouse:acme",
+          runCount: 1,
+          observedJobs: 2,
+          newJobs: 2,
+          duplicateRate: 0.5,
+          activeVerificationRate: 1,
+          fullDescriptionSuccessRate: 0.5,
+          applyUrlSuccessRate: 0.5,
+          lastRunId: "run-source-quality",
+          lastErrorClass: "TimeoutError",
+          recommendedState: "normal",
         });
       } finally {
         await app.close();

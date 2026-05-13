@@ -585,6 +585,7 @@ export interface DashboardSummary {
     message: string;
     at: string | null;
   }>;
+  sourceHealth: SourceHealthSummary[];
   applyRuns: Array<{
     runId: string;
     jobKey: string;
@@ -594,6 +595,24 @@ export interface DashboardSummary {
     dryRun: boolean;
     startedAt: string | null;
   }>;
+}
+
+export interface SourceHealthSummary {
+  sourceId: string;
+  recommendedState: string;
+  runCount: number;
+  failedRunCount: number;
+  consecutiveFailures: number;
+  observedJobs: number;
+  newJobs: number;
+  existingJobs: number;
+  duplicateRate: number | null;
+  activeVerificationRate: number | null;
+  fullDescriptionSuccessRate: number | null;
+  applyUrlSuccessRate: number | null;
+  lastRunId: string | null;
+  lastErrorClass: string | null;
+  updatedAt: string | null;
 }
 
 export interface JobDetail {

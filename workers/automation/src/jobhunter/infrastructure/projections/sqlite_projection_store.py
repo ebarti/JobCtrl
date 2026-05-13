@@ -12,6 +12,8 @@ multi-tenant rollout per ddd-target.md §9):
 * ``job_detail_projections``  — full detail row per job
 * ``artifact_list_projections`` — denormalised artifact rows
 * ``apply_run_projections``   — apply-run telemetry per run
+* ``discovery_run_projections`` — scheduled discovery run telemetry
+* ``source_quality_stats``    — rolling source health window
 
 Schemas are intentionally narrow — every column corresponds to a field
 on the matching projection dataclass.  ``payload_json`` style overflow
@@ -30,8 +32,10 @@ from jobhunter.domain.operations.projections import (
     ApplyRunProjection,
     ArtifactListProjection,
     DashboardProjection,
+    DiscoveryRunProjection,
     JobDetailProjection,
     JobListProjection,
+    SourceQualityStats,
 )
 
 
@@ -41,6 +45,8 @@ PROJECTION_TABLES: tuple[str, ...] = (
     "job_detail_projections",
     "artifact_list_projections",
     "apply_run_projections",
+    "discovery_run_projections",
+    "source_quality_stats",
 )
 
 SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
@@ -176,6 +182,54 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             finished_at            TEXT,
             duration_ms            INTEGER,
             events_json            TEXT NOT NULL DEFAULT '[]'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_run_projections (
+            run_id                 TEXT PRIMARY KEY,
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            source_ids_json        TEXT NOT NULL DEFAULT '[]',
+            profile_snapshot_id    TEXT,
+            status                 TEXT NOT NULL DEFAULT 'running',
+            counts_json            TEXT NOT NULL DEFAULT '{}',
+            error_classes_json     TEXT NOT NULL DEFAULT '[]',
+            started_at             TEXT,
+            completed_at           TEXT,
+            failed_at              TEXT,
+            failed_source_id       TEXT,
+            retryable              INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS source_quality_stats (
+            tenant_id                         TEXT NOT NULL DEFAULT 'local',
+            source_id                         TEXT NOT NULL,
+            window_start                      TEXT NOT NULL,
+            window_end                        TEXT NOT NULL,
+            run_count                         INTEGER NOT NULL DEFAULT 0,
+            failed_run_count                  INTEGER NOT NULL DEFAULT 0,
+            consecutive_failures              INTEGER NOT NULL DEFAULT 0,
+            observed_jobs                     INTEGER NOT NULL DEFAULT 0,
+            new_jobs                          INTEGER NOT NULL DEFAULT 0,
+            existing_jobs                     INTEGER NOT NULL DEFAULT 0,
+            duplicate_jobs                    INTEGER NOT NULL DEFAULT 0,
+            active_jobs                       INTEGER NOT NULL DEFAULT 0,
+            stale_jobs                        INTEGER NOT NULL DEFAULT 0,
+            detail_success_count              INTEGER NOT NULL DEFAULT 0,
+            detail_failure_count              INTEGER NOT NULL DEFAULT 0,
+            active_verification_rate          REAL,
+            duplicate_rate                    REAL,
+            full_description_success_rate     REAL,
+            apply_url_success_rate            REAL,
+            last_run_id                       TEXT,
+            last_error_class                  TEXT,
+            recommended_state                 TEXT NOT NULL DEFAULT 'normal',
+            updated_at                        TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (tenant_id, source_id, window_start, window_end)
         )
         """
     )
@@ -497,6 +551,109 @@ class SqliteProjectionStore:
                 projection.finished_at,
                 projection.duration_ms,
                 json.dumps(list(projection.events)),
+            ),
+        )
+
+    def upsert_discovery_run(self, projection: DiscoveryRunProjection) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO discovery_run_projections (
+                run_id, tenant_id, source_ids_json, profile_snapshot_id,
+                status, counts_json, error_classes_json, started_at,
+                completed_at, failed_at, failed_source_id, retryable
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                tenant_id           = excluded.tenant_id,
+                source_ids_json     = excluded.source_ids_json,
+                profile_snapshot_id = excluded.profile_snapshot_id,
+                status              = excluded.status,
+                counts_json         = excluded.counts_json,
+                error_classes_json  = excluded.error_classes_json,
+                started_at          = excluded.started_at,
+                completed_at        = excluded.completed_at,
+                failed_at           = excluded.failed_at,
+                failed_source_id    = excluded.failed_source_id,
+                retryable           = excluded.retryable
+            """,
+            (
+                projection.run_id,
+                str(projection.tenant_id),
+                json.dumps(list(projection.source_ids)),
+                projection.profile_snapshot_id,
+                projection.status,
+                json.dumps(projection.counts),
+                json.dumps(list(projection.error_classes)),
+                projection.started_at,
+                projection.completed_at,
+                projection.failed_at,
+                projection.failed_source_id,
+                1 if projection.retryable else 0,
+            ),
+        )
+
+    def replace_source_quality(self, tenant_id: str, stats: Iterable[SourceQualityStats]) -> None:
+        self._conn.execute("DELETE FROM source_quality_stats WHERE tenant_id = ?", (tenant_id,))
+        for projection in stats:
+            self.upsert_source_quality(projection)
+
+    def upsert_source_quality(self, projection: SourceQualityStats) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO source_quality_stats (
+                tenant_id, source_id, window_start, window_end, run_count,
+                failed_run_count, consecutive_failures, observed_jobs,
+                new_jobs, existing_jobs, duplicate_jobs, active_jobs,
+                stale_jobs, detail_success_count, detail_failure_count,
+                active_verification_rate, duplicate_rate,
+                full_description_success_rate, apply_url_success_rate,
+                last_run_id, last_error_class, recommended_state, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, source_id, window_start, window_end) DO UPDATE SET
+                window_end                    = excluded.window_end,
+                run_count                     = excluded.run_count,
+                failed_run_count              = excluded.failed_run_count,
+                consecutive_failures          = excluded.consecutive_failures,
+                observed_jobs                 = excluded.observed_jobs,
+                new_jobs                      = excluded.new_jobs,
+                existing_jobs                 = excluded.existing_jobs,
+                duplicate_jobs                = excluded.duplicate_jobs,
+                active_jobs                   = excluded.active_jobs,
+                stale_jobs                    = excluded.stale_jobs,
+                detail_success_count          = excluded.detail_success_count,
+                detail_failure_count          = excluded.detail_failure_count,
+                active_verification_rate      = excluded.active_verification_rate,
+                duplicate_rate                = excluded.duplicate_rate,
+                full_description_success_rate = excluded.full_description_success_rate,
+                apply_url_success_rate        = excluded.apply_url_success_rate,
+                last_run_id                   = excluded.last_run_id,
+                last_error_class              = excluded.last_error_class,
+                recommended_state             = excluded.recommended_state,
+                updated_at                    = excluded.updated_at
+            """,
+            (
+                str(projection.tenant_id),
+                projection.source_id,
+                projection.window_start,
+                projection.window_end,
+                projection.run_count,
+                projection.failed_run_count,
+                projection.consecutive_failures,
+                projection.observed_jobs,
+                projection.new_jobs,
+                projection.existing_jobs,
+                projection.duplicate_jobs,
+                projection.active_jobs,
+                projection.stale_jobs,
+                projection.detail_success_count,
+                projection.detail_failure_count,
+                projection.active_verification_rate,
+                projection.duplicate_rate,
+                projection.full_description_success_rate,
+                projection.apply_url_success_rate,
+                projection.last_run_id,
+                projection.last_error_class,
+                projection.recommended_state,
+                projection.updated_at,
             ),
         )
 

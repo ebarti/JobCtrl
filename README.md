@@ -261,12 +261,15 @@ worker, whether the start was queued, completed, dry-run, or failed, and the
 returned run/action id when one is available. Longer-running progress appears in
 the dashboard pipeline, apply runs, and recent activity cards after the API
 invalidates those read models. Non-apply stages emit pipeline lifecycle events;
-Discover also emits source-step events for JobSpy, Workday, and Smart Extract
-so a stuck source is visible before the request finishes. The `limit` control
-is honored by every stage tab, including `discover` and `enrich`, so local
-debug runs can be bounded to one job. A bounded Discover run stops remaining
-sources once the cap is reached. Tabs default to dry-run mode so apply
-automation does not submit applications unless you explicitly clear dry run.
+Discover also emits source-step events and scheduled discovery-run events for
+JobSpy, Workday, and Smart Extract so a stuck or low-quality source is visible
+before the request finishes. The dashboard source-health card summarizes the
+local source-quality projection used to budget and demote future crawls. The
+`limit` control is honored by every stage tab, including `discover` and
+`enrich`, so local debug runs can be bounded to one job. A bounded Discover run
+stops remaining sources once the cap is reached. Tabs default to dry-run mode
+so apply automation does not submit applications unless you explicitly clear
+dry run.
 
 ## Inspecting Progress
 

@@ -23,6 +23,13 @@ from jobhunter.domain.events.discovery import (
     create_source_registry_entry_updated,
     SourceStateChangedPayload,
     create_source_state_changed,
+    DiscoveryRunStartedPayload,
+    create_discovery_run_started,
+    DiscoveryRunCountsPayload,
+    DiscoveryRunCompletedPayload,
+    create_discovery_run_completed,
+    DiscoveryRunFailedPayload,
+    create_discovery_run_failed,
 )
 from jobhunter.domain.events.enrichment import (
     JobEnrichedPayload,
@@ -197,6 +204,39 @@ class TestDiscoveryEvents:
         assert updated.event_type == "SourceRegistryEntryUpdated"
         assert changed.event_type == "SourceStateChanged"
         assert promoted.event_type == "SourceLocationCandidatePromoted"
+
+    def test_discovery_run_events(self) -> None:
+        started = create_discovery_run_started(
+            LOCAL_TENANT,
+            DiscoveryRunStartedPayload(
+                run_id="run-1",
+                source_ids=("greenhouse:acme",),
+                profile_snapshot_id="profile:1",
+                started_at="2026-05-13T00:00:00Z",
+            ),
+        )
+        completed = create_discovery_run_completed(
+            LOCAL_TENANT,
+            DiscoveryRunCompletedPayload(
+                run_id="run-1",
+                counts=DiscoveryRunCountsPayload(total=2, new_jobs=1, existing_jobs=1),
+                error_classes=(),
+                completed_at="2026-05-13T00:01:00Z",
+            ),
+        )
+        failed = create_discovery_run_failed(
+            LOCAL_TENANT,
+            DiscoveryRunFailedPayload(
+                run_id="run-2",
+                source_id="greenhouse:acme",
+                error_class="TimeoutError",
+                retryable=True,
+                failed_at="2026-05-13T00:02:00Z",
+            ),
+        )
+        assert started.event_type == "DiscoveryRunStarted"
+        assert completed.payload["counts"]["new_jobs"] == 1
+        assert failed.payload["error_class"] == "TimeoutError"
 
 
 class TestEnrichmentEvents:

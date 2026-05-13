@@ -70,3 +70,55 @@ def locator_span(
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             raise
+
+
+@contextmanager
+def discovery_run_span(
+    *,
+    tenant_id: str,
+    run_id: str,
+    source_ids: tuple[str, ...],
+    profile_snapshot_id: str | None,
+    scope_name: str = "jobhunter.discovery.scheduler",
+) -> Iterator[None]:
+    tracer = trace.get_tracer(scope_name)
+    with tracer.start_as_current_span("discovery.run") as span:
+        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute("tenant.id", tenant_id)
+        span.set_attribute("run.id", run_id)
+        span.set_attribute("source.ids", ",".join(source_ids))
+        span.set_attribute("source.count", len(source_ids))
+        if profile_snapshot_id:
+            span.set_attribute("profile.snapshot_id", profile_snapshot_id)
+        try:
+            yield
+        except Exception as exc:
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            raise
+
+
+@contextmanager
+def source_quality_aggregation_span(
+    *,
+    tenant_id: str,
+    source_id: str,
+    window: str,
+    event_count: int,
+    span_count: int = 0,
+    scope_name: str = "jobhunter.operations.source_quality",
+) -> Iterator[None]:
+    tracer = trace.get_tracer(scope_name)
+    with tracer.start_as_current_span("operations.source_quality.aggregate") as span:
+        span.set_attribute("langfuse.observation.type", "span")
+        span.set_attribute("tenant.id", tenant_id)
+        span.set_attribute("source.id", source_id)
+        span.set_attribute("window", window)
+        span.set_attribute("event.count", event_count)
+        span.set_attribute("span.count", span_count)
+        try:
+            yield
+        except Exception as exc:
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            raise

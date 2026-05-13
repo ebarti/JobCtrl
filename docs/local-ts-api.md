@@ -15,7 +15,7 @@ SQLite and reconstruct the existing response object shape for frontend/client
 compatibility.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
-`/v1/artifacts`, `/v1/workflow-runs`) read from the five `*_projections` tables
+`/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
 maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 `ProjectionBuilder` (`workers/automation/src/jobhunter/infrastructure/projections/`).
 Both processes refresh projections idempotently via the shared
@@ -25,6 +25,12 @@ Both processes refresh projections idempotently via the shared
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, and `scoredAt`. `scoreReasoning` remains on
 the wire as a compatibility summary during the scoring evidence migration.
+
+`/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
+`source_quality_stats`. The projection is rebuilt from discovery run,
+source-observation, duplicate, content snapshot, enrichment, apply-URL, and
+active-state events and is the read-side signal the web dashboard uses for
+source health.
 
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal
@@ -58,10 +64,11 @@ The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
-the same lifecycle rows for its JobSpy, Workday, and Smart Extract source
-steps. Those event types are part of the SSE domain catalog, so the dashboard
-can refresh recent activity while a long synchronous stage request is still
-running.
+the same lifecycle rows plus `DiscoveryRunStarted`,
+`DiscoveryRunCompleted`, and `DiscoveryRunFailed` for its JobSpy, Workday, and
+Smart Extract source steps. Those event types are part of the SSE domain
+catalog, so the dashboard can refresh recent activity and source health while a
+long synchronous stage request is still running.
 
 `GET /v1/dashboard/summary` includes `activity[].eventType` for those rows so
 the web UI can render started, completed, and failed stage states from backend

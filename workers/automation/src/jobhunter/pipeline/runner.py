@@ -12,9 +12,11 @@ Usage (via CLI):
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Callable
 
@@ -28,6 +30,20 @@ from jobhunter import config
 from jobhunter.config import load_env, ensure_dirs
 from jobhunter import database as db_module
 from jobhunter.database import init_db, get_connection, get_stats
+from jobhunter.domain.discovery.scheduler import (
+    DiscoveryRun,
+    DiscoveryRunCounts,
+    DiscoverySchedule,
+    DiscoveryScheduler,
+    ScheduledSource,
+    SourceQualitySnapshot,
+)
+from jobhunter.domain.discovery.source_registry import SourceState
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.discovery.sqlite_run_repository import (
+    SqliteDiscoveryRunRepository,
+)
+from jobhunter.infrastructure.observability.source_spans import discovery_run_span
 from jobhunter.state import record_job_event, utc_now
 
 log = logging.getLogger(__name__)
@@ -260,25 +276,102 @@ def _run_stage_observed(
         return result, elapsed, status
 
 
-def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> str:
+def _run_discovery_source(
+    source: str,
+    label: str,
+    scheduled_sources: tuple[ScheduledSource, ...],
+    run: Callable[[], Any],
+) -> str:
+    runnable = tuple(item for item in scheduled_sources if item.should_run)
+    if not runnable:
+        reason = scheduled_sources[0].reason if scheduled_sources else "not scheduled"
+        return _record_skipped_discovery_run(source, label, scheduled_sources, reason)
+
+    source_ids = tuple(item.source_id for item in runnable)
+    run_id = f"discovery:{source}:{uuid.uuid4().hex}"
+    started_at = utc_now()
+    conn = get_connection()
+    run_repo = SqliteDiscoveryRunRepository(conn)
+    _record_source_state_changes(conn, scheduled_sources)
+    discovery_run = DiscoveryRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=run_id,
+        source_ids=source_ids,
+        profile_snapshot_id=None,
+        started_at=started_at,
+    )
+    run_repo.save(discovery_run)
+    _record_discovery_run_event(
+        conn,
+        "DiscoveryRunStarted",
+        {
+            "run_id": run_id,
+            "runId": run_id,
+            "source_ids": list(source_ids),
+            "sourceIds": list(source_ids),
+            "profile_snapshot_id": None,
+            "profileSnapshotId": None,
+            "started_at": started_at,
+            "startedAt": started_at,
+        },
+        message=f"Discovery run {run_id} started",
+        occurred_at=started_at,
+    )
+
     _record_pipeline_event(
         "discover",
         "StageStarted",
         "info",
         f"Discovery source {source} started",
-        {"source": source, "sourceLabel": label},
+        {"source": source, "sourceLabel": label, "runId": run_id, "sourceIds": list(source_ids)},
     )
     t0 = time.time()
-    with _pipeline_tracer().start_as_current_span(f"pipeline.source.discover.{source}") as span:
+    with (
+        _pipeline_tracer().start_as_current_span(f"pipeline.source.discover.{source}") as span,
+        discovery_run_span(
+            tenant_id=str(LOCAL_TENANT),
+            run_id=run_id,
+            source_ids=source_ids,
+            profile_snapshot_id=None,
+        ),
+    ):
         _set_pipeline_span_attributes(span, "discover")
         span.set_attribute("jobhunter.pipeline.source", source)
+        span.set_attribute("jobhunter.discovery.run_id", run_id)
         try:
-            status = run()
+            result = run()
         except Exception as exc:
             elapsed = time.time() - t0
             log.error("%s failed: %s", label, exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
+            failed_at = utc_now()
+            failed_run = discovery_run.fail(
+                error_class=type(exc).__name__,
+                failed_at=failed_at,
+            )
+            run_repo.save(failed_run)
+            failed_source_id = source_ids[0] if len(source_ids) == 1 else ""
+            _record_discovery_run_event(
+                conn,
+                "DiscoveryRunFailed",
+                {
+                    "run_id": run_id,
+                    "runId": run_id,
+                    "source_id": failed_source_id,
+                    "sourceId": failed_source_id,
+                    "source_ids": list(source_ids),
+                    "sourceIds": list(source_ids),
+                    "error_class": type(exc).__name__,
+                    "errorClass": type(exc).__name__,
+                    "retryable": True,
+                    "failed_at": failed_at,
+                    "failedAt": failed_at,
+                },
+                level="error",
+                message=f"Discovery run {run_id} failed: {exc}",
+                occurred_at=failed_at,
+            )
             _record_pipeline_event(
                 "discover",
                 "StageFailed",
@@ -287,6 +380,8 @@ def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> st
                 {
                     "source": source,
                     "sourceLabel": label,
+                    "runId": run_id,
+                    "sourceIds": list(source_ids),
                     "durationMs": int(elapsed * 1000),
                     "error": str(exc),
                     "errorCode": type(exc).__name__,
@@ -296,7 +391,40 @@ def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> st
             return f"error: {exc}"
 
         elapsed = time.time() - t0
+        counts = DiscoveryRunCounts.from_result(result)
+        completed_at = utc_now()
+        completed_run = discovery_run.complete(
+            counts=counts,
+            error_classes=(),
+            completed_at=completed_at,
+        )
+        run_repo.save(completed_run)
+        _record_discovery_run_event(
+            conn,
+            "DiscoveryRunCompleted",
+            {
+                "run_id": run_id,
+                "runId": run_id,
+                "counts": {
+                    **counts.to_dict(),
+                    "newJobs": counts.new_jobs,
+                    "existingJobs": counts.existing_jobs,
+                    "observedJobs": counts.observed_jobs,
+                    "duplicateJobs": counts.duplicate_jobs,
+                    "rejectedDuplicates": counts.rejected_duplicates,
+                },
+                "error_classes": [],
+                "errorClasses": [],
+                "completed_at": completed_at,
+                "completedAt": completed_at,
+            },
+            message=f"Discovery run {run_id} completed",
+            occurred_at=completed_at,
+        )
+        status = "ok"
         span.set_attribute("jobhunter.pipeline.source_status", status)
+        span.set_attribute("jobhunter.discovery.result.total", counts.total)
+        span.set_attribute("jobhunter.discovery.result.new_jobs", counts.new_jobs)
         _record_pipeline_event(
             "discover",
             "StageCompleted",
@@ -305,6 +433,8 @@ def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> st
             {
                 "source": source,
                 "sourceLabel": label,
+                "runId": run_id,
+                "sourceIds": list(source_ids),
                 "durationMs": int(elapsed * 1000),
                 "status": status,
             },
@@ -312,16 +442,211 @@ def _run_discovery_source(source: str, label: str, run: Callable[[], str]) -> st
         return status
 
 
-def _skip_discovery_source(source: str, label: str, reason: str) -> str:
-    status = "skipped_limit"
+def _record_skipped_discovery_run(
+    source: str,
+    label: str,
+    scheduled_sources: tuple[ScheduledSource, ...],
+    reason: str,
+) -> str:
+    source_ids = tuple(item.source_id for item in scheduled_sources) or (source,)
+    run_id = f"discovery:{source}:{uuid.uuid4().hex}"
+    started_at = utc_now()
+    completed_at = started_at
+    conn = get_connection()
+    run_repo = SqliteDiscoveryRunRepository(conn)
+    _record_source_state_changes(conn, scheduled_sources)
+    discovery_run = DiscoveryRun.start(
+        tenant_id=LOCAL_TENANT,
+        run_id=run_id,
+        source_ids=source_ids,
+        profile_snapshot_id=None,
+        started_at=started_at,
+    )
+    completed_run = discovery_run.complete(
+        counts=DiscoveryRunCounts(),
+        error_classes=("scheduler_skip",),
+        completed_at=completed_at,
+    )
+    run_repo.save(completed_run)
+    _record_discovery_run_event(
+        conn,
+        "DiscoveryRunStarted",
+        {
+            "run_id": run_id,
+            "runId": run_id,
+            "source_ids": list(source_ids),
+            "sourceIds": list(source_ids),
+            "profile_snapshot_id": None,
+            "profileSnapshotId": None,
+            "started_at": started_at,
+            "startedAt": started_at,
+        },
+        message=f"Discovery run {run_id} started",
+        occurred_at=started_at,
+    )
+    _record_discovery_run_event(
+        conn,
+        "DiscoveryRunCompleted",
+        {
+            "run_id": run_id,
+            "runId": run_id,
+            "counts": {
+                "total": 0,
+                "new_jobs": 0,
+                "existing_jobs": 0,
+                "observed_jobs": 0,
+                "duplicate_jobs": 0,
+                "rejected_duplicates": 0,
+                "newJobs": 0,
+                "existingJobs": 0,
+                "observedJobs": 0,
+                "duplicateJobs": 0,
+                "rejectedDuplicates": 0,
+            },
+            "error_classes": ["scheduler_skip"],
+            "errorClasses": ["scheduler_skip"],
+            "skipped": True,
+            "skip_reason": reason,
+            "skipReason": reason,
+            "completed_at": completed_at,
+            "completedAt": completed_at,
+        },
+        message=f"Discovery run {run_id} skipped: {reason}",
+        occurred_at=completed_at,
+    )
+    return _skip_discovery_source(source, label, reason, run_id=run_id, source_ids=source_ids)
+
+
+def _skip_discovery_source(
+    source: str,
+    label: str,
+    reason: str,
+    *,
+    run_id: str | None = None,
+    source_ids: tuple[str, ...] = (),
+) -> str:
+    status = _skip_status(reason)
+    payload: dict[str, Any] = {
+        "source": source,
+        "sourceLabel": label,
+        "status": status,
+        "reason": reason,
+    }
+    if run_id:
+        payload["runId"] = run_id
+    if source_ids:
+        payload["sourceIds"] = list(source_ids)
     _record_pipeline_event(
         "discover",
         "StageCompleted",
         "info",
         f"Discovery source {source} skipped: {reason}",
-        {"source": source, "sourceLabel": label, "status": status, "reason": reason},
+        payload,
     )
     return status
+
+
+def _skip_status(reason: str) -> str:
+    normalized = reason.lower()
+    if "disabled" in normalized:
+        return "skipped_disabled"
+    quality_reasons = ("failure", "active rate", "duplicate rate", "detail success")
+    if any(reason in normalized for reason in quality_reasons):
+        return "skipped_quality"
+    return "skipped_limit"
+
+
+def _record_source_state_changes(
+    conn: Any,
+    scheduled_sources: tuple[ScheduledSource, ...],
+) -> None:
+    changed = False
+    for source in scheduled_sources:
+        target = _recommended_source_state(source)
+        if target is None or target == source.configured_state:
+            continue
+        if _latest_recorded_source_state(conn, source.source_id) == target.value:
+            continue
+        changed_at = utc_now()
+        record_job_event(
+            conn,
+            None,
+            "discover",
+            "SourceStateChanged",
+            level="info",
+            message=f"Source {source.source_id} state changed to {target.value}: {source.reason}",
+            payload={
+                "tenantId": str(LOCAL_TENANT),
+                "source_id": source.source_id,
+                "sourceId": source.source_id,
+                "from_state": source.configured_state.value,
+                "fromState": source.configured_state.value,
+                "to_state": target.value,
+                "toState": target.value,
+                "reason": source.reason,
+                "changed_at": changed_at,
+                "changedAt": changed_at,
+            },
+            occurred_at=changed_at,
+        )
+        changed = True
+    if changed:
+        conn.commit()
+
+
+def _recommended_source_state(source: ScheduledSource) -> SourceState | None:
+    if source.recommended_state == SourceState.DISABLED.value:
+        return SourceState.DISABLED
+    if source.recommended_state == SourceState.QUARANTINED.value:
+        return SourceState.QUARANTINED
+    return None
+
+
+def _latest_recorded_source_state(conn: Any, source_id: str) -> str | None:
+    rows = conn.execute(
+        """
+        SELECT payload_json
+        FROM job_events
+        WHERE event_type = 'SourceStateChanged'
+        ORDER BY event_id DESC
+        """
+    ).fetchall()
+    for row in rows:
+        payload_json = _row_get(row, "payload_json", 0)
+        if not payload_json:
+            continue
+        try:
+            payload = json.loads(str(payload_json))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("sourceId") == source_id or payload.get("source_id") == source_id:
+            value = payload.get("toState") or payload.get("to_state")
+            return str(value) if value else None
+    return None
+
+
+def _record_discovery_run_event(
+    conn: Any,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    level: str = "info",
+    message: str,
+    occurred_at: str,
+) -> None:
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        event_type,
+        level=level,
+        message=message,
+        payload={"tenantId": str(LOCAL_TENANT), **payload},
+        occurred_at=occurred_at,
+    )
+    conn.commit()
 
 
 def _pipeline_job_count() -> int:
@@ -357,6 +682,74 @@ def _discover_limit_consumed(start_count: int, limit: int, source_result: Any = 
     return _discover_limit_reached(start_count, limit)
 
 
+def _load_source_quality_snapshots() -> tuple[SourceQualitySnapshot, ...]:
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            """
+            SELECT source_id, observed_jobs, new_jobs, existing_jobs,
+                   duplicate_jobs, failed_run_count, consecutive_failures,
+                   active_verification_rate, full_description_success_rate,
+                   duplicate_rate, recommended_state
+            FROM source_quality_stats
+            """
+        ).fetchall()
+    except Exception:
+        log.debug("Failed to load source quality stats for scheduling", exc_info=True)
+        return ()
+    snapshots: list[SourceQualitySnapshot] = []
+    for row in rows:
+        snapshots.append(
+            SourceQualitySnapshot(
+                source_id=str(_row_get(row, "source_id", 0) or ""),
+                observed_jobs=int(_row_get(row, "observed_jobs", 1) or 0),
+                new_jobs=int(_row_get(row, "new_jobs", 2) or 0),
+                existing_jobs=int(_row_get(row, "existing_jobs", 3) or 0),
+                duplicate_jobs=int(_row_get(row, "duplicate_jobs", 4) or 0),
+                failed_runs=int(_row_get(row, "failed_run_count", 5) or 0),
+                consecutive_failures=int(_row_get(row, "consecutive_failures", 6) or 0),
+                active_rate=_optional_float(_row_get(row, "active_verification_rate", 7)),
+                detail_success_rate=_optional_float(
+                    _row_get(row, "full_description_success_rate", 8)
+                ),
+                duplicate_rate=_optional_float(_row_get(row, "duplicate_rate", 9)),
+                recommended_state=str(_row_get(row, "recommended_state", 10) or "normal"),
+            )
+        )
+    return tuple(snapshots)
+
+
+def _plan_discovery_schedule(limit: int) -> DiscoverySchedule:
+    scheduler = DiscoveryScheduler()
+    return scheduler.plan(
+        registry=config.load_source_registry(),
+        quality=_load_source_quality_snapshots(),
+        global_limit=limit,
+    )
+
+
+def _scheduled_limit(schedule: DiscoverySchedule, prefix: str, user_limit: int) -> int:
+    budget = schedule.budget_for_prefix(prefix)
+    if user_limit > 0:
+        return min(user_limit, budget) if budget > 0 else 0
+    return budget
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_get(row: Any, key: str, index: int) -> Any:
+    if hasattr(row, "keys") and key in row.keys():
+        return row[key]
+    return row[index]
+
+
 # ---------------------------------------------------------------------------
 # Individual stage runners
 # ---------------------------------------------------------------------------
@@ -365,25 +758,35 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
+    schedule = _plan_discovery_schedule(limit)
     bounded_workers = 1 if limit > 0 else workers
     start_count = _pipeline_job_count() if limit > 0 else 0
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
-    def run_jobspy() -> str:
+    def run_jobspy() -> dict:
         if search_cfg.get("disable_jobspy", False):
             console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
-            return "disabled"
+            result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            source_results["jobspy"] = result
+            return result
         console.print("  [cyan]JobSpy full crawl...[/cyan]")
         try:
             from jobhunter.discovery.jobspy import run_discovery
         except ImportError:
             console.print("  [dim]JobSpy not installed — skipping[/dim]")
-            return "not_installed"
-        source_results["jobspy"] = run_discovery(limit=limit)
-        return "ok"
+            result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            source_results["jobspy"] = result
+            return result
+        source_results["jobspy"] = run_discovery(limit=_scheduled_limit(schedule, "jobspy", limit))
+        return source_results["jobspy"]
 
-    stats["jobspy"] = _run_discovery_source("jobspy", "JobSpy", run_jobspy)
+    stats["jobspy"] = _run_discovery_source(
+        "jobspy",
+        "JobSpy",
+        schedule.for_prefix("jobspy"),
+        run_jobspy,
+    )
     if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
         console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
     if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
@@ -392,13 +795,21 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         return stats
 
     # Workday corporate scraper
-    def run_workday() -> str:
+    def run_workday() -> dict:
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
-        source_results["workday"] = run_workday_discovery(workers=bounded_workers, limit=limit)
-        return "ok"
+        source_results["workday"] = run_workday_discovery(
+            workers=bounded_workers,
+            limit=_scheduled_limit(schedule, "workday", limit),
+        )
+        return source_results["workday"]
 
-    stats["workday"] = _run_discovery_source("workday", "Workday scraper", run_workday)
+    stats["workday"] = _run_discovery_source(
+        "workday",
+        "Workday scraper",
+        schedule.for_prefix("workday"),
+        run_workday,
+    )
     if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
         console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
     if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
@@ -406,15 +817,19 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         return stats
 
     # Smart extract
-    def run_smart_extract_source() -> str:
+    def run_smart_extract_source() -> dict:
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         from jobhunter.discovery.smartextract import run_smart_extract
-        source_results["smartextract"] = run_smart_extract(workers=bounded_workers, limit=limit)
-        return "ok"
+        source_results["smartextract"] = run_smart_extract(
+            workers=bounded_workers,
+            limit=_scheduled_limit(schedule, "smart_extract", limit),
+        )
+        return source_results["smartextract"]
 
     stats["smartextract"] = _run_discovery_source(
         "smartextract",
         "Smart extract",
+        schedule.for_prefix("smart_extract"),
         run_smart_extract_source,
     )
     if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):

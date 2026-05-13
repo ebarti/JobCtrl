@@ -93,7 +93,7 @@ TS↔Python integration protocol (§6.5 of `docs/ddd-target.md`). The pre-DDD
 
 ## Read-Model Projections (Phase 9)
 
-The Operations / Read-Side context maintains five denormalised projection
+The Operations / Read-Side context maintains denormalised projection
 tables that back every read-model endpoint:
 
 | Table                        | What it stores                                                    |
@@ -103,6 +103,8 @@ tables that back every read-model endpoint:
 | `job_detail_projections`     | Per-job description preview, score reasoning, full stages array. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
+| `discovery_run_projections`  | Scheduled discovery-run status, source ids, counts, and retry metadata. |
+| `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
 
 The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
 `refreshProjections` helper both read new rows from `job_events` since the
@@ -404,7 +406,7 @@ Langfuse instance for LLM tracing. The wiring lives under
   `gen_ai.response.model`, `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`) so OTel-native dashboards work too.
 
-Three sources emit spans:
+These sources emit spans:
 
 | Source | Span name | `langfuse.observation.type` |
 | --- | --- | --- |
@@ -413,6 +415,8 @@ Three sources emit spans:
 | Every JSON-RPC dispatch (`jobhunter.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
 | Every pipeline stage (`jobhunter.pipeline.runner`) | `pipeline.stage.<stage>` | `span` |
 | Discover source steps (`jobspy`, `workday`, `smartextract`) | `pipeline.source.discover.<source>` | `span` |
+| Scheduled discovery runs | `discovery.run` | `span` |
+| Source-quality projection rebuilds | `operations.source_quality.aggregate` | `span` |
 
 Pipeline stages and Discover source steps also emit short
 `langfuse.observation.type=event` observations for their

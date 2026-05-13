@@ -25,6 +25,19 @@ import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } f
 
 const STAGE_ORDER: readonly string[] = STAGES;
 const SOURCE_BOARD_NAMES = new Set(["greenhouse", "linkedin", "talent.com"]);
+const SOURCE_QUALITY_EVENT_TYPES = new Set([
+  "DiscoveryRunStarted",
+  "DiscoveryRunCompleted",
+  "DiscoveryRunFailed",
+  "JobSourceObserved",
+  "DuplicateJobLinked",
+  "PostingContentSnapshotCaptured",
+  "PostingContentSnapshotFailed",
+  "JobEnriched",
+  "EnrichmentFailed",
+  "JobActiveStateChanged",
+  "ContentDuplicateCandidateDetected",
+]);
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,
@@ -342,6 +355,46 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       duration_ms            INTEGER,
       events_json            TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE IF NOT EXISTS discovery_run_projections (
+      run_id                 TEXT PRIMARY KEY,
+      tenant_id              TEXT NOT NULL DEFAULT 'local',
+      source_ids_json        TEXT NOT NULL DEFAULT '[]',
+      profile_snapshot_id    TEXT,
+      status                 TEXT NOT NULL DEFAULT 'running',
+      counts_json            TEXT NOT NULL DEFAULT '{}',
+      error_classes_json     TEXT NOT NULL DEFAULT '[]',
+      started_at             TEXT,
+      completed_at           TEXT,
+      failed_at              TEXT,
+      failed_source_id       TEXT,
+      retryable              INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS source_quality_stats (
+      tenant_id                         TEXT NOT NULL DEFAULT 'local',
+      source_id                         TEXT NOT NULL,
+      window_start                      TEXT NOT NULL,
+      window_end                        TEXT NOT NULL,
+      run_count                         INTEGER NOT NULL DEFAULT 0,
+      failed_run_count                  INTEGER NOT NULL DEFAULT 0,
+      consecutive_failures              INTEGER NOT NULL DEFAULT 0,
+      observed_jobs                     INTEGER NOT NULL DEFAULT 0,
+      new_jobs                          INTEGER NOT NULL DEFAULT 0,
+      existing_jobs                     INTEGER NOT NULL DEFAULT 0,
+      duplicate_jobs                    INTEGER NOT NULL DEFAULT 0,
+      active_jobs                       INTEGER NOT NULL DEFAULT 0,
+      stale_jobs                        INTEGER NOT NULL DEFAULT 0,
+      detail_success_count              INTEGER NOT NULL DEFAULT 0,
+      detail_failure_count              INTEGER NOT NULL DEFAULT 0,
+      active_verification_rate          REAL,
+      duplicate_rate                    REAL,
+      full_description_success_rate     REAL,
+      apply_url_success_rate            REAL,
+      last_run_id                       TEXT,
+      last_error_class                  TEXT,
+      recommended_state                 TEXT NOT NULL DEFAULT 'normal',
+      updated_at                        TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (tenant_id, source_id, window_start, window_end)
+    );
   `);
   let schemaChanged = false;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_breakdown_json", "TEXT") || schemaChanged;
@@ -410,17 +463,21 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   const watermark = readWatermark(db, PROJECTION_WATERMARK_NAME);
 
   let dirtyJobs = new Set<string>();
+  let sourceQualityDirty = false;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {
-    const rows = allRows<{ event_id: number; job_url: string | null }>(
+    const rows = allRows<{ event_id: number; job_url: string | null; event_type: string }>(
       db,
-      "SELECT event_id, job_url FROM job_events WHERE event_id > ? ORDER BY event_id ASC",
+      "SELECT event_id, job_url, event_type FROM job_events WHERE event_id > ? ORDER BY event_id ASC",
       [watermark],
     );
     for (const row of rows) {
       const eventId = Number(row.event_id);
       if (eventId > maxEventId) maxEventId = eventId;
       if (row.job_url) dirtyJobs.add(String(row.job_url));
+      if (SOURCE_QUALITY_EVENT_TYPES.has(String(row.event_type))) {
+        sourceQualityDirty = true;
+      }
     }
   }
 
@@ -448,8 +505,23 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
-  if (dirtyJobs.size === 0 && maxEventId === watermark) {
+  const sourceQualityExists =
+    getRow<{ c: number }>(db, "SELECT COUNT(*) AS c FROM source_quality_stats WHERE tenant_id = ?", [
+      tenantId,
+    ])?.c ?? 0;
+  const sourceQualityHistory = sourceQualityDirty || hasSourceQualityHistory(db);
+
+  if (
+    dirtyJobs.size === 0 &&
+    !sourceQualityDirty &&
+    (sourceQualityExists > 0 || !sourceQualityHistory) &&
+    maxEventId === watermark
+  ) {
     return;
+  }
+
+  if (sourceQualityDirty || (sourceQualityExists === 0 && sourceQualityHistory)) {
+    rebuildSourceQualityProjections(db, tenantId);
   }
 
   for (const jobUrl of dirtyJobs) {
@@ -1267,7 +1339,509 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   );
 }
 
+interface SourceQualityEventRow extends Record<string, unknown> {
+  job_url: string | null;
+  event_type: string;
+  occurred_at: string;
+  payload_json: string | null;
+}
+
+interface MutableSourceStats {
+  runCount: number;
+  failedRunCount: number;
+  consecutiveFailures: number;
+  observedJobs: number;
+  newJobs: number;
+  existingJobs: number;
+  duplicateJobs: number;
+  activeJobs: number;
+  staleJobs: number;
+  detailSuccessCount: number;
+  detailFailureCount: number;
+  applyUrlSuccessCount: number;
+  applyUrlFailureCount: number;
+  lastRunId: string | null;
+  lastErrorClass: string | null;
+  detailSuccessJobs: Set<string>;
+  detailFailureJobs: Set<string>;
+  applySuccessJobs: Set<string>;
+  applyFailureJobs: Set<string>;
+}
+
+interface DiscoveryRunProjection {
+  runId: string;
+  sourceIds: string[];
+  profileSnapshotId: string | null;
+  status: string;
+  counts: Record<string, number>;
+  errorClasses: string[];
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  failedSourceId: string | null;
+  retryable: boolean;
+}
+
+function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): void {
+  if (!tableExists(db, "job_events")) return;
+  const payloadColumn = hasColumn(db, "job_events", "payload_json")
+    ? "payload_json"
+    : "NULL AS payload_json";
+  const rows = allRows<SourceQualityEventRow>(
+    db,
+    `SELECT job_url, event_type, occurred_at, ${payloadColumn}
+     FROM job_events
+     WHERE event_type IN (
+       'DiscoveryRunStarted',
+       'DiscoveryRunCompleted',
+       'DiscoveryRunFailed',
+       'JobSourceObserved',
+       'DuplicateJobLinked',
+       'PostingContentSnapshotCaptured',
+       'PostingContentSnapshotFailed',
+       'JobEnriched',
+       'EnrichmentFailed',
+       'JobActiveStateChanged',
+       'ContentDuplicateCandidateDetected'
+     )
+     ORDER BY event_id ASC`,
+  );
+  const runs = new Map<string, DiscoveryRunProjection>();
+  const stats = new Map<string, MutableSourceStats>();
+  const sourceByObservation = new Map<string, string>();
+  const sourcesByJob = new Map<string, Set<string>>();
+  const activeRunBySource = new Map<string, string>();
+  const observedByRunSource = new Map<string, number>();
+  const duplicateByRunSource = new Map<string, number>();
+  const windowStart = rows[0]?.occurred_at ?? new Date().toISOString();
+  const windowEnd = rows[rows.length - 1]?.occurred_at ?? windowStart;
+
+  for (const row of rows) {
+    const payload = parsePayload(row.payload_json);
+    if (row.event_type === "DiscoveryRunStarted") {
+      const runId = text(payload, "run_id", "runId");
+      const sourceIds = stringList(value(payload, "source_ids", "sourceIds"));
+      if (!runId) continue;
+      runs.set(runId, {
+        runId,
+        sourceIds,
+        profileSnapshotId: nullableText(value(payload, "profile_snapshot_id", "profileSnapshotId")),
+        status: "running",
+        counts: {},
+        errorClasses: [],
+        startedAt: text(payload, "started_at", "startedAt") || row.occurred_at,
+        completedAt: null,
+        failedAt: null,
+        failedSourceId: null,
+        retryable: true,
+      });
+      for (const sourceId of sourceIds) {
+        getStats(stats, sourceId);
+        activeRunBySource.set(sourceId, runId);
+      }
+    } else if (row.event_type === "DiscoveryRunCompleted") {
+      const runId = text(payload, "run_id", "runId");
+      const run = runs.get(runId);
+      const counts = normalizeCounts(record(value(payload, "counts")));
+      const skipped = Boolean(value(payload, "skipped"));
+      if (run) {
+        run.status = "completed";
+        run.counts = counts;
+        run.errorClasses = stringList(value(payload, "error_classes", "errorClasses"));
+        run.completedAt = text(payload, "completed_at", "completedAt") || row.occurred_at;
+        for (const sourceId of run.sourceIds) {
+          const current = getStats(stats, sourceId);
+          if (!skipped) {
+            current.runCount += 1;
+            current.consecutiveFailures = 0;
+          }
+          if (run.sourceIds.length === 1 && !skipped) {
+            current.newJobs += counts.new_jobs ?? 0;
+            current.existingJobs += counts.existing_jobs ?? 0;
+            const observedKey = runSourceKey(runId, sourceId);
+            const observedFallback = counts.observed_jobs ?? 0;
+            current.observedJobs += Math.max(
+              0,
+              observedFallback - (observedByRunSource.get(observedKey) ?? 0),
+            );
+            const duplicateFallback = counts.duplicate_jobs ?? 0;
+            current.duplicateJobs += Math.max(
+              0,
+              duplicateFallback - (duplicateByRunSource.get(observedKey) ?? 0),
+            );
+          }
+          current.lastRunId = runId;
+          if (activeRunBySource.get(sourceId) === runId) activeRunBySource.delete(sourceId);
+        }
+      }
+    } else if (row.event_type === "DiscoveryRunFailed") {
+      const runId = text(payload, "run_id", "runId");
+      const sourceId = text(payload, "source_id", "sourceId");
+      const errorClass = text(payload, "error_class", "errorClass");
+      const run = runs.get(runId);
+      if (run) {
+        run.status = "failed";
+        run.errorClasses = errorClass ? [errorClass] : [];
+        run.failedAt = text(payload, "failed_at", "failedAt") || row.occurred_at;
+        run.failedSourceId = sourceId || null;
+        run.retryable = value(payload, "retryable") !== false;
+      }
+      if (sourceId) {
+        const current = getStats(stats, sourceId);
+        current.failedRunCount += 1;
+        current.consecutiveFailures += 1;
+        current.lastRunId = runId || current.lastRunId;
+        current.lastErrorClass = errorClass || current.lastErrorClass;
+        if (activeRunBySource.get(sourceId) === runId) activeRunBySource.delete(sourceId);
+      }
+    } else if (row.event_type === "JobSourceObserved") {
+      const sourceId = text(payload, "source_id", "sourceId");
+      const observationId = text(payload, "source_observation_id", "sourceObservationId");
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      if (!sourceId) continue;
+      getStats(stats, sourceId).observedJobs += 1;
+      const activeRunId = activeRunBySource.get(sourceId);
+      if (activeRunId) {
+        const key = runSourceKey(activeRunId, sourceId);
+        observedByRunSource.set(key, (observedByRunSource.get(key) ?? 0) + 1);
+      }
+      if (observationId) sourceByObservation.set(observationId, sourceId);
+      if (jobId) {
+        const set = sourcesByJob.get(jobId) ?? new Set<string>();
+        set.add(sourceId);
+        sourcesByJob.set(jobId, set);
+      }
+    } else if (row.event_type === "DuplicateJobLinked") {
+      const observationId = text(
+        payload,
+        "superseded_job_or_observation_id",
+        "supersededJobOrObservationId",
+      );
+      const sourceId = sourceByObservation.get(observationId);
+      if (sourceId) {
+        getStats(stats, sourceId).duplicateJobs += 1;
+        const activeRunId = activeRunBySource.get(sourceId);
+        if (activeRunId) {
+          const key = runSourceKey(activeRunId, sourceId);
+          duplicateByRunSource.set(key, (duplicateByRunSource.get(key) ?? 0) + 1);
+        }
+      }
+    } else if (row.event_type === "PostingContentSnapshotCaptured") {
+      const sourceId = text(payload, "source_id", "sourceId");
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      if (sourceId) markDetailSuccess(getStats(stats, sourceId), jobId);
+    } else if (row.event_type === "PostingContentSnapshotFailed") {
+      const sourceId = text(payload, "source_id", "sourceId");
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      if (sourceId) {
+        const current = getStats(stats, sourceId);
+        markDetailFailure(current, jobId);
+        current.lastErrorClass = text(payload, "error_class", "errorClass") || current.lastErrorClass;
+      }
+    } else if (row.event_type === "JobEnriched") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const fullDescription = text(payload, "full_description", "fullDescription");
+      const applicationUrl = text(payload, "application_url", "applicationUrl");
+      for (const sourceId of sourcesByJob.get(jobId) ?? []) {
+        const current = getStats(stats, sourceId);
+        if (fullDescription.trim()) markDetailSuccess(current, jobId);
+        else markDetailFailure(current, jobId);
+        if (applicationUrl.trim()) markApplySuccess(current, jobId);
+        else markApplyFailure(current, jobId);
+      }
+    } else if (row.event_type === "EnrichmentFailed") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const errorClass = text(payload, "error_class", "errorClass", "error");
+      for (const sourceId of sourcesByJob.get(jobId) ?? []) {
+        const current = getStats(stats, sourceId);
+        markDetailFailure(current, jobId);
+        markApplyFailure(current, jobId);
+        current.lastErrorClass = errorClass || current.lastErrorClass;
+      }
+    } else if (row.event_type === "JobActiveStateChanged") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const activeState = text(payload, "active_state", "activeState");
+      for (const sourceId of sourcesByJob.get(jobId) ?? []) {
+        const current = getStats(stats, sourceId);
+        if (activeState === "active") current.activeJobs += 1;
+        if (["closed", "expired", "removed", "location_incompatible"].includes(activeState)) {
+          current.staleJobs += 1;
+        }
+      }
+    } else if (row.event_type === "ContentDuplicateCandidateDetected") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const candidateJobId = text(payload, "candidate_job_id", "candidateJobId");
+      const sourceIds = new Set([
+        ...(sourcesByJob.get(jobId) ?? []),
+        ...(sourcesByJob.get(candidateJobId) ?? []),
+      ]);
+      for (const sourceId of sourceIds) {
+        getStats(stats, sourceId).duplicateJobs += 1;
+        const activeRunId = activeRunBySource.get(sourceId);
+        if (activeRunId) {
+          const key = runSourceKey(activeRunId, sourceId);
+          duplicateByRunSource.set(key, (duplicateByRunSource.get(key) ?? 0) + 1);
+        }
+      }
+    }
+  }
+
+  for (const run of runs.values()) {
+    db.prepare(
+      `INSERT INTO discovery_run_projections (
+         run_id, tenant_id, source_ids_json, profile_snapshot_id, status,
+         counts_json, error_classes_json, started_at, completed_at,
+         failed_at, failed_source_id, retryable
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(run_id) DO UPDATE SET
+         tenant_id = excluded.tenant_id,
+         source_ids_json = excluded.source_ids_json,
+         profile_snapshot_id = excluded.profile_snapshot_id,
+         status = excluded.status,
+         counts_json = excluded.counts_json,
+         error_classes_json = excluded.error_classes_json,
+         started_at = excluded.started_at,
+         completed_at = excluded.completed_at,
+         failed_at = excluded.failed_at,
+         failed_source_id = excluded.failed_source_id,
+         retryable = excluded.retryable`,
+    ).run(
+      run.runId,
+      tenantId,
+      JSON.stringify(run.sourceIds),
+      run.profileSnapshotId,
+      run.status,
+      JSON.stringify(run.counts),
+      JSON.stringify(run.errorClasses),
+      run.startedAt,
+      run.completedAt,
+      run.failedAt,
+      run.failedSourceId,
+      run.retryable ? 1 : 0,
+    );
+  }
+
+  db.prepare("DELETE FROM source_quality_stats WHERE tenant_id = ?").run(tenantId);
+  const updatedAt = new Date().toISOString();
+  for (const [sourceId, current] of stats.entries()) {
+    const activeRate = rate(current.activeJobs, current.activeJobs + current.staleJobs);
+    const duplicateRate = rate(current.duplicateJobs, current.observedJobs);
+    const detailRate = rate(
+      current.detailSuccessCount,
+      current.detailSuccessCount + current.detailFailureCount,
+    );
+    const applyUrlRate = rate(
+      current.applyUrlSuccessCount,
+      current.applyUrlSuccessCount + current.applyUrlFailureCount,
+    );
+    db.prepare(
+      `INSERT INTO source_quality_stats (
+         tenant_id, source_id, window_start, window_end, run_count,
+         failed_run_count, consecutive_failures, observed_jobs, new_jobs,
+         existing_jobs, duplicate_jobs, active_jobs, stale_jobs,
+         detail_success_count, detail_failure_count, active_verification_rate,
+         duplicate_rate, full_description_success_rate, apply_url_success_rate,
+         last_run_id, last_error_class, recommended_state, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      tenantId,
+      sourceId,
+      windowStart,
+      windowEnd,
+      current.runCount,
+      current.failedRunCount,
+      current.consecutiveFailures,
+      current.observedJobs,
+      current.newJobs,
+      current.existingJobs,
+      current.duplicateJobs,
+      current.activeJobs,
+      current.staleJobs,
+      current.detailSuccessCount,
+      current.detailFailureCount,
+      activeRate,
+      duplicateRate,
+      detailRate,
+      applyUrlRate,
+      current.lastRunId,
+      current.lastErrorClass,
+      recommendedState(current, activeRate, duplicateRate, detailRate),
+      updatedAt,
+    );
+  }
+}
+
+function hasSourceQualityHistory(db: SqliteDatabase): boolean {
+  if (!tableExists(db, "job_events")) return false;
+  const row = getRow<{ c: number }>(
+    db,
+    `SELECT COUNT(*) AS c
+     FROM job_events
+     WHERE event_type IN (
+       'DiscoveryRunStarted',
+       'DiscoveryRunCompleted',
+       'DiscoveryRunFailed',
+       'JobSourceObserved',
+       'DuplicateJobLinked',
+       'PostingContentSnapshotCaptured',
+       'PostingContentSnapshotFailed',
+       'JobEnriched',
+       'EnrichmentFailed',
+       'JobActiveStateChanged',
+       'ContentDuplicateCandidateDetected'
+     )`,
+  );
+  return Number(row?.c ?? 0) > 0;
+}
+
 // =============================================================== helpers
+
+function parsePayload(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasColumn(db: SqliteDatabase, tableName: string, columnName: string): boolean {
+  return allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).some(
+    (row) => row.name === columnName,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function value(payload: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      return payload[key];
+    }
+  }
+  return undefined;
+}
+
+function text(payload: Record<string, unknown>, ...keys: string[]): string {
+  const candidate = value(payload, ...keys);
+  return candidate === null || candidate === undefined ? "" : String(candidate);
+}
+
+function nullableText(candidate: unknown): string | null {
+  return candidate === null || candidate === undefined || candidate === "" ? null : String(candidate);
+}
+
+function stringList(candidate: unknown): string[] {
+  return Array.isArray(candidate)
+    ? candidate.map((item) => String(item)).filter((item) => item.length > 0)
+    : [];
+}
+
+function record(candidate: unknown): Record<string, unknown> {
+  return isRecord(candidate) ? candidate : {};
+}
+
+function normalizeCounts(counts: Record<string, unknown>): Record<string, number> {
+  return {
+    total: numberValue(counts, "total"),
+    new_jobs: numberValue(counts, "new_jobs", "newJobs"),
+    existing_jobs: numberValue(counts, "existing_jobs", "existingJobs"),
+    observed_jobs: numberValue(counts, "observed_jobs", "observedJobs"),
+    duplicate_jobs: numberValue(counts, "duplicate_jobs", "duplicateJobs"),
+    rejected_duplicates: numberValue(counts, "rejected_duplicates", "rejectedDuplicates"),
+  };
+}
+
+function numberValue(payload: Record<string, unknown>, ...keys: string[]): number {
+  const candidate = value(payload, ...keys);
+  const number = Number(candidate ?? 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function getStats(stats: Map<string, MutableSourceStats>, sourceId: string): MutableSourceStats {
+  const existing = stats.get(sourceId);
+  if (existing) return existing;
+  const created: MutableSourceStats = {
+    runCount: 0,
+    failedRunCount: 0,
+    consecutiveFailures: 0,
+    observedJobs: 0,
+    newJobs: 0,
+    existingJobs: 0,
+    duplicateJobs: 0,
+    activeJobs: 0,
+    staleJobs: 0,
+    detailSuccessCount: 0,
+    detailFailureCount: 0,
+    applyUrlSuccessCount: 0,
+    applyUrlFailureCount: 0,
+    lastRunId: null,
+    lastErrorClass: null,
+    detailSuccessJobs: new Set<string>(),
+    detailFailureJobs: new Set<string>(),
+    applySuccessJobs: new Set<string>(),
+    applyFailureJobs: new Set<string>(),
+  };
+  stats.set(sourceId, created);
+  return created;
+}
+
+function runSourceKey(runId: string, sourceId: string): string {
+  return `${runId}\u0000${sourceId}`;
+}
+
+function markDetailSuccess(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && stats.detailSuccessJobs.has(jobId)) return;
+  if (jobId) {
+    stats.detailSuccessJobs.add(jobId);
+    stats.detailFailureJobs.delete(jobId);
+  }
+  stats.detailSuccessCount += 1;
+}
+
+function markDetailFailure(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && (stats.detailFailureJobs.has(jobId) || stats.detailSuccessJobs.has(jobId))) return;
+  if (jobId) stats.detailFailureJobs.add(jobId);
+  stats.detailFailureCount += 1;
+}
+
+function markApplySuccess(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && stats.applySuccessJobs.has(jobId)) return;
+  if (jobId) {
+    stats.applySuccessJobs.add(jobId);
+    stats.applyFailureJobs.delete(jobId);
+  }
+  stats.applyUrlSuccessCount += 1;
+}
+
+function markApplyFailure(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && (stats.applyFailureJobs.has(jobId) || stats.applySuccessJobs.has(jobId))) return;
+  if (jobId) stats.applyFailureJobs.add(jobId);
+  stats.applyUrlFailureCount += 1;
+}
+
+function rate(numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  return Math.round((numerator / denominator) * 10000) / 10000;
+}
+
+function recommendedState(
+  stats: MutableSourceStats,
+  activeRate: number | null,
+  duplicateRate: number | null,
+  detailRate: number | null,
+): string {
+  const sample = Math.max(stats.observedJobs, stats.newJobs + stats.existingJobs);
+  if (stats.consecutiveFailures >= 5) return "disabled";
+  if (stats.consecutiveFailures >= 3) return "quarantined";
+  if (sample >= 10 && duplicateRate !== null && duplicateRate >= 0.85) return "quarantined";
+  if (sample >= 10 && activeRate !== null && activeRate < 0.25) return "quarantined";
+  if (sample >= 10 && detailRate !== null && detailRate < 0.25) return "quarantined";
+  return "normal";
+}
 
 function stringField(value: unknown): string {
   if (value === null || value === undefined) return "";

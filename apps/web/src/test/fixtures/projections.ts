@@ -189,6 +189,25 @@ export const sampleDashboardSummary: DashboardSummary = {
       at: "2026-05-06T07:30:00Z",
     },
   ],
+  sourceHealth: [
+    {
+      sourceId: "greenhouse:acme",
+      recommendedState: "normal",
+      runCount: 2,
+      failedRunCount: 0,
+      consecutiveFailures: 0,
+      observedJobs: 6,
+      newJobs: 4,
+      existingJobs: 2,
+      duplicateRate: 0.1,
+      activeVerificationRate: 0.9,
+      fullDescriptionSuccessRate: 1,
+      applyUrlSuccessRate: 0.8,
+      lastRunId: "run-1",
+      lastErrorClass: null,
+      updatedAt: "2026-05-06T07:40:00Z",
+    },
+  ],
   applyRuns: [
     {
       runId: "run-1",

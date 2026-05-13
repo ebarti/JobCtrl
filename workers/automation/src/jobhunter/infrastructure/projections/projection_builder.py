@@ -59,6 +59,11 @@ from jobhunter.infrastructure.projections.sqlite_projection_store import (
     SqliteProjectionStore,
     ensure_projection_tables,
 )
+from jobhunter.infrastructure.projections.source_quality import (
+    SOURCE_QUALITY_EVENT_TYPES,
+    event_row_from_sql,
+    project_source_quality,
+)
 
 
 log = logging.getLogger(__name__)
@@ -240,7 +245,7 @@ class ProjectionBuilder:
         watermark = self._watermarks.get(PROJECTION_NAME)
         rows = self._conn.execute(
             """
-            SELECT event_id, job_url, event_type, payload_json
+            SELECT event_id, job_url, event_type, occurred_at, payload_json
             FROM job_events
             WHERE event_id > ?
             ORDER BY event_id ASC
@@ -249,6 +254,7 @@ class ProjectionBuilder:
         ).fetchall()
 
         dirty_jobs: set[str] = set()
+        source_quality_dirty = False
         max_event_id = watermark
         for row in rows:
             event_id = int(row["event_id"]) if not isinstance(row, tuple) else int(row[0])
@@ -257,6 +263,9 @@ class ProjectionBuilder:
             job_url = row["job_url"] if not isinstance(row, tuple) else row[1]
             if job_url:
                 dirty_jobs.add(str(job_url))
+            event_type = row["event_type"] if not isinstance(row, tuple) else row[2]
+            if str(event_type) in SOURCE_QUALITY_EVENT_TYPES:
+                source_quality_dirty = True
 
         # First-run backfill: if projections are empty, mark every
         # existing job as dirty so pre-event-history rows still get
@@ -288,7 +297,21 @@ class ProjectionBuilder:
             ).fetchone()
             is not None
         )
-        if not dirty_jobs and max_event_id == watermark and dashboard_exists:
+        source_quality_exists = (
+            self._conn.execute(
+                "SELECT 1 FROM source_quality_stats WHERE tenant_id = ? LIMIT 1",
+                (str(self._tenant_id),),
+            ).fetchone()
+            is not None
+        )
+        source_quality_history = source_quality_dirty or self._has_source_quality_history()
+        if (
+            not dirty_jobs
+            and not source_quality_dirty
+            and dashboard_exists
+            and (source_quality_exists or not source_quality_history)
+            and max_event_id == watermark
+        ):
             return 0
 
         # ``record_job_event`` invokes the wildcard subscriber inside the
@@ -304,6 +327,8 @@ class ProjectionBuilder:
             # Watermark advanced past events with no job_url (e.g.
             # system events) OR first-run: bump the watermark + ensure
             # the dashboard row exists.
+            if source_quality_dirty or (not source_quality_exists and source_quality_history):
+                self._rebuild_source_quality()
             if max_event_id > watermark:
                 self._watermarks.set(PROJECTION_NAME, max_event_id)
             if not dashboard_exists:
@@ -316,6 +341,8 @@ class ProjectionBuilder:
         # first so ``_rebuild_job`` can read the freshly derived apply
         # lifecycle status when it materialises ``job_list_projections``.
         self._rebuild_apply_runs()
+        if source_quality_dirty or (not source_quality_exists and source_quality_history):
+            self._rebuild_source_quality()
         for job_url in dirty_jobs:
             self._rebuild_job(job_url)
         self._rebuild_dashboard()
@@ -894,6 +921,58 @@ class ProjectionBuilder:
             generated_at=_utc_now(),
         )
         self._store.upsert_dashboard(dashboard)
+
+    def _rebuild_source_quality(self) -> None:
+        rows = self._conn.execute(
+            """
+            SELECT event_id, job_url, event_type, occurred_at, payload_json
+            FROM job_events
+            WHERE event_type IN (
+                'DiscoveryRunStarted',
+                'DiscoveryRunCompleted',
+                'DiscoveryRunFailed',
+                'JobSourceObserved',
+                'DuplicateJobLinked',
+                'PostingContentSnapshotCaptured',
+                'PostingContentSnapshotFailed',
+                'JobEnriched',
+                'EnrichmentFailed',
+                'JobActiveStateChanged',
+                'ContentDuplicateCandidateDetected'
+            )
+            ORDER BY event_id ASC
+            """
+        ).fetchall()
+        result = project_source_quality(
+            tenant_id=self._tenant_id,
+            events=(event_row_from_sql(row) for row in rows),
+            updated_at=_utc_now(),
+        )
+        for run in result.runs:
+            self._store.upsert_discovery_run(run)
+        self._store.replace_source_quality(str(self._tenant_id), result.stats)
+
+    def _has_source_quality_history(self) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM job_events
+            WHERE event_type IN (
+                'DiscoveryRunStarted',
+                'DiscoveryRunCompleted',
+                'DiscoveryRunFailed',
+                'JobSourceObserved',
+                'DuplicateJobLinked',
+                'PostingContentSnapshotCaptured',
+                'PostingContentSnapshotFailed',
+                'JobEnriched',
+                'EnrichmentFailed',
+                'JobActiveStateChanged',
+                'ContentDuplicateCandidateDetected'
+            )
+            """
+        ).fetchone()
+        return bool(row and int(row[0]) > 0)
 
     # ----------------------------------------------------------- apply runs
 

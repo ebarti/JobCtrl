@@ -4,6 +4,9 @@ import { createDomainEvent } from "../src/events/base.js";
 import { DOMAIN_EVENT_TYPES } from "../src/events/index.js";
 import {
   createCanonicalJobIdentityResolved,
+  createDiscoveryRunCompleted,
+  createDiscoveryRunFailed,
+  createDiscoveryRunStarted,
   createDuplicateJobLinked,
   createDuplicateJobLinkRejected,
   createJobDiscovered,
@@ -98,6 +101,38 @@ describe("Discovery events", () => {
     expect(event.eventType).toBe("JobSourceObserved");
     expect(event.payload.sourceObservationId).toBe("observation-1");
     expect(event.payload.runId).toBe("run-1");
+  });
+
+  it("DiscoveryRun events carry scheduler telemetry", () => {
+    const started = createDiscoveryRunStarted(LOCAL_TENANT, {
+      runId: "run-1",
+      sourceIds: ["greenhouse:acme"],
+      profileSnapshotId: "profile:1",
+      startedAt: "2026-05-13T00:00:00Z",
+    });
+    const completed = createDiscoveryRunCompleted(LOCAL_TENANT, {
+      runId: "run-1",
+      counts: {
+        total: 3,
+        newJobs: 2,
+        existingJobs: 1,
+        observedJobs: 3,
+        duplicateJobs: 0,
+        rejectedDuplicates: 0,
+      },
+      errorClasses: [],
+      completedAt: "2026-05-13T00:01:00Z",
+    });
+    const failed = createDiscoveryRunFailed(LOCAL_TENANT, {
+      runId: "run-2",
+      sourceId: "greenhouse:acme",
+      errorClass: "TimeoutError",
+      retryable: true,
+      failedAt: "2026-05-13T00:02:00Z",
+    });
+    expect(started.eventType).toBe("DiscoveryRunStarted");
+    expect(completed.payload.counts.newJobs).toBe(2);
+    expect(failed.payload.errorClass).toBe("TimeoutError");
   });
 
   it("CanonicalJobIdentityResolved carries ATS identity fields", () => {
@@ -357,6 +392,35 @@ describe("All events carry tenantId", () => {
         observedAt: "t",
       }),
     () =>
+      createDiscoveryRunStarted(LOCAL_TENANT, {
+        runId: "run-1",
+        sourceIds: ["greenhouse:acme"],
+        profileSnapshotId: null,
+        startedAt: "t",
+      }),
+    () =>
+      createDiscoveryRunCompleted(LOCAL_TENANT, {
+        runId: "run-1",
+        counts: {
+          total: 1,
+          newJobs: 1,
+          existingJobs: 0,
+          observedJobs: 1,
+          duplicateJobs: 0,
+          rejectedDuplicates: 0,
+        },
+        errorClasses: [],
+        completedAt: "t",
+      }),
+    () =>
+      createDiscoveryRunFailed(LOCAL_TENANT, {
+        runId: "run-2",
+        sourceId: "greenhouse:acme",
+        errorClass: "TimeoutError",
+        retryable: true,
+        failedAt: "t",
+      }),
+    () =>
       createJobEnriched(LOCAL_TENANT, {
         jobId: "j1",
         fullDescription: "d",
@@ -428,7 +492,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(40);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(43);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -482,6 +546,32 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         observedUrl: "https://boards.greenhouse.io/acme/jobs/123456",
         runId: "run-1",
         observedAt: "t",
+      }).eventType,
+      createDiscoveryRunStarted(LOCAL_TENANT, {
+        runId: "run-1",
+        sourceIds: ["greenhouse:acme"],
+        profileSnapshotId: "profile:1",
+        startedAt: "t",
+      }).eventType,
+      createDiscoveryRunCompleted(LOCAL_TENANT, {
+        runId: "run-1",
+        counts: {
+          total: 1,
+          newJobs: 1,
+          existingJobs: 0,
+          observedJobs: 1,
+          duplicateJobs: 0,
+          rejectedDuplicates: 0,
+        },
+        errorClasses: [],
+        completedAt: "t",
+      }).eventType,
+      createDiscoveryRunFailed(LOCAL_TENANT, {
+        runId: "run-2",
+        sourceId: "greenhouse:acme",
+        errorClass: "TimeoutError",
+        retryable: true,
+        failedAt: "t",
       }).eventType,
       createCanonicalJobIdentityResolved(LOCAL_TENANT, {
         jobId: "j",

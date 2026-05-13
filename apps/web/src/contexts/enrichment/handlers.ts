@@ -15,6 +15,7 @@ import { jobsKeys } from "../operations/jobsKeys.js";
 export const jobEnrichedHandler = (event: JobEnriched): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
@@ -23,6 +24,7 @@ export const enrichmentFailedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
@@ -61,6 +63,7 @@ export const jobActiveStateChangedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 

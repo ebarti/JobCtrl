@@ -169,6 +169,63 @@ def create_job_source_observed(
 
 
 @dataclass(frozen=True)
+class DiscoveryRunStartedPayload:
+    run_id: str
+    source_ids: tuple[str, ...]
+    profile_snapshot_id: str | None
+    started_at: str
+
+
+def create_discovery_run_started(
+    tenant_id: TenantId,
+    payload: DiscoveryRunStartedPayload,
+) -> DomainEvent:
+    return create_domain_event("DiscoveryRunStarted", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class DiscoveryRunCountsPayload:
+    total: int = 0
+    new_jobs: int = 0
+    existing_jobs: int = 0
+    observed_jobs: int = 0
+    duplicate_jobs: int = 0
+    rejected_duplicates: int = 0
+
+
+@dataclass(frozen=True)
+class DiscoveryRunCompletedPayload:
+    run_id: str
+    counts: DiscoveryRunCountsPayload
+    error_classes: tuple[str, ...]
+    completed_at: str
+
+
+def create_discovery_run_completed(
+    tenant_id: TenantId,
+    payload: DiscoveryRunCompletedPayload,
+) -> DomainEvent:
+    event_payload = asdict(payload)
+    return create_domain_event("DiscoveryRunCompleted", tenant_id, event_payload)
+
+
+@dataclass(frozen=True)
+class DiscoveryRunFailedPayload:
+    run_id: str
+    source_id: str
+    error_class: str
+    retryable: bool
+    failed_at: str
+
+
+def create_discovery_run_failed(
+    tenant_id: TenantId,
+    payload: DiscoveryRunFailedPayload,
+) -> DomainEvent:
+    return create_domain_event("DiscoveryRunFailed", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
 class CanonicalJobIdentityResolvedPayload:
     """Discovery-owned identity decision for a Job.
 
