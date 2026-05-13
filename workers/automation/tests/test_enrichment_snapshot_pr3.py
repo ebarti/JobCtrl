@@ -263,6 +263,48 @@ def test_capture_snapshot_publishes_pr3_events_and_spans(in_memory_exporter) -> 
     assert "langfuse.observation.input" not in spans["enrichment.content.acquire"]
 
 
+def test_repeat_capture_does_not_republish_existing_duplicate_candidate() -> None:
+    description = _long_description()
+    expected_hash = SnapshotDescriptionHash.from_text(description)
+    repository = _MemorySnapshotRepository(
+        index=(
+            DedupeIndexEntry(
+                candidate_job_id="job-2",
+                description_hash=expected_hash,
+                apply_url=SnapshotApplyUrl(value="https://boards.greenhouse.io/acme/jobs/1/apply"),
+                cleaned_text=description,
+            ),
+        )
+    )
+    publisher = _RecordingPublisher()
+    use_case = _snapshot_use_case(
+        page=_json_ld_page(description),
+        publisher=publisher,
+        snapshot_repository=repository,
+    )
+
+    first = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        source_id=SOURCE_ID,
+        promote_to_job_enrichment=False,
+    )
+    second = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        source_id=SOURCE_ID,
+        promote_to_job_enrichment=False,
+    )
+
+    assert len(first.duplicate_candidates) == 1
+    assert second.duplicate_candidates == ()
+    assert [event.event_type for event in publisher.published].count(
+        "ContentDuplicateCandidateDetected"
+    ) == 1
+
+
 def test_render_and_llm_fallback_spans_record_non_sensitive_metadata(in_memory_exporter) -> None:
     with content_render_span(
         tenant_id="local",
@@ -330,6 +372,45 @@ def test_snapshot_failure_records_failure_event_without_bumping_version() -> Non
     assert outcome.snapshot_set.failures[0].error_class == "FETCH_ERROR"
     assert [event.event_type for event in publisher.published] == ["PostingContentSnapshotFailed"]
     assert publisher.published[0].payload["retryable"] is True
+
+
+def test_failed_capture_still_records_verified_active_state_change() -> None:
+    acquisition = ContentAcquisitionService(
+        fetcher=_CannedFetcher(DetailPage(url="https://x", status=404)),
+        extractors=(
+            TierExtractor(
+                tier=ExtractionTier.JSON_LD,
+                extractor=_StaticExtractor(ExtractionResult(ok=False)),
+            ),
+        ),
+    )
+    repository = _MemorySnapshotRepository()
+    publisher = _RecordingPublisher()
+    use_case = CapturePostingSnapshotUseCase(
+        snapshot_repository=repository,
+        acquisition_service=acquisition,
+        publisher=publisher,
+    )
+
+    outcome = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        source_id=SOURCE_ID,
+        promote_to_job_enrichment=False,
+    )
+
+    assert not outcome.ok
+    assert outcome.active_state_changed
+    assert outcome.snapshot_set.latest_active_state is ActiveState.REMOVED
+    assert [event.event_type for event in publisher.published] == [
+        "PostingContentSnapshotFailed",
+        "JobActiveStateChanged",
+    ]
+    active_event = publisher.published[1]
+    assert active_event.payload["active_state"] == "removed"
+    assert active_event.payload["previous_state"] == "unknown"
+    assert active_event.payload["verification_method"] == "http_status"
 
 
 def test_low_confidence_capture_is_quarantined_without_override() -> None:
@@ -440,6 +521,72 @@ def test_filter_override_rejects_disallowed_policy() -> None:
             requested_by="user:eloi",
             overridden_at=NOW,
         )
+
+
+def test_quarantined_snapshot_does_not_promote_to_job_enrichment() -> None:
+    acquisition = ContentAcquisitionService(
+        fetcher=_CannedFetcher(
+            DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)
+        ),
+        extractors=(
+            TierExtractor(
+                tier=ExtractionTier.LLM_ASSISTED,
+                extractor=_StaticExtractor(
+                    ExtractionResult(
+                        ok=True,
+                        full_description=FullDescription(text="Short description"),
+                        application_url=ApplicationUrl(value="https://apply"),
+                    )
+                ),
+            ),
+        ),
+    )
+    enrichment_repository = _MemoryEnrichmentRepository()
+    publisher = _RecordingPublisher()
+    use_case = CapturePostingSnapshotUseCase(
+        snapshot_repository=_MemorySnapshotRepository(),
+        acquisition_service=acquisition,
+        publisher=publisher,
+        enrichment_repository=enrichment_repository,
+    )
+
+    outcome = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        source_id=SOURCE_ID,
+        promote_to_job_enrichment=True,
+    )
+
+    assert outcome.ok
+    assert not outcome.promoted_to_job_enrichment
+    assert enrichment_repository.load(LOCAL_TENANT, JOB_ID) is None
+    assert "JobEnriched" not in [event.event_type for event in publisher.published]
+
+
+def test_inactive_snapshot_does_not_promote_to_job_enrichment() -> None:
+    enrichment_repository = _MemoryEnrichmentRepository()
+    publisher = _RecordingPublisher()
+    use_case = _snapshot_use_case(
+        page=_json_ld_page(valid_through="2000-01-01T00:00:00+00:00"),
+        publisher=publisher,
+        snapshot_repository=_MemorySnapshotRepository(),
+        enrichment_repository=enrichment_repository,
+    )
+
+    outcome = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JOB_ID,
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        source_id=SOURCE_ID,
+        promote_to_job_enrichment=True,
+    )
+
+    assert outcome.ok
+    assert outcome.snapshot_set.latest_active_state is ActiveState.EXPIRED
+    assert not outcome.promoted_to_job_enrichment
+    assert enrichment_repository.load(LOCAL_TENANT, JOB_ID) is None
+    assert "JobEnriched" not in [event.event_type for event in publisher.published]
 
 
 def test_later_snapshots_do_not_reopen_enriched_job_enrichment() -> None:

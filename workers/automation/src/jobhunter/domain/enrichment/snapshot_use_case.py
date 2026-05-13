@@ -39,6 +39,7 @@ from jobhunter.domain.enrichment.snapshot_set import (
 from jobhunter.domain.enrichment.snapshot_value_objects import (
     ActiveState,
     FilterOverrideAudit,
+    QuarantineReason,
     SnapshotApplyUrl,
 )
 from jobhunter.domain.enrichment.value_objects import ExtractionTier
@@ -214,10 +215,10 @@ class CapturePostingSnapshotUseCase:
                 confidence=finding.confidence,
                 detected_at=_utc_now(),
             )
-            snapshot_set = snapshot_set.record_duplicate_candidate(
-                candidate=candidate
-            )
-            duplicate_candidates.append(candidate)
+            before_count = len(snapshot_set.duplicate_candidates)
+            snapshot_set = snapshot_set.record_duplicate_candidate(candidate=candidate)
+            if len(snapshot_set.duplicate_candidates) > before_count:
+                duplicate_candidates.append(candidate)
 
         # Active-state transition (vs. the previously latest state).
         active_changed = result.active_state is not previous_active
@@ -231,6 +232,8 @@ class CapturePostingSnapshotUseCase:
             and self._enrichment_repository is not None
             and result.description is not None
             and result.apply_url is not None
+            and result.active_state is ActiveState.ACTIVE
+            and result.quarantine_reason is QuarantineReason.NONE
         ):
             promoted = self._maybe_seed_job_enrichment(
                 tenant_id=tenant_id,
@@ -284,6 +287,7 @@ class CapturePostingSnapshotUseCase:
         result: ContentAcquisitionResult,
     ) -> CapturePostingSnapshotOutcome:
         failed_at = _utc_now()
+        previous_active = snapshot_set.latest_active_state
         snapshot_set, _ = snapshot_set.record_capture_failure(
             source_id=source_id,
             error_class=result.error_class or "UNKNOWN",
@@ -291,6 +295,15 @@ class CapturePostingSnapshotUseCase:
             retryable=result.retryable,
             failed_at=failed_at,
         )
+        active_changed = (
+            result.verification_method != "unknown"
+            and result.active_state is not previous_active
+        )
+        if active_changed:
+            snapshot_set, _ = snapshot_set.mark_active_state(
+                active_state=result.active_state,
+                verified_at=failed_at,
+            )
         self._snapshot_repository.save(snapshot_set)
         self._publish_failed(
             tenant_id=snapshot_set.tenant_id,
@@ -300,9 +313,19 @@ class CapturePostingSnapshotUseCase:
             retryable=result.retryable,
             failed_at=failed_at,
         )
+        if active_changed:
+            self._publish_active_state_changed(
+                tenant_id=snapshot_set.tenant_id,
+                job_id=snapshot_set.job_id,
+                new_state=result.active_state,
+                previous_state=previous_active,
+                verification_method=result.verification_method,
+                verified_at=failed_at,
+            )
         return CapturePostingSnapshotOutcome(
             ok=False,
             snapshot_set=snapshot_set,
+            active_state_changed=active_changed,
             error_class=result.error_class,
             error_message=result.error_message,
         )
