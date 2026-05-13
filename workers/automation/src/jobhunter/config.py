@@ -249,6 +249,7 @@ def _workday_sources(employers_cfg: dict) -> list[SourceRegistryEntry]:
                     state=SourceState.ACTIVE,
                     policy=WORKDAY_API_POLICY,
                     adapter_config={
+                        "employer_key": str(key),
                         "tenant": employer.get("tenant"),
                         "site_id": employer.get("site_id"),
                         "base_url": employer.get("base_url"),

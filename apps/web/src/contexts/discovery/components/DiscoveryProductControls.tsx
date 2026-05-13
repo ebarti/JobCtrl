@@ -346,7 +346,7 @@ function SourceLocatorPanel({
                 variant="ghost"
                 aria-label={`Promote ${candidate.candidateUrl}`}
                 title="Promote candidate"
-                disabled={promote.isPending}
+                disabled={promote.isPending || reject.isPending}
                 onClick={() =>
                   promote.mutate({
                     candidateId: candidate.candidateId,
@@ -362,7 +362,7 @@ function SourceLocatorPanel({
                 variant="ghost"
                 aria-label={`Reject ${candidate.candidateUrl}`}
                 title="Reject candidate"
-                disabled={reject.isPending}
+                disabled={promote.isPending || reject.isPending}
                 onClick={() =>
                   reject.mutate({
                     candidateId: candidate.candidateId,

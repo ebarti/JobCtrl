@@ -80,14 +80,10 @@ interface SourceLocatorCandidateRow extends Record<string, unknown> {
   discovered_at: string;
 }
 
-interface JobSourceObservedEventRow extends Record<string, unknown> {
-  job_url: string | null;
-  occurred_at: string;
-  payload_json: string | null;
-}
-
-interface PreviewJobRow extends Record<string, unknown> {
-  url: string;
+interface PreviewObservationRow extends Record<string, unknown> {
+  job_url: string;
+  observed_url: string;
+  observed_at: string;
   title: string | null;
   site: string | null;
   location: string | null;
@@ -636,45 +632,36 @@ export function previewDiscoverySource(
   sourceId: string,
 ): DiscoveryPreviewResponse {
   ensureDiscoveryControlTables(db);
-  if (!tableExists(db, "job_events")) {
+  if (!tableExists(db, "job_source_observations")) {
     return { ok: true, sourceId, leads: [], generatedAt: new Date().toISOString() };
   }
 
-  const rows = allRows<JobSourceObservedEventRow>(
+  const rows = allRows<PreviewObservationRow>(
     db,
-    `SELECT job_url, occurred_at, payload_json
-     FROM job_events
-     WHERE event_type = 'JobSourceObserved'
-     ORDER BY occurred_at DESC, event_id DESC
-     LIMIT 200`,
+    `SELECT o.job_url, o.observed_url, o.observed_at,
+            j.title, j.site, j.location
+     FROM job_source_observations o
+     LEFT JOIN jobs j ON j.url = o.job_url
+     WHERE o.tenant_id = ? AND o.source_id = ?
+     ORDER BY o.observed_at DESC, o.source_observation_id DESC
+     LIMIT 10`,
+    [DEFAULT_TENANT, sourceId],
   );
   const leads: DiscoveryPreviewResponse["leads"] = [];
   const seen = new Set<string>();
   for (const row of rows) {
-    const payload = parseObject(row.payload_json ?? "{}");
-    if (text(payload, "sourceId", "source_id") !== sourceId) {
-      continue;
-    }
-    const candidateUrl =
-      text(payload, "observedUrl", "observed_url") ||
-      text(payload, "jobId", "job_id") ||
-      row.job_url ||
-      "";
+    const candidateUrl = row.observed_url || row.job_url;
     if (!candidateUrl || seen.has(candidateUrl)) {
       continue;
     }
     seen.add(candidateUrl);
-    const job = readPreviewJob(db, text(payload, "jobId", "job_id") || row.job_url || candidateUrl);
     leads.push({
       candidateUrl,
-      title: job?.title || "",
-      company: job?.site || "",
-      location: job?.location || "",
+      title: row.title || "",
+      company: row.site || "",
+      location: row.location || "",
       estimatedConfidence: 1,
     });
-    if (leads.length >= 10) {
-      break;
-    }
   }
   return {
     ok: true,
@@ -911,29 +898,6 @@ function parseObject(raw: string): Record<string, unknown> {
   }
 }
 
-function text(payload: Record<string, unknown>, ...names: string[]): string {
-  for (const name of names) {
-    const value = payload[name];
-    if (typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-  return "";
-}
-
-function readPreviewJob(db: SqliteDatabase, jobKey: string): PreviewJobRow | undefined {
-  if (!jobKey || !tableExists(db, "jobs")) {
-    return undefined;
-  }
-  return getRow<PreviewJobRow>(
-    db,
-    `SELECT url, title, site, location
-     FROM jobs
-     WHERE url = ?`,
-    [jobKey],
-  );
-}
-
 function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -951,8 +915,8 @@ function jobKeyFromCapturedInput(input: ManualCaptureImportRequest, fallbackUrl:
 }
 
 function sourceIdFromLocatorCandidate(candidate: SourceLocatorCandidateRow): string {
-  const slug = slugFromUrl(candidate.candidate_url) || candidate.candidate_id;
   const atsKind = candidate.detected_ats_kind?.trim().toLowerCase();
+  const slug = sourceSlugFromLocatorCandidate(candidate.candidate_url, atsKind) || candidate.candidate_id;
   if (atsKind) {
     return `${atsKind}:${slug}`;
   }
@@ -965,10 +929,7 @@ function sourceDisplayNameFromUrl(rawUrl: string): string {
 }
 
 function slugFromUrl(rawUrl: string): string {
-  return sourceDisplayNameFromUrl(rawUrl)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return slugText(sourceDisplayNameFromUrl(rawUrl));
 }
 
 function hostFromUrl(rawUrl: string): string {
@@ -977,4 +938,37 @@ function hostFromUrl(rawUrl: string): string {
   } catch {
     return "";
   }
+}
+
+function sourceSlugFromLocatorCandidate(rawUrl: string, atsKind: string | undefined): string {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const firstPathSegment = url.pathname.split("/").filter(Boolean)[0] ?? "";
+    if (atsKind && isSharedAtsHost(host) && firstPathSegment) {
+      return slugText(firstPathSegment);
+    }
+    return slugText(host);
+  } catch {
+    return slugFromUrl(rawUrl);
+  }
+}
+
+function isSharedAtsHost(host: string): boolean {
+  return [
+    "boards.greenhouse.io",
+    "jobs.lever.co",
+    "jobs.ashbyhq.com",
+    "myworkdayjobs.com",
+    "wd1.myworkdaysite.com",
+    "wd3.myworkdayjobs.com",
+    "wd5.myworkdayjobs.com",
+  ].some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function slugText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }

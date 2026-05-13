@@ -68,21 +68,12 @@ describe("DiscoveryProductControls", () => {
       },
       decidedAt: "2026-05-12T10:00:00+00:00",
     }));
-    const rejectSourceLocatorCandidate = vi.fn(async () => ({
-      ok: true as const,
-      candidateId: "candidate-1",
-      decision: "reject" as const,
-      source: null,
-      decidedAt: "2026-05-12T10:00:00+00:00",
-    }));
-
     renderWithProviders(<DiscoveryProductControls />, {
       ports: buildTestPorts({
         api: {
           recordDiscoveryFeedback,
           importManualCapture,
           promoteSourceLocatorCandidate,
-          rejectSourceLocatorCandidate,
         },
       }),
     });
@@ -90,17 +81,12 @@ describe("DiscoveryProductControls", () => {
     await screen.findByText("Engineering Manager");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /promote https:\/\/example.com\/careers/i }));
-    await user.click(screen.getByRole("button", { name: /reject https:\/\/example.com\/careers/i }));
     await user.click(screen.getByRole("button", { name: /mark source greenhouse-example useful/i }));
     await user.click(screen.getByRole("button", { name: /import https:\/\/example.com\/protected\/job/i }));
 
     await waitFor(() => expect(promoteSourceLocatorCandidate).toHaveBeenCalledTimes(1));
     expect(promoteSourceLocatorCandidate).toHaveBeenCalledWith("candidate-1", {
       reason: "User promoted source locator candidate from product controls.",
-    });
-    await waitFor(() => expect(rejectSourceLocatorCandidate).toHaveBeenCalledTimes(1));
-    expect(rejectSourceLocatorCandidate).toHaveBeenCalledWith("candidate-1", {
-      reason: "User rejected source locator candidate from product controls.",
     });
     await waitFor(() => expect(recordDiscoveryFeedback).toHaveBeenCalledTimes(1));
     expect(recordDiscoveryFeedback).toHaveBeenCalledWith({
@@ -113,6 +99,33 @@ describe("DiscoveryProductControls", () => {
       captureMode: "copied_url",
       capturedUrl: "https://example.com/protected/job",
       futureManualActionRequired: false,
+    });
+  });
+
+  it("rejects source locator candidates through the API port", async () => {
+    const rejectSourceLocatorCandidate = vi.fn(async () => ({
+      ok: true as const,
+      candidateId: "candidate-1",
+      decision: "reject" as const,
+      source: null,
+      decidedAt: "2026-05-12T10:00:00+00:00",
+    }));
+
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({
+        api: {
+          rejectSourceLocatorCandidate,
+        },
+      }),
+    });
+
+    await screen.findByText("https://example.com/careers");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /reject https:\/\/example.com\/careers/i }));
+
+    await waitFor(() => expect(rejectSourceLocatorCandidate).toHaveBeenCalledTimes(1));
+    expect(rejectSourceLocatorCandidate).toHaveBeenCalledWith("candidate-1", {
+      reason: "User rejected source locator candidate from product controls.",
     });
   });
 });

@@ -140,6 +140,7 @@ export const discoveryFeedbackRecordedHandler = (
   event: DiscoveryFeedbackRecorded,
 ): readonly InvalidationItem[] => [
   invalidate(discoveryKeys.feedback(event.tenantId)),
+  invalidate(discoveryKeys.sourceRegistry(event.tenantId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];

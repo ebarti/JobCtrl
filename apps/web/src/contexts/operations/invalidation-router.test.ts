@@ -65,6 +65,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ],
   DiscoveryFeedbackRecorded: [
     discoveryKeys.feedback(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],

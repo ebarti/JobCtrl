@@ -167,6 +167,7 @@ def test_load_source_registry_generates_entries_from_packaged_yaml_shapes() -> N
 
     workday = by_id["workday:acme"]
     assert workday.kind is SourceKind.ATS_API
+    assert workday.adapter_config["employer_key"] == "acme"
     assert workday.adapter_config["tenant"] == "acme"
 
     assert by_id["jobspy:linkedin"].kind is SourceKind.BROAD_BOARD

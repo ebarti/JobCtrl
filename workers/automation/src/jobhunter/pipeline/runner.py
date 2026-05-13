@@ -742,6 +742,32 @@ def _scheduled_limit_for_sources(sources: tuple[ScheduledSource, ...], user_limi
     return budget
 
 
+def _jobspy_config_for_sources(search_cfg: dict, sources: tuple[ScheduledSource, ...]) -> dict:
+    boards: list[str] = []
+    for source in sources:
+        if not source.should_run:
+            continue
+        board = str(source.adapter_config.get("board") or "").strip()
+        if board:
+            boards.append(board)
+    return {**search_cfg, "boards": boards}
+
+
+def _workday_employers_for_sources(sources: tuple[ScheduledSource, ...]) -> dict:
+    employers_cfg = config.load_employers_config()
+    employers = employers_cfg.get("employers", {}) if isinstance(employers_cfg, dict) else {}
+    if not isinstance(employers, dict):
+        return {}
+    selected: dict[str, object] = {}
+    for source in sources:
+        if not source.should_run:
+            continue
+        employer_key = str(source.adapter_config.get("employer_key") or "").strip()
+        if employer_key and employer_key in employers:
+            selected[employer_key] = employers[employer_key]
+    return selected
+
+
 def _smart_extract_sources(schedule: DiscoverySchedule) -> tuple[ScheduledSource, ...]:
     source_ids = {source.source_id for source in schedule.for_prefix("smart_extract")}
     sources = list(schedule.for_prefix("smart_extract"))
@@ -807,6 +833,8 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
+    jobspy_sources = schedule.for_prefix("jobspy")
+
     def run_jobspy() -> dict:
         if search_cfg.get("disable_jobspy", False):
             console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
@@ -821,13 +849,22 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result
-        source_results["jobspy"] = run_discovery(limit=_scheduled_limit(schedule, "jobspy", limit))
+        jobspy_cfg = _jobspy_config_for_sources(search_cfg, jobspy_sources)
+        if not jobspy_cfg.get("boards"):
+            console.print("  [dim]No runnable JobSpy boards scheduled[/dim]")
+            result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            source_results["jobspy"] = result
+            return result
+        source_results["jobspy"] = run_discovery(
+            cfg=jobspy_cfg,
+            limit=_scheduled_limit(schedule, "jobspy", limit),
+        )
         return source_results["jobspy"]
 
     stats["jobspy"] = _run_discovery_source(
         "jobspy",
         "JobSpy",
-        schedule.for_prefix("jobspy"),
+        jobspy_sources,
         run_jobspy,
     )
     if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
@@ -838,10 +875,13 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         return stats
 
     # Workday corporate scraper
+    workday_sources = schedule.for_prefix("workday")
+
     def run_workday() -> dict:
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
         source_results["workday"] = run_workday_discovery(
+            employers=_workday_employers_for_sources(workday_sources),
             workers=bounded_workers,
             limit=_scheduled_limit(schedule, "workday", limit),
         )
@@ -850,7 +890,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     stats["workday"] = _run_discovery_source(
         "workday",
         "Workday scraper",
-        schedule.for_prefix("workday"),
+        workday_sources,
         run_workday,
     )
     if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):

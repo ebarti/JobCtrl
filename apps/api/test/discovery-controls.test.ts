@@ -47,6 +47,18 @@ function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
       occurred_at TEXT NOT NULL,
       payload_json TEXT
     );
+    CREATE TABLE job_source_observations (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      source_observation_id TEXT NOT NULL,
+      job_url TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      source_native_id TEXT NOT NULL,
+      observed_url TEXT NOT NULL,
+      normalized_observed_url TEXT NOT NULL,
+      run_id TEXT NOT NULL DEFAULT '',
+      observed_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, source_observation_id)
+    );
   `);
   db.close();
   return {
@@ -195,7 +207,7 @@ describe("discovery product controls API", () => {
       ).run(
         "local",
         "candidate-1",
-        "https://example.com/careers",
+        "https://boards.greenhouse.io/acme",
         "employer_careers_page",
         0.86,
         "greenhouse",
@@ -211,6 +223,22 @@ describe("discovery product controls API", () => {
       ).run(
         "local",
         "candidate-2",
+        "https://boards.greenhouse.io/contoso",
+        "employer_careers_page",
+        0.84,
+        "greenhouse",
+        1,
+        null,
+        "2026-05-12T10:05:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO source_locator_candidates (
+           tenant_id, candidate_id, candidate_url, source_kind, confidence,
+           detected_ats_kind, employer_domain_matched, manual_action_reason, discovered_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "candidate-3",
         "https://bad.example.com/careers",
         "employer_careers_page",
         0.41,
@@ -231,19 +259,33 @@ describe("discovery product controls API", () => {
         candidateId: "candidate-1",
         decision: "promote",
         source: {
-          sourceId: "greenhouse:example-com",
-          displayName: "example.com",
+          sourceId: "greenhouse:acme",
+          displayName: "boards.greenhouse.io",
+        },
+      });
+
+      const secondPromoted = await app.inject({
+        method: "POST",
+        url: "/v1/discovery/locator-candidates/candidate-2/promote",
+        payload: { reason: "reviewed" },
+      });
+      expect(secondPromoted.statusCode, secondPromoted.body).toBe(200);
+      expect(secondPromoted.json()).toMatchObject({
+        candidateId: "candidate-2",
+        decision: "promote",
+        source: {
+          sourceId: "greenhouse:contoso",
         },
       });
 
       const rejected = await app.inject({
         method: "POST",
-        url: "/v1/discovery/locator-candidates/candidate-2/reject",
+        url: "/v1/discovery/locator-candidates/candidate-3/reject",
         payload: { reason: "not a careers site" },
       });
       expect(rejected.statusCode, rejected.body).toBe(200);
       expect(rejected.json()).toMatchObject({
-        candidateId: "candidate-2",
+        candidateId: "candidate-3",
         decision: "reject",
         source: null,
       });
@@ -253,15 +295,14 @@ describe("discovery product controls API", () => {
       expect(candidates.json().candidates).toEqual([]);
 
       const verifyDb = new Database(dbPath);
-      const event = verifyDb
+      const events = verifyDb
         .prepare("SELECT event_type, payload_json FROM job_events WHERE event_type = 'SourceLocationCandidatePromoted'")
-        .get() as { event_type: string; payload_json: string };
+        .all() as { event_type: string; payload_json: string }[];
       verifyDb.close();
-      expect(event.event_type).toBe("SourceLocationCandidatePromoted");
-      expect(JSON.parse(event.payload_json)).toMatchObject({
-        candidateId: "candidate-1",
-        sourceId: "greenhouse:example-com",
-      });
+      expect(events.map((event) => JSON.parse(event.payload_json).sourceId)).toEqual([
+        "greenhouse:acme",
+        "greenhouse:contoso",
+      ]);
     } finally {
       await app.close();
       cleanup();
@@ -284,22 +325,20 @@ describe("discovery product controls API", () => {
         "2026-05-12T10:00:00+00:00",
       );
       db.prepare(
-        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        `INSERT INTO job_source_observations (
+           tenant_id, source_observation_id, job_url, source_id, source_native_id,
+           observed_url, normalized_observed_url, run_id, observed_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
+        "local",
+        "observation-1",
         "https://example.com/jobs/1",
-        "discover",
-        "JobSourceObserved",
-        "info",
-        "Source observed",
+        "greenhouse:example-com",
+        "native-1",
+        "https://example.com/jobs/1",
+        "https://example.com/jobs/1",
+        "run-1",
         "2026-05-12T10:01:00+00:00",
-        JSON.stringify({
-          jobId: "https://example.com/jobs/1",
-          sourceId: "greenhouse:example-com",
-          observedUrl: "https://example.com/jobs/1",
-          sourceObservationId: "observation-1",
-          runId: "run-1",
-          observedAt: "2026-05-12T10:01:00+00:00",
-        }),
       );
       db.prepare(
         `INSERT INTO discovery_quarantine_entries (
