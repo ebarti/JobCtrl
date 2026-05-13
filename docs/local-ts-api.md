@@ -28,8 +28,9 @@ the wire as a compatibility summary during the scoring evidence migration.
 
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
-source-observation, duplicate, content snapshot, and active-state events and is
-the read-side signal the web dashboard uses for source health.
+source-observation, duplicate, content snapshot, enrichment, apply-URL, and
+active-state events and is the read-side signal the web dashboard uses for
+source health.
 
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal

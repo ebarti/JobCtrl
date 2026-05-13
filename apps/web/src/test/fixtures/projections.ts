@@ -202,6 +202,7 @@ export const sampleDashboardSummary: DashboardSummary = {
       duplicateRate: 0.1,
       activeVerificationRate: 0.9,
       fullDescriptionSuccessRate: 1,
+      applyUrlSuccessRate: 0.8,
       lastRunId: "run-1",
       lastErrorClass: null,
       updatedAt: "2026-05-06T07:40:00Z",

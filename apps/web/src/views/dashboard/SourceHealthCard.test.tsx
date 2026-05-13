@@ -11,6 +11,7 @@ describe("SourceHealthCard", () => {
     expect(screen.getByText("Source health")).toBeInTheDocument();
     expect(screen.getByText("greenhouse:acme")).toBeInTheDocument();
     expect(screen.getByText(/active 90%/i)).toBeInTheDocument();
+    expect(screen.getByText(/apply 80%/i)).toBeInTheDocument();
   });
 
   it("renders an empty state when no source health exists", () => {

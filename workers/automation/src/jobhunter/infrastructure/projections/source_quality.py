@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from jobhunter.domain.operations.projections import (
@@ -53,9 +53,15 @@ class _MutableStats:
     stale_jobs: int = 0
     detail_success_count: int = 0
     detail_failure_count: int = 0
+    apply_url_success_count: int = 0
+    apply_url_failure_count: int = 0
     last_run_id: str | None = None
     last_error_class: str | None = None
     event_count: int = 0
+    detail_success_jobs: set[str] = field(default_factory=set)
+    detail_failure_jobs: set[str] = field(default_factory=set)
+    apply_success_jobs: set[str] = field(default_factory=set)
+    apply_failure_jobs: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -87,6 +93,9 @@ def project_source_quality(
     stats: dict[str, _MutableStats] = {}
     source_by_observation: dict[str, str] = {}
     sources_by_job: dict[str, set[str]] = {}
+    active_run_by_source: dict[str, str] = {}
+    observed_by_run_source: dict[tuple[str, str], int] = {}
+    duplicate_by_run_source: dict[tuple[str, str], int] = {}
     window_start = ordered[0].occurred_at if ordered else updated_at
     window_end = ordered[-1].occurred_at if ordered else updated_at
 
@@ -111,10 +120,12 @@ def project_source_quality(
             )
             for source_id in source_ids:
                 _stats(stats, source_id).event_count += 1
+                active_run_by_source[source_id] = run_id
         elif event.event_type == "DiscoveryRunCompleted":
             run_id = _text(payload, "run_id", "runId")
             counts = _dict(_value(payload, "counts"))
             source_ids = runs.get(run_id).source_ids if run_id in runs else ()
+            skipped = bool(_value(payload, "skipped"))
             if run_id in runs:
                 runs[run_id] = _merge_run(
                     runs[run_id],
@@ -125,14 +136,22 @@ def project_source_quality(
                 )
             for source_id in source_ids:
                 current = _stats(stats, source_id)
-                current.run_count += 1
-                current.consecutive_failures = 0
-                current.new_jobs += _int(counts, "new_jobs", "newJobs")
-                current.existing_jobs += _int(counts, "existing_jobs", "existingJobs")
-                current.observed_jobs += _int(counts, "observed_jobs", "observedJobs")
-                current.duplicate_jobs += _int(counts, "duplicate_jobs", "duplicateJobs")
+                if not skipped:
+                    current.run_count += 1
+                    current.consecutive_failures = 0
+                if len(source_ids) == 1 and not skipped:
+                    current.new_jobs += _int(counts, "new_jobs", "newJobs")
+                    current.existing_jobs += _int(counts, "existing_jobs", "existingJobs")
+                    observed_fallback = _int(counts, "observed_jobs", "observedJobs")
+                    observed_from_events = observed_by_run_source.get((run_id, source_id), 0)
+                    current.observed_jobs += max(0, observed_fallback - observed_from_events)
+                    duplicate_fallback = _int(counts, "duplicate_jobs", "duplicateJobs")
+                    duplicates_from_events = duplicate_by_run_source.get((run_id, source_id), 0)
+                    current.duplicate_jobs += max(0, duplicate_fallback - duplicates_from_events)
                 current.last_run_id = run_id
                 current.event_count += 1
+                if active_run_by_source.get(source_id) == run_id:
+                    active_run_by_source.pop(source_id, None)
         elif event.event_type == "DiscoveryRunFailed":
             run_id = _text(payload, "run_id", "runId")
             source_id = _text(payload, "source_id", "sourceId")
@@ -153,6 +172,8 @@ def project_source_quality(
                 current.last_run_id = run_id or current.last_run_id
                 current.last_error_class = error_class or current.last_error_class
                 current.event_count += 1
+                if active_run_by_source.get(source_id) == run_id:
+                    active_run_by_source.pop(source_id, None)
         elif event.event_type == "JobSourceObserved":
             source_id = _text(payload, "source_id", "sourceId")
             observation_id = _text(payload, "source_observation_id", "sourceObservationId")
@@ -161,6 +182,10 @@ def project_source_quality(
                 current = _stats(stats, source_id)
                 current.observed_jobs += 1
                 current.event_count += 1
+                active_run_id = active_run_by_source.get(source_id)
+                if active_run_id:
+                    key = (active_run_id, source_id)
+                    observed_by_run_source[key] = observed_by_run_source.get(key, 0) + 1
                 if observation_id:
                     source_by_observation[observation_id] = source_id
                 if job_id:
@@ -176,18 +201,48 @@ def project_source_quality(
                 current = _stats(stats, source_id)
                 current.duplicate_jobs += 1
                 current.event_count += 1
+                active_run_id = active_run_by_source.get(source_id)
+                if active_run_id:
+                    key = (active_run_id, source_id)
+                    duplicate_by_run_source[key] = duplicate_by_run_source.get(key, 0) + 1
         elif event.event_type == "PostingContentSnapshotCaptured":
             source_id = _text(payload, "source_id", "sourceId")
+            job_id = _text(payload, "job_id", "jobId") or event.job_url
             if source_id:
                 current = _stats(stats, source_id)
-                current.detail_success_count += 1
+                _mark_detail_success(current, job_id)
                 current.event_count += 1
         elif event.event_type == "PostingContentSnapshotFailed":
             source_id = _text(payload, "source_id", "sourceId")
+            job_id = _text(payload, "job_id", "jobId") or event.job_url
             if source_id:
                 current = _stats(stats, source_id)
-                current.detail_failure_count += 1
+                _mark_detail_failure(current, job_id)
                 current.last_error_class = _text(payload, "error_class", "errorClass") or None
+                current.event_count += 1
+        elif event.event_type == "JobEnriched":
+            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            full_description = _text(payload, "full_description", "fullDescription")
+            application_url = _text(payload, "application_url", "applicationUrl")
+            for source_id in sources_by_job.get(job_id, set()):
+                current = _stats(stats, source_id)
+                if full_description.strip():
+                    _mark_detail_success(current, job_id)
+                else:
+                    _mark_detail_failure(current, job_id)
+                if application_url.strip():
+                    _mark_apply_success(current, job_id)
+                else:
+                    _mark_apply_failure(current, job_id)
+                current.event_count += 1
+        elif event.event_type == "EnrichmentFailed":
+            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            error_class = _text(payload, "error_class", "errorClass", "error")
+            for source_id in sources_by_job.get(job_id, set()):
+                current = _stats(stats, source_id)
+                _mark_detail_failure(current, job_id)
+                _mark_apply_failure(current, job_id)
+                current.last_error_class = error_class or current.last_error_class
                 current.event_count += 1
         elif event.event_type == "JobActiveStateChanged":
             job_id = _text(payload, "job_id", "jobId") or event.job_url
@@ -199,6 +254,18 @@ def project_source_quality(
                 elif active_state in {"closed", "expired", "removed", "location_incompatible"}:
                     current.stale_jobs += 1
                 current.event_count += 1
+        elif event.event_type == "ContentDuplicateCandidateDetected":
+            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            candidate_job_id = _text(payload, "candidate_job_id", "candidateJobId")
+            source_ids = sources_by_job.get(job_id, set()) | sources_by_job.get(candidate_job_id, set())
+            for source_id in source_ids:
+                current = _stats(stats, source_id)
+                current.duplicate_jobs += 1
+                current.event_count += 1
+                active_run_id = active_run_by_source.get(source_id)
+                if active_run_id:
+                    key = (active_run_id, source_id)
+                    duplicate_by_run_source[key] = duplicate_by_run_source.get(key, 0) + 1
 
     projected_stats = []
     for source_id, current in sorted(stats.items()):
@@ -234,7 +301,10 @@ def project_source_quality(
                         current.detail_success_count,
                         current.detail_success_count + current.detail_failure_count,
                     ),
-                    apply_url_success_rate=None,
+                    apply_url_success_rate=_rate(
+                        current.apply_url_success_count,
+                        current.apply_url_success_count + current.apply_url_failure_count,
+                    ),
                     last_run_id=current.last_run_id,
                     last_error_class=current.last_error_class,
                     recommended_state=_recommended_state(current),
@@ -251,6 +321,40 @@ def _stats(stats: dict[str, _MutableStats], source_id: str) -> _MutableStats:
     if source_id not in stats:
         stats[source_id] = _MutableStats(source_id=source_id)
     return stats[source_id]
+
+
+def _mark_detail_success(stats: _MutableStats, job_id: str) -> None:
+    if job_id and job_id in stats.detail_success_jobs:
+        return
+    if job_id:
+        stats.detail_success_jobs.add(job_id)
+        stats.detail_failure_jobs.discard(job_id)
+    stats.detail_success_count += 1
+
+
+def _mark_detail_failure(stats: _MutableStats, job_id: str) -> None:
+    if job_id and (job_id in stats.detail_failure_jobs or job_id in stats.detail_success_jobs):
+        return
+    if job_id:
+        stats.detail_failure_jobs.add(job_id)
+    stats.detail_failure_count += 1
+
+
+def _mark_apply_success(stats: _MutableStats, job_id: str) -> None:
+    if job_id and job_id in stats.apply_success_jobs:
+        return
+    if job_id:
+        stats.apply_success_jobs.add(job_id)
+        stats.apply_failure_jobs.discard(job_id)
+    stats.apply_url_success_count += 1
+
+
+def _mark_apply_failure(stats: _MutableStats, job_id: str) -> None:
+    if job_id and (job_id in stats.apply_failure_jobs or job_id in stats.apply_success_jobs):
+        return
+    if job_id:
+        stats.apply_failure_jobs.add(job_id)
+    stats.apply_url_failure_count += 1
 
 
 def _merge_run(

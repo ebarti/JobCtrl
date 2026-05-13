@@ -609,6 +609,7 @@ export interface SourceHealthSummary {
   duplicateRate: number | null;
   activeVerificationRate: number | null;
   fullDescriptionSuccessRate: number | null;
+  applyUrlSuccessRate: number | null;
   lastRunId: string | null;
   lastErrorClass: string | null;
   updatedAt: string | null;

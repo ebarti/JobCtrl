@@ -37,7 +37,8 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
                 <b>{source.sourceId}</b>
                 <span>
                   active {pct(source.activeVerificationRate)} · detail{" "}
-                  {pct(source.fullDescriptionSuccessRate)} · duplicate {pct(source.duplicateRate)}
+                  {pct(source.fullDescriptionSuccessRate)} · apply{" "}
+                  {pct(source.applyUrlSuccessRate)} · duplicate {pct(source.duplicateRate)}
                 </span>
               </span>
               {source.consecutiveFailures ? (

@@ -181,6 +181,7 @@ interface SourceQualityProjectionRow extends Record<string, unknown> {
   duplicate_rate: number | null;
   active_verification_rate: number | null;
   full_description_success_rate: number | null;
+  apply_url_success_rate: number | null;
   last_run_id: string | null;
   last_error_class: string | null;
   updated_at: string | null;
@@ -539,7 +540,8 @@ function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] 
     `SELECT source_id, recommended_state, run_count, failed_run_count,
             consecutive_failures, observed_jobs, new_jobs, existing_jobs,
             duplicate_rate, active_verification_rate,
-            full_description_success_rate, last_run_id, last_error_class,
+            full_description_success_rate, apply_url_success_rate,
+            last_run_id, last_error_class,
             updated_at
      FROM source_quality_stats
      WHERE tenant_id = ?
@@ -558,6 +560,7 @@ function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] 
     duplicateRate: nullableNumber(row.duplicate_rate),
     activeVerificationRate: nullableNumber(row.active_verification_rate),
     fullDescriptionSuccessRate: nullableNumber(row.full_description_success_rate),
+    applyUrlSuccessRate: nullableNumber(row.apply_url_success_rate),
     lastRunId: row.last_run_id,
     lastErrorClass: row.last_error_class,
     updatedAt: row.updated_at,

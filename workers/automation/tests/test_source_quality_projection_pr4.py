@@ -30,16 +30,52 @@ def test_source_quality_aggregates_run_and_downstream_events() -> None:
             payload={"job_id": "job-1", "source_id": "greenhouse:acme"},
         ),
         EventRow(
+            event_type="JobEnriched",
+            occurred_at="2026-05-13T00:00:12Z",
+            payload={
+                "job_id": "job-1",
+                "full_description": "Complete posting",
+                "application_url": "https://acme.example/apply/1",
+            },
+        ),
+        EventRow(
             event_type="JobActiveStateChanged",
             occurred_at="2026-05-13T00:00:15Z",
             payload={"job_id": "job-1", "active_state": "active"},
+        ),
+        EventRow(
+            event_type="JobSourceObserved",
+            occurred_at="2026-05-13T00:00:20Z",
+            payload={
+                "job_id": "job-2",
+                "source_observation_id": "obs-2",
+                "source_id": "greenhouse:acme",
+            },
+        ),
+        EventRow(
+            event_type="EnrichmentFailed",
+            occurred_at="2026-05-13T00:00:25Z",
+            payload={
+                "job_id": "job-2",
+                "error": "TimeoutError",
+                "attempt_number": 1,
+            },
+        ),
+        EventRow(
+            event_type="ContentDuplicateCandidateDetected",
+            occurred_at="2026-05-13T00:00:30Z",
+            payload={
+                "job_id": "job-1",
+                "candidate_job_id": "job-2",
+                "confidence": 0.91,
+            },
         ),
         EventRow(
             event_type="DiscoveryRunCompleted",
             occurred_at="2026-05-13T00:01:00Z",
             payload={
                 "run_id": "run-1",
-                "counts": {"total": 1, "new_jobs": 1, "observed_jobs": 1},
+                "counts": {"total": 2, "new_jobs": 2, "observed_jobs": 2},
                 "completed_at": "2026-05-13T00:01:00Z",
             },
         ),
@@ -54,13 +90,16 @@ def test_source_quality_aggregates_run_and_downstream_events() -> None:
     [run] = result.runs
     [stats] = result.stats
     assert run.status == "completed"
-    assert run.counts["new_jobs"] == 1
+    assert run.counts["new_jobs"] == 2
     assert stats.source_id == "greenhouse:acme"
     assert stats.run_count == 1
-    assert stats.new_jobs == 1
+    assert stats.new_jobs == 2
     assert stats.observed_jobs == 2
-    assert stats.full_description_success_rate == 1
+    assert stats.duplicate_jobs == 1
+    assert stats.full_description_success_rate == 0.5
+    assert stats.apply_url_success_rate == 0.5
     assert stats.active_verification_rate == 1
+    assert stats.last_error_class == "TimeoutError"
     assert stats.recommended_state == "normal"
 
 

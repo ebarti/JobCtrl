@@ -1358,8 +1358,14 @@ interface MutableSourceStats {
   staleJobs: number;
   detailSuccessCount: number;
   detailFailureCount: number;
+  applyUrlSuccessCount: number;
+  applyUrlFailureCount: number;
   lastRunId: string | null;
   lastErrorClass: string | null;
+  detailSuccessJobs: Set<string>;
+  detailFailureJobs: Set<string>;
+  applySuccessJobs: Set<string>;
+  applyFailureJobs: Set<string>;
 }
 
 interface DiscoveryRunProjection {
@@ -1404,6 +1410,9 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
   const stats = new Map<string, MutableSourceStats>();
   const sourceByObservation = new Map<string, string>();
   const sourcesByJob = new Map<string, Set<string>>();
+  const activeRunBySource = new Map<string, string>();
+  const observedByRunSource = new Map<string, number>();
+  const duplicateByRunSource = new Map<string, number>();
   const windowStart = rows[0]?.occurred_at ?? new Date().toISOString();
   const windowEnd = rows[rows.length - 1]?.occurred_at ?? windowStart;
 
@@ -1426,11 +1435,15 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         failedSourceId: null,
         retryable: true,
       });
-      for (const sourceId of sourceIds) getStats(stats, sourceId);
+      for (const sourceId of sourceIds) {
+        getStats(stats, sourceId);
+        activeRunBySource.set(sourceId, runId);
+      }
     } else if (row.event_type === "DiscoveryRunCompleted") {
       const runId = text(payload, "run_id", "runId");
       const run = runs.get(runId);
       const counts = normalizeCounts(record(value(payload, "counts")));
+      const skipped = Boolean(value(payload, "skipped"));
       if (run) {
         run.status = "completed";
         run.counts = counts;
@@ -1438,13 +1451,27 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         run.completedAt = text(payload, "completed_at", "completedAt") || row.occurred_at;
         for (const sourceId of run.sourceIds) {
           const current = getStats(stats, sourceId);
-          current.runCount += 1;
-          current.consecutiveFailures = 0;
-          current.newJobs += counts.new_jobs ?? 0;
-          current.existingJobs += counts.existing_jobs ?? 0;
-          current.observedJobs += counts.observed_jobs ?? 0;
-          current.duplicateJobs += counts.duplicate_jobs ?? 0;
+          if (!skipped) {
+            current.runCount += 1;
+            current.consecutiveFailures = 0;
+          }
+          if (run.sourceIds.length === 1 && !skipped) {
+            current.newJobs += counts.new_jobs ?? 0;
+            current.existingJobs += counts.existing_jobs ?? 0;
+            const observedKey = runSourceKey(runId, sourceId);
+            const observedFallback = counts.observed_jobs ?? 0;
+            current.observedJobs += Math.max(
+              0,
+              observedFallback - (observedByRunSource.get(observedKey) ?? 0),
+            );
+            const duplicateFallback = counts.duplicate_jobs ?? 0;
+            current.duplicateJobs += Math.max(
+              0,
+              duplicateFallback - (duplicateByRunSource.get(observedKey) ?? 0),
+            );
+          }
           current.lastRunId = runId;
+          if (activeRunBySource.get(sourceId) === runId) activeRunBySource.delete(sourceId);
         }
       }
     } else if (row.event_type === "DiscoveryRunFailed") {
@@ -1465,6 +1492,7 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         current.consecutiveFailures += 1;
         current.lastRunId = runId || current.lastRunId;
         current.lastErrorClass = errorClass || current.lastErrorClass;
+        if (activeRunBySource.get(sourceId) === runId) activeRunBySource.delete(sourceId);
       }
     } else if (row.event_type === "JobSourceObserved") {
       const sourceId = text(payload, "source_id", "sourceId");
@@ -1472,6 +1500,11 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
       const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
       if (!sourceId) continue;
       getStats(stats, sourceId).observedJobs += 1;
+      const activeRunId = activeRunBySource.get(sourceId);
+      if (activeRunId) {
+        const key = runSourceKey(activeRunId, sourceId);
+        observedByRunSource.set(key, (observedByRunSource.get(key) ?? 0) + 1);
+      }
       if (observationId) sourceByObservation.set(observationId, sourceId);
       if (jobId) {
         const set = sourcesByJob.get(jobId) ?? new Set<string>();
@@ -1485,16 +1518,45 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         "supersededJobOrObservationId",
       );
       const sourceId = sourceByObservation.get(observationId);
-      if (sourceId) getStats(stats, sourceId).duplicateJobs += 1;
+      if (sourceId) {
+        getStats(stats, sourceId).duplicateJobs += 1;
+        const activeRunId = activeRunBySource.get(sourceId);
+        if (activeRunId) {
+          const key = runSourceKey(activeRunId, sourceId);
+          duplicateByRunSource.set(key, (duplicateByRunSource.get(key) ?? 0) + 1);
+        }
+      }
     } else if (row.event_type === "PostingContentSnapshotCaptured") {
       const sourceId = text(payload, "source_id", "sourceId");
-      if (sourceId) getStats(stats, sourceId).detailSuccessCount += 1;
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      if (sourceId) markDetailSuccess(getStats(stats, sourceId), jobId);
     } else if (row.event_type === "PostingContentSnapshotFailed") {
       const sourceId = text(payload, "source_id", "sourceId");
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
       if (sourceId) {
         const current = getStats(stats, sourceId);
-        current.detailFailureCount += 1;
+        markDetailFailure(current, jobId);
         current.lastErrorClass = text(payload, "error_class", "errorClass") || current.lastErrorClass;
+      }
+    } else if (row.event_type === "JobEnriched") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const fullDescription = text(payload, "full_description", "fullDescription");
+      const applicationUrl = text(payload, "application_url", "applicationUrl");
+      for (const sourceId of sourcesByJob.get(jobId) ?? []) {
+        const current = getStats(stats, sourceId);
+        if (fullDescription.trim()) markDetailSuccess(current, jobId);
+        else markDetailFailure(current, jobId);
+        if (applicationUrl.trim()) markApplySuccess(current, jobId);
+        else markApplyFailure(current, jobId);
+      }
+    } else if (row.event_type === "EnrichmentFailed") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const errorClass = text(payload, "error_class", "errorClass", "error");
+      for (const sourceId of sourcesByJob.get(jobId) ?? []) {
+        const current = getStats(stats, sourceId);
+        markDetailFailure(current, jobId);
+        markApplyFailure(current, jobId);
+        current.lastErrorClass = errorClass || current.lastErrorClass;
       }
     } else if (row.event_type === "JobActiveStateChanged") {
       const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
@@ -1504,6 +1566,21 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         if (activeState === "active") current.activeJobs += 1;
         if (["closed", "expired", "removed", "location_incompatible"].includes(activeState)) {
           current.staleJobs += 1;
+        }
+      }
+    } else if (row.event_type === "ContentDuplicateCandidateDetected") {
+      const jobId = text(payload, "job_id", "jobId") || row.job_url || "";
+      const candidateJobId = text(payload, "candidate_job_id", "candidateJobId");
+      const sourceIds = new Set([
+        ...(sourcesByJob.get(jobId) ?? []),
+        ...(sourcesByJob.get(candidateJobId) ?? []),
+      ]);
+      for (const sourceId of sourceIds) {
+        getStats(stats, sourceId).duplicateJobs += 1;
+        const activeRunId = activeRunBySource.get(sourceId);
+        if (activeRunId) {
+          const key = runSourceKey(activeRunId, sourceId);
+          duplicateByRunSource.set(key, (duplicateByRunSource.get(key) ?? 0) + 1);
         }
       }
     }
@@ -1553,6 +1630,10 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
       current.detailSuccessCount,
       current.detailSuccessCount + current.detailFailureCount,
     );
+    const applyUrlRate = rate(
+      current.applyUrlSuccessCount,
+      current.applyUrlSuccessCount + current.applyUrlFailureCount,
+    );
     db.prepare(
       `INSERT INTO source_quality_stats (
          tenant_id, source_id, window_start, window_end, run_count,
@@ -1581,7 +1662,7 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
       activeRate,
       duplicateRate,
       detailRate,
-      null,
+      applyUrlRate,
       current.lastRunId,
       current.lastErrorClass,
       recommendedState(current, activeRate, duplicateRate, detailRate),
@@ -1695,11 +1776,51 @@ function getStats(stats: Map<string, MutableSourceStats>, sourceId: string): Mut
     staleJobs: 0,
     detailSuccessCount: 0,
     detailFailureCount: 0,
+    applyUrlSuccessCount: 0,
+    applyUrlFailureCount: 0,
     lastRunId: null,
     lastErrorClass: null,
+    detailSuccessJobs: new Set<string>(),
+    detailFailureJobs: new Set<string>(),
+    applySuccessJobs: new Set<string>(),
+    applyFailureJobs: new Set<string>(),
   };
   stats.set(sourceId, created);
   return created;
+}
+
+function runSourceKey(runId: string, sourceId: string): string {
+  return `${runId}\u0000${sourceId}`;
+}
+
+function markDetailSuccess(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && stats.detailSuccessJobs.has(jobId)) return;
+  if (jobId) {
+    stats.detailSuccessJobs.add(jobId);
+    stats.detailFailureJobs.delete(jobId);
+  }
+  stats.detailSuccessCount += 1;
+}
+
+function markDetailFailure(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && (stats.detailFailureJobs.has(jobId) || stats.detailSuccessJobs.has(jobId))) return;
+  if (jobId) stats.detailFailureJobs.add(jobId);
+  stats.detailFailureCount += 1;
+}
+
+function markApplySuccess(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && stats.applySuccessJobs.has(jobId)) return;
+  if (jobId) {
+    stats.applySuccessJobs.add(jobId);
+    stats.applyFailureJobs.delete(jobId);
+  }
+  stats.applyUrlSuccessCount += 1;
+}
+
+function markApplyFailure(stats: MutableSourceStats, jobId: string): void {
+  if (jobId && (stats.applyFailureJobs.has(jobId) || stats.applySuccessJobs.has(jobId))) return;
+  if (jobId) stats.applyFailureJobs.add(jobId);
+  stats.applyUrlFailureCount += 1;
 }
 
 function rate(numerator: number, denominator: number): number | null {

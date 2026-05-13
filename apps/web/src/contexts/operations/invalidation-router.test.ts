@@ -88,11 +88,13 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   JobEnriched: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   EnrichmentFailed: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   PostingContentSnapshotCaptured: [
@@ -106,6 +108,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   JobActiveStateChanged: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ContentDuplicateCandidateDetected: [
