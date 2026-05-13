@@ -746,3 +746,290 @@ export interface CredentialsResponse {
     storage: "keychain";
   }>;
 }
+
+// ---------------------------------------------------------------------------
+// PR6 Discovery Product Controls — source registry, locator candidates,
+// quarantine queue, manual-capture queue, and discovery feedback.
+//
+// These read-model rows are surfaced through ``GET /v1/discovery/...``
+// endpoints. The schemas live alongside the existing dashboard payloads so
+// the web app and the JSON-RPC contract tests share one source of truth.
+// ---------------------------------------------------------------------------
+
+export const SOURCE_KIND_VALUES = [
+  "ats_api",
+  "employer_careers_page",
+  "official_api",
+  "licensed_feed",
+  "niche_board",
+  "broad_board",
+  "smart_extract",
+  "user_mediated_capture",
+] as const;
+export type SourceKindValue = (typeof SOURCE_KIND_VALUES)[number];
+
+export const SOURCE_STATE_VALUES = ["active", "experimental", "quarantined", "disabled"] as const;
+export type SourceStateValue = (typeof SOURCE_STATE_VALUES)[number];
+
+export const SOURCE_PRIORITY_VALUES = [
+  "canonical",
+  "preferred",
+  "standard",
+  "fallback",
+  "lead_generator",
+] as const;
+export type SourcePriorityValue = (typeof SOURCE_PRIORITY_VALUES)[number];
+
+export const RECOMMENDED_SOURCE_STATES = [
+  "trusted",
+  "normal",
+  "experimental",
+  "quarantined",
+  "disabled",
+] as const;
+export type RecommendedSourceState = (typeof RECOMMENDED_SOURCE_STATES)[number];
+
+export interface SourceRegistryEntrySummary {
+  sourceId: string;
+  kind: SourceKindValue;
+  displayName: string;
+  owner: "system" | "user";
+  priority: SourcePriorityValue;
+  state: SourceStateValue;
+  policyId: string;
+  recommendedState: RecommendedSourceState;
+  lastRunId: string | null;
+  lastRunCompletedAt: string | null;
+  lastErrorClass: string | null;
+  consecutiveFailures: number;
+  observedJobs: number;
+  newJobs: number;
+  duplicateRate: number | null;
+  activeVerificationRate: number | null;
+  fullDescriptionSuccessRate: number | null;
+  applyUrlSuccessRate: number | null;
+  qualityTrend: "up" | "flat" | "down" | "unknown";
+}
+
+export interface SourceRegistryListResponse {
+  ok: true;
+  sources: SourceRegistryEntrySummary[];
+}
+
+export const MANUAL_ACTION_REASON_VALUES = [
+  "captcha",
+  "login_required",
+  "paywall",
+  "bot_detection",
+  "rate_limit",
+  "protected_internal_site",
+  "ambiguous_career_system",
+] as const;
+export type ManualActionReasonValue = (typeof MANUAL_ACTION_REASON_VALUES)[number];
+
+export const MANUAL_CAPTURE_MODE_VALUES = [
+  "current_page",
+  "saved_html",
+  "copied_url",
+  "pasted_text",
+  "email_import",
+] as const;
+export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
+
+export interface SourceLocatorCandidateSummary {
+  candidateId: string;
+  candidateUrl: string;
+  sourceKind: SourceKindValue;
+  confidence: number;
+  detectedAtsKind: string | null;
+  employerDomainMatched: boolean;
+  manualActionReason: ManualActionReasonValue | null;
+  discoveredAt: string;
+}
+
+export interface SourceLocatorListResponse {
+  ok: true;
+  candidates: SourceLocatorCandidateSummary[];
+}
+
+export const QUARANTINE_REASONS = [
+  "low_confidence_extraction",
+  "policy_overridden",
+  "broad_board_only",
+  "unknown_active_state",
+  "user_review_requested",
+] as const;
+export type QuarantineReason = (typeof QUARANTINE_REASONS)[number];
+
+export interface QuarantineEntrySummary {
+  jobId: string;
+  jobKey: string;
+  title: string;
+  company: string;
+  sourceId: string;
+  postingUrl: string | null;
+  reason: QuarantineReason;
+  confidence: number | null;
+  snapshotVersion: number | null;
+  capturedAt: string | null;
+  noticeText: string | null;
+}
+
+export interface QuarantineListResponse {
+  ok: true;
+  entries: QuarantineEntrySummary[];
+}
+
+export interface ManualCaptureQueueItemSummary {
+  itemId: string;
+  originatingUrl: string;
+  sourceId: string | null;
+  reason: ManualActionReasonValue;
+  retryContext: Record<string, unknown>;
+  requiredAt: string;
+  status: "pending" | "imported" | "dismissed";
+}
+
+export interface ManualCaptureListResponse {
+  ok: true;
+  items: ManualCaptureQueueItemSummary[];
+}
+
+export const DISCOVERY_FEEDBACK_KINDS = [
+  "saved",
+  "applied",
+  "dismissed",
+  "stale",
+  "duplicate",
+  "wrong_company",
+  "wrong_location",
+  "bad_source",
+  "useful",
+  "irrelevant",
+] as const;
+export type DiscoveryFeedbackKind = (typeof DISCOVERY_FEEDBACK_KINDS)[number];
+
+export const DiscoveryFeedbackRequestSchema = z
+  .object({
+    jobKey: z.string().trim().min(1).max(2048),
+    sourceId: z.string().trim().min(1).max(160).optional(),
+    kind: z.enum(DISCOVERY_FEEDBACK_KINDS),
+    note: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type DiscoveryFeedbackRequest = z.infer<typeof DiscoveryFeedbackRequestSchema>;
+
+export interface DiscoveryFeedbackResponse {
+  ok: true;
+  feedbackId: string;
+  jobKey: string;
+  sourceId: string | null;
+  kind: DiscoveryFeedbackKind;
+  recordedAt: string;
+}
+
+export const SourceUpsertRequestSchema = z
+  .object({
+    sourceId: z.string().trim().min(1).max(160),
+    kind: z.enum(SOURCE_KIND_VALUES),
+    displayName: z.string().trim().min(1).max(160),
+    priority: z.enum(SOURCE_PRIORITY_VALUES).default("standard"),
+    state: z.enum(SOURCE_STATE_VALUES).default("experimental"),
+    seedUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "seedUrl must be a valid http(s) URL")
+      .optional(),
+  })
+  .strict();
+export type SourceUpsertRequest = z.infer<typeof SourceUpsertRequestSchema>;
+
+export const SourceStatePatchSchema = z
+  .object({
+    state: z.enum(SOURCE_STATE_VALUES),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type SourceStatePatch = z.infer<typeof SourceStatePatchSchema>;
+
+export interface DiscoveryPreviewLead {
+  candidateUrl: string;
+  title: string;
+  company: string;
+  location: string;
+  estimatedConfidence: number;
+}
+
+export interface DiscoveryPreviewResponse {
+  ok: true;
+  sourceId: string;
+  leads: DiscoveryPreviewLead[];
+  generatedAt: string;
+}
+
+export const QuarantineDecisionSchema = z
+  .object({
+    decision: z.enum(["approve", "reject"]),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type QuarantineDecision = z.infer<typeof QuarantineDecisionSchema>;
+
+export interface QuarantineDecisionResponse {
+  ok: true;
+  jobKey: string;
+  decision: "approve" | "reject";
+  recordedAt: string;
+}
+
+export const ManualCaptureImportSchema = z
+  .object({
+    captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
+    capturedUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .regex(/^https?:\/\/[^\s]+$/i, "capturedUrl must be a valid http(s) URL")
+      .optional(),
+    contentText: z.string().trim().max(200_000).optional(),
+    contentHtmlBase64: z.string().trim().max(8_000_000).optional(),
+    note: z.string().trim().max(400).optional(),
+    futureManualActionRequired: z.boolean().default(false),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.capturedUrl !== undefined ||
+      value.contentText !== undefined ||
+      value.contentHtmlBase64 !== undefined,
+    { message: "One of capturedUrl, contentText, or contentHtmlBase64 must be provided." },
+  );
+export type ManualCaptureImportRequest = z.infer<typeof ManualCaptureImportSchema>;
+
+export interface ManualCaptureImportResponse {
+  ok: true;
+  itemId: string;
+  jobKey: string | null;
+  importedAt: string;
+  provenance: {
+    sourceKind: "user_mediated_capture";
+    originatingUrl: string;
+    captureMode: ManualCaptureModeValue;
+    futureManualActionRequired: boolean;
+  };
+}
+
+export const ManualCaptureDismissSchema = z
+  .object({
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type ManualCaptureDismissRequest = z.infer<typeof ManualCaptureDismissSchema>;
+
+export interface ManualCaptureDismissResponse {
+  ok: true;
+  itemId: string;
+  status: "dismissed";
+  dismissedAt: string;
+}

@@ -6,6 +6,7 @@ import {
   createCanonicalJobIdentityResolved,
   createContentDuplicateCandidateDetected,
   createCoverLetterGenerated,
+  createDiscoveryFeedbackRecorded,
   createDiscoveryRunCompleted,
   createDiscoveryRunFailed,
   createDiscoveryRunStarted,
@@ -128,6 +129,13 @@ export const eventByType = {
     candidateIds: [JOB_ID, "job-duplicate-1"],
     reason: "low_confidence",
     rejectedAt: NOW,
+  }),
+  DiscoveryFeedbackRecorded: createDiscoveryFeedbackRecorded(LOCAL_TENANT, {
+    feedbackId: "feedback-1",
+    jobId: JOB_ID,
+    sourceId: "greenhouse:acme",
+    kind: "saved",
+    recordedAt: NOW,
   }),
   SourceLocationCandidateDiscovered: createSourceLocationCandidateDiscovered(LOCAL_TENANT, {
     candidateId: "candidate-1",
