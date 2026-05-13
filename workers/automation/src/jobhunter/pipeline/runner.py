@@ -38,7 +38,7 @@ from jobhunter.domain.discovery.scheduler import (
     ScheduledSource,
     SourceQualitySnapshot,
 )
-from jobhunter.domain.discovery.source_registry import SourceState
+from jobhunter.domain.discovery.source_registry import SourceKind, SourceState
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
@@ -735,6 +735,75 @@ def _scheduled_limit(schedule: DiscoverySchedule, prefix: str, user_limit: int) 
     return budget
 
 
+def _scheduled_limit_for_sources(sources: tuple[ScheduledSource, ...], user_limit: int) -> int:
+    budget = sum(source.crawl_budget for source in sources if source.should_run)
+    if user_limit > 0:
+        return min(user_limit, budget) if budget > 0 else 0
+    return budget
+
+
+def _jobspy_config_for_sources(search_cfg: dict, sources: tuple[ScheduledSource, ...]) -> dict:
+    boards: list[str] = []
+    for source in sources:
+        if not source.should_run:
+            continue
+        board = str(source.adapter_config.get("board") or "").strip()
+        if board:
+            boards.append(board)
+    return {**search_cfg, "boards": boards}
+
+
+def _workday_employers_for_sources(sources: tuple[ScheduledSource, ...]) -> dict:
+    employers_cfg = config.load_employers_config()
+    employers = employers_cfg.get("employers", {}) if isinstance(employers_cfg, dict) else {}
+    if not isinstance(employers, dict):
+        return {}
+    selected: dict[str, object] = {}
+    for source in sources:
+        if not source.should_run:
+            continue
+        employer_key = str(source.adapter_config.get("employer_key") or "").strip()
+        if employer_key and employer_key in employers:
+            selected[employer_key] = employers[employer_key]
+    return selected
+
+
+def _smart_extract_sources(schedule: DiscoverySchedule) -> tuple[ScheduledSource, ...]:
+    source_ids = {source.source_id for source in schedule.for_prefix("smart_extract")}
+    sources = list(schedule.for_prefix("smart_extract"))
+    for source in schedule.for_kinds(
+        SourceKind.SMART_EXTRACT,
+        SourceKind.EMPLOYER_CAREERS_PAGE,
+        SourceKind.NICHE_BOARD,
+    ):
+        if source.source_id not in source_ids:
+            sources.append(source)
+            source_ids.add(source.source_id)
+    return tuple(sources)
+
+
+def _smart_extract_sites(sources: tuple[ScheduledSource, ...]) -> list[dict]:
+    sites: list[dict] = []
+    for source in sources:
+        if not source.should_run:
+            continue
+        url = str(
+            source.adapter_config.get("url")
+            or source.adapter_config.get("seed_url")
+            or ""
+        ).strip()
+        if not url:
+            continue
+        sites.append(
+            {
+                "name": str(source.adapter_config.get("name") or source.display_name),
+                "url": url,
+                "type": str(source.adapter_config.get("type") or "static"),
+            }
+        )
+    return sites
+
+
 def _optional_float(value: object) -> float | None:
     if value is None:
         return None
@@ -764,6 +833,8 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
+    jobspy_sources = schedule.for_prefix("jobspy")
+
     def run_jobspy() -> dict:
         if search_cfg.get("disable_jobspy", False):
             console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
@@ -778,13 +849,22 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result
-        source_results["jobspy"] = run_discovery(limit=_scheduled_limit(schedule, "jobspy", limit))
+        jobspy_cfg = _jobspy_config_for_sources(search_cfg, jobspy_sources)
+        if not jobspy_cfg.get("boards"):
+            console.print("  [dim]No runnable JobSpy boards scheduled[/dim]")
+            result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
+            source_results["jobspy"] = result
+            return result
+        source_results["jobspy"] = run_discovery(
+            cfg=jobspy_cfg,
+            limit=_scheduled_limit(schedule, "jobspy", limit),
+        )
         return source_results["jobspy"]
 
     stats["jobspy"] = _run_discovery_source(
         "jobspy",
         "JobSpy",
-        schedule.for_prefix("jobspy"),
+        jobspy_sources,
         run_jobspy,
     )
     if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
@@ -795,10 +875,13 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         return stats
 
     # Workday corporate scraper
+    workday_sources = schedule.for_prefix("workday")
+
     def run_workday() -> dict:
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
         source_results["workday"] = run_workday_discovery(
+            employers=_workday_employers_for_sources(workday_sources),
             workers=bounded_workers,
             limit=_scheduled_limit(schedule, "workday", limit),
         )
@@ -807,7 +890,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     stats["workday"] = _run_discovery_source(
         "workday",
         "Workday scraper",
-        schedule.for_prefix("workday"),
+        workday_sources,
         run_workday,
     )
     if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
@@ -817,19 +900,22 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         return stats
 
     # Smart extract
+    smart_extract_sources = _smart_extract_sources(schedule)
+
     def run_smart_extract_source() -> dict:
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         from jobhunter.discovery.smartextract import run_smart_extract
         source_results["smartextract"] = run_smart_extract(
+            sites=_smart_extract_sites(smart_extract_sources),
             workers=bounded_workers,
-            limit=_scheduled_limit(schedule, "smart_extract", limit),
+            limit=_scheduled_limit_for_sources(smart_extract_sources, limit),
         )
         return source_results["smartextract"]
 
     stats["smartextract"] = _run_discovery_source(
         "smartextract",
         "Smart extract",
-        schedule.for_prefix("smart_extract"),
+        smart_extract_sources,
         run_smart_extract_source,
     )
     if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):

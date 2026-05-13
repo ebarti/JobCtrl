@@ -11,6 +11,7 @@ import {
 } from "../apply/handlers.js";
 import {
   canonicalJobIdentityResolvedHandler,
+  discoveryFeedbackRecordedHandler,
   discoveryRunCompletedHandler,
   discoveryRunFailedHandler,
   discoveryRunStartedHandler,
@@ -104,6 +105,7 @@ export const handlers: HandlerMap = {
   CanonicalJobIdentityResolved: canonicalJobIdentityResolvedHandler,
   DuplicateJobLinked: duplicateJobLinkedHandler,
   DuplicateJobLinkRejected: duplicateJobLinkRejectedHandler,
+  DiscoveryFeedbackRecorded: discoveryFeedbackRecordedHandler,
   SourceLocationCandidateDiscovered: sourceLocationCandidateDiscoveredHandler,
   SourceLocationCandidatePromoted: sourceLocationCandidatePromotedHandler,
   SourceRegistryEntryCreated: sourceRegistryEntryCreatedHandler,

@@ -96,6 +96,38 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
     ]
 
 
+def test_feedback_only_history_rebuilds_source_quality(conn: sqlite3.Connection) -> None:
+    record_job_event(
+        conn,
+        "job-1",
+        "discover",
+        "DiscoveryFeedbackRecorded",
+        payload={
+            "feedback_id": "feedback-1",
+            "job_id": "job-1",
+            "source_id": "greenhouse:acme",
+            "kind": "bad_source",
+            "recorded_at": utc_now(),
+        },
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        """
+        SELECT observed_jobs, detail_failure_count, last_error_class
+        FROM source_quality_stats
+        WHERE source_id = ?
+        """,
+        ("greenhouse:acme",),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == 1
+    assert row[1] == 1
+    assert row[2] == "user_bad_source"
+
+
 def test_subscribes_to_event_bus(conn: sqlite3.Connection) -> None:
     """Wiring the builder to the bus refreshes projections on publish."""
     _seed_job(conn, "https://example.com/bus")

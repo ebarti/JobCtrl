@@ -12,22 +12,40 @@ import type {
   CredentialUpdateRequest,
   DashboardSummary,
   DeleteJobRequest,
+  DiscoveryFeedbackRequest,
+  DiscoveryFeedbackResponse,
+  DiscoveryPreviewResponse,
   GenerateMaterialsRequest,
   JobDetail,
   JobListQuery,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
+  ManualCaptureDismissRequest,
+  ManualCaptureDismissResponse,
+  ManualCaptureImportRequest,
+  ManualCaptureImportResponse,
+  ManualCaptureListResponse,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
   PipelineStageRunResponse,
+  QuarantineDecision,
+  QuarantineDecisionResponse,
+  QuarantineListResponse,
   RetryStageRequest,
   RunPipelineStagesRequest,
   SettingsUpdateRequest,
   SettingsResponse,
+  SourceLocatorListResponse,
+  SourceLocatorDecisionRequest,
+  SourceLocatorDecisionResponse,
+  SourceRegistryListResponse,
+  SourceRegistryMutationResponse,
+  SourceStatePatch,
+  SourceUpsertRequest,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
@@ -54,6 +72,82 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  discoverySources(): Promise<SourceRegistryListResponse> {
+    return this.get("/v1/discovery/sources");
+  }
+
+  upsertDiscoverySource(body: SourceUpsertRequest): Promise<SourceRegistryMutationResponse> {
+    return this.post("/v1/discovery/sources", body);
+  }
+
+  patchDiscoverySourceState(
+    sourceId: string,
+    body: SourceStatePatch,
+  ): Promise<SourceRegistryMutationResponse> {
+    return this.patch(`/v1/discovery/sources/${encodeURIComponent(sourceId)}/state`, body);
+  }
+
+  discoverySourcePreview(sourceId: string): Promise<DiscoveryPreviewResponse> {
+    return this.get(`/v1/discovery/sources/${encodeURIComponent(sourceId)}/preview`);
+  }
+
+  discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {
+    return this.get("/v1/discovery/locator-candidates");
+  }
+
+  promoteSourceLocatorCandidate(
+    candidateId: string,
+    body: SourceLocatorDecisionRequest = {},
+  ): Promise<SourceLocatorDecisionResponse> {
+    return this.post(
+      `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/promote`,
+      body,
+    );
+  }
+
+  rejectSourceLocatorCandidate(
+    candidateId: string,
+    body: SourceLocatorDecisionRequest = {},
+  ): Promise<SourceLocatorDecisionResponse> {
+    return this.post(
+      `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/reject`,
+      body,
+    );
+  }
+
+  discoveryQuarantine(): Promise<QuarantineListResponse> {
+    return this.get("/v1/discovery/quarantine");
+  }
+
+  decideDiscoveryQuarantine(
+    jobKey: string,
+    body: QuarantineDecision,
+  ): Promise<QuarantineDecisionResponse> {
+    return this.post(`/v1/discovery/quarantine/${encodeURIComponent(jobKey)}/decision`, body);
+  }
+
+  manualCaptureQueue(): Promise<ManualCaptureListResponse> {
+    return this.get("/v1/discovery/manual-capture");
+  }
+
+  importManualCapture(
+    itemId: string,
+    body: ManualCaptureImportRequest,
+  ): Promise<ManualCaptureImportResponse> {
+    return this.post(`/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/import`, body);
+  }
+
+  dismissManualCapture(
+    itemId: string,
+    body: ManualCaptureDismissRequest = {},
+  ): Promise<ManualCaptureDismissResponse> {
+    return this.post(`/v1/discovery/manual-capture/${encodeURIComponent(itemId)}/dismiss`, body);
+  }
+
+  recordDiscoveryFeedback(body: DiscoveryFeedbackRequest): Promise<DiscoveryFeedbackResponse> {
+    return this.post("/v1/discovery/feedback", body);
   }
 
   jobs(query: Partial<JobListQuery> = {}): Promise<PaginatedResponse<JobSummary>> {

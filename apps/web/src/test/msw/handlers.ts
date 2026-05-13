@@ -29,9 +29,181 @@ function jobMutationResponse(jobKeys: string[]) {
   return { ok: true, count: jobKeys.length, jobKeys };
 }
 
+const sampleDiscoverySource = {
+  sourceId: "greenhouse-example",
+  kind: "ats_api",
+  displayName: "Greenhouse Example",
+  owner: "user",
+  priority: "canonical",
+  state: "experimental",
+  policyId: "local:greenhouse-example",
+  recommendedState: "normal",
+  lastRunId: "run-source-1",
+  lastRunCompletedAt: "2026-05-12T10:00:00+00:00",
+  lastErrorClass: null,
+  consecutiveFailures: 0,
+  observedJobs: 12,
+  newJobs: 5,
+  duplicateRate: 0.08,
+  activeVerificationRate: 0.75,
+  fullDescriptionSuccessRate: 0.92,
+  applyUrlSuccessRate: 0.83,
+  qualityTrend: "flat",
+};
+
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
+  http.get("*/v1/discovery/sources", () =>
+    HttpResponse.json({ ok: true, sources: [sampleDiscoverySource] }),
+  ),
+  http.post("*/v1/discovery/sources", async ({ request }) => {
+    const body = (await request.json()) as { sourceId: string; displayName: string; kind: string };
+    return HttpResponse.json({
+      ok: true,
+      source: {
+        ...sampleDiscoverySource,
+        sourceId: body.sourceId,
+        displayName: body.displayName,
+        kind: body.kind,
+      },
+    });
+  }),
+  http.patch("*/v1/discovery/sources/:sourceId/state", async ({ params, request }) => {
+    const body = (await request.json()) as { state: string };
+    return HttpResponse.json({
+      ok: true,
+      source: { ...sampleDiscoverySource, sourceId: String(params["sourceId"]), state: body.state },
+    });
+  }),
+  http.get("*/v1/discovery/sources/:sourceId/preview", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      sourceId: String(params["sourceId"]),
+      leads: [
+        {
+          candidateUrl: "https://example.com/jobs/preview",
+          title: "Product Engineer",
+          company: "ExampleCo",
+          location: "Remote",
+          estimatedConfidence: 0.91,
+        },
+      ],
+      generatedAt: "2026-05-12T10:00:00+00:00",
+    }),
+  ),
+  http.get("*/v1/discovery/locator-candidates", () =>
+    HttpResponse.json({
+      ok: true,
+      candidates: [
+        {
+          candidateId: "candidate-1",
+          candidateUrl: "https://example.com/careers",
+          sourceKind: "employer_careers_page",
+          confidence: 0.86,
+          detectedAtsKind: "greenhouse",
+          employerDomainMatched: true,
+          manualActionReason: null,
+          discoveredAt: "2026-05-12T10:00:00+00:00",
+        },
+      ],
+    }),
+  ),
+  http.post("*/v1/discovery/locator-candidates/:candidateId/promote", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      candidateId: String(params["candidateId"]),
+      decision: "promote",
+      source: sampleDiscoverySource,
+      decidedAt: "2026-05-12T10:00:00+00:00",
+    }),
+  ),
+  http.post("*/v1/discovery/locator-candidates/:candidateId/reject", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      candidateId: String(params["candidateId"]),
+      decision: "reject",
+      source: null,
+      decidedAt: "2026-05-12T10:00:00+00:00",
+    }),
+  ),
+  http.get("*/v1/discovery/quarantine", () =>
+    HttpResponse.json({
+      ok: true,
+      entries: [
+        {
+          jobId: "job-1",
+          jobKey: "https://example.com/jobs/quarantined",
+          title: "Engineering Manager",
+          company: "ExampleCo",
+          sourceId: "greenhouse-example",
+          postingUrl: "https://example.com/jobs/quarantined",
+          reason: "unknown_active_state",
+          confidence: 0.62,
+          snapshotVersion: 1,
+          capturedAt: "2026-05-12T10:00:00+00:00",
+          noticeText: null,
+        },
+      ],
+    }),
+  ),
+  http.post("*/v1/discovery/quarantine/:jobKey/decision", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      jobKey: String(params["jobKey"]),
+      decision: "approve",
+      recordedAt: "2026-05-12T10:00:00+00:00",
+    }),
+  ),
+  http.get("*/v1/discovery/manual-capture", () =>
+    HttpResponse.json({
+      ok: true,
+      items: [
+        {
+          itemId: "manual-1",
+          originatingUrl: "https://example.com/protected/job",
+          sourceId: "greenhouse-example",
+          reason: "login_required",
+          retryContext: { sourceId: "greenhouse-example" },
+          requiredAt: "2026-05-12T10:00:00+00:00",
+          status: "pending",
+        },
+      ],
+    }),
+  ),
+  http.post("*/v1/discovery/manual-capture/:itemId/import", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      itemId: String(params["itemId"]),
+      jobKey: "https://example.com/protected/job",
+      importedAt: "2026-05-12T10:00:00+00:00",
+      provenance: {
+        sourceKind: "user_mediated_capture",
+        originatingUrl: "https://example.com/protected/job",
+        captureMode: "copied_url",
+        futureManualActionRequired: false,
+      },
+    }),
+  ),
+  http.post("*/v1/discovery/manual-capture/:itemId/dismiss", ({ params }) =>
+    HttpResponse.json({
+      ok: true,
+      itemId: String(params["itemId"]),
+      status: "dismissed",
+      dismissedAt: "2026-05-12T10:00:00+00:00",
+    }),
+  ),
+  http.post("*/v1/discovery/feedback", async ({ request }) => {
+    const body = (await request.json()) as { jobKey: string; sourceId?: string; kind: string };
+    return HttpResponse.json({
+      ok: true,
+      feedbackId: "feedback-1",
+      jobKey: body.jobKey,
+      sourceId: body.sourceId ?? null,
+      kind: body.kind,
+      recordedAt: "2026-05-12T10:00:00+00:00",
+    });
+  }),
 
   http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage())),
   http.post("*/v1/jobs/bulk-delete", async ({ request }) => {

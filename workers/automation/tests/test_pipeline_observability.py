@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import set_tracer_provider
 
+from jobhunter.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobhunter.pipeline import runner
 
 
@@ -71,12 +72,12 @@ def test_discover_emits_source_events(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda workers=1, limit=0: None),
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0: None),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda workers=1, limit=0: None),
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 
     result = runner._run_discover(workers=2)
@@ -102,19 +103,25 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.jobspy",
-        SimpleNamespace(run_discovery=lambda limit=0: calls.append(("jobspy", limit, None))),
+        SimpleNamespace(run_discovery=lambda cfg=None, limit=0: calls.append(("jobspy", limit, None))),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
         SimpleNamespace(
-            run_workday_discovery=lambda workers=1, limit=0: calls.append(("workday", limit, workers))
+            run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.append(
+                ("workday", limit, workers)
+            )
         ),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda workers=1, limit=0: calls.append(("smartextract", limit, workers))),
+        SimpleNamespace(
+            run_smart_extract=lambda sites=None, workers=1, limit=0: calls.append(
+                ("smartextract", limit, workers)
+            )
+        ),
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
@@ -128,6 +135,94 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
     ]
 
 
+def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def scheduled_source(
+        source_id: str,
+        *,
+        kind: SourceKind,
+        should_run: bool,
+        adapter_config: dict[str, object],
+    ) -> runner.ScheduledSource:
+        return runner.ScheduledSource(
+            source_id=source_id,
+            display_name=source_id,
+            source_kind=kind,
+            priority=SourcePriority.LEAD_GENERATOR,
+            configured_state=SourceState.EXPERIMENTAL,
+            crawl_budget=1 if should_run else 0,
+            decision="run" if should_run else "skip",
+            reason="test",
+            recommended_state="normal",
+            adapter_config=adapter_config,
+        )
+
+    monkeypatch.setattr(
+        runner,
+        "_plan_discovery_schedule",
+        lambda _limit: runner.DiscoverySchedule(
+            (
+                scheduled_source(
+                    "jobspy:linkedin",
+                    kind=SourceKind.BROAD_BOARD,
+                    should_run=True,
+                    adapter_config={"board": "linkedin"},
+                ),
+                scheduled_source(
+                    "jobspy:indeed",
+                    kind=SourceKind.BROAD_BOARD,
+                    should_run=False,
+                    adapter_config={"board": "indeed"},
+                ),
+                scheduled_source(
+                    "workday:acme",
+                    kind=SourceKind.ATS_API,
+                    should_run=True,
+                    adapter_config={"employer_key": "acme"},
+                ),
+                scheduled_source(
+                    "workday:contoso",
+                    kind=SourceKind.ATS_API,
+                    should_run=False,
+                    adapter_config={"employer_key": "contoso"},
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(runner.config, "load_search_config", lambda: {"boards": ["linkedin", "indeed"]})
+    monkeypatch.setattr(
+        runner.config,
+        "load_employers_config",
+        lambda: {"employers": {"acme": {"name": "Acme"}, "contoso": {"name": "Contoso"}}},
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.jobspy",
+        SimpleNamespace(run_discovery=lambda cfg=None, limit=0: calls.setdefault("boards", cfg["boards"])),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(
+            run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.setdefault(
+                "employers",
+                sorted((employers or {}).keys()),
+            )
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: {}),
+    )
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+
+    runner._run_discover(workers=4, limit=0)
+
+    assert calls == {"boards": ["linkedin"], "employers": ["acme"]}
+
+
 def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     calls: list[str] = []
     job_counts = iter([10, 11])
@@ -137,17 +232,17 @@ def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.jobspy",
-        SimpleNamespace(run_discovery=lambda limit=0: calls.append("jobspy")),
+        SimpleNamespace(run_discovery=lambda cfg=None, limit=0: calls.append("jobspy")),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda workers=1, limit=0: calls.append("workday")),
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.append("workday")),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda workers=1, limit=0: calls.append("smartextract")),
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: calls.append("smartextract")),
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 
@@ -166,18 +261,20 @@ def test_discover_limit_skips_remaining_sources_after_existing_candidate(monkeyp
         sys.modules,
         "jobhunter.discovery.jobspy",
         SimpleNamespace(
-            run_discovery=lambda limit=0: (calls.append("jobspy") or {"new": 0, "existing": 1, "errors": 0})
+            run_discovery=lambda cfg=None, limit=0: (
+                calls.append("jobspy") or {"new": 0, "existing": 1, "errors": 0}
+            )
         ),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda workers=1, limit=0: calls.append("workday")),
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.append("workday")),
     )
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda workers=1, limit=0: calls.append("smartextract")),
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: calls.append("smartextract")),
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 

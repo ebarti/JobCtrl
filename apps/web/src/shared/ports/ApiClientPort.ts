@@ -12,22 +12,40 @@ import type {
   CredentialUpdateRequest,
   DashboardSummary,
   DeleteJobRequest,
+  DiscoveryFeedbackRequest,
+  DiscoveryFeedbackResponse,
+  DiscoveryPreviewResponse,
   GenerateMaterialsRequest,
   JobDetail,
   JobListQuery,
   JobMutationResponse,
   JobSummary,
   MarkJobActionRequest,
+  ManualCaptureDismissRequest,
+  ManualCaptureDismissResponse,
+  ManualCaptureImportRequest,
+  ManualCaptureImportResponse,
+  ManualCaptureListResponse,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
   ProfileUpdateRequest,
   PipelineStageRunResponse,
+  QuarantineDecision,
+  QuarantineDecisionResponse,
+  QuarantineListResponse,
   RetryStageRequest,
   RunPipelineStagesRequest,
   SettingsResponse,
   SettingsUpdateRequest,
+  SourceLocatorListResponse,
+  SourceLocatorDecisionRequest,
+  SourceLocatorDecisionResponse,
+  SourceRegistryListResponse,
+  SourceRegistryMutationResponse,
+  SourceStatePatch,
+  SourceUpsertRequest,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "@jobhunter/contracts";
@@ -41,6 +59,37 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  discoverySources(): Promise<SourceRegistryListResponse>;
+  upsertDiscoverySource(body: SourceUpsertRequest): Promise<SourceRegistryMutationResponse>;
+  patchDiscoverySourceState(
+    sourceId: string,
+    body: SourceStatePatch,
+  ): Promise<SourceRegistryMutationResponse>;
+  discoverySourcePreview(sourceId: string): Promise<DiscoveryPreviewResponse>;
+  discoveryLocatorCandidates(): Promise<SourceLocatorListResponse>;
+  promoteSourceLocatorCandidate(
+    candidateId: string,
+    body?: SourceLocatorDecisionRequest,
+  ): Promise<SourceLocatorDecisionResponse>;
+  rejectSourceLocatorCandidate(
+    candidateId: string,
+    body?: SourceLocatorDecisionRequest,
+  ): Promise<SourceLocatorDecisionResponse>;
+  discoveryQuarantine(): Promise<QuarantineListResponse>;
+  decideDiscoveryQuarantine(
+    jobKey: string,
+    body: QuarantineDecision,
+  ): Promise<QuarantineDecisionResponse>;
+  manualCaptureQueue(): Promise<ManualCaptureListResponse>;
+  importManualCapture(
+    itemId: string,
+    body: ManualCaptureImportRequest,
+  ): Promise<ManualCaptureImportResponse>;
+  dismissManualCapture(
+    itemId: string,
+    body?: ManualCaptureDismissRequest,
+  ): Promise<ManualCaptureDismissResponse>;
+  recordDiscoveryFeedback(body: DiscoveryFeedbackRequest): Promise<DiscoveryFeedbackResponse>;
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
   job(jobKey: string): Promise<JobDetail>;

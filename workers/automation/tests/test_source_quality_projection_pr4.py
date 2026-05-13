@@ -128,3 +128,29 @@ def test_source_quality_marks_sources_quarantined_after_repeated_failures() -> N
     assert stats.failed_run_count == 3
     assert stats.consecutive_failures == 3
     assert stats.recommended_state == "quarantined"
+
+
+def test_source_quality_applies_discovery_feedback_events() -> None:
+    result = project_source_quality(
+        tenant_id=LOCAL_TENANT,
+        events=[
+            EventRow(
+                event_type="DiscoveryFeedbackRecorded",
+                occurred_at="2026-05-13T00:00:00Z",
+                payload={
+                    "feedback_id": "feedback-1",
+                    "job_id": "job-1",
+                    "source_id": "greenhouse:acme",
+                    "kind": "bad_source",
+                    "recorded_at": "2026-05-13T00:00:00Z",
+                },
+            )
+        ],
+        updated_at="2026-05-13T00:05:00Z",
+    )
+
+    [stats] = result.stats
+    assert stats.source_id == "greenhouse:acme"
+    assert stats.observed_jobs == 1
+    assert stats.detail_failure_count == 1
+    assert stats.last_error_class == "user_bad_source"

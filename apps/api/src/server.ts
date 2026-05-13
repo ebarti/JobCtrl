@@ -16,19 +16,41 @@ import {
   CredentialKeys,
   CredentialUpdateRequestSchema,
   DeleteJobRequestSchema,
+  DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
   JobListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
   MarkJobActionRequestSchema,
+  ManualCaptureDismissSchema,
+  ManualCaptureImportSchema,
   ProfileImportRequestSchema,
   ProfileUpdateRequestSchema,
+  QuarantineDecisionSchema,
   RetryStageRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
+  SourceLocatorDecisionSchema,
+  SourceStatePatchSchema,
+  SourceUpsertRequestSchema,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
 import { databaseExists, openDatabase } from "./db.js";
+import {
+  decideQuarantineEntry,
+  dismissManualCapture,
+  importManualCapture,
+  listManualCaptureQueue,
+  listQuarantine,
+  listSourceLocatorCandidates,
+  listSourceRegistry,
+  patchSourceState,
+  previewDiscoverySource,
+  promoteSourceLocatorCandidate,
+  recordDiscoveryFeedback,
+  rejectSourceLocatorCandidate,
+  upsertSourceRegistryEntry,
+} from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
 import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
 import {
@@ -128,6 +150,128 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
   );
+
+  app.get("/v1/discovery/sources", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listSourceRegistry(db)),
+  );
+
+  app.post("/v1/discovery/sources", async (request, reply) => {
+    const body = parseBody(reply, SourceUpsertRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => ({
+      ok: true,
+      source: upsertSourceRegistryEntry(db, body),
+    }));
+  });
+
+  app.patch<{ Params: { sourceId: string } }>(
+    "/v1/discovery/sources/:sourceId/state",
+    async (request, reply) => {
+      const body = parseBody(reply, SourceStatePatchSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) => ({
+        ok: true,
+        source: patchSourceState(db, decodeRouteParam(request.params.sourceId), body),
+      }));
+    },
+  );
+
+  app.get<{ Params: { sourceId: string } }>(
+    "/v1/discovery/sources/:sourceId/preview",
+    async (request, reply) =>
+      withDb(reply, options.dbPath, (db) =>
+        previewDiscoverySource(db, decodeRouteParam(request.params.sourceId)),
+      ),
+  );
+
+  app.get("/v1/discovery/locator-candidates", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listSourceLocatorCandidates(db)),
+  );
+
+  app.post<{ Params: { candidateId: string } }>(
+    "/v1/discovery/locator-candidates/:candidateId/promote",
+    async (request, reply) => {
+      const body = parseBody(reply, SourceLocatorDecisionSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        promoteSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+      );
+    },
+  );
+
+  app.post<{ Params: { candidateId: string } }>(
+    "/v1/discovery/locator-candidates/:candidateId/reject",
+    async (request, reply) => {
+      const body = parseBody(reply, SourceLocatorDecisionSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        rejectSourceLocatorCandidate(db, decodeRouteParam(request.params.candidateId)),
+      );
+    },
+  );
+
+  app.get("/v1/discovery/quarantine", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listQuarantine(db)),
+  );
+
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/discovery/quarantine/:jobKey/decision",
+    async (request, reply) => {
+      const body = parseBody(reply, QuarantineDecisionSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        decideQuarantineEntry(db, decodeRouteParam(request.params.jobKey), body),
+      );
+    },
+  );
+
+  app.get("/v1/discovery/manual-capture", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listManualCaptureQueue(db)),
+  );
+
+  app.post<{ Params: { itemId: string } }>(
+    "/v1/discovery/manual-capture/:itemId/import",
+    async (request, reply) => {
+      const body = parseBody(reply, ManualCaptureImportSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        importManualCapture(db, decodeRouteParam(request.params.itemId), body),
+      );
+    },
+  );
+
+  app.post<{ Params: { itemId: string } }>(
+    "/v1/discovery/manual-capture/:itemId/dismiss",
+    async (request, reply) => {
+      const body = parseBody(reply, ManualCaptureDismissSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        dismissManualCapture(db, decodeRouteParam(request.params.itemId), body.reason),
+      );
+    },
+  );
+
+  app.post("/v1/discovery/feedback", async (request, reply) => {
+    const body = parseBody(reply, DiscoveryFeedbackRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => recordDiscoveryFeedback(db, body));
+  });
 
   app.post("/v1/pipeline/actions/run-stage", async (request, reply) => {
     const body = parseBody(reply, RunPipelineStagesRequestSchema, request.body ?? {});

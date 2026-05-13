@@ -4,6 +4,7 @@ import { createDomainEvent } from "../src/events/base.js";
 import { DOMAIN_EVENT_TYPES } from "../src/events/index.js";
 import {
   createCanonicalJobIdentityResolved,
+  createDiscoveryFeedbackRecorded,
   createDiscoveryRunCompleted,
   createDiscoveryRunFailed,
   createDiscoveryRunStarted,
@@ -16,6 +17,7 @@ import {
   createSourceRegistryEntryCreated,
   createSourceRegistryEntryUpdated,
   createSourceStateChanged,
+  DISCOVERY_FEEDBACK_KINDS,
 } from "../src/events/discovery.js";
 import {
   createContentDuplicateCandidateDetected,
@@ -170,6 +172,20 @@ describe("Discovery events", () => {
     });
     expect(event.eventType).toBe("DuplicateJobLinkRejected");
     expect(event.payload.candidateIds).toEqual(["j1", "j2"]);
+  });
+
+  it("DiscoveryFeedbackRecorded carries the feedback kind without raw text", () => {
+    const event = createDiscoveryFeedbackRecorded(LOCAL_TENANT, {
+      feedbackId: "feedback-1",
+      jobId: "j1",
+      sourceId: "greenhouse:acme",
+      kind: "saved",
+      recordedAt: "2026-05-13T12:00:00Z",
+    });
+    expect(event.eventType).toBe("DiscoveryFeedbackRecorded");
+    expect(event.payload.kind).toBe("saved");
+    expect(event.payload.sourceId).toBe("greenhouse:acme");
+    expect(DISCOVERY_FEEDBACK_KINDS).toContain(event.payload.kind);
   });
 });
 
@@ -492,7 +508,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(43);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(44);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -592,6 +608,13 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         candidateIds: ["j", "j2"],
         reason: "low_confidence",
         rejectedAt: "t",
+      }).eventType,
+      createDiscoveryFeedbackRecorded(LOCAL_TENANT, {
+        feedbackId: "feedback-1",
+        jobId: "j",
+        sourceId: "greenhouse:acme",
+        kind: "saved",
+        recordedAt: "t",
       }).eventType,
       createJobEnriched(LOCAL_TENANT, {
         jobId: "j",

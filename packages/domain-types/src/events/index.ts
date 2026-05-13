@@ -54,6 +54,11 @@ export {
   type DuplicateJobLinkRejectedPayload,
   type DuplicateJobLinkRejected,
   createDuplicateJobLinkRejected,
+  type DiscoveryFeedbackKind,
+  DISCOVERY_FEEDBACK_KINDS,
+  type DiscoveryFeedbackRecordedPayload,
+  type DiscoveryFeedbackRecorded,
+  createDiscoveryFeedbackRecorded,
 } from "./discovery.js";
 
 export {
@@ -170,6 +175,7 @@ import type {
   CanonicalJobIdentityResolved,
   DuplicateJobLinked,
   DuplicateJobLinkRejected,
+  DiscoveryFeedbackRecorded,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
   SourceRegistryEntryCreated,
@@ -222,6 +228,7 @@ export type DomainEventUnion =
   | CanonicalJobIdentityResolved
   | DuplicateJobLinked
   | DuplicateJobLinkRejected
+  | DiscoveryFeedbackRecorded
   | SourceLocationCandidateDiscovered
   | SourceLocationCandidatePromoted
   | SourceRegistryEntryCreated
@@ -269,6 +276,7 @@ export const DOMAIN_EVENT_TYPES = [
   "CanonicalJobIdentityResolved",
   "DuplicateJobLinked",
   "DuplicateJobLinkRejected",
+  "DiscoveryFeedbackRecorded",
   "SourceLocationCandidateDiscovered",
   "SourceLocationCandidatePromoted",
   "SourceRegistryEntryCreated",

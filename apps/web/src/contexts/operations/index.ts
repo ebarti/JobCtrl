@@ -6,6 +6,10 @@ export type {
   CredentialsResponse,
   DashboardSettings,
   DashboardSummary,
+  DiscoveryFeedbackKind,
+  DiscoveryFeedbackRequest,
+  DiscoveryFeedbackResponse,
+  DiscoveryPreviewResponse,
   JobDetail,
   JobId,
   JobListQuery,
@@ -14,9 +18,19 @@ export type {
   JobsListInput,
   KnownDomainEvent,
   KnownDomainEventType,
+  ManualCaptureImportRequest,
+  ManualCaptureListResponse,
   PaginatedResponse,
   ProfileConfigResponse,
+  QuarantineDecision,
+  QuarantineListResponse,
   SettingsResponse,
+  SourceLocatorListResponse,
+  SourceRegistryEntrySummary,
+  SourceRegistryListResponse,
+  SourceRegistryMutationResponse,
+  SourceStatePatch,
+  SourceUpsertRequest,
   Stage,
   StageOrAll,
   StageState,
@@ -51,6 +65,12 @@ export { useApplyRunsListQuery } from "./hooks/useApplyRunsListQuery.js";
 export { useArtifactDetailQuery } from "./hooks/useArtifactDetailQuery.js";
 export { useArtifactsListQuery } from "./hooks/useArtifactsListQuery.js";
 export { useDashboardSummaryQuery } from "./hooks/useDashboardSummaryQuery.js";
+export {
+  useDiscoveryQuarantineQuery,
+  useManualCaptureQueueQuery,
+  useSourceLocatorCandidatesQuery,
+  useSourceRegistryQuery,
+} from "./hooks/useDiscoveryProductControlsQuery.js";
 export { useHealthQuery } from "./hooks/useHealthQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";

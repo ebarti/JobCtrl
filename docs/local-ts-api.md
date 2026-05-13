@@ -29,8 +29,38 @@ the wire as a compatibility summary during the scoring evidence migration.
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
 source-observation, duplicate, content snapshot, enrichment, apply-URL, and
-active-state events and is the read-side signal the web dashboard uses for
-source health.
+active-state events and user discovery feedback. It is the read-side signal the
+web dashboard uses for source health.
+
+Discovery product-control endpoints are local-first and share DTOs from
+`packages/contracts`:
+
+- `GET /v1/discovery/sources` lists source registry entries merged with
+  `source_quality_stats`.
+- `POST /v1/discovery/sources` upserts a local source registry entry and emits
+  `SourceRegistryEntryCreated` or `SourceRegistryEntryUpdated`.
+- `PATCH /v1/discovery/sources/:sourceId/state` changes local source state and
+  emits `SourceStateChanged`.
+- `GET /v1/discovery/sources/:sourceId/preview` returns local preview leads
+  from recent `JobSourceObserved` history for that source; it does not perform
+  live scraping.
+- `GET /v1/discovery/locator-candidates`, `GET /v1/discovery/quarantine`, and
+  `GET /v1/discovery/manual-capture` expose the local review queues.
+- `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
+  source locator candidate into an experimental source registry entry and emits
+  `SourceLocationCandidatePromoted`.
+- `POST /v1/discovery/locator-candidates/:candidateId/reject` removes a local
+  source locator candidate from the review queue.
+- `POST /v1/discovery/quarantine/:jobKey/decision` approves or rejects a
+  quarantined lead and records feedback for source-quality aggregation.
+- `POST /v1/discovery/manual-capture/:itemId/import` records user-mediated
+  capture provenance. Raw pasted or saved content is not copied into domain
+  events; the API stores only local metadata such as content length and hash.
+- `POST /v1/discovery/manual-capture/:itemId/dismiss` dismisses a pending
+  manual-capture item.
+- `POST /v1/discovery/feedback` records `DiscoveryFeedbackRecorded` with IDs,
+  source, kind, and timestamp only; free-form notes stay out of the domain event
+  payload.
 
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal

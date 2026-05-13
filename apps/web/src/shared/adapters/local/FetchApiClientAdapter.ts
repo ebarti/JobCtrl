@@ -14,6 +14,60 @@ export class FetchApiClientAdapter implements ApiClientPort {
   dashboardSummary() {
     return this.client.dashboardSummary();
   }
+  discoverySources() {
+    return this.client.discoverySources();
+  }
+  upsertDiscoverySource(body: Parameters<JobHunterApiClient["upsertDiscoverySource"]>[0]) {
+    return this.client.upsertDiscoverySource(body);
+  }
+  patchDiscoverySourceState(
+    sourceId: string,
+    body: Parameters<JobHunterApiClient["patchDiscoverySourceState"]>[1],
+  ) {
+    return this.client.patchDiscoverySourceState(sourceId, body);
+  }
+  discoverySourcePreview(sourceId: string) {
+    return this.client.discoverySourcePreview(sourceId);
+  }
+  discoveryLocatorCandidates() {
+    return this.client.discoveryLocatorCandidates();
+  }
+  promoteSourceLocatorCandidate(
+    candidateId: string,
+    body: Parameters<JobHunterApiClient["promoteSourceLocatorCandidate"]>[1] = {},
+  ) {
+    return this.client.promoteSourceLocatorCandidate(candidateId, body);
+  }
+  rejectSourceLocatorCandidate(
+    candidateId: string,
+    body: Parameters<JobHunterApiClient["rejectSourceLocatorCandidate"]>[1] = {},
+  ) {
+    return this.client.rejectSourceLocatorCandidate(candidateId, body);
+  }
+  discoveryQuarantine() {
+    return this.client.discoveryQuarantine();
+  }
+  decideDiscoveryQuarantine(
+    jobKey: string,
+    body: Parameters<JobHunterApiClient["decideDiscoveryQuarantine"]>[1],
+  ) {
+    return this.client.decideDiscoveryQuarantine(jobKey, body);
+  }
+  manualCaptureQueue() {
+    return this.client.manualCaptureQueue();
+  }
+  importManualCapture(itemId: string, body: Parameters<JobHunterApiClient["importManualCapture"]>[1]) {
+    return this.client.importManualCapture(itemId, body);
+  }
+  dismissManualCapture(
+    itemId: string,
+    body: Parameters<JobHunterApiClient["dismissManualCapture"]>[1] = {},
+  ) {
+    return this.client.dismissManualCapture(itemId, body);
+  }
+  recordDiscoveryFeedback(body: Parameters<JobHunterApiClient["recordDiscoveryFeedback"]>[0]) {
+    return this.client.recordDiscoveryFeedback(body);
+  }
   jobs(query: Parameters<JobHunterApiClient["jobs"]>[0] = {}) {
     return this.client.jobs(query);
   }

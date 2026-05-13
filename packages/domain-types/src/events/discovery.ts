@@ -336,3 +336,49 @@ export function createDuplicateJobLinkRejected(
 ): DuplicateJobLinkRejected {
   return createDomainEvent("DuplicateJobLinkRejected", tenantId, payload);
 }
+
+// -- DiscoveryFeedbackRecorded ---------------------------------------------
+
+/**
+ * RFC §Domain Events: User or system feedback (saved, applied, dismissed,
+ * stale, duplicate, bad_source, useful, ...). Operations projects this
+ * event into source-quality stats; the source-quality scheduler reads the
+ * projection on the next refresh.
+ *
+ * The event payload is intentionally non-sensitive: it carries IDs, the
+ * feedback kind, and a tenant-scoped feedbackId, but never raw posting
+ * text, user notes that could embed credentials, or resume content.
+ */
+export const DISCOVERY_FEEDBACK_KINDS = [
+  "saved",
+  "applied",
+  "dismissed",
+  "stale",
+  "duplicate",
+  "wrong_company",
+  "wrong_location",
+  "bad_source",
+  "useful",
+  "irrelevant",
+] as const;
+export type DiscoveryFeedbackKind = (typeof DISCOVERY_FEEDBACK_KINDS)[number];
+
+export interface DiscoveryFeedbackRecordedPayload {
+  readonly feedbackId: string;
+  readonly jobId: string;
+  readonly sourceId: string | null;
+  readonly kind: DiscoveryFeedbackKind;
+  readonly recordedAt: string;
+}
+
+export type DiscoveryFeedbackRecorded = DomainEvent<
+  "DiscoveryFeedbackRecorded",
+  DiscoveryFeedbackRecordedPayload
+>;
+
+export function createDiscoveryFeedbackRecorded(
+  tenantId: TenantId,
+  payload: DiscoveryFeedbackRecordedPayload,
+): DiscoveryFeedbackRecorded {
+  return createDomainEvent("DiscoveryFeedbackRecorded", tenantId, payload);
+}

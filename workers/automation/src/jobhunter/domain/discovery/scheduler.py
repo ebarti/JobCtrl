@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Iterable
 
 from jobhunter.domain.discovery.source_registry import (
+    SourceKind,
     SourcePriority,
     SourceRegistryEntry,
     SourceState,
@@ -176,12 +177,14 @@ class SourceQualitySnapshot:
 class ScheduledSource:
     source_id: str
     display_name: str
+    source_kind: SourceKind
     priority: SourcePriority
     configured_state: SourceState
     crawl_budget: int
     decision: str
     reason: str
     recommended_state: str
+    adapter_config: dict[str, object] = field(default_factory=dict)
 
     @property
     def should_run(self) -> bool:
@@ -199,6 +202,10 @@ class DiscoverySchedule:
     def for_prefix(self, prefix: str) -> tuple[ScheduledSource, ...]:
         normalized = prefix.rstrip(":") + ":"
         return tuple(source for source in self.sources if source.source_id.startswith(normalized))
+
+    def for_kinds(self, *kinds: SourceKind) -> tuple[ScheduledSource, ...]:
+        wanted = set(kinds)
+        return tuple(source for source in self.sources if source.source_kind in wanted)
 
     def budget_for_prefix(self, prefix: str) -> int:
         return sum(source.crawl_budget for source in self.for_prefix(prefix) if source.should_run)
@@ -247,12 +254,14 @@ class DiscoveryScheduler:
             return ScheduledSource(
                 source_id=entry.source_id,
                 display_name=entry.display_name,
+                source_kind=entry.kind,
                 priority=entry.priority,
                 configured_state=entry.state,
                 crawl_budget=budget,
                 decision="run" if budget > 0 else "skip",
                 reason="no quality history",
                 recommended_state=entry.state.value,
+                adapter_config=dict(entry.adapter_config),
             )
 
         demoted = _recommended_state(snapshot)
@@ -277,12 +286,14 @@ class DiscoveryScheduler:
         return ScheduledSource(
             source_id=entry.source_id,
             display_name=entry.display_name,
+            source_kind=entry.kind,
             priority=entry.priority,
             configured_state=entry.state,
             crawl_budget=budget,
             decision="run" if budget > 0 else "skip",
             reason=reason,
             recommended_state=demoted,
+            adapter_config=dict(entry.adapter_config),
         )
 
     @staticmethod
@@ -290,12 +301,14 @@ class DiscoveryScheduler:
         return ScheduledSource(
             source_id=entry.source_id,
             display_name=entry.display_name,
+            source_kind=entry.kind,
             priority=entry.priority,
             configured_state=entry.state,
             crawl_budget=0,
             decision="skip",
             reason=reason,
             recommended_state=recommended_state,
+            adapter_config=dict(entry.adapter_config),
         )
 
 

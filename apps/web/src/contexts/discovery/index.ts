@@ -1,5 +1,16 @@
 export { discoveryKeys } from "./queryKeys.js";
 
+export { DiscoveryProductControls } from "./components/DiscoveryProductControls.js";
+
+export {
+  useDiscoveryFeedbackMutation,
+  useDiscoveryQuarantineDecisionMutation,
+  useManualCaptureDismissMutation,
+  useManualCaptureImportMutation,
+  usePatchDiscoverySourceStateMutation,
+  useUpsertDiscoverySourceMutation,
+} from "./hooks/useDiscoveryProductControlMutations.js";
+
 export { useDeleteJobMutation } from "./hooks/useDeleteJobMutation.js";
 export { useDeleteJobsBulkMutation } from "./hooks/useDeleteJobsBulkMutation.js";
 export { useImportJobMutation } from "./hooks/useImportJobMutation.js";
