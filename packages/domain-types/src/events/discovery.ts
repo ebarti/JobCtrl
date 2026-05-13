@@ -202,6 +202,79 @@ export function createJobSourceObserved(
   return createDomainEvent("JobSourceObserved", tenantId, payload);
 }
 
+// -- DiscoveryRunStarted ----------------------------------------------------
+
+export interface DiscoveryRunStartedPayload {
+  readonly runId: string;
+  readonly sourceIds: readonly string[];
+  readonly profileSnapshotId: string | null;
+  readonly startedAt: string;
+}
+
+export type DiscoveryRunStarted = DomainEvent<
+  "DiscoveryRunStarted",
+  DiscoveryRunStartedPayload
+>;
+
+export function createDiscoveryRunStarted(
+  tenantId: TenantId,
+  payload: DiscoveryRunStartedPayload,
+): DiscoveryRunStarted {
+  return createDomainEvent("DiscoveryRunStarted", tenantId, payload);
+}
+
+// -- DiscoveryRunCompleted --------------------------------------------------
+
+export interface DiscoveryRunCounts {
+  readonly total: number;
+  readonly newJobs: number;
+  readonly existingJobs: number;
+  readonly observedJobs: number;
+  readonly duplicateJobs: number;
+  readonly rejectedDuplicates: number;
+}
+
+export interface DiscoveryRunCompletedPayload {
+  readonly runId: string;
+  readonly counts: DiscoveryRunCounts;
+  readonly errorClasses: readonly string[];
+  readonly completedAt: string;
+}
+
+export type DiscoveryRunCompleted = DomainEvent<
+  "DiscoveryRunCompleted",
+  DiscoveryRunCompletedPayload
+>;
+
+export function createDiscoveryRunCompleted(
+  tenantId: TenantId,
+  payload: DiscoveryRunCompletedPayload,
+): DiscoveryRunCompleted {
+  return createDomainEvent("DiscoveryRunCompleted", tenantId, payload);
+}
+
+// -- DiscoveryRunFailed -----------------------------------------------------
+
+export interface DiscoveryRunFailedPayload {
+  readonly runId: string;
+  readonly sourceId: string;
+  readonly errorClass: string;
+  readonly retryable: boolean;
+  readonly failedAt: string;
+}
+
+export type DiscoveryRunFailed = DomainEvent<
+  "DiscoveryRunFailed",
+  DiscoveryRunFailedPayload
+>;
+
+export function createDiscoveryRunFailed(
+  tenantId: TenantId,
+  payload: DiscoveryRunFailedPayload,
+): DiscoveryRunFailed {
+  return createDomainEvent("DiscoveryRunFailed", tenantId, payload);
+}
+
 // -- CanonicalJobIdentityResolved ------------------------------------------
 
 export interface CanonicalJobIdentityResolvedPayload {

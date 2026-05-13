@@ -145,6 +145,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_score_tables(conn)
     ensure_materials_tables(conn)
     ensure_enrichment_tables(conn)
+    ensure_discovery_run_tables(conn)
     ensure_source_observation_tables(conn)
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
@@ -168,6 +169,37 @@ def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> li
     )
 
     return ensure_projection_tables(conn)
+
+
+def ensure_discovery_run_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create Discovery-owned scheduled run persistence tables."""
+    if conn is None:
+        conn = get_connection()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_runs (
+            tenant_id              TEXT NOT NULL DEFAULT 'local',
+            run_id                 TEXT NOT NULL,
+            source_ids_json        TEXT NOT NULL DEFAULT '[]',
+            profile_snapshot_id    TEXT,
+            status                 TEXT NOT NULL,
+            counts_json            TEXT NOT NULL DEFAULT '{}',
+            error_classes_json     TEXT NOT NULL DEFAULT '[]',
+            started_at             TEXT NOT NULL,
+            completed_at           TEXT,
+            failed_at              TEXT,
+            PRIMARY KEY (tenant_id, run_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_runs_started
+        ON discovery_runs(tenant_id, started_at DESC)
+        """
+    )
+    conn.commit()
+    return ["discovery_runs"]
 
 
 # Complete column registry: column_name -> SQL type with optional default.

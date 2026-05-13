@@ -35,6 +35,16 @@ export {
   type JobSourceObservedPayload,
   type JobSourceObserved,
   createJobSourceObserved,
+  type DiscoveryRunStartedPayload,
+  type DiscoveryRunStarted,
+  createDiscoveryRunStarted,
+  type DiscoveryRunCounts,
+  type DiscoveryRunCompletedPayload,
+  type DiscoveryRunCompleted,
+  createDiscoveryRunCompleted,
+  type DiscoveryRunFailedPayload,
+  type DiscoveryRunFailed,
+  createDiscoveryRunFailed,
   type CanonicalJobIdentityResolvedPayload,
   type CanonicalJobIdentityResolved,
   createCanonicalJobIdentityResolved,
@@ -152,6 +162,9 @@ import type {
   JobDeleted,
   JobDiscovered,
   JobSourceObserved,
+  DiscoveryRunStarted,
+  DiscoveryRunCompleted,
+  DiscoveryRunFailed,
   JobRestored,
   JobUpdated,
   CanonicalJobIdentityResolved,
@@ -203,6 +216,9 @@ export type DomainEventUnion =
   | JobDeleted
   | JobRestored
   | JobSourceObserved
+  | DiscoveryRunStarted
+  | DiscoveryRunCompleted
+  | DiscoveryRunFailed
   | CanonicalJobIdentityResolved
   | DuplicateJobLinked
   | DuplicateJobLinkRejected
@@ -247,6 +263,9 @@ export const DOMAIN_EVENT_TYPES = [
   "JobDeleted",
   "JobRestored",
   "JobSourceObserved",
+  "DiscoveryRunStarted",
+  "DiscoveryRunCompleted",
+  "DiscoveryRunFailed",
   "CanonicalJobIdentityResolved",
   "DuplicateJobLinked",
   "DuplicateJobLinkRejected",

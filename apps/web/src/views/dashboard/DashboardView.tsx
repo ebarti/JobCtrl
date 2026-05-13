@@ -5,6 +5,7 @@ import { ActivityFeed } from "./ActivityFeed.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 import { Funnel } from "./Funnel.js";
 import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
+import { SourceHealthCard } from "./SourceHealthCard.js";
 
 export function DashboardView() {
   const { data: summary, isLoading, error } = useDashboardSummaryQuery();
@@ -17,6 +18,7 @@ export function DashboardView() {
       {summary ? (
         <div className="dashboard-grid">
           <Funnel summary={summary} />
+          <SourceHealthCard summary={summary} />
           <ApplyRunsCard summary={summary} />
           <ActivityFeed summary={summary} />
         </div>

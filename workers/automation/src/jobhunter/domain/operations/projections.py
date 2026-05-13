@@ -179,3 +179,50 @@ class ApplyRunProjection:
     finished_at: str | None = None
     duration_ms: int | None = None
     events: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class DiscoveryRunProjection:
+    """Read-side row for scheduled discovery runs."""
+
+    run_id: str
+    tenant_id: TenantId
+    source_ids: tuple[str, ...] = ()
+    profile_snapshot_id: str | None = None
+    status: str = "running"
+    counts: dict[str, int] = field(default_factory=dict)
+    error_classes: tuple[str, ...] = ()
+    started_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
+    failed_source_id: str | None = None
+    retryable: bool = True
+
+
+@dataclass(frozen=True)
+class SourceQualityStats:
+    """Operations projection for source health and scheduling feedback."""
+
+    tenant_id: TenantId
+    source_id: str
+    window_start: str
+    window_end: str
+    run_count: int = 0
+    failed_run_count: int = 0
+    consecutive_failures: int = 0
+    observed_jobs: int = 0
+    new_jobs: int = 0
+    existing_jobs: int = 0
+    duplicate_jobs: int = 0
+    active_jobs: int = 0
+    stale_jobs: int = 0
+    detail_success_count: int = 0
+    detail_failure_count: int = 0
+    active_verification_rate: float | None = None
+    duplicate_rate: float | None = None
+    full_description_success_rate: float | None = None
+    apply_url_success_rate: float | None = None
+    last_run_id: str | None = None
+    last_error_class: str | None = None
+    recommended_state: str = "normal"
+    updated_at: str = ""

@@ -35,6 +35,19 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
+  DiscoveryRunStarted: [
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  DiscoveryRunCompleted: [
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  DiscoveryRunFailed: [
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    discoveryKeys.sourceRegistry(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   CanonicalJobIdentityResolved: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),

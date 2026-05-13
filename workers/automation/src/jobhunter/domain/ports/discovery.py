@@ -21,6 +21,7 @@ from jobhunter.domain.discovery.identity import (
     DuplicateJobLink,
     JobSourceObservation,
 )
+from jobhunter.domain.discovery.scheduler import DiscoveryRun
 from jobhunter.domain.discovery.value_objects import (
     JobMetadata,
     PostingUrl,
@@ -241,4 +242,16 @@ class JobRepository(Protocol):
         the merge decision so Operations can surface it and a future
         user correction can split the candidate back out.
         """
+        ...
+
+
+class DiscoveryRunRepository(Protocol):
+    """Persistence port for the ``DiscoveryRun`` aggregate."""
+
+    def save(self, run: DiscoveryRun) -> None:
+        """Insert or update one scheduled discovery run."""
+        ...
+
+    def load(self, tenant_id: TenantId, run_id: str) -> DiscoveryRun | None:
+        """Return a scheduled discovery run by id, if present."""
         ...

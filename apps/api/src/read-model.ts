@@ -169,6 +169,23 @@ interface ApplyRunProjectionRow extends Record<string, unknown> {
   events_json: string;
 }
 
+interface SourceQualityProjectionRow extends Record<string, unknown> {
+  source_id: string;
+  recommended_state: string;
+  run_count: number;
+  failed_run_count: number;
+  consecutive_failures: number;
+  observed_jobs: number;
+  new_jobs: number;
+  existing_jobs: number;
+  duplicate_rate: number | null;
+  active_verification_rate: number | null;
+  full_description_success_rate: number | null;
+  last_run_id: string | null;
+  last_error_class: string | null;
+  updated_at: string | null;
+}
+
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   discovered_at: "discovered_at",
   title: "LOWER(title)",
@@ -198,6 +215,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     },
     funnel: parseFunnel(dashboard.funnel_json),
     activity: recentActivity(db),
+    sourceHealth: listSourceHealth(db),
     applyRuns: recentApplyRuns(db),
   };
 }
@@ -510,6 +528,40 @@ function defaultDashboardRow(): DashboardProjectionRow {
     score_distribution_json: "[]",
     generated_at: "",
   };
+}
+
+function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] {
+  if (!tableExists(db, "source_quality_stats")) {
+    return [];
+  }
+  const rows = allRows<SourceQualityProjectionRow>(
+    db,
+    `SELECT source_id, recommended_state, run_count, failed_run_count,
+            consecutive_failures, observed_jobs, new_jobs, existing_jobs,
+            duplicate_rate, active_verification_rate,
+            full_description_success_rate, last_run_id, last_error_class,
+            updated_at
+     FROM source_quality_stats
+     WHERE tenant_id = ?
+     ORDER BY recommended_state DESC, observed_jobs DESC, source_id ASC`,
+    [DEFAULT_TENANT],
+  );
+  return rows.map((row) => ({
+    sourceId: row.source_id,
+    recommendedState: row.recommended_state || "normal",
+    runCount: Number(row.run_count ?? 0),
+    failedRunCount: Number(row.failed_run_count ?? 0),
+    consecutiveFailures: Number(row.consecutive_failures ?? 0),
+    observedJobs: Number(row.observed_jobs ?? 0),
+    newJobs: Number(row.new_jobs ?? 0),
+    existingJobs: Number(row.existing_jobs ?? 0),
+    duplicateRate: nullableNumber(row.duplicate_rate),
+    activeVerificationRate: nullableNumber(row.active_verification_rate),
+    fullDescriptionSuccessRate: nullableNumber(row.full_description_success_rate),
+    lastRunId: row.last_run_id,
+    lastErrorClass: row.last_error_class,
+    updatedAt: row.updated_at,
+  }));
 }
 
 function parseStages(stagesJson: string | undefined): StageSummary[] {

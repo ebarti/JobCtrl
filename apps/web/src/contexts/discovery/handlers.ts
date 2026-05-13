@@ -1,5 +1,8 @@
 import type {
   CanonicalJobIdentityResolved,
+  DiscoveryRunCompleted,
+  DiscoveryRunFailed,
+  DiscoveryRunStarted,
   DuplicateJobLinked,
   DuplicateJobLinkRejected,
   JobDeleted,
@@ -47,6 +50,28 @@ export const jobSourceObservedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+];
+
+export const discoveryRunStartedHandler = (
+  event: DiscoveryRunStarted,
+): readonly InvalidationItem[] => [
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const discoveryRunCompletedHandler = (
+  event: DiscoveryRunCompleted,
+): readonly InvalidationItem[] => [
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const discoveryRunFailedHandler = (
+  event: DiscoveryRunFailed,
+): readonly InvalidationItem[] => [
+  invalidate(discoveryKeys.sourceQuality(event.tenantId)),
+  invalidate(discoveryKeys.sourceRegistry(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
 export const canonicalJobIdentityResolvedHandler = (
