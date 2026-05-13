@@ -75,7 +75,7 @@ Important gaps:
 - Capture enough posting content to support scoring, tailoring, deduplication,
   auditability, and future search/ranking evaluation.
 - Make source policies explicit: allowed collection method, rate budget,
-  authentication mode, robots handling, attribution requirements, and fallback
+  authentication mode, attribution requirements, and fallback
   behavior.
 - Preserve local-first operation while leaving a clear future path for hosted
   source registries, shared source-health metadata, and licensed data feeds.
@@ -314,9 +314,10 @@ Not allowed:
 ### Human-In-The-Loop Blocked Source Path
 
 Blocked sources should not become dead ends. When a lead looks useful but the
-autonomous path hits CAPTCHA, login, paywall, bot-detection, robots disallow,
-rate-limit, or another access boundary, JobHunter should create a
-`manual_action_required` item instead of silently discarding the lead.
+autonomous path hits CAPTCHA, login, paywall, bot-detection,
+rate-limit, or another access boundary, JobHunter should first try to circumvent 
+the blockage, and, if not, ccreate a`manual_action_required` item instead of silently 
+discarding the lead.
 
 The manual path:
 
@@ -346,12 +347,11 @@ sources:
     allowed_methods: [api, rendered_detail]
     authentication: none
     attribution: none
-    robots_policy: honor
     max_pages_per_run: 500
     max_run_frequency: "PT6H"
     manual_intervention:
       allowed: true
-      triggers: [captcha, login_required, paywall, bot_detection, robots_disallow]
+      triggers: [captcha, login_required, paywall, bot_detection]
       capture_modes: [current_page, saved_html, copied_url, pasted_text, email_import]
     content_filter_override:
       allowed: true
@@ -439,9 +439,9 @@ Proposed entities/value objects:
 | Name | Kind | Owning context | Identity / parent | Purpose |
 | --- | --- | --- | --- | --- |
 | `SourceLocationCandidate` | Entity | Discovery | `(TenantId, candidateId)` | Candidate career system discovered from the public web, a source seed, or an aggregator backtrace, with detected source kind, URL, confidence, and promotion state. |
-| `SourceDiscoveryEvidence` | Value object | Discovery | Owned by `SourceLocationCandidate` | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, robots result, and validation fetch result. |
+| `SourceDiscoveryEvidence` | Value object | Discovery | Owned by `SourceLocationCandidate` | Evidence supporting a locator candidate: matched links, employer-domain checks, redirect chain, detected ATS tokens, and validation fetch result. |
 | `SourceRegistryEntry` | Aggregate | Discovery | `(TenantId, sourceId)` | Source ID, kind, display name, owner, policy, priority, adapter config, and source state. |
-| `SourcePolicy` | Value object | Discovery | Owned by `SourceRegistryEntry`; persisted by policy version when needed | Allowed methods, locator/crawl rate budgets, robots handling, auth mode, attribution, and filter override rules. |
+| `SourcePolicy` | Value object | Discovery | Owned by `SourceRegistryEntry`; persisted by policy version when needed | Allowed methods, locator/crawl rate budgets, auth mode, attribution, and filter override rules. |
 | `DiscoveryRun` | Aggregate | Discovery | `(TenantId, runId: UUID)` | One scheduled run with source IDs, query/profile snapshot, status, counts, and error classes. Operations builds read-side run projections from Discovery events. |
 | `DiscoveredPosting` | Value object | Discovery | Owned by `DiscoveryRun` result pages | Raw source result with source-native ID, listing URL, title/company/location, and strategy. |
 | `CanonicalJobIdentity` | Value object | Discovery | Owned by the Discovery `Job` decision | Canonical URL, ATS type, employer identity, source-native ID, and dedupe keys. |
@@ -673,7 +673,7 @@ Required spans:
 
 | Stage | Span name | Required non-sensitive attributes |
 | --- | --- | --- |
-| Locator probe | `discovery.locator.probe` | `tenant.id`, `source.candidate_id`, `url.domain`, `robots.result`, `locator.method`, `http.status_code`, `confidence` |
+| Locator probe | `discovery.locator.probe` | `tenant.id`, `source.candidate_id`, `url.domain`, `locator.method`, `http.status_code`, `confidence` |
 | Source validation | `discovery.source.validate` | `tenant.id`, `source.id`, `source.kind`, `policy.id`, `validation.result` |
 | Scheduled run | `discovery.run` | `tenant.id`, `run.id`, `source.ids`, `profile.snapshot_id`, `source.count` |
 | Adapter fetch | `discovery.adapter.fetch` | `tenant.id`, `run.id`, `source.id`, `adapter.kind`, `page.count`, `result.count`, `error.class` |
@@ -851,12 +851,10 @@ Rollback rules:
 - Add a source locator model that turns aggregator leads, public web results, and
   source seeds into `SourceLocationCandidate` records with evidence and
   confidence.
-- Enforce locator policy guardrails: RFC 9309/robots handling, declared user
-  agent, locator-level per-domain budgets, and manual-review thresholds for
+- Enforce locator policy guardrails: locator-level per-domain budgets, and manual-review thresholds for
   autonomous search/backtrace results.
 - Add `manual_action_required` and manual-capture provenance fields for useful
-  leads that hit CAPTCHA, login, paywall, bot-detection, robots disallow,
-  rate-limit, or other access boundaries.
+  leads that hit boundaries
 - Add a typed source registry model that covers current `sites.yaml`,
   `employers.yaml`, and JobSpy board selection.
 - Resolve `boards` versus `sites` naming so `searches.yaml` is a stable product
@@ -948,9 +946,7 @@ Rollback rules:
 
 For implementation PRs:
 
-- Unit tests for source config parsing, source policy validation, locator robots
-  handling, locator rate budgets, adapter parsing, content extraction,
-  active-state detection, dedupe, and source-health aggregation.
+- Unit tests for source config parsing, source policy validation, locator rate budgets, adapter parsing, content extraction, active-state detection, dedupe, and source-health aggregation.
 - Migration tests for existing `jobs` rows, generated `JobSourceObservation`
   rows, existing `sites.yaml` / `employers.yaml`, and `boards` / `sites`
   compatibility in user `searches.yaml`.
@@ -1003,8 +999,6 @@ For implementation PRs:
 - [Remotive public jobs API](https://github.com/remotive-io/remote-jobs-api)
 - [USAJOBS Search API](https://developer.usajobs.gov/api-reference/get-api-search)
 - [Adzuna API](https://developer.adzuna.com/)
-- [RFC 9309: Robots Exclusion Protocol](https://www.ietf.org/rfc/rfc9309.html)
-- [Google robots.txt documentation](https://developers.google.com/search/docs/crawling-indexing/robots/intro)
 
 ## Open Questions
 
