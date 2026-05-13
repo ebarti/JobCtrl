@@ -30,6 +30,26 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  JobSourceObserved: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+  ],
+  CanonicalJobIdentityResolved: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+  ],
+  DuplicateJobLinked: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  DuplicateJobLinkRejected: [
+    discoveryKeys.sourceQuality(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   SourceLocationCandidateDiscovered: [
     discoveryKeys.sourceLocator(LOCAL_TENANT),
     discoveryKeys.sourceRegistry(LOCAL_TENANT),

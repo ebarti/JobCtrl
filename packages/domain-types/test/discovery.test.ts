@@ -12,6 +12,7 @@ import { LOCAL_TENANT } from "../src/tenant.js";
 import { generateJobId } from "../src/identifiers.js";
 import {
   SEARCH_STRATEGIES,
+  ATS_KINDS,
   SMART_EXTRACT_EXPERIMENTAL_POLICY,
   UNKNOWN_EMPLOYER,
   createSourcePolicy,
@@ -37,6 +38,10 @@ describe("Discovery types", () => {
       "smart_extract",
       "manual",
     ]);
+  });
+
+  it("exposes the canonical ATS kind literal range", () => {
+    expect(ATS_KINDS).toEqual(["workday", "greenhouse", "lever", "ashby", "other"]);
   });
 
   it("createPostingUrl accepts non-empty strings", () => {

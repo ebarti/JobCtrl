@@ -32,6 +32,18 @@ export {
   type SourceStateChangedPayload,
   type SourceStateChanged,
   createSourceStateChanged,
+  type JobSourceObservedPayload,
+  type JobSourceObserved,
+  createJobSourceObserved,
+  type CanonicalJobIdentityResolvedPayload,
+  type CanonicalJobIdentityResolved,
+  createCanonicalJobIdentityResolved,
+  type DuplicateJobLinkedPayload,
+  type DuplicateJobLinked,
+  createDuplicateJobLinked,
+  type DuplicateJobLinkRejectedPayload,
+  type DuplicateJobLinkRejected,
+  createDuplicateJobLinkRejected,
 } from "./discovery.js";
 
 export {
@@ -124,8 +136,12 @@ export {
 import type {
   JobDeleted,
   JobDiscovered,
+  JobSourceObserved,
   JobRestored,
   JobUpdated,
+  CanonicalJobIdentityResolved,
+  DuplicateJobLinked,
+  DuplicateJobLinkRejected,
   SourceLocationCandidateDiscovered,
   SourceLocationCandidatePromoted,
   SourceRegistryEntryCreated,
@@ -164,6 +180,10 @@ export type DomainEventUnion =
   | JobUpdated
   | JobDeleted
   | JobRestored
+  | JobSourceObserved
+  | CanonicalJobIdentityResolved
+  | DuplicateJobLinked
+  | DuplicateJobLinkRejected
   | SourceLocationCandidateDiscovered
   | SourceLocationCandidatePromoted
   | SourceRegistryEntryCreated
@@ -200,6 +220,10 @@ export const DOMAIN_EVENT_TYPES = [
   "JobUpdated",
   "JobDeleted",
   "JobRestored",
+  "JobSourceObserved",
+  "CanonicalJobIdentityResolved",
+  "DuplicateJobLinked",
+  "DuplicateJobLinkRejected",
   "SourceLocationCandidateDiscovered",
   "SourceLocationCandidatePromoted",
   "SourceRegistryEntryCreated",

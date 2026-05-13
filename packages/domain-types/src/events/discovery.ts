@@ -5,7 +5,7 @@
  */
 
 import type { TenantId } from "../tenant.js";
-import type { SourceKind, SourceState } from "../discovery/source.js";
+import type { AtsKind, SourceKind, SourceState } from "../discovery/source.js";
 import { type DomainEvent, createDomainEvent } from "./base.js";
 
 // -- JobDiscovered ----------------------------------------------------------
@@ -179,4 +179,87 @@ export function createSourceStateChanged(
   payload: SourceStateChangedPayload,
 ): SourceStateChanged {
   return createDomainEvent("SourceStateChanged", tenantId, payload);
+}
+
+// -- JobSourceObserved ------------------------------------------------------
+
+export interface JobSourceObservedPayload {
+  readonly jobId: string;
+  readonly sourceObservationId: string;
+  readonly sourceId: string;
+  readonly sourceNativeId: string;
+  readonly observedUrl: string;
+  readonly runId: string;
+  readonly observedAt: string;
+}
+
+export type JobSourceObserved = DomainEvent<"JobSourceObserved", JobSourceObservedPayload>;
+
+export function createJobSourceObserved(
+  tenantId: TenantId,
+  payload: JobSourceObservedPayload,
+): JobSourceObserved {
+  return createDomainEvent("JobSourceObserved", tenantId, payload);
+}
+
+// -- CanonicalJobIdentityResolved ------------------------------------------
+
+export interface CanonicalJobIdentityResolvedPayload {
+  readonly jobId: string;
+  readonly canonicalUrl: string;
+  readonly atsKind: AtsKind;
+  readonly sourceNativeId: string;
+  readonly confidence: number;
+}
+
+export type CanonicalJobIdentityResolved = DomainEvent<
+  "CanonicalJobIdentityResolved",
+  CanonicalJobIdentityResolvedPayload
+>;
+
+export function createCanonicalJobIdentityResolved(
+  tenantId: TenantId,
+  payload: CanonicalJobIdentityResolvedPayload,
+): CanonicalJobIdentityResolved {
+  return createDomainEvent("CanonicalJobIdentityResolved", tenantId, payload);
+}
+
+// -- DuplicateJobLinked -----------------------------------------------------
+
+export interface DuplicateJobLinkedPayload {
+  readonly duplicateLinkId: string;
+  readonly survivingJobId: string;
+  readonly supersededJobOrObservationId: string;
+  readonly reason: string;
+  readonly confidence: number;
+}
+
+export type DuplicateJobLinked = DomainEvent<"DuplicateJobLinked", DuplicateJobLinkedPayload>;
+
+export function createDuplicateJobLinked(
+  tenantId: TenantId,
+  payload: DuplicateJobLinkedPayload,
+): DuplicateJobLinked {
+  return createDomainEvent("DuplicateJobLinked", tenantId, payload);
+}
+
+// -- DuplicateJobLinkRejected ----------------------------------------------
+
+export interface DuplicateJobLinkRejectedPayload {
+  readonly duplicateLinkId: string;
+  readonly candidateIds: readonly string[];
+  readonly reason: string;
+  readonly rejectedAt: string;
+}
+
+export type DuplicateJobLinkRejected = DomainEvent<
+  "DuplicateJobLinkRejected",
+  DuplicateJobLinkRejectedPayload
+>;
+
+export function createDuplicateJobLinkRejected(
+  tenantId: TenantId,
+  payload: DuplicateJobLinkRejectedPayload,
+): DuplicateJobLinkRejected {
+  return createDomainEvent("DuplicateJobLinkRejected", tenantId, payload);
 }
