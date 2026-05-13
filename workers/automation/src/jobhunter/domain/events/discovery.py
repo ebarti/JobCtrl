@@ -55,3 +55,80 @@ class JobRestoredPayload:
 
 def create_job_restored(tenant_id: TenantId, payload: JobRestoredPayload) -> DomainEvent:
     return create_domain_event("JobRestored", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class SourceLocationCandidateDiscoveredPayload:
+    candidate_id: str
+    candidate_url: str
+    source_kind: str
+    confidence: float
+    evidence_ref: str
+    discovered_at: str
+
+
+def create_source_location_candidate_discovered(
+    tenant_id: TenantId,
+    payload: SourceLocationCandidateDiscoveredPayload,
+) -> DomainEvent:
+    return create_domain_event("SourceLocationCandidateDiscovered", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class SourceLocationCandidatePromotedPayload:
+    candidate_id: str
+    source_id: str
+    promoted_at: str
+
+
+def create_source_location_candidate_promoted(
+    tenant_id: TenantId,
+    payload: SourceLocationCandidatePromotedPayload,
+) -> DomainEvent:
+    return create_domain_event("SourceLocationCandidatePromoted", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class SourceRegistryEntryCreatedPayload:
+    source_id: str
+    kind: str
+    policy_id: str
+    state: str
+    created_at: str
+
+
+def create_source_registry_entry_created(
+    tenant_id: TenantId,
+    payload: SourceRegistryEntryCreatedPayload,
+) -> DomainEvent:
+    return create_domain_event("SourceRegistryEntryCreated", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class SourceRegistryEntryUpdatedPayload:
+    source_id: str
+    changed_fields: tuple[str, ...]
+    updated_at: str
+
+
+def create_source_registry_entry_updated(
+    tenant_id: TenantId,
+    payload: SourceRegistryEntryUpdatedPayload,
+) -> DomainEvent:
+    return create_domain_event("SourceRegistryEntryUpdated", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class SourceStateChangedPayload:
+    source_id: str
+    from_state: str
+    to_state: str
+    reason: str
+    changed_at: str
+
+
+def create_source_state_changed(
+    tenant_id: TenantId,
+    payload: SourceStateChangedPayload,
+) -> DomainEvent:
+    return create_domain_event("SourceStateChanged", tenant_id, asdict(payload))

@@ -12,12 +12,15 @@ import { LOCAL_TENANT } from "../src/tenant.js";
 import { generateJobId } from "../src/identifiers.js";
 import {
   SEARCH_STRATEGIES,
+  SMART_EXTRACT_EXPERIMENTAL_POLICY,
   UNKNOWN_EMPLOYER,
+  createSourcePolicy,
   createEmployer,
   createPostingUrl,
   createSource,
   isSearchStrategy,
   isUnknownEmployer,
+  validateSourceLocationCandidate,
   type Employer,
   type Job,
   type JobMetadata,
@@ -115,5 +118,65 @@ describe("Discovery types", () => {
     };
     expect(job.deletedAt).toBe("2026-05-02T00:00:00+00:00");
     expect(job.deleteReason).toBe("not interested");
+  });
+
+  it("SourcePolicy keeps third-party bypass disabled", () => {
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.policyId).toBe("smart_extract_experimental");
+    expect(() =>
+      createSourcePolicy({
+        ...SMART_EXTRACT_EXPERIMENTAL_POLICY,
+        policyId: "bad",
+        thirdPartyControlBypass: true as false,
+      }),
+    ).toThrow(/thirdPartyControlBypass/);
+  });
+
+  it("validates locator candidates into promotion, manual review, or rejection", () => {
+    const baseCandidate = {
+      tenantId: LOCAL_TENANT,
+      candidateId: "candidate-1",
+      candidateUrl: "https://example.com/careers",
+      sourceKind: "employer_careers_page" as const,
+      evidence: {
+        matchedUrl: "https://example.com/careers",
+        pageTitle: "Careers",
+        detectedAtsKind: null,
+        sourceNativeToken: null,
+        employerDomainMatched: true,
+        redirectChain: [],
+        validationFetchStatus: 200,
+      },
+      manualActionRequired: null,
+      discoveredAt: "2026-05-12T00:00:00Z",
+    };
+    expect(validateSourceLocationCandidate({ ...baseCandidate, confidence: 0.9 })).toBe("promote");
+    expect(validateSourceLocationCandidate({ ...baseCandidate, confidence: 0.5 })).toBe(
+      "manual_action_required",
+    );
+    expect(validateSourceLocationCandidate({ ...baseCandidate, confidence: 0.1 })).toBe("reject");
+    expect(
+      validateSourceLocationCandidate({
+        ...baseCandidate,
+        confidence: 0.9,
+        evidence: { ...baseCandidate.evidence, employerDomainMatched: false },
+      }),
+    ).toBe("manual_action_required");
+    expect(
+      validateSourceLocationCandidate(
+        {
+          ...baseCandidate,
+          confidence: 0.9,
+          evidence: { ...baseCandidate.evidence, employerDomainMatched: false },
+        },
+        {
+          userAgent: "JobHunter Source Locator (local)",
+          maxRequestsPerDomain: 5,
+          minPromotionConfidence: 0.75,
+          minManualReviewConfidence: 0.4,
+          domainAllowlist: [],
+          allowAutonomousBroadDiscovery: true,
+        },
+      ),
+    ).toBe("promote");
   });
 });

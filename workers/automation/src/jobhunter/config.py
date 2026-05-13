@@ -1,9 +1,25 @@
 """JobHunter configuration: paths, platform detection, user data."""
 
+import logging
 import os
 import platform
+import re
 import shutil
 from pathlib import Path
+
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.domain.discovery.source_registry import (
+    BROAD_BOARD_LEAD_POLICY,
+    SMART_EXTRACT_EXPERIMENTAL_POLICY,
+    WORKDAY_API_POLICY,
+    SourceKind,
+    SourcePriority,
+    SourceRegistryEntry,
+    SourceState,
+)
+from jobhunter.infrastructure.observability import source_validation_span
+
+log = logging.getLogger(__name__)
 
 # User data directory — all user-specific files live here
 APP_DIR = Path(os.environ.get("JOBHUNTER_DIR", Path.home() / ".jobhunter"))
@@ -30,6 +46,8 @@ APPLY_WORKER_DIR = APP_DIR / "apply-workers"
 # Package-shipped config (YAML registries)
 PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
+
+DEFAULT_JOBSPY_BOARDS = ("indeed", "linkedin", "zip_recruiter")
 
 
 def get_chrome_path() -> str:
@@ -112,6 +130,169 @@ def load_sites_config() -> dict:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_employers_config() -> dict:
+    """Load the packaged Workday employer registry."""
+    import yaml
+
+    path = CONFIG_DIR / "employers.yaml"
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) -> list[str]:
+    """Return JobSpy board names, accepting legacy ``sites`` for one release.
+
+    ``boards`` is the stable product key because it names JobSpy source boards.
+    ``sites`` remains accepted as a compatibility alias and logs a warning
+    instead of failing existing local configs.
+    """
+    cfg = search_cfg if search_cfg is not None else load_search_config()
+    boards = _string_list(cfg.get("boards")) if isinstance(cfg, dict) else []
+    legacy_sites = _string_list(cfg.get("sites")) if isinstance(cfg, dict) else []
+    if boards:
+        if legacy_sites and legacy_sites != boards and warn:
+            log.warning(
+                "Both JobSpy 'boards' and legacy 'sites' are configured; using 'boards'. "
+                "Remove 'sites' after the compatibility window."
+            )
+        return boards
+    if legacy_sites:
+        if warn:
+            log.warning(
+                "searches.yaml key 'sites' is deprecated for JobSpy board selection; use 'boards'."
+            )
+        return legacy_sites
+    return list(DEFAULT_JOBSPY_BOARDS)
+
+
+def _source_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+    return slug or "source"
+
+
+def _validated_source(entry: SourceRegistryEntry) -> SourceRegistryEntry:
+    with source_validation_span(
+        tenant_id=entry.tenant_id,
+        source_id=entry.source_id,
+        source_kind=entry.kind.value,
+        policy_id=entry.policy.policy_id,
+        state=entry.state.value,
+        validation_result="ok",
+    ):
+        return entry
+
+
+def _smart_extract_sources(sites_cfg: dict) -> list[SourceRegistryEntry]:
+    entries: list[SourceRegistryEntry] = []
+    base_urls = sites_cfg.get("base_urls", {}) if isinstance(sites_cfg.get("base_urls"), dict) else {}
+    for item in sites_cfg.get("sites", []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        url = str(item.get("url", "")).strip()
+        if not name or not url:
+            continue
+        entries.append(
+            _validated_source(
+                SourceRegistryEntry(
+                    tenant_id=LOCAL_TENANT,
+                    source_id=f"smart_extract:{_source_slug(name)}",
+                    kind=SourceKind.SMART_EXTRACT,
+                    display_name=name,
+                    owner="system",
+                    priority=SourcePriority.FALLBACK,
+                    state=SourceState.EXPERIMENTAL,
+                    policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
+                    adapter_config={
+                        "name": name,
+                        "url": url,
+                        "type": item.get("type", "static"),
+                        "base_url": base_urls.get(name),
+                    },
+                )
+            )
+        )
+    return entries
+
+
+def _workday_sources(employers_cfg: dict) -> list[SourceRegistryEntry]:
+    entries: list[SourceRegistryEntry] = []
+    employers = employers_cfg.get("employers", {}) if isinstance(employers_cfg, dict) else {}
+    if not isinstance(employers, dict):
+        return entries
+    for key, employer in employers.items():
+        if not isinstance(employer, dict):
+            continue
+        name = str(employer.get("name") or key).strip()
+        if not name:
+            continue
+        entries.append(
+            _validated_source(
+                SourceRegistryEntry(
+                    tenant_id=LOCAL_TENANT,
+                    source_id=f"workday:{_source_slug(str(key))}",
+                    kind=SourceKind.ATS_API,
+                    display_name=name,
+                    owner="system",
+                    priority=SourcePriority.CANONICAL,
+                    state=SourceState.ACTIVE,
+                    policy=WORKDAY_API_POLICY,
+                    adapter_config={
+                        "tenant": employer.get("tenant"),
+                        "site_id": employer.get("site_id"),
+                        "base_url": employer.get("base_url"),
+                    },
+                )
+            )
+        )
+    return entries
+
+
+def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
+    entries: list[SourceRegistryEntry] = []
+    for board in resolve_jobspy_boards(search_cfg, warn=False):
+        entries.append(
+            _validated_source(
+                SourceRegistryEntry(
+                    tenant_id=LOCAL_TENANT,
+                    source_id=f"jobspy:{_source_slug(board)}",
+                    kind=SourceKind.BROAD_BOARD,
+                    display_name=f"JobSpy {board}",
+                    owner="system",
+                    priority=SourcePriority.LEAD_GENERATOR,
+                    state=SourceState.EXPERIMENTAL,
+                    policy=BROAD_BOARD_LEAD_POLICY,
+                    adapter_config={"board": board},
+                )
+            )
+        )
+    return entries
+
+
+def load_source_registry(
+    *,
+    search_cfg: dict | None = None,
+    sites_cfg: dict | None = None,
+    employers_cfg: dict | None = None,
+) -> list[SourceRegistryEntry]:
+    """Generate typed source registry entries from packaged YAML and JobSpy config."""
+    active_search_cfg = search_cfg if search_cfg is not None else load_search_config()
+    active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
+    active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()
+    return [
+        *_smart_extract_sources(active_sites_cfg),
+        *_workday_sources(active_employers_cfg),
+        *_jobspy_sources(active_search_cfg),
+    ]
 
 
 def is_manual_ats(url: str | None) -> bool:
