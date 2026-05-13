@@ -1,6 +1,7 @@
 import type {
   DiscoveryFeedbackKind,
   DiscoveryPreviewResponse,
+  ManualCaptureImportRequest,
   ManualCaptureListResponse,
   QuarantineListResponse,
   SourceLocatorListResponse,
@@ -57,6 +58,17 @@ const SOURCE_KINDS = [
   "user_mediated_capture",
 ] as const;
 
+const CAPTURE_MODES: Array<{
+  value: ManualCaptureImportRequest["captureMode"];
+  label: string;
+}> = [
+  { value: "copied_url", label: "Copied URL" },
+  { value: "current_page", label: "Current page" },
+  { value: "saved_html", label: "Saved HTML" },
+  { value: "pasted_text", label: "Pasted text" },
+  { value: "email_import", label: "Email import" },
+];
+
 function pct(value: number | null): string {
   return value === null ? "n/a" : `${Math.round(value * 100)}%`;
 }
@@ -84,7 +96,9 @@ function sourceMeta(source: SourceRegistryEntrySummary): string {
 function candidateEvidence(candidate: LocatorCandidate): string {
   return [
     candidate.employerDomainMatched ? "domain matched" : "domain unverified",
-    candidate.manualActionReason ? `manual ${label(candidate.manualActionReason)}` : "no manual blocker",
+    candidate.manualActionReason
+      ? `manual ${label(candidate.manualActionReason)}`
+      : "no manual blocker",
     `discovered ${new Date(candidate.discoveredAt).toLocaleDateString()}`,
   ].join(" · ");
 }
@@ -98,7 +112,11 @@ export function DiscoveryProductControls() {
   const quarantineCount = quarantine.data?.entries.length ?? 0;
   const manualCount = manualCapture.data?.items.length ?? 0;
   const candidateCount = locatorCandidates.data?.candidates.length ?? 0;
-  const error = sources.error ?? quarantine.error ?? manualCapture.error ?? locatorCandidates.error;
+  const error =
+    sources.error ??
+    quarantine.error ??
+    manualCapture.error ??
+    locatorCandidates.error;
   const message = error instanceof Error ? error.message : null;
 
   return (
@@ -109,13 +127,22 @@ export function DiscoveryProductControls() {
       />
       {message ? <div className="banner inline">{message}</div> : null}
       <div className="discovery-control-grid">
-        <SourceRegistryPanel sources={sources.data?.sources ?? []} loading={sources.isLoading} />
+        <SourceRegistryPanel
+          sources={sources.data?.sources ?? []}
+          loading={sources.isLoading}
+        />
         <SourceLocatorPanel
           candidates={locatorCandidates.data?.candidates ?? []}
           loading={locatorCandidates.isLoading}
         />
-        <QuarantinePanel entries={quarantine.data?.entries ?? []} loading={quarantine.isLoading} />
-        <ManualCapturePanel items={manualCapture.data?.items ?? []} loading={manualCapture.isLoading} />
+        <QuarantinePanel
+          entries={quarantine.data?.entries ?? []}
+          loading={quarantine.isLoading}
+        />
+        <ManualCapturePanel
+          items={manualCapture.data?.items ?? []}
+          loading={manualCapture.isLoading}
+        />
       </div>
     </section>
   );
@@ -134,7 +161,9 @@ function SourceRegistryPanel({
   const preview = useDiscoverySourcePreviewQuery(previewSourceId);
   const [sourceId, setSourceId] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [kind, setKind] = useState<(typeof SOURCE_KINDS)[number]>("employer_careers_page");
+  const [kind, setKind] = useState<(typeof SOURCE_KINDS)[number]>(
+    "employer_careers_page",
+  );
   const [seedUrl, setSeedUrl] = useState("");
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -161,17 +190,27 @@ function SourceRegistryPanel({
       <form className="source-upsert-form" onSubmit={submit}>
         <label className="field">
           <span>Source id</span>
-          <input value={sourceId} onChange={(event) => setSourceId(event.target.value)} required />
+          <input
+            value={sourceId}
+            onChange={(event) => setSourceId(event.target.value)}
+            required
+          />
         </label>
         <label className="field">
           <span>Name</span>
-          <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
+          <input
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            required
+          />
         </label>
         <label className="field">
           <span>Kind</span>
           <select
             value={kind}
-            onChange={(event) => setKind(event.target.value as (typeof SOURCE_KINDS)[number])}
+            onChange={(event) =>
+              setKind(event.target.value as (typeof SOURCE_KINDS)[number])
+            }
           >
             {SOURCE_KINDS.map((value) => (
               <option key={value} value={value}>
@@ -189,7 +228,11 @@ function SourceRegistryPanel({
             placeholder="https://example.com/careers"
           />
         </label>
-        <Button type="submit" size="sm" disabled={upsert.isPending || !sourceId.trim() || !displayName.trim()}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={upsert.isPending || !sourceId.trim() || !displayName.trim()}
+        >
           <Plus size={14} aria-hidden="true" />
           Add source
         </Button>
@@ -202,7 +245,9 @@ function SourceRegistryPanel({
               <b>{source.displayName}</b>
               <span>{sourceMeta(source)}</span>
             </span>
-            <span className={`tag ${source.recommendedState === "quarantined" ? "danger" : "info"}`}>
+            <span
+              className={`tag ${source.recommendedState === "quarantined" ? "danger" : "info"}`}
+            >
               {label(source.state)}
             </span>
             <div className="row-actions">
@@ -216,7 +261,10 @@ function SourceRegistryPanel({
                 onClick={() =>
                   patchState.mutate({
                     sourceId: source.sourceId,
-                    body: { state: "active", reason: "User enabled source from product controls." },
+                    body: {
+                      state: "active",
+                      reason: "User enabled source from product controls.",
+                    },
                   })
                 }
               >
@@ -228,11 +276,16 @@ function SourceRegistryPanel({
                 variant="ghost"
                 aria-label={`Quarantine ${source.displayName}`}
                 title="Quarantine source"
-                disabled={patchState.isPending || source.state === "quarantined"}
+                disabled={
+                  patchState.isPending || source.state === "quarantined"
+                }
                 onClick={() =>
                   patchState.mutate({
                     sourceId: source.sourceId,
-                    body: { state: "quarantined", reason: "User quarantined source from product controls." },
+                    body: {
+                      state: "quarantined",
+                      reason: "User quarantined source from product controls.",
+                    },
                   })
                 }
               >
@@ -244,7 +297,9 @@ function SourceRegistryPanel({
                 variant="ghost"
                 aria-label={`Preview ${source.displayName}`}
                 title="Preview observed leads"
-                disabled={preview.isFetching && previewSourceId === source.sourceId}
+                disabled={
+                  preview.isFetching && previewSourceId === source.sourceId
+                }
                 onClick={() => setPreviewSourceId(source.sourceId)}
               >
                 <Eye size={14} aria-hidden="true" />
@@ -252,7 +307,11 @@ function SourceRegistryPanel({
             </div>
           </div>
         ))}
-        {!sources.length ? <Empty title={loading ? "Loading sources." : "No sources registered."} /> : null}
+        {!sources.length ? (
+          <Empty
+            title={loading ? "Loading sources." : "No sources registered."}
+          />
+        ) : null}
       </div>
       {previewSourceId ? (
         <SourcePreview
@@ -286,7 +345,8 @@ function SourcePreview({
             <span className="title-stack">
               <b>{lead.title || lead.candidateUrl}</b>
               <span>
-                {lead.company || "Unknown company"} · {lead.location || "Unknown location"} · confidence{" "}
+                {lead.company || "Unknown company"} ·{" "}
+                {lead.location || "Unknown location"} · confidence{" "}
                 {pct(lead.estimatedConfidence)}
               </span>
               <span className="mono">{lead.candidateUrl}</span>
@@ -294,7 +354,13 @@ function SourcePreview({
           </div>
         ))}
         {!leads.length ? (
-          <Empty title={loading ? "Loading source preview." : "No observed leads for this source."} />
+          <Empty
+            title={
+              loading
+                ? "Loading source preview."
+                : "No observed leads for this source."
+            }
+          />
         ) : null}
       </div>
     </div>
@@ -324,13 +390,21 @@ function SourceLocatorPanel({
             <span className="title-stack">
               <b>{candidate.candidateUrl}</b>
               <span>
-                {label(candidate.sourceKind)} · confidence {pct(candidate.confidence)} ·{" "}
-                {candidate.detectedAtsKind ? `${candidate.detectedAtsKind} detected` : "ATS unknown"}
+                {label(candidate.sourceKind)} · confidence{" "}
+                {pct(candidate.confidence)} ·{" "}
+                {candidate.detectedAtsKind
+                  ? `${candidate.detectedAtsKind} detected`
+                  : "ATS unknown"}
               </span>
               <span>{candidateEvidence(candidate)}</span>
             </span>
             <div className="row-actions">
-              <Button size="icon" variant="ghost" asChild title="Open candidate">
+              <Button
+                size="icon"
+                variant="ghost"
+                asChild
+                title="Open candidate"
+              >
                 <a
                   aria-label={`Open ${candidate.candidateUrl}`}
                   href={candidate.candidateUrl}
@@ -350,7 +424,10 @@ function SourceLocatorPanel({
                 onClick={() =>
                   promote.mutate({
                     candidateId: candidate.candidateId,
-                    body: { reason: "User promoted source locator candidate from product controls." },
+                    body: {
+                      reason:
+                        "User promoted source locator candidate from product controls.",
+                    },
                   })
                 }
               >
@@ -366,7 +443,10 @@ function SourceLocatorPanel({
                 onClick={() =>
                   reject.mutate({
                     candidateId: candidate.candidateId,
-                    body: { reason: "User rejected source locator candidate from product controls." },
+                    body: {
+                      reason:
+                        "User rejected source locator candidate from product controls.",
+                    },
                   })
                 }
               >
@@ -376,18 +456,31 @@ function SourceLocatorPanel({
           </div>
         ))}
         {!candidates.length ? (
-          <Empty title={loading ? "Loading locator candidates." : "No source candidates."} />
+          <Empty
+            title={
+              loading ? "Loading locator candidates." : "No source candidates."
+            }
+          />
         ) : null}
       </div>
     </div>
   );
 }
 
-function QuarantinePanel({ entries, loading }: { entries: QuarantineEntry[]; loading: boolean }) {
+function QuarantinePanel({
+  entries,
+  loading,
+}: {
+  entries: QuarantineEntry[];
+  loading: boolean;
+}) {
   const decision = useDiscoveryQuarantineDecisionMutation();
   const feedback = useDiscoveryFeedbackMutation();
 
-  const sendFeedback = (entry: QuarantineEntry, kind: DiscoveryFeedbackKind) => {
+  const sendFeedback = (
+    entry: QuarantineEntry,
+    kind: DiscoveryFeedbackKind,
+  ) => {
     feedback.mutate({ jobKey: entry.jobKey, sourceId: entry.sourceId, kind });
   };
 
@@ -404,8 +497,11 @@ function QuarantinePanel({ entries, loading }: { entries: QuarantineEntry[]; loa
             <span className="title-stack">
               <b>{entry.title || entry.jobKey}</b>
               <span>
-                {entry.company || "Unknown company"} · {label(entry.reason)} · confidence{" "}
-                {entry.confidence === null ? "n/a" : Math.round(entry.confidence * 100)}
+                {entry.company || "Unknown company"} · {label(entry.reason)} ·
+                confidence{" "}
+                {entry.confidence === null
+                  ? "n/a"
+                  : Math.round(entry.confidence * 100)}
               </span>
             </span>
             <div className="row-actions">
@@ -417,7 +513,10 @@ function QuarantinePanel({ entries, loading }: { entries: QuarantineEntry[]; loa
                 title="Approve"
                 disabled={decision.isPending}
                 onClick={() =>
-                  decision.mutate({ jobKey: entry.jobKey, body: { decision: "approve" } })
+                  decision.mutate({
+                    jobKey: entry.jobKey,
+                    body: { decision: "approve" },
+                  })
                 }
               >
                 <Check size={14} aria-hidden="true" />
@@ -429,7 +528,12 @@ function QuarantinePanel({ entries, loading }: { entries: QuarantineEntry[]; loa
                 aria-label={`Reject ${entry.title || entry.jobKey}`}
                 title="Reject"
                 disabled={decision.isPending}
-                onClick={() => decision.mutate({ jobKey: entry.jobKey, body: { decision: "reject" } })}
+                onClick={() =>
+                  decision.mutate({
+                    jobKey: entry.jobKey,
+                    body: { decision: "reject" },
+                  })
+                }
               >
                 <X size={14} aria-hidden="true" />
               </Button>
@@ -459,16 +563,31 @@ function QuarantinePanel({ entries, loading }: { entries: QuarantineEntry[]; loa
           </div>
         ))}
         {!entries.length ? (
-          <Empty title={loading ? "Loading quarantined leads." : "No quarantined leads."} />
+          <Empty
+            title={
+              loading ? "Loading quarantined leads." : "No quarantined leads."
+            }
+          />
         ) : null}
       </div>
     </div>
   );
 }
 
-function ManualCapturePanel({ items, loading }: { items: ManualCaptureItem[]; loading: boolean }) {
+function ManualCapturePanel({
+  items,
+  loading,
+}: {
+  items: ManualCaptureItem[];
+  loading: boolean;
+}) {
   const importCapture = useManualCaptureImportMutation();
   const dismiss = useManualCaptureDismissMutation();
+
+  const importItem = (itemId: string, body: ManualCaptureImportRequest) => {
+    importCapture.mutate({ itemId, body });
+  };
+
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
@@ -477,61 +596,218 @@ function ManualCapturePanel({ items, loading }: { items: ManualCaptureItem[]; lo
       </div>
       <div className="rows compact">
         {items.map((item) => (
-          <div className="discovery-review-row" key={item.itemId}>
-            <ExternalLink size={16} aria-hidden="true" />
-            <span className="title-stack">
-              <b>{item.sourceId ?? "Unassigned source"}</b>
-              <span>
-                {label(item.reason)} · <span className="mono">{item.originatingUrl}</span>
-              </span>
-            </span>
-            <div className="row-actions">
-              <Button size="icon" variant="ghost" asChild title="Open page">
-                <a
-                  aria-label={`Open ${item.originatingUrl}`}
-                  href={item.originatingUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ExternalLink size={14} aria-hidden="true" />
-                </a>
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Import ${item.originatingUrl}`}
-                title="Import copied URL"
-                disabled={importCapture.isPending}
-                onClick={() =>
-                  importCapture.mutate({
-                    itemId: item.itemId,
-                    body: {
-                      captureMode: "copied_url",
-                      capturedUrl: item.originatingUrl,
-                      futureManualActionRequired: false,
-                    },
-                  })
-                }
-              >
-                <Upload size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Dismiss ${item.originatingUrl}`}
-                title="Dismiss"
-                disabled={dismiss.isPending}
-                onClick={() => dismiss.mutate(item.itemId)}
-              >
-                <X size={14} aria-hidden="true" />
-              </Button>
-            </div>
-          </div>
+          <ManualCaptureRow
+            key={item.itemId}
+            item={item}
+            importing={importCapture.isPending}
+            dismissing={dismiss.isPending}
+            onImport={importItem}
+            onDismiss={(itemId) => dismiss.mutate(itemId)}
+          />
         ))}
-        {!items.length ? <Empty title={loading ? "Loading manual queue." : "No manual captures."} /> : null}
+        {!items.length ? (
+          <Empty
+            title={loading ? "Loading manual queue." : "No manual captures."}
+          />
+        ) : null}
       </div>
     </div>
   );
+}
+
+function ManualCaptureRow({
+  item,
+  importing,
+  dismissing,
+  onImport,
+  onDismiss,
+}: {
+  item: ManualCaptureItem;
+  importing: boolean;
+  dismissing: boolean;
+  onImport: (itemId: string, body: ManualCaptureImportRequest) => void;
+  onDismiss: (itemId: string) => void;
+}) {
+  const [captureMode, setCaptureMode] =
+    useState<ManualCaptureImportRequest["captureMode"]>("copied_url");
+  const [capturedUrl, setCapturedUrl] = useState(item.originatingUrl);
+  const [content, setContent] = useState("");
+  const [note, setNote] = useState("");
+  const [futureManualActionRequired, setFutureManualActionRequired] =
+    useState(false);
+  const contentRequired = requiresContent(captureMode);
+  const urlRequired =
+    captureMode === "copied_url" || captureMode === "current_page";
+  const contentLabel = manualCaptureContentLabel(captureMode);
+  const canImport =
+    (!urlRequired || capturedUrl.trim().length > 0) &&
+    (!contentRequired || content.trim().length > 0);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canImport) return;
+    onImport(
+      item.itemId,
+      buildManualCapturePayload({
+        captureMode,
+        capturedUrl,
+        content,
+        note,
+        futureManualActionRequired,
+      }),
+    );
+  };
+
+  return (
+    <div className="discovery-review-row manual-capture-row">
+      <ExternalLink size={16} aria-hidden="true" />
+      <span className="title-stack manual-capture-body">
+        <b>{item.sourceId ?? "Unassigned source"}</b>
+        <span>
+          {label(item.reason)} ·{" "}
+          <span className="mono">{item.originatingUrl}</span>
+        </span>
+        <form className="manual-capture-form" onSubmit={submit}>
+          <label className="field">
+            <span>Capture mode</span>
+            <select
+              value={captureMode}
+              onChange={(event) =>
+                setCaptureMode(
+                  event.target
+                    .value as ManualCaptureImportRequest["captureMode"],
+                )
+              }
+            >
+              {CAPTURE_MODES.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>{urlRequired ? "Captured URL" : "Source URL"}</span>
+            <input
+              type="url"
+              value={capturedUrl}
+              onChange={(event) => setCapturedUrl(event.target.value)}
+              required={urlRequired}
+            />
+          </label>
+          {contentRequired ? (
+            <label className="field wide">
+              <span>{contentLabel}</span>
+              <textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                required
+                rows={3}
+              />
+            </label>
+          ) : null}
+          <label className="field wide">
+            <span>Note</span>
+            <input
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </label>
+          <label className="checkline wide">
+            <input
+              type="checkbox"
+              checked={futureManualActionRequired}
+              onChange={(event) =>
+                setFutureManualActionRequired(event.target.checked)
+              }
+            />
+            <span>Needs manual follow-up</span>
+          </label>
+          <Button
+            type="submit"
+            size="sm"
+            aria-label={`Import ${item.originatingUrl}`}
+            disabled={importing || !canImport}
+          >
+            <Upload size={14} aria-hidden="true" />
+            Import
+          </Button>
+        </form>
+      </span>
+      <div className="row-actions">
+        <Button size="icon" variant="ghost" asChild title="Open page">
+          <a
+            aria-label={`Open ${item.originatingUrl}`}
+            href={item.originatingUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <ExternalLink size={14} aria-hidden="true" />
+          </a>
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label={`Dismiss ${item.originatingUrl}`}
+          title="Dismiss"
+          disabled={dismissing}
+          onClick={() => onDismiss(item.itemId)}
+        >
+          <X size={14} aria-hidden="true" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function requiresContent(
+  captureMode: ManualCaptureImportRequest["captureMode"],
+): boolean {
+  return (
+    captureMode === "saved_html" ||
+    captureMode === "pasted_text" ||
+    captureMode === "email_import"
+  );
+}
+
+function manualCaptureContentLabel(
+  captureMode: ManualCaptureImportRequest["captureMode"],
+): string {
+  if (captureMode === "saved_html") return "Saved HTML";
+  if (captureMode === "email_import") return "Email content";
+  return "Pasted text";
+}
+
+function buildManualCapturePayload(input: {
+  captureMode: ManualCaptureImportRequest["captureMode"];
+  capturedUrl: string;
+  content: string;
+  note: string;
+  futureManualActionRequired: boolean;
+}): ManualCaptureImportRequest {
+  const payload: ManualCaptureImportRequest = {
+    captureMode: input.captureMode,
+    futureManualActionRequired: input.futureManualActionRequired,
+  };
+  const capturedUrl = input.capturedUrl.trim();
+  const content = input.content.trim();
+  const note = input.note.trim();
+  if (capturedUrl) payload.capturedUrl = capturedUrl;
+  if (note) payload.note = note;
+  if (input.captureMode === "saved_html") {
+    payload.contentHtmlBase64 = encodeUtf8Base64(content);
+  } else if (requiresContent(input.captureMode)) {
+    payload.contentText = content;
+  }
+  return payload;
+}
+
+function encodeUtf8Base64(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
 }
