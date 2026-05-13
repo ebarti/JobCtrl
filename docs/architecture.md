@@ -91,6 +91,22 @@ domain events and the **`SubprocessJsonRpcAdapter`** (Phase 9, S-34) for the
 TS↔Python integration protocol (§6.5 of `docs/ddd-target.md`). The pre-DDD
 "call out via `uv run jobhunter action ...` per request" pattern is gone.
 
+## Retrieval Before Scoring
+
+The Scoring context owns a local hybrid retrieval service under
+`workers/automation/src/jobhunter/domain/scoring/retrieval.py`. It builds an
+in-memory lexical index over normalized posting fields already produced by
+Discovery and Enrichment, then ranks candidate jobs before the scorer spends
+LLM calls. When `jobhunter run score --limit N` or equivalent pipeline calls
+cap scoring, the runner fetches a broader pending/enriched pool and lets hybrid
+retrieval choose the top N.
+
+Semantic search is optional. The `EmbeddingIndexPort` in
+`workers/automation/src/jobhunter/domain/ports/retrieval.py` is the adapter seam
+for a hosted or local embedding index; local mode defaults to
+`DisabledEmbeddingIndex`, so lexical retrieval and scoring continue to work
+without any external embedding service.
+
 ## Read-Model Projections (Phase 9)
 
 The Operations / Read-Side context maintains denormalised projection

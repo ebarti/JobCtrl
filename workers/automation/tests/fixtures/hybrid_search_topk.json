@@ -1,0 +1,47 @@
+{
+  "cases": [
+    {
+      "name": "barcelona-platform-leadership",
+      "query": "Barcelona Spain platform engineering leadership Kubernetes reliability",
+      "profile": {
+        "summary": "Engineering leader with Kubernetes, SRE, platform, infrastructure, and reliability experience."
+      },
+      "expected_top_k": [
+        "job-sre-lead",
+        "job-platform-manager"
+      ],
+      "jobs": [
+        {
+          "id": "job-frontend",
+          "title": "Frontend Engineering Manager",
+          "company": "CanvasWorks",
+          "location": "Barcelona, Spain",
+          "description": "Manage React product teams building design-system surfaces."
+        },
+        {
+          "id": "job-platform-manager",
+          "title": "Senior Platform Engineering Manager",
+          "company": "Northstar",
+          "location": "Barcelona, Spain",
+          "verification_confidence": "high",
+          "description": "Engineering leadership for Kubernetes, cloud infrastructure, observability, and developer platform reliability."
+        },
+        {
+          "id": "job-sales",
+          "title": "Enterprise Sales Director",
+          "company": "RevenueGrid",
+          "location": "Madrid, Spain",
+          "description": "Own sales pipeline, account expansion, and revenue targets."
+        },
+        {
+          "id": "job-sre-lead",
+          "title": "SRE Lead",
+          "company": "HarborOps",
+          "location": "Barcelona, Spain",
+          "verification_confidence": "medium",
+          "description": "Lead reliability engineering, incident response, Kubernetes operations, and platform automation."
+        }
+      ]
+    }
+  ]
+}

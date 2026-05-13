@@ -87,6 +87,22 @@ def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
     conn.commit()
 
 
+def _seed_pending_job_with_description(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    title: str,
+    description: str,
+    discovered_at: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (url, title, "Acme", description, discovered_at),
+    )
+    conn.commit()
+
+
 @pytest.fixture()
 def profile_snapshot(tmp_path):
     from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
@@ -241,3 +257,49 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
     ).fetchone()
     assert stage_row["state"] == "failed"
     assert "outside" in (stage_row["error_message"] or "").lower()
+
+
+def test_run_scoring_preselects_retrieval_top_k_before_llm(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    relevant_url = "https://example.com/job/platform"
+    stale_irrelevant_url = "https://example.com/job/retail"
+    _seed_pending_job_with_description(
+        conn,
+        url=stale_irrelevant_url,
+        title="Retail Operations Manager",
+        description="Store staffing, inventory, and sales operations.",
+        discovered_at="2026-01-02T00:00:00+00:00",
+    )
+    _seed_pending_job_with_description(
+        conn,
+        url=relevant_url,
+        title="Platform Engineering Manager",
+        description="Lead Kubernetes, SRE, infrastructure, and developer platform teams.",
+        discovered_at="2026-01-01T00:00:00+00:00",
+    )
+    repo = SqliteScoreRepository(conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 9,
+            "role_fit": 9,
+            "keywords": ["kubernetes", "platform"],
+            "reasoning": "ok",
+        }
+    )
+
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    summary = scorer_module.run_scoring(
+        limit=1,
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="Kubernetes platform engineering leadership.",
+    )
+
+    assert summary["scored"] == 1
+    assert summary["errors"] == 0
+    assert repo.load(LOCAL_TENANT, JobId(relevant_url)) is not None
+    assert repo.load(LOCAL_TENANT, JobId(stale_irrelevant_url)) is None

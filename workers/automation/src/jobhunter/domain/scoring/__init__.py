@@ -20,6 +20,16 @@ from jobhunter.domain.scoring.services import (
     ScoreParser,
     ScoreParseResult,
 )
+from jobhunter.domain.scoring.retrieval import (
+    DisabledEmbeddingIndex,
+    HybridSearchIndex,
+    PostingDocument,
+    RetrievedJobCandidate,
+    SearchQuery,
+    normalize_text,
+    preselect_jobs_for_scoring,
+    tokenize_text,
+)
 
 __all__ = [
     "FitScore",
@@ -31,4 +41,12 @@ __all__ = [
     "EligibilityChecker",
     "ScoreParser",
     "ScoreParseResult",
+    "DisabledEmbeddingIndex",
+    "HybridSearchIndex",
+    "PostingDocument",
+    "RetrievedJobCandidate",
+    "SearchQuery",
+    "normalize_text",
+    "preselect_jobs_for_scoring",
+    "tokenize_text",
 ]

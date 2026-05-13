@@ -29,6 +29,10 @@ from jobhunter.database import get_connection, get_jobs_by_stage
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.domain.scoring.retrieval import (
+    HybridSearchIndex,
+    preselect_jobs_for_scoring,
+)
 from jobhunter.domain.scoring.use_cases import (
     ScoreJobOutcome,
     ScoreJobUseCase,
@@ -119,6 +123,7 @@ def run_scoring(
     tenant_id: TenantId = LOCAL_TENANT,
     profile_snapshot: ProfileSnapshot | None = None,
     resume_text: str | None = None,
+    search_index: HybridSearchIndex | None = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -146,19 +151,31 @@ def run_scoring(
         publisher=publisher,
     )
 
+    source_limit = _retrieval_source_limit(limit)
     if rescore:
         # Phase 7 (S-26 round-1 review H1): bare ``full_description`` is
         # NULL on the new write path; route through ``get_jobs_by_stage``
         # which already COALESCEs over ``job_enrichments``. Use the
         # ``enriched`` selector instead of ``pending_score`` so already-
         # scored rows are included (rescore semantics).
-        jobs = get_jobs_by_stage(conn=conn, stage="enriched", limit=limit)
+        jobs = get_jobs_by_stage(conn=conn, stage="enriched", limit=source_limit)
     else:
-        jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=limit)
+        jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=source_limit)
 
     if not jobs:
         log.info("No unscored jobs with descriptions found.")
         return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
+
+    jobs = [
+        dict(job)
+        for job in preselect_jobs_for_scoring(
+            jobs,
+            profile_snapshot=profile_snapshot,
+            top_k=limit,
+            resume_text=resume_text,
+            search_index=search_index,
+        )
+    ]
 
     worker_count = max(1, workers)
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
@@ -308,6 +325,14 @@ def _score_distribution(
         counts[score.fit_score.value] = counts.get(score.fit_score.value, 0) + 1
     # Match the legacy distribution shape: highest score first.
     return sorted(counts.items(), key=lambda kv: kv[0], reverse=True)
+
+
+def _retrieval_source_limit(limit: int) -> int:
+    """Fetch a broader pool when scoring is capped, then let retrieval choose."""
+
+    if limit <= 0:
+        return 0
+    return max(limit * 5, 50)
 
 
 # ---------------------------------------------------------------------------
