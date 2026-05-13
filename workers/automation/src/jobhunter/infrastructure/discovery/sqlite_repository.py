@@ -415,36 +415,75 @@ class SqliteJobRepository:
         """
 
         normalized = normalize_observed_url(observation.observed_url)
-        # Defensive: if a different source already owns this normalized
-        # URL we want the upsert path to merge instead of failing on the
-        # unique index. The normalized-URL conflict is handled with
-        # ``ON CONFLICT (tenant_id, normalized_observed_url)``.
-        self._conn.execute(
+        updated = self._conn.execute(
             """
-            INSERT INTO job_source_observations (
-                tenant_id, source_observation_id, job_url, source_id,
-                source_native_id, observed_url, normalized_observed_url,
-                run_id, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (tenant_id, source_id, source_native_id) DO UPDATE SET
-                job_url = excluded.job_url,
-                observed_url = excluded.observed_url,
-                normalized_observed_url = excluded.normalized_observed_url,
-                run_id = excluded.run_id,
-                observed_at = excluded.observed_at
+            UPDATE job_source_observations SET
+                source_observation_id = ?,
+                job_url = ?,
+                observed_url = ?,
+                normalized_observed_url = ?,
+                run_id = ?,
+                observed_at = ?
+            WHERE tenant_id = ? AND source_id = ? AND source_native_id = ?
             """,
             (
-                str(tenant_id),
                 observation.source_observation_id,
                 str(job_id),
-                observation.source_id,
-                observation.source_native_id,
                 observation.observed_url,
                 normalized,
                 observation.run_id,
                 observation.observed_at,
+                str(tenant_id),
+                observation.source_id,
+                observation.source_native_id,
             ),
         )
+        if updated.rowcount == 0:
+            updated = self._conn.execute(
+                """
+                UPDATE job_source_observations SET
+                    source_observation_id = ?,
+                    job_url = ?,
+                    source_id = ?,
+                    source_native_id = ?,
+                    observed_url = ?,
+                    run_id = ?,
+                    observed_at = ?
+                WHERE tenant_id = ? AND normalized_observed_url = ?
+                """,
+                (
+                    observation.source_observation_id,
+                    str(job_id),
+                    observation.source_id,
+                    observation.source_native_id,
+                    observation.observed_url,
+                    observation.run_id,
+                    observation.observed_at,
+                    str(tenant_id),
+                    normalized,
+                ),
+            )
+        if updated.rowcount == 0:
+            self._conn.execute(
+                """
+                INSERT INTO job_source_observations (
+                    tenant_id, source_observation_id, job_url, source_id,
+                    source_native_id, observed_url, normalized_observed_url,
+                    run_id, observed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(tenant_id),
+                    observation.source_observation_id,
+                    str(job_id),
+                    observation.source_id,
+                    observation.source_native_id,
+                    observation.observed_url,
+                    normalized,
+                    observation.run_id,
+                    observation.observed_at,
+                ),
+            )
         self._conn.commit()
 
     def set_canonical_identity(

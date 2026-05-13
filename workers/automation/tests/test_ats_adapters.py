@@ -16,8 +16,20 @@ from jobhunter.infrastructure.discovery import (
 def test_workday_adapter_maps_cxs_payload_to_scraped_posting() -> None:
     requested_urls: list[str] = []
 
-    def http(url: str) -> dict[str, Any]:
+    def http(
+        url: str,
+        *,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         requested_urls.append(url)
+        assert method == "POST"
+        assert json_body == {
+            "appliedFacets": {},
+            "limit": 20,
+            "offset": 0,
+            "searchText": "Platform",
+        }
         return {
             "total": 1,
             "jobPostings": [
@@ -43,8 +55,7 @@ def test_workday_adapter_maps_cxs_payload_to_scraped_posting() -> None:
 
     postings = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Platform", location="Remote"))
 
-    assert "searchText=Platform" in requested_urls[0]
-    assert "location=Remote" in requested_urls[0]
+    assert requested_urls[0] == "https://acme.wd1.myworkdayjobs.com/wday/cxs/acme/External/jobs"
     assert len(postings) == 1
     posting = postings[0]
     assert posting.metadata.title == "Senior Platform Engineer"

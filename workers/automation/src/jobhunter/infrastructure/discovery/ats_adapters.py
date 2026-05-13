@@ -52,24 +52,34 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-HttpFetcher = Callable[[str], Any]
+HttpFetcher = Callable[..., Any]
 """Callable signature shared by every adapter.
 
-Accepts a fully-formed HTTP URL and returns the decoded JSON payload
-(typically a ``dict`` or ``list``). Tests inject a fixture-backed
-fetcher; production injects :func:`default_http_fetcher`.
+Accepts a fully-formed HTTP URL and optional method/body kwargs, then
+returns the decoded JSON payload (typically a ``dict`` or ``list``).
+Tests inject a fixture-backed fetcher; production injects
+:func:`default_http_fetcher`.
 """
 
 
-def default_http_fetcher(url: str, *, timeout: float = 20.0) -> Any:
-    """Production fetcher — plain JSON GET with a regular browser UA.
+def default_http_fetcher(
+    url: str,
+    *,
+    method: str = "GET",
+    json_body: dict[str, Any] | None = None,
+    timeout: float = 20.0,
+) -> Any:
+    """Production fetcher — JSON request with a regular browser UA.
 
     We deliberately use ``urllib`` rather than ``requests`` so the
     workers package keeps its current minimal dependency surface.
     """
 
-    req = urllib.request.Request(url, method="GET")
+    data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Accept", "application/json")
+    if json_body is not None:
+        req.add_header("Content-Type", "application/json")
     req.add_header(
         "User-Agent",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_0) AppleWebKit/605.1.15 "
@@ -181,16 +191,15 @@ class WorkdayBoardAdapter:
         offset = 0
         pages = 0
         while pages < self._max_pages:
-            # Query params are URL-encoded into the GET path so the
-            # injected ``HttpFetcher`` (production ``urlopen`` or the
-            # test fixture loader) sees the full filtered URL — this
-            # also lets unit tests assert the URL matches a fixture
-            # path without a separate request body channel.
             payload = self._http(
-                url
-                + f"?limit={self._page_size}&offset={offset}"
-                + (f"&searchText={query}" if query else "")
-                + (f"&location={location}" if location else "")
+                url,
+                method="POST",
+                json_body={
+                    "appliedFacets": {},
+                    "limit": self._page_size,
+                    "offset": offset,
+                    "searchText": query,
+                },
             )
             postings = (payload or {}).get("jobPostings") or []
             if not postings:

@@ -127,6 +127,101 @@ def test_load_by_url_resolves_observation_url_to_canonical_job(conn: sqlite3.Con
     assert found.job_id == job.job_id
 
 
+def test_attach_source_observation_replaces_repeated_native_identity(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    job = _job()
+    repo.save(job)
+
+    repo.attach_source_observation(
+        LOCAL_TENANT,
+        job.job_id,
+        JobSourceObservation(
+            source_observation_id="obs-1",
+            source_id="greenhouse:acme",
+            source_native_id="123",
+            observed_url="https://boards.greenhouse.io/acme/jobs/123",
+            run_id="run-1",
+            observed_at="2026-05-12T00:00:00Z",
+        ),
+    )
+    repo.attach_source_observation(
+        LOCAL_TENANT,
+        job.job_id,
+        JobSourceObservation(
+            source_observation_id="obs-2",
+            source_id="greenhouse:acme",
+            source_native_id="123",
+            observed_url="https://boards.greenhouse.io/acme/jobs/123?gh_src=tracking",
+            run_id="run-2",
+            observed_at="2026-05-13T00:00:00Z",
+        ),
+    )
+
+    rows = conn.execute(
+        """
+        SELECT source_observation_id, source_id, source_native_id, run_id, observed_at
+        FROM job_source_observations
+        WHERE tenant_id = 'local'
+        """
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["source_observation_id"] == "obs-2"
+    assert rows[0]["source_id"] == "greenhouse:acme"
+    assert rows[0]["source_native_id"] == "123"
+    assert rows[0]["run_id"] == "run-2"
+    assert rows[0]["observed_at"] == "2026-05-13T00:00:00Z"
+
+
+def test_attach_source_observation_replaces_normalized_url_conflict(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    job = _job()
+    repo.save(job)
+
+    repo.attach_source_observation(
+        LOCAL_TENANT,
+        job.job_id,
+        JobSourceObservation(
+            source_observation_id="obs-1",
+            source_id="broad-board",
+            source_native_id="board-123",
+            observed_url="https://boards.greenhouse.io/acme/jobs/123?utm_source=board",
+            run_id="run-1",
+            observed_at="2026-05-12T00:00:00Z",
+        ),
+    )
+    repo.attach_source_observation(
+        LOCAL_TENANT,
+        job.job_id,
+        JobSourceObservation(
+            source_observation_id="obs-2",
+            source_id="greenhouse:acme",
+            source_native_id="123",
+            observed_url="https://boards.greenhouse.io/acme/jobs/123?gh_src=tracking",
+            run_id="run-2",
+            observed_at="2026-05-13T00:00:00Z",
+        ),
+    )
+
+    rows = conn.execute(
+        """
+        SELECT source_observation_id, source_id, source_native_id,
+               normalized_observed_url, run_id
+        FROM job_source_observations
+        WHERE tenant_id = 'local'
+        """
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["source_observation_id"] == "obs-2"
+    assert rows[0]["source_id"] == "greenhouse:acme"
+    assert rows[0]["source_native_id"] == "123"
+    assert rows[0]["normalized_observed_url"] == "https://boards.greenhouse.io/acme/jobs/123"
+    assert rows[0]["run_id"] == "run-2"
+
+
 def test_find_canonical_owner_resolves_native_identity_then_canonical_and_observation(
     conn: sqlite3.Connection,
 ) -> None:
