@@ -28,6 +28,7 @@ SOURCE_QUALITY_EVENT_TYPES = {
     "EnrichmentFailed",
     "JobActiveStateChanged",
     "ContentDuplicateCandidateDetected",
+    "DiscoveryFeedbackRecorded",
 }
 
 
@@ -266,6 +267,27 @@ def project_source_quality(
                 if active_run_id:
                     key = (active_run_id, source_id)
                     duplicate_by_run_source[key] = duplicate_by_run_source.get(key, 0) + 1
+        elif event.event_type == "DiscoveryFeedbackRecorded":
+            job_id = _text(payload, "job_id", "jobId") or event.job_url
+            explicit_source_id = _nullable_str(_value(payload, "source_id", "sourceId"))
+            source_ids = (explicit_source_id,) if explicit_source_id else tuple(sources_by_job.get(job_id, set()))
+            kind = _text(payload, "kind")
+            for source_id in source_ids:
+                current = _stats(stats, source_id)
+                current.observed_jobs += 1
+                if kind == "duplicate":
+                    current.duplicate_jobs += 1
+                elif kind in {"stale", "wrong_company", "wrong_location", "irrelevant"}:
+                    current.stale_jobs += 1
+                elif kind == "bad_source":
+                    _mark_detail_failure(current, job_id)
+                    current.last_error_class = "user_bad_source"
+                elif kind in {"saved", "applied", "useful"}:
+                    current.active_jobs += 1
+                    _mark_detail_success(current, job_id)
+                    if kind == "applied":
+                        _mark_apply_success(current, job_id)
+                current.event_count += 1
 
     projected_stats = []
     for source_id, current in sorted(stats.items()):

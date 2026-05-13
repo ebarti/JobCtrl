@@ -37,6 +37,7 @@ const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "EnrichmentFailed",
   "JobActiveStateChanged",
   "ContentDuplicateCandidateDetected",
+  "DiscoveryFeedbackRecorded",
 ]);
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,

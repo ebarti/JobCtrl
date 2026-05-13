@@ -274,7 +274,29 @@ export function patchSourceState(
 ): SourceRegistryEntrySummary {
   ensureDiscoveryControlTables(db);
   const now = new Date().toISOString();
-  const existing = getSourceRegistryRow(db, sourceId);
+  let existing = getSourceRegistryRow(db, sourceId);
+  if (!existing) {
+    const kind = sourceKindFromId(sourceId);
+    db.prepare(
+      `INSERT INTO source_registry_entries (
+         tenant_id, source_id, kind, display_name, owner, priority, state,
+         policy_id, seed_url, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      DEFAULT_TENANT,
+      sourceId,
+      kind,
+      sourceId,
+      "user",
+      defaultPriority(kind),
+      "experimental",
+      `local:${sourceId}`,
+      null,
+      now,
+      now,
+    );
+    existing = getSourceRegistryRow(db, sourceId);
+  }
   if (!existing) {
     throw new InputError(`Source ${sourceId} was not found.`);
   }
@@ -730,6 +752,20 @@ function sourcePriority(value: string): SourcePriorityValue {
   return SOURCE_PRIORITY_VALUES.includes(value as SourcePriorityValue)
     ? (value as SourcePriorityValue)
     : "standard";
+}
+
+function sourceKindFromId(sourceId: string): SourceKindValue {
+  if (sourceId.startsWith("workday:")) return "ats_api";
+  if (sourceId.startsWith("jobspy:")) return "broad_board";
+  if (sourceId.startsWith("smart_extract:")) return "smart_extract";
+  return "employer_careers_page";
+}
+
+function defaultPriority(kind: SourceKindValue): SourcePriorityValue {
+  if (kind === "ats_api") return "canonical";
+  if (kind === "broad_board") return "lead_generator";
+  if (kind === "smart_extract") return "fallback";
+  return "standard";
 }
 
 function recommendedSourceState(value: string | undefined): RecommendedSourceState {

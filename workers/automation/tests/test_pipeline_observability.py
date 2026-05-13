@@ -76,7 +76,7 @@ def test_discover_emits_source_events(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda workers=1, limit=0: None),
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
     )
 
     result = runner._run_discover(workers=2)
@@ -114,7 +114,11 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.smartextract",
-        SimpleNamespace(run_smart_extract=lambda workers=1, limit=0: calls.append(("smartextract", limit, workers))),
+        SimpleNamespace(
+            run_smart_extract=lambda sites=None, workers=1, limit=0: calls.append(
+                ("smartextract", limit, workers)
+            )
+        ),
     )
     monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
 

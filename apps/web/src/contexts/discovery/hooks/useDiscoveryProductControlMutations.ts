@@ -54,6 +54,7 @@ export function useDiscoveryQuarantineDecisionMutation() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.quarantine(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.feedback(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceQuality(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
@@ -72,6 +73,7 @@ export function useManualCaptureImportMutation() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.manualCapture(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.quarantine(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
     },
@@ -99,6 +101,7 @@ export function useDiscoveryFeedbackMutation() {
     onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: discoveryKeys.feedback(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceQuality(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);

@@ -5,6 +5,7 @@ import os
 import platform
 import re
 import shutil
+import sqlite3
 from pathlib import Path
 
 from jobhunter.domain.tenant import LOCAL_TENANT
@@ -14,6 +15,7 @@ from jobhunter.domain.discovery.source_registry import (
     WORKDAY_API_POLICY,
     SourceKind,
     SourcePriority,
+    SourceQualityPlaceholder,
     SourceRegistryEntry,
     SourceState,
 )
@@ -278,6 +280,116 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
     return entries
 
 
+def _enum_value(enum_type, value: object, fallback):
+    try:
+        return enum_type(str(value))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _policy_for_local_source(kind: SourceKind, source_id: str):
+    if source_id.startswith("workday:"):
+        return WORKDAY_API_POLICY
+    if kind is SourceKind.BROAD_BOARD:
+        return BROAD_BOARD_LEAD_POLICY
+    if kind is SourceKind.ATS_API:
+        return WORKDAY_API_POLICY
+    return SMART_EXTRACT_EXPERIMENTAL_POLICY
+
+
+def _local_source_registry_rows() -> list[sqlite3.Row]:
+    if not DB_PATH.exists():
+        return []
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'source_registry_entries'"
+        ).fetchone()
+        if table is None:
+            return []
+        return list(
+            conn.execute(
+                """
+                SELECT source_id, kind, display_name, owner, priority, state,
+                       policy_id, seed_url
+                FROM source_registry_entries
+                WHERE tenant_id = ?
+                ORDER BY created_at ASC, source_id ASC
+                """,
+                (str(LOCAL_TENANT),),
+            )
+        )
+    except Exception:
+        log.debug("Failed to load local source registry overrides", exc_info=True)
+        return []
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _adapter_config_from_row(row: sqlite3.Row) -> dict:
+    seed_url = str(row["seed_url"] or "").strip()
+    if not seed_url:
+        return {}
+    display_name = str(row["display_name"] or row["source_id"]).strip()
+    return {
+        "name": display_name,
+        "url": seed_url,
+        "type": "static",
+        "base_url": seed_url,
+    }
+
+
+def _merge_local_source_registry(
+    base_registry: list[SourceRegistryEntry],
+) -> list[SourceRegistryEntry]:
+    rows = _local_source_registry_rows()
+    if not rows:
+        return base_registry
+
+    merged = {entry.source_id: entry for entry in base_registry}
+    ordered_ids = [entry.source_id for entry in base_registry]
+    for row in rows:
+        source_id = str(row["source_id"] or "").strip()
+        if not source_id:
+            continue
+        existing = merged.get(source_id)
+        kind = _enum_value(SourceKind, row["kind"], existing.kind if existing else SourceKind.EMPLOYER_CAREERS_PAGE)
+        priority = _enum_value(
+            SourcePriority,
+            row["priority"],
+            existing.priority if existing else SourcePriority.STANDARD,
+        )
+        state = _enum_value(
+            SourceState,
+            row["state"],
+            existing.state if existing else SourceState.EXPERIMENTAL,
+        )
+        adapter_config = dict(existing.adapter_config) if existing else {}
+        adapter_config.update(_adapter_config_from_row(row))
+        display_name = str(row["display_name"] or (existing.display_name if existing else source_id))
+        owner = str(row["owner"] or (existing.owner if existing else "user"))
+        merged[source_id] = _validated_source(
+            SourceRegistryEntry(
+                tenant_id=LOCAL_TENANT,
+                source_id=source_id,
+                kind=kind,
+                display_name=display_name,
+                owner=owner,
+                priority=priority,
+                state=state,
+                policy=existing.policy if existing else _policy_for_local_source(kind, source_id),
+                adapter_config=adapter_config,
+                quality=existing.quality if existing else SourceQualityPlaceholder(),
+            )
+        )
+        if source_id not in ordered_ids:
+            ordered_ids.append(source_id)
+    return [merged[source_id] for source_id in ordered_ids]
+
+
 def load_source_registry(
     *,
     search_cfg: dict | None = None,
@@ -288,11 +400,12 @@ def load_source_registry(
     active_search_cfg = search_cfg if search_cfg is not None else load_search_config()
     active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
     active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()
-    return [
+    registry = [
         *_smart_extract_sources(active_sites_cfg),
         *_workday_sources(active_employers_cfg),
         *_jobspy_sources(active_search_cfg),
     ]
+    return _merge_local_source_registry(registry)
 
 
 def is_manual_ats(url: str | None) -> bool:

@@ -115,6 +115,34 @@ describe("discovery product controls API", () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));
     try {
+      const seedDb = new Database(dbPath);
+      seedDb
+        .prepare(
+          "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          null,
+          "discover",
+          "DiscoveryRunFailed",
+          "error",
+          "Discovery failed",
+          "2026-05-12T10:00:00+00:00",
+          JSON.stringify({
+            run_id: "run-1",
+            source_id: "greenhouse-example",
+            error_class: "TimeoutError",
+            retryable: true,
+          }),
+        );
+      seedDb.close();
+
+      const primed = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(primed.statusCode, primed.body).toBe(200);
+      expect(primed.json().sourceHealth[0]).toMatchObject({
+        sourceId: "greenhouse-example",
+        lastErrorClass: "TimeoutError",
+      });
+
       const response = await app.inject({
         method: "POST",
         url: "/v1/discovery/feedback",
