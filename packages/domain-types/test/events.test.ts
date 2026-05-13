@@ -14,7 +14,14 @@ import {
   createSourceRegistryEntryUpdated,
   createSourceStateChanged,
 } from "../src/events/discovery.js";
-import { createJobEnriched } from "../src/events/enrichment.js";
+import {
+  createContentDuplicateCandidateDetected,
+  createEnrichmentFailed,
+  createJobActiveStateChanged,
+  createJobEnriched,
+  createPostingContentSnapshotCaptured,
+  createPostingContentSnapshotFailed,
+} from "../src/events/enrichment.js";
 import { createJobScored } from "../src/events/scoring.js";
 import { createResumeApproved, createMaterialsExhausted } from "../src/events/materials.js";
 import { createApplicationSubmitted, createApplyRunStarted } from "../src/events/apply.js";
@@ -143,6 +150,65 @@ describe("Enrichment events", () => {
     expect(event.eventType).toBe("JobEnriched");
     expect(event.tenantId).toBe("local");
     expect(event.payload.extractionTier).toBe("json_ld");
+  });
+
+  it("PostingContentSnapshotCaptured carries snapshot provenance", () => {
+    const event = createPostingContentSnapshotCaptured(LOCAL_TENANT, {
+      jobId: "j1",
+      snapshotVersion: 1,
+      snapshotRef: "j1:1",
+      sourceId: "greenhouse:acme",
+      extractionTier: "json_ld",
+      capturedAt: "2026-05-13T00:00:00Z",
+    });
+    expect(event.eventType).toBe("PostingContentSnapshotCaptured");
+    expect(event.payload.snapshotRef).toBe("j1:1");
+    expect(event.payload.sourceId).toBe("greenhouse:acme");
+  });
+
+  it("PostingContentSnapshotFailed carries retry classification", () => {
+    const event = createPostingContentSnapshotFailed(LOCAL_TENANT, {
+      jobId: "j1",
+      sourceId: "greenhouse:acme",
+      errorClass: "FETCH_ERROR",
+      retryable: true,
+      failedAt: "2026-05-13T00:00:00Z",
+    });
+    expect(event.eventType).toBe("PostingContentSnapshotFailed");
+    expect(event.payload.errorClass).toBe("FETCH_ERROR");
+    expect(event.payload.retryable).toBe(true);
+  });
+
+  it("JobActiveStateChanged carries active-state transition details", () => {
+    const event = createJobActiveStateChanged(LOCAL_TENANT, {
+      jobId: "j1",
+      activeState: "closed",
+      previousState: "active",
+      verificationMethod: "closed_marker",
+      verifiedAt: "2026-05-13T00:00:00Z",
+    });
+    expect(event.eventType).toBe("JobActiveStateChanged");
+    expect(event.payload.activeState).toBe("closed");
+    expect(event.payload.verificationMethod).toBe("closed_marker");
+  });
+
+  it("ContentDuplicateCandidateDetected carries duplicate evidence", () => {
+    const event = createContentDuplicateCandidateDetected(LOCAL_TENANT, {
+      jobId: "j1",
+      candidateJobId: "j2",
+      evidence: [
+        {
+          kind: "description_hash_match",
+          matchedValue: "hash-1",
+          confidence: 1,
+        },
+      ],
+      confidence: 1,
+      detectedAt: "2026-05-13T00:00:00Z",
+    });
+    expect(event.eventType).toBe("ContentDuplicateCandidateDetected");
+    expect(event.payload.candidateJobId).toBe("j2");
+    expect(event.payload.evidence[0]?.kind).toBe("description_hash_match");
   });
 });
 
@@ -299,6 +365,23 @@ describe("All events carry tenantId", () => {
         enrichedAt: "t",
       }),
     () =>
+      createPostingContentSnapshotCaptured(LOCAL_TENANT, {
+        jobId: "j1",
+        snapshotVersion: 1,
+        snapshotRef: "j1:1",
+        sourceId: "greenhouse:acme",
+        extractionTier: "json_ld",
+        capturedAt: "t",
+      }),
+    () =>
+      createJobActiveStateChanged(LOCAL_TENANT, {
+        jobId: "j1",
+        activeState: "active",
+        previousState: "unknown",
+        verificationMethod: "json_ld_valid_through",
+        verifiedAt: "t",
+      }),
+    () =>
       createJobScored(LOCAL_TENANT, {
         jobId: "j1",
         fitScore: 5,
@@ -345,7 +428,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(36);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(40);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -426,6 +509,46 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         applicationUrl: "u",
         extractionTier: "t",
         enrichedAt: "t",
+      }).eventType,
+      createEnrichmentFailed(LOCAL_TENANT, {
+        jobId: "j",
+        error: "timeout",
+        attemptNumber: 1,
+      }).eventType,
+      createPostingContentSnapshotCaptured(LOCAL_TENANT, {
+        jobId: "j",
+        snapshotVersion: 1,
+        snapshotRef: "j:1",
+        sourceId: "greenhouse:acme",
+        extractionTier: "json_ld",
+        capturedAt: "t",
+      }).eventType,
+      createPostingContentSnapshotFailed(LOCAL_TENANT, {
+        jobId: "j",
+        sourceId: "greenhouse:acme",
+        errorClass: "FETCH_ERROR",
+        retryable: true,
+        failedAt: "t",
+      }).eventType,
+      createJobActiveStateChanged(LOCAL_TENANT, {
+        jobId: "j",
+        activeState: "active",
+        previousState: "unknown",
+        verificationMethod: "json_ld_valid_through",
+        verifiedAt: "t",
+      }).eventType,
+      createContentDuplicateCandidateDetected(LOCAL_TENANT, {
+        jobId: "j",
+        candidateJobId: "j2",
+        evidence: [
+          {
+            kind: "description_hash_match",
+            matchedValue: "hash",
+            confidence: 1,
+          },
+        ],
+        confidence: 1,
+        detectedAt: "t",
       }).eventType,
       createJobScored(LOCAL_TENANT, {
         jobId: "j",

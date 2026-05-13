@@ -47,12 +47,27 @@ export {
 } from "./discovery.js";
 
 export {
-  type JobEnrichedPayload,
-  type JobEnriched,
-  createJobEnriched,
-  type EnrichmentFailedPayload,
+  type ActiveStateValue,
+  type ContentDuplicateCandidateDetected,
+  type ContentDuplicateCandidateDetectedPayload,
+  createContentDuplicateCandidateDetected,
+  type DuplicateEvidenceKindValue,
+  type DuplicateEvidenceOnWire,
   type EnrichmentFailed,
+  type EnrichmentFailedPayload,
   createEnrichmentFailed,
+  type JobActiveStateChanged,
+  type JobActiveStateChangedPayload,
+  createJobActiveStateChanged,
+  type JobEnriched,
+  type JobEnrichedPayload,
+  createJobEnriched,
+  type PostingContentSnapshotCaptured,
+  type PostingContentSnapshotCapturedPayload,
+  createPostingContentSnapshotCaptured,
+  type PostingContentSnapshotFailed,
+  type PostingContentSnapshotFailedPayload,
+  createPostingContentSnapshotFailed,
 } from "./enrichment.js";
 
 export {
@@ -148,7 +163,14 @@ import type {
   SourceRegistryEntryUpdated,
   SourceStateChanged,
 } from "./discovery.js";
-import type { EnrichmentFailed, JobEnriched } from "./enrichment.js";
+import type {
+  ContentDuplicateCandidateDetected,
+  EnrichmentFailed,
+  JobActiveStateChanged,
+  JobEnriched,
+  PostingContentSnapshotCaptured,
+  PostingContentSnapshotFailed,
+} from "./enrichment.js";
 import type { JobScored, ScoreCorrected } from "./scoring.js";
 import type {
   CoverLetterGenerated,
@@ -191,6 +213,10 @@ export type DomainEventUnion =
   | SourceStateChanged
   | JobEnriched
   | EnrichmentFailed
+  | PostingContentSnapshotCaptured
+  | PostingContentSnapshotFailed
+  | JobActiveStateChanged
+  | ContentDuplicateCandidateDetected
   | JobScored
   | ScoreCorrected
   | ResumeApproved
@@ -231,6 +257,10 @@ export const DOMAIN_EVENT_TYPES = [
   "SourceStateChanged",
   "JobEnriched",
   "EnrichmentFailed",
+  "PostingContentSnapshotCaptured",
+  "PostingContentSnapshotFailed",
+  "JobActiveStateChanged",
+  "ContentDuplicateCandidateDetected",
   "JobScored",
   "ScoreCorrected",
   "ResumeApproved",

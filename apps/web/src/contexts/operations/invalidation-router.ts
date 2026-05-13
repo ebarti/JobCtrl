@@ -24,7 +24,14 @@ import {
   sourceRegistryEntryUpdatedHandler,
   sourceStateChangedHandler,
 } from "../discovery/handlers.js";
-import { enrichmentFailedHandler, jobEnrichedHandler } from "../enrichment/handlers.js";
+import {
+  contentDuplicateCandidateDetectedHandler,
+  enrichmentFailedHandler,
+  jobActiveStateChangedHandler,
+  jobEnrichedHandler,
+  postingContentSnapshotCapturedHandler,
+  postingContentSnapshotFailedHandler,
+} from "../enrichment/handlers.js";
 import {
   coverLetterGeneratedHandler,
   materialsExhaustedHandler,
@@ -98,6 +105,10 @@ export const handlers: HandlerMap = {
   SourceStateChanged: sourceStateChangedHandler,
   JobEnriched: jobEnrichedHandler,
   EnrichmentFailed: enrichmentFailedHandler,
+  PostingContentSnapshotCaptured: postingContentSnapshotCapturedHandler,
+  PostingContentSnapshotFailed: postingContentSnapshotFailedHandler,
+  JobActiveStateChanged: jobActiveStateChangedHandler,
+  ContentDuplicateCandidateDetected: contentDuplicateCandidateDetectedHandler,
   JobScored: jobScoredHandler,
   ScoreCorrected: scoreCorrectedHandler,
   ResumeApproved: resumeApprovedHandler,
