@@ -130,6 +130,66 @@ def test_source_quality_marks_sources_quarantined_after_repeated_failures() -> N
     assert stats.recommended_state == "quarantined"
 
 
+def test_source_quality_does_not_reset_failed_sources_on_partial_completion() -> None:
+    events = [
+        *[
+            EventRow(
+                event_type="DiscoveryRunFailed",
+                occurred_at=f"2026-05-13T00:0{i}:00Z",
+                payload={
+                    "run_id": f"prior-{i}",
+                    "source_id": "lever:acme",
+                    "error_class": "TimeoutError",
+                    "retryable": True,
+                },
+            )
+            for i in range(3)
+        ],
+        EventRow(
+            event_type="DiscoveryRunStarted",
+            occurred_at="2026-05-13T00:10:00Z",
+            payload={
+                "run_id": "mixed-run",
+                "source_ids": ["greenhouse:acme", "lever:acme"],
+                "started_at": "2026-05-13T00:10:00Z",
+            },
+        ),
+        EventRow(
+            event_type="DiscoveryRunFailed",
+            occurred_at="2026-05-13T00:10:20Z",
+            payload={
+                "run_id": "mixed-run",
+                "source_id": "lever:acme",
+                "error_class": "TimeoutError",
+                "retryable": True,
+            },
+        ),
+        EventRow(
+            event_type="DiscoveryRunCompleted",
+            occurred_at="2026-05-13T00:11:00Z",
+            payload={
+                "run_id": "mixed-run",
+                "counts": {"total": 1, "new_jobs": 1, "observed_jobs": 1},
+                "failed_source_ids": ["lever:acme"],
+                "completed_at": "2026-05-13T00:11:00Z",
+            },
+        ),
+    ]
+
+    result = project_source_quality(
+        tenant_id=LOCAL_TENANT,
+        events=events,
+        updated_at="2026-05-13T00:12:00Z",
+    )
+
+    stats = {item.source_id: item for item in result.stats}
+    assert stats["greenhouse:acme"].run_count == 1
+    assert stats["greenhouse:acme"].consecutive_failures == 0
+    assert stats["lever:acme"].failed_run_count == 4
+    assert stats["lever:acme"].consecutive_failures == 4
+    assert stats["lever:acme"].recommended_state == "quarantined"
+
+
 def test_source_quality_applies_discovery_feedback_events() -> None:
     result = project_source_quality(
         tenant_id=LOCAL_TENANT,

@@ -398,10 +398,11 @@ def _run_discovery_source(
 
         elapsed = time.time() - t0
         counts = DiscoveryRunCounts.from_result(result)
+        failed_source_ids = _failed_source_ids_from_result(result)
         completed_at = utc_now()
         completed_run = discovery_run.complete(
             counts=counts,
-            error_classes=(),
+            error_classes=("partial_source_failure",) if failed_source_ids else (),
             completed_at=completed_at,
         )
         run_repo.save(completed_run)
@@ -419,8 +420,10 @@ def _run_discovery_source(
                     "duplicateJobs": counts.duplicate_jobs,
                     "rejectedDuplicates": counts.rejected_duplicates,
                 },
-                "error_classes": [],
-                "errorClasses": [],
+                "error_classes": ["partial_source_failure"] if failed_source_ids else [],
+                "errorClasses": ["partial_source_failure"] if failed_source_ids else [],
+                "failed_source_ids": failed_source_ids,
+                "failedSourceIds": failed_source_ids,
                 "completed_at": completed_at,
                 "completedAt": completed_at,
             },
@@ -463,6 +466,15 @@ def _call_discovery_source(run: Callable[..., Any], run_id: str) -> Any:
     if accepts_run_id:
         return run(run_id=run_id)
     return run()
+
+
+def _failed_source_ids_from_result(result: Any) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    raw = result.get("failed_sources") or result.get("failedSourceIds")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(source_id) for source_id in raw if str(source_id)]
 
 
 def _record_skipped_discovery_run(
