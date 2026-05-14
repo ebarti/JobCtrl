@@ -16,31 +16,21 @@ This is the authoritative roadmap. Keep detailed historical proposals under
 
 ### Worker Reliability
 
-- Eliminate the second stage-state write path in
-  `workers/automation/src/jobhunter/infrastructure/pipeline/sqlite_repository.py:249,296`
-  that issues ad-hoc `UPDATE/INSERT INTO job_stage_states`. The canonical
-  helper `state.set_stage_state` is used by every stage runner
-  (`enrichment/detail.py:436`, `scoring/scorer.py:171`, `apply/launcher.py`,
-  RPC handlers, …) — the repository should route through it too so all
-  writes share validation and event emission.
-- Extend the `apply_runs` canonical run-record table to non-apply local
-  actions. Today only `apply` produces a row; `run_stage` and
-  `profile_import` are sync RPCs that emit `job_events` and return an
-  in-memory `LocalActionResult` (`workers/automation/src/jobhunter/actions.py:48`)
-  without persisting a run record. Without a uniform run record, the
-  dashboard cannot show running / queued / failed status for non-apply
-  work. (PR 4 in the Workflow Orchestration stack collapses this onto
-  Temporal workflow runs.)
-- Add cancellation for queued or running non-workflow local actions.
-  `apply` and other workflow-mode RPCs already cooperatively cancel via
-  `cancel_run` (PR #36), but `run_stage` / `profile_import` still run
-  synchronously inside the JSON-RPC handler and have no cancel surface,
-  and `cancel_stage`
+- Extend workflow-run records to non-apply local actions. `apply` now runs
+  through Temporal and is visible through `apply_run_projections` /
+  `/v1/workflow-runs`, but `run_stage` and `profile_import` are still sync
+  RPCs that emit `job_events` and return an in-memory `LocalActionResult`
+  (`workers/automation/src/jobhunter/actions.py:48`) without a durable
+  workflow-run record. Without a uniform run record, the dashboard cannot show
+  running / queued / failed status for non-apply work.
+- Add cancellation for queued or running non-apply local actions. `apply`
+  cooperatively cancels via `cancel_run` (PR #36), but `run_stage` /
+  `profile_import` still run synchronously inside the JSON-RPC handler and have
+  no cancel surface, and `cancel_stage`
   (`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`) only
   flips the stage row to `canceled` post-hoc. Migrating these handlers to
-  workflows (PR 4 / per-job runners) gets cooperative cancel for free; a
-  shorter-term option is to add a cancel token surface for the in-process
-  sync handlers.
+  workflows gets cooperative cancel for free; a shorter-term option is to add a
+  cancel token surface for the in-process sync handlers.
 - Record `score_report` artifacts. PR 7 of the Temporal stack wired
   `state.record_job_artifact` into `apply.launcher.mark_result` so the
   per-worker agent log (`LOG_DIR/worker-{worker_id}.log`) lands in
@@ -62,55 +52,19 @@ This is the authoritative roadmap. Keep detailed historical proposals under
 
 ### Workflow Orchestration (Local Temporal)
 
-Adopt Temporal as the orchestration engine for the Python worker, run
-**locally** for now (Temporal dev server / `docker compose` profile, no
-managed service). The trigger is that several Worker Reliability items
-above are converging on a small, badly-scaled workflow engine —
-re-implementing durable retries, cancellation, and run records inside
-SQLite is more expensive than adopting Temporal and pointing it at the
-existing aggregates.
+Delivered by
+[`docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md`](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md).
+The local Temporal foundation, activity registry, `ApplyWorkflow`, JSON-RPC
+workflow mode, `cancel_run`, `apply_runs` collapse, Workflow Runs view,
+canonical stage-state writer cleanup, apply-log artifact registration, and
+Langfuse/OpenTelemetry wiring have landed.
 
-This work subsumes three of the Worker Reliability items above:
+Remaining local reliability work is tracked in the Worker Reliability bullets
+above: non-apply `run_stage` / `profile_import` still need durable workflow-run
+records and cooperative cancellation if the UI must show or stop them like
+apply runs.
 
-- "Add cancellation for queued or running local actions" — native
-  workflow + activity cancellation. (Apply: delivered in PR #36 via
-  `cancel_run`. Non-apply RPCs follow PR 4.)
-- "Extend the `apply_runs` canonical run-record table to non-apply
-  local actions" — the Temporal workflow execution ID becomes the
-  canonical run record for every action. (PR 4.)
-- The ad-hoc `fire_and_forget` dispatch mode is deleted (PR #36): the
-  JSON-RPC server now exposes `mode="workflow"`, starts a Temporal
-  workflow, and returns `{runId, workflowId, firstExecutionRunId}` as
-  the run handle.
-
-Scope:
-
-- Add `temporalio` to `workers/automation/pyproject.toml` and a
-  `temporal` service to a local `docker compose` profile (or document
-  the `temporal server start-dev` workflow in
-  `docs/local-development.md`).
-- Each pipeline stage (discover, enrich, score, tailor, cover, pdf,
-  apply) becomes a Temporal **Activity** owned by its bounded context
-  under `workers/automation/src/jobhunter/<context>/activities.py`.
-- A `JobPipelineWorkflow` (one per `(TenantId, JobId)`) orchestrates
-  the stages, owns the retry policies that today live in
-  `state.set_stage_state` defaults, and consults the existing
-  `StageStateMachine` for transition validity.
-- `apply_runs` collapses into a workflow run; the read-side projection
-  sources from a Temporal completion sink (or workflow history query)
-  rather than the bespoke table.
-- The `JsonRpcServer` now dispatches `mode="workflow"` handlers
-  (`apply` is the first; PR 4 migrates `run_stage` /
-  `profile_import`); each starts a Temporal workflow and returns
-  `{runId, workflowId, firstExecutionRunId}`. The existing JSON-RPC
-  contract (`run_stage`, `apply`, `profile_import`, `cancel_run`, …)
-  is preserved.
-- Add a Workflow Runs view in the UI that surfaces in-progress /
-  failed / completed runs with a deep-link to the Temporal Web UI
-  (`http://127.0.0.1:8233` by default) for live debugging during the
-  local-dev phase.
-
-Out of scope (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
+Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
 
 - Managed Temporal Cloud,
 - distributed worker fleet (multi-machine task queues),

@@ -1,6 +1,6 @@
 # Temporal + Worker Reliability Stack
 
-> **Status:** proposed.
+> **Status:** implemented.
 > **Source:** `docs/backlog.md` → "Workflow Orchestration (Local Temporal)"
 > and the surrounding "Worker Reliability" items.
 > **Style:** rip-and-replace per `MEMORY.md` — each PR removes the legacy
