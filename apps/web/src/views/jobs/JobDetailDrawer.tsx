@@ -8,6 +8,7 @@ import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQ
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { ScoreBreakdown } from "../../contexts/scoring/components/ScoreBreakdown.js";
+import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
@@ -77,6 +78,13 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
                 scoreReasoning={detail.job.scoreReasoning}
                 scoreVersion={detail.job.scoreVersion}
                 scoredAt={detail.job.scoredAt}
+                scoreCriteria={detail.job.scoreCriteria}
+                scoreTrace={detail.job.scoreTrace}
+                scoreCorrection={detail.job.scoreCorrection}
+              />
+              <ScoreCorrectionControl
+                jobId={detail.job.jobKey}
+                currentScore={detail.job.fitScore}
               />
             </Section>
             <Section title="Description">

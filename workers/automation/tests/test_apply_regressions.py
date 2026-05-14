@@ -48,6 +48,55 @@ def _insert_ready_job(conn, *, url: str = "https://example.com/job") -> None:
     conn.commit()
 
 
+def _insert_single_job_tailor_candidate(
+    conn, *, url: str = "https://example.com/job"
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, full_description, application_url, fit_score
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            url,
+            "Platform Engineer",
+            "ExampleCo",
+            "Build distributed systems.",
+            "https://example.com/apply",
+            9,
+        ),
+    )
+    conn.commit()
+
+
+def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            job_url, version, tenant_id, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        """,
+        (
+            url,
+            fit_score,
+            json.dumps(
+                {
+                    "reasoning": "Strong match with a hard blocker.",
+                    "eligibility": {
+                        "status": "blocked",
+                        "hard_blockers": ["No sponsorship."],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            "2026-05-14T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+
 def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
     """The lock now lives on ``job_stage_states.apply.state == 'running'``.
     Legacy ``jobs.apply_status`` stays NULL."""
@@ -87,6 +136,103 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
 
         payload = json.loads(evt["payload_json"])
         assert payload["run_id"] == job["apply_run_id"]
+    finally:
+        close_connection(db_path)
+
+
+def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn, url="https://example.com/allowed")
+    _insert_ready_job(conn, url="https://example.com/blocked")
+    _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        job = acquire_job(min_score=7, worker_id=1)
+        assert job is not None
+        assert job["url"] == "https://example.com/allowed"
+    finally:
+        close_connection(db_path)
+
+
+def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn, url="https://example.com/blocked")
+    _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        assert acquire_job(target_url="https://example.com/blocked", worker_id=1) is None
+    finally:
+        close_connection(db_path)
+
+
+def test_single_job_tailor_rejects_blocked_candidate(tmp_path, monkeypatch):
+    import jobhunter.config as config_module
+    import jobhunter.database as database_module
+    import jobhunter.pipeline.runner as runner_module
+
+    app_dir = Path(tmp_path) / "app"
+    resume_path = app_dir / "resume.txt"
+    db_path = Path(tmp_path) / "jobs.db"
+    app_dir.mkdir()
+    resume_path.write_text("Resume baseline.", encoding="utf-8")
+
+    monkeypatch.setattr(config_module, "APP_DIR", app_dir)
+    monkeypatch.setattr(config_module, "DB_PATH", db_path)
+    monkeypatch.setattr(config_module, "PROFILE_PATH", app_dir / "profile.json")
+    monkeypatch.setattr(config_module, "RESUME_PATH", resume_path)
+    monkeypatch.setattr(config_module, "TAILORED_DIR", app_dir / "tailored_resumes")
+    monkeypatch.setattr(config_module, "COVER_LETTER_DIR", app_dir / "cover_letters")
+    monkeypatch.setattr(config_module, "LOG_DIR", app_dir / "logs")
+    monkeypatch.setattr(config_module, "ENV_PATH", app_dir / ".env")
+    monkeypatch.setattr(database_module, "DB_PATH", db_path)
+
+    conn = init_db(db_path)
+    url = "https://example.com/blocked"
+    _insert_single_job_tailor_candidate(conn, url=url)
+    _insert_blocked_score(conn, url, fit_score=10)
+
+    class FakeProfileRepository:
+        def load_snapshot(self, tenant_id):
+            return object()
+
+    def fail_tailor(*args, **kwargs):
+        raise AssertionError("blocked score must not tailor")
+
+    def fail_cover_use_case(*args, **kwargs):
+        raise AssertionError("blocked score must not generate cover letters")
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.infrastructure.profile.get_profile_repository",
+            lambda: FakeProfileRepository(),
+        )
+        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fail_tailor)
+        monkeypatch.setattr(
+            "jobhunter.scoring.cover_letter._build_use_case",
+            fail_cover_use_case,
+        )
+
+        result = runner_module.run_single_job(url, do_tailor=True, do_apply=False)
+
+        assert result["tailor_status"] == "blocked_score_eligibility"
+        assert result["cover_status"] == "blocked_score_eligibility"
+        assert result["errors"] == [
+            "Score eligibility blocks tailoring: No sponsorship."
+        ]
+        row = conn.execute(
+            "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
+            (url,),
+        ).fetchone()
+        assert row["tailored_resume_path"] is None
+        assert row["cover_letter_path"] is None
     finally:
         close_connection(db_path)
 

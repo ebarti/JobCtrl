@@ -6,6 +6,7 @@ apply lifecycle writes (sourced from ``job_events`` →
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,34 @@ def _insert_apply_ready_job(conn, *, url: str = "https://example.com/job"):
     conn.commit()
 
 
+def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            job_url, version, tenant_id, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        """,
+        (
+            url,
+            fit_score,
+            json.dumps(
+                {
+                    "reasoning": "Strong match with a hard blocker.",
+                    "eligibility": {
+                        "status": "blocked",
+                        "hard_blockers": ["Requires sponsorship."],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            "2026-05-14T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+
 def _emit_started(conn, url: str, run_id: str, *, when: str = "t0") -> None:
     record_job_event(
         conn,
@@ -85,6 +114,17 @@ def test_pending_apply_includes_jobs_with_no_apply_run(conn):
     rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
     assert len(rows) == 1
     assert rows[0]["url"] == "https://example.com/job"
+
+
+def test_pending_apply_excludes_high_score_blocked_jobs(conn):
+    _insert_apply_ready_job(conn, url="https://example.com/allowed")
+    _insert_apply_ready_job(conn, url="https://example.com/blocked")
+    _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
+
+    rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+    urls = {row["url"] for row in rows}
+    assert "https://example.com/allowed" in urls
+    assert "https://example.com/blocked" not in urls
 
 
 def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):

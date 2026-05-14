@@ -49,6 +49,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Discovery product controls stop recording source/quarantine/manual-capture feedback safely, mislabel locator candidates, or preview quarantine residue as source leads | `apps/api/test/discovery-controls.test.ts`; `apps/web/src/contexts/discovery/components/DiscoveryProductControls.test.tsx` |
 | Discovery RFC production wiring stops feeding API-visible locator/manual queues, canonical ATS ingestion, manual-capture imports, snapshot persistence, or acceptance evidence | `workers/automation/tests/test_discovery_production_wiring.py` uses a Barcelona/Spain tech-leadership fixture and report covering lead yield, candidate sources, manual-action count, canonical verification rate, duplicate/quarantine counts, source-quality updates, and scoring handoff count |
 | Hybrid retrieval picks stale or weak candidates before LLM scoring | `workers/automation/tests/test_hybrid_search_index.py`; `workers/automation/tests/test_scorer.py::test_run_scoring_preselects_retrieval_top_k_before_llm` |
+| Scoring prompt/schema/model changes silently regress parse validity, bands, blockers, ranking, or correction agreement | `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_scoring_eval*.py`; update the synthetic scoring fixtures or document why a scoring change does not affect them |
 
 ## Frontend QA
 

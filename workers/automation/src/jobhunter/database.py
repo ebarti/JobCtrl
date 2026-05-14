@@ -905,10 +905,19 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             keywords_json       TEXT NOT NULL,
             scored_at           TEXT NOT NULL,
             correction_json     TEXT,
+            criteria_json       TEXT NOT NULL DEFAULT '{}',
+            trace_json          TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (job_url, version),
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
+    existing_score_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()
+    }
+    if "criteria_json" not in existing_score_cols:
+        conn.execute("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'")
+    if "trace_json" not in existing_score_cols:
+        conn.execute("ALTER TABLE job_scores ADD COLUMN trace_json TEXT NOT NULL DEFAULT '{}'")
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_scores_tenant_score
         ON job_scores(tenant_id, fit_score DESC, scored_at DESC)
@@ -965,10 +974,28 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                     """
                     INSERT OR IGNORE INTO job_scores (
                         job_url, version, tenant_id, fit_score,
-                        breakdown_json, keywords_json, scored_at, correction_json
-                    ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL)
+                        breakdown_json, keywords_json, scored_at, correction_json,
+                        criteria_json, trace_json
+                    ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL, ?, ?)
                     """,
-                    (url, int(fit), breakdown_json, keywords_json, scored_at or now),
+                    (
+                        url,
+                        int(fit),
+                        breakdown_json,
+                        keywords_json,
+                        scored_at or now,
+                        json.dumps({}, sort_keys=True),
+                        json.dumps(
+                            {
+                                "prompt_version": "legacy",
+                                "schema_version": "legacy",
+                                "model": "legacy",
+                                "parser_warnings": ["legacy_backfill"],
+                                "correction_history": [],
+                            },
+                            sort_keys=True,
+                        ),
+                    ),
                 )
 
     conn.commit()
@@ -1802,7 +1829,16 @@ _COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 
 
 _LATEST_SCORE_JOIN: str = (
     "LEFT JOIN ("
-    "SELECT s.job_url AS js_job_url, s.fit_score AS js_fit_score "
+    "SELECT s.job_url AS js_job_url, s.fit_score AS js_fit_score, "
+    "CASE WHEN json_valid(s.breakdown_json) "
+    "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
+    "ELSE '' END AS js_eligibility_status, "
+    "CASE WHEN json_valid(s.breakdown_json) "
+    "THEN COALESCE("
+    "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
+    "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
+    "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
+    "0) ELSE 0 END AS js_hard_blocker_count "
     "FROM job_scores s "
     "INNER JOIN ("
     "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
@@ -1811,6 +1847,10 @@ _LATEST_SCORE_JOIN: str = (
 )
 
 _EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
+_SCORE_ELIGIBLE_FOR_DOWNSTREAM: str = (
+    "(COALESCE(js.js_eligibility_status, '') != 'blocked' "
+    "AND COALESCE(js.js_hard_blocker_count, 0) = 0)"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1864,6 +1904,52 @@ _EFFECTIVE_APPLY_STATUS: str = (
     "ELSE NULL END, "
     "jobs.apply_status)"
 )
+
+
+_FEEDBACK_ORDERED_STAGES = frozenset({"scored", "pending_tailor", "pending_cover", "pending_apply"})
+
+
+def _order_rows_by_feedback(
+    conn: sqlite3.Connection,
+    rows: list[sqlite3.Row],
+) -> list[sqlite3.Row]:
+    """Order score-backed selector rows using local feedback signals."""
+    if len(rows) < 2:
+        return rows
+
+    row_keys = set(rows[0].keys())
+    base_scores: dict[str, float] = {}
+    for row in rows:
+        raw_score = row["js_fit_score"] if "js_fit_score" in row_keys else None
+        if raw_score is None:
+            raw_score = row["fit_score"] if "fit_score" in row_keys else None
+        if raw_score is None:
+            continue
+        try:
+            base_scores[str(row["url"])] = float(raw_score)
+        except (TypeError, ValueError):
+            continue
+
+    if len(base_scores) < 2:
+        return rows
+
+    from jobhunter.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
+
+    signals = collect_feedback_signals(conn)
+    if not signals:
+        return rows
+
+    ranked = rank_jobs_with_feedback(base_scores, signals)
+    rank_index = {item.job_id: index for index, item in enumerate(ranked)}
+    original_index = {str(row["url"]): index for index, row in enumerate(rows)}
+    fallback_index = len(rank_index)
+    return sorted(
+        rows,
+        key=lambda row: (
+            rank_index.get(str(row["url"]), fallback_index),
+            original_index[str(row["url"])],
+        ),
+    )
 
 
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
@@ -1953,6 +2039,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
         f"{_ENRICHMENT_JOIN} "
         f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 "
+        f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL"
     ).fetchone()[0]
@@ -1989,9 +2076,11 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["ready_to_apply"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} {_ENRICHMENT_JOIN} "
-        f"{_LATEST_APPLY_RUN_JOIN} "
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
+        f"{_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
         f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+        f"AND {_EFFECTIVE_FIT_SCORE} >= 7 "
+        f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
         f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
         f"AND {_EFFECTIVE_APPLICATION_URL} != ''"
@@ -2174,10 +2263,12 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     # double-pick already-enriched jobs.
     pending_tailor_where = (
         f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
         if retailor else
         f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -2195,6 +2286,7 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         "pending_tailor": pending_tailor_where,
         "pending_cover": (
             f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {_EFFECTIVE_TAILOR_PATH} != '' "
             f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
             f"AND {_COVER_NOT_EXHAUSTED} "
@@ -2210,8 +2302,11 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         # (which leaves jobs.applied_at NULL) is visible.
         "pending_apply": (
             f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+            f"AND {_EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
             f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
+            f"AND {_EFFECTIVE_APPLICATION_URL} != '' "
             "AND (ar.ar_status IS NULL "
             "     OR ar.ar_status NOT IN ('starting', 'in_progress'))"
         ),
@@ -2274,11 +2369,16 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )
-    if limit > 0:
+    feedback_ordered = stage in _FEEDBACK_ORDERED_STAGES
+    if limit > 0 and not feedback_ordered:
         query += " LIMIT ?"
         params.append(limit)
 
     rows = conn.execute(query, params).fetchall()
+    if feedback_ordered:
+        rows = _order_rows_by_feedback(conn, rows)
+        if limit > 0:
+            rows = rows[:limit]
 
     # Convert sqlite3.Row objects to dicts. We promote ``js_fit_score``
     # into the legacy ``fit_score`` slot and ``jm_*_path`` into the

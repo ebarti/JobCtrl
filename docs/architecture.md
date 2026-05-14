@@ -107,6 +107,27 @@ for a hosted or local embedding index; local mode defaults to
 `DisabledEmbeddingIndex`, so lexical retrieval and scoring continue to work
 without any external embedding service.
 
+## Scoring Fit Assessment
+
+The Scoring context keeps `FitScore` as a 1..10 applicant-side triage signal,
+but each persisted `job_scores` row also stores the criteria snapshot and trace
+used to produce it. `criteria_json` records the saved score criteria, target
+criteria, minimum score, and structured profile preference fields used for the
+prompt. `trace_json` records non-sensitive audit metadata: prompt/schema
+versions, model name, criteria version, profile snapshot version, parser
+warnings, and correction history.
+
+The score breakdown separates soft fit from hard eligibility. `fit_band`,
+`confidence`, matched/missing/transferable signals, warnings, and hard blockers
+are exposed through the local API and jobs drawer. User corrections create a new
+score version, preserve the correction rationale, publish `ScoreCorrected`, and
+can be read back as transparent feedback signals alongside existing job actions.
+
+This is not an employer-side candidate selection system. If JobHunter is ever
+used to rank people for hiring decisions, the architecture needs a separate
+governance layer for validation, bias audits, notices, adverse-impact review,
+and human-review procedures before production use.
+
 ## Read-Model Projections (Phase 9)
 
 The Operations / Read-Side context maintains denormalised projection
@@ -430,6 +451,7 @@ These sources emit spans:
 | Every Temporal workflow + activity (via `temporalio.contrib.opentelemetry.TracingInterceptor`) | workflow / activity name | `span` (default) |
 | Every JSON-RPC dispatch (`jobhunter.infrastructure.rpc.server.JsonRpcServer.dispatch`) | `rpc.<method>` | `span` |
 | Every pipeline stage (`jobhunter.pipeline.runner`) | `pipeline.stage.<stage>` | `span` |
+| Every score use-case call (`ScoreJobUseCase`) | `scoring.score_job` | `span` |
 | Discover source steps (`jobspy`, `workday`, `smartextract`) | `pipeline.source.discover.<source>` | `span` |
 | Scheduled discovery runs | `discovery.run` | `span` |
 | Source-quality projection rebuilds | `operations.source_quality.aggregate` | `span` |

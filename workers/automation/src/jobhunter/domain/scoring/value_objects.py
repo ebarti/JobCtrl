@@ -25,10 +25,17 @@ Invariants enforced here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable
+import hashlib
+import json
+from collections.abc import Iterable as IterableABC
+from collections.abc import Mapping as MappingABC
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from jobhunter.domain.tenant import TenantId
+
+if TYPE_CHECKING:
+    from jobhunter.domain.profile.snapshot import ProfileSnapshot
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +45,53 @@ from jobhunter.domain.tenant import TenantId
 
 _FIT_SCORE_MIN = 1
 _FIT_SCORE_MAX = 10
+FIT_BANDS = ("excellent", "strong", "plausible", "stretch", "poor")
+CONFIDENCE_LEVELS = ("high", "medium", "low")
+ELIGIBILITY_STATUSES = ("eligible", "warning", "blocked", "unknown")
+
+
+def _clean_strings(values: Iterable[Any] | Any) -> tuple[str, ...]:
+    if values is None or isinstance(values, (str, bytes)):
+        values = [values] if values else []
+    if not isinstance(values, IterableABC):
+        return ()
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values:
+        text = str(raw or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return tuple(out)
+
+
+def _clean_mapping(value: Mapping[str, Any] | dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(value, MappingABC):
+        return {}
+    # Round-trip through JSON-compatible values so snapshots stay stable
+    # and do not retain caller-owned mutable containers.
+    return json.loads(json.dumps(dict(value), sort_keys=True, default=str))
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def fit_band_for_score(score: int) -> str:
+    if score >= 9:
+        return "excellent"
+    if score >= 7:
+        return "strong"
+    if score >= 5:
+        return "plausible"
+    if score >= 3:
+        return "stretch"
+    return "poor"
 
 
 @dataclass(frozen=True)
@@ -86,7 +140,58 @@ class FitScore:
 
 
 # ---------------------------------------------------------------------------
-# ScoreBreakdown — fixed-dimensional component scores + reasoning
+# EligibilityAssessment — hard-constraint evidence
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EligibilityAssessment:
+    """Hard-constraint assessment kept separate from the display score."""
+
+    status: str = "unknown"
+    hard_blockers: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        status = str(self.status or "unknown").strip().lower()
+        if status not in ELIGIBILITY_STATUSES:
+            status = "unknown"
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "hard_blockers", _clean_strings(self.hard_blockers))
+        object.__setattr__(self, "warnings", _clean_strings(self.warnings))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "EligibilityAssessment":
+        data = data or {}
+        blockers = data.get("hard_blockers", data.get("hardBlockers", data.get("blockers", ())))
+        warnings = data.get("warnings", ())
+        return cls(
+            status=str(data.get("status") or "unknown"),
+            hard_blockers=_clean_strings(blockers),
+            warnings=_clean_strings(warnings),
+        )
+
+    def merge(self, other: "EligibilityAssessment") -> "EligibilityAssessment":
+        status_rank = {"unknown": 0, "eligible": 1, "warning": 2, "blocked": 3}
+        status = self.status if status_rank[self.status] >= status_rank[other.status] else other.status
+        blockers = (*self.hard_blockers, *other.hard_blockers)
+        warnings = (*self.warnings, *other.warnings)
+        if blockers:
+            status = "blocked"
+        elif warnings and status == "eligible":
+            status = "warning"
+        return EligibilityAssessment(status=status, hard_blockers=blockers, warnings=warnings)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "hard_blockers": list(self.hard_blockers),
+            "warnings": list(self.warnings),
+        }
+
+
+# ---------------------------------------------------------------------------
+# ScoreBreakdown — fixed dimensions + fit-assessment evidence
 # ---------------------------------------------------------------------------
 
 
@@ -104,6 +209,12 @@ class ScoreBreakdown:
     experience_fit: int = 0
     role_fit: int = 0
     reasoning: str = ""
+    fit_band: str = "plausible"
+    confidence: str = "medium"
+    eligibility: EligibilityAssessment = field(default_factory=EligibilityAssessment)
+    matched_signals: tuple[str, ...] = ()
+    missing_signals: tuple[str, ...] = ()
+    transferable_signals: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("technical_fit", "experience_fit", "role_fit"):
@@ -116,15 +227,42 @@ class ScoreBreakdown:
                 )
         if not isinstance(self.reasoning, str):
             raise ValueError("ScoreBreakdown.reasoning must be a string")
+        fit_band = str(self.fit_band or "plausible").strip().lower()
+        if fit_band not in FIT_BANDS:
+            raise ValueError(f"ScoreBreakdown.fit_band must be one of {FIT_BANDS}")
+        confidence = str(self.confidence or "medium").strip().lower()
+        if confidence not in CONFIDENCE_LEVELS:
+            raise ValueError(f"ScoreBreakdown.confidence must be one of {CONFIDENCE_LEVELS}")
+        object.__setattr__(self, "fit_band", fit_band)
+        object.__setattr__(self, "confidence", confidence)
+        if not isinstance(self.eligibility, EligibilityAssessment):
+            object.__setattr__(
+                self,
+                "eligibility",
+                EligibilityAssessment.from_dict(self.eligibility if isinstance(self.eligibility, dict) else None),
+            )
+        object.__setattr__(self, "matched_signals", _clean_strings(self.matched_signals))
+        object.__setattr__(self, "missing_signals", _clean_strings(self.missing_signals))
+        object.__setattr__(self, "transferable_signals", _clean_strings(self.transferable_signals))
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "ScoreBreakdown":
         data = data or {}
         return cls(
-            technical_fit=int(data.get("technical_fit", 0) or 0),
-            experience_fit=int(data.get("experience_fit", 0) or 0),
-            role_fit=int(data.get("role_fit", 0) or 0),
+            technical_fit=int(data.get("technical_fit", data.get("technicalFit", 0)) or 0),
+            experience_fit=int(data.get("experience_fit", data.get("experienceFit", 0)) or 0),
+            role_fit=int(data.get("role_fit", data.get("roleFit", 0)) or 0),
             reasoning=str(data.get("reasoning") or ""),
+            fit_band=str(data.get("fit_band", data.get("fitBand", "plausible")) or "plausible"),
+            confidence=str(data.get("confidence") or "medium"),
+            eligibility=EligibilityAssessment.from_dict(
+                data.get("eligibility") if isinstance(data.get("eligibility"), dict) else None
+            ),
+            matched_signals=_clean_strings(data.get("matched_signals", data.get("matchedSignals", ()))),
+            missing_signals=_clean_strings(data.get("missing_signals", data.get("missingSignals", ()))),
+            transferable_signals=_clean_strings(
+                data.get("transferable_signals", data.get("transferableSignals", ()))
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -133,6 +271,12 @@ class ScoreBreakdown:
             "experience_fit": self.experience_fit,
             "role_fit": self.role_fit,
             "reasoning": self.reasoning,
+            "fit_band": self.fit_band,
+            "confidence": self.confidence,
+            "eligibility": self.eligibility.to_dict(),
+            "matched_signals": list(self.matched_signals),
+            "missing_signals": list(self.missing_signals),
+            "transferable_signals": list(self.transferable_signals),
         }
 
 
@@ -270,6 +414,106 @@ class ScoreCorrection:
 
 
 # ---------------------------------------------------------------------------
+# ScoreTrace — non-sensitive observability and audit metadata
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ScoreTrace:
+    """Non-sensitive trace metadata for one score version."""
+
+    prompt_version: str = "score-fit-assessment-v1"
+    schema_version: str = "score-fit-assessment-v1"
+    model: str = "llm-port-default"
+    criteria_version: str = ""
+    profile_snapshot_version: int = 0
+    parser_warnings: tuple[str, ...] = ()
+    correction_history: tuple[dict[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("prompt_version", "schema_version", "model", "criteria_version"):
+            value = str(getattr(self, name) or "").strip()
+            object.__setattr__(self, name, value)
+        try:
+            profile_version = int(self.profile_snapshot_version or 0)
+        except (TypeError, ValueError):
+            profile_version = 0
+        object.__setattr__(self, "profile_snapshot_version", profile_version)
+        object.__setattr__(self, "parser_warnings", _clean_strings(self.parser_warnings))
+        history = []
+        for raw in self.correction_history:
+            if isinstance(raw, MappingABC):
+                history.append(_clean_mapping(raw))
+        object.__setattr__(self, "correction_history", tuple(history))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ScoreTrace":
+        data = data or {}
+        return cls(
+            prompt_version=str(data.get("prompt_version", data.get("promptVersion", "score-fit-assessment-v1"))),
+            schema_version=str(data.get("schema_version", data.get("schemaVersion", "score-fit-assessment-v1"))),
+            model=str(data.get("model") or "llm-port-default"),
+            criteria_version=str(data.get("criteria_version", data.get("criteriaVersion", ""))),
+            profile_snapshot_version=_int_or_default(
+                data.get("profile_snapshot_version", data.get("profileSnapshotVersion", 0)),
+                0,
+            ),
+            parser_warnings=_clean_strings(data.get("parser_warnings", data.get("parserWarnings", ()))),
+            correction_history=tuple(
+                item for item in data.get("correction_history", data.get("correctionHistory", ())) or ()
+                if isinstance(item, MappingABC)
+            ),
+        )
+
+    def with_parser_warnings(self, warnings: Iterable[Any]) -> "ScoreTrace":
+        return ScoreTrace(
+            prompt_version=self.prompt_version,
+            schema_version=self.schema_version,
+            model=self.model,
+            criteria_version=self.criteria_version,
+            profile_snapshot_version=self.profile_snapshot_version,
+            parser_warnings=(*self.parser_warnings, *_clean_strings(warnings)),
+            correction_history=self.correction_history,
+        )
+
+    def with_correction(
+        self,
+        *,
+        original_score: int,
+        correction: ScoreCorrection,
+    ) -> "ScoreTrace":
+        return ScoreTrace(
+            prompt_version=self.prompt_version,
+            schema_version=self.schema_version,
+            model=self.model,
+            criteria_version=self.criteria_version,
+            profile_snapshot_version=self.profile_snapshot_version,
+            parser_warnings=self.parser_warnings,
+            correction_history=(
+                *self.correction_history,
+                {
+                    "original_score": original_score,
+                    "corrected_score": correction.corrected_fit_score.value,
+                    "rationale": correction.rationale,
+                    "corrected_by": str(correction.corrected_by),
+                    "corrected_at": correction.corrected_at,
+                },
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "prompt_version": self.prompt_version,
+            "schema_version": self.schema_version,
+            "model": self.model,
+            "criteria_version": self.criteria_version,
+            "profile_snapshot_version": self.profile_snapshot_version,
+            "parser_warnings": list(self.parser_warnings),
+            "correction_history": list(self.correction_history),
+        }
+
+
+# ---------------------------------------------------------------------------
 # ScoringCriteria — published rule-of-thumb threshold + free-text criteria
 # ---------------------------------------------------------------------------
 
@@ -286,6 +530,9 @@ class ScoringCriteria:
 
     min_fit_score: int = 7
     criteria_text: str = ""
+    target_criteria: str = ""
+    profile_preferences: dict[str, Any] = field(default_factory=dict)
+    criteria_version: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.min_fit_score, int) or isinstance(self.min_fit_score, bool):
@@ -296,3 +543,84 @@ class ScoringCriteria:
             )
         if not isinstance(self.criteria_text, str):
             raise ValueError("ScoringCriteria.criteria_text must be a string")
+        if not isinstance(self.target_criteria, str):
+            raise ValueError("ScoringCriteria.target_criteria must be a string")
+        prefs = _clean_mapping(self.profile_preferences)
+        object.__setattr__(self, "profile_preferences", prefs)
+        version = str(self.criteria_version or "").strip()
+        if not version:
+            version = self._derive_version(
+                self.min_fit_score,
+                self.criteria_text,
+                self.target_criteria,
+                prefs,
+            )
+        object.__setattr__(self, "criteria_version", version)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "ScoringCriteria":
+        data = data or {}
+        return cls(
+            min_fit_score=_int_or_default(data.get("min_fit_score", data.get("minFitScore", 7)), 7),
+            criteria_text=str(data.get("criteria_text", data.get("criteriaText", "")) or ""),
+            target_criteria=str(data.get("target_criteria", data.get("targetCriteria", "")) or ""),
+            profile_preferences=_clean_mapping(
+                data.get("profile_preferences", data.get("profilePreferences", {}))
+            ),
+            criteria_version=str(data.get("criteria_version", data.get("criteriaVersion", "")) or ""),
+        )
+
+    @classmethod
+    def from_profile_snapshot(
+        cls,
+        profile_snapshot: "ProfileSnapshot",
+        *,
+        min_fit_score: int = 7,
+        criteria_text: str = "",
+        target_criteria: str = "",
+    ) -> "ScoringCriteria":
+        profile = profile_snapshot.as_dict()
+        experience = profile.get("experience") if isinstance(profile.get("experience"), MappingABC) else {}
+        preferences = {
+            "profile_snapshot_version": profile_snapshot.version,
+            "work_authorization": profile.get("work_authorization", {}),
+            "compensation": profile.get("compensation", {}),
+            "availability": profile.get("availability", {}),
+            "target_role": experience.get("target_role", ""),
+            "target_locations": experience.get("target_locations", ""),
+            "target_work_models": experience.get("target_work_models", ""),
+        }
+        return cls(
+            min_fit_score=min_fit_score,
+            criteria_text=criteria_text,
+            target_criteria=target_criteria,
+            profile_preferences=preferences,
+        )
+
+    @staticmethod
+    def _derive_version(
+        min_fit_score: int,
+        criteria_text: str,
+        target_criteria: str,
+        profile_preferences: dict[str, Any],
+    ) -> str:
+        payload = json.dumps(
+            {
+                "min_fit_score": min_fit_score,
+                "criteria_text": criteria_text,
+                "target_criteria": target_criteria,
+                "profile_preferences": profile_preferences,
+            },
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "min_fit_score": self.min_fit_score,
+            "criteria_text": self.criteria_text,
+            "target_criteria": self.target_criteria,
+            "profile_preferences": self.profile_preferences,
+            "criteria_version": self.criteria_version,
+        }

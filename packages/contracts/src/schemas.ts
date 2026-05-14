@@ -495,6 +495,43 @@ export interface ScoreBreakdown {
   experienceFit: number;
   roleFit: number;
   reasoning: string;
+  fitBand: "excellent" | "strong" | "plausible" | "stretch" | "poor";
+  confidence: "high" | "medium" | "low";
+  eligibility: ScoreEligibility;
+  matchedSignals: string[];
+  missingSignals: string[];
+  transferableSignals: string[];
+}
+
+export interface ScoreEligibility {
+  status: "eligible" | "warning" | "blocked" | "unknown";
+  hardBlockers: string[];
+  warnings: string[];
+}
+
+export interface ScoringCriteriaSnapshot {
+  minFitScore: number;
+  criteriaText: string;
+  targetCriteria: string;
+  criteriaVersion: string;
+}
+
+export interface ScoreTrace {
+  promptVersion: string;
+  schemaVersion: string;
+  model: string;
+  criteriaVersion: string;
+  profileSnapshotVersion: number;
+  parserWarnings: string[];
+  correctionHistory: ScoreCorrection[];
+}
+
+export interface ScoreCorrection {
+  originalScore?: number;
+  correctedScore: number;
+  rationale: string;
+  correctedBy: string;
+  correctedAt: string;
 }
 
 export interface JobSummary {
@@ -514,6 +551,9 @@ export interface JobSummary {
   scoreReasoning: string;
   scoreVersion: number | null;
   scoredAt: string | null;
+  scoreCriteria: ScoringCriteriaSnapshot | null;
+  scoreTrace: ScoreTrace | null;
+  scoreCorrection: ScoreCorrection | null;
   currentStage: Stage;
   currentState: StageState;
   errorCode: string | null;
@@ -718,6 +758,15 @@ export interface JobMutationResponse {
   count: number;
   jobKeys: string[];
 }
+
+export const CorrectScoreRequestSchema = z
+  .object({
+    correctedScore: z.coerce.number().int().min(1).max(10),
+    reason: z.string().trim().min(1).max(1000),
+  })
+  .strict();
+export type CorrectScoreRequest = z.infer<typeof CorrectScoreRequestSchema>;
+export type CorrectScoreResponse = JobDetail;
 
 export interface DashboardSettings {
   targetRole: string;

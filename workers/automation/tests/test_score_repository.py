@@ -21,6 +21,8 @@ from jobhunter.domain.scoring import (
     JobScore,
     MatchedKeywords,
     ScoreBreakdown,
+    ScoreTrace,
+    ScoringCriteria,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import SqliteScoreRepository
@@ -70,6 +72,51 @@ def test_save_and_load_round_trips(conn: sqlite3.Connection) -> None:
     assert loaded.fit_score.value == 7
     assert loaded.matched_keywords.values == ("python", "fastapi")
     assert loaded.breakdown.technical_fit == 8
+
+
+def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) -> None:
+    url = _seed_job(conn)
+    repo = SqliteScoreRepository(conn)
+    score = JobScore.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        fit_score=FitScore.create(9),
+        breakdown=ScoreBreakdown(
+            technical_fit=9,
+            experience_fit=8,
+            role_fit=9,
+            reasoning="excellent",
+            fit_band="excellent",
+            confidence="high",
+            matched_signals=("Python",),
+        ),
+        matched_keywords=MatchedKeywords.from_iterable(["python"]),
+        scored_at=datetime.now(timezone.utc).isoformat(),
+        criteria=ScoringCriteria(
+            min_fit_score=8,
+            criteria_text="Security leadership.",
+            target_criteria="Remote roles.",
+            profile_preferences={"target_work_models": "remote"},
+        ),
+        trace=ScoreTrace(
+            prompt_version="score-fit-assessment-v1",
+            schema_version="score-fit-assessment-v1",
+            model="fake-model",
+            criteria_version="criteria-1",
+            profile_snapshot_version=3,
+            parser_warnings=("missing_confidence",),
+        ),
+    )
+    repo.save(score)
+
+    loaded = repo.load(LOCAL_TENANT, JobId(url))
+
+    assert loaded is not None
+    assert loaded.criteria.criteria_text == "Security leadership."
+    assert loaded.criteria.profile_preferences["target_work_models"] == "remote"
+    assert loaded.trace.model == "fake-model"
+    assert loaded.trace.profile_snapshot_version == 3
+    assert loaded.trace.parser_warnings == ("missing_confidence",)
 
 
 def test_load_returns_none_when_no_score(conn: sqlite3.Connection) -> None:

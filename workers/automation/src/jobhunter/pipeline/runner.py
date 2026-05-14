@@ -1240,6 +1240,7 @@ _PENDING_SQL: dict[str, str] = {
         f"{db_module._ENRICHMENT_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
         f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -1250,6 +1251,7 @@ _PENDING_SQL: dict[str, str] = {
         f"{db_module._ENRICHMENT_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {db_module._EFFECTIVE_TAILOR_PATH} != '' "
         f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
         f"AND {db_module._COVER_NOT_EXHAUSTED} "
@@ -1280,11 +1282,13 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
         where = (
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
             if retailor else
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -1819,6 +1823,7 @@ def run_single_job(
 
         score_repo = SqliteScoreRepository(conn)
         existing_score = score_repo.load(LOCAL_TENANT, JobId(str(url)))
+        score_for_downstream = existing_score
         if existing_score is None:
             console.print("  [cyan]Scoring job...[/cyan]")
             if not dry_run:
@@ -1830,6 +1835,7 @@ def run_single_job(
                     resume_text=resume_text,
                 )
                 if outcome.ok and outcome.score is not None:
+                    score_for_downstream = outcome.score
                     job["fit_score"] = outcome.score.fit_score.value
                     console.print(f"  Score: [bold]{outcome.score.fit_score.value}[/bold]/10")
                 else:
@@ -1839,6 +1845,23 @@ def run_single_job(
                 console.print("  [dim]DRY RUN — would score job[/dim]")
         else:
             job["fit_score"] = existing_score.fit_score.value
+
+        if score_for_downstream is not None:
+            eligibility = score_for_downstream.breakdown.eligibility
+            if eligibility.status == "blocked" or eligibility.hard_blockers:
+                blockers = ", ".join(eligibility.hard_blockers) or eligibility.status
+                result["tailor_status"] = "blocked_score_eligibility"
+                result["cover_status"] = "blocked_score_eligibility"
+                if do_apply:
+                    result["apply_status"] = "skipped"
+                result["errors"].append(
+                    f"Score eligibility blocks tailoring: {blockers}"
+                )
+                console.print(
+                    "  [yellow]Skipping tailoring and cover letter: "
+                    f"score eligibility blocked ({blockers})[/yellow]"
+                )
+                return result
 
         # Tailor resume — Phase 6 (S-23) routes through TailorResumeUseCase
         # via the existing ``_tailor_one_job`` thin wrapper. No more
