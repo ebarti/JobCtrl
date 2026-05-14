@@ -618,6 +618,7 @@ def _record_posting_snapshot_from_cascade(
     description = str(cascade_result.get("full_description") or "")
     if not description.strip():
         return
+    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
     try:
         repo = SqlitePostingSnapshotSetRepository(conn)
         snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
@@ -643,7 +644,7 @@ def _record_posting_snapshot_from_cascade(
             else QuarantineReason.LOW_CONFIDENCE_EXTRACTION
         )
         snapshot_set, snapshot = snapshot_set.record_snapshot(
-            source_id=source_id,
+            source_id=resolved_source_id,
             extraction_tier=tier.value,
             description_hash=SnapshotDescriptionHash.from_text(description),
             apply_url=apply_url,
@@ -675,8 +676,8 @@ def _record_posting_snapshot_from_cascade(
                 "snapshotVersion": snapshot.snapshot_version,
                 "snapshot_ref": f"{url}:{snapshot.snapshot_version}",
                 "snapshotRef": f"{url}:{snapshot.snapshot_version}",
-                "source_id": source_id,
-                "sourceId": source_id,
+                "source_id": resolved_source_id,
+                "sourceId": resolved_source_id,
                 "extraction_tier": tier.value,
                 "extractionTier": tier.value,
                 "captured_at": captured_at,
@@ -731,7 +732,7 @@ def _record_posting_snapshot_from_cascade(
                     url,
                     url,
                     title,
-                    source_id,
+                    resolved_source_id,
                     url,
                     quarantine_reason.value,
                     _snapshot_confidence_value(confidence),
@@ -743,6 +744,32 @@ def _record_posting_snapshot_from_cascade(
         conn.commit()
     except Exception:
         log.exception("Failed to persist PostingSnapshotSet for %s", url)
+
+
+def _source_id_for_enriched_job(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    fallback: str,
+) -> str:
+    """Return the discovery source id for an enriched job when available."""
+    try:
+        row = conn.execute(
+            """
+            SELECT source_id
+            FROM job_source_observations
+            WHERE tenant_id = ? AND job_url = ?
+            ORDER BY observed_at DESC, source_observation_id DESC
+            LIMIT 1
+            """,
+            (str(LOCAL_TENANT), job_url),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return fallback
+    if row is None:
+        return fallback
+    source_id = str(row[0] or "").strip()
+    return source_id or fallback
 
 
 def _snapshot_confidence_value(confidence: SnapshotConfidence) -> float:

@@ -91,13 +91,16 @@ class ScheduledAtsSummary:
     failed_sources: tuple[str, ...] = ()
 
     def to_result_dict(self) -> dict[str, Any]:
+        failed_source_ids = list(self.failed_sources)
         return {
             "total": self.total,
             "new_jobs": self.new_jobs,
             "observed_jobs": self.observed_jobs,
             "duplicate_jobs": self.duplicate_jobs,
             "rejected_duplicates": self.rejected_duplicates,
-            "failed_sources": list(self.failed_sources),
+            "failed_sources": failed_source_ids,
+            "failed_source_ids": failed_source_ids,
+            "failedSourceIds": failed_source_ids,
         }
 
 

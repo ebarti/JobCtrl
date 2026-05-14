@@ -14,6 +14,7 @@ from jobhunter.discovery import manual_capture_import as manual_capture_import_c
 from jobhunter.database import close_connection, init_db
 from jobhunter.domain.discovery.scheduler import DiscoveryScheduler
 from jobhunter.domain.discovery.source_registry import SourceKind
+from jobhunter.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobhunter.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
     build_discovery_acceptance_report,
@@ -22,6 +23,7 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     seed_discovery_control_queues,
 )
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
+from jobhunter.state import record_job_event
 
 
 @pytest.fixture
@@ -304,6 +306,7 @@ def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
 
     assert result["new_jobs"] == 2
     assert result["failed_sources"] == ["lever:leadershipco"]
+    assert result["failed_source_ids"] == ["lever:leadershipco"]
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
     assert (
         conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
@@ -319,6 +322,163 @@ def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
         """
     ).fetchone()
     assert json.loads(failed_event["payload_json"])["source_id"] == "lever:leadershipco"
+
+
+def test_repeated_partial_ats_failures_keep_failed_source_quarantined(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    ats_sources = schedule.for_kinds(SourceKind.ATS_API)
+    source_ids = [source.source_id for source in ats_sources]
+
+    for run_number in range(3):
+        run_id = f"acceptance:ats:{run_number}"
+        record_job_event(
+            conn,
+            None,
+            "discover",
+            "DiscoveryRunStarted",
+            payload={
+                "tenantId": "local",
+                "run_id": run_id,
+                "runId": run_id,
+                "source_ids": source_ids,
+                "sourceIds": source_ids,
+                "started_at": f"2026-05-14T00:0{run_number}:00+00:00",
+                "startedAt": f"2026-05-14T00:0{run_number}:00+00:00",
+            },
+        )
+        result = run_scheduled_ats_sources(
+            conn,
+            ats_sources,
+            search_cfg=_search_cfg(),
+            run_id=run_id,
+            http=_fake_ats_http_with_lever_failure,
+        )
+        failed_source_ids = result["failed_source_ids"]
+        record_job_event(
+            conn,
+            None,
+            "discover",
+            "DiscoveryRunCompleted",
+            payload={
+                "tenantId": "local",
+                "run_id": run_id,
+                "runId": run_id,
+                "counts": {
+                    "total": result["total"],
+                    "new_jobs": result["new_jobs"],
+                    "newJobs": result["new_jobs"],
+                    "observed_jobs": result["observed_jobs"],
+                    "observedJobs": result["observed_jobs"],
+                    "duplicate_jobs": result["duplicate_jobs"],
+                    "duplicateJobs": result["duplicate_jobs"],
+                    "rejected_duplicates": result["rejected_duplicates"],
+                    "rejectedDuplicates": result["rejected_duplicates"],
+                },
+                "error_classes": ["partial_source_failure"],
+                "errorClasses": ["partial_source_failure"],
+                "failed_source_ids": failed_source_ids,
+                "failedSourceIds": failed_source_ids,
+                "completed_at": f"2026-05-14T00:0{run_number}:30+00:00",
+                "completedAt": f"2026-05-14T00:0{run_number}:30+00:00",
+            },
+        )
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    lever_stats = conn.execute(
+        """
+        SELECT failed_run_count, consecutive_failures, recommended_state
+        FROM source_quality_stats
+        WHERE source_id = ?
+        """,
+        ("lever:leadershipco",),
+    ).fetchone()
+    greenhouse_stats = conn.execute(
+        """
+        SELECT run_count, consecutive_failures, recommended_state
+        FROM source_quality_stats
+        WHERE source_id = ?
+        """,
+        ("greenhouse:barcelona-tech",),
+    ).fetchone()
+
+    assert tuple(lever_stats) == (3, 3, "quarantined")
+    assert tuple(greenhouse_stats) == (3, 0, "normal")
+
+
+def test_enrichment_snapshot_success_uses_observed_source_id(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    run_scheduled_ats_sources(
+        conn,
+        schedule.for_kinds(SourceKind.ATS_API),
+        search_cfg=_search_cfg(),
+        run_id="acceptance:ats",
+        http=_fake_ats_http,
+    )
+    row = conn.execute(
+        """
+        SELECT jobs.url, jobs.title, jobs.site, job_source_observations.source_id
+        FROM jobs
+        JOIN job_source_observations
+            ON job_source_observations.job_url = jobs.url
+        WHERE job_source_observations.source_id = ?
+        LIMIT 1
+        """,
+        ("greenhouse:barcelona-tech",),
+    ).fetchone()
+
+    assert row["site"] != row["source_id"]
+    _record_posting_snapshot_from_cascade(
+        conn,
+        url=row["url"],
+        source_id=row["site"],
+        title=row["title"],
+        cascade_result={
+            "status": "ok",
+            "tier_used": 1,
+            "full_description": _manual_capture_html(),
+            "application_url": f"{row['url']}/apply",
+        },
+        captured_at="2026-05-14T00:00:00+00:00",
+    )
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    observed_source_stats = conn.execute(
+        """
+        SELECT detail_success_count
+        FROM source_quality_stats
+        WHERE source_id = ?
+        """,
+        ("greenhouse:barcelona-tech",),
+    ).fetchone()
+    display_site_stats = conn.execute(
+        """
+        SELECT detail_success_count
+        FROM source_quality_stats
+        WHERE source_id = ?
+        """,
+        (row["site"],),
+    ).fetchone()
+    snapshot_event = conn.execute(
+        """
+        SELECT payload_json
+        FROM job_events
+        WHERE event_type = 'PostingContentSnapshotCaptured'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+
+    assert observed_source_stats["detail_success_count"] == 1
+    assert display_site_stats is None
+    assert json.loads(snapshot_event["payload_json"])["source_id"] == (
+        "greenhouse:barcelona-tech"
+    )
 
 
 def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(

@@ -471,7 +471,11 @@ def _call_discovery_source(run: Callable[..., Any], run_id: str) -> Any:
 def _failed_source_ids_from_result(result: Any) -> list[str]:
     if not isinstance(result, dict):
         return []
-    raw = result.get("failed_sources") or result.get("failedSourceIds")
+    raw = None
+    for key in ("failed_source_ids", "failedSourceIds", "failed_sources", "failedSources"):
+        raw = result.get(key)
+        if raw:
+            break
     if not isinstance(raw, (list, tuple)):
         return []
     return [str(source_id) for source_id in raw if str(source_id)]
