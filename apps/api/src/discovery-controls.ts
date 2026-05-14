@@ -3,8 +3,6 @@ import crypto from "node:crypto";
 import type {
   DiscoveryFeedbackResponse,
   ManualCaptureDismissResponse,
-  ManualCaptureImportRequest,
-  ManualCaptureImportResponse,
   ManualCaptureListResponse,
   ManualActionReasonValue,
   QuarantineDecision,
@@ -500,72 +498,6 @@ export function listManualCaptureQueue(db: SqliteDatabase): ManualCaptureListRes
   };
 }
 
-export function importManualCapture(
-  db: SqliteDatabase,
-  itemId: string,
-  input: ManualCaptureImportRequest,
-): ManualCaptureImportResponse {
-  ensureDiscoveryControlTables(db);
-  const row = getManualCaptureRow(db, itemId);
-  if (!row) {
-    throw new InputError(`Manual capture item ${itemId} was not found.`);
-  }
-  const now = new Date().toISOString();
-  const content = input.contentText ?? input.contentHtmlBase64 ?? input.capturedUrl ?? "";
-  const contentLength = input.contentText?.length ?? input.contentHtmlBase64?.length ?? input.capturedUrl?.length ?? 0;
-  const jobKey = jobKeyFromCapturedInput(input, row.originating_url);
-  db.prepare(
-    `UPDATE manual_capture_queue
-     SET status = 'imported',
-         imported_at = ?,
-         capture_mode = ?,
-         captured_url = ?,
-         content_sha256 = ?,
-         content_length = ?,
-         note = ?,
-         future_manual_action_required = ?,
-         job_key = ?
-     WHERE tenant_id = ? AND item_id = ?`,
-  ).run(
-    now,
-    input.captureMode,
-    input.capturedUrl ?? null,
-    sha256(content),
-    contentLength,
-    input.note ?? null,
-    input.futureManualActionRequired ? 1 : 0,
-    jobKey,
-    DEFAULT_TENANT,
-    itemId,
-  );
-  recordEvent(db, {
-    eventType: "PostingContentSnapshotCaptured",
-    jobUrl: jobKey,
-    stage: "enrich",
-    message: "Manual capture imported.",
-    payload: {
-      jobId: jobKey,
-      snapshotVersion: 1,
-      snapshotRef: `manual-capture:${itemId}`,
-      sourceId: row.source_id,
-      extractionTier: "user_mediated_capture",
-      capturedAt: now,
-    },
-  });
-  return {
-    ok: true,
-    itemId,
-    jobKey,
-    importedAt: now,
-    provenance: {
-      sourceKind: "user_mediated_capture",
-      originatingUrl: row.originating_url,
-      captureMode: input.captureMode,
-      futureManualActionRequired: input.futureManualActionRequired,
-    },
-  };
-}
-
 export function dismissManualCapture(
   db: SqliteDatabase,
   itemId: string,
@@ -887,7 +819,13 @@ function quarantineReason(value: string): QuarantineReason {
     : "user_review_requested";
 }
 
-function parseObject(raw: string): Record<string, unknown> {
+function parseObject(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw !== "string") {
+    return {};
+  }
   try {
     const parsed = JSON.parse(raw) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -904,14 +842,6 @@ function nullableNumber(value: unknown): number | null {
   }
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function jobKeyFromCapturedInput(input: ManualCaptureImportRequest, fallbackUrl: string): string {
-  return input.capturedUrl ?? fallbackUrl;
 }
 
 function sourceIdFromLocatorCandidate(candidate: SourceLocatorCandidateRow): string {

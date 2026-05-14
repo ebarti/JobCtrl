@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+from io import StringIO
 from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
 
 from jobhunter import config
+from jobhunter.discovery import manual_capture_import as manual_capture_import_cli
 from jobhunter.database import close_connection, init_db
 from jobhunter.domain.discovery.scheduler import DiscoveryScheduler
 from jobhunter.domain.discovery.source_registry import SourceKind
@@ -133,6 +136,12 @@ def _fake_ats_http(url: str, **_kwargs: Any) -> Any:
     return {}
 
 
+def _fake_ats_http_with_lever_failure(url: str, **kwargs: Any) -> Any:
+    if "lever" in url:
+        raise TimeoutError("lever unavailable")
+    return _fake_ats_http(url, **kwargs)
+
+
 def _manual_capture_html() -> str:
     description = (
         "Lead engineering teams building job search infrastructure with Python, "
@@ -185,6 +194,41 @@ def test_worker_seeds_api_visible_locator_and_manual_queues(
     assert "configured_seed" in manual_row["retry_context_json"]
 
 
+def test_worker_queue_seeding_preserves_dismissed_manual_actions(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    seed_discovery_control_queues(conn, registry)
+    item_id = conn.execute(
+        """
+        SELECT item_id FROM manual_capture_queue
+        WHERE source_id = ?
+        """,
+        ("manual:protected-board",),
+    ).fetchone()["item_id"]
+    conn.execute(
+        """
+        UPDATE manual_capture_queue
+        SET status = 'dismissed', dismissed_at = ?
+        WHERE item_id = ?
+        """,
+        ("2026-05-12T10:00:00+00:00", item_id),
+    )
+    conn.commit()
+
+    seed_discovery_control_queues(conn, registry)
+
+    manual_row = conn.execute(
+        """
+        SELECT status, dismissed_at
+        FROM manual_capture_queue
+        WHERE item_id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    assert tuple(manual_row) == ("dismissed", "2026-05-12T10:00:00+00:00")
+
+
 def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
     conn: sqlite3.Connection,
 ) -> None:
@@ -213,6 +257,40 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
         ).fetchall()
     }
     assert ats_kinds == {"greenhouse", "lever", "ashby"}
+
+
+def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    ats_sources = schedule.for_kinds(SourceKind.ATS_API)
+
+    result = run_scheduled_ats_sources(
+        conn,
+        ats_sources,
+        search_cfg=_search_cfg(),
+        run_id="acceptance:ats",
+        http=_fake_ats_http_with_lever_failure,
+    )
+
+    assert result["new_jobs"] == 2
+    assert result["failed_sources"] == ["lever:leadershipco"]
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    assert (
+        conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
+        == 2
+    )
+    failed_event = conn.execute(
+        """
+        SELECT payload_json
+        FROM job_events
+        WHERE event_type = 'DiscoveryRunFailed'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert json.loads(failed_event["payload_json"])["source_id"] == "lever:leadershipco"
 
 
 def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
@@ -278,6 +356,77 @@ def test_manual_capture_import_runs_discovery_enrichment_and_snapshot_pipeline(
         "manual_capture_provenance"
     ]
     assert provenance["source_kind"] == "user_mediated_capture"
+
+
+def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = init_db(db_path)
+    seed_discovery_control_queues(conn, _barcelona_registry())
+    item_id = conn.execute(
+        """
+        SELECT item_id FROM manual_capture_queue
+        WHERE source_id = ?
+        """,
+        ("manual:protected-board",),
+    ).fetchone()["item_id"]
+    close_connection(db_path)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        StringIO(
+            json.dumps(
+                {
+                    "itemId": item_id,
+                    "captureMode": "saved_html",
+                    "capturedUrl": "https://login.protected.example/jobs/vp-engineering",
+                    "contentText": _manual_capture_html(),
+                    "futureManualActionRequired": True,
+                }
+            )
+        ),
+    )
+
+    exit_code = manual_capture_import_cli.main(["--db-path", str(db_path)])
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert exit_code == 0
+    result = json.loads(captured.out)
+    assert result["jobId"] == "https://login.protected.example/jobs/vp-engineering"
+    assert result["promotedToJobEnrichment"] is True
+    assert result["retryContext"]["manual_capture_provenance"]["source_kind"] == (
+        "user_mediated_capture"
+    )
+    verify_conn = sqlite3.connect(db_path)
+    verify_conn.row_factory = sqlite3.Row
+    try:
+        assert (
+            verify_conn.execute(
+                "SELECT strategy FROM jobs WHERE url = ?",
+                ("https://login.protected.example/jobs/vp-engineering",),
+            ).fetchone()["strategy"]
+            == "manual"
+        )
+        assert (
+            verify_conn.execute(
+                "SELECT current_status FROM job_enrichments WHERE job_url = ?",
+                ("https://login.protected.example/jobs/vp-engineering",),
+            ).fetchone()["current_status"]
+            == "enriched"
+        )
+        assert (
+            verify_conn.execute(
+                "SELECT status FROM manual_capture_queue WHERE item_id = ?",
+                (item_id,),
+            ).fetchone()["status"]
+            == "imported"
+        )
+    finally:
+        verify_conn.close()
 
 
 def test_barcelona_spain_tech_leadership_acceptance_report_is_end_to_end(

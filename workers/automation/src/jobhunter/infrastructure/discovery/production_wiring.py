@@ -88,14 +88,16 @@ class ScheduledAtsSummary:
     duplicate_jobs: int = 0
     rejected_duplicates: int = 0
     sources_run: tuple[str, ...] = ()
+    failed_sources: tuple[str, ...] = ()
 
-    def to_result_dict(self) -> dict[str, int]:
+    def to_result_dict(self) -> dict[str, Any]:
         return {
             "total": self.total,
             "new_jobs": self.new_jobs,
             "observed_jobs": self.observed_jobs,
             "duplicate_jobs": self.duplicate_jobs,
             "rejected_duplicates": self.rejected_duplicates,
+            "failed_sources": list(self.failed_sources),
         }
 
 
@@ -324,38 +326,61 @@ def run_scheduled_ats_sources(
     if not adapters:
         return ScheduledAtsSummary().to_result_dict()
 
-    postings: list[ScrapedJobPosting] = []
-    for query, location in _query_location_pairs(search_cfg):
-        if limit > 0 and len(postings) >= limit:
-            break
-        for adapter in adapters:
-            if limit > 0 and len(postings) >= limit:
-                break
-            for posting in adapter.scrape(
-                tenant_id=LOCAL_TENANT,
-                query=query,
-                location=location,
-            ):
-                postings.append(posting)
-                if limit > 0 and len(postings) >= limit:
-                    break
-
     use_case = DiscoverJobsUseCase(
         repository=SqliteJobRepository(conn),
         publisher=DurableJobEventPublisher(conn, stage="discover"),
     )
-    summary = use_case.execute(
-        tenant_id=LOCAL_TENANT,
-        postings=postings,
-        run_id=run_id,
-    )
+    total = 0
+    new_jobs = 0
+    observed_jobs = 0
+    duplicate_jobs = 0
+    rejected_duplicates = 0
+    sources_run: list[str] = []
+    failed_sources: list[str] = []
+    remaining = limit if limit > 0 else None
+    pairs = tuple(_query_location_pairs(search_cfg))
+    for adapter in adapters:
+        if remaining is not None and remaining <= 0:
+            break
+        postings: list[ScrapedJobPosting] = []
+        try:
+            for query, location in pairs:
+                if remaining is not None and remaining <= 0:
+                    break
+                for posting in adapter.scrape(
+                    tenant_id=LOCAL_TENANT,
+                    query=query,
+                    location=location,
+                ):
+                    postings.append(posting)
+                    if remaining is not None:
+                        remaining -= 1
+                        if remaining <= 0:
+                            break
+        except Exception as exc:
+            failed_sources.append(adapter.source_id)
+            _record_ats_source_failure(conn, adapter.source_id, run_id, exc)
+        if not postings:
+            continue
+        summary = use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=postings,
+            run_id=run_id,
+        )
+        total += summary.total
+        new_jobs += summary.new_jobs
+        observed_jobs += summary.observed
+        duplicate_jobs += summary.duplicates_linked
+        rejected_duplicates += summary.duplicates_rejected
+        sources_run.append(adapter.source_id)
     return ScheduledAtsSummary(
-        total=summary.total,
-        new_jobs=summary.new_jobs,
-        observed_jobs=summary.observed,
-        duplicate_jobs=summary.duplicates_linked,
-        rejected_duplicates=summary.duplicates_rejected,
-        sources_run=tuple(adapter.source_id for adapter in adapters),
+        total=total,
+        new_jobs=new_jobs,
+        observed_jobs=observed_jobs,
+        duplicate_jobs=duplicate_jobs,
+        rejected_duplicates=rejected_duplicates,
+        sources_run=tuple(sources_run),
+        failed_sources=tuple(failed_sources),
     ).to_result_dict()
 
 
@@ -823,7 +848,8 @@ def _enqueue_manual_capture(
             retry_context_json = excluded.retry_context_json,
             required_at = excluded.required_at,
             status = CASE
-                WHEN manual_capture_queue.status = 'imported' THEN manual_capture_queue.status
+                WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+                    THEN manual_capture_queue.status
                 ELSE excluded.status
             END
         """,
@@ -838,6 +864,39 @@ def _enqueue_manual_capture(
         ),
     )
     return item_id
+
+
+def _record_ats_source_failure(
+    conn: sqlite3.Connection,
+    source_id: str,
+    run_id: str,
+    exc: Exception,
+) -> None:
+    failed_at = utc_now()
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        "DiscoveryRunFailed",
+        level="error",
+        message=f"ATS source {source_id} failed: {exc}",
+        payload={
+            "tenantId": str(LOCAL_TENANT),
+            "run_id": run_id,
+            "runId": run_id,
+            "source_id": source_id,
+            "sourceId": source_id,
+            "source_ids": [source_id],
+            "sourceIds": [source_id],
+            "error_class": type(exc).__name__,
+            "errorClass": type(exc).__name__,
+            "retryable": True,
+            "failed_at": failed_at,
+            "failedAt": failed_at,
+        },
+        occurred_at=failed_at,
+    )
+    conn.commit()
 
 
 def _adapter_for_source(source: Any, *, http: HttpFetcher | None) -> Any | None:
