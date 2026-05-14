@@ -28,15 +28,37 @@ from jobhunter.infrastructure.discovery.sqlite_repository import (
 from jobhunter.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
 )
+from jobhunter.infrastructure.discovery.production_wiring import (
+    DiscoveryAcceptanceReport,
+    ManualCaptureImport,
+    ManualCaptureImportOutcome,
+    SourceControlSeedSummary,
+    build_discovery_acceptance_report,
+    enqueue_manual_action_for_sources,
+    import_manual_capture_item,
+    run_scheduled_ats_sources,
+    seed_discovery_control_queues,
+    seed_source_registry_controls,
+)
 
 __all__ = [
     "AshbyBoardAdapter",
     "GreenhouseBoardAdapter",
     "HttpFetcher",
     "LeverBoardAdapter",
+    "DiscoveryAcceptanceReport",
+    "ManualCaptureImport",
+    "ManualCaptureImportOutcome",
+    "SourceControlSeedSummary",
     "SqliteDiscoveryRunRepository",
     "SqliteJobRepository",
     "WorkdayBoardAdapter",
     "WorkdayEmployer",
+    "build_discovery_acceptance_report",
     "default_http_fetcher",
+    "enqueue_manual_action_for_sources",
+    "import_manual_capture_item",
+    "run_scheduled_ats_sources",
+    "seed_discovery_control_queues",
+    "seed_source_registry_controls",
 ]

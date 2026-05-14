@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildApp } from "../src/server.js";
+import type { ManualCaptureImportRequest } from "../src/contracts.js";
+import type { ManualCaptureImporter } from "../src/manual-capture-worker.js";
 
 function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-discovery-controls-"));
@@ -76,6 +78,36 @@ function options(dbPath: string, dir: string) {
     resumeTemplatePath: path.join(dir, "resume_template.tex"),
     settingsPath: path.join(dir, "dashboard.json"),
   };
+}
+
+function manualCaptureHtml(): string {
+  const description =
+    "Lead engineering teams building job search infrastructure with Python, TypeScript, observability, product strategy, hiring systems, and local-first automation. ".repeat(
+      5,
+    );
+  return `
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "VP Engineering",
+          "description": "${description}",
+          "directApply": true,
+          "url": "https://example.com/protected/job",
+          "validThrough": "2999-01-01T00:00:00+00:00",
+          "jobLocation": {
+            "address": {
+              "addressLocality": "Barcelona",
+              "addressCountry": "Spain"
+            }
+          }
+        }
+        </script>
+      </head>
+      <body><main>${description}</main></body>
+    </html>
+  `;
 }
 
 describe("discovery product controls API", () => {
@@ -383,9 +415,29 @@ describe("discovery product controls API", () => {
     }
   });
 
-  it("imports manual capture provenance while storing only content metadata", async () => {
+  it("delegates manual capture imports to the worker pipeline", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
-    const app = buildApp(options(dbPath, dir));
+    const calls: Array<{
+      itemId: string;
+      input: ManualCaptureImportRequest;
+      context: { appDir: string; dbPath: string };
+    }> = [];
+    const manualCaptureImporter: ManualCaptureImporter = async (itemId, input, context) => {
+      calls.push({ itemId, input, context });
+      return {
+        ok: true,
+        itemId,
+        jobKey: input.capturedUrl ?? "https://example.com/protected/job",
+        importedAt: "2026-05-12T10:05:00+00:00",
+        provenance: {
+          sourceKind: "user_mediated_capture",
+          originatingUrl: "https://example.com/protected/job",
+          captureMode: input.captureMode,
+          futureManualActionRequired: input.futureManualActionRequired,
+        },
+      };
+    };
+    const app = buildApp({ ...options(dbPath, dir), manualCaptureImporter });
     try {
       await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" });
       const db = new Database(dbPath);
@@ -426,6 +478,18 @@ describe("discovery product controls API", () => {
           futureManualActionRequired: true,
         },
       });
+      expect(calls).toEqual([
+        {
+          itemId: "manual-1",
+          input: {
+            captureMode: "pasted_text",
+            capturedUrl: "https://example.com/protected/job",
+            contentText: "Visible user-provided posting text.",
+            futureManualActionRequired: true,
+          },
+          context: { appDir: dir, dbPath },
+        },
+      ]);
 
       const verifyDb = new Database(dbPath);
       const row = verifyDb
@@ -434,15 +498,112 @@ describe("discovery product controls API", () => {
         )
         .get("manual-1") as {
         status: string;
+        content_sha256: string | null;
+        content_length: number | null;
+        captured_url: string | null;
+      };
+      const events = verifyDb
+        .prepare("SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'PostingContentSnapshotCaptured'")
+        .get() as { count: number };
+      verifyDb.close();
+      expect(row.status).toBe("pending");
+      expect(row.content_sha256).toBeNull();
+      expect(row.content_length).toBeNull();
+      expect(row.captured_url).toBeNull();
+      expect(events.count).toBe(0);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("runs the default manual capture importer through the worker pipeline", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/manual-capture" });
+      const db = new Database(dbPath);
+      db.prepare(
+        `INSERT INTO manual_capture_queue (
+           tenant_id, item_id, originating_url, source_id, reason,
+           retry_context_json, required_at, status
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "manual-2",
+        "https://example.com/protected/job",
+        "greenhouse-example",
+        "login_required",
+        "{}",
+        "2026-05-12T10:00:00+00:00",
+        "pending",
+      );
+      db.close();
+
+      const contentText = manualCaptureHtml().trim();
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/discovery/manual-capture/manual-2/import",
+        payload: {
+          captureMode: "saved_html",
+          capturedUrl: "https://example.com/protected/job",
+          contentText,
+          futureManualActionRequired: true,
+        },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        itemId: "manual-2",
+        jobKey: "https://example.com/protected/job",
+        provenance: {
+          sourceKind: "user_mediated_capture",
+          captureMode: "saved_html",
+          futureManualActionRequired: true,
+        },
+      });
+
+      const verifyDb = new Database(dbPath);
+      const row = verifyDb
+        .prepare(
+          "SELECT status, content_sha256, content_length, captured_url, retry_context_json FROM manual_capture_queue WHERE item_id = ?",
+        )
+        .get("manual-2") as {
+        status: string;
         content_sha256: string;
         content_length: number;
         captured_url: string;
+        retry_context_json: string;
+      };
+      const job = verifyDb
+        .prepare("SELECT title, strategy FROM jobs WHERE url = ?")
+        .get("https://example.com/protected/job") as { title: string; strategy: string };
+      const observation = verifyDb
+        .prepare("SELECT source_id FROM job_source_observations WHERE job_url = ?")
+        .get("https://example.com/protected/job") as { source_id: string };
+      const enrichment = verifyDb
+        .prepare("SELECT current_status, extraction_tier FROM job_enrichments WHERE job_url = ?")
+        .get("https://example.com/protected/job") as { current_status: string; extraction_tier: string };
+      const snapshot = verifyDb
+        .prepare("SELECT latest_snapshot_version, latest_active_state FROM posting_snapshot_sets WHERE job_url = ?")
+        .get("https://example.com/protected/job") as {
+        latest_snapshot_version: number;
+        latest_active_state: string;
       };
       verifyDb.close();
+
       expect(row.status).toBe("imported");
       expect(row.content_sha256).toHaveLength(64);
-      expect(row.content_length).toBe("Visible user-provided posting text.".length);
-      expect(JSON.stringify(row)).not.toContain("Visible user-provided posting text.");
+      expect(row.content_length).toBe(contentText.trim().length);
+      expect(row.captured_url).toBe("https://example.com/protected/job");
+      expect(JSON.parse(row.retry_context_json).manual_capture_provenance).toMatchObject({
+        source_kind: "user_mediated_capture",
+        capture_mode: "saved_html",
+      });
+      expect(job).toMatchObject({ title: "VP Engineering", strategy: "manual" });
+      expect(observation.source_id).toBe("greenhouse-example");
+      expect(enrichment).toMatchObject({ current_status: "enriched", extraction_tier: "json_ld" });
+      expect(snapshot).toMatchObject({ latest_snapshot_version: 1, latest_active_state: "active" });
+      expect(JSON.stringify(row)).not.toContain("Lead engineering teams");
     } finally {
       await app.close();
       cleanup();

@@ -138,6 +138,17 @@ def test_load_source_registry_generates_entries_from_packaged_yaml_shapes() -> N
     registry = config.load_source_registry(
         search_cfg={"boards": ["linkedin", "indeed"]},
         sites_cfg={
+            "sources": [
+                {
+                    "id": "greenhouse:acme",
+                    "kind": "ats_api",
+                    "display_name": "Acme Greenhouse",
+                    "priority": "canonical",
+                    "seed_url": "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+                    "board_token": "acme",
+                    "ats_kind": "greenhouse",
+                }
+            ],
             "base_urls": {"RemoteOK": None},
             "sites": [
                 {
@@ -169,6 +180,11 @@ def test_load_source_registry_generates_entries_from_packaged_yaml_shapes() -> N
     assert workday.kind is SourceKind.ATS_API
     assert workday.adapter_config["employer_key"] == "acme"
     assert workday.adapter_config["tenant"] == "acme"
+
+    greenhouse = by_id["greenhouse:acme"]
+    assert greenhouse.kind is SourceKind.ATS_API
+    assert greenhouse.policy.policy_id == "ats_api_canonical"
+    assert greenhouse.adapter_config["board_token"] == "acme"
 
     assert by_id["jobspy:linkedin"].kind is SourceKind.BROAD_BOARD
     assert by_id["jobspy:indeed"].adapter_config["board"] == "indeed"

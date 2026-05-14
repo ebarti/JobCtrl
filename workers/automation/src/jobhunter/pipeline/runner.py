@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import inspect
 import threading
 import time
 import uuid
@@ -42,6 +43,11 @@ from jobhunter.domain.discovery.source_registry import SourceKind, SourceState
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
+)
+from jobhunter.infrastructure.discovery.production_wiring import (
+    enqueue_manual_action_for_sources,
+    run_scheduled_ats_sources,
+    seed_discovery_control_queues,
 )
 from jobhunter.infrastructure.observability.source_spans import discovery_run_span
 from jobhunter.state import record_job_event, utc_now
@@ -339,7 +345,7 @@ def _run_discovery_source(
         span.set_attribute("jobhunter.pipeline.source", source)
         span.set_attribute("jobhunter.discovery.run_id", run_id)
         try:
-            result = run()
+            result = _call_discovery_source(run, run_id)
         except Exception as exc:
             elapsed = time.time() - t0
             log.error("%s failed: %s", label, exc)
@@ -392,10 +398,11 @@ def _run_discovery_source(
 
         elapsed = time.time() - t0
         counts = DiscoveryRunCounts.from_result(result)
+        failed_source_ids = _failed_source_ids_from_result(result)
         completed_at = utc_now()
         completed_run = discovery_run.complete(
             counts=counts,
-            error_classes=(),
+            error_classes=("partial_source_failure",) if failed_source_ids else (),
             completed_at=completed_at,
         )
         run_repo.save(completed_run)
@@ -413,8 +420,10 @@ def _run_discovery_source(
                     "duplicateJobs": counts.duplicate_jobs,
                     "rejectedDuplicates": counts.rejected_duplicates,
                 },
-                "error_classes": [],
-                "errorClasses": [],
+                "error_classes": ["partial_source_failure"] if failed_source_ids else [],
+                "errorClasses": ["partial_source_failure"] if failed_source_ids else [],
+                "failed_source_ids": failed_source_ids,
+                "failedSourceIds": failed_source_ids,
                 "completed_at": completed_at,
                 "completedAt": completed_at,
             },
@@ -440,6 +449,36 @@ def _run_discovery_source(
             },
         )
         return status
+
+
+def _call_discovery_source(run: Callable[..., Any], run_id: str) -> Any:
+    try:
+        signature = inspect.signature(run)
+    except (TypeError, ValueError):
+        return run()
+    accepts_run_id = (
+        "run_id" in signature.parameters
+        or any(
+            param.kind is inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+    )
+    if accepts_run_id:
+        return run(run_id=run_id)
+    return run()
+
+
+def _failed_source_ids_from_result(result: Any) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+    raw = None
+    for key in ("failed_source_ids", "failedSourceIds", "failed_sources", "failedSources"):
+        raw = result.get(key)
+        if raw:
+            break
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(source_id) for source_id in raw if str(source_id)]
 
 
 def _record_skipped_discovery_run(
@@ -669,7 +708,15 @@ def _discovery_result_count(result: Any) -> int:
     if "found" in result:
         return int(result.get("found") or 0)
     count = 0
-    for key in ("new", "existing", "total_new", "total_existing"):
+    for key in (
+        "new",
+        "existing",
+        "total_new",
+        "total_existing",
+        "new_jobs",
+        "existing_jobs",
+        "observed_jobs",
+    ):
         count += int(result.get(key) or 0)
     return count
 
@@ -827,6 +874,11 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
+    conn = init_db()
+    try:
+        seed_discovery_control_queues(conn, config.load_source_registry())
+    except Exception:
+        log.debug("Failed to seed discovery control queues", exc_info=True)
     schedule = _plan_discovery_schedule(limit)
     bounded_workers = 1 if limit > 0 else workers
     start_count = _pipeline_job_count() if limit > 0 else 0
@@ -874,6 +926,36 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
         return stats
 
+    ats_sources = tuple(
+        source
+        for source in schedule.for_kinds(SourceKind.ATS_API)
+        if not source.source_id.startswith("workday:")
+    )
+    if ats_sources:
+        def run_ats(run_id: str | None = None) -> dict:
+            console.print("  [cyan]Canonical ATS APIs...[/cyan]")
+            source_results["ats_api"] = run_scheduled_ats_sources(
+                conn,
+                ats_sources,
+                search_cfg=search_cfg,
+                run_id=run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
+                limit=_scheduled_limit_for_sources(ats_sources, limit),
+            )
+            return source_results["ats_api"]
+
+        stats["ats_api"] = _run_discovery_source(
+            "ats_api",
+            "Canonical ATS APIs",
+            ats_sources,
+            run_ats,
+        )
+        if isinstance(stats["ats_api"], str) and stats["ats_api"].startswith("error"):
+            console.print(f"  [red]Canonical ATS API error:[/red] {stats['ats_api'][7:]}")
+        if _discover_limit_consumed(start_count, limit, source_results.get("ats_api")):
+            stats["workday"] = _skip_discovery_source("workday", "Workday scraper", "limit reached")
+            stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
+            return stats
+
     # Workday corporate scraper
     workday_sources = schedule.for_prefix("workday")
 
@@ -904,6 +986,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
 
     def run_smart_extract_source() -> dict:
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
+        enqueue_manual_action_for_sources(conn, smart_extract_sources)
         from jobhunter.discovery.smartextract import run_smart_extract
         source_results["smartextract"] = run_smart_extract(
             sites=_smart_extract_sites(smart_extract_sources),
