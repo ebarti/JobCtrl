@@ -1532,6 +1532,11 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
       const run = runs.get(runId);
       const counts = normalizeCounts(record(value(payload, "counts")));
       const skipped = Boolean(value(payload, "skipped"));
+      const failedSourceIds = new Set(
+        stringList(
+          value(payload, "failed_source_ids", "failedSourceIds", "failed_sources", "failedSources"),
+        ),
+      );
       if (run) {
         run.status = "completed";
         run.counts = counts;
@@ -1539,11 +1544,12 @@ function rebuildSourceQualityProjections(db: SqliteDatabase, tenantId: string): 
         run.completedAt = text(payload, "completed_at", "completedAt") || row.occurred_at;
         for (const sourceId of run.sourceIds) {
           const current = getStats(stats, sourceId);
-          if (!skipped) {
+          const failedInRun = failedSourceIds.has(sourceId);
+          if (!skipped && !failedInRun) {
             current.runCount += 1;
             current.consecutiveFailures = 0;
           }
-          if (run.sourceIds.length === 1 && !skipped) {
+          if (run.sourceIds.length === 1 && !skipped && !failedInRun) {
             current.newJobs += counts.new_jobs ?? 0;
             current.existingJobs += counts.existing_jobs ?? 0;
             const observedKey = runSourceKey(runId, sourceId);
