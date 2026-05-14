@@ -3,6 +3,20 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-05-07: Temporal + Worker Reliability Stack
+
+Plan: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md`
+
+Delivered (PRs #34-#40 plus follow-up hardening):
+
+- Local Temporal foundation, worker bootstrap, `jobhunter worker`, and doctor checks.
+- Pipeline activities, `JobPipelineWorkflow`, and `ApplyWorkflow`.
+- JSON-RPC workflow dispatch for apply plus cooperative `cancel_run`.
+- `apply_runs` / `apply_run_events` collapse into workflow-backed `apply_run_projections`.
+- Workflow Runs API, web view, Temporal Web UI deep links, and workflow-run invalidation keys.
+- Canonical stage-state writer cleanup and apply-log artifact registration.
+- OpenTelemetry / Langfuse wiring for LLM, Temporal, and JSON-RPC spans.
+
 ## 2026-05-06: Frontend TanStack Migration (8 phases)
 
 Plan: `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`

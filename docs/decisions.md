@@ -584,4 +584,4 @@ Consequences:
   `SubmitApplicationUseCase` / `ApplySaga`; persistence happens via
   `record_job_event`.
 
-Cites: `docs/plans/proposed/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.
+Cites: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md` PR 4.
