@@ -1,6 +1,6 @@
 """Use case orchestrating ``PostingSnapshotSet``.
 
-See ``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md``
+See ``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md``
 §"Content Acquisition Pipeline" and §"Domain Events".
 
 ``CapturePostingSnapshotUseCase`` ties together:

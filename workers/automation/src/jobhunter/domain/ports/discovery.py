@@ -1,7 +1,7 @@
 """Driven ports for the Job Discovery context.
 
 See ddd-target.md §5.1 and the PR 2 section of the Job Search Discovery
-RFC (`docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`).
+RFC (`docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`).
 
 Three ports declared here. ``JobRepository`` is materialised by
 ``SqliteJobRepository``. ``JobBoardScraperPort`` is materialised by the

@@ -1527,7 +1527,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
     """Create ``job_source_observations``, ``job_canonical_identities``, and ``job_duplicate_links``.
 
     See PR 2 of the Job Search Discovery RFC
-    (`docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`).
+    (`docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`).
 
     The migration is purely additive — the legacy ``jobs.url`` PRIMARY
     KEY remains the canonical posting URL during the compatibility
@@ -1706,7 +1706,9 @@ def _backfill_one_observation_row(
 # ---------------------------------------------------------------------------
 
 _ENRICHMENT_JOIN: str = (
-    "LEFT JOIN job_enrichments je ON je.job_url = jobs.url"
+    "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
+    "LEFT JOIN job_stage_states jss_enrich "
+    "ON jss_enrich.job_url = jobs.url AND jss_enrich.stage = 'enrich'"
 )
 
 _EFFECTIVE_FULL_DESCRIPTION: str = (
@@ -1724,16 +1726,16 @@ _EFFECTIVE_DETAIL_SCRAPED_AT: str = (
 _ENRICHMENT_DONE: str = (
     "(je.current_status = 'enriched' OR jobs.detail_scraped_at IS NOT NULL)"
 )
-# Phase 7 (S-26 round-1 review M3): the canonical "this job needs
-# enrichment" predicate is the aggregate's status alone. Earlier drafts
-# carried an `AND jobs.detail_scraped_at IS NULL` clause that (a)
-# excluded backfilled `pending` rows that happened to have the legacy
-# timestamp set, and (b) would block the post-reset re-pickup once
-# `reset_job_stage("enrich")` clears the aggregate. The predicate now
-# matches the Phase-5/6 pattern — COALESCE expressions are the source
-# of truth, the legacy column is read-only fallback only.
+# Phase 7 (S-26 round-1 review M3): the aggregate status is the primary
+# enrichment signal, but the live local DB can contain historical jobs with
+# legacy description columns and a canonical ``job_stage_states.enrich =
+# succeeded`` row before a ``job_enrichments`` aggregate exists. Those rows
+# must not be re-picked by runners, because the state machine correctly
+# rejects succeeded -> running. A reset clears the stage row back to pending,
+# so retries still work even when legacy detail columns remain populated.
 _ENRICHMENT_PENDING: str = (
-    "(je.job_url IS NULL OR je.current_status = 'pending')"
+    "(je.job_url IS NULL OR je.current_status = 'pending') "
+    "AND COALESCE(jss_enrich.state, CASE WHEN jobs.detail_scraped_at IS NOT NULL THEN 'succeeded' ELSE 'pending' END) = 'pending'"
 )
 
 

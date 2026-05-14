@@ -8,7 +8,7 @@ PR3 additions: ``PostingSnapshotSet`` aggregate plus its
 ``QuarantineReason`` / ``SnapshotConfidence`` enums, the
 ``DuplicateEvidence`` / ``ContentDuplicateCandidate`` records, and the
 ``FilterOverrideAudit`` for policy-compliant overrides. See
-``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`` §"Domain
+``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`` §"Domain
 Model Additions" and §"Content Acquisition Pipeline".
 
 Public API barrel: aggregate roots, child entities/value objects, and

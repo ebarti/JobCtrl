@@ -1,8 +1,12 @@
 # Job Scoring Intelligence Plan
 
-> **Status:** proposed; partially implemented.
+> **Status:** implemented in PR #61.
 > **Research date:** 2026-05-10.
 > **Source:** user request to compare current JobHunter scoring against practical job-matching approaches and define the next PR stack.
+
+> **Delivery note:** PR #61 completed the scoring-intelligence stack described
+> here. Historical sections below preserve the original plan framing; actual
+> delivered outcomes are summarized in `docs/delivered.md`.
 
 ## Goal
 
@@ -10,7 +14,15 @@ Move JobHunter scoring from a single opaque LLM-generated fit grade into an expl
 
 ## Executive Summary
 
-Current scoring is a solid DDD foundation but an incomplete product signal. The worker now has a `JobScore` aggregate, versioned `job_scores` persistence, structured LLM output, typed dimensions, keyword evidence, and a `CorrectScoreUseCase`. PR 1 exposed the already-persisted score evidence through the API, contracts, and jobs drawer (`scoreBreakdown`, `scoreKeywords`, `scoreVersion`, and `scoredAt`) and hardened blank-keyword parsing. The remaining product gaps are criteria-aware scoring, hard eligibility blockers, score corrections, a local evaluation harness, feedback personalization, and score-governance reporting.
+Before PR #61, scoring had a solid DDD foundation but an incomplete product
+signal. The worker already had a `JobScore` aggregate, versioned `job_scores`
+persistence, structured LLM output, typed dimensions, keyword evidence, and a
+`CorrectScoreUseCase`. PR 1 exposed the already-persisted score evidence through
+the API, contracts, and jobs drawer (`scoreBreakdown`, `scoreKeywords`,
+`scoreVersion`, and `scoredAt`) and hardened blank-keyword parsing. PR #61
+completed criteria-aware scoring, hard eligibility blockers, score corrections,
+a local evaluation harness, feedback personalization, and score-governance
+reporting.
 
 Practical job matching is not done as an opaque LLM grade. The common pattern is hybrid:
 
@@ -24,7 +36,33 @@ Practical job matching is not done as an opaque LLM grade. The common pattern is
 
 The recommended direction is to keep the DDD `JobScore` aggregate and still resolve one final score for sorting, filtering, and gating. The change is how that score is produced: expand the scoring language from "score plus reasoning" to "final score backed by a fit assessment": eligibility, weighted dimensions, evidence, gaps, confidence, criteria version, and later correction feedback.
 
-## Current Implementation
+## Delivered Implementation
+
+PR #61 completed the scoring-intelligence work from this plan:
+
+- Scoring criteria and target criteria are loaded through a criteria provider,
+  passed into `ScoreJobUseCase`, included in the prompt payload, and persisted
+  as criteria snapshots on `job_scores`.
+- The score schema and domain model now include eligibility, hard blockers,
+  missing signals, transferable signals, confidence, fit band, trace metadata,
+  and parser warnings while keeping the persisted `FitScore` semantics at
+  1..10.
+- Hard blockers are enforced separately from display score across downstream
+  selectors and targeted single-job material generation.
+- Score corrections are wired end to end through the API, contracts, web
+  mutation/control, persistence, projections, events, optimistic rollback, and
+  invalidation.
+- The local eval harness covers parse validity, band expectations, blocker
+  precision/recall, ranking, and feedback-agreement cases.
+- Feedback-adjusted ordering is wired into production selection paths while
+  preserving explainable score evidence.
+- Documentation and QA gates now name the applicant-side boundary and scoring
+  regression requirements.
+
+## Historical Baseline Before PR #61
+
+The rest of this section is retained as the original implementation snapshot
+that motivated the PR #61 stack. It is not a current list of gaps.
 
 ### What Works
 
@@ -52,15 +90,27 @@ Key code:
 - `packages/domain-types/src/operations/index.ts`
 - `apps/web/src/contexts/scoring/components/ScoreBreakdown.tsx`
 
-### Gaps
+### Historical Gaps Closed By PR #61
 
-- `scoreCriteria` is saved in profile settings but is not passed into `ScoreJobUseCase`, the prompt, or the persisted score criteria.
-- The LLM sees mostly resume baseline text plus title, company, location, and description. It does not explicitly receive the structured profile fields that matter for fit, such as work authorization, compensation, target roles, target locations, target work models, and negative preferences.
-- The typed score surface is still limited to the existing three dimensions, keywords, version, and timestamp; it does not yet expose eligibility, evidence, missing qualifications, transferable signals, confidence, criteria version, or fit band.
-- `useCorrectScoreMutation` throws `NotImplementedError`; no API route or UI writes score corrections.
-- There is no offline scoring evaluation set, no ranking metrics, no calibration report, and no regression matrix for prompt or model changes.
-- There is no feedback loop using corrections, apply/save/dismiss behavior, or downstream outcomes to improve ranking.
-- There is no explicit separation between hard eligibility constraints and soft fit. A high score can hide a non-negotiable mismatch, and a low score can hide a job worth manually reviewing.
+- Before PR #61, `scoreCriteria` was saved in profile settings but was not
+  passed into `ScoreJobUseCase`, the prompt, or the persisted score criteria.
+- Before PR #61, the LLM saw mostly resume baseline text plus title, company,
+  location, and description. It did not explicitly receive the structured
+  profile fields that matter for fit, such as work authorization, compensation,
+  target roles, target locations, target work models, and negative preferences.
+- Before PR #61, the typed score surface was limited to the existing three
+  dimensions, keywords, version, and timestamp. It did not expose eligibility,
+  evidence, missing qualifications, transferable signals, confidence, criteria
+  version, or fit band.
+- Before PR #61, `useCorrectScoreMutation` threw `NotImplementedError`; no API
+  route or UI wrote score corrections.
+- Before PR #61, there was no offline scoring evaluation set, ranking metrics,
+  calibration report, or regression matrix for prompt or model changes.
+- Before PR #61, there was no feedback loop using corrections,
+  apply/save/dismiss behavior, or downstream outcomes to improve ranking.
+- Before PR #61, hard eligibility constraints and soft fit were not explicitly
+  separated. A high score could hide a non-negotiable mismatch, and a low score
+  could hide a job worth manually reviewing.
 
 ## Research Findings
 
@@ -70,7 +120,10 @@ LinkedIn's user-facing job match compares required and preferred qualifications 
 
 LinkedIn engineering describes recommendation personalization as a mix of content features and recent job-seeking activity. Apply, save, and dismiss actions are converted into job activity embeddings, with recency-weighted and learned aggregation outperforming simple skill averaging. Source: [LinkedIn Engineering: job matching with activity features](https://www.linkedin.com/blog/engineering/machine-learning/improving-job-matching-with-machine-learned-activity-features-).
 
-Implication for JobHunter: profile-only scoring is not enough. Corrections, saves, skips, generated-material approvals, dry runs, and applications should become explicit feedback signals once the correction path is wired.
+Implication for JobHunter: profile-only scoring is not enough. PR #61 wired the
+correction path and feedback-adjusted ordering so corrections can act as
+explicit feedback signals; saves, skips, generated-material approvals, dry runs,
+and applications remain useful future feedback inputs.
 
 ### Modern Job-Recommendation Research Is Skill-Aware And Ranking-Oriented
 
@@ -141,7 +194,11 @@ Use the LLM as a structured extractor and reasoner, not as the sole source of tr
 - Parser rejects missing required evidence, malformed dimensions, impossible scores, or unsupported claims.
 - Observability records prompt version, model, response schema version, parse outcome, token/cost metadata, and score version.
 
-## Pending PR Stack
+## Historical PR Stack Delivered By PR #61
+
+The following subsections are the original staged implementation plan. PR #61
+delivered these capabilities as an integrated stack rather than as separate
+future work.
 
 ### PR 2 - Make Scoring Criteria-Aware And Constraint-Aware
 

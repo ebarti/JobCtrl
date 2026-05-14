@@ -278,6 +278,93 @@ def test_pending_sql_enrich_excludes_new_path_enriched_jobs(
     assert pending_count == 1  # only B is pending
 
 
+def test_pending_detail_excludes_legacy_stage_succeeded_without_aggregate(
+    conn: sqlite3.Connection,
+) -> None:
+    """Live local DBs may have canonical succeeded stage rows before a
+    ``job_enrichments`` aggregate exists. Those rows must not be
+    re-enriched unless the stage is reset to pending."""
+    from jobhunter.pipeline import _PENDING_SQL
+    from jobhunter.state import ensure_job_stage_rows, set_stage_state
+
+    legacy_url = "https://example.com/jobs/LEGACY"
+    pending_url = "https://example.com/jobs/PENDING"
+    _seed_discovered(conn, legacy_url)
+    _seed_discovered(conn, pending_url)
+    conn.execute(
+        """
+        UPDATE jobs
+        SET full_description = ?, detail_scraped_at = ?
+        WHERE url = ?
+        """,
+        ("Legacy description", "2024-01-02T00:00:00+00:00", legacy_url),
+    )
+    ensure_job_stage_rows(conn, legacy_url)
+    set_stage_state(
+        conn,
+        legacy_url,
+        "enrich",
+        "succeeded",
+        finished_at="2024-01-02T00:00:00+00:00",
+        validate_transition=False,
+    )
+    conn.commit()
+
+    rows = get_jobs_by_stage(conn, "pending_detail")
+    assert {row["url"] for row in rows} == {pending_url}
+    assert conn.execute(_PENDING_SQL["enrich"]).fetchone()[0] == 1
+
+
+def test_run_detail_scraper_skips_legacy_stage_succeeded_without_aggregate(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobhunter.enrichment import detail
+    from jobhunter.state import ensure_job_stage_rows, set_stage_state
+
+    legacy_url = "https://example.com/jobs/LEGACY-RUNNER"
+    pending_url = "https://example.com/jobs/PENDING-RUNNER"
+    _seed_discovered(conn, legacy_url)
+    _seed_discovered(conn, pending_url)
+    conn.execute(
+        """
+        UPDATE jobs
+        SET full_description = ?, detail_scraped_at = ?
+        WHERE url = ?
+        """,
+        ("Legacy description", "2024-01-02T00:00:00+00:00", legacy_url),
+    )
+    ensure_job_stage_rows(conn, legacy_url)
+    set_stage_state(
+        conn,
+        legacy_url,
+        "enrich",
+        "succeeded",
+        finished_at="2024-01-02T00:00:00+00:00",
+        validate_transition=False,
+    )
+    conn.commit()
+
+    batches: list[list[tuple[str, str]]] = []
+
+    def fake_scrape_site_batch(
+        _conn: sqlite3.Connection | None,
+        _site: str,
+        jobs: list[tuple[str, str]],
+        *,
+        delay: float = 2.0,
+        max_jobs: int | None = None,
+    ) -> dict:
+        batches.append(jobs[: max_jobs or None])
+        return {"processed": len(jobs), "ok": 0, "partial": 0, "error": 0, "tiers": {}}
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_scrape_site_batch)
+
+    detail._run_detail_scraper(conn, max_per_site=1, workers=1)
+
+    assert batches == [[(pending_url, "Engineer")]]
+
+
 def test_pending_sql_score_includes_new_path_enriched_jobs(
     conn: sqlite3.Connection,
 ) -> None:

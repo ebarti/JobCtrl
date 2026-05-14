@@ -33,6 +33,7 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
 
+from jobhunter import database as db_module
 from jobhunter.database import ensure_discovery_control_tables, init_db
 from jobhunter.domain.enrichment import (
     ActiveState,
@@ -801,9 +802,8 @@ def _run_detail_scraper(
     # ``detail_scraped_at IS NULL`` gate was redundant AND blocked the
     # post-``reset_job_stage("enrich")`` re-pickup.
     rows = conn.execute(
-        "SELECT jobs.url, jobs.title, jobs.site FROM jobs "
-        "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
-        f"WHERE (je.job_url IS NULL OR je.current_status = 'pending') "
+        f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
+        f"WHERE {db_module._ENRICHMENT_PENDING} "
         f"AND {skip_filter} "
         "ORDER BY jobs.site"
     ).fetchall()
@@ -954,9 +954,8 @@ def stream_detail(
             # ``_ENRICHMENT_PENDING`` so all three call sites use the
             # same signal.
             rows = conn.execute(
-                "SELECT jobs.url, jobs.title, jobs.site FROM jobs "
-                "LEFT JOIN job_enrichments je ON je.job_url = jobs.url "
-                f"WHERE (je.job_url IS NULL OR je.current_status = 'pending') "
+                f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
+                f"WHERE {db_module._ENRICHMENT_PENDING} "
                 f"AND {skip_filter} "
                 "ORDER BY jobs.site LIMIT 200"
             ).fetchall()

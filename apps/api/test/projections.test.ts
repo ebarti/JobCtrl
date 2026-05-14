@@ -442,4 +442,71 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       cleanup();
     }
   });
+
+  it("does not reset failed sources on partial discovery completion", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      for (let i = 0; i < 3; i += 1) {
+        insertEvent(dbPath, "DiscoveryRunFailed", `2026-05-13T00:0${i}:00Z`, {
+          runId: `prior-${i}`,
+          sourceId: "lever:acme",
+          errorClass: "TimeoutError",
+          retryable: true,
+        });
+      }
+      insertEvent(dbPath, "DiscoveryRunStarted", "2026-05-13T00:10:00Z", {
+        runId: "mixed-run",
+        sourceIds: ["greenhouse:acme", "lever:acme"],
+        startedAt: "2026-05-13T00:10:00Z",
+      });
+      insertEvent(dbPath, "DiscoveryRunFailed", "2026-05-13T00:10:20Z", {
+        runId: "mixed-run",
+        sourceId: "lever:acme",
+        errorClass: "TimeoutError",
+        retryable: true,
+      });
+      insertEvent(dbPath, "DiscoveryRunCompleted", "2026-05-13T00:11:00Z", {
+        runId: "mixed-run",
+        counts: { total: 1, newJobs: 1, observedJobs: 1 },
+        failedSourceIds: ["lever:acme"],
+        completedAt: "2026-05-13T00:11:00Z",
+      });
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const sources = new Map(
+          res.json().sourceHealth.map((source: { sourceId: string }) => [source.sourceId, source]),
+        );
+        expect(sources.get("greenhouse:acme")).toMatchObject({
+          sourceId: "greenhouse:acme",
+          runCount: 1,
+          consecutiveFailures: 0,
+          recommendedState: "normal",
+          lastRunId: "mixed-run",
+        });
+        expect(sources.get("lever:acme")).toMatchObject({
+          sourceId: "lever:acme",
+          runCount: 0,
+          failedRunCount: 4,
+          consecutiveFailures: 4,
+          recommendedState: "quarantined",
+          lastRunId: "mixed-run",
+          lastErrorClass: "TimeoutError",
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
 });

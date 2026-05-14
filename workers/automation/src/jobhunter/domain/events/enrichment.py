@@ -6,7 +6,7 @@ PR3 additions: ``PostingContentSnapshotCaptured``,
 ``PostingContentSnapshotFailed``, ``JobActiveStateChanged``,
 ``ContentDuplicateCandidateDetected``. Each event shape mirrors the
 §"Domain Events" table in
-``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`` so the
+``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`` so the
 Operations projections can stay exhaustive and the SSE invalidation
 router can stay parity-safe.
 """
