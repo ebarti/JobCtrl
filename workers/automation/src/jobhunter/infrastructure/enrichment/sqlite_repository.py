@@ -21,6 +21,23 @@ from jobhunter.domain.enrichment.aggregate import (
     JobEnrichment,
 )
 from jobhunter.domain.enrichment.entities import EnrichmentAttempt
+from jobhunter.domain.enrichment.snapshot_services import DedupeIndexEntry
+from jobhunter.domain.enrichment.snapshot_set import (
+    ContentDuplicateCandidate,
+    PostingSnapshotSet,
+    SnapshotCaptureFailure,
+)
+from jobhunter.domain.enrichment.snapshot_value_objects import (
+    ActiveState,
+    DuplicateEvidence,
+    DuplicateEvidenceKind,
+    FilterOverrideAudit,
+    PostingContentSnapshot,
+    QuarantineReason,
+    SnapshotApplyUrl,
+    SnapshotConfidence,
+    SnapshotDescriptionHash,
+)
 from jobhunter.domain.enrichment.value_objects import (
     ApplicationUrl,
     ExtractionTier,
@@ -206,3 +223,187 @@ class SqliteEnrichmentRepository:
             extraction_tier=ExtractionTier.from_optional(extraction_tier),
             updated_at=str(updated_at or ""),
         )
+
+
+class SqlitePostingSnapshotSetRepository:
+    """SQLite-backed ``PostingSnapshotSetRepository`` implementation."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def load(self, tenant_id: TenantId, job_id: JobId) -> PostingSnapshotSet | None:
+        row = self._conn.execute(
+            """
+            SELECT snapshot_set_json
+            FROM posting_snapshot_sets
+            WHERE tenant_id = ? AND job_url = ?
+            LIMIT 1
+            """,
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[0]
+        data = json.loads(raw_json) if raw_json else {}
+        return _snapshot_set_from_dict(data)
+
+    def save(self, snapshot_set: PostingSnapshotSet) -> None:
+        latest = snapshot_set.latest_snapshot
+        self._conn.execute(
+            """
+            INSERT INTO posting_snapshot_sets (
+                tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+                latest_active_state, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+                snapshot_set_json = excluded.snapshot_set_json,
+                latest_snapshot_version = excluded.latest_snapshot_version,
+                latest_active_state = excluded.latest_active_state,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(snapshot_set.tenant_id),
+                str(snapshot_set.job_id),
+                json.dumps(snapshot_set.to_dict(), sort_keys=True),
+                latest.snapshot_version if latest else 0,
+                snapshot_set.latest_active_state.value,
+                snapshot_set.updated_at,
+            ),
+        )
+        self._conn.commit()
+
+    def index_entries(
+        self,
+        tenant_id: TenantId,
+        *,
+        exclude_job_id: JobId | None = None,
+    ) -> list[DedupeIndexEntry]:
+        rows = self._conn.execute(
+            """
+            SELECT job_url, snapshot_set_json
+            FROM posting_snapshot_sets
+            WHERE tenant_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (str(tenant_id),),
+        ).fetchall()
+        entries: list[DedupeIndexEntry] = []
+        for row in rows:
+            job_url = row["job_url"] if isinstance(row, sqlite3.Row) else row[0]
+            if exclude_job_id is not None and str(job_url) == str(exclude_job_id):
+                continue
+            raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[1]
+            data = json.loads(raw_json) if raw_json else {}
+            snapshot_set = _snapshot_set_from_dict(data)
+            latest = snapshot_set.latest_snapshot
+            if latest is None:
+                continue
+            entries.append(
+                DedupeIndexEntry(
+                    candidate_job_id=str(snapshot_set.job_id),
+                    description_hash=latest.description_hash,
+                    apply_url=latest.apply_url,
+                )
+            )
+        return entries
+
+
+def _snapshot_set_from_dict(data: dict[str, Any]) -> PostingSnapshotSet:
+    tenant_id = TenantId(str(data.get("tenant_id") or LOCAL_TENANT))
+    job_id = JobId(str(data.get("job_id") or ""))
+    snapshots = tuple(
+        _snapshot_from_dict(item)
+        for item in data.get("snapshots", [])
+        if isinstance(item, dict)
+    )
+    failures = tuple(
+        _failure_from_dict(item)
+        for item in data.get("failures", [])
+        if isinstance(item, dict)
+    )
+    duplicate_candidates = tuple(
+        _duplicate_candidate_from_dict(item)
+        for item in data.get("duplicate_candidates", [])
+        if isinstance(item, dict)
+    )
+    latest_state = ActiveState.from_optional(data.get("latest_active_state")) or (
+        snapshots[-1].active_state if snapshots else ActiveState.UNKNOWN
+    )
+    return PostingSnapshotSet(
+        tenant_id=tenant_id,
+        job_id=job_id,
+        snapshots=snapshots,
+        failures=failures,
+        duplicate_candidates=duplicate_candidates,
+        latest_active_state=latest_state,
+        updated_at=str(data.get("updated_at") or ""),
+    )
+
+
+def _snapshot_from_dict(data: dict[str, Any]) -> PostingContentSnapshot:
+    filter_override_raw = data.get("filter_override")
+    filter_override = (
+        FilterOverrideAudit(
+            source_id=str(filter_override_raw.get("source_id") or ""),
+            overridden_filter=str(filter_override_raw.get("overridden_filter") or ""),
+            reason=str(filter_override_raw.get("reason") or ""),
+            requested_by=str(filter_override_raw.get("requested_by") or ""),
+            overridden_at=str(filter_override_raw.get("overridden_at") or ""),
+        )
+        if isinstance(filter_override_raw, dict)
+        else None
+    )
+    apply_url_raw = data.get("apply_url")
+    return PostingContentSnapshot(
+        snapshot_version=int(data.get("snapshot_version") or 1),
+        source_id=str(data.get("source_id") or "unknown"),
+        extraction_tier=str(data.get("extraction_tier") or "unknown"),
+        description_hash=SnapshotDescriptionHash(
+            value=str(data.get("description_hash") or "")
+        ),
+        apply_url=SnapshotApplyUrl(value=str(apply_url_raw)) if apply_url_raw else None,
+        active_state=ActiveState.from_optional(data.get("active_state"))
+        or ActiveState.UNKNOWN,
+        confidence=SnapshotConfidence.from_optional(data.get("confidence"))
+        or SnapshotConfidence.LOW,
+        quarantine_reason=QuarantineReason.from_optional(data.get("quarantine_reason"))
+        or QuarantineReason.NONE,
+        captured_at=str(data.get("captured_at") or ""),
+        raw_text_hash=str(data.get("raw_text_hash") or ""),
+        filter_override=filter_override,
+        evidence=tuple(str(item) for item in data.get("evidence", []) if item),
+    )
+
+
+def _failure_from_dict(data: dict[str, Any]) -> SnapshotCaptureFailure:
+    return SnapshotCaptureFailure(
+        error_class=str(data.get("error_class") or "UNKNOWN"),
+        message=str(data.get("message") or ""),
+        retryable=bool(data.get("retryable", True)),
+        failed_at=str(data.get("failed_at") or ""),
+        source_id=str(data.get("source_id") or "unknown"),
+    )
+
+
+def _duplicate_candidate_from_dict(data: dict[str, Any]) -> ContentDuplicateCandidate:
+    evidence = tuple(
+        _duplicate_evidence_from_dict(item)
+        for item in data.get("evidence", [])
+        if isinstance(item, dict)
+    )
+    return ContentDuplicateCandidate(
+        candidate_job_id=str(data.get("candidate_job_id") or ""),
+        evidence=evidence,
+        confidence=float(data.get("confidence") or 0),
+        detected_at=str(data.get("detected_at") or ""),
+    )
+
+
+def _duplicate_evidence_from_dict(data: dict[str, Any]) -> DuplicateEvidence:
+    return DuplicateEvidence(
+        kind=DuplicateEvidenceKind(
+            str(data.get("kind") or DuplicateEvidenceKind.DESCRIPTION_HASH_MATCH.value)
+        ),
+        matched_value=str(data.get("matched_value") or ""),
+        confidence=float(data.get("confidence") or 0),
+    )

@@ -157,6 +157,13 @@ WORKDAY_API_POLICY = SourcePolicy(
     max_run_frequency="PT6H",
 )
 
+ATS_API_POLICY = SourcePolicy(
+    policy_id="ats_api_canonical",
+    allowed_methods=(SourcePolicyMethod.API,),
+    max_pages_per_run=500,
+    max_run_frequency="PT6H",
+)
+
 
 @dataclass(frozen=True)
 class SourceQualityPlaceholder:

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.domain.discovery.source_registry import (
+    ATS_API_POLICY,
     BROAD_BOARD_LEAD_POLICY,
     SMART_EXTRACT_EXPERIMENTAL_POLICY,
     WORKDAY_API_POLICY,
@@ -281,6 +282,61 @@ def _jobspy_sources(search_cfg: dict | None) -> list[SourceRegistryEntry]:
     return entries
 
 
+def _configured_sources(sites_cfg: dict) -> list[SourceRegistryEntry]:
+    """Load explicit RFC-style source registry entries from ``sites.yaml``."""
+    entries: list[SourceRegistryEntry] = []
+    raw_sources = sites_cfg.get("sources", [])
+    if not isinstance(raw_sources, list):
+        return entries
+    for item in raw_sources:
+        if not isinstance(item, dict):
+            continue
+        source_id = str(item.get("id") or item.get("source_id") or "").strip()
+        display_name = str(
+            item.get("display_name") or item.get("name") or source_id
+        ).strip()
+        if not source_id or not display_name:
+            continue
+        kind = _enum_value(SourceKind, item.get("kind"), SourceKind.EMPLOYER_CAREERS_PAGE)
+        priority = _enum_value(
+            SourcePriority,
+            item.get("priority"),
+            SourcePriority.CANONICAL if kind is SourceKind.ATS_API else SourcePriority.STANDARD,
+        )
+        state = _enum_value(SourceState, item.get("state"), SourceState.EXPERIMENTAL)
+        seed_url = str(item.get("seed_url") or item.get("url") or "").strip()
+        adapter_config = {
+            key: value
+            for key, value in {
+                "name": display_name,
+                "url": seed_url,
+                "seed_url": seed_url,
+                "ats_kind": item.get("ats_kind"),
+                "board_token": item.get("board_token"),
+                "site": item.get("site"),
+                "board_name": item.get("board_name"),
+                "company": item.get("company"),
+            }.items()
+            if value not in (None, "")
+        }
+        entries.append(
+            _validated_source(
+                SourceRegistryEntry(
+                    tenant_id=LOCAL_TENANT,
+                    source_id=source_id,
+                    kind=kind,
+                    display_name=display_name,
+                    owner=str(item.get("owner") or "system"),
+                    priority=priority,
+                    state=state,
+                    policy=_policy_for_local_source(kind, source_id),
+                    adapter_config=adapter_config,
+                )
+            )
+        )
+    return entries
+
+
 def _enum_value(enum_type, value: object, fallback):
     try:
         return enum_type(str(value))
@@ -294,7 +350,7 @@ def _policy_for_local_source(kind: SourceKind, source_id: str):
     if kind is SourceKind.BROAD_BOARD:
         return BROAD_BOARD_LEAD_POLICY
     if kind is SourceKind.ATS_API:
-        return WORKDAY_API_POLICY
+        return ATS_API_POLICY
     return SMART_EXTRACT_EXPERIMENTAL_POLICY
 
 
@@ -402,6 +458,7 @@ def load_source_registry(
     active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
     active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()
     registry = [
+        *_configured_sources(active_sites_cfg),
         *_smart_extract_sources(active_sites_cfg),
         *_workday_sources(active_employers_cfg),
         *_jobspy_sources(active_search_cfg),
