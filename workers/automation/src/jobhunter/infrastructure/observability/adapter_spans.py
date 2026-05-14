@@ -1,7 +1,7 @@
 """OpenTelemetry spans for Discovery adapters, canonicalisation, and dedupe.
 
 These mirror the §"Observability" table in
-`docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md` so PR 4 can
+`docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md` so PR 4 can
 aggregate per-source quality without additional plumbing.
 
 Three context managers are exposed:

@@ -1,10 +1,15 @@
 # RFC: Ideal Job Search Discovery Setup
 
-> **Status:** proposed RFC; partially implemented.
+> **Status:** implemented in PR #61.
 > **Date:** 2026-05-12.
 > **Owner:** JobHunter.
 > **Scope:** job discovery, source indexing, content acquisition, deduplication,
 > source-quality measurement, and the handoff into enrichment/scoring.
+
+> **Delivery note:** PR #61 completed the remaining RFC implementation stack
+> for the accepted Barcelona/Spain tech-leadership v1 scope. Historical
+> sections below preserve the original RFC and staged plan; actual delivered
+> outcomes are summarized in `docs/delivered.md`.
 
 ## Decision Summary
 

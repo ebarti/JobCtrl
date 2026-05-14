@@ -1,8 +1,12 @@
 # Job Scoring Intelligence Plan
 
-> **Status:** proposed; partially implemented.
+> **Status:** implemented in PR #61.
 > **Research date:** 2026-05-10.
 > **Source:** user request to compare current JobHunter scoring against practical job-matching approaches and define the next PR stack.
+
+> **Delivery note:** PR #61 completed the scoring-intelligence stack described
+> here. Historical sections below preserve the original plan framing; actual
+> delivered outcomes are summarized in `docs/delivered.md`.
 
 ## Goal
 

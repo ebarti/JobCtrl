@@ -1,6 +1,6 @@
 """OpenTelemetry spans for PR3 Enrichment content acquisition.
 
-See ``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md``
+See ``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md``
 §"Observability". The four spans defined here cover content
 acquisition, rendered-browser extraction, the LLM fallback, and
 active verification. Span attributes intentionally omit raw posting

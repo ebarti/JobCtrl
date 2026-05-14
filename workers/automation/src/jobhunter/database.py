@@ -1527,7 +1527,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
     """Create ``job_source_observations``, ``job_canonical_identities``, and ``job_duplicate_links``.
 
     See PR 2 of the Job Search Discovery RFC
-    (`docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`).
+    (`docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`).
 
     The migration is purely additive — the legacy ``jobs.url`` PRIMARY
     KEY remains the canonical posting URL during the compatibility

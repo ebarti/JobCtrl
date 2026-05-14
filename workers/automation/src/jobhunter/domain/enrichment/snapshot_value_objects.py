@@ -1,6 +1,6 @@
 """Value objects for PR3 PostingSnapshotSet aggregate.
 
-See ``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md`` §"Domain
+See ``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`` §"Domain
 Model Additions" and §"Content Acquisition Pipeline".
 
 These value objects support the recurring detail-refresh / active-state /

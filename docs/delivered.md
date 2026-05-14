@@ -3,6 +3,52 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-05-14: Discovery RFC + Scoring Intelligence Completion
+
+Plans:
+
+- `docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md`
+- `docs/plans/implemented/2026-05-10-job-scoring-intelligence.md`
+
+Delivered (PR #61, integrating #59 and #60):
+
+- Discovery RFC production wiring: worker-created source locator candidates,
+  manual-capture queues, quarantine/source-control rows, and API-visible
+  product controls.
+- Manual-capture import bridge from the TypeScript API into the Python worker
+  import path, with Discovery identity/dedupe, Enrichment snapshot persistence,
+  active-state evidence, provenance, and scoring handoff eligibility.
+- Canonical ATS scheduling for Greenhouse/Lever/Ashby through Discovery use
+  cases, preserving partial successes and carrying failed source IDs into
+  Python and TypeScript source-quality projections.
+- Recurring posting snapshots and source-quality attribution from enrichment
+  using configured source IDs rather than display-site labels.
+- Barcelona/Spain tech-leadership acceptance fixture covering lead yield,
+  locator/manual-action queues, canonical verification, quarantine, source
+  quality, and scoring handoff evidence.
+- Criteria-aware scoring with persisted criteria snapshots, structured
+  eligibility/hard blockers, gaps, transferable signals, confidence, fit band,
+  and metadata-only score traces.
+- End-to-end score corrections through API, contracts, web mutation/UI, events,
+  projections, optimistic rollback, and SSE invalidation.
+- Local scoring evaluation harness with parse validity, band, blocker, ranking,
+  and feedback-agreement coverage.
+- Feedback-adjusted production ranking/selection plus downstream blocker gates
+  for tailoring, cover generation, apply acquisition, and targeted single-job
+  material generation.
+- Live-data hardening for legacy-enriched rows whose canonical enrichment stage
+  is already `succeeded`, keeping enrichment runners aligned with the stage
+  state machine.
+
+Validation:
+
+- PR review/QA gates passed for #59, #60, and final #61 with no unresolved
+  Blocker/High inline threads.
+- `corepack pnpm test`, `corepack pnpm check`, web unit tests, web type-level
+  tests, and Playwright e2e passed locally.
+- Real local `~/.jobhunter` smoke covered limited non-apply `discover`,
+  `enrich`, and `score` stages plus API/web rendering with `LANGFUSE_DISABLE=1`.
+
 ## 2026-05-07: Temporal + Worker Reliability Stack
 
 Plan: `docs/plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md`

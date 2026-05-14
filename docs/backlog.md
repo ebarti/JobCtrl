@@ -115,28 +115,6 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
   as a stop-gap. Promote keywords to a typed contract, expose
   filter/search, and add aggregate views.
 
-### Scoring Intelligence
-
-- Populate and expose the typed `ScoreBreakdown` dimensions
-  (`technical_fit` / `experience_fit` / `role_fit`,
-  `workers/automation/src/jobhunter/domain/scoring/value_objects.py:103-105`).
-  The scorer now parses and stores those components in `job_scores`, but the
-  projection contract still collapses them to `scoreReasoning: string`
-  (`packages/contracts/src/schemas.ts:566`) and the frontend
-  `ScoreBreakdown.tsx` just wraps free text. Add the typed dimensions and
-  keywords to the read model contract and render them in the jobs drawer.
-- Wire the user-correctable score path end-to-end. The `ScoreCorrected`
-  domain event and `JobScore.with_correction` exist; the frontend has a
-  handler (`apps/web/src/contexts/scoring/handlers.ts:13`); but
-  `useCorrectScoreMutation` throws `NotImplementedError`
-  (`apps/web/src/contexts/scoring/hooks/useCorrectScoreMutation.ts:19`),
-  there is no API endpoint in `apps/api/src/server.ts`, and no UI form.
-  Once the surface lands, define which signals (job text, employer, score
-  delta, rationale tokens) feed back into scoring for remaining jobs.
-- Execute the proposed scoring-intelligence stack in
-  `docs/plans/proposed/2026-05-10-job-scoring-intelligence.md`, starting with
-  exposing the persisted score evidence before changing the scorer's rubric.
-
 ### UI Quality
 
 - Spike the best long-term resume rendering path. Evaluate whether to keep

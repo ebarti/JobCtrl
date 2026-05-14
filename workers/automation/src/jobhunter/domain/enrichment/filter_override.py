@@ -1,6 +1,6 @@
 """Policy-compliant internal filter override logger.
 
-See ``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md``
+See ``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md``
 §"Policy For Content Acquisition" — "filter override" is the
 *product-internal* override of one of JobHunter's own filters
 (low-confidence extraction, short description, missing salary, ...)

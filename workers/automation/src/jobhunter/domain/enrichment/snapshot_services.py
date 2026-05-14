@@ -1,6 +1,6 @@
 """PR3 Enrichment domain services.
 
-See ``docs/plans/proposed/2026-05-12-job-search-discovery-rfc.md``
+See ``docs/plans/implemented/2026-05-12-job-search-discovery-rfc.md``
 §"Content Acquisition Pipeline", §"Deduplication Boundary", and
 §"Domain Events".
 
