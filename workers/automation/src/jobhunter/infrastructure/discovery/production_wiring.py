@@ -845,7 +845,11 @@ def _enqueue_manual_capture(
             originating_url = excluded.originating_url,
             source_id = excluded.source_id,
             reason = excluded.reason,
-            retry_context_json = excluded.retry_context_json,
+            retry_context_json = CASE
+                WHEN manual_capture_queue.status IN ('imported', 'dismissed')
+                    THEN manual_capture_queue.retry_context_json
+                ELSE excluded.retry_context_json
+            END,
             required_at = excluded.required_at,
             status = CASE
                 WHEN manual_capture_queue.status IN ('imported', 'dismissed')

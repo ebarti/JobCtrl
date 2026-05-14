@@ -209,10 +209,25 @@ def test_worker_queue_seeding_preserves_dismissed_manual_actions(
     conn.execute(
         """
         UPDATE manual_capture_queue
-        SET status = 'dismissed', dismissed_at = ?
+        SET status = 'dismissed',
+            dismissed_at = ?,
+            retry_context_json = ?
         WHERE item_id = ?
         """,
-        ("2026-05-12T10:00:00+00:00", item_id),
+        (
+            "2026-05-12T10:00:00+00:00",
+            json.dumps(
+                {
+                    "dismissal_source": "api",
+                    "manual_capture_provenance": {
+                        "source_kind": "user_mediated_capture",
+                        "captured_at": "2026-05-12T09:30:00+00:00",
+                    },
+                },
+                sort_keys=True,
+            ),
+            item_id,
+        ),
     )
     conn.commit()
 
@@ -227,6 +242,19 @@ def test_worker_queue_seeding_preserves_dismissed_manual_actions(
         (item_id,),
     ).fetchone()
     assert tuple(manual_row) == ("dismissed", "2026-05-12T10:00:00+00:00")
+    retry_context = json.loads(
+        conn.execute(
+            """
+            SELECT retry_context_json
+            FROM manual_capture_queue
+            WHERE item_id = ?
+            """,
+            (item_id,),
+        ).fetchone()["retry_context_json"]
+    )
+    assert retry_context["manual_capture_provenance"]["source_kind"] == (
+        "user_mediated_capture"
+    )
 
 
 def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
@@ -427,6 +455,58 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
         )
     finally:
         verify_conn.close()
+
+
+def test_worker_queue_reseeding_preserves_imported_manual_capture_provenance(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    seed_discovery_control_queues(conn, registry)
+    item_id = conn.execute(
+        """
+        SELECT item_id FROM manual_capture_queue
+        WHERE source_id = ?
+        """,
+        ("manual:protected-board",),
+    ).fetchone()["item_id"]
+
+    import_manual_capture_item(
+        conn,
+        ManualCaptureImport(
+            item_id=item_id,
+            capture_mode="saved_html",
+            captured_url="https://login.protected.example/jobs/vp-engineering",
+            content_text=_manual_capture_html(),
+            future_manual_action_required=True,
+        ),
+    )
+    imported_context = json.loads(
+        conn.execute(
+            """
+            SELECT retry_context_json
+            FROM manual_capture_queue
+            WHERE item_id = ?
+            """,
+            (item_id,),
+        ).fetchone()["retry_context_json"]
+    )
+    assert "manual_capture_provenance" in imported_context
+
+    seed_discovery_control_queues(conn, registry)
+
+    manual_row = conn.execute(
+        """
+        SELECT status, retry_context_json
+        FROM manual_capture_queue
+        WHERE item_id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    reseeded_context = json.loads(manual_row["retry_context_json"])
+    assert manual_row["status"] == "imported"
+    assert reseeded_context["manual_capture_provenance"] == (
+        imported_context["manual_capture_provenance"]
+    )
 
 
 def test_barcelona_spain_tech_leadership_acceptance_report_is_end_to_end(
