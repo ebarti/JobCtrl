@@ -96,6 +96,9 @@ interface JobListProjectionRow extends Record<string, unknown> {
   score_reasoning: string;
   score_version: number | null;
   scored_at: string | null;
+  score_criteria_json: string | null;
+  score_trace_json: string | null;
+  score_correction_json: string | null;
   current_stage: string;
   current_state: string;
   current_error_code: string | null;
@@ -120,6 +123,9 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   score_reasoning: string;
   score_version: number | null;
   scored_at: string | null;
+  score_criteria_json: string | null;
+  score_trace_json: string | null;
+  score_correction_json: string | null;
   stages_json: string;
   last_updated_at: string | null;
 }
@@ -386,6 +392,9 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     scoreReasoning: row.score_reasoning ?? "",
     scoreVersion: nullableNumber(row.score_version),
     scoredAt: nullableString(row.scored_at),
+    scoreCriteria: parseScoreCriteria(row.score_criteria_json),
+    scoreTrace: parseScoreTrace(row.score_trace_json),
+    scoreCorrection: parseScoreCorrection(row.score_correction_json),
     currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
     currentState: (isStageState(row.current_state) ? row.current_state : "pending") as StageState,
     errorCode: row.current_error_code,
@@ -407,11 +416,93 @@ function parseScoreBreakdown(value: string | null): ScoreBreakdown | null {
   }
   if (!isRecord(parsed)) return null;
   return {
-    technicalFit: scoreDimension(parsed.technicalFit),
-    experienceFit: scoreDimension(parsed.experienceFit),
-    roleFit: scoreDimension(parsed.roleFit),
+    technicalFit: scoreDimension(parsed.technical_fit ?? parsed.technicalFit),
+    experienceFit: scoreDimension(parsed.experience_fit ?? parsed.experienceFit),
+    roleFit: scoreDimension(parsed.role_fit ?? parsed.roleFit),
     reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+    fitBand: parseChoice(parsed.fit_band ?? parsed.fitBand, "plausible", [
+      "excellent",
+      "strong",
+      "plausible",
+      "stretch",
+      "poor",
+    ]),
+    confidence: parseChoice(parsed.confidence, "medium", ["high", "medium", "low"]),
+    eligibility: parseScoreEligibility(parsed.eligibility),
+    matchedSignals: parseStringList(parsed.matched_signals ?? parsed.matchedSignals),
+    missingSignals: parseStringList(parsed.missing_signals ?? parsed.missingSignals),
+    transferableSignals: parseStringList(parsed.transferable_signals ?? parsed.transferableSignals),
   };
+}
+
+function parseScoreEligibility(value: unknown): ScoreBreakdown["eligibility"] {
+  if (!isRecord(value)) {
+    return { status: "unknown", hardBlockers: [], warnings: [] };
+  }
+  return {
+    status: parseChoice(value.status, "unknown", ["eligible", "warning", "blocked", "unknown"]),
+    hardBlockers: parseStringList(value.hard_blockers ?? value.hardBlockers),
+    warnings: parseStringList(value.warnings),
+  };
+}
+
+function parseScoreCriteria(value: string | null): JobSummary["scoreCriteria"] {
+  const parsed = parseJsonRecord(value);
+  if (!parsed) return null;
+  return {
+    minFitScore: scoreDimension(parsed.min_fit_score ?? parsed.minFitScore),
+    criteriaText: stringField(parsed.criteria_text ?? parsed.criteriaText),
+    targetCriteria: stringField(parsed.target_criteria ?? parsed.targetCriteria),
+    criteriaVersion: stringField(parsed.criteria_version ?? parsed.criteriaVersion),
+  };
+}
+
+function parseScoreTrace(value: string | null): JobSummary["scoreTrace"] {
+  const parsed = parseJsonRecord(value);
+  if (!parsed) return null;
+  return {
+    promptVersion: stringField(parsed.prompt_version ?? parsed.promptVersion),
+    schemaVersion: stringField(parsed.schema_version ?? parsed.schemaVersion),
+    model: stringField(parsed.model),
+    criteriaVersion: stringField(parsed.criteria_version ?? parsed.criteriaVersion),
+    profileSnapshotVersion: Number(parsed.profile_snapshot_version ?? parsed.profileSnapshotVersion ?? 0),
+    parserWarnings: parseStringList(parsed.parser_warnings ?? parsed.parserWarnings),
+    correctionHistory: parseCorrectionList(parsed.correction_history ?? parsed.correctionHistory),
+  };
+}
+
+function parseScoreCorrection(value: string | null): JobSummary["scoreCorrection"] {
+  const parsed = parseJsonRecord(value);
+  return parsed ? parseCorrectionRecord(parsed) : null;
+}
+
+function parseCorrectionList(value: unknown): NonNullable<JobSummary["scoreTrace"]>["correctionHistory"] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map(parseCorrectionRecord);
+}
+
+function parseCorrectionRecord(value: Record<string, unknown>): NonNullable<JobSummary["scoreCorrection"]> {
+  const originalScore = nullableNumber(value.original_score ?? value.originalScore);
+  const correction: NonNullable<JobSummary["scoreCorrection"]> = {
+    correctedScore: Number(value.corrected_fit_score ?? value.correctedScore ?? value.corrected_score ?? 0),
+    rationale: stringField(value.rationale),
+    correctedBy: stringField(value.corrected_by ?? value.correctedBy),
+    correctedAt: stringField(value.corrected_at ?? value.correctedAt),
+  };
+  if (originalScore !== null) {
+    correction.originalScore = originalScore;
+  }
+  return correction;
+}
+
+function parseJsonRecord(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseScoreKeywords(value: string | null): string[] {
@@ -432,6 +523,25 @@ function parseScoreKeywords(value: string | null): string[] {
     keywords.push(keyword);
   }
   return keywords;
+}
+
+function parseStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = String(raw ?? "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function parseChoice<T extends string>(value: unknown, fallback: T, allowed: readonly T[]): T {
+  const text = String(value ?? "").trim() as T;
+  return allowed.includes(text) ? text : fallback;
 }
 
 function scoreDimension(value: unknown): number {

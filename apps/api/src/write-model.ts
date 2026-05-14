@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type {
   BulkJobMutationRequest,
+  CorrectScoreRequest,
   DeleteJobRequest,
   JobMutationResponse,
   MarkJobActionRequest,
@@ -232,6 +233,75 @@ export function cancelJobAction(db: SqliteDatabase, jobKey: string, runId = ""):
   return { jobUrl, stage: getStageState(db, jobUrl, stage) };
 }
 
+export function correctScore(
+  db: SqliteDatabase,
+  jobKey: string,
+  request: CorrectScoreRequest,
+): { jobUrl: string; version: number } {
+  const jobUrl = resolveJobUrl(db, jobKey);
+  if (!jobUrl) {
+    throw new InputError("Job not found.");
+  }
+  ensureJobScoresTable(db);
+  const latest = getRow<Record<string, unknown>>(
+    db,
+    `SELECT * FROM job_scores
+     WHERE tenant_id = 'local' AND job_url = ?
+     ORDER BY version DESC LIMIT 1`,
+    [jobUrl],
+  );
+  if (!latest) {
+    throw new InputError("Score correction requires an existing score.");
+  }
+  const now = new Date().toISOString();
+  const nextVersion = Number(latest.version ?? 0) + 1;
+  const correction = {
+    corrected_fit_score: request.correctedScore,
+    rationale: request.reason,
+    corrected_by: "local",
+    corrected_at: now,
+  };
+  const trace = appendCorrectionHistory(latest.trace_json, {
+    original_score: Number(latest.fit_score ?? 0),
+    corrected_score: request.correctedScore,
+    rationale: request.reason,
+    corrected_by: "local",
+    corrected_at: now,
+  });
+  db.prepare(
+    `INSERT INTO job_scores (
+       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       scored_at, correction_json, criteria_json, trace_json
+     ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    jobUrl,
+    nextVersion,
+    request.correctedScore,
+    String(latest.breakdown_json ?? "{}"),
+    String(latest.keywords_json ?? "[]"),
+    now,
+    JSON.stringify(correction),
+    String(latest.criteria_json ?? "{}"),
+    JSON.stringify(trace),
+  );
+  recordActionEvent(db, {
+    jobUrl,
+    stage: "score",
+    eventType: "ScoreCorrected",
+    level: "info",
+    message: "Score corrected from the local API.",
+    payload: {
+      tenantId: "local",
+      jobId: jobUrl,
+      originalScore: Number(latest.fit_score ?? 0),
+      correctedScore: request.correctedScore,
+      reason: request.reason,
+      correctedAt: now,
+    },
+  });
+  return { jobUrl, version: nextVersion };
+}
+
 export function softDeleteJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {
   return softDeleteJobs(db, { allMatching: false, jobKeys: [jobKey], reason: request.reason });
 }
@@ -431,6 +501,43 @@ function uniqueJobKeys(jobKeys: string[]): string[] {
   return Array.from(new Set(jobKeys.map((jobKey) => jobKey.trim()).filter(Boolean)));
 }
 
+function ensureJobScoresTable(db: SqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_scores (
+      job_url TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      fit_score INTEGER NOT NULL,
+      breakdown_json TEXT NOT NULL,
+      keywords_json TEXT NOT NULL,
+      scored_at TEXT NOT NULL,
+      correction_json TEXT,
+      criteria_json TEXT NOT NULL DEFAULT '{}',
+      trace_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (job_url, version)
+    )
+  `);
+  const columns = columnNames(db, "job_scores");
+  if (!columns.has("criteria_json")) {
+    db.exec("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!columns.has("trace_json")) {
+    db.exec("ALTER TABLE job_scores ADD COLUMN trace_json TEXT NOT NULL DEFAULT '{}'");
+  }
+}
+
+function appendCorrectionHistory(
+  rawTrace: unknown,
+  correction: Record<string, unknown>,
+): Record<string, unknown> {
+  const trace = parseObjectOrDefault(String(rawTrace ?? "{}"));
+  const history = Array.isArray(trace.correction_history) ? trace.correction_history : [];
+  return {
+    ...trace,
+    correction_history: [...history.filter(isRecord), correction],
+  };
+}
+
 function updateExistingJobColumns(db: SqliteDatabase, jobUrl: string, updates: Record<string, SqliteValue>): void {
   const names = columnNames(db, "jobs");
   const entries = Object.entries(updates).filter(([name]) => names.has(name));
@@ -439,6 +546,15 @@ function updateExistingJobColumns(db: SqliteDatabase, jobUrl: string, updates: R
   }
   const assignments = entries.map(([name]) => `${name} = ?`).join(", ");
   db.prepare(`UPDATE jobs SET ${assignments} WHERE url = ?`).run(...entries.map(([, value]) => value), jobUrl);
+}
+
+function parseObjectOrDefault(text: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 /**

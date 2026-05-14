@@ -8,6 +8,8 @@ import type {
   BulkJobMutationRequest,
   CancelJobActionRequest,
   CredentialKey,
+  CorrectScoreRequest,
+  CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
   DashboardSummary,
@@ -97,6 +99,7 @@ export interface ApiClientPort {
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   restoreJob(jobKey: string): Promise<JobMutationResponse>;
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
 

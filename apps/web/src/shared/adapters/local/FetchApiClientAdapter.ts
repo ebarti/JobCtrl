@@ -86,6 +86,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   restoreJobs(body: Parameters<JobHunterApiClient["restoreJobs"]>[0]) {
     return this.client.restoreJobs(body);
   }
+  correctScore(jobKey: string, body: Parameters<JobHunterApiClient["correctScore"]>[1]) {
+    return this.client.correctScore(jobKey, body);
+  }
   workflowRuns(query: Parameters<JobHunterApiClient["workflowRuns"]>[0] = {}) {
     return this.client.workflowRuns(query);
   }

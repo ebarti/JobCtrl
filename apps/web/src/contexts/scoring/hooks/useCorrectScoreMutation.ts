@@ -1,6 +1,11 @@
-import { useMutation, type UseMutationResult } from "@tanstack/react-query";
+import type { CorrectScoreResponse, JobDetail, JobSummary, PaginatedResponse } from "@jobhunter/contracts";
+import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
-import { NotImplementedError } from "../../../shared/lib/errors.js";
+import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { dashboardKeys } from "../../operations/dashboardKeys.js";
+import { jobsKeys } from "../../operations/jobsKeys.js";
 import type { JobId } from "../../operations/types.js";
 
 export interface CorrectScoreVariables {
@@ -10,13 +15,77 @@ export interface CorrectScoreVariables {
 }
 
 export function useCorrectScoreMutation(): UseMutationResult<
-  never,
+  CorrectScoreResponse,
   Error,
   CorrectScoreVariables
 > {
-  return useMutation({
-    mutationFn: () => {
-      throw new NotImplementedError("useCorrectScoreMutation");
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation(
+    createOptimisticMutation<CorrectScoreResponse, CorrectScoreVariables>(queryClient, {
+      mutationFn: ({ jobId, correctedScore, reason }) =>
+        api.correctScore(jobId, { correctedScore, reason }),
+      optimisticUpdates: ({ jobId }) => [
+        {
+          queryKey: jobsKeys.detail(tenantId, jobId),
+          patch: patchDetailScore,
+        },
+        {
+          queryKey: jobsKeys.lists(tenantId),
+          exact: false,
+          patch: patchListScore,
+        },
+      ],
+      settle: ({ jobId }) => [
+        jobsKeys.detail(tenantId, jobId),
+        jobsKeys.lists(tenantId),
+        dashboardKeys.summary(tenantId),
+      ],
+    }),
+  );
+}
+
+function patchDetailScore(current: unknown, variables: CorrectScoreVariables): unknown {
+  if (!isJobDetail(current)) return current;
+  return {
+    ...current,
+    job: patchJobSummary(current.job, variables),
+  };
+}
+
+function patchListScore(current: unknown, variables: CorrectScoreVariables): unknown {
+  if (!isJobsPage(current)) return current;
+  return {
+    ...current,
+    items: current.items.map((job) =>
+      job.jobKey === variables.jobId ? patchJobSummary(job, variables) : job,
+    ),
+  };
+}
+
+function patchJobSummary(job: JobSummary, variables: CorrectScoreVariables): JobSummary {
+  return {
+    ...job,
+    fitScore: variables.correctedScore,
+    scoreCorrection: {
+      correctedScore: variables.correctedScore,
+      rationale: variables.reason,
+      correctedBy: "local",
+      correctedAt: new Date().toISOString(),
     },
-  });
+  };
+}
+
+function isJobDetail(value: unknown): value is JobDetail {
+  return value !== null && typeof value === "object" && "job" in value;
+}
+
+function isJobsPage(value: unknown): value is PaginatedResponse<JobSummary> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "items" in value &&
+    Array.isArray((value as PaginatedResponse<JobSummary>).items)
+  );
 }

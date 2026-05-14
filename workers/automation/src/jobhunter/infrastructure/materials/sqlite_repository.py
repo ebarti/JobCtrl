@@ -135,7 +135,16 @@ class SqliteMaterialsRepository:
         # this adapter stays self-contained.
         score_join = (
             "LEFT JOIN ("
-            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score "
+            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score, "
+            "CASE WHEN json_valid(s.breakdown_json) "
+            "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
+            "ELSE '' END AS sj_eligibility_status, "
+            "CASE WHEN json_valid(s.breakdown_json) "
+            "THEN COALESCE("
+            "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
+            "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
+            "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
+            "0) ELSE 0 END AS sj_hard_blocker_count "
             "FROM job_scores s "
             "INNER JOIN ("
             "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
@@ -162,12 +171,16 @@ class SqliteMaterialsRepository:
         if retailor:
             where = (
                 "j.full_description IS NOT NULL "
-                "AND COALESCE(sj.sj_fit_score, j.fit_score) >= ?"
+                "AND COALESCE(sj.sj_fit_score, j.fit_score) >= ? "
+                "AND COALESCE(sj.sj_eligibility_status, '') != 'blocked' "
+                "AND COALESCE(sj.sj_hard_blocker_count, 0) = 0"
             )
         else:
             where = (
                 "j.full_description IS NOT NULL "
                 "AND COALESCE(sj.sj_fit_score, j.fit_score) >= ? "
+                "AND COALESCE(sj.sj_eligibility_status, '') != 'blocked' "
+                "AND COALESCE(sj.sj_hard_blocker_count, 0) = 0 "
                 "AND mj.mj_resume_status IS NULL"
             )
         params.append(int(min_score))
@@ -194,7 +207,16 @@ class SqliteMaterialsRepository:
         params: list[Any] = [str(tenant_id)]
         score_join = (
             "LEFT JOIN ("
-            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score "
+            "SELECT s.job_url AS sj_job_url, s.fit_score AS sj_fit_score, "
+            "CASE WHEN json_valid(s.breakdown_json) "
+            "THEN LOWER(COALESCE(CAST(json_extract(s.breakdown_json, '$.eligibility.status') AS TEXT), '')) "
+            "ELSE '' END AS sj_eligibility_status, "
+            "CASE WHEN json_valid(s.breakdown_json) "
+            "THEN COALESCE("
+            "json_array_length(s.breakdown_json, '$.eligibility.hard_blockers'), "
+            "json_array_length(s.breakdown_json, '$.eligibility.hardBlockers'), "
+            "json_array_length(s.breakdown_json, '$.eligibility.blockers'), "
+            "0) ELSE 0 END AS sj_hard_blocker_count "
             "FROM job_scores s "
             "INNER JOIN ("
             "SELECT job_url, MAX(version) AS max_version FROM job_scores GROUP BY job_url"
@@ -224,6 +246,8 @@ class SqliteMaterialsRepository:
         sql = (
             f"SELECT j.url FROM jobs j {score_join} {materials_join} "
             "WHERE COALESCE(sj.sj_fit_score, j.fit_score) >= ? "
+            "AND COALESCE(sj.sj_eligibility_status, '') != 'blocked' "
+            "AND COALESCE(sj.sj_hard_blocker_count, 0) = 0 "
             "AND mj.mj_cover_status IS NULL "
             "ORDER BY COALESCE(sj.sj_fit_score, j.fit_score) DESC, j.discovered_at DESC"
         )

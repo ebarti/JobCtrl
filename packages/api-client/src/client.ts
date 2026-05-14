@@ -8,6 +8,8 @@ import type {
   BulkJobMutationRequest,
   CancelJobActionRequest,
   CredentialKey,
+  CorrectScoreRequest,
+  CorrectScoreResponse,
   CredentialsResponse,
   CredentialUpdateRequest,
   DashboardSummary,
@@ -172,6 +174,10 @@ export class JobHunterApiClient {
 
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
     return this.post("/v1/jobs/bulk-restore", body);
+  }
+
+  correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/score-correction`, body);
   }
 
   workflowRuns(

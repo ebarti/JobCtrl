@@ -15,6 +15,7 @@ import pytest
 
 from jobhunter.database import init_db
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.scoring import ScoringCriteria
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import SqliteScoreRepository
 from jobhunter.scoring import scorer as scorer_module
@@ -70,6 +71,16 @@ class _ScriptedLlm:
 
     def ask(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError("ScoreJobUseCase should not call ask()")
+
+
+class _CriteriaProvider:
+    def __init__(self, criteria: ScoringCriteria) -> None:
+        self.criteria = criteria
+        self.loaded = False
+
+    def load(self, profile_snapshot) -> ScoringCriteria:
+        self.loaded = True
+        return self.criteria
 
 
 @pytest.fixture()
@@ -221,6 +232,54 @@ def test_run_scoring_persists_via_repository_only(
         (url,),
     ).fetchone()
     assert stage_row["state"] == "succeeded"
+
+
+def test_run_scoring_loads_and_persists_local_scoring_criteria(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    url = "https://example.com/job/criteria"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "fit_band": "strong",
+            "confidence": "medium",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "ok",
+        }
+    )
+    criteria = ScoringCriteria(
+        min_fit_score=8,
+        criteria_text="Favor platform reliability leadership.",
+        target_criteria="Remote infrastructure roles.",
+        profile_preferences={"target_work_models": "remote"},
+    )
+    provider = _CriteriaProvider(criteria)
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    monkeypatch.setattr(scorer_module, "LocalScoringCriteriaProvider", lambda: provider)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+    )
+
+    assert summary["scored"] == 1
+    assert provider.loaded is True
+    loaded = repo.load(LOCAL_TENANT, JobId(url))
+    assert loaded is not None
+    assert loaded.criteria.criteria_text == "Favor platform reliability leadership."
+    assert loaded.criteria.target_criteria == "Remote infrastructure roles."
+    assert loaded.trace.criteria_version == criteria.criteria_version
 
 
 def test_run_scoring_records_failure_state_when_llm_returns_garbage(

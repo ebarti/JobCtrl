@@ -1,0 +1,23 @@
+[
+  {
+    "job_id": "synthetic-platform-lead",
+    "expected_fit_band": "excellent",
+    "known_blockers": [],
+    "corrected_score": 9,
+    "ideal_rank": 1
+  },
+  {
+    "job_id": "synthetic-onsite-sponsorship-blocker",
+    "expected_fit_band": "stretch",
+    "known_blockers": ["candidate requires sponsorship but posting says sponsorship is unavailable"],
+    "corrected_score": 3,
+    "ideal_rank": 3
+  },
+  {
+    "job_id": "synthetic-adjacent-infra-role",
+    "expected_fit_band": "strong",
+    "known_blockers": [],
+    "corrected_score": 8,
+    "ideal_rank": 2
+  }
+]

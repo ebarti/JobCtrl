@@ -16,6 +16,9 @@ export interface JobScoredPayload {
   readonly keywords: readonly string[];
   readonly version: number;
   readonly scoredAt: string;
+  readonly fitBand?: string;
+  readonly confidence?: string;
+  readonly eligibility?: Record<string, unknown>;
 }
 
 export type JobScored = DomainEvent<"JobScored", JobScoredPayload>;

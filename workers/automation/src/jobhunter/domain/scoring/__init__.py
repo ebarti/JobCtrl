@@ -8,14 +8,17 @@ ports owned by the Scoring context. Adapters live under
 """
 
 from jobhunter.domain.scoring.value_objects import (
+    EligibilityAssessment,
     FitScore,
     MatchedKeywords,
     ScoreBreakdown,
     ScoreCorrection,
+    ScoreTrace,
     ScoringCriteria,
 )
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.services import (
+    ConstraintChecker,
     EligibilityChecker,
     ScoreParser,
     ScoreParseResult,
@@ -32,12 +35,15 @@ from jobhunter.domain.scoring.retrieval import (
 )
 
 __all__ = [
+    "EligibilityAssessment",
     "FitScore",
     "MatchedKeywords",
     "ScoreBreakdown",
     "ScoreCorrection",
+    "ScoreTrace",
     "ScoringCriteria",
     "JobScore",
+    "ConstraintChecker",
     "EligibilityChecker",
     "ScoreParser",
     "ScoreParseResult",

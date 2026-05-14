@@ -70,6 +70,8 @@ from jobhunter.database import (
     _LATEST_APPLY_RUN_JOIN,
     _LATEST_MATERIALS_JOIN,
     _LATEST_SCORE_JOIN,
+    _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
+    _order_rows_by_feedback,
     get_connection,
 )
 from jobhunter.domain.apply.services import ApplyPromptBuilder
@@ -206,6 +208,7 @@ def acquire_job(
                 WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
                        OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
                   AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
+                  AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                 LIMIT 1
                 """,
                 (target_url, target_url, like, like),
@@ -227,7 +230,7 @@ def acquire_job(
                     "AND jobs.url NOT LIKE ?" for _ in blocked_patterns
                 )
                 params.extend(blocked_patterns)
-            row = conn.execute(
+            rows = conn.execute(
                 f"""
                 SELECT {common_columns}
                 FROM jobs {common_joins}
@@ -246,13 +249,15 @@ def acquire_job(
                        LIMIT 1), 0
                   ) < ?
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
+                  AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                   {site_clause}
                   {url_clauses}
                 ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url
-                LIMIT 1
                 """,
                 params,
-            ).fetchone()
+            ).fetchall()
+            ordered_rows = _order_rows_by_feedback(conn, rows)
+            row = ordered_rows[0] if ordered_rows else None
 
         if not row:
             conn.rollback()

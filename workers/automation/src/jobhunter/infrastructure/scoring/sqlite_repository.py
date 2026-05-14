@@ -27,6 +27,8 @@ from jobhunter.domain.scoring.value_objects import (
     MatchedKeywords,
     ScoreBreakdown,
     ScoreCorrection,
+    ScoreTrace,
+    ScoringCriteria,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 
@@ -69,7 +71,7 @@ class SqliteScoreRepository:
         row = self._conn.execute(
             """
             SELECT job_url, version, fit_score, breakdown_json, keywords_json,
-                   scored_at, correction_json
+                   scored_at, correction_json, criteria_json, trace_json
             FROM job_scores
             WHERE job_url = ? AND tenant_id = ?
             ORDER BY version DESC
@@ -113,7 +115,8 @@ class SqliteScoreRepository:
         rows = self._conn.execute(
             """
             SELECT s.job_url, s.version, s.fit_score, s.breakdown_json,
-                   s.keywords_json, s.scored_at, s.correction_json
+                   s.keywords_json, s.scored_at, s.correction_json,
+                   s.criteria_json, s.trace_json
             FROM job_scores s
             INNER JOIN (
                 SELECT job_url, MAX(version) AS max_version
@@ -153,8 +156,8 @@ class SqliteScoreRepository:
             """
             INSERT INTO job_scores (
                 job_url, version, tenant_id, fit_score, breakdown_json,
-                keywords_json, scored_at, correction_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                keywords_json, scored_at, correction_json, criteria_json, trace_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(score.job_id),
@@ -169,6 +172,8 @@ class SqliteScoreRepository:
                     if score.correction
                     else None
                 ),
+                json.dumps(score.criteria.to_dict(), sort_keys=True),
+                json.dumps(score.trace.to_dict(), sort_keys=True),
             ),
         )
         self._conn.commit()
@@ -187,12 +192,31 @@ class SqliteScoreRepository:
             keywords_json = row["keywords_json"]
             scored_at = row["scored_at"]
             correction_json = row["correction_json"]
+            criteria_json = row["criteria_json"] if "criteria_json" in row.keys() else None
+            trace_json = row["trace_json"] if "trace_json" in row.keys() else None
         else:
-            job_url, version, fit_score, breakdown_json, keywords_json, scored_at, correction_json = row
+            if len(row) >= 9:
+                (
+                    job_url,
+                    version,
+                    fit_score,
+                    breakdown_json,
+                    keywords_json,
+                    scored_at,
+                    correction_json,
+                    criteria_json,
+                    trace_json,
+                ) = row
+            else:
+                job_url, version, fit_score, breakdown_json, keywords_json, scored_at, correction_json = row
+                criteria_json = None
+                trace_json = None
 
         breakdown_data = json.loads(breakdown_json) if breakdown_json else {}
         keywords_data = json.loads(keywords_json) if keywords_json else []
         correction_data = json.loads(correction_json) if correction_json else None
+        criteria_data = json.loads(criteria_json) if criteria_json else None
+        trace_data = json.loads(trace_json) if trace_json else None
 
         return JobScore(
             tenant_id=tenant_id or LOCAL_TENANT,
@@ -202,5 +226,7 @@ class SqliteScoreRepository:
             breakdown=ScoreBreakdown.from_dict(breakdown_data),
             matched_keywords=MatchedKeywords.from_iterable(keywords_data),
             scored_at=str(scored_at),
+            criteria=ScoringCriteria.from_dict(criteria_data),
+            trace=ScoreTrace.from_dict(trace_data),
             correction=ScoreCorrection.from_dict(correction_data) if correction_data else None,
         )

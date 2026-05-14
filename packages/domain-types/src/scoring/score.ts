@@ -47,6 +47,18 @@ export interface ScoreBreakdown {
   readonly experienceFit: number;
   readonly roleFit: number;
   readonly reasoning: string;
+  readonly fitBand: "excellent" | "strong" | "plausible" | "stretch" | "poor";
+  readonly confidence: "high" | "medium" | "low";
+  readonly eligibility: ScoreEligibility;
+  readonly matchedSignals: readonly string[];
+  readonly missingSignals: readonly string[];
+  readonly transferableSignals: readonly string[];
+}
+
+export interface ScoreEligibility {
+  readonly status: "eligible" | "warning" | "blocked" | "unknown";
+  readonly hardBlockers: readonly string[];
+  readonly warnings: readonly string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +87,19 @@ export interface ScoreCorrection {
 export interface ScoringCriteria {
   readonly minFitScore: number;
   readonly criteriaText: string;
+  readonly targetCriteria: string;
+  readonly profilePreferences: Readonly<Record<string, unknown>>;
+  readonly criteriaVersion: string;
+}
+
+export interface ScoreTrace {
+  readonly promptVersion: string;
+  readonly schemaVersion: string;
+  readonly model: string;
+  readonly criteriaVersion: string;
+  readonly profileSnapshotVersion: number;
+  readonly parserWarnings: readonly string[];
+  readonly correctionHistory: readonly ScoreCorrection[];
 }
 
 // ---------------------------------------------------------------------------
@@ -89,5 +114,7 @@ export interface JobScore {
   readonly breakdown: ScoreBreakdown;
   readonly matchedKeywords: MatchedKeywords;
   readonly scoredAt: string;
+  readonly criteria: ScoringCriteria;
+  readonly trace: ScoreTrace;
   readonly correction: ScoreCorrection | null;
 }

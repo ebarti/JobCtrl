@@ -63,6 +63,12 @@ Important local files include:
 Do not commit profile data, keys, generated resumes, cover letters, PDFs,
 browser profiles, logs, or SQLite databases.
 
+Job scoring is an applicant-side triage aid. Scores, criteria snapshots,
+eligibility blockers, confidence, trace metadata, and user corrections are
+stored locally so you can inspect why a job was ranked or gated. Do not use
+JobHunter as an employer-side candidate screening or selection tool without a
+separate legal, bias-audit, validation, and notice process.
+
 The local TypeScript API binds to `127.0.0.1` by default. Binding it to a
 non-loopback interface requires an explicit opt-in because it exposes local job,
 profile, and artifact metadata.

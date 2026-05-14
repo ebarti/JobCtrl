@@ -9,6 +9,7 @@ to seed the backfill path.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -186,6 +187,34 @@ def _seed_with_score(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> 
     return url
 
 
+def _seed_blocked_latest_score(conn: sqlite3.Connection, url: str, fit_score: int = 9) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            job_url, version, tenant_id, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        """,
+        (
+            url,
+            fit_score,
+            json.dumps(
+                {
+                    "reasoning": "Strong match with a hard blocker.",
+                    "eligibility": {
+                        "status": "blocked",
+                        "hard_blockers": ["Requires sponsorship."],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            "2026-05-14T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+
 def test_list_pending_tailor_returns_jobs_without_materials(conn: sqlite3.Connection) -> None:
     url_pending = _seed_with_score(conn, "https://example.com/pending")
     url_done = _seed_with_score(conn, "https://example.com/done")
@@ -194,6 +223,18 @@ def test_list_pending_tailor_returns_jobs_without_materials(conn: sqlite3.Connec
 
     pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7)
     assert pending == [JobId(url_pending)]
+
+
+def test_list_pending_tailor_excludes_blocked_scores(conn: sqlite3.Connection) -> None:
+    url_allowed = _seed_with_score(conn, "https://example.com/allowed")
+    url_blocked = _seed_with_score(conn, "https://example.com/blocked")
+    _seed_blocked_latest_score(conn, url_blocked, fit_score=10)
+    repo = SqliteMaterialsRepository(conn)
+
+    pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7)
+
+    assert JobId(url_allowed) in pending
+    assert JobId(url_blocked) not in pending
 
 
 def test_list_pending_tailor_with_retailor_includes_already_done(conn: sqlite3.Connection) -> None:
@@ -221,6 +262,20 @@ def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
     assert pending == [JobId(url_resume_only)]
+
+
+def test_list_pending_cover_excludes_blocked_scores(conn: sqlite3.Connection) -> None:
+    url_allowed = _seed_with_score(conn, "https://example.com/cover-allowed")
+    url_blocked = _seed_with_score(conn, "https://example.com/cover-blocked")
+    _seed_blocked_latest_score(conn, url_blocked, fit_score=10)
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(_approved(url_allowed))
+    repo.save(_approved(url_blocked))
+
+    pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
+
+    assert JobId(url_allowed) in pending
+    assert JobId(url_blocked) not in pending
 
 
 def test_list_pending_pdf_returns_jobs_missing_a_pdf(conn: sqlite3.Connection) -> None:
