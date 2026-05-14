@@ -542,6 +542,39 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
+.manual-capture-row {
+  align-items: start;
+}
+
+.manual-capture-body {
+  gap: 8px;
+}
+
+.manual-capture-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.manual-capture-form .wide,
+.manual-capture-form button {
+  grid-column: 1 / -1;
+}
+
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.checkline input {
+  width: 14px;
+  height: 14px;
+}
+
 .discovery-preview-row {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -655,12 +688,16 @@ textarea {
 }
 
 .data-row.job {
-  grid-template-columns: 28px 70px minmax(180px, 1.25fr) minmax(160px, 0.85fr) minmax(150px, 0.85fr) 90px 105px 110px;
+  grid-template-columns:
+    28px 70px minmax(180px, 1.25fr) minmax(160px, 0.85fr)
+    minmax(150px, 0.85fr) 90px 105px 110px;
   gap: 14px;
 }
 
 .data-row.artifact {
-  grid-template-columns: 28px minmax(260px, 1.1fr) minmax(140px, 0.55fr) 150px 98px 84px 110px 76px;
+  grid-template-columns:
+    28px minmax(260px, 1.1fr) minmax(140px, 0.55fr)
+    150px 98px 84px 110px 76px;
   gap: 14px;
 }
 
@@ -1764,6 +1801,7 @@ textarea {
   .discovery-source-row,
   .discovery-review-row,
   .discovery-preview-row,
+  .manual-capture-form,
   .funnel-row,
   .detail-list div,
   .section .mini-row {
