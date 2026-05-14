@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
+from jobhunter.database import get_jobs_by_stage, init_db
 from jobhunter.infrastructure.scoring import collect_feedback_signals, rank_jobs_with_feedback
+from jobhunter.state import record_job_event
 
 
 def test_feedback_signals_use_corrections_and_job_actions_transparently() -> None:
@@ -58,3 +61,51 @@ def test_feedback_signals_use_corrections_and_job_actions_transparently() -> Non
     assert "Better leadership fit" in ranked[0].evidence[0]
     assert ranked[1].feedback_adjustment < 0
     assert "Skipped after review" in ranked[1].evidence[0]
+
+
+def test_feedback_adjustments_affect_downstream_selector_order(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "jobhunter.db")
+    corrected = "https://example.com/corrected"
+    skipped = "https://example.com/skipped"
+    for url in (corrected, skipped):
+        conn.execute(
+            "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (url, "Engineer", "Acme", "Need Python.", "2026-05-14T00:00:00+00:00"),
+        )
+    conn.execute(
+        """INSERT INTO job_scores (
+          job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
+          correction_json, criteria_json, trace_json
+        ) VALUES (?, 2, 'local', 9, ?, '["python"]', ?, ?, '{}', ?)""",
+        (
+            corrected,
+            json.dumps({"reasoning": "Corrected after review.", "eligibility": {"status": "eligible"}}),
+            "2026-05-14T10:00:00+00:00",
+            json.dumps({"corrected_fit_score": 9, "rationale": "Better leadership fit."}),
+            json.dumps({"correction_history": [{"original_score": 6, "corrected_score": 9}]}),
+        ),
+    )
+    conn.execute(
+        """INSERT INTO job_scores (
+          job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at,
+          correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', 10, ?, '["python"]', ?, NULL, '{}', '{}')""",
+        (
+            skipped,
+            json.dumps({"reasoning": "High raw score.", "eligibility": {"status": "eligible"}}),
+            "2026-05-14T10:00:00+00:00",
+        ),
+    )
+    record_job_event(
+        conn,
+        skipped,
+        "tailor",
+        "StageSkipped",
+        message="Skipped after manual review.",
+    )
+    conn.commit()
+
+    rows = get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=1)
+
+    assert [row["url"] for row in rows] == [corrected]

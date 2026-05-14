@@ -30,4 +30,39 @@ describe("<ScoreCorrectionControl>", () => {
       }),
     );
   });
+
+  it("blocks empty corrected scores before optimistic mutation", async () => {
+    const user = userEvent.setup();
+    const correctScore = vi.fn(async () =>
+      makeJobDetail({ ...sampleJob, fitScore: 6 }),
+    );
+    renderWithProviders(
+      <ScoreCorrectionControl jobId="job-1" currentScore={8} />,
+      { ports: buildTestPorts({ api: { correctScore } }) },
+    );
+
+    await user.clear(screen.getByLabelText("Correct score"));
+    await user.type(screen.getByLabelText("Reason"), "Manual review found a mismatch.");
+
+    expect(screen.getByRole("button", { name: "Save score correction" })).toBeDisabled();
+    expect(correctScore).not.toHaveBeenCalled();
+  });
+
+  it("blocks out-of-range corrected scores before optimistic mutation", async () => {
+    const user = userEvent.setup();
+    const correctScore = vi.fn(async () =>
+      makeJobDetail({ ...sampleJob, fitScore: 6 }),
+    );
+    renderWithProviders(
+      <ScoreCorrectionControl jobId="job-1" currentScore={8} />,
+      { ports: buildTestPorts({ api: { correctScore } }) },
+    );
+
+    await user.clear(screen.getByLabelText("Correct score"));
+    await user.type(screen.getByLabelText("Correct score"), "11");
+    await user.type(screen.getByLabelText("Reason"), "Manual review found a mismatch.");
+
+    expect(screen.getByRole("button", { name: "Save score correction" })).toBeDisabled();
+    expect(correctScore).not.toHaveBeenCalled();
+  });
 });

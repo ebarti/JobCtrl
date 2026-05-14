@@ -48,6 +48,34 @@ def _insert_ready_job(conn, *, url: str = "https://example.com/job") -> None:
     conn.commit()
 
 
+def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            job_url, version, tenant_id, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        """,
+        (
+            url,
+            fit_score,
+            json.dumps(
+                {
+                    "reasoning": "Strong match with a hard blocker.",
+                    "eligibility": {
+                        "status": "blocked",
+                        "hard_blockers": ["No sponsorship."],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            "2026-05-14T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+
 def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
     """The lock now lives on ``job_stage_states.apply.state == 'running'``.
     Legacy ``jobs.apply_status`` stays NULL."""
@@ -87,6 +115,39 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
 
         payload = json.loads(evt["payload_json"])
         assert payload["run_id"] == job["apply_run_id"]
+    finally:
+        close_connection(db_path)
+
+
+def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn, url="https://example.com/allowed")
+    _insert_ready_job(conn, url="https://example.com/blocked")
+    _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        job = acquire_job(min_score=7, worker_id=1)
+        assert job is not None
+        assert job["url"] == "https://example.com/allowed"
+    finally:
+        close_connection(db_path)
+
+
+def test_targeted_apply_rejects_blocked_candidate(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn, url="https://example.com/blocked")
+    _insert_blocked_score(conn, "https://example.com/blocked", fit_score=10)
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        assert acquire_job(target_url="https://example.com/blocked", worker_id=1) is None
     finally:
         close_connection(db_path)
 

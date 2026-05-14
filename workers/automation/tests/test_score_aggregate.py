@@ -12,6 +12,7 @@ import pytest
 
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring import (
+    EligibilityAssessment,
     FitScore,
     JobScore,
     MatchedKeywords,
@@ -292,3 +293,17 @@ def test_eligibility_checker_threshold() -> None:
     criteria = ScoringCriteria(min_fit_score=7)
     assert checker.is_eligible(FitScore.create(7), criteria) is True
     assert checker.is_eligible(FitScore.create(6), criteria) is False
+
+
+def test_eligibility_checker_rejects_hard_blockers_despite_high_score() -> None:
+    checker = EligibilityChecker()
+    criteria = ScoringCriteria(min_fit_score=7)
+
+    assert (
+        checker.is_eligible(
+            FitScore.create(9),
+            criteria,
+            EligibilityAssessment(status="blocked", hard_blockers=("Requires sponsorship.",)),
+        )
+        is False
+    )

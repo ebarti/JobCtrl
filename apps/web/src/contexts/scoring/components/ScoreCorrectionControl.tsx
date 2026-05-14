@@ -12,13 +12,18 @@ export function ScoreCorrectionControl({ jobId, currentScore }: ScoreCorrectionC
   const [correctedScore, setCorrectedScore] = useState(String(currentScore ?? 7));
   const [reason, setReason] = useState("");
   const mutation = useCorrectScoreMutation();
-  const disabled = mutation.isPending || !reason.trim();
+  const parsedScore = Number(correctedScore);
+  const scoreIsValid = Number.isInteger(parsedScore) && parsedScore >= 1 && parsedScore <= 10;
+  const disabled = mutation.isPending || !reason.trim() || !scoreIsValid;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (disabled) {
+      return;
+    }
     mutation.mutate({
       jobId,
-      correctedScore: Number(correctedScore),
+      correctedScore: parsedScore,
       reason: reason.trim(),
     });
   };
@@ -30,8 +35,10 @@ export function ScoreCorrectionControl({ jobId, currentScore }: ScoreCorrectionC
         <input
           min={1}
           max={10}
+          step={1}
           type="number"
           value={correctedScore}
+          aria-invalid={!scoreIsValid}
           onChange={(event) => setCorrectedScore(event.target.value)}
         />
       </label>

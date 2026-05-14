@@ -34,6 +34,7 @@ from jobhunter.database import (
 )
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring import (
+    EligibilityAssessment,
     FitScore,
     JobScore,
     MatchedKeywords,
@@ -57,7 +58,13 @@ def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
     conn.commit()
 
 
-def _save_score(conn: sqlite3.Connection, url: str, fit: int = 8) -> None:
+def _save_score(
+    conn: sqlite3.Connection,
+    url: str,
+    fit: int = 8,
+    *,
+    eligibility: EligibilityAssessment | None = None,
+) -> None:
     """Save a JobScore through the new repository — leaves jobs.fit_score NULL."""
     repo = SqliteScoreRepository(conn)
     repo.save(
@@ -65,7 +72,7 @@ def _save_score(conn: sqlite3.Connection, url: str, fit: int = 8) -> None:
             tenant_id=LOCAL_TENANT,
             job_id=JobId(url),
             fit_score=FitScore.create(fit),
-            breakdown=ScoreBreakdown(reasoning="ok"),
+            breakdown=ScoreBreakdown(reasoning="ok", eligibility=eligibility or EligibilityAssessment()),
             matched_keywords=MatchedKeywords.from_iterable(["python"]),
             scored_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -115,6 +122,27 @@ def test_pending_tailor_includes_jobs_scored_through_repository(
     assert url in urls
 
 
+def test_pending_tailor_excludes_high_score_blocked_jobs(
+    conn: sqlite3.Connection,
+) -> None:
+    url_allowed = "https://example.com/job/allowed-tailor"
+    url_blocked = "https://example.com/job/blocked-tailor"
+    _seed_enriched_job(conn, url_allowed)
+    _seed_enriched_job(conn, url_blocked)
+    _save_score(conn, url_allowed, fit=8)
+    _save_score(
+        conn,
+        url_blocked,
+        fit=9,
+        eligibility=EligibilityAssessment(status="blocked", hard_blockers=("No sponsorship.",)),
+    )
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+    urls = {row["url"] for row in pending}
+    assert url_allowed in urls
+    assert url_blocked not in urls
+
+
 def test_pending_cover_includes_jobs_scored_through_repository(
     conn: sqlite3.Connection,
 ) -> None:
@@ -131,6 +159,35 @@ def test_pending_cover_includes_jobs_scored_through_repository(
     pending = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
     urls = {row["url"] for row in pending}
     assert url in urls
+
+
+def test_pending_cover_excludes_high_score_blocked_jobs(
+    conn: sqlite3.Connection,
+) -> None:
+    url_allowed = "https://example.com/job/allowed-cover"
+    url_blocked = "https://example.com/job/blocked-cover"
+    _seed_enriched_job(conn, url_allowed)
+    _seed_enriched_job(conn, url_blocked)
+    _save_score(conn, url_allowed, fit=8)
+    _save_score(
+        conn,
+        url_blocked,
+        fit=9,
+        eligibility=EligibilityAssessment(status="eligible", hard_blockers=("Below minimum salary.",)),
+    )
+    conn.executemany(
+        "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
+        [
+            ("/tmp/allowed-tailored.txt", "2024-01-02T00:00:00+00:00", url_allowed),
+            ("/tmp/blocked-tailored.txt", "2024-01-02T00:00:00+00:00", url_blocked),
+        ],
+    )
+    conn.commit()
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
+    urls = {row["url"] for row in pending}
+    assert url_allowed in urls
+    assert url_blocked not in urls
 
 
 def test_get_jobs_by_stage_returns_canonical_score_in_dict(

@@ -19,7 +19,8 @@ Two services live here:
                            the caller wants to record an error event but
                            keep going.
   ``EligibilityChecker`` — gates downstream tailoring per
-                           ``ScoringCriteria.min_fit_score``.
+                           ``ScoringCriteria.min_fit_score`` plus hard
+                           eligibility blockers.
 """
 
 from __future__ import annotations
@@ -364,17 +365,25 @@ class ConstraintChecker:
 
 
 class EligibilityChecker:
-    """Gate that decides whether a ``JobScore`` clears the tailoring threshold.
+    """Gate that decides whether a ``JobScore`` clears downstream selection.
 
     Decoupled from ``ScoringCriteria`` so the same checker instance can be
-    reused across tenants — the criteria object is passed at call time. The
-    checker is intentionally tiny: a single boolean predicate. Other gates
-    (e.g. work-authorization compatibility) live in their own services so
-    we never mix concerns inside one service.
+    reused across tenants — the criteria object is passed at call time.
+    Hard blockers remain separate from the display score, but downstream
+    automation must not treat a high blocked score as actionable.
     """
 
-    def is_eligible(self, fit_score: FitScore, criteria: ScoringCriteria) -> bool:
-        """True iff the candidate clears the configured ``min_fit_score`` cut."""
+    def is_eligible(
+        self,
+        fit_score: FitScore,
+        criteria: ScoringCriteria,
+        eligibility: EligibilityAssessment | None = None,
+    ) -> bool:
+        """True iff the candidate clears score and hard-blocker gates."""
+        if eligibility is not None and (
+            eligibility.status == "blocked" or eligibility.hard_blockers
+        ):
+            return False
         return fit_score.value >= criteria.min_fit_score
 
 
