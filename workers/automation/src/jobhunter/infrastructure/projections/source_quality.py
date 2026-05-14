@@ -126,6 +126,17 @@ def project_source_quality(
             run_id = _text(payload, "run_id", "runId")
             counts = _dict(_value(payload, "counts"))
             source_ids = runs.get(run_id).source_ids if run_id in runs else ()
+            failed_source_ids = set(
+                _str_list(
+                    _value(
+                        payload,
+                        "failed_source_ids",
+                        "failedSourceIds",
+                        "failed_sources",
+                        "failedSources",
+                    )
+                )
+            )
             skipped = bool(_value(payload, "skipped"))
             if run_id in runs:
                 runs[run_id] = _merge_run(
@@ -137,10 +148,11 @@ def project_source_quality(
                 )
             for source_id in source_ids:
                 current = _stats(stats, source_id)
-                if not skipped:
+                failed_in_run = source_id in failed_source_ids
+                if not skipped and not failed_in_run:
                     current.run_count += 1
                     current.consecutive_failures = 0
-                if len(source_ids) == 1 and not skipped:
+                if len(source_ids) == 1 and not skipped and not failed_in_run:
                     current.new_jobs += _int(counts, "new_jobs", "newJobs")
                     current.existing_jobs += _int(counts, "existing_jobs", "existingJobs")
                     observed_fallback = _int(counts, "observed_jobs", "observedJobs")

@@ -39,7 +39,6 @@ import { databaseExists, openDatabase } from "./db.js";
 import {
   decideQuarantineEntry,
   dismissManualCapture,
-  importManualCapture,
   listManualCaptureQueue,
   listQuarantine,
   listSourceLocatorCandidates,
@@ -64,6 +63,11 @@ import {
   type ProfilePreviewRenderer,
   type ProfileImporter,
 } from "./local-actions.js";
+import {
+  createWorkerManualCaptureImporter,
+  ManualCaptureImportError,
+  type ManualCaptureImporter,
+} from "./manual-capture-worker.js";
 import {
   buildDashboardSummary,
   getArtifactDetail,
@@ -105,6 +109,7 @@ export interface BuildAppOptions {
   actionDispatcher?: ActionDispatcher;
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
+  manualCaptureImporter?: ManualCaptureImporter;
   profileImporter?: ProfileImporter;
   profilePreviewRenderer?: ProfilePreviewRenderer;
   logger?: boolean;
@@ -116,6 +121,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
+  const manualCaptureImporter = options.manualCaptureImporter ?? createWorkerManualCaptureImporter();
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
   const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
   const actionContext = { appDir };
@@ -246,9 +252,26 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
-        importManualCapture(db, decodeRouteParam(request.params.itemId), body),
-      );
+      if (!databaseExists(options.dbPath)) {
+        void reply.code(503);
+        return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+      }
+      try {
+        return await manualCaptureImporter(decodeRouteParam(request.params.itemId), body, {
+          appDir,
+          dbPath: options.dbPath,
+        });
+      } catch (error) {
+        if (error instanceof ManualCaptureImportError) {
+          void reply.code(error.statusCode);
+          return {
+            ok: false,
+            error: error.statusCode === 404 ? "not_found" : "manual_capture_import_failed",
+            message: error.message,
+          };
+        }
+        throw error;
+      }
     },
   );
 

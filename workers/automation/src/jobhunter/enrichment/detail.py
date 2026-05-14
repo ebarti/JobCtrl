@@ -33,13 +33,20 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
 
-from jobhunter.database import init_db
+from jobhunter.database import ensure_discovery_control_tables, init_db
 from jobhunter.domain.enrichment import (
+    ActiveState,
     DetailPage,
     EnrichmentError,
     ExtractionTier,
     JobEnrichment,
+    PostingSnapshotSet,
+    QuarantineReason,
+    SnapshotApplyUrl,
+    SnapshotConfidence,
+    SnapshotDescriptionHash,
 )
+from jobhunter.domain.enrichment.snapshot_services import judge_snapshot_confidence
 from jobhunter.domain.enrichment.services import (
     CssSelectorExtractor,
     ExtractionResult,
@@ -53,6 +60,9 @@ from jobhunter.domain.enrichment.value_objects import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobhunter.infrastructure.enrichment.sqlite_repository import (
+    SqlitePostingSnapshotSetRepository,
+)
 from jobhunter.infrastructure.enrichment.playwright_fetcher import (
     _clean_content_html,
     _collect_json_ld,
@@ -515,6 +525,14 @@ def scrape_site_batch(
                         finished_at=finished_at,
                     )
                     repo.save(succeeded)
+                    _record_posting_snapshot_from_cascade(
+                        conn,
+                        url=url,
+                        source_id=site or "enrichment",
+                        title=title or "",
+                        cascade_result=cascade_result,
+                        captured_at=finished_at,
+                    )
                     set_stage_state(
                         conn,
                         url,
@@ -585,6 +603,181 @@ def _tier_from_legacy(tier_num: int | None) -> ExtractionTier:
     if tier_num == 2:
         return ExtractionTier.CSS_SELECTORS
     return ExtractionTier.LLM_ASSISTED
+
+
+def _record_posting_snapshot_from_cascade(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    source_id: str,
+    title: str,
+    cascade_result: dict,
+    captured_at: str,
+) -> None:
+    """Persist ``PostingSnapshotSet`` history from the existing enrich path."""
+    description = str(cascade_result.get("full_description") or "")
+    if not description.strip():
+        return
+    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
+    try:
+        repo = SqlitePostingSnapshotSetRepository(conn)
+        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            updated_at=captured_at,
+        )
+        previous_active = snapshot_set.latest_active_state
+        tier = _tier_from_legacy(cascade_result.get("tier_used"))
+        apply_url = (
+            SnapshotApplyUrl(value=str(cascade_result["application_url"]))
+            if cascade_result.get("application_url")
+            else None
+        )
+        confidence = judge_snapshot_confidence(
+            tier=tier,
+            description=FullDescription(text=description),
+            apply_url_present=apply_url is not None,
+        )
+        quarantine_reason = (
+            QuarantineReason.NONE
+            if confidence is not SnapshotConfidence.LOW and apply_url is not None
+            else QuarantineReason.LOW_CONFIDENCE_EXTRACTION
+        )
+        snapshot_set, snapshot = snapshot_set.record_snapshot(
+            source_id=resolved_source_id,
+            extraction_tier=tier.value,
+            description_hash=SnapshotDescriptionHash.from_text(description),
+            apply_url=apply_url,
+            active_state=ActiveState.ACTIVE,
+            confidence=confidence,
+            quarantine_reason=quarantine_reason,
+            captured_at=captured_at,
+            evidence=(
+                f"tier:{tier.value}",
+                f"description_length:{len(description)}",
+                f"apply_url_present:{str(apply_url is not None).lower()}",
+            ),
+        )
+        repo.save(snapshot_set)
+
+        from jobhunter.state import record_job_event
+
+        record_job_event(
+            conn,
+            url,
+            "enrich",
+            "PostingContentSnapshotCaptured",
+            message="Posting content snapshot captured.",
+            payload={
+                "tenantId": str(LOCAL_TENANT),
+                "job_id": url,
+                "jobId": url,
+                "snapshot_version": snapshot.snapshot_version,
+                "snapshotVersion": snapshot.snapshot_version,
+                "snapshot_ref": f"{url}:{snapshot.snapshot_version}",
+                "snapshotRef": f"{url}:{snapshot.snapshot_version}",
+                "source_id": resolved_source_id,
+                "sourceId": resolved_source_id,
+                "extraction_tier": tier.value,
+                "extractionTier": tier.value,
+                "captured_at": captured_at,
+                "capturedAt": captured_at,
+            },
+            occurred_at=captured_at,
+        )
+        if previous_active is not ActiveState.ACTIVE:
+            record_job_event(
+                conn,
+                url,
+                "enrich",
+                "JobActiveStateChanged",
+                message="Job active state changed.",
+                payload={
+                    "tenantId": str(LOCAL_TENANT),
+                    "job_id": url,
+                    "jobId": url,
+                    "active_state": ActiveState.ACTIVE.value,
+                    "activeState": ActiveState.ACTIVE.value,
+                    "previous_state": previous_active.value,
+                    "previousState": previous_active.value,
+                    "verification_method": "enrichment_success",
+                    "verificationMethod": "enrichment_success",
+                    "verified_at": captured_at,
+                    "verifiedAt": captured_at,
+                },
+                occurred_at=captured_at,
+            )
+        if quarantine_reason is not QuarantineReason.NONE:
+            ensure_discovery_control_tables(conn)
+            conn.execute(
+                """
+                INSERT INTO discovery_quarantine_entries (
+                    tenant_id, job_id, job_key, title, company, source_id,
+                    posting_url, reason, confidence, snapshot_version,
+                    captured_at, notice_text, status
+                ) VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, 'pending')
+                ON CONFLICT(tenant_id, job_key) DO UPDATE SET
+                    title = excluded.title,
+                    source_id = excluded.source_id,
+                    posting_url = excluded.posting_url,
+                    reason = excluded.reason,
+                    confidence = excluded.confidence,
+                    snapshot_version = excluded.snapshot_version,
+                    captured_at = excluded.captured_at,
+                    notice_text = excluded.notice_text,
+                    status = excluded.status
+                """,
+                (
+                    str(LOCAL_TENANT),
+                    url,
+                    url,
+                    title,
+                    resolved_source_id,
+                    url,
+                    quarantine_reason.value,
+                    _snapshot_confidence_value(confidence),
+                    snapshot.snapshot_version,
+                    captured_at,
+                    "Enrichment snapshot needs review before downstream handoff.",
+                ),
+            )
+        conn.commit()
+    except Exception:
+        log.exception("Failed to persist PostingSnapshotSet for %s", url)
+
+
+def _source_id_for_enriched_job(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    fallback: str,
+) -> str:
+    """Return the discovery source id for an enriched job when available."""
+    try:
+        row = conn.execute(
+            """
+            SELECT source_id
+            FROM job_source_observations
+            WHERE tenant_id = ? AND job_url = ?
+            ORDER BY observed_at DESC, source_observation_id DESC
+            LIMIT 1
+            """,
+            (str(LOCAL_TENANT), job_url),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return fallback
+    if row is None:
+        return fallback
+    source_id = str(row[0] or "").strip()
+    return source_id or fallback
+
+
+def _snapshot_confidence_value(confidence: SnapshotConfidence) -> float:
+    if confidence is SnapshotConfidence.HIGH:
+        return 0.95
+    if confidence is SnapshotConfidence.MEDIUM:
+        return 0.7
+    return 0.35
 
 
 def _run_detail_scraper(

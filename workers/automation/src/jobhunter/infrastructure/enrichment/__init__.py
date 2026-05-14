@@ -12,6 +12,7 @@ Two adapters are wired up here:
 
 from jobhunter.infrastructure.enrichment.sqlite_repository import (
     SqliteEnrichmentRepository,
+    SqlitePostingSnapshotSetRepository,
 )
 from jobhunter.infrastructure.enrichment.playwright_fetcher import (
     PlaywrightDetailPageFetcher,
@@ -20,4 +21,5 @@ from jobhunter.infrastructure.enrichment.playwright_fetcher import (
 __all__ = [
     "PlaywrightDetailPageFetcher",
     "SqliteEnrichmentRepository",
+    "SqlitePostingSnapshotSetRepository",
 ]
