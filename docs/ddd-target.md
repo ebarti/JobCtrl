@@ -415,8 +415,9 @@ interaction with ATS portals.
 **Boundary justification:** Apply is the most complex and most isolated context.
 It manages subprocesses (Claude Code), browser processes (Chrome), MCP servers
 (Playwright), and durable telemetry — none of which any other context touches.
-Its `ApplyRun` aggregate has its own lifecycle and persistence (the `apply_runs`
-+ `apply_run_events` tables). *Current pain point addressed:* `apply/launcher.py`
+Its `ApplyRun` aggregate has its own lifecycle and local persistence through
+`job_events` plus the `apply_run_projections` read model keyed by the Temporal
+workflow run id. *Current pain point addressed:* `apply/launcher.py`
 (1300 LOC) tangles subprocess spawning, Chrome management, telemetry, DB writes,
 dashboard updates, and business rules — hexagonal ports separate each concern.
 
@@ -1372,10 +1373,10 @@ mutating shared state:
 3. `ApplicationSubmitted` or `ApplicationFailed` — Pipeline Orchestration
    transitions the `apply` stage state. Operations updates the job list.
 
-This eliminates the current coupling where `launcher.py` directly writes to
-the `jobs` table, `apply_runs` table, `apply_run_events` table, `job_events`
-table, and `job_stage_states` table while also updating the in-memory Rich
-dashboard — all in the same function.
+This eliminates the former coupling where `launcher.py` directly wrote to
+the `jobs` table, bespoke apply-run tables, `job_events`, and
+`job_stage_states` while also updating the in-memory Rich dashboard — all in
+the same function.
 
 ### 6.8 TS API Write Operations — Domain Logic Hosting
 
@@ -1426,7 +1427,7 @@ commands go through Temporal instead of subprocess.
 | `Profile` | `ProfileRepository` | `candidate_profiles` + child `candidate_profile_*` tables | `profiles` + child profile tables (hosted) |
 | `JobScore` | `ScoreRepository` | `jobs` (scoring columns) | `job_scores` (new: jobId, version, fitScore, breakdown, keywords, scoredAt, correction) |
 | `MaterialsSet` | `MaterialsRepository` | `jobs` (tailor/cover columns) + `job_artifacts` | `job_materials` (new) + `job_artifacts` (existing, enriched) |
-| `ApplyRun` | `ApplyRunRepository` | `apply_runs` + `apply_run_events` | `apply_runs` + `apply_run_events` (existing, largely correct) |
+| `ApplyRun` | `ApplyRunRepository` / workflow-run projection | `job_events` + `apply_run_projections` | `job_events` + workflow-run projections keyed by Temporal workflow id |
 | `JobPipelineState` | `PipelineStateRepository` | `job_stage_states` | `job_stage_states` (existing, largely correct) |
 | Read-model projections | `ReadModelStore` | Computed at read time from `jobs` + `job_stage_states` | `job_list_view` (materialized/denormalized), `dashboard_stats` (materialized) |
 
@@ -1480,7 +1481,7 @@ The current wide `jobs` table is narrowed in the target:
 | `fit_score`, `score_reasoning`, `scored_at` | Scoring | `job_scores` |
 | `tailored_resume_path`, `tailored_at`, `tailor_attempts` | Materials Generation | `job_materials` + `job_artifacts` |
 | `cover_letter_path`, `cover_letter_at`, `cover_attempts` | Materials Generation | `job_materials` + `job_artifacts` |
-| `applied_at`, `apply_status`, `apply_error`, `apply_attempts`, `agent_id`, etc. | Apply Automation | `apply_runs` (existing) |
+| `applied_at`, `apply_status`, `apply_error`, `apply_attempts`, `agent_id`, etc. | Apply Automation | `job_events` + `apply_run_projections` |
 
 The migration creates new tables, backfills them from the wide `jobs` table in
 the same change, and drops the legacy columns. Each context's extraction PR
@@ -1494,8 +1495,9 @@ migrates its data and removes the corresponding `jobs` columns in one step.
   adequate; target adds `generation` column for versioning.
 - **`job_events`** → Domain event store. Existing schema is adequate; target
   standardizes `event_type` values to match domain event names.
-- **`apply_runs` + `apply_run_events`** → `ApplyRun` aggregate. Existing schema
-  is well-designed. No structural changes needed.
+- **`job_events` + `apply_run_projections`** → `ApplyRun` lifecycle and
+  telemetry read model. The bespoke `apply_runs` / `apply_run_events` tables
+  have been retired; workflow ids are the durable run handles.
 
 ---
 
@@ -1867,8 +1869,9 @@ on the new adapter." There is no parallel old/new traffic.
 
 5. **Job Discovery** — Fifth: move the narrowed `jobs` table into Postgres.
 
-6. **Apply Automation** — Sixth: move `apply_runs` + `apply_run_events` into
-   Postgres. Browser port and agent port swap to cloud adapters.
+6. **Apply Automation** — Sixth: move `job_events` and workflow-run
+   projections for apply telemetry into Postgres. Browser port and agent port
+   swap to cloud adapters.
 
 7. **Operations** — Last: switches from SQLite read model to Postgres read
    replica once all write-side contexts are on Postgres.

@@ -1,6 +1,6 @@
 # RFC: Ideal Job Search Discovery Setup
 
-> **Status:** proposed RFC.
+> **Status:** proposed RFC; partially implemented.
 > **Date:** 2026-05-12.
 > **Owner:** JobHunter.
 > **Scope:** job discovery, source indexing, content acquisition, deduplication,
@@ -32,6 +32,116 @@ The ideal setup has six operating principles:
    duplicate rate, full-description rate, canonical URL rate, apply URL success,
    and user feedback.
 
+## Implementation Status
+
+### Pending
+
+- Production source locator behavior is not wired. The domain/events/API queue
+  model exists, but no production component probes careers paths, backtraces
+  aggregator leads, runs search discovery, or writes
+  `SourceLocationCandidateDiscovered` candidates.
+- The canonical ATS adapter write path is incomplete. Greenhouse, Lever, and
+  Ashby adapters exist, but production registry generation and scheduling still
+  center on Smart Extract, Workday, and JobSpy, and the pipeline still calls the
+  legacy scraper lanes directly.
+- `PostingSnapshotSet` and snapshot value objects are modeled, but recurring
+  snapshot persistence and production enrichment wiring are still pending.
+- Manual capture, quarantine, and locator review have API/UI surfaces, but
+  production workers do not yet populate those queues, and imported manual
+  captures do not yet run the full extraction, dedupe, active-verification,
+  scoring, and provenance pipeline.
+- The source-quality and product-control surfaces need production feeding from
+  the full locator, canonical adapter, snapshot, and manual-capture pipeline
+  before the RFC can be considered complete.
+
+### In Flight
+
+- PR #57 (`feat(discovery): expand manual capture controls`) expands the
+  manual-capture UI path from copied URLs to copied URL, current-page URL,
+  saved HTML, pasted text, and email import modes. Once merged, it reduces the
+  product-control/UI part of the manual-capture gap. It does not close the
+  remaining production gaps around worker-created `manual_action_required`
+  queue rows, full extraction/dedupe/active-verification/scoring handoff, or
+  source-quality feeding.
+
+### Done Or Partially Delivered
+
+- Source registry and config compatibility landed: `boards` is the stable
+  public key, legacy `sites` remains compatible, and packaged Smart Extract,
+  Workday, and JobSpy sources are generated as registry entries.
+- Source policy, source registry, locator candidate, source-quality, and
+  manual-action data models exist in the Python and TypeScript domain layers.
+- Discovery/domain event types for locator candidates, registry changes,
+  discovery runs, canonical identity, duplicate links, snapshots, and feedback
+  are represented with frontend invalidation coverage.
+- Canonical identity, source observations, duplicate-link handling, and URL
+  compatibility lookup exist in the Discovery repository/use-case layer.
+- Workday, Greenhouse, Lever, and Ashby adapter classes exist with test
+  coverage for canonical URL/source-native identity parsing.
+- Source-quality reducers, scheduler decisions, hybrid retrieval preselection,
+  and local product controls have landed as substantial slices.
+
+## Remaining Completion Plan
+
+The remaining RFC work should land as small, reviewable PRs. PR D should be the
+acceptance gate before moving this RFC to `implemented`; PR A should introduce
+the first acceptance-report fixture so A-C cannot each pass locally while still
+missing the RFC outcome.
+
+### PR A: Production Queue Seeding And Deterministic Locator
+
+- Add Python-side schema/repositories, or shared repository adapters, for
+  `source_locator_candidates`, `manual_capture_queue`, quarantine entries, and
+  source-control tables that workers need to write.
+- Hook discovery workers so blocked Smart Extract paths enqueue
+  `manual_action_required` items with reason, original URL, source id, retry
+  context, and provenance.
+- Add a deterministic source locator pass that emits
+  `SourceLocationCandidateDiscovered` from configured seeds and broad-board or
+  aggregator observations.
+- Seed the first Barcelona/Spain tech-leadership acceptance-report fixture with
+  expected fields and source-quality metrics, even if the first PR only
+  populates the queue/locator subset.
+- Acceptance: existing API/UI queues show worker-generated rows, not only test
+  or manually inserted rows.
+
+### PR B: Canonical ATS Scheduling
+
+- Generate and run Greenhouse, Lever, and Ashby registry entries through the
+  scheduler.
+- Route those adapters through the Discovery use case so canonical identity,
+  source observations, duplicate-link decisions, and events use the domain
+  boundary instead of legacy direct scraper writes.
+- Keep Workday semantics intact while adding these canonical ATS lanes.
+- Acceptance: scheduled ATS runs can create or update canonical job records via
+  the Discovery use case, and low-confidence matches are quarantined rather
+  than merged.
+
+### PR C: Snapshot And Manual-Capture Production Pipeline
+
+- Wire `PostingSnapshotSet` persistence into enrichment refreshes for recurring
+  detail/content captures and active-state changes.
+- Make manual-capture imports run the normal pipeline: extraction, dedupe,
+  active verification, scoring handoff, and provenance labeling as
+  `source_kind=user_mediated_capture`.
+- Preserve the bounded-context split: Discovery confirms identity/dedupe,
+  Enrichment owns snapshots and active state, and Scoring is a downstream
+  handoff rather than embedded in manual capture.
+- Acceptance: a manual capture can create or update a canonical job with
+  provenance, snapshot history, active-state evidence, and scoring eligibility.
+
+### PR D: RFC Acceptance Evidence
+
+- Complete the Barcelona/Spain tech-leadership acceptance fixture/report started
+  in PR A.
+- Report lead yield, candidate sources, manual-action count, canonical
+  verification rate, duplicate/quarantine counts, source-quality updates, and
+  scoring handoff count.
+- Update this RFC to `implemented` only when A-C evidence passes against the
+  fixture/report.
+- Acceptance: the report proves source-quality feeding and end-to-end
+  RFC-relevant behavior, not only isolated unit behavior.
+
 ## Current State
 
 JobHunter currently has three discovery lanes:
@@ -55,16 +165,21 @@ directly to storage.
 
 Important gaps:
 
-- `searches.example.yaml` uses `boards`, but `jobspy.run_discovery()` reads
-  `sites`; source selection is therefore not yet a clean product contract.
-- Source health is implicit in logs rather than stored as queryable data.
-- Discovery stores a posting, but canonical verification and full content
-  acquisition are split across later enrichment paths without a versioned
-  content snapshot lifecycle.
-- Smart Extract has useful reach, but arbitrary web extraction should be
-  source-health gated and policy-labeled so it does not pollute the job set.
+- The `boards` / legacy `sites` configuration contract has landed, but
+  production discovery still enters through the existing JobSpy, Workday, and
+  Smart Extract lanes rather than a unified source-registry scheduler for every
+  source kind.
+- Source health is now represented in projections and scheduler inputs, but it
+  is not yet fed by the full locator, canonical adapter, snapshot, and manual
+  capture pipeline.
+- Discovery has canonical identity/source-observation storage, but canonical
+  verification and full content acquisition are still split across later
+  enrichment paths without production `PostingSnapshotSet` persistence.
+- Smart Extract has useful reach and policy metadata, but arbitrary web
+  extraction still needs production source-health gating, quarantine feeding,
+  and policy-labeled repeat crawling.
 - Broad boards can produce stale, duplicated, incomplete, or redirected jobs;
-  they need downstream canonicalization instead of direct trust.
+  they still need production downstream canonicalization before direct trust.
 
 ## Goals
 
@@ -150,7 +265,7 @@ Expected behavior:
 The locator runs before a promoted source has a `SourcePolicy`, so it needs its
 own conservative policy envelope:
 
-- Use a declared regular browser user agent. 
+- Use a declared regular browser user agent.
 - Enforce a locator-level per-domain budget independent of
   `SourcePolicy.max_pages_per_run`. The default should be a small number of
   HEAD/GET requests per domain per run with backoff on 429, 403.
@@ -159,7 +274,6 @@ own conservative policy envelope:
   employer-domain match is present. Otherwise, store a candidate for manual
   confirmation.
 
-  
 ## Source Hierarchy
 
 ### Tier 1: Canonical ATS And Employer APIs
@@ -315,9 +429,9 @@ Not allowed:
 
 Blocked sources should not become dead ends. When a lead looks useful but the
 autonomous path hits CAPTCHA, login, paywall, bot-detection,
-rate-limit, or another access boundary, JobHunter should first try to circumvent 
-the blockage, and, if not, ccreate a`manual_action_required` item instead of silently 
-discarding the lead.
+rate-limit, or another access boundary, JobHunter should not try to circumvent
+the blockage. It should create a `manual_action_required` item instead of
+silently discarding the lead.
 
 The manual path:
 
@@ -845,6 +959,10 @@ Rollback rules:
   artifacts.
 
 ## Proposed PR Stack
+
+The stack below is partially implemented. The implementation status section
+above is the authoritative current state: pending work stays first, and landed
+or partial slices are summarized after it.
 
 ### PR 1: Source Locator, Registry, And Config Contract
 

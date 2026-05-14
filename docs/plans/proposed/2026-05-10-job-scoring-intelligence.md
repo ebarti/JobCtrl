@@ -1,6 +1,6 @@
 # Job Scoring Intelligence Plan
 
-> **Status:** proposed.
+> **Status:** proposed; partially implemented.
 > **Research date:** 2026-05-10.
 > **Source:** user request to compare current JobHunter scoring against practical job-matching approaches and define the next PR stack.
 
@@ -10,7 +10,7 @@ Move JobHunter scoring from a single opaque LLM-generated fit grade into an expl
 
 ## Executive Summary
 
-Current scoring is a solid DDD foundation but an incomplete product signal. The worker now has a `JobScore` aggregate, versioned `job_scores` persistence, structured LLM output, typed dimensions, keyword evidence, and a `CorrectScoreUseCase`. The user-facing product still behaves like a legacy score: API projections expose only `fitScore` plus one `scoreReasoning` string, the web UI renders the reasoning as free text, `scoreCriteria` is saved but not consumed by the scorer, and corrections are not wired end to end.
+Current scoring is a solid DDD foundation but an incomplete product signal. The worker now has a `JobScore` aggregate, versioned `job_scores` persistence, structured LLM output, typed dimensions, keyword evidence, and a `CorrectScoreUseCase`. PR 1 exposed the already-persisted score evidence through the API, contracts, and jobs drawer (`scoreBreakdown`, `scoreKeywords`, `scoreVersion`, and `scoredAt`) and hardened blank-keyword parsing. The remaining product gaps are criteria-aware scoring, hard eligibility blockers, score corrections, a local evaluation harness, feedback personalization, and score-governance reporting.
 
 Practical job matching is not done as an opaque LLM grade. The common pattern is hybrid:
 
@@ -35,9 +35,10 @@ The recommended direction is to keep the DDD `JobScore` aggregate and still reso
   - `technical_fit`, `experience_fit`, and `role_fit`,
   - matched `keywords`,
   - short `reasoning`.
-- `ScoreParser` validates the overall score, requires the raw keyword field to be present, clamps component dimensions into 0..10, and returns typed value objects. A follow-up should harden blank-only keyword arrays so they cannot normalize to the legacy sentinel.
+- `ScoreParser` validates the overall score, requires the raw keyword field to be present, rejects missing, empty, and blank-only keyword arrays, clamps component dimensions into 0..10, and returns typed value objects.
 - `job_scores` stores versioned scores with `breakdown_json`, `keywords_json`, `scored_at`, and optional correction metadata.
 - `CorrectScoreUseCase` exists and emits `ScoreCorrected`.
+- Operations projections, shared read-model types, and the web jobs drawer expose the typed score evidence already persisted: `scoreBreakdown`, `scoreKeywords`, `scoreVersion`, and `scoredAt`.
 
 Key code:
 
@@ -47,14 +48,15 @@ Key code:
 - `workers/automation/src/jobhunter/infrastructure/scoring/sqlite_repository.py`
 - `workers/automation/tests/test_score_use_cases.py`
 - `workers/automation/tests/test_scorer.py`
+- `apps/api/src/read-model.ts`
+- `packages/domain-types/src/operations/index.ts`
+- `apps/web/src/contexts/scoring/components/ScoreBreakdown.tsx`
 
 ### Gaps
 
 - `scoreCriteria` is saved in profile settings but is not passed into `ScoreJobUseCase`, the prompt, or the persisted score criteria.
 - The LLM sees mostly resume baseline text plus title, company, location, and description. It does not explicitly receive the structured profile fields that matter for fit, such as work authorization, compensation, target roles, target locations, target work models, and negative preferences.
-- The API projection path reads only `fit_score` and `breakdown_json.reasoning`; it drops typed dimensions and keywords.
-- `packages/contracts` and `packages/domain-types` define only the richer domain mirror; the read-model wire contract does not expose the richer score.
-- The web `ScoreBreakdown` component wraps free text rather than rendering typed dimensions, evidence, missing qualifications, confidence, or criteria.
+- The typed score surface is still limited to the existing three dimensions, keywords, version, and timestamp; it does not yet expose eligibility, evidence, missing qualifications, transferable signals, confidence, criteria version, or fit band.
 - `useCorrectScoreMutation` throws `NotImplementedError`; no API route or UI writes score corrections.
 - There is no offline scoring evaluation set, no ranking metrics, no calibration report, and no regression matrix for prompt or model changes.
 - There is no feedback loop using corrections, apply/save/dismiss behavior, or downstream outcomes to improve ranking.
@@ -139,27 +141,7 @@ Use the LLM as a structured extractor and reasoner, not as the sole source of tr
 - Parser rejects missing required evidence, malformed dimensions, impossible scores, or unsupported claims.
 - Observability records prompt version, model, response schema version, parse outcome, token/cost metadata, and score version.
 
-## Proposed PR Stack
-
-### PR 1 - Expose The Score Evidence Already Persisted
-
-Branch: `scoring/evidence-contract`.
-
-- Extend Operations projections to carry `scoreBreakdown`, `scoreKeywords`, `scoreVersion`, and `scoredAt` from latest `job_scores`.
-- Extend `packages/contracts` and `packages/domain-types` read-model types to expose these fields.
-- Replace web free-text parsing with typed rendering in `apps/web/src/contexts/scoring/components/ScoreBreakdown.tsx`.
-- Keep `scoreReasoning` as compatibility output only while projections and fixtures migrate.
-- Harden `ScoreParser` so blank-only keyword arrays fail parsing instead of normalizing to the `legacy` sentinel used for backfilled rows.
-- Tests:
-  - `apps/api/test/projections.test.ts` for typed dimensions and keywords.
-  - parser regression coverage for missing, empty, and blank-only keywords.
-  - contract/type tests for the new read-model shape.
-  - React component tests and Storybook stories for populated, missing, and legacy score states.
-- QA:
-  - `pnpm api:test`
-  - `pnpm --filter @jobhunter/web test`
-  - `pnpm web:check`
-  - browser smoke on a seeded job drawer showing score dimensions and keywords.
+## Pending PR Stack
 
 ### PR 2 - Make Scoring Criteria-Aware And Constraint-Aware
 
@@ -275,3 +257,17 @@ Branch: `scoring/governance`.
 - Should score corrections feed the next score immediately as few-shot examples, or only after a minimum number of corrections prevents overfitting?
 - Should O*NET or ESCO be the first canonical skill taxonomy, or should JobHunter start with a lightweight local alias table and defer taxonomy adoption?
 - Should `scoreCriteria` stay free text, or become a weighted rubric editor after PR 2 proves the target dimensions?
+
+## Completed Work
+
+### PR 1 - Expose The Score Evidence Already Persisted
+
+Status: done. Landed via PR #48 (`scoring/evidence-contract`).
+
+- Extended Operations projections to carry `scoreBreakdown`, `scoreKeywords`, `scoreVersion`, and `scoredAt` from latest `job_scores`.
+- Extended shared read-model types to expose these fields.
+- Replaced web free-text-only score rendering with typed rendering in `apps/web/src/contexts/scoring/components/ScoreBreakdown.tsx`.
+- Kept `scoreReasoning` as compatibility output while projections and fixtures migrated.
+- Hardened `ScoreParser` so missing, empty, and blank-only keyword arrays fail parsing instead of normalizing to the `legacy` sentinel used for backfilled rows.
+- Tests added or updated for API projections, parser keyword validation, read-model typing, React score rendering, and Storybook score states.
+- Validation at the time of the PR covered API tests, web tests, web typecheck, and a seeded jobs-drawer smoke showing dimensions and keywords.
