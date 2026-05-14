@@ -13,11 +13,23 @@ describe("<ScoreBreakdown>", () => {
           experienceFit: 7,
           roleFit: 8,
           reasoning: "Latest structured score evidence.",
+          fitBand: "strong",
+          confidence: "high",
+          eligibility: { status: "eligible", hardBlockers: [], warnings: [] },
+          matchedSignals: ["Python API leadership"],
+          missingSignals: ["public company scale"],
+          transferableSignals: ["incident leadership"],
         }}
         scoreKeywords={["python", "fastapi"]}
         scoreReasoning="Legacy reasoning should not be the primary path."
         scoreVersion={2}
         scoredAt="2026-05-05T09:30:00+00:00"
+        scoreCriteria={{
+          minFitScore: 7,
+          criteriaText: "Platform reliability.",
+          targetCriteria: "Remote leadership.",
+          criteriaVersion: "criteria-1",
+        }}
       />,
     );
 
@@ -31,6 +43,12 @@ describe("<ScoreBreakdown>", () => {
     expect(screen.getByText("7 / 10")).toBeInTheDocument();
     expect(screen.getByText("python")).toBeInTheDocument();
     expect(screen.getByText("fastapi")).toBeInTheDocument();
+    expect(screen.getByText("strong")).toBeInTheDocument();
+    expect(screen.getByText("high")).toBeInTheDocument();
+    expect(screen.getByText("Python API leadership")).toBeInTheDocument();
+    expect(screen.getByText("public company scale")).toBeInTheDocument();
+    expect(screen.getByText("incident leadership")).toBeInTheDocument();
+    expect(screen.getByText(/Criteria criteria-1/)).toBeInTheDocument();
     expect(screen.getByText(/version 2/i)).toBeInTheDocument();
     expect(screen.getByText(/2026-05-05/)).toBeInTheDocument();
   });

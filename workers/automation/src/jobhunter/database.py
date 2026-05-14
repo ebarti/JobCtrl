@@ -903,10 +903,19 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             keywords_json       TEXT NOT NULL,
             scored_at           TEXT NOT NULL,
             correction_json     TEXT,
+            criteria_json       TEXT NOT NULL DEFAULT '{}',
+            trace_json          TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (job_url, version),
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
+    existing_score_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()
+    }
+    if "criteria_json" not in existing_score_cols:
+        conn.execute("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'")
+    if "trace_json" not in existing_score_cols:
+        conn.execute("ALTER TABLE job_scores ADD COLUMN trace_json TEXT NOT NULL DEFAULT '{}'")
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_job_scores_tenant_score
         ON job_scores(tenant_id, fit_score DESC, scored_at DESC)
@@ -963,10 +972,28 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                     """
                     INSERT OR IGNORE INTO job_scores (
                         job_url, version, tenant_id, fit_score,
-                        breakdown_json, keywords_json, scored_at, correction_json
-                    ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL)
+                        breakdown_json, keywords_json, scored_at, correction_json,
+                        criteria_json, trace_json
+                    ) VALUES (?, 1, 'local', ?, ?, ?, ?, NULL, ?, ?)
                     """,
-                    (url, int(fit), breakdown_json, keywords_json, scored_at or now),
+                    (
+                        url,
+                        int(fit),
+                        breakdown_json,
+                        keywords_json,
+                        scored_at or now,
+                        json.dumps({}, sort_keys=True),
+                        json.dumps(
+                            {
+                                "prompt_version": "legacy",
+                                "schema_version": "legacy",
+                                "model": "legacy",
+                                "parser_warnings": ["legacy_backfill"],
+                                "correction_history": [],
+                            },
+                            sort_keys=True,
+                        ),
+                    ),
                 )
 
     conn.commit()

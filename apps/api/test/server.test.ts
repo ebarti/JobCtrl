@@ -549,6 +549,69 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("corrects a score through the API and records correction evidence", async () => {
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/score-correction`,
+      payload: { correctedScore: 6, reason: "Manual review found a seniority mismatch." },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().job).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      fitScore: 6,
+      scoreVersion: 2,
+      scoreCorrection: {
+        correctedScore: 6,
+        rationale: "Manual review found a seniority mismatch.",
+        correctedBy: "local",
+      },
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      const latest = db
+        .prepare(
+          `SELECT version, fit_score, correction_json, trace_json
+           FROM job_scores
+           WHERE job_url = ?
+           ORDER BY version DESC
+           LIMIT 1`,
+        )
+        .get("https://example.com/jobs/ready") as {
+        version: number;
+        fit_score: number;
+        correction_json: string;
+        trace_json: string;
+      };
+      expect(latest.version).toBe(2);
+      expect(latest.fit_score).toBe(6);
+      expect(JSON.parse(latest.correction_json)).toMatchObject({
+        corrected_fit_score: 6,
+        rationale: "Manual review found a seniority mismatch.",
+        corrected_by: "local",
+      });
+      expect(JSON.parse(latest.trace_json).correction_history[0]).toMatchObject({
+        original_score: 9,
+        corrected_score: 6,
+      });
+      const event = db
+        .prepare("SELECT event_type, payload_json FROM job_events WHERE event_type = 'ScoreCorrected'")
+        .get() as { event_type: string; payload_json: string };
+      expect(event.event_type).toBe("ScoreCorrected");
+      expect(JSON.parse(event.payload_json)).toMatchObject({
+        jobId: "https://example.com/jobs/ready",
+        originalScore: 9,
+        correctedScore: 6,
+      });
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
   it("returns artifact detail by artifact id", async () => {
     const app = buildApp(options);
     const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_txt" });
@@ -1946,7 +2009,21 @@ function seedDatabase(dbPath: string): void {
       event_type TEXT NOT NULL DEFAULT '',
       level TEXT,
       message TEXT,
-      occurred_at TEXT
+      occurred_at TEXT,
+      payload_json TEXT
+    );
+    CREATE TABLE job_scores (
+      job_url TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      fit_score INTEGER NOT NULL,
+      breakdown_json TEXT NOT NULL,
+      keywords_json TEXT NOT NULL,
+      scored_at TEXT NOT NULL,
+      correction_json TEXT,
+      criteria_json TEXT NOT NULL DEFAULT '{}',
+      trace_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (job_url, version)
     );
     CREATE TABLE job_enrichments (
       job_url TEXT PRIMARY KEY,
@@ -1984,6 +2061,9 @@ function seedDatabase(dbPath: string): void {
     fitScore: 9,
     tailoredPath: artifactPath,
   });
+  insertScore(db, "https://example.com/jobs/ready", 1, 9);
+  insertScore(db, "https://example.com/jobs/failed-score", 1, 8);
+  insertScore(db, "https://example.com/jobs/blocked-tailor", 1, 6);
   insertJob(db, {
     url: "https://example.com/jobs/failed-score",
     title: "Backend Engineer",
@@ -2079,6 +2159,54 @@ function insertJob(
     job.scoredAt === undefined ? "2026-04-29T10:02:00+00:00" : job.scoredAt,
     job.tailoredPath ?? null,
     job.tailoredPath ? "2026-04-29T10:03:00+00:00" : null,
+  );
+}
+
+function insertScore(
+  db: Database.Database,
+  jobUrl: string,
+  version: number,
+  fitScore: number,
+): void {
+  db.prepare(
+    `INSERT INTO job_scores (
+      job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+      scored_at, correction_json, criteria_json, trace_json
+    ) VALUES (?, ?, 'local', ?, ?, ?, ?, NULL, ?, ?)`,
+  ).run(
+    jobUrl,
+    version,
+    fitScore,
+    JSON.stringify({
+      technical_fit: fitScore,
+      experience_fit: Math.max(fitScore - 1, 0),
+      role_fit: fitScore,
+      reasoning: "Seeded structured score.",
+      fit_band: fitScore >= 9 ? "excellent" : fitScore >= 7 ? "strong" : "plausible",
+      confidence: "medium",
+      eligibility: { status: "eligible", hard_blockers: [], warnings: [] },
+      matched_signals: ["platform reliability"],
+      missing_signals: [],
+      transferable_signals: [],
+    }),
+    JSON.stringify(["platform"]),
+    "2026-04-29T10:02:00+00:00",
+    JSON.stringify({
+      min_fit_score: 7,
+      criteria_text: "Seeded criteria.",
+      target_criteria: "Seeded target.",
+      profile_preferences: { target_work_models: "remote" },
+      criteria_version: "seeded-criteria",
+    }),
+    JSON.stringify({
+      prompt_version: "score-fit-assessment-v1",
+      schema_version: "score-fit-assessment-v1",
+      model: "seed",
+      criteria_version: "seeded-criteria",
+      profile_snapshot_version: 1,
+      parser_warnings: [],
+      correction_history: [],
+    }),
   );
 }
 

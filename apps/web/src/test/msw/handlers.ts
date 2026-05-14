@@ -226,6 +226,20 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/restore", ({ params }) =>
     HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
   ),
+  http.post("*/v1/jobs/:jobKey/score-correction", async ({ params, request }) => {
+    const body = (await request.json()) as { correctedScore: number; reason: string };
+    return HttpResponse.json(makeJobDetail({
+      ...makeJobsPage().items[0]!,
+      jobKey: String(params["jobKey"]),
+      fitScore: body.correctedScore,
+      scoreCorrection: {
+        correctedScore: body.correctedScore,
+        rationale: body.reason,
+        correctedBy: "local",
+        correctedAt: "2026-05-14T10:00:00+00:00",
+      },
+    }));
+  }),
   http.post("*/v1/jobs/:jobKey/actions/retry-stage", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "retry_stage")),
   ),

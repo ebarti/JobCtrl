@@ -20,6 +20,7 @@ from jobhunter.domain.scoring import (
     JobScore,
     MatchedKeywords,
     ScoreBreakdown,
+    ScoringCriteria,
 )
 from jobhunter.domain.scoring.services import ScoreParser
 from jobhunter.domain.scoring.use_cases import (
@@ -224,6 +225,40 @@ def test_score_parser_rejects_blank_only_keyword_array() -> None:
     assert "keywords" in result.error
 
 
+def test_score_parser_supports_fit_assessment_fields() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 8,
+            "role_fit": 9,
+            "fit_band": "excellent",
+            "confidence": "high",
+            "eligibility": {
+                "status": "warning",
+                "hard_blockers": [],
+                "warnings": ["location needs review"],
+            },
+            "matched_signals": ["Python leadership", "Platform reliability"],
+            "missing_signals": ["public company scale"],
+            "transferable_signals": ["incident command"],
+            "keywords": ["python", "platform"],
+            "reasoning": "Very strong overlap with one review item.",
+        }
+    )
+
+    assert result.ok is True
+    assert result.fit_score is not None and result.fit_score.value == 9
+    assert result.breakdown.fit_band == "excellent"
+    assert result.breakdown.confidence == "high"
+    assert result.breakdown.eligibility.status == "warning"
+    assert result.breakdown.eligibility.warnings == ("location needs review",)
+    assert result.breakdown.matched_signals == ("Python leadership", "Platform reliability")
+    assert result.breakdown.missing_signals == ("public company scale",)
+    assert result.breakdown.transferable_signals == ("incident command",)
+    assert result.trace.parser_warnings == ()
+
+
 # ---------------------------------------------------------------------------
 # ScoreJobUseCase
 # ---------------------------------------------------------------------------
@@ -265,6 +300,106 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
     assert len(received) == 1
     assert received[0].event_type == "JobScored"
     assert received[0].payload["fit_score"] == 8
+
+
+def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 8,
+            "role_fit": 9,
+            "fit_band": "excellent",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["security leadership"],
+            "missing_signals": [],
+            "transferable_signals": ["platform reliability"],
+            "keywords": ["security", "platform"],
+            "reasoning": "Matches the saved leadership criteria.",
+        }
+    )
+    criteria = ScoringCriteria(
+        min_fit_score=8,
+        criteria_text="Prioritize platform security leadership.",
+        target_criteria="Remote infrastructure roles.",
+        profile_preferences={
+            "target_work_models": "remote",
+            "work_authorization": {"require_sponsorship": "no"},
+        },
+    )
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=_job(),
+        profile_snapshot=profile_snapshot,
+        criteria=criteria,
+    )
+
+    assert outcome.ok is True
+    prompt_payload = llm.calls[0][1].content
+    assert "Prioritize platform security leadership." in prompt_payload
+    assert "Remote infrastructure roles." in prompt_payload
+    assert '"target_work_models": "remote"' in prompt_payload
+    persisted = repo.load(LOCAL_TENANT, JobId(_job()["url"]))
+    assert persisted is not None
+    assert persisted.criteria.criteria_text == "Prioritize platform security leadership."
+    assert persisted.criteria.target_criteria == "Remote infrastructure roles."
+    assert persisted.criteria.criteria_version == criteria.criteria_version
+    assert persisted.trace.criteria_version == criteria.criteria_version
+    assert persisted.breakdown.fit_band == "excellent"
+
+
+def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 9,
+            "role_fit": 9,
+            "fit_band": "excellent",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "The role otherwise looks excellent.",
+        }
+    )
+    criteria = ScoringCriteria(
+        min_fit_score=8,
+        target_criteria="Remote only.",
+        profile_preferences={
+            "target_work_models": "remote",
+            "work_authorization": {"require_sponsorship": "yes"},
+        },
+    )
+    job = {
+        **_job("https://example.com/job/blocker"),
+        "location": "On-site Barcelona",
+        "full_description": "Python role. Must already be authorized; no sponsorship. Office-based team.",
+    }
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=job,
+        profile_snapshot=profile_snapshot,
+        criteria=criteria,
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 9
+    assert outcome.score.breakdown.eligibility.status == "blocked"
+    assert any(
+        "sponsorship" in blocker
+        for blocker in outcome.score.breakdown.eligibility.hard_blockers
+    )
+    assert any(
+        "remote" in blocker
+        for blocker in outcome.score.breakdown.eligibility.hard_blockers
+    )
 
 
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:

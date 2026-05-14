@@ -11,6 +11,7 @@ import {
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
   CancelJobActionRequestSchema,
+  CorrectScoreRequestSchema,
   PIPELINE_ACTION_JOB_KEY,
   type PipelineStageRunResponse,
   CredentialKeys,
@@ -81,6 +82,7 @@ import {
 } from "./profile-store.js";
 import {
   cancelJobAction,
+  correctScore,
   InputError,
   markJobApplied,
   markJobSkipped,
@@ -357,6 +359,25 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       return detail;
     }),
+  );
+
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/score-correction",
+    async (request, reply) => {
+      const body = parseBody(reply, CorrectScoreRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) => {
+        const { jobUrl } = correctScore(db, decodeRouteParam(request.params.jobKey), body);
+        const detail = getJobDetail(db, jobUrl);
+        if (!detail) {
+          void reply.code(404);
+          return { ok: false, error: "job_not_found" };
+        }
+        return detail;
+      });
+    },
   );
 
   app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) => {

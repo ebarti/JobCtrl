@@ -10,7 +10,7 @@ allocation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from jobhunter.domain.identifiers import JobId
@@ -19,6 +19,8 @@ from jobhunter.domain.scoring.value_objects import (
     MatchedKeywords,
     ScoreBreakdown,
     ScoreCorrection,
+    ScoreTrace,
+    ScoringCriteria,
 )
 from jobhunter.domain.tenant import TenantId
 
@@ -42,6 +44,8 @@ class JobScore:
     breakdown: ScoreBreakdown
     matched_keywords: MatchedKeywords
     scored_at: str
+    criteria: ScoringCriteria = field(default_factory=ScoringCriteria)
+    trace: ScoreTrace = field(default_factory=ScoreTrace)
     correction: ScoreCorrection | None = None
 
     # ------------------------------------------------------------------
@@ -55,6 +59,10 @@ class JobScore:
             raise ValueError("JobScore.breakdown must be a ScoreBreakdown")
         if not isinstance(self.matched_keywords, MatchedKeywords):
             raise ValueError("JobScore.matched_keywords must be a MatchedKeywords")
+        if not isinstance(self.criteria, ScoringCriteria):
+            raise ValueError("JobScore.criteria must be a ScoringCriteria")
+        if not isinstance(self.trace, ScoreTrace):
+            raise ValueError("JobScore.trace must be a ScoreTrace")
         if not isinstance(self.version, int) or self.version < 1:
             raise ValueError(f"JobScore.version must be >= 1, got {self.version!r}")
         if not isinstance(self.scored_at, str) or not self.scored_at.strip():
@@ -76,6 +84,8 @@ class JobScore:
         breakdown: ScoreBreakdown,
         matched_keywords: MatchedKeywords,
         scored_at: str,
+        criteria: ScoringCriteria | None = None,
+        trace: ScoreTrace | None = None,
     ) -> "JobScore":
         """Create the first version (version=1) of a JobScore."""
         return cls(
@@ -86,6 +96,8 @@ class JobScore:
             breakdown=breakdown,
             matched_keywords=matched_keywords,
             scored_at=scored_at,
+            criteria=criteria or ScoringCriteria(),
+            trace=trace or ScoreTrace(),
             correction=None,
         )
 
@@ -96,6 +108,8 @@ class JobScore:
         breakdown: ScoreBreakdown,
         matched_keywords: MatchedKeywords,
         scored_at: str,
+        criteria: ScoringCriteria | None = None,
+        trace: ScoreTrace | None = None,
         correction: ScoreCorrection | None = None,
     ) -> "JobScore":
         """Return a new ``JobScore`` with ``version + 1`` and replaced fields.
@@ -110,6 +124,8 @@ class JobScore:
             breakdown=breakdown,
             matched_keywords=matched_keywords,
             scored_at=scored_at,
+            criteria=criteria or self.criteria,
+            trace=trace or self.trace,
             correction=correction,
         )
 
@@ -127,6 +143,11 @@ class JobScore:
             breakdown=self.breakdown,
             matched_keywords=self.matched_keywords,
             scored_at=correction.corrected_at,
+            criteria=self.criteria,
+            trace=self.trace.with_correction(
+                original_score=self.fit_score.value,
+                correction=correction,
+            ),
             correction=correction,
         )
 
@@ -143,5 +164,7 @@ class JobScore:
             "breakdown": self.breakdown.to_dict(),
             "matched_keywords": self.matched_keywords.to_list(),
             "scored_at": self.scored_at,
+            "criteria": self.criteria.to_dict(),
+            "trace": self.trace.to_dict(),
             "correction": self.correction.to_dict() if self.correction else None,
         }

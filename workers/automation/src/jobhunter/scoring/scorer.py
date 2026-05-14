@@ -37,10 +37,11 @@ from jobhunter.domain.scoring.use_cases import (
     ScoreJobOutcome,
     ScoreJobUseCase,
 )
+from jobhunter.domain.scoring.value_objects import ScoringCriteria
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import get_llm_adapter
 from jobhunter.infrastructure.profile.factory import get_profile_repository
-from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.infrastructure.scoring import LocalScoringCriteriaProvider, SqliteScoreRepository
 from jobhunter.state import (
     ensure_job_stage_rows,
     record_job_event,
@@ -90,6 +91,7 @@ def score_job(
     publisher: EventPublisher | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     resume_text: str | None = None,
+    criteria: ScoringCriteria | None = None,
 ) -> ScoreJobOutcome:
     """Score a single job and persist the result.
 
@@ -109,6 +111,7 @@ def score_job(
         profile_snapshot=profile_snapshot,
         tenant_id=tenant_id,
         resume_text=resume_text,
+        criteria=criteria,
     )
 
 
@@ -124,6 +127,7 @@ def run_scoring(
     profile_snapshot: ProfileSnapshot | None = None,
     resume_text: str | None = None,
     search_index: HybridSearchIndex | None = None,
+    criteria: ScoringCriteria | None = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -140,6 +144,8 @@ def run_scoring(
             resume_text = RESUME_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             resume_text = ""
+    if criteria is None:
+        criteria = LocalScoringCriteriaProvider().load(profile_snapshot)
 
     conn = get_connection()
     if repository is None:
@@ -213,6 +219,7 @@ def run_scoring(
                 job=job,
                 profile_snapshot=profile_snapshot,
                 resume_text=resume_text,
+                criteria=criteria,
             ): job
             for job in jobs
         }

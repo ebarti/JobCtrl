@@ -20,6 +20,9 @@ class JobScoredPayload:
     keywords: tuple[str, ...] = ()
     version: int = 1
     scored_at: str = ""
+    fit_band: str = ""
+    confidence: str = ""
+    eligibility: dict[str, Any] = field(default_factory=dict)
 
 
 def create_job_scored(tenant_id: TenantId, payload: JobScoredPayload) -> DomainEvent:

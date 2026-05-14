@@ -25,6 +25,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from opentelemetry import trace as otel_trace
+from opentelemetry.trace import Status, StatusCode
+
 from jobhunter.domain.events import (
     JobScoredPayload,
     ScoreCorrectedPayload,
@@ -37,12 +40,13 @@ from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
-from jobhunter.domain.scoring.services import ScoreParseResult, ScoreParser
+from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
     ScoreBreakdown,
     ScoreCorrection,
+    ScoreTrace,
     ScoringCriteria,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
@@ -55,7 +59,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT = """You are a job fit evaluator. Given a candidate's resume and a job description, score how well the candidate fits the role.
+SCORE_PROMPT_VERSION = "score-fit-assessment-v1"
+SCORE_SCHEMA_VERSION = "score-fit-assessment-v1"
+
+
+SCORE_PROMPT = """You are a job fit evaluator for an applicant-side local tool. Given a candidate profile, saved scoring criteria, and a job description, produce an explainable fit assessment.
 
 SCORING CRITERIA (overall `score`, 1..10):
 - 9-10: Perfect match. Candidate has direct experience in nearly all required skills and qualifications.
@@ -68,6 +76,12 @@ DIMENSION SCORES (0..10 each — be strict, do not anchor on the overall score):
 - `technical_fit`: alignment of programming languages, frameworks, tools, and platforms.
 - `experience_fit`: alignment of years / seniority level / domain depth.
 - `role_fit`: alignment of role responsibilities and the candidate's recent role focus.
+
+ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, location/work model, compensation, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker is visible.
+
+EVIDENCE: name matched signals, missing signals, and transferable signals. Do not invent candidate experience to close a gap.
+
+CONFIDENCE: use `low` when the posting is thin, the profile is incomplete, evidence conflicts, or the score needs manual review.
 
 KEYWORDS: list ATS keywords from the job description that match or could match the candidate. At least one keyword is required.
 
@@ -104,6 +118,49 @@ SCORE_SCHEMA: dict = {
             "maximum": 10,
             "description": "Role responsibility alignment 0..10",
         },
+        "fit_band": {
+            "type": "string",
+            "enum": ["excellent", "strong", "plausible", "stretch", "poor"],
+            "description": "Band derived from the overall assessment",
+        },
+        "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Confidence in the assessment",
+        },
+        "eligibility": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["eligible", "warning", "blocked", "unknown"],
+                },
+                "hard_blockers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["status", "hard_blockers", "warnings"],
+        },
+        "matched_signals": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Concrete profile/job signals that support the score",
+        },
+        "missing_signals": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Required or preferred job signals missing from the profile",
+        },
+        "transferable_signals": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Adjacent experience that could bridge a gap",
+        },
         "keywords": {
             "type": "array",
             "items": {"type": "string"},
@@ -115,7 +172,20 @@ SCORE_SCHEMA: dict = {
             "description": "2-3 sentence justification",
         },
     },
-    "required": ["score", "technical_fit", "experience_fit", "role_fit", "keywords", "reasoning"],
+    "required": [
+        "score",
+        "technical_fit",
+        "experience_fit",
+        "role_fit",
+        "fit_band",
+        "confidence",
+        "eligibility",
+        "matched_signals",
+        "missing_signals",
+        "transferable_signals",
+        "keywords",
+        "reasoning",
+    ],
 }
 
 
@@ -130,6 +200,16 @@ def _build_job_blob(job: dict[str, Any]) -> str:
         f"LOCATION: {job.get('location') or 'N/A'}\n\n"
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
+
+
+def _build_profile_preferences_blob(criteria: ScoringCriteria) -> str:
+    return json_dumps(criteria.to_dict())
+
+
+def json_dumps(value: Any) -> str:
+    import json
+
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -168,12 +248,14 @@ class ScoreJobUseCase:
         llm: LlmPort,
         publisher: EventPublisher | None = None,
         parser: ScoreParser | None = None,
+        constraints: ConstraintChecker | None = None,
         prompt: str = SCORE_PROMPT,
     ) -> None:
         self._repository = repository
         self._llm = llm
         self._publisher = publisher
         self._parser = parser or ScoreParser()
+        self._constraints = constraints or ConstraintChecker()
         self._prompt = prompt
 
     # ------------------------------------------------------------------
@@ -187,6 +269,7 @@ class ScoreJobUseCase:
         profile_snapshot: ProfileSnapshot,
         tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
+        criteria: ScoringCriteria | None = None,
     ) -> ScoreJobOutcome:
         """**Preferred entry point** for single-threaded callers.
 
@@ -206,6 +289,7 @@ class ScoreJobUseCase:
             job=job,
             profile_snapshot=profile_snapshot,
             resume_text=resume_text,
+            criteria=criteria,
         )
         return self.persist_outcome(job=job, parse=parse_result, tenant_id=tenant_id)
 
@@ -215,6 +299,7 @@ class ScoreJobUseCase:
         job: dict[str, Any],
         profile_snapshot: ProfileSnapshot,
         resume_text: str | None = None,
+        criteria: ScoringCriteria | None = None,
     ) -> ScoreParseResult:
         """LLM call + parse only — does NOT touch the repository.
 
@@ -230,7 +315,13 @@ class ScoreJobUseCase:
         text = resume_text or profile_snapshot.as_dict().get("resume", {}).get(
             "executive_profile", {}
         ).get("baseline_text", "")
-        return self._call_llm(job=job, resume_text=text)
+        scoring_criteria = criteria or ScoringCriteria.from_profile_snapshot(profile_snapshot)
+        return self._call_llm(
+            job=job,
+            resume_text=text,
+            profile_snapshot=profile_snapshot,
+            criteria=scoring_criteria,
+        )
 
     def persist_outcome(
         self,
@@ -277,25 +368,44 @@ class ScoreJobUseCase:
         job: dict[str, Any],
         tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
+        criteria: ScoringCriteria | None = None,
     ) -> ScoreJobOutcome:
         return self.score(
             job=job,
             profile_snapshot=profile_snapshot,
             tenant_id=tenant_id,
             resume_text=resume_text,
+            criteria=criteria,
         )
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _call_llm(self, *, job: dict[str, Any], resume_text: str) -> ScoreParseResult:
+    def _call_llm(
+        self,
+        *,
+        job: dict[str, Any],
+        resume_text: str,
+        profile_snapshot: ProfileSnapshot,
+        criteria: ScoringCriteria,
+    ) -> ScoreParseResult:
+        trace = ScoreTrace(
+            prompt_version=SCORE_PROMPT_VERSION,
+            schema_version=SCORE_SCHEMA_VERSION,
+            model=str(getattr(self._llm, "model", "llm-port-default")),
+            criteria_version=criteria.criteria_version,
+            profile_snapshot_version=profile_snapshot.version,
+        )
         messages = [
             LlmMessage(role="system", content=self._prompt),
             LlmMessage(
                 role="user",
                 content=(
-                    f"RESUME:\n{resume_text}\n\n---\n\nJOB POSTING:\n{_build_job_blob(job)}"
+                    f"RESUME BASELINE:\n{resume_text}\n\n"
+                    f"---\n\nSCORING CRITERIA AND PROFILE PREFERENCES:\n"
+                    f"{_build_profile_preferences_blob(criteria)}\n\n"
+                    f"---\n\nJOB POSTING:\n{_build_job_blob(job)}"
                 ),
             ),
         ]
@@ -303,27 +413,52 @@ class ScoreJobUseCase:
         # already conforms to SCORE_SCHEMA. max_tokens is generous because
         # Gemini 3.x preview models spend invisible tokens on internal
         # reasoning before emitting the schema fill.
-        try:
-            payload = self._llm.chat_json(
-                messages,
-                response_schema=SCORE_SCHEMA,
-                max_tokens=4096,
-                temperature=0.2,
-            )
-        except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
-            log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)
-            # Sentinel keyword keeps the ``MatchedKeywords`` non-empty
-            # invariant intact for the failure-path ``ScoreParseResult``;
-            # ``ok=False`` means nothing is persisted anyway.
-            return ScoreParseResult(
-                ok=False,
-                fit_score=None,
-                breakdown=ScoreBreakdown(reasoning=f"LLM error: {exc}"),
-                keywords=MatchedKeywords(),
-                error=f"LLM error: {exc}",
-            )
+        with otel_trace.get_tracer("jobhunter.scoring").start_as_current_span("scoring.score_job") as span:
+            span.set_attribute("langfuse.observation.type", "span")
+            span.set_attribute("jobhunter.scoring.prompt_version", SCORE_PROMPT_VERSION)
+            span.set_attribute("jobhunter.scoring.schema_version", SCORE_SCHEMA_VERSION)
+            span.set_attribute("jobhunter.scoring.criteria_version", criteria.criteria_version)
+            span.set_attribute("jobhunter.scoring.profile_snapshot_version", profile_snapshot.version)
+            span.set_attribute("jobhunter.scoring.min_fit_score", criteria.min_fit_score)
+            try:
+                payload = self._llm.chat_json(
+                    messages,
+                    response_schema=SCORE_SCHEMA,
+                    max_tokens=4096,
+                    temperature=0.2,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
+                log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)
+                span.set_attribute("jobhunter.scoring.parse.ok", False)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                # Sentinel keyword keeps the ``MatchedKeywords`` non-empty
+                # invariant intact for the failure-path ``ScoreParseResult``;
+                # ``ok=False`` means nothing is persisted anyway.
+                return ScoreParseResult(
+                    ok=False,
+                    fit_score=None,
+                    breakdown=ScoreBreakdown(reasoning=f"LLM error: {exc}"),
+                    keywords=MatchedKeywords(),
+                    criteria=criteria,
+                    trace=trace,
+                    error=f"LLM error: {exc}",
+                )
 
-        return self._parser.parse_json(payload)
+            parsed = self._parser.parse_json(payload, criteria=criteria, trace=trace)
+            if parsed.ok:
+                parsed = self._constraints.apply(parse=parsed, job=job)
+            span.set_attribute("jobhunter.scoring.parse.ok", parsed.ok)
+            span.set_attribute("jobhunter.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
+            span.set_attribute("jobhunter.scoring.eligibility", parsed.breakdown.eligibility.status)
+            span.set_attribute("jobhunter.scoring.hard_blocker_count", len(parsed.breakdown.eligibility.hard_blockers))
+            span.set_attribute("jobhunter.scoring.fit_band", parsed.breakdown.fit_band)
+            span.set_attribute("jobhunter.scoring.confidence", parsed.breakdown.confidence)
+            if parsed.fit_score is not None:
+                span.set_attribute("jobhunter.scoring.fit_score", parsed.fit_score.value)
+            if not parsed.ok:
+                span.set_status(Status(StatusCode.ERROR, parsed.error))
+            return parsed
 
     def _build_aggregate(
         self,
@@ -345,12 +480,16 @@ class ScoreJobUseCase:
                 breakdown=parse.breakdown,
                 matched_keywords=parse.keywords,
                 scored_at=scored_at,
+                criteria=parse.criteria,
+                trace=parse.trace,
             )
         return previous.next_version(
             fit_score=parse.fit_score,
             breakdown=parse.breakdown,
             matched_keywords=parse.keywords,
             scored_at=scored_at,
+            criteria=parse.criteria,
+            trace=parse.trace,
         )
 
     def _publish_scored(self, score: JobScore) -> None:
@@ -366,6 +505,9 @@ class ScoreJobUseCase:
                     keywords=tuple(score.matched_keywords),
                     version=score.version,
                     scored_at=score.scored_at,
+                    fit_band=score.breakdown.fit_band,
+                    confidence=score.breakdown.confidence,
+                    eligibility=score.breakdown.eligibility.to_dict(),
                 ),
             )
             self._publisher.publish(event)

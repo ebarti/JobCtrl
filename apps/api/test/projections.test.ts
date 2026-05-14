@@ -111,6 +111,8 @@ function seedSchema(dbPath: string): void {
       keywords_json TEXT NOT NULL,
       scored_at TEXT NOT NULL,
       correction_json TEXT,
+      criteria_json TEXT NOT NULL DEFAULT '{}',
+      trace_json TEXT NOT NULL DEFAULT '{}',
       PRIMARY KEY (job_url, version)
     );
   `);
@@ -141,7 +143,10 @@ function seedSchema(dbPath: string): void {
     "2026-05-04T11:00:00+00:00",
   );
   db.prepare(
-    "INSERT INTO job_scores (job_url, version, tenant_id, fit_score, breakdown_json, keywords_json, scored_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO job_scores (
+      job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+      scored_at, criteria_json, trace_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "https://example.com/jobs/event-driven",
     2,
@@ -152,9 +157,31 @@ function seedSchema(dbPath: string): void {
       experience_fit: 7,
       role_fit: 8,
       reasoning: "Latest structured score evidence.",
+      fit_band: "strong",
+      confidence: "high",
+      eligibility: { status: "eligible", hard_blockers: [], warnings: [] },
+      matched_signals: ["event-driven architecture"],
+      missing_signals: ["people management"],
+      transferable_signals: ["platform ownership"],
     }),
     JSON.stringify(["python", "fastapi"]),
     "2026-05-05T09:30:00+00:00",
+    JSON.stringify({
+      min_fit_score: 8,
+      criteria_text: "Platform reliability and distributed systems.",
+      target_criteria: "Remote platform roles.",
+      profile_preferences: { target_work_models: "remote" },
+      criteria_version: "criteria-v2",
+    }),
+    JSON.stringify({
+      prompt_version: "score-fit-assessment-v1",
+      schema_version: "score-fit-assessment-v1",
+      model: "fake-eval",
+      criteria_version: "criteria-v2",
+      profile_snapshot_version: 4,
+      parser_warnings: [],
+      correction_history: [],
+    }),
   );
   db.prepare(
     "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -268,11 +295,31 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             experienceFit: 7,
             roleFit: 8,
             reasoning: "Latest structured score evidence.",
+            fitBand: "strong",
+            confidence: "high",
+            matchedSignals: ["event-driven architecture"],
+            missingSignals: ["people management"],
+            transferableSignals: ["platform ownership"],
           },
           scoreKeywords: ["python", "fastapi"],
           scoreReasoning: "Latest structured score evidence.",
           scoreVersion: 2,
           scoredAt: "2026-05-05T09:30:00+00:00",
+          scoreCriteria: {
+            minFitScore: 8,
+            criteriaText: "Platform reliability and distributed systems.",
+            targetCriteria: "Remote platform roles.",
+            criteriaVersion: "criteria-v2",
+          },
+          scoreTrace: {
+            promptVersion: "score-fit-assessment-v1",
+            schemaVersion: "score-fit-assessment-v1",
+            model: "fake-eval",
+            criteriaVersion: "criteria-v2",
+            profileSnapshotVersion: 4,
+            parserWarnings: [],
+            correctionHistory: [],
+          },
         });
 
         const detailRes = await app.inject({
@@ -287,11 +334,22 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             experienceFit: 7,
             roleFit: 8,
             reasoning: "Latest structured score evidence.",
+            fitBand: "strong",
+            confidence: "high",
+            matchedSignals: ["event-driven architecture"],
+            missingSignals: ["people management"],
+            transferableSignals: ["platform ownership"],
           },
           scoreKeywords: ["python", "fastapi"],
           scoreReasoning: "Latest structured score evidence.",
           scoreVersion: 2,
           scoredAt: "2026-05-05T09:30:00+00:00",
+          scoreCriteria: {
+            minFitScore: 8,
+            criteriaText: "Platform reliability and distributed systems.",
+            targetCriteria: "Remote platform roles.",
+            criteriaVersion: "criteria-v2",
+          },
         });
       } finally {
         await app.close();

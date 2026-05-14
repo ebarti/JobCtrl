@@ -286,6 +286,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       score_reasoning        TEXT NOT NULL DEFAULT '',
       score_version          INTEGER,
       scored_at              TEXT,
+      score_criteria_json    TEXT,
+      score_trace_json       TEXT,
+      score_correction_json  TEXT,
       current_stage          TEXT NOT NULL DEFAULT 'discover',
       current_state          TEXT NOT NULL DEFAULT 'pending',
       current_error_code     TEXT,
@@ -323,6 +326,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       score_reasoning        TEXT NOT NULL DEFAULT '',
       score_version          INTEGER,
       scored_at              TEXT,
+      score_criteria_json    TEXT,
+      score_trace_json       TEXT,
+      score_correction_json  TEXT,
       stages_json            TEXT NOT NULL DEFAULT '[]',
       last_updated_at        TEXT,
       PRIMARY KEY (tenant_id, job_id)
@@ -404,6 +410,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_version", "INTEGER") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "scored_at", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_criteria_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_trace_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_correction_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "score_breakdown_json", "TEXT") || schemaChanged;
   schemaChanged =
@@ -411,6 +420,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
     schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_version", "INTEGER") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "scored_at", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_criteria_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_trace_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_correction_json", "TEXT") || schemaChanged;
   return schemaChanged;
 }
 
@@ -603,6 +615,16 @@ interface ScoreBreakdownLatest {
   experienceFit: number;
   roleFit: number;
   reasoning: string;
+  fitBand: string;
+  confidence: string;
+  eligibility: {
+    status: string;
+    hardBlockers: string[];
+    warnings: string[];
+  };
+  matchedSignals: string[];
+  missingSignals: string[];
+  transferableSignals: string[];
 }
 
 interface ScoreLatest {
@@ -612,6 +634,9 @@ interface ScoreLatest {
   reasoning: string;
   version: number | null;
   scoredAt: string | null;
+  criteriaJson: string | null;
+  traceJson: string | null;
+  correctionJson: string | null;
 }
 
 function loadLatestScore(db: SqliteDatabase, jobUrl: string): ScoreLatest {
@@ -624,9 +649,13 @@ function loadLatestScore(db: SqliteDatabase, jobUrl: string): ScoreLatest {
     breakdown_json: string | null;
     keywords_json: string | null;
     scored_at: string | null;
+    correction_json: string | null;
+    criteria_json: string | null;
+    trace_json: string | null;
   }>(
     db,
-    `SELECT fit_score, version, breakdown_json, keywords_json, scored_at
+    `SELECT fit_score, version, breakdown_json, keywords_json, scored_at,
+            correction_json, criteria_json, trace_json
      FROM job_scores WHERE job_url = ? ORDER BY version DESC LIMIT 1`,
     [jobUrl],
   );
@@ -642,6 +671,9 @@ function loadLatestScore(db: SqliteDatabase, jobUrl: string): ScoreLatest {
     reasoning: parsedBreakdown.reasoning,
     version: nullableNumber(row.version),
     scoredAt: nullableString(row.scored_at),
+    criteriaJson: row.criteria_json,
+    traceJson: row.trace_json,
+    correctionJson: row.correction_json,
   };
 }
 
@@ -653,6 +685,9 @@ function emptyScore(): ScoreLatest {
     reasoning: "",
     version: null,
     scoredAt: null,
+    criteriaJson: null,
+    traceJson: null,
+    correctionJson: null,
   };
 }
 
@@ -679,10 +714,47 @@ function parseScoreBreakdown(
       experienceFit: scoreDimension(record.experience_fit ?? record.experienceFit),
       roleFit: scoreDimension(record.role_fit ?? record.roleFit),
       reasoning,
+      fitBand: stringChoice(record.fit_band ?? record.fitBand, "plausible"),
+      confidence: stringChoice(record.confidence, "medium"),
+      eligibility: parseEligibility(record.eligibility),
+      matchedSignals: parseStringList(record.matched_signals ?? record.matchedSignals),
+      missingSignals: parseStringList(record.missing_signals ?? record.missingSignals),
+      transferableSignals: parseStringList(record.transferable_signals ?? record.transferableSignals),
     },
     reasoning,
     legacy: false,
   };
+}
+
+function parseEligibility(value: unknown): ScoreBreakdownLatest["eligibility"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { status: "unknown", hardBlockers: [], warnings: [] };
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    status: stringChoice(record.status, "unknown"),
+    hardBlockers: parseStringList(record.hard_blockers ?? record.hardBlockers),
+    warnings: parseStringList(record.warnings),
+  };
+}
+
+function parseStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = String(raw ?? "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function stringChoice(value: unknown, fallback: string): string {
+  const text = String(value ?? "").trim();
+  return text || fallback;
 }
 
 function parseScoreKeywords(value: string | null): string[] {
@@ -957,11 +1029,12 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
      tenant_id, job_id, title, employer, source, strategy, location,
      salary, application_url, discovered_at, description, full_description,
        fit_score, score_breakdown_json, score_keywords_json, score_reasoning,
-       score_version, scored_at, current_stage, current_state,
+       score_version, scored_at, score_criteria_json, score_trace_json,
+       score_correction_json, current_stage, current_state,
        current_error_code, current_error_message, current_next_action,
        has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
        artifact_count, deleted_at, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        title                 = excluded.title,
        employer              = excluded.employer,
@@ -979,6 +1052,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        score_reasoning       = excluded.score_reasoning,
        score_version         = excluded.score_version,
        scored_at             = excluded.scored_at,
+       score_criteria_json   = excluded.score_criteria_json,
+       score_trace_json      = excluded.score_trace_json,
+       score_correction_json = excluded.score_correction_json,
        current_stage         = excluded.current_stage,
        current_state         = excluded.current_state,
        current_error_code    = excluded.current_error_code,
@@ -1011,6 +1087,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     scoreReasoning,
     score.version,
     score.scoredAt,
+    score.criteriaJson,
+    score.traceJson,
+    score.correctionJson,
     firstActionable?.stage ?? "discover",
     firstActionable?.state ?? "pending",
     firstActionable?.error_code ?? null,
@@ -1030,8 +1109,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     `INSERT INTO job_detail_projections (
        tenant_id, job_id, description_preview, score_breakdown_json,
        score_keywords_json, score_reasoning, score_version, scored_at,
+       score_criteria_json, score_trace_json, score_correction_json,
        stages_json, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        description_preview  = excluded.description_preview,
        score_breakdown_json = excluded.score_breakdown_json,
@@ -1039,6 +1119,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        score_reasoning      = excluded.score_reasoning,
        score_version        = excluded.score_version,
        scored_at            = excluded.scored_at,
+       score_criteria_json  = excluded.score_criteria_json,
+       score_trace_json     = excluded.score_trace_json,
+       score_correction_json = excluded.score_correction_json,
        stages_json          = excluded.stages_json,
        last_updated_at      = excluded.last_updated_at`,
   ).run(
@@ -1050,6 +1133,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     scoreReasoning,
     score.version,
     score.scoredAt,
+    score.criteriaJson,
+    score.traceJson,
+    score.correctionJson,
     JSON.stringify(stages),
     lastUpdatedAt,
   );
