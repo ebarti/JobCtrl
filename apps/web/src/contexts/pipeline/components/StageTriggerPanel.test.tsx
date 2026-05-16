@@ -107,6 +107,26 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
   });
 
+  it("renders supplemental content only for the active stage", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <StageTriggerPanel
+        stagePanels={{
+          discover: <div>Discover supplemental controls</div>,
+          score: <div>Score supplemental controls</div>,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Discover supplemental controls")).toBeInTheDocument();
+    expect(screen.queryByText("Score supplemental controls")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Score" }));
+
+    expect(screen.getByText("Score supplemental controls")).toBeInTheDocument();
+    expect(screen.queryByText("Discover supplemental controls")).not.toBeInTheDocument();
+  });
+
   it("submits a bounded Discover run from the stage tab", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({

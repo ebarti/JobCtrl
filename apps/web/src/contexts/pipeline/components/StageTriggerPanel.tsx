@@ -7,7 +7,7 @@ import {
   type Stage,
 } from "@jobhunter/contracts";
 import { Play } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
@@ -169,7 +169,11 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
     : "haiku";
 }
 
-export function StageTriggerPanel() {
+export interface StageTriggerPanelProps {
+  readonly stagePanels?: Partial<Record<Stage, ReactNode>>;
+}
+
+export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps = {}) {
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -186,6 +190,7 @@ export function StageTriggerPanel() {
     runStages.isPending && stageActivity && isActivityAfter(stageActivity, submittedAt) ? stageActivity : null;
   const visibleStageActivity = relevantPendingActivity ?? (!runStages.isPending ? stageActivity : null);
   const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
+  const activeStagePanel = stagePanels[activeStage] ?? null;
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
@@ -363,30 +368,33 @@ export function StageTriggerPanel() {
   );
 
   return (
-    <section className="card full stage-trigger-panel">
-      <CardHeader title="Pipeline actions" meta={headerMeta} />
-      <Tabs
-        className="stage-trigger-tabs"
-        value={activeStage}
-        onValueChange={(value) => {
-          if (STAGES.includes(value as Stage)) {
-            setActiveStage(value as Stage);
-          }
-        }}
-      >
-        <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
+    <>
+      <section className="card full stage-trigger-panel">
+        <CardHeader title="Pipeline actions" meta={headerMeta} />
+        <Tabs
+          className="stage-trigger-tabs"
+          value={activeStage}
+          onValueChange={(value) => {
+            if (STAGES.includes(value as Stage)) {
+              setActiveStage(value as Stage);
+            }
+          }}
+        >
+          <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
+            {STAGES.map((stage) => (
+              <TabsTrigger key={stage} value={stage}>
+                {labelForStage(stage)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
           {STAGES.map((stage) => (
-            <TabsTrigger key={stage} value={stage}>
-              {labelForStage(stage)}
-            </TabsTrigger>
+            <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
+              {stage === activeStage ? stageForm : null}
+            </TabsContent>
           ))}
-        </TabsList>
-        {STAGES.map((stage) => (
-          <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
-            {stage === activeStage ? stageForm : null}
-          </TabsContent>
-        ))}
-      </Tabs>
-    </section>
+        </Tabs>
+      </section>
+      {activeStagePanel}
+    </>
   );
 }

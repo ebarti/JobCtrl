@@ -91,6 +91,14 @@ reached so `limit: 1` is usable for local debugging. For `enrich`, the same
 field caps pending detail jobs instead of falling back to the enrichment default
 batch size.
 
+Discover honors the profile Target search saved from the Preferences tab.
+Target roles replace the active discovery query list, target locations replace
+the active location list, and the worker falls back to profile city/country when
+target locations are blank. Spain or Europe targets set JobSpy's Indeed country
+to Spain, add Europe/remote location accepts, reject America-only non-remote
+locations, and filter API-visible America-only source rows from
+`GET /v1/discovery/sources`.
+
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. Non-apply pipeline runs also emit pipeline-level

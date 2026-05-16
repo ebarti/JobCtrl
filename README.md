@@ -258,21 +258,21 @@ pnpm web:dev
 The Vite dev server proxies `/v1/*` to the local API by default. Set
 `VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
 
-The dashboard includes a pipeline actions panel for global stage starts. Each
-stage (`discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has
-its own tab with persisted local config, and the tab only shows controls that
-the selected stage actually consumes. Running a tab submits that stage through
-the local API. The panel reports when the request is waiting on the local
-worker, whether the start was queued, completed, dry-run, or failed, and the
-returned run/action id when one is available. Longer-running progress appears in
-the dashboard pipeline, apply runs, and recent activity cards after the API
-invalidates those read models. Non-apply stages emit pipeline lifecycle events;
-Discover also emits source-step events and scheduled discovery-run events for
-JobSpy, Workday, and Smart Extract so a stuck or low-quality source is visible
-before the request finishes. The dashboard source-health card summarizes the
-local source-quality projection used to budget and demote future crawls. The
-dashboard also exposes Discovery controls for the local source registry, source
-locator candidates, observed-source preview, quarantined leads, and
+The Pipelines tab includes global stage starts. Each stage (`discover`,
+`enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has its own tab with
+persisted local config, and the tab only shows controls that the selected stage
+actually consumes. Running a tab submits that stage through the local API. The
+panel reports when the request is waiting on the local worker, whether the start
+was queued, completed, dry-run, or failed, and the returned run/action id when
+one is available. Longer-running progress appears in the dashboard pipeline,
+apply runs, and recent activity cards after the API invalidates those read
+models. Non-apply stages emit pipeline lifecycle events; Discover also emits
+source-step events and scheduled discovery-run events for JobSpy, Workday, and
+Smart Extract so a stuck or low-quality source is visible before the request
+finishes. The dashboard source-health card summarizes the local source-quality
+projection used to budget and demote future crawls. The Discover stage in the
+Pipelines tab also exposes Discovery controls for the local source registry,
+source locator candidates, observed-source preview, quarantined leads, and
 manual-capture queue. These controls can add an experimental source, promote or
 reject a detected careers-page candidate, preview recently observed leads for a
 source, enable or quarantine a source, approve or reject quarantined leads,
@@ -280,11 +280,10 @@ record source feedback, open a blocked lead in the local browser, and import a
 user-provided URL, current-page URL, pasted text, saved HTML, or email content
 as manual-capture provenance. Manual capture stores local provenance metadata
 and content hashes, not raw captured posting text in domain events. The `limit`
-control is honored by every stage
-tab, including `discover` and `enrich`, so local debug runs can be bounded to
-one job. A bounded Discover run stops remaining sources once the cap is
-reached. Tabs default to dry-run mode so apply automation does not submit
-applications unless you explicitly clear dry run.
+control is honored by every stage tab, including `discover` and `enrich`, so
+local debug runs can be bounded to one job. A bounded Discover run stops
+remaining sources once the cap is reached. Tabs default to dry-run mode so apply
+automation does not submit applications unless you explicitly clear dry run.
 
 ## Inspecting Progress
 
@@ -337,6 +336,13 @@ worker also builds a local source registry contract from packaged
 Smart Extract entries start as `experimental` with the
 `smart_extract_experimental` policy so existing arbitrary-site discovery keeps
 working while sources are promoted or rejected.
+
+The Preferences tab's Target search fields are discovery inputs. Target roles
+replace the active discovery query list, target locations replace the active
+location list, and if target locations are blank the worker falls back to the
+profile city/country. A Spain or Europe target sets JobSpy's Indeed country to
+Spain, broadens Europe/remote location accepts, rejects America-only non-remote
+locations, and hides packaged America-only source rows from discovery controls.
 
 Common environment variables:
 
