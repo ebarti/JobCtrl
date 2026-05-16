@@ -52,6 +52,66 @@ CONFIG_DIR = PACKAGE_DIR / "config"
 
 DEFAULT_JOBSPY_BOARDS = ("indeed", "linkedin", "zip_recruiter")
 
+_EUROPE_TARGET_MARKERS = (
+    "barcelona",
+    "spain",
+    "españa",
+    "madrid",
+    "valencia",
+    "europe",
+    "european union",
+    " eu",
+    "eu ",
+)
+
+_EUROPE_LOCATION_ACCEPTS = (
+    "Barcelona",
+    "Spain",
+    "España",
+    "Madrid",
+    "Valencia",
+    "Europe",
+    "European Union",
+    "EU",
+    "Remote",
+    "Anywhere",
+)
+
+_AMERICA_LOCATION_REJECTS = (
+    "United States",
+    "USA",
+    "US only",
+    "U.S.",
+    "Canada",
+    "Canada only",
+    "Mexico",
+    "North America",
+    "South America",
+    "Latin America",
+    "LATAM",
+    "Americas",
+)
+
+_AMERICA_ONLY_SOURCE_MARKERS = (
+    "canada",
+    "canadian",
+    "job bank",
+    "job-bank",
+    "careerjet canada",
+    "careerjet-canada",
+    "randstad canada",
+    "randstad-canada",
+    "eluta",
+    "jobbank.gc.ca",
+    "careerjet.ca",
+    "randstad.ca",
+    "eluta.ca",
+    "smart_extract:dice",
+    "dice.com",
+    "smart_extract:wellfound",
+    "wellfound.com/role/l/software-engineer/canada",
+)
+
 
 def get_chrome_path() -> str:
     """Auto-detect Chrome/Chromium executable path, cross-platform.
@@ -115,15 +175,157 @@ def ensure_dirs():
 
 
 def load_search_config() -> dict:
-    """Load search configuration from ~/.jobhunter/searches.yaml."""
+    """Load search configuration, honoring the profile target-search fields."""
     import yaml
     if not SEARCH_CONFIG_PATH.exists():
         # Fall back to package-shipped example
         example = CONFIG_DIR / "searches.example.yaml"
         if example.exists():
-            return yaml.safe_load(example.read_text(encoding="utf-8"))
+            return _apply_profile_target_search(yaml.safe_load(example.read_text(encoding="utf-8")) or {})
         return {}
-    return yaml.safe_load(SEARCH_CONFIG_PATH.read_text(encoding="utf-8"))
+    return _apply_profile_target_search(yaml.safe_load(SEARCH_CONFIG_PATH.read_text(encoding="utf-8")) or {})
+
+
+def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -> dict:
+    """Overlay profile target roles and locations onto the discovery search config."""
+    target_search = target if target is not None else _load_profile_target_search()
+    roles = target_search.get("roles", [])
+    locations = target_search.get("locations", [])
+    work_models = target_search.get("work_models", [])
+
+    if not roles and not locations:
+        return search_cfg
+
+    next_cfg = dict(search_cfg)
+    if roles:
+        next_cfg["queries"] = [{"query": role, "tier": 1} for role in roles]
+        next_cfg["workday_max_tier"] = 1
+        next_cfg["ats_max_tier"] = 1
+
+    if locations:
+        next_cfg["locations"] = [
+            {
+                "label": _source_slug(location),
+                "location": location,
+                "remote": _target_location_is_remote(location, work_models[index] if index < len(work_models) else ""),
+            }
+            for index, location in enumerate(locations)
+        ]
+        next_cfg["location_labels"] = [_source_slug(location) for location in locations]
+
+    if _target_prefers_europe_from_values(locations):
+        defaults = dict(next_cfg.get("defaults") or {})
+        defaults.setdefault("country_indeed", "spain")
+        next_cfg["defaults"] = defaults
+        next_cfg["country"] = "Spain"
+        next_cfg["target_region"] = "europe"
+        next_cfg["location_accept"] = _dedupe_strings(
+            [*_string_list(next_cfg.get("location_accept")), *locations, *_EUROPE_LOCATION_ACCEPTS]
+        )
+        next_cfg["location_reject_non_remote"] = _dedupe_strings(
+            [*_string_list(next_cfg.get("location_reject_non_remote")), *_AMERICA_LOCATION_REJECTS]
+        )
+
+    return next_cfg
+
+
+def _load_profile_target_search() -> dict[str, list[str]]:
+    if not DB_PATH.exists():
+        return {"roles": [], "locations": [], "work_models": []}
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_profiles'"
+        ).fetchone()
+        if table is None:
+            return {"roles": [], "locations": [], "work_models": []}
+        row = conn.execute(
+            """
+            SELECT experience_target_role, experience_target_locations,
+                   experience_target_work_models, personal_city, personal_country
+            FROM candidate_profiles
+            WHERE tenant_id = ? AND profile_id = ?
+            """,
+            (str(LOCAL_TENANT), "default"),
+        ).fetchone()
+        if row is None:
+            return {"roles": [], "locations": [], "work_models": []}
+        locations = _split_target_text(row["experience_target_locations"])
+        return {
+            "roles": _split_target_text(row["experience_target_role"]),
+            "locations": locations or _profile_home_location(row),
+            "work_models": _split_target_text(row["experience_target_work_models"]),
+        }
+    except Exception:
+        log.debug("Failed to load profile target-search preferences", exc_info=True)
+        return {"roles": [], "locations": [], "work_models": []}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _split_target_text(value: object) -> list[str]:
+    if value is None:
+        return []
+    cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
+    return [
+        item.strip()
+        for item in re.split(r"[;\n]+", cleaned)
+        if item.strip()
+    ]
+
+
+def _profile_home_location(row: sqlite3.Row) -> list[str]:
+    city = str(row["personal_city"] or "").strip()
+    country = str(row["personal_country"] or "").strip()
+    if city and country:
+        return [f"{city}, {country}"]
+    if country:
+        return [country]
+    if city:
+        return [city]
+    return []
+
+
+def _target_location_is_remote(location: str, work_model: str) -> bool:
+    target = f"{location} {work_model}".lower()
+    return any(marker in target for marker in ("remote", "anywhere", "distributed"))
+
+
+def _target_prefers_europe_from_values(locations: list[str]) -> bool:
+    target = f" {' '.join(locations)} ".lower()
+    return any(marker in target for marker in _EUROPE_TARGET_MARKERS)
+
+
+def _target_prefers_europe(search_cfg: dict | None) -> bool:
+    if not isinstance(search_cfg, dict):
+        return False
+    if str(search_cfg.get("target_region") or "").strip().lower() == "europe":
+        return True
+    defaults = search_cfg.get("defaults") if isinstance(search_cfg.get("defaults"), dict) else {}
+    country = f"{search_cfg.get('country') or ''} {defaults.get('country_indeed') or ''}".lower()
+    if any(marker.strip() in country for marker in ("spain", "españa", "europe")):
+        return True
+    locations = [
+        str(item.get("location") or item.get("label") or "")
+        for item in search_cfg.get("locations", [])
+        if isinstance(item, dict)
+    ]
+    return _target_prefers_europe_from_values(locations)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        key = normalized.lower()
+        if normalized and key not in seen:
+            result.append(normalized)
+            seen.add(key)
+    return result
 
 
 def load_sites_config() -> dict:
@@ -447,6 +649,30 @@ def _merge_local_source_registry(
     return [merged[source_id] for source_id in ordered_ids]
 
 
+def _filter_sources_for_target_region(
+    registry: list[SourceRegistryEntry],
+    search_cfg: dict | None,
+) -> list[SourceRegistryEntry]:
+    if not _target_prefers_europe(search_cfg):
+        return registry
+    return [entry for entry in registry if not _is_america_only_source(entry)]
+
+
+def _is_america_only_source(entry: SourceRegistryEntry) -> bool:
+    source_text = " ".join(
+        str(value)
+        for value in (
+            entry.source_id,
+            entry.display_name,
+            entry.adapter_config.get("url"),
+            entry.adapter_config.get("seed_url"),
+            entry.adapter_config.get("base_url"),
+        )
+        if value
+    ).lower()
+    return any(marker in source_text for marker in _AMERICA_ONLY_SOURCE_MARKERS)
+
+
 def load_source_registry(
     *,
     search_cfg: dict | None = None,
@@ -463,7 +689,10 @@ def load_source_registry(
         *_workday_sources(active_employers_cfg),
         *_jobspy_sources(active_search_cfg),
     ]
-    return _merge_local_source_registry(registry)
+    return _filter_sources_for_target_region(
+        _merge_local_source_registry(registry),
+        active_search_cfg,
+    )
 
 
 def is_manual_ats(url: str | None) -> bool:

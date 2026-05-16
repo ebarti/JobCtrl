@@ -13,6 +13,7 @@ import { Route as SettingsRouteImport } from "./routes/settings";
 import { Route as RunsRouteImport } from "./routes/runs";
 import { Route as ProfileRouteImport } from "./routes/profile";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
+import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as JobsRouteImport } from "./routes/jobs";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
@@ -51,6 +52,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const PreferencesRoute = PreferencesRouteImport.update({
   id: "/preferences",
   path: "/preferences",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const PipelinesRoute = PipelinesRouteImport.update({
+  id: "/pipelines",
+  path: "/pipelines",
   getParentRoute: () => rootRouteImport,
 } as any);
 const JobsRoute = JobsRouteImport.update({
@@ -154,6 +160,7 @@ export interface FileRoutesByFullPath {
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
   "/runs": typeof RunsRouteWithChildren;
@@ -177,6 +184,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/dashboard": typeof DashboardRoute;
+  "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
   "/artifacts/$artifactId": typeof ArtifactsArtifactIdRoute;
@@ -200,6 +208,7 @@ export interface FileRoutesById {
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
   "/jobs": typeof JobsRouteWithChildren;
+  "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/profile": typeof ProfileRouteWithChildren;
   "/runs": typeof RunsRouteWithChildren;
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | "/artifacts"
     | "/dashboard"
     | "/jobs"
+    | "/pipelines"
     | "/preferences"
     | "/profile"
     | "/runs"
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
   to:
     | "/"
     | "/dashboard"
+    | "/pipelines"
     | "/preferences"
     | "/activity/$eventId"
     | "/artifacts/$artifactId"
@@ -272,6 +283,7 @@ export interface FileRouteTypes {
     | "/artifacts"
     | "/dashboard"
     | "/jobs"
+    | "/pipelines"
     | "/preferences"
     | "/profile"
     | "/runs"
@@ -298,6 +310,7 @@ export interface RootRouteChildren {
   ArtifactsRoute: typeof ArtifactsRouteWithChildren;
   DashboardRoute: typeof DashboardRoute;
   JobsRoute: typeof JobsRouteWithChildren;
+  PipelinesRoute: typeof PipelinesRoute;
   PreferencesRoute: typeof PreferencesRoute;
   ProfileRoute: typeof ProfileRouteWithChildren;
   RunsRoute: typeof RunsRouteWithChildren;
@@ -333,6 +346,13 @@ declare module "@tanstack/react-router" {
       path: "/preferences";
       fullPath: "/preferences";
       preLoaderRoute: typeof PreferencesRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/pipelines": {
+      id: "/pipelines";
+      path: "/pipelines";
+      fullPath: "/pipelines";
+      preLoaderRoute: typeof PipelinesRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/jobs": {
@@ -569,6 +589,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtifactsRoute: ArtifactsRouteWithChildren,
   DashboardRoute: DashboardRoute,
   JobsRoute: JobsRouteWithChildren,
+  PipelinesRoute: PipelinesRoute,
   PreferencesRoute: PreferencesRoute,
   ProfileRoute: ProfileRouteWithChildren,
   RunsRoute: RunsRouteWithChildren,

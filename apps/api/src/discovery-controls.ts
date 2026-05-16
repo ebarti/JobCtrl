@@ -35,6 +35,36 @@ import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 
+const EUROPE_TARGET_MARKERS = [
+  "barcelona",
+  "spain",
+  "españa",
+  "madrid",
+  "valencia",
+  "europe",
+  "european union",
+];
+
+const AMERICA_ONLY_SOURCE_MARKERS = [
+  "canada",
+  "canadian",
+  "job bank",
+  "job-bank",
+  "careerjet canada",
+  "careerjet-canada",
+  "randstad canada",
+  "randstad-canada",
+  "eluta",
+  "jobbank.gc.ca",
+  "careerjet.ca",
+  "randstad.ca",
+  "eluta.ca",
+  "smart_extract:dice",
+  "dice.com",
+  "smart_extract:wellfound",
+  "wellfound.com/role/l/software-engineer/canada",
+];
+
 interface SourceRegistryRow extends Record<string, unknown> {
   tenant_id: string;
   source_id: string;
@@ -110,6 +140,14 @@ interface ManualCaptureRow extends Record<string, unknown> {
   required_at: string;
   status: string;
 }
+
+interface CandidateProfileTargetRow extends Record<string, unknown> {
+  experience_target_locations?: string;
+  personal_city?: string;
+  personal_country?: string;
+}
+
+type CandidateProfileTargetColumn = "experience_target_locations" | "personal_city" | "personal_country";
 
 export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
   db.exec(`
@@ -193,6 +231,7 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
 export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListResponse {
   ensureDiscoveryControlTables(db);
   refreshProjections(db, DEFAULT_TENANT);
+  const filterAmericaOnlySources = targetSearchPrefersEurope(db);
 
   const rows = allRows<SourceRegistryRow>(
     db,
@@ -206,14 +245,60 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
   const quality = sourceQualityById(db);
   const summaries = new Map<string, SourceRegistryEntrySummary>();
   for (const row of rows) {
+    if (filterAmericaOnlySources && isAmericaOnlySource(row.source_id, row.display_name, row.seed_url)) {
+      continue;
+    }
     summaries.set(row.source_id, rowToSourceSummary(row, quality.get(row.source_id)));
   }
   for (const [sourceId, stats] of quality.entries()) {
+    if (filterAmericaOnlySources && isAmericaOnlySource(sourceId, sourceId, null)) {
+      continue;
+    }
     if (!summaries.has(sourceId)) {
       summaries.set(sourceId, qualityOnlySourceSummary(sourceId, stats));
     }
   }
   return { ok: true, sources: [...summaries.values()] };
+}
+
+function targetSearchPrefersEurope(db: SqliteDatabase): boolean {
+  if (!tableExists(db, "candidate_profiles")) {
+    return false;
+  }
+  const columns = candidateProfileColumns(db);
+  const row = getRow<CandidateProfileTargetRow>(
+    db,
+    `SELECT ${candidateProfileColumn(columns, "experience_target_locations")},
+            ${candidateProfileColumn(columns, "personal_city")},
+            ${candidateProfileColumn(columns, "personal_country")}
+     FROM candidate_profiles
+     WHERE tenant_id = ? AND profile_id = ?`,
+    [DEFAULT_TENANT, "default"],
+  );
+  const target = [
+    row?.experience_target_locations,
+    row?.personal_city,
+    row?.personal_country,
+  ]
+    .map((value) => String(value ?? ""))
+    .join(" ")
+    .toLowerCase();
+  return EUROPE_TARGET_MARKERS.some((marker) => target.includes(marker));
+}
+
+function candidateProfileColumns(db: SqliteDatabase): Set<string> {
+  return new Set(
+    allRows<{ name: string }>(db, "PRAGMA table_info(candidate_profiles)").map((row) => row.name),
+  );
+}
+
+function candidateProfileColumn(columns: Set<string>, column: CandidateProfileTargetColumn): string {
+  return columns.has(column) ? column : `'' AS ${column}`;
+}
+
+function isAmericaOnlySource(sourceId: string, displayName: string, seedUrl: string | null): boolean {
+  const target = `${sourceId} ${displayName} ${seedUrl ?? ""}`.toLowerCase();
+  return AMERICA_ONLY_SOURCE_MARKERS.some((marker) => target.includes(marker));
 }
 
 export function upsertSourceRegistryEntry(

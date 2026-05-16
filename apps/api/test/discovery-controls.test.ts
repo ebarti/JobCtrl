@@ -155,6 +155,98 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("filters America-only source registry rows when profile target search is Europe-focused", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE candidate_profiles (
+          tenant_id TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          experience_target_locations TEXT NOT NULL,
+          personal_city TEXT NOT NULL DEFAULT '',
+          personal_country TEXT NOT NULL DEFAULT ''
+        );
+      `);
+      db.prepare(
+        `INSERT INTO candidate_profiles (
+           tenant_id, profile_id, experience_target_locations, personal_city, personal_country
+         ) VALUES (?, ?, ?, ?, ?)`,
+      ).run("local", "default", "", "Barcelona", "Spain");
+      const now = "2026-05-15T10:00:00+00:00";
+      db.prepare(
+        `INSERT INTO source_registry_entries (
+           tenant_id, source_id, kind, display_name, owner, priority, state,
+           policy_id, seed_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "smart_extract:job-bank-canada",
+        "smart_extract",
+        "Job Bank Canada",
+        "system",
+        "fallback",
+        "active",
+        "smart_extract_experimental",
+        "https://www.jobbank.gc.ca",
+        now,
+        now,
+      );
+      db.prepare(
+        `INSERT INTO source_registry_entries (
+           tenant_id, source_id, kind, display_name, owner, priority, state,
+           policy_id, seed_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "smart_extract:welcome-to-the-jungle",
+        "smart_extract",
+        "WelcomeToTheJungle",
+        "system",
+        "standard",
+        "active",
+        "smart_extract_experimental",
+        "https://www.welcometothejungle.com/en/jobs",
+        now,
+        now,
+      );
+      db.prepare(
+        `INSERT INTO source_quality_stats (
+           tenant_id, source_id, window_start, window_end, recommended_state,
+           run_count, failed_run_count, consecutive_failures, observed_jobs,
+           new_jobs, existing_jobs, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "smart_extract:dice",
+        "2026-05-15T00:00:00+00:00",
+        "2026-05-15T10:00:00+00:00",
+        "active",
+        1,
+        0,
+        0,
+        5,
+        5,
+        0,
+        now,
+      );
+      db.close();
+
+      const list = await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      expect(list.statusCode, list.body).toBe(200);
+      const sourceIds = list.json().sources.map((source: { sourceId: string }) => source.sourceId);
+
+      expect(sourceIds).not.toContain("smart_extract:job-bank-canada");
+      expect(sourceIds).not.toContain("smart_extract:dice");
+      expect(sourceIds).toContain("smart_extract:welcome-to-the-jungle");
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("records discovery feedback without copying the free-form note into domain events", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));
