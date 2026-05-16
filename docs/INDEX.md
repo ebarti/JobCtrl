@@ -1,6 +1,9 @@
 # Documentation Index
 
 - `architecture.md`: runtime boundaries and repository ownership.
+- `job-pipeline-architecture.md`: phase-by-phase pipeline execution, sequence
+  diagrams, component diagrams, call paths, persistence, events, and failure
+  behavior.
 - `ddd-target.md`: canonical DDD + hexagonal target architecture, domain
   language, and ownership rules (backend).
 - `frontend-target.md`: canonical frontend architecture — three-layer state,
@@ -14,8 +17,4 @@
 - `decisions.md`: accepted architecture decisions.
 - `delivered.md`: delivery history by PR.
 - `backlog.md`: deferred local and hosted work.
-- `plans/implemented/2026-05-06-ddd-migration.md`: backend DDD + hexagonal
-  migration (Phases 1–9).
-- `plans/implemented/2026-05-06-frontend-tanstack-migration.md`: frontend
-  TanStack migration (Phases 1–8).
 - `plans/`: proposal and implementation history.
