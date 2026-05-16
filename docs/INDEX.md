@@ -1,8 +1,8 @@
 # Documentation Index
 
 - `architecture.md`: runtime boundaries and repository ownership.
-- `domain-model.md`: domain language and ownership rules.
-- `ddd-target.md`: canonical DDD + hexagonal target architecture (backend).
+- `ddd-target.md`: canonical DDD + hexagonal target architecture, domain
+  language, and ownership rules (backend).
 - `frontend-target.md`: canonical frontend architecture — three-layer state,
   eight bounded contexts mirrored from the backend, hexagonal frontend ports,
   SSE realtime + invalidation router, testing pyramid.

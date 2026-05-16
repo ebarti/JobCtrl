@@ -427,7 +427,7 @@ reliable.
 
 - `docs/README.md`: documentation index.
 - `docs/architecture.md`: current architecture and runtime boundaries.
-- `docs/domain-model.md`: domain language and ownership rules.
+- `docs/ddd-target.md`: canonical DDD target, domain language, and ownership rules.
 - `docs/local-development.md`: setup, run, build, test, and lint commands.
 - `docs/local-ts-api.md`: local API and web development notes.
 - `docs/local-reliability-qa.md`: local QA checklist and regression matrix.
