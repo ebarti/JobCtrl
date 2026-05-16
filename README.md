@@ -425,8 +425,10 @@ reliable.
 
 ## Documentation Map
 
-- `docs/README.md`: documentation index.
+- `docs/INDEX.md`: documentation index.
 - `docs/architecture.md`: current architecture and runtime boundaries.
+- `docs/job-pipeline-architecture.md`: detailed phase-by-phase job pipeline
+  execution diagrams and call paths.
 - `docs/ddd-target.md`: canonical DDD target, domain language, and ownership rules.
 - `docs/local-development.md`: setup, run, build, test, and lint commands.
 - `docs/local-ts-api.md`: local API and web development notes.

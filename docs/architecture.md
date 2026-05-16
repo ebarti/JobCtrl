@@ -7,6 +7,10 @@ codebase here are summarised in
 `docs/plans/implemented/2026-05-06-ddd-migration.md`. Detailed proposal and
 delivery history lives under `docs/plans/`.
 
+For a phase-by-phase execution view of the job pipeline, including sequence
+diagrams, component diagrams, call paths, persistence, events, and failure
+behavior, see [`docs/job-pipeline-architecture.md`](job-pipeline-architecture.md).
+
 ## System Shape
 
 JobHunter is a local-first job-search automation system. The product surface is
