@@ -216,8 +216,9 @@ single-stage `run_pipeline(stages=[stage])` invocation.
 
 Discover finds postings from configured sources and creates canonical job
 records plus source observations. It owns source scheduling, source-quality
-feedback, canonical identity, manual-action queue seeding, and dedupe against
-existing jobs. It does not score jobs or fetch every full job description.
+feedback, canonical identity, idempotent source-control refresh, manual-capture
+queue entries for protected sources, and dedupe against existing jobs. It does
+not score jobs or fetch every full job description.
 
 ### Sequence
 
@@ -239,7 +240,7 @@ sequenceDiagram
     Api->>Rpc: run_stage(stage="discover", limit, workers)
     Rpc->>Action: LocalActionRequest(stage="discover")
     Action->>Runner: run_pipeline(stages=["discover"])
-    Runner->>DB: init_db() and seed discovery control queues
+    Runner->>DB: init_db(); refresh source-control rows idempotently
     Runner->>Scheduler: plan(registry, source quality, global limit)
     Scheduler-->>Runner: DiscoverySchedule
 
@@ -314,8 +315,11 @@ classDiagram
 - Reads source-quality snapshots to schedule and budget sources.
 - Reads target search from `candidate_profiles` and overlays it onto
   discovery search config.
+- Upserts source registry control rows, source locator candidates, and
+  manual-capture queue entries for protected/manual sources. Existing
+  `imported` or `dismissed` manual-capture entries keep their status.
 - Writes `jobs`, source observations, canonical identity rows, quarantine
-  entries, manual-capture queue rows, discovery run rows, and `job_events`.
+  entries, discovery run rows, and `job_events`.
 - Emits stage events and source-level discovery events.
 
 ### Failure And Limits
