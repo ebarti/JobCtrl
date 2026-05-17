@@ -44,7 +44,9 @@ Update only the root `package.json` scripts block to add:
 - `"web:e2e:headed": "corepack pnpm --filter @jobhunter/web e2e:headed"`
 
 Keep the aliases grouped with the existing root web scripts so the command
-surface remains easy to scan.
+surface remains easy to scan. Insert them between `web:preview` and
+`web:storybook` so the root script order mirrors the web package's script
+order.
 
 ## Rejected Alternatives
 
@@ -55,20 +57,28 @@ surface remains easy to scan.
   those are separate backlog items and would broaden this change.
 - Modify README or local development docs: rejected for this narrow scripts
   change because the root documentation already references these command
-  names; the stale behavior is the missing root aliases.
+  names; the stale behavior is the missing root aliases. The specific
+  completed backlog bullet in `docs/backlog.md` should be removed when the
+  aliases land.
 
 ## Validation
 
 After editing `package.json`, run the most practical package-manager checks
 for this scripts-only change:
 
-1. `corepack pnpm web:test -- --runInBand` is not appropriate because Vitest
-   does not support Jest's `--runInBand`; do not use it.
-2. `corepack pnpm web:test-d` verifies one new root alias delegates correctly
+1. `corepack pnpm web:test-d` verifies one new root alias delegates correctly
    to the web type-level test script without starting a browser.
-3. `corepack pnpm web:test -- --help` verifies the root unit-test alias reaches
+2. `corepack pnpm web:test --help` verifies the root unit-test alias reaches
    Vitest without running the full suite if a lighter smoke check is needed.
-4. Optionally run `corepack pnpm web:test` when local runtime budget permits.
+3. `corepack pnpm web:test:watch --help` verifies the watch alias reaches
+   Vitest without entering watch mode.
+4. `corepack pnpm web:test:coverage --help` verifies the coverage alias reaches
+   Vitest without running the coverage suite.
+5. `corepack pnpm web:e2e --help` verifies the Playwright alias reaches
+   `playwright test` without launching a browser.
+6. `corepack pnpm web:e2e:headed --help` verifies the headed Playwright
+   alias delegates correctly without launching a browser.
+7. Optionally run `corepack pnpm web:test` when local runtime budget permits.
 
 Do not run headed Playwright as validation for this planning item; the change
 only wires aliases, and browser execution belongs to product-flow QA when the
@@ -77,5 +87,10 @@ implementation or caller explicitly requires it.
 ## Implementation Notes
 
 - No commits are needed during the planning phase.
-- The implementation phase should keep the diff to `package.json` unless
-  verification reveals an unexpected script wiring issue.
+- The implementation phase should keep the functional diff to `package.json`
+  and remove only the completed root-alias bullet from `docs/backlog.md`
+  unless verification reveals an unexpected script wiring issue.
+- Do not pass Jest-only flags such as `--runInBand` to Vitest.
+- For root `pnpm` scripts, pass help flags directly, for example
+  `corepack pnpm web:e2e --help`; `corepack pnpm web:e2e -- --help` forwards
+  `--help` as a Playwright test filter and can start the configured web server.
