@@ -1,7 +1,7 @@
 import { ProfileSchema, type ProfileShape, type ProfileUpdateRequest } from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -86,10 +86,12 @@ function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
 export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [persistedValues, setPersistedValues] = useState(() => toProfileFormValues(initial));
+  const previousInitial = useRef(initial);
   const isProfileSection = section === "profile";
 
   const form = useForm({
-    defaultValues: toProfileFormValues(initial),
+    defaultValues: persistedValues,
     validators: {
       onBlur: ({ value }) => validateProfileForm(value),
       onSubmit: ({ value }) => validateProfileForm(value),
@@ -97,13 +99,21 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
       const response = await updateProfile.mutateAsync(toUpdateRequest(value));
-      formApi.reset(toProfileFormValues(response));
+      const nextValues = toProfileFormValues(response);
+      setPersistedValues(nextValues);
+      formApi.reset(nextValues);
       setStatusMessage(isProfileSection ? "profile saved" : "preferences saved");
     },
   });
 
   useEffect(() => {
-    form.reset(toProfileFormValues(initial));
+    if (previousInitial.current === initial) {
+      return;
+    }
+    previousInitial.current = initial;
+    const nextValues = toProfileFormValues(initial);
+    setPersistedValues(nextValues);
+    form.reset(nextValues);
   }, [form, initial]);
 
   return (
@@ -115,7 +125,7 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
       }}
       onReset={(event) => {
         event.preventDefault();
-        form.reset(toProfileFormValues(initial));
+        form.reset(persistedValues);
         setStatusMessage("");
       }}
     >

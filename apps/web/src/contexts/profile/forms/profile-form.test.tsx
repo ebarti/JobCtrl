@@ -1,4 +1,5 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { ProfileSchema, type ProfileUpdateRequest } from "@jobhunter/contracts";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -8,6 +9,83 @@ import { renderWithProviders } from "../../../test/render.js";
 import { ProfileForm } from "./profile-form.js";
 
 describe("<ProfileForm>", () => {
+  it("saves edited persisted profile fields and resets to the saved response", async () => {
+    const user = userEvent.setup();
+    const editedFullName = "Jordan Saved";
+    const initialProfile = ProfileSchema.parse(sampleProfileResponse.profile);
+    const savedProfile = {
+      ...sampleProfileResponse,
+      profile: {
+        ...initialProfile,
+        personal: {
+          ...initialProfile.personal,
+          full_name: editedFullName,
+        },
+      },
+    };
+    const updateProfile = vi.fn(async (_body: ProfileUpdateRequest) => savedProfile);
+
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+      withRouter: true,
+    });
+
+    const fullName = await screen.findByLabelText("Full name");
+    const saveButton = screen.getByRole("button", { name: /^save all$/i });
+    const discardButton = screen.getByRole("button", { name: /^discard all$/i });
+
+    expect(saveButton).toBeDisabled();
+    expect(discardButton).toBeDisabled();
+
+    await user.clear(fullName);
+    await user.type(fullName, editedFullName);
+
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    expect(discardButton).toBeEnabled();
+
+    await user.click(saveButton);
+
+    expect(await screen.findByText("profile saved")).toBeInTheDocument();
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    const submitted = updateProfile.mock.calls[0]?.[0];
+    if (!submitted?.profileText) {
+      throw new Error("Expected profileText to be submitted");
+    }
+    const submittedProfile = ProfileSchema.parse(JSON.parse(submitted.profileText));
+    expect(submittedProfile.personal.full_name).toBe(editedFullName);
+    expect(fullName).toHaveValue(editedFullName);
+    await waitFor(() => expect(saveButton).toBeDisabled());
+    expect(discardButton).toBeDisabled();
+  });
+
+  it("discards edited persisted profile fields without saving", async () => {
+    const user = userEvent.setup();
+    const initialProfile = ProfileSchema.parse(sampleProfileResponse.profile);
+    const updateProfile = vi.fn(async (_body: ProfileUpdateRequest) => sampleProfileResponse);
+
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+      withRouter: true,
+    });
+
+    const fullName = await screen.findByLabelText("Full name");
+    const saveButton = screen.getByRole("button", { name: /^save all$/i });
+    const discardButton = screen.getByRole("button", { name: /^discard all$/i });
+
+    await user.clear(fullName);
+    await user.type(fullName, "Jordan Unsaved");
+
+    await waitFor(() => expect(discardButton).toBeEnabled());
+    expect(saveButton).toBeEnabled();
+
+    await user.click(discardButton);
+
+    expect(fullName).toHaveValue(initialProfile.personal.full_name);
+    await waitFor(() => expect(saveButton).toBeDisabled());
+    expect(discardButton).toBeDisabled();
+    expect(updateProfile).not.toHaveBeenCalled();
+  });
+
   it("keeps preference controls out of the profile section", async () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
       withRouter: true,

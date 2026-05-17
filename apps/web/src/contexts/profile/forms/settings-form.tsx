@@ -3,7 +3,7 @@ import {
   type SettingsUpdateRequest,
 } from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { DashboardSettings } from "../../operations/types.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
@@ -27,9 +27,11 @@ function toFormValues(values: DashboardSettings): SettingsUpdateRequest {
 export function SettingsForm({ initial }: SettingsFormProps) {
   const updateSettings = useUpdateSettingsMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [persistedValues, setPersistedValues] = useState(() => toFormValues(initial));
+  const previousInitial = useRef(initial);
 
   const form = useForm({
-    defaultValues: toFormValues(initial),
+    defaultValues: persistedValues,
     validators: {
       onSubmit: ({ value }) => {
         const result = SettingsUpdateRequestSchema.safeParse(value);
@@ -39,13 +41,21 @@ export function SettingsForm({ initial }: SettingsFormProps) {
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
       const response = await updateSettings.mutateAsync(value);
-      formApi.reset(toFormValues(response.settings));
+      const nextValues = toFormValues(response.settings);
+      setPersistedValues(nextValues);
+      formApi.reset(nextValues);
       setStatusMessage("settings saved");
     },
   });
 
   useEffect(() => {
-    form.reset(toFormValues(initial));
+    if (previousInitial.current === initial) {
+      return;
+    }
+    previousInitial.current = initial;
+    const nextValues = toFormValues(initial);
+    setPersistedValues(nextValues);
+    form.reset(nextValues);
   }, [form, initial]);
 
   return (
@@ -58,7 +68,7 @@ export function SettingsForm({ initial }: SettingsFormProps) {
       }}
       onReset={(event) => {
         event.preventDefault();
-        form.reset(toFormValues(initial));
+        form.reset(persistedValues);
         setStatusMessage("");
       }}
     >
