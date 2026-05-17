@@ -58,17 +58,23 @@ delegate to the existing `@jobhunter/web` scripts:
 ```
 
 Place the new scripts near the existing root `web:*` scripts so the script list
-remains discoverable and grouped by surface.
+remains discoverable and grouped by surface. Leave the root aggregate `test`
+script unchanged because this backlog item is scoped to adding explicit aliases;
+changing the aggregate test contract would be a separate behavior change.
 
 ## Rejected Alternatives
 
-- Add ESLint, dependency-cruiser, or CI grep guards: those are separate backlog
-  items and would broaden a scripts-only change.
+- TODO (follow-up backlog item): Add ESLint, dependency-cruiser, or CI grep
+  guards from `docs/backlog.md` `Frontend Tooling + CI Backlog`. Those are
+  separate backlog items and would broaden a scripts-only change.
 - Run web tests directly from the root scripts, for example
   `vitest run --dir apps/web`: this would duplicate implementation details and
   risk drift from the package-owned scripts.
 - Add or rename scripts in `apps/web/package.json`: the needed script names
   already exist there.
+- TODO (follow-up backlog item): Add CI workflow coverage for `web:test`,
+  `web:test-d`, or `web:e2e` from `docs/backlog.md`
+  `Frontend Tooling + CI Backlog`. This task only restores the root aliases.
 - Update broad documentation: the root aliases are already referenced by the
   frontend migration documentation, and this change makes those references true.
   The package script metadata is the owning surface for this implementation.
@@ -78,13 +84,13 @@ remains discoverable and grouped by surface.
 After editing `package.json`, run practical package-manager validation for a
 scripts-only change:
 
-1. Run `corepack pnpm run` and confirm the six new root scripts are listed.
+1. Run `corepack pnpm run` and confirm the six new root scripts are listed with
+   the expected `corepack pnpm --filter @jobhunter/web ...` command mappings.
 2. Run `corepack pnpm web:test` when dependencies are available. This exercises
    the most common alias and the existing web unit test command.
 3. Run `corepack pnpm web:test-d` when type-level validation is practical.
-4. For the Playwright aliases, prefer command-resolution validation such as
-   `corepack pnpm web:e2e -- --help` unless a browser QA pass is specifically
-   requested.
+4. Treat the `corepack pnpm run` enumeration as the Playwright alias
+   command-resolution check unless a browser QA pass is specifically requested.
 
 The implementation phase should report any validation command that cannot run,
 including missing dependencies or Playwright browser prerequisites. E2E aliases
@@ -98,4 +104,6 @@ suite unless the reviewer requests a product-level browser QA pass.
   `corepack pnpm --filter @jobhunter/web ...`.
 - No unrelated package scripts, dependencies, CI files, or documentation are
   changed.
+- New scripts are contiguous with the existing root `web:*` script group before
+  `qa:seed`.
 - Relevant package-manager validation has been run and reported.
