@@ -133,11 +133,6 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
   files today (axe-only); the `useUpdateProfileMutation` /
   `useUpdateSettingsMutation` hooks are tested in isolation but no test
   drives the form's save and reset interactions together.
-- Add browser smoke for action-status polling. Bulk action buttons are
-  already covered by `apps/web/e2e/tests/jobs-bulk.spec.ts`; nothing
-  exercises the status-poll loop. `apps/web/e2e/tests/materials.spec.ts`
-  is `test.fixme`'d pending the generate-materials backend enablement
-  below.
 - Decide whether row selection should be URL-persisted or kept as client
   state. Filters, sort, and page already survive live updates by virtue
   of the TanStack Router URL-state architecture; selection lives in

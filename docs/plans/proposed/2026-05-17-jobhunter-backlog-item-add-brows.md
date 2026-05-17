@@ -42,26 +42,26 @@ Preferred file:
 Primary flow:
 
 1. Open `/pipelines` and wait for the `Pipeline actions` heading.
-2. Select a supported stage, preferably `Score`, so the flow is clearly a pipeline
-   action and not a job bulk action.
+2. Click the `Score` tab explicitly before submitting. The stage trigger store
+   persists the active tab, so the spec must not assume a fresh browser starts on
+   `Discover`; after this click the submit button label is `Run Score`.
 3. Intercept `POST /v1/pipeline/actions/run-stage` in the browser test and delay the
    fulfillment long enough to observe the pending UI. This keeps the test independent
    from a running Python/Temporal worker while still exercising the browser, route,
    TanStack mutation, and rendered status behavior.
+   Use the same-origin Vite-proxied request URL; in Playwright the reliable match is
+   `**/v1/pipeline/actions/run-stage`, not the API server's `:8767` URL.
 4. Click `Run Score`.
 5. Assert the `role="status"` element transitions to the pending text:
    `Starting Score... waiting for local worker response.`
-6. Fulfill the intercepted request with a valid queued `PipelineStageRunResponse`
-   containing a stable action/run id such as `smoke-score-run`.
+6. Fulfill the intercepted request with a queued `PipelineStageRunResponse` containing:
+   `ok: true`, `action: "run_stage"`, `status: "queued"`, `jobKey: "pipeline"`,
+   `count: 1`, the echoed `command`, and one nested action with `ok: true`,
+   `runId: "smoke-score-run"`, a stable `actionId`, `action: "run_stage"`,
+   `status: "queued"`, `jobKey: "pipeline"`, and the echoed action command. The
+   nested `runId` is required for the UI branch that renders the run reference.
 7. Poll the status element until it shows:
    `Score queued successfully (run smoke-score-run).`
-
-Optional strengthening, if the initial implementation remains simple and stable:
-
-- After the queued response, insert or expose a deterministic `StageStarted` event for
-  the `score` stage and assert the status line reflects the latest backend activity.
-  This is useful only if it can reuse the existing e2e state/SQLite helper without
-  making the smoke brittle.
 
 ## Rejected Alternatives
 
@@ -80,8 +80,8 @@ Optional strengthening, if the initial implementation remains simple and stable:
 
 - Remove the completed `docs/backlog.md` UI Quality bullet once the Playwright smoke
   lands.
-- Update `docs/local-reliability-qa.md` if adding a new spec changes the documented
-  Playwright spec count/list.
+- Update `docs/local-reliability-qa.md` to list 10 Playwright specs, including both
+  the already-present `runs` spec and the new `action-status-polling` spec.
 - No README or architecture updates are expected because this is test coverage for
   existing behavior, not new product behavior.
 - TODO(existing backlog): keep `apps/web/e2e/tests/materials.spec.ts` as `test.fixme`
