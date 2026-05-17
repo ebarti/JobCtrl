@@ -183,6 +183,27 @@ def test_worker_seeds_api_visible_locator_and_manual_queues(
     assert summary.registry_rows >= 4
     assert summary.locator_candidates >= 4
     assert summary.manual_action_count == 1
+    parseable_candidate_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM source_locator_candidates
+        WHERE detected_ats_kind IS NOT NULL
+        """
+    ).fetchone()[0]
+    assert parseable_candidate_count == 0
+    active_source_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM source_registry_entries
+        WHERE source_id IN (
+          'greenhouse:barcelona-tech',
+          'lever:leadershipco',
+          'ashby:platformops'
+        )
+          AND state = 'active'
+        """
+    ).fetchone()[0]
+    assert active_source_count == 3
     manual_row = conn.execute(
         """
         SELECT originating_url, source_id, reason, retry_context_json
@@ -194,6 +215,56 @@ def test_worker_seeds_api_visible_locator_and_manual_queues(
     assert manual_row is not None
     assert manual_row["reason"] == "protected_internal_site"
     assert "configured_seed" in manual_row["retry_context_json"]
+
+
+def test_worker_auto_approves_parseable_sources_from_broad_board_observations(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_source_observations (
+          tenant_id, source_observation_id, job_url, source_id,
+          source_native_id, observed_url, normalized_observed_url,
+          run_id, observed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            "obs-1",
+            "https://boards.greenhouse.io/acme/jobs/123",
+            "jobspy:linkedin",
+            "123",
+            "https://boards.greenhouse.io/acme/jobs/123",
+            "https://boards.greenhouse.io/acme/jobs/123",
+            "run-1",
+            "2026-05-12T10:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+    summary = seed_discovery_control_queues(conn, ())
+
+    assert summary.locator_candidates == 1
+    source_row = conn.execute(
+        """
+        SELECT source_id, kind, state, priority, policy_id, seed_url
+        FROM source_registry_entries
+        WHERE source_id = ?
+        """,
+        ("greenhouse:acme",),
+    ).fetchone()
+    assert dict(source_row) == {
+        "source_id": "greenhouse:acme",
+        "kind": "ats_api",
+        "state": "active",
+        "priority": "canonical",
+        "policy_id": "ats_api_canonical",
+        "seed_url": "https://boards.greenhouse.io/acme/jobs/123",
+    }
+    pending_candidates = conn.execute(
+        "SELECT COUNT(*) FROM source_locator_candidates"
+    ).fetchone()[0]
+    assert pending_candidates == 0
 
 
 def test_worker_queue_seeding_preserves_dismissed_manual_actions(
@@ -718,4 +789,4 @@ def test_barcelona_spain_tech_leadership_acceptance_report_is_end_to_end(
     assert report["quarantine_count"] == 0
     assert report["source_quality_updates"] >= fixture["minimums"]["source_quality_updates"]
     assert report["scoring_handoff_count"] == fixture["minimums"]["scoring_handoff_count"]
-    assert report["details"]["locator_candidates"] >= 4
+    assert report["details"]["locator_candidates"] == 1

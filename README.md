@@ -273,13 +273,15 @@ finishes. The dashboard source-health card summarizes the local source-quality
 projection used to budget and demote future crawls. The Discover stage in the
 Pipelines tab also exposes Discovery controls for the local source registry,
 source locator candidates, observed-source preview, quarantined leads, and
-manual-capture queue. These controls can add an experimental source, promote or
-reject a detected careers-page candidate, preview recently observed leads for a
-source, enable or quarantine a source, approve or reject quarantined leads,
-record source feedback, open a blocked lead in the local browser, and import a
-user-provided URL, current-page URL, pasted text, saved HTML, or email content
-as manual-capture provenance. Manual capture stores local provenance metadata
-and content hashes, not raw captured posting text in domain events. The `limit`
+manual-capture queue. Located parseable sources are automatically approved into
+the active source registry; manual review is reserved for blocked, ambiguous,
+or unparseable sources. These controls can add an experimental source, preview
+recently observed leads for a source, enable or quarantine a source, approve or
+reject quarantined leads, record source feedback, open a blocked lead in the
+local browser, and import a user-provided URL, current-page URL, pasted text,
+saved HTML, or email content as manual-capture provenance. Manual capture
+stores local provenance metadata and content hashes, not raw captured posting
+text in domain events. The `limit`
 control is honored by every stage tab, including `discover` and `enrich`, so
 local debug runs can be bounded to one job. A bounded Discover run stops
 remaining sources once the cap is reached. Tabs default to dry-run mode so apply
