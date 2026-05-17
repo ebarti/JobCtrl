@@ -432,9 +432,17 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
      ORDER BY confidence DESC, discovered_at DESC`,
     [DEFAULT_TENANT],
   );
+  const pendingRows: SourceLocatorCandidateRow[] = [];
+  for (const row of rows) {
+    if (shouldAutoPromoteParseableLocatorCandidate(row)) {
+      promoteSourceLocatorCandidate(db, row.candidate_id);
+      continue;
+    }
+    pendingRows.push(row);
+  }
   return {
     ok: true,
-    candidates: rows.map((row) => ({
+    candidates: pendingRows.map((row) => ({
       candidateId: row.candidate_id,
       candidateUrl: row.candidate_url,
       sourceKind: sourceKind(row.source_kind),
@@ -445,6 +453,10 @@ export function listSourceLocatorCandidates(db: SqliteDatabase): SourceLocatorLi
       discoveredAt: row.discovered_at,
     })),
   };
+}
+
+function shouldAutoPromoteParseableLocatorCandidate(row: SourceLocatorCandidateRow): boolean {
+  return Number(row.confidence ?? 0) >= 0.4 && manualActionReason(row.manual_action_reason) === null;
 }
 
 export function promoteSourceLocatorCandidate(
@@ -465,7 +477,7 @@ export function promoteSourceLocatorCandidate(
     kind,
     displayName: sourceDisplayNameFromUrl(candidate.candidate_url),
     priority: defaultPriority(kind),
-    state: "experimental",
+    state: "active",
     seedUrl: candidate.candidate_url,
   });
   deleteSourceLocatorCandidate(db, candidateId);

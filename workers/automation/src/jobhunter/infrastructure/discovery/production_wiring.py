@@ -265,13 +265,19 @@ def run_deterministic_source_locator(
     for candidate in candidates:
         decision = validate_locator_candidate(candidate, active_policy)
         is_new = _locator_candidate_is_new(conn, candidate)
-        _upsert_locator_candidate(conn, candidate)
-        if is_new:
-            _record_locator_event(conn, candidate)
         persisted += 1
+        if decision == "promote":
+            if _promote_locator_candidate(conn, candidate) and is_new:
+                _record_locator_event(conn, candidate)
+            continue
         if decision == "manual_action_required":
+            if is_new:
+                _record_locator_event(conn, candidate)
             _enqueue_manual_action_from_candidate(conn, candidate)
+            _upsert_locator_candidate(conn, candidate)
             manual_actions += 1
+        else:
+            _delete_locator_candidate(conn, candidate.candidate_id)
     conn.commit()
     return persisted, manual_actions
 
@@ -673,7 +679,7 @@ def _candidates_from_broad_board_observations(
         yield _source_location_candidate(
             candidate_url=observed_url,
             source_kind=SourceKind.ATS_API,
-            confidence=0.72,
+            confidence=0.82,
             detected_ats_kind=detected.value,
             employer_domain_matched=False,
             source_id=source_id,
@@ -761,6 +767,91 @@ def _upsert_locator_candidate(
     )
 
 
+def _promote_locator_candidate(
+    conn: sqlite3.Connection,
+    candidate: SourceLocationCandidate,
+) -> bool:
+    source_id = _source_id_from_locator_candidate(conn, candidate)
+    now = utc_now()
+    existing = conn.execute(
+        """
+        SELECT source_id, state, policy_id, seed_url, created_at
+        FROM source_registry_entries
+        WHERE tenant_id = ? AND source_id = ?
+        """,
+        (str(candidate.tenant_id), source_id),
+    ).fetchone()
+    if existing is None:
+        kind = (
+            SourceKind.ATS_API.value
+            if candidate.evidence.detected_ats_kind
+            else candidate.source_kind.value
+        )
+        policy_id = _policy_id_for_promoted_source(source_id, candidate)
+        conn.execute(
+            """
+            INSERT INTO source_registry_entries (
+                tenant_id, source_id, kind, display_name, owner, priority,
+                state, policy_id, seed_url, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'system', ?, 'active', ?, ?, ?, ?)
+            """,
+            (
+                str(candidate.tenant_id),
+                source_id,
+                kind,
+                _source_display_name_from_url(candidate.candidate_url),
+                _default_priority_value(kind),
+                policy_id,
+                candidate.candidate_url,
+                now,
+                now,
+            ),
+        )
+        _record_source_registry_created_event(
+            conn,
+            source_id=source_id,
+            kind=kind,
+            policy_id=policy_id,
+            state="active",
+            occurred_at=now,
+        )
+        changed = True
+    else:
+        changed_fields: list[str] = []
+        if str(existing["state"]) != "active":
+            changed_fields.append("state")
+        if existing["seed_url"] is None:
+            changed_fields.append("seedUrl")
+        conn.execute(
+            """
+            UPDATE source_registry_entries
+            SET state = 'active',
+                seed_url = COALESCE(seed_url, ?),
+                updated_at = ?
+            WHERE tenant_id = ? AND source_id = ?
+            """,
+            (candidate.candidate_url, now, str(candidate.tenant_id), source_id),
+        )
+        if changed_fields:
+            _record_source_registry_updated_event(
+                conn,
+                source_id=source_id,
+                changed_fields=tuple(changed_fields),
+                occurred_at=now,
+            )
+        changed = bool(changed_fields)
+    had_pending_candidate = not _locator_candidate_is_new(conn, candidate)
+    _delete_locator_candidate(conn, candidate.candidate_id)
+    if changed or had_pending_candidate:
+        _record_locator_promoted_event(
+            conn,
+            candidate_id=candidate.candidate_id,
+            source_id=source_id,
+            occurred_at=now,
+        )
+    return changed or had_pending_candidate
+
+
 def _locator_candidate_is_new(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
@@ -774,6 +865,16 @@ def _locator_candidate_is_new(
         (str(candidate.tenant_id), candidate.candidate_id),
     ).fetchone()
     return row is None
+
+
+def _delete_locator_candidate(conn: sqlite3.Connection, candidate_id: str) -> None:
+    conn.execute(
+        """
+        DELETE FROM source_locator_candidates
+        WHERE tenant_id = ? AND candidate_id = ?
+        """,
+        (str(LOCAL_TENANT), candidate_id),
+    )
 
 
 def _record_locator_event(
@@ -801,6 +902,88 @@ def _record_locator_event(
             "discoveredAt": candidate.discovered_at,
         },
         occurred_at=candidate.discovered_at,
+    )
+
+
+def _record_locator_promoted_event(
+    conn: sqlite3.Connection,
+    *,
+    candidate_id: str,
+    source_id: str,
+    occurred_at: str,
+) -> None:
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        "SourceLocationCandidatePromoted",
+        message="Source location candidate promoted.",
+        payload={
+            "tenantId": str(LOCAL_TENANT),
+            "candidate_id": candidate_id,
+            "candidateId": candidate_id,
+            "source_id": source_id,
+            "sourceId": source_id,
+            "promoted_at": occurred_at,
+            "promotedAt": occurred_at,
+        },
+        occurred_at=occurred_at,
+    )
+
+
+def _record_source_registry_created_event(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    kind: str,
+    policy_id: str,
+    state: str,
+    occurred_at: str,
+) -> None:
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        "SourceRegistryEntryCreated",
+        message="Source registry entry created.",
+        payload={
+            "tenantId": str(LOCAL_TENANT),
+            "source_id": source_id,
+            "sourceId": source_id,
+            "kind": kind,
+            "policy_id": policy_id,
+            "policyId": policy_id,
+            "state": state,
+            "created_at": occurred_at,
+            "createdAt": occurred_at,
+        },
+        occurred_at=occurred_at,
+    )
+
+
+def _record_source_registry_updated_event(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    changed_fields: tuple[str, ...],
+    occurred_at: str,
+) -> None:
+    record_job_event(
+        conn,
+        None,
+        "discover",
+        "SourceRegistryEntryUpdated",
+        message="Source registry entry updated.",
+        payload={
+            "tenantId": str(LOCAL_TENANT),
+            "source_id": source_id,
+            "sourceId": source_id,
+            "changed_fields": list(changed_fields),
+            "changedFields": list(changed_fields),
+            "updated_at": occurred_at,
+            "updatedAt": occurred_at,
+        },
+        occurred_at=occurred_at,
     )
 
 
@@ -871,6 +1054,88 @@ def _enqueue_manual_capture(
         ),
     )
     return item_id
+
+
+def _source_id_from_locator_candidate(
+    conn: sqlite3.Connection,
+    candidate: SourceLocationCandidate,
+) -> str:
+    existing = conn.execute(
+        """
+        SELECT source_id
+        FROM source_registry_entries
+        WHERE tenant_id = ? AND seed_url = ?
+        LIMIT 1
+        """,
+        (str(candidate.tenant_id), candidate.candidate_url),
+    ).fetchone()
+    if existing is not None:
+        return str(existing["source_id"])
+    slug = _source_slug_from_locator_url(
+        candidate.candidate_url,
+        candidate.evidence.detected_ats_kind,
+    )
+    if candidate.evidence.detected_ats_kind:
+        return f"{candidate.evidence.detected_ats_kind}:{slug}"
+    return f"{candidate.source_kind.value}:{slug}"
+
+
+def _source_slug_from_locator_url(url: str, ats_kind: str | None) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if ats_kind == AtsKind.GREENHOUSE.value:
+        if "boards" in segments:
+            index = segments.index("boards")
+            if len(segments) > index + 1:
+                return _slug_text(segments[index + 1])
+        if "greenhouse.io" in host and segments:
+            return _slug_text(segments[0])
+    if ats_kind == AtsKind.LEVER.value:
+        if "postings" in segments:
+            index = segments.index("postings")
+            if len(segments) > index + 1:
+                return _slug_text(segments[index + 1])
+        if segments:
+            return _slug_text(segments[0])
+    if ats_kind == AtsKind.ASHBY.value:
+        if "job-board" in segments:
+            index = segments.index("job-board")
+            if len(segments) > index + 1:
+                return _slug_text(segments[index + 1])
+        if segments:
+            return _slug_text(segments[0])
+    return _slug_text(host or url)
+
+
+def _source_display_name_from_url(url: str) -> str:
+    host = (urlparse(url).hostname or "").removeprefix("www.")
+    return host or url
+
+
+def _default_priority_value(kind: str) -> str:
+    if kind == SourceKind.ATS_API.value:
+        return "canonical"
+    if kind == SourceKind.BROAD_BOARD.value:
+        return "lead_generator"
+    if kind == SourceKind.SMART_EXTRACT.value:
+        return "fallback"
+    return "standard"
+
+
+def _policy_id_for_promoted_source(
+    source_id: str,
+    candidate: SourceLocationCandidate,
+) -> str:
+    if candidate.evidence.detected_ats_kind == AtsKind.WORKDAY.value:
+        return "workday_api_canonical"
+    if candidate.evidence.detected_ats_kind is not None:
+        return "ats_api_canonical"
+    return f"local:{source_id}"
+
+
+def _slug_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-") or "source"
 
 
 def _record_ats_source_failure(

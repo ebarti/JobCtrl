@@ -523,11 +523,35 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.discovery-source-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  border-bottom: 1px solid var(--rule);
+  padding: 10px 12px;
+}
+
+.discovery-source-summary span {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-2);
+  padding: 7px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.discovery-source-summary strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .discovery-source-row,
 .discovery-review-row,
 .discovery-preview-row {
   display: grid;
-  align-items: center;
+  align-items: start;
   gap: 10px;
   min-height: var(--row);
   border-bottom: 1px solid var(--rule);
@@ -535,7 +559,7 @@ textarea {
 }
 
 .discovery-source-row {
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .discovery-review-row {
@@ -548,6 +572,252 @@ textarea {
 
 .manual-capture-body {
   gap: 8px;
+}
+
+.source-title-stack {
+  gap: 6px;
+}
+
+.source-controls-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.source-controls-row > .tag {
+  flex: 0 0 auto;
+}
+
+.source-controls-row > .row-actions {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.discovery-source-row .title-stack > b,
+.discovery-source-row .title-stack > .source-detail-line,
+.discovery-review-row .title-stack b,
+.discovery-review-row .title-stack span,
+.discovery-preview-row .title-stack b,
+.discovery-preview-row .title-stack span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.discovery-source-row .title-stack > b,
+.discovery-review-row .title-stack b,
+.discovery-preview-row .title-stack b {
+  overflow-wrap: anywhere;
+}
+
+.discovery-source-row .title-stack > .source-detail-line,
+.discovery-review-row .title-stack span,
+.discovery-preview-row .title-stack span,
+.manual-capture-reason {
+  overflow-wrap: anywhere;
+}
+
+.source-meta-chips {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.source-meta-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper-2);
+  padding: 3px 7px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.25;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.discovery-source-row .source-meta-chip {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.source-meta-chip.good {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--rule));
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+
+.source-meta-chip.info {
+  border-color: color-mix(in srgb, var(--info) 45%, var(--rule));
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+  color: var(--info);
+}
+
+.source-meta-chip.warn {
+  border-color: color-mix(in srgb, var(--warn) 48%, var(--rule));
+  background: color-mix(in srgb, var(--warn) 13%, transparent);
+  color: var(--warn);
+}
+
+.source-meta-chip.bad {
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--rule));
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.source-meta-chip.neutral {
+  color: var(--muted);
+}
+
+.source-detail-line strong,
+.manual-capture-reason {
+  color: var(--ink);
+}
+
+.source-detail-line strong {
+  font-weight: 600;
+}
+
+.source-detail-line.good,
+.source-detail-line.good strong {
+  color: var(--ok);
+}
+
+.source-detail-line.warn,
+.source-detail-line.warn strong {
+  color: var(--warn);
+}
+
+.source-detail-line.bad,
+.source-detail-line.bad strong {
+  color: var(--danger);
+}
+
+.source-detail-line.unknown,
+.source-detail-line.unknown strong {
+  color: var(--muted);
+}
+
+.source-quality-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.source-quality-cell {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper-2);
+  padding: 6px 8px;
+  color: var(--muted);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.discovery-source-row .source-quality-cell,
+.discovery-source-row .source-quality-cell span {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.source-quality-cell.good {
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--rule));
+  background: color-mix(in srgb, var(--ok) 9%, var(--paper));
+}
+
+.source-quality-cell.warn {
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--rule));
+  background: color-mix(in srgb, var(--warn) 10%, var(--paper));
+}
+
+.source-quality-cell.bad {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--rule));
+  background: color-mix(in srgb, var(--danger) 9%, var(--paper));
+}
+
+.source-quality-cell.unknown {
+  background: var(--paper-2);
+}
+
+.source-quality-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.source-quality-cell.good .source-quality-icon {
+  color: var(--ok);
+}
+
+.source-quality-cell.good strong {
+  color: var(--ok);
+}
+
+.source-quality-cell.warn .source-quality-icon {
+  color: var(--warn);
+}
+
+.source-quality-cell.warn strong {
+  color: var(--warn);
+}
+
+.source-quality-cell.bad .source-quality-icon {
+  color: var(--danger);
+}
+
+.source-quality-cell.bad strong {
+  color: var(--danger);
+}
+
+.source-quality-cell.unknown .source-quality-icon {
+  color: var(--soft);
+}
+
+.source-quality-cell.unknown strong {
+  color: var(--muted);
+}
+
+.source-quality-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.source-quality-label {
+  color: var(--muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-quality-cell strong {
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .manual-capture-form {
@@ -1801,6 +2071,7 @@ textarea {
   .discovery-source-row,
   .discovery-review-row,
   .discovery-preview-row,
+  .discovery-source-summary,
   .manual-capture-form,
   .funnel-row,
   .detail-list div,

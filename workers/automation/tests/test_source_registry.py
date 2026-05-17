@@ -50,7 +50,7 @@ def test_locator_candidate_decision_thresholds_and_manual_boundary() -> None:
 
     assert (
         validate_locator_candidate(SourceLocationCandidate(confidence=0.5, **base))
-        == "manual_action_required"
+        == "promote"
     )
     assert validate_locator_candidate(SourceLocationCandidate(confidence=0.9, **base)) == "promote"
     assert validate_locator_candidate(SourceLocationCandidate(confidence=0.1, **base)) == "reject"
@@ -68,7 +68,25 @@ def test_locator_candidate_decision_thresholds_and_manual_boundary() -> None:
                 },
             )
         )
-        == "manual_action_required"
+        == "promote"
+    )
+    assert (
+        validate_locator_candidate(
+            SourceLocationCandidate(
+                confidence=0.9,
+                **{
+                    **base,
+                    "candidate_url": "https://jobs.lever.co/acme",
+                    "evidence": SourceDiscoveryEvidence(
+                        matched_url="https://jobs.lever.co/acme",
+                        detected_ats_kind="lever",
+                        employer_domain_matched=False,
+                        validation_fetch_status=200,
+                    ),
+                },
+            )
+        )
+        == "promote"
     )
     assert (
         validate_locator_candidate(
@@ -134,7 +152,9 @@ def test_resolve_jobspy_boards_prefers_boards_and_warns_for_legacy_sites(caplog)
     assert "using 'boards'" in caplog.text
 
 
-def test_load_source_registry_generates_entries_from_packaged_yaml_shapes() -> None:
+def test_load_source_registry_generates_entries_from_packaged_yaml_shapes(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobhunter.db")
+
     registry = config.load_source_registry(
         search_cfg={"boards": ["linkedin", "indeed"]},
         sites_cfg={

@@ -24,6 +24,84 @@ describe("DiscoveryProductControls", () => {
     expect(await screen.findByText("Product Engineer")).toBeInTheDocument();
   });
 
+  it("renders readable source details and manual capture reasons", async () => {
+    renderWithProviders(<DiscoveryProductControls />, {
+      ports: buildTestPorts({
+        api: {
+          discoverySources: vi.fn(async () => ({
+            ok: true as const,
+            sources: [
+              {
+                sourceId: "readable-source",
+                kind: "employer_careers_page" as const,
+                displayName: "Readable Source",
+                owner: "user" as const,
+                priority: "preferred" as const,
+                state: "active" as const,
+                policyId: "local:readable-source",
+                recommendedState: "trusted" as const,
+                lastRunId: "run-1",
+                lastRunCompletedAt: "2026-05-15T10:00:00+00:00",
+                lastErrorClass: null,
+                consecutiveFailures: 0,
+                observedJobs: 3,
+                newJobs: 2,
+                duplicateRate: 0.1,
+                activeVerificationRate: 0.8,
+                fullDescriptionSuccessRate: 0.7,
+                applyUrlSuccessRate: 0.6,
+                qualityTrend: "flat" as const,
+              },
+            ],
+          })),
+          manualCaptureQueue: vi.fn(async () => ({
+            ok: true as const,
+            items: [
+              {
+                itemId: "manual-ambiguous",
+                originatingUrl: "https://example.com/jobs/?q={query}",
+                sourceId: "example-source",
+                reason: "ambiguous_career_system" as const,
+                retryContext: { sourceId: "example-source" },
+                requiredAt: "2026-05-15T10:00:00+00:00",
+                status: "pending" as const,
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    await screen.findByText("Readable Source");
+    expect(screen.getByLabelText("Source registry summary")).toHaveTextContent(
+      "1 active",
+    );
+    expect(screen.getByTitle("Source type: employer careers page")).toHaveClass(
+      "source-meta-chip",
+      "info",
+    );
+    expect(screen.getByTitle("Priority: preferred")).toHaveClass(
+      "source-meta-chip",
+      "good",
+    );
+    expect(screen.getByTitle("Recommended state: trusted")).toHaveClass(
+      "source-meta-chip",
+      "good",
+    );
+    expect(screen.getByText("3 observed leads · 2 new")).toBeInTheDocument();
+    const qualityGrid = screen.getByRole("list", {
+      name: "Readable Source quality metrics",
+    });
+    expect(qualityGrid).toHaveTextContent("Active");
+    expect(qualityGrid).toHaveTextContent("80%");
+    expect(qualityGrid).toHaveTextContent("Full text");
+    expect(qualityGrid).toHaveTextContent("70%");
+    expect(screen.getByText(/Unconfirmed careers page/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/cannot confirm which careers system/i),
+    ).toBeInTheDocument();
+  });
+
   it("records feedback and manual capture actions through the API port", async () => {
     const recordDiscoveryFeedback = vi.fn(async () => ({
       ok: true as const,

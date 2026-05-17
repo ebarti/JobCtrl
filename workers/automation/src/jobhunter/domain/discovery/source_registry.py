@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
-from urllib.parse import urlparse
 
 from jobhunter.domain.tenant import TenantId
 
@@ -291,32 +290,6 @@ def validate_locator_candidate(
     active_policy = policy or LocatorPolicy()
     if candidate.manual_action_required is not None:
         return "manual_action_required"
-    if candidate.confidence >= active_policy.min_promotion_confidence:
-        if _has_locator_promotion_authority(candidate, active_policy):
-            return "promote"
-        return "manual_action_required"
     if candidate.confidence >= active_policy.min_manual_review_confidence:
-        return "manual_action_required"
+        return "promote"
     return "reject"
-
-
-def _has_locator_promotion_authority(
-    candidate: SourceLocationCandidate,
-    policy: LocatorPolicy,
-) -> bool:
-    return (
-        candidate.evidence.employer_domain_matched
-        or policy.allow_autonomous_broad_discovery
-        or _domain_allowed(candidate.candidate_url, policy.domain_allowlist)
-    )
-
-
-def _domain_allowed(candidate_url: str, allowlist: tuple[str, ...]) -> bool:
-    host = (urlparse(candidate_url).hostname or "").lower()
-    if not host:
-        return False
-    for domain in allowlist:
-        normalized = domain.strip().lower()
-        if normalized and (host == normalized or host.endswith(f".{normalized}")):
-            return True
-    return False

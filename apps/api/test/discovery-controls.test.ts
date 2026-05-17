@@ -385,6 +385,7 @@ describe("discovery product controls API", () => {
         source: {
           sourceId: "greenhouse:acme",
           displayName: "boards.greenhouse.io",
+          state: "active",
         },
       });
 
@@ -427,6 +428,71 @@ describe("discovery product controls API", () => {
         "greenhouse:acme",
         "greenhouse:contoso",
       ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("auto-promotes parseable source locator candidates when listing review queue", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
+      const db = new Database(dbPath);
+      db.prepare(
+        `INSERT INTO source_locator_candidates (
+           tenant_id, candidate_id, candidate_url, source_kind, confidence,
+           detected_ats_kind, employer_domain_matched, manual_action_reason, discovered_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "candidate-parseable",
+        "https://remoteok.com/remote-dev-jobs",
+        "smart_extract",
+        0.55,
+        null,
+        0,
+        null,
+        "2026-05-12T10:00:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO source_locator_candidates (
+           tenant_id, candidate_id, candidate_url, source_kind, confidence,
+           detected_ats_kind, employer_domain_matched, manual_action_reason, discovered_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "candidate-blocked",
+        "https://jobs.lever.co/private/123",
+        "ats_api",
+        0.95,
+        "lever",
+        0,
+        "login_required",
+        "2026-05-12T10:05:00+00:00",
+      );
+      db.close();
+
+      const response = await app.inject({ method: "GET", url: "/v1/discovery/locator-candidates" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().candidates).toHaveLength(1);
+      expect(response.json().candidates[0]).toMatchObject({ candidateId: "candidate-blocked" });
+
+      const verifyDb = new Database(dbPath);
+      const source = verifyDb
+        .prepare("SELECT source_id, state, seed_url FROM source_registry_entries WHERE source_id = ?")
+        .get("smart_extract:remoteok-com") as { source_id: string; state: string; seed_url: string };
+      const parseableCandidate = verifyDb
+        .prepare("SELECT 1 FROM source_locator_candidates WHERE candidate_id = ?")
+        .get("candidate-parseable");
+      verifyDb.close();
+      expect(source).toMatchObject({
+        source_id: "smart_extract:remoteok-com",
+        state: "active",
+        seed_url: "https://remoteok.com/remote-dev-jobs",
+      });
+      expect(parseableCandidate).toBeUndefined();
     } finally {
       await app.close();
       cleanup();
