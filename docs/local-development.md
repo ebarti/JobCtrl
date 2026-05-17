@@ -81,17 +81,15 @@ pnpm web:build
 ```
 
 Run the test pyramid (Vitest unit / hook / component, type-level tests, and
-Playwright end-to-end). The unit / type / E2E scripts are not aliased at the
-repo root yet (tracked in `docs/backlog.md`); run them via `pnpm --filter`
-or from the package directory:
+Playwright end-to-end):
 
 ```bash
-pnpm --filter @jobhunter/web test
-pnpm --filter @jobhunter/web test:watch
-pnpm --filter @jobhunter/web test:coverage
-pnpm --filter @jobhunter/web test-d
-pnpm --filter @jobhunter/web e2e
-pnpm --filter @jobhunter/web e2e:headed
+pnpm web:test
+pnpm web:test:watch
+pnpm web:test:coverage
+pnpm web:test-d
+pnpm web:e2e
+pnpm web:e2e:headed
 ```
 
 Run Storybook locally and against the built assets:

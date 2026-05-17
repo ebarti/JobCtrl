@@ -36,9 +36,9 @@ The unit-test and QA command set must be made explicit as the project evolves. U
 - TypeScript API tests: `pnpm api:test`.
 - Web typecheck: `pnpm web:check`.
 - Web build: `pnpm web:build`.
-- Web Vitest unit + hook + component tests: `pnpm --filter @jobhunter/web test` (watch: `:watch`; coverage: `:coverage`).
-- Web type-level tests: `pnpm --filter @jobhunter/web test-d`.
-- Web Playwright end-to-end specs: `pnpm --filter @jobhunter/web e2e` (headed: `e2e:headed`).
+- Web Vitest unit + hook + component tests: `pnpm web:test` (watch: `pnpm web:test:watch`; coverage: `pnpm web:test:coverage`).
+- Web type-level tests: `pnpm web:test-d`.
+- Web Playwright end-to-end specs: `pnpm web:e2e` (headed: `pnpm web:e2e:headed`).
 - Web Storybook: `pnpm web:storybook` (build: `pnpm web:storybook:build`; test runner with a11y addon: `pnpm web:storybook:test`).
 - Python tests: `uv --project workers/automation run --extra dev pytest -q`.
 - Python lint: `uv --project workers/automation run --extra dev ruff check .`.
@@ -207,7 +207,7 @@ The `apps/web` frontend follows the architecture documented in `docs/frontend-ta
 
 ### Tests
 
-- Colocated `*.test.ts(x)` next to source. Type-level tests live under `apps/web/test/types/<name>.test-d.ts` (separate config: `vitest.types.config.ts`, runs Vitest's `typecheck` mode — invoked via `pnpm --filter @jobhunter/web test-d`). Accessibility tests are colocated `*.a11y.test.tsx`. Storybook stories are colocated `*.stories.tsx`.
+- Colocated `*.test.ts(x)` next to source. Type-level tests live under `apps/web/test/types/<name>.test-d.ts` (separate config: `vitest.types.config.ts`, runs Vitest's `typecheck` mode — invoked via `pnpm web:test-d`). Accessibility tests are colocated `*.a11y.test.tsx`. Storybook stories are colocated `*.stories.tsx`.
 - MSW handlers live in `apps/web/src/test/msw/handlers.ts` (REST) and `apps/web/src/test/msw/sse-handlers.ts` (SSE). Add to the existing handler file rather than creating new MSW setups.
 - One test per query hook and per mutation hook covering the success path AND the rollback path.
 - The two parity tests are non-negotiable: `every-event-has-handler.test.ts` (`apps/web/src/contexts/operations/`) for `DomainEventUnion`, `every-stage-state-has-badge.test.tsx` (`apps/web/src/contexts/pipeline/components/`) for `STAGE_STATE_KINDS`.

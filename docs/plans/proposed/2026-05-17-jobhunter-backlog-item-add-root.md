@@ -63,11 +63,16 @@ pnpm web:e2e:headed
 2. Leave `apps/web/package.json` unchanged. The web package is already the
    canonical owner of the underlying commands.
 
-3. Update only documentation that would become directly stale. The narrow doc
-   candidate is `docs/local-development.md`, where the frontend section says
-   the unit, type, and E2E scripts are not root-aliased yet. Replace that note
-   with the new root aliases while keeping the filtered package commands
-   unnecessary for normal usage.
+3. Update only documentation that would become directly stale:
+
+   - Rewrite `docs/local-development.md` to use the new root aliases and remove
+     the statement that these commands are not root-aliased yet.
+   - Remove the delivered backlog item from `docs/backlog.md`.
+   - Update `AGENTS.md` command references to the new root aliases because it
+     owns repository workflow and automation guidance.
+   - Update `docs/local-reliability-qa.md` to use `pnpm web:test` for the
+     colocated a11y suite reference.
+   - Update the active type-level test command reference in `docs/architecture.md`.
 
 4. Do not add CI jobs, ESLint setup, dependencies, or new test frameworks. Those
    are separate backlog entries and should remain out of scope.
@@ -90,24 +95,30 @@ For this scripts-only change, use package-manager-level validation after the
 edit:
 
 ```bash
-corepack pnpm run web:test -- --help
-corepack pnpm run web:test-d -- --help
-corepack pnpm run web:e2e -- --help
+corepack pnpm run web:test --help
+corepack pnpm run web:test:watch --help
+corepack pnpm run web:test:coverage --help
+corepack pnpm run web:test-d --help
+corepack pnpm run web:e2e --help
+corepack pnpm run web:e2e:headed --help
 git diff --check
 ```
 
 These commands verify that the new root aliases resolve through pnpm into the
 web package command entry points without running the full unit, type, or E2E
-suites. If a reviewer wants stronger coverage before merge, run the actual root
-aliases without `-- --help` for `web:test` and `web:test-d`; reserve full
-`web:e2e` for environments with the local E2E prerequisites available.
+suites. Vitest and Playwright both exit successfully for `--help`; pnpm exits
+non-zero before reaching them if an alias is missing or mistyped. If a reviewer
+wants stronger coverage before merge, run the actual root aliases without
+`--help` for `web:test` and `web:test-d`; reserve full `web:e2e` for
+environments with the local E2E prerequisites available.
 
 ## Acceptance Criteria
 
 - Root `package.json` contains all six requested aliases.
 - Each alias delegates to the matching existing `@jobhunter/web` script.
 - No unrelated scripts, dependencies, CI workflows, or lint setup are added.
-- Directly stale documentation is updated narrowly, if included in the
-  implementation changeset.
+- Directly stale documentation is updated narrowly in `docs/local-development.md`,
+  `docs/backlog.md`, `AGENTS.md`, `docs/local-reliability-qa.md`, and
+  `docs/architecture.md`.
 - Package-manager validation confirms the aliases resolve from the repository
   root.

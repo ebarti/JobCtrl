@@ -82,7 +82,7 @@ type system provides; each lives next to its subject:
 
 The Storybook `addon-a11y` is configured so that **critical** and **serious**
 axe violations fail CI (`a11y: { test: "error" }`). The Storybook test runner
-(`pnpm web:storybook:test`) is the gate; `pnpm --filter @jobhunter/web test`
+(`pnpm web:storybook:test`) is the gate; `pnpm web:test`
 also runs the colocated `*.a11y.test.tsx` suites for forms and dialogs.
 
 17 stories defer the a11y check (`a11y: { test: "off" }`) because they

@@ -195,7 +195,7 @@ target sections; the target doc is the canonical detail.
 | Test runner | Vitest + React Testing Library + MSW for unit / hook / component | §10.2, §10.3 |
 | End-to-end | Playwright against a seeded local API + SQLite fixture | §10.4 |
 | Component-driven dev | Storybook with `addon-msw` and `addon-a11y` (critical+serious axe violations fail CI) | §10.5, §10.7 |
-| Type-level tests | Vitest `typecheck` mode via `vitest.types.config.ts`; `*.test-d.ts` files live under `apps/web/test/types/`; invoked as `pnpm --filter @jobhunter/web test-d` | §10.6 |
+| Type-level tests | Vitest `typecheck` mode via `vitest.types.config.ts`; `*.test-d.ts` files live under `apps/web/test/types/`; invoked as `pnpm web:test-d` | §10.6 |
 
 #### Three Layers of State
 
