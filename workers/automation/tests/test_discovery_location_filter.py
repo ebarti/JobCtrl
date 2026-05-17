@@ -13,7 +13,11 @@ EUROPE_REJECT = ["United States", "USA", "Canada", "North America", "Brazil"]
 def test_remote_country_scoped_locations_do_not_bypass_reject_patterns() -> None:
     for location in (
         "Remote, United States",
+        "Remote US",
+        "US Remote",
+        "Remote - US",
         "USA, Remote",
+        "U.S. Remote",
         "Remote Canada",
         "North America Remote",
         "Brazil Remote Work",

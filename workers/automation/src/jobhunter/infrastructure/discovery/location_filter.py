@@ -8,6 +8,12 @@ from typing import Any
 
 
 REMOTE_MARKERS = ("remote", "anywhere", "work from home", "wfh", "distributed")
+REJECT_ALIASES = {
+    "usa": ("usa", "us", "u.s.", "u.s.a.", "united states"),
+    "u.s.": ("usa", "us", "u.s.", "u.s.a.", "united states"),
+    "u.s.a.": ("usa", "us", "u.s.", "u.s.a.", "united states"),
+    "united states": ("usa", "us", "u.s.", "u.s.a.", "united states"),
+}
 
 
 def configured_location_filters(search_cfg: Mapping[str, Any]) -> tuple[list[str], list[str]]:
@@ -39,7 +45,7 @@ def location_matches_target(
         return True
 
     normalized = _normalize(location)
-    if _matches_any(normalized, reject):
+    if _matches_reject(normalized, reject):
         return False
 
     if search_location and _matches(normalized, search_location):
@@ -70,6 +76,14 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 def _matches_any(location: str, patterns: Sequence[str]) -> bool:
     return any(_matches(location, pattern) for pattern in patterns)
+
+
+def _matches_reject(location: str, patterns: Sequence[str]) -> bool:
+    for pattern in patterns:
+        aliases = REJECT_ALIASES.get(_normalize(pattern), (pattern,))
+        if _matches_any(location, aliases):
+            return True
+    return False
 
 
 def _matches(location: str, pattern: str | None) -> bool:
