@@ -312,13 +312,6 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   `window.dispatchEvent` (cross-component coordination outside the URL /
   router / cache), no `useRef(0)` for stale-response dedup (TanStack Query
   handles this).
-- **Root-level `pnpm web:test` / `web:test:watch` / `web:test:coverage` /
-  `web:test-d` / `web:e2e` / `web:e2e:headed` aliases** in `package.json` —
-  the migration plan and `docs/frontend-target.md` §10.9 reference these
-  commands as if they were aliased at the root, but Phase 6 only added the
-  `apps/web/package.json` scripts. Today, these run via
-  `pnpm --filter @jobhunter/web <script>` (documented in
-  [`docs/local-development.md`](local-development.md)).
 - **`pnpm web:lint` script** — named in the migration plan (S-15 / S-28
   exit criteria) but never landed. There is no ESLint config in
   `apps/web/` today, and no `lint` script in either the web package or
