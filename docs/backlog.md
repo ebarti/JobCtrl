@@ -3,14 +3,30 @@
 This is the authoritative roadmap. Keep detailed historical proposals under
 `docs/plans/proposed/`; move delivered work to `docs/delivered.md`.
 
+## Current State Snapshot (2026-05-17)
+
+Delivered work is archived in [`docs/delivered.md`](delivered.md) and the
+implemented plan directory. Discovery RFC production wiring and scoring
+intelligence are implemented via PR #61; the local Temporal stack, DDD /
+hexagonal migration, and frontend TanStack migration are also implemented.
+
+The active local-product backlog is the remaining validation and hardening
+work below: realtime cache patching beyond apply-run timeline events,
+non-apply workflow-run / cancellation parity, cleanup of legacy `jobs.*`
+storage fallbacks, profile/materials/browser QA gaps, frontend a11y
+deferrals, and tooling / CI enforcement gaps. Hosted product, hosted data,
+hosted automation, packaging, and cloud-mode frontend adapters remain
+deferred until the local product is solid.
+
 ## Local Product Validation
 
 ### Frontend/API Parity
 
 - Extend targeted row patching beyond the single `ApplyRunEventRecorded`
-  handler at `apps/web/src/contexts/operations/invalidation-router.ts:128`.
-  The SSE pipeline and invalidation router landed in Phase 5; every other
-  event still triggers `invalidateQueries` (full list reload). Per-event
+  handler. The SSE pipeline and invalidation router are live, and
+  `ApplyRunEventRecorded` is the only handler that returns a
+  `patchApplyRunEvent(...)` item for `queryClient.setQueryData`; every other
+  event handler still returns `invalidate(...)` entries. Per-event
   `setQueryData` patches are the next step for jobs / artifacts / dashboard
   lists so live updates do not lose scroll position or trigger spinners.
 
@@ -76,44 +92,38 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
 - Cut the `jobs` table over from URL primary key to `JobId`. Domain has
   `JobId` (`workers/automation/src/jobhunter/domain/identifiers.py:12`) and
   the projections expose `jobKey`, but the storage layer still uses
-  `jobs.url TEXT PRIMARY KEY` (`database.py:97`) with cross-aggregate FKs
-  on `job_url` (`database.py:262, 345, 372, 385, 680, 787, 804`). The
-  read-model resolves `jobKey` via URL fallback (`apps/api/src/read-model.ts:266-280`).
+  `jobs.url TEXT PRIMARY KEY` (`workers/automation/src/jobhunter/database.py`)
+  with cross-aggregate FKs on `job_url`. The read-model and projections still
+  use URL-shaped `job_id` / `jobKey` values.
   Until the cut-over, `jobKey` is a projection alias for the URL, not a
   stable independent identity.
 - Drop the legacy `jobs.application_url` column and the COALESCE fallback
-  at `apps/api/src/projections.ts:726`. Domain TS already separates
-  `Job.postingUrl` from `Enrichment.applicationUrl`
-  (`packages/domain-types/src/discovery/job.ts:110`,
-  `packages/domain-types/src/enrichment/enrichment.ts:108`); the storage
-  layer should follow.
+  in `apps/api/src/projections.ts`. Domain TS already separates
+  `Job.postingUrl` from `Enrichment.applicationUrl`; the storage layer should
+  follow.
 - Stop projection BUILDERS from sourcing legacy nullable `jobs.*` columns.
-  `apps/api/src/projections.ts:700-742` and the Python builder at
-  `workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py:208`
+  `apps/api/src/projections.ts` and the Python builder at
+  `workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py`
   still fall back to `jobs.fit_score`, `jobs.application_url`,
   `jobs.tailored_resume_path`, `jobs.cover_letter_path`, `jobs.applied_at`,
   `jobs.apply_status`. The read-side already moved to projections in
   Phase 9 (S-33); the build-side is the remaining half.
-- Stop `apps/api/src/projections.ts:946-975` from synthesising phantom
-  `*_pdf` artifact rows from sibling `.txt` files with no DB record. Only
-  real DB-backed artifacts should be exposed; the file-existence check at
-  `server.ts:358` is the only guard today and the synthesised rows are
+- Stop `apps/api/src/projections.ts` from synthesising phantom `*_pdf`
+  artifact rows from sibling `.txt` files with no DB record. Only real
+  DB-backed artifacts should be exposed; the synthesized rows are
   indistinguishable from real ones in the UI.
 - Persist domain `Source.board` and `Employer.name` directly. The domain
-  types are split (`packages/domain-types/src/discovery/job.ts:44-52,111`)
-  and the projection table has both columns, but the values are still
-  populated from `jobs.site` (`projections.ts:725, 791`) and `companyName()`
-  infers the employer from URL slugs because the domain `Employer` is
-  never persisted. Until the storage layer captures both, "filter by
-  board" + "filter by employer" cannot be separated.
+  types are split and the projection table has both columns, but the values
+  are still populated from `jobs.site` and `companyName()` infers the employer
+  from source labels or URL slugs because the domain `Employer` is never
+  persisted. Until the storage layer captures both, "filter by board" +
+  "filter by employer" cannot be separated.
 - Index normalized scoring keywords per job. `keywords_json` is written
   and read in `workers/automation/src/jobhunter/infrastructure/scoring/sqlite_repository.py`
-  but is unindexed, has no contract field
-  (`packages/contracts/src/schemas.ts` has zero `keywords` references),
-  no API filter, and no UI. The web parses keywords from a free-text
-  reasoning string (`apps/web/src/contexts/scoring/lib/parse-reasoning.ts:9`)
-  as a stop-gap. Promote keywords to a typed contract, expose
-  filter/search, and add aggregate views.
+  and is projected through typed `scoreKeywords`, but it is unindexed and has
+  no API filter/search or aggregate view. The web still parses keywords out of
+  legacy free-text reasoning as a compatibility path. Promote keywords to a
+  searchable/indexed contract field with aggregate views.
 
 ### UI Quality
 
@@ -129,14 +139,17 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
   optional and user-editable so the target-search lists remain explicit
   profile data.
 - Add React component tests for persisted profile field save/discard
-  behavior. `apps/web/src/contexts/profile/forms/` only has `*.a11y.test.tsx`
-  files today (axe-only); the `useUpdateProfileMutation` /
-  `useUpdateSettingsMutation` hooks are tested in isolation but no test
-  drives the form's save and reset interactions together.
+  behavior. `apps/web/src/contexts/profile/forms/profile-form.test.tsx` now
+  covers form structure, validation, target-search controls, and preference
+  editing affordances, and the update hooks are tested in isolation. What is
+  still missing is a component test that drives a successful persisted save and
+  then verifies discard/reset behavior against fresh initial data.
 - Add browser smoke for action-status polling. Bulk action buttons are
-  already covered by `apps/web/e2e/tests/jobs-bulk.spec.ts`; nothing
-  exercises the status-poll loop. `apps/web/e2e/tests/materials.spec.ts`
-  is `test.fixme`'d pending the generate-materials backend enablement
+  covered by `apps/web/e2e/tests/jobs-bulk.spec.ts`, `dry-run.spec.ts` covers
+  the SSE connection/activity path, and `runs.spec.ts` covers the Workflow
+  Runs list. No browser flow starts a stage and observes the action-status
+  loop from queued/running to terminal. `apps/web/e2e/tests/materials.spec.ts`
+  remains `test.fixme`'d pending the generate-materials backend enablement
   below.
 - Decide whether row selection should be URL-persisted or kept as client
   state. Filters, sort, and page already survive live updates by virtue
@@ -277,18 +290,20 @@ parameters.
 
 Production fixes for the in-repo files (`data-table.tsx`, `toast.tsx`,
 `JobFilterBar.tsx`, `ArtifactFilterBar.tsx`, `StructuredProfileEditor.tsx`,
-`ApplyHistory.tsx`) unblock 13 of the 17 deferrals immediately. The four
-remaining (Radix transient internals + cmdk) need either upstream fixes
-or local wrappers with the missing ARIA plumbing.
+`ApplyHistory.tsx`) unblock 13 of the 18 deferrals immediately. The five
+remaining deferrals (Radix transient internals + cmdk) need either upstream
+fixes or local wrappers with the missing ARIA plumbing.
 
 ## Frontend Tooling + CI Backlog (Phase 1–8 Deferrals)
 
 These items were explicitly deferred during the frontend TanStack migration
 and are tracked here per the migration plan §"Deferred follow-ups":
 
-- **ESLint setup** — `no-restricted-imports` to forbid `@jobhunter/api-client`
-  and `@jobhunter/contracts` outside the `contexts/operations/types.ts` ACL,
-  plus `dependency-cruiser` to enforce view → context one-way direction
+- **ESLint + dependency-boundary setup** — no ESLint config, lint script, or
+  dependency-cruiser config exists today. Add `no-restricted-imports` /
+  dependency-cruiser rules for the frontend architecture boundaries, then
+  reconcile the currently direct `@jobhunter/contracts` imports in feature
+  code with the intended Operations ACL before making the rule blocking
   (deferred from Phase 3, S-15).
 - **CI grep guards for cut-over invariants** — `grep` rules in CI to fail
   on regressions of the rip-and-replace cut-overs: no `useState<JobSummary>`
@@ -331,19 +346,21 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   row selection, which is brittle as copy evolves.
 - **`apps/api/test/qa-seed.ts` schema bump** — Phase 6 reviewer follow-up.
   The seed currently creates only the legacy tables (`jobs`,
-  `job_stage_states`, `job_artifacts`, `job_events`, `apply_runs`). It is
-  missing `job_scores` (read at `apps/api/src/projections.ts:484`),
-  `job_materials` + `job_materials_artifacts` (lines 437, 442, 451),
-  `jobhunter_deleted_jobs` (line 598), and `job_enrichments`. The seeded
-  `job_stage_states` row also omits the `metadata_json` and `version`
-  columns expected at `projections.ts:114-115`.
+  `job_stage_states`, `job_artifacts`, `job_events`,
+  `apply_run_projections`). It is missing `job_scores`, `job_materials`,
+  `job_materials_artifacts`, `jobhunter_deleted_jobs`, and
+  `job_enrichments`. The seeded `job_stage_states` row also omits
+  `metadata_json` and `version`, so it no longer represents the production
+  projection schema closely enough.
 - **Generate-materials backend enablement** — `docs/frontend-target.md`
   §3.6 / migration plan §7. The `useGenerateMaterialsMutation` hook
-  exists; the backend `GenerateMaterialsUseCase` exposure on the JSON-RPC
-  / HTTP surface is the gating dependency.
-- **`DryRunComplete` event addition to `DomainEventUnion`** — Phase 6
-  reviewer note. The dry-run apply path completes via the generic
-  `ApplicationSubmitted` / `ApplicationFailed` events today; a dedicated
-  `DryRunComplete` event would let the frontend distinguish dry-run
-  outcomes from real submissions in the activity feed and the apply-run
-  card without payload-shape inspection.
+  still throws `NotImplementedError`, the button is disabled, and the HTTP
+  route exists only to return `unsupported_per_job_material_action` (400).
+  The gating dependency is a real targeted materials generation workflow /
+  JSON-RPC command plus a 202 HTTP surface that the hook can call.
+- **`DryRunCompleted` event addition to `DomainEventUnion`** — Phase 6
+  reviewer note. The worker emits `DryRunCompleted`, and the apply-run
+  projection maps it to `dry_run_complete`, but the frontend
+  `DomainEventUnion` / SSE adapter does not include or listen for that event
+  type. Add the typed event so the frontend can distinguish dry-run outcomes
+  from real submissions without payload-shape inspection.
