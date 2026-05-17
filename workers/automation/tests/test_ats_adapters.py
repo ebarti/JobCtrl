@@ -64,10 +64,51 @@ def test_workday_adapter_maps_cxs_payload_to_scraped_posting() -> None:
     assert posting.source_id == "workday:acme"
     assert posting.source_native_id == "Senior-Platform-Engineer_JR-123"
     assert posting.canonical_url == (
-        "https://acme.wd1.myworkdayjobs.com/External/job/Remote-USA/"
-        "Senior-Platform-Engineer_JR-123"
+        "https://acme.wd1.myworkdayjobs.com/External/job/Remote-USA/Senior-Platform-Engineer_JR-123"
     )
     assert posting.ats_kind is AtsKind.WORKDAY
+
+
+def test_workday_adapter_rejects_country_scoped_remote_locations() -> None:
+    def http(
+        url: str,
+        *,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "total": 2,
+            "jobPostings": [
+                {
+                    "title": "Senior Platform Engineer",
+                    "externalPath": "/job/Remote-USA/Senior-Platform-Engineer_JR-123",
+                    "locationsText": "Remote, United States",
+                },
+                {
+                    "title": "Principal Platform Engineer",
+                    "externalPath": "/job/Remote-EMEA/Principal-Platform-Engineer_JR-456",
+                    "locationsText": "Remote EMEA",
+                },
+            ],
+        }
+
+    adapter = WorkdayBoardAdapter(
+        source_id="workday:acme",
+        employer=WorkdayEmployer(
+            employer_key="acme",
+            name="Acme Corp",
+            base_url="https://acme.wd1.myworkdayjobs.com",
+            tenant="acme",
+            site_id="External",
+        ),
+        http=http,
+        location_accept=["Remote", "Spain", "Europe", "EMEA"],
+        location_reject=["United States", "USA"],
+    )
+
+    postings = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Platform", location="Remote"))
+
+    assert [posting.metadata.location for posting in postings] == ["Remote EMEA"]
 
 
 def test_greenhouse_adapter_maps_job_board_payload_to_scraped_posting() -> None:
@@ -157,9 +198,7 @@ def test_ashby_adapter_maps_public_board_payload_to_scraped_posting() -> None:
         http=http,
     )
 
-    postings = list(
-        adapter.scrape(tenant_id=LOCAL_TENANT, query="Infrastructure", location="Remote")
-    )
+    postings = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Infrastructure", location="Remote"))
 
     assert len(postings) == 1
     posting = postings[0]

@@ -61,6 +61,7 @@ from jobhunter.infrastructure.discovery.ats_adapters import (
     HttpFetcher,
     LeverBoardAdapter,
 )
+from jobhunter.infrastructure.discovery.location_filter import configured_location_filters
 from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.infrastructure.enrichment import (
     SqliteEnrichmentRepository,
@@ -293,10 +294,7 @@ def enqueue_manual_action_for_sources(
         source_id = str(getattr(source, "source_id", "")).strip()
         adapter_config = dict(getattr(source, "adapter_config", {}) or {})
         url = str(
-            adapter_config.get("url")
-            or adapter_config.get("seed_url")
-            or adapter_config.get("base_url")
-            or ""
+            adapter_config.get("url") or adapter_config.get("seed_url") or adapter_config.get("base_url") or ""
         ).strip()
         if not url or not _looks_protected(url):
             continue
@@ -330,7 +328,7 @@ def run_scheduled_ats_sources(
     """Run Greenhouse, Lever, and Ashby through the Discovery use case."""
     ensure_worker_discovery_tables(conn)
     runnable = tuple(source for source in sources if getattr(source, "should_run", True))
-    adapters = tuple(_adapter_for_source(source, http=http) for source in runnable)
+    adapters = tuple(_adapter_for_source(source, http=http, search_cfg=search_cfg) for source in runnable)
     adapters = tuple(adapter for adapter in adapters if adapter is not None)
     if not adapters:
         return ScheduledAtsSummary().to_result_dict()
@@ -460,9 +458,7 @@ def import_manual_capture_item(
         promote_to_job_enrichment=True,
     )
     quarantine_reason = (
-        outcome.snapshot_set.latest_snapshot.quarantine_reason.value
-        if outcome.snapshot_set.latest_snapshot
-        else ""
+        outcome.snapshot_set.latest_snapshot.quarantine_reason.value if outcome.snapshot_set.latest_snapshot else ""
     )
     if outcome.ok and quarantine_reason and quarantine_reason != QuarantineReason.NONE.value:
         _upsert_quarantine_entry(
@@ -559,9 +555,7 @@ def build_discovery_acceptance_report(
         "SELECT COUNT(DISTINCT job_url) FROM job_canonical_identities WHERE tenant_id = ?",
         (tenant,),
     )
-    canonical_verification_rate = (
-        round(canonical_jobs / lead_yield, 4) if lead_yield else 0.0
-    )
+    canonical_verification_rate = round(canonical_jobs / lead_yield, 4) if lead_yield else 0.0
     duplicate_count = _scalar_int(
         conn,
         "SELECT COUNT(*) FROM job_duplicate_links WHERE tenant_id = ?",
@@ -639,11 +633,7 @@ def _candidates_from_registry(
         }:
             continue
         protected = _looks_protected(seed_url)
-        reason = (
-            ManualActionReason.PROTECTED_INTERNAL_SITE
-            if protected
-            else None
-        )
+        reason = ManualActionReason.PROTECTED_INTERNAL_SITE if protected else None
         candidate_url = seed_url
         confidence = 0.88 if detected else 0.55
         yield _source_location_candidate(
@@ -757,11 +747,7 @@ def _upsert_locator_candidate(
             candidate.confidence,
             candidate.evidence.detected_ats_kind,
             1 if candidate.evidence.employer_domain_matched else 0,
-            (
-                candidate.manual_action_required.reason.value
-                if candidate.manual_action_required
-                else None
-            ),
+            (candidate.manual_action_required.reason.value if candidate.manual_action_required else None),
             candidate.discovered_at,
         ),
     )
@@ -782,11 +768,7 @@ def _promote_locator_candidate(
         (str(candidate.tenant_id), source_id),
     ).fetchone()
     if existing is None:
-        kind = (
-            SourceKind.ATS_API.value
-            if candidate.evidence.detected_ats_kind
-            else candidate.source_kind.value
-        )
+        kind = SourceKind.ATS_API.value if candidate.evidence.detected_ats_kind else candidate.source_kind.value
         policy_id = _policy_id_for_promoted_source(source_id, candidate)
         conn.execute(
             """
@@ -992,15 +974,15 @@ def _enqueue_manual_action_from_candidate(
     candidate: SourceLocationCandidate,
 ) -> None:
     manual = candidate.manual_action_required
-    reason = (
-        manual.reason.value
+    reason = manual.reason.value if manual else ManualActionReason.AMBIGUOUS_CAREER_SYSTEM.value
+    retry_context = (
+        manual.retry_context
         if manual
-        else ManualActionReason.AMBIGUOUS_CAREER_SYSTEM.value
+        else {
+            "source": "locator_candidate",
+            "candidate_id": candidate.candidate_id,
+        }
     )
-    retry_context = manual.retry_context if manual else {
-        "source": "locator_candidate",
-        "candidate_id": candidate.candidate_id,
-    }
     _enqueue_manual_capture(
         conn,
         originating_url=candidate.candidate_url,
@@ -1171,12 +1153,18 @@ def _record_ats_source_failure(
     conn.commit()
 
 
-def _adapter_for_source(source: Any, *, http: HttpFetcher | None) -> Any | None:
+def _adapter_for_source(
+    source: Any,
+    *,
+    http: HttpFetcher | None,
+    search_cfg: Mapping[str, Any],
+) -> Any | None:
     source_id = str(getattr(source, "source_id", "")).strip()
     if source_id.startswith("workday:"):
         return None
     adapter_config = dict(getattr(source, "adapter_config", {}) or {})
     ats_kind = _source_ats_kind(source_id, adapter_config)
+    location_accept, location_reject = configured_location_filters(search_cfg)
     if ats_kind is AtsKind.GREENHOUSE:
         board_token = _board_token(source_id, adapter_config)
         return GreenhouseBoardAdapter(
@@ -1184,6 +1172,8 @@ def _adapter_for_source(source: Any, *, http: HttpFetcher | None) -> Any | None:
             board_token=board_token,
             company=_company_name(source, adapter_config),
             http=http,
+            location_accept=location_accept,
+            location_reject=location_reject,
         )
     if ats_kind is AtsKind.LEVER:
         site = _site_token(source_id, adapter_config)
@@ -1192,6 +1182,8 @@ def _adapter_for_source(source: Any, *, http: HttpFetcher | None) -> Any | None:
             site=site,
             company=_company_name(source, adapter_config),
             http=http,
+            location_accept=location_accept,
+            location_reject=location_reject,
         )
     if ats_kind is AtsKind.ASHBY:
         board_name = _board_name(source_id, adapter_config)
@@ -1200,6 +1192,8 @@ def _adapter_for_source(source: Any, *, http: HttpFetcher | None) -> Any | None:
             board_name=board_name,
             company=_company_name(source, adapter_config),
             http=http,
+            location_accept=location_accept,
+            location_reject=location_reject,
         )
     return None
 
@@ -1212,11 +1206,7 @@ def _query_location_pairs(search_cfg: Mapping[str, Any]) -> Iterable[tuple[str, 
         if isinstance(item, Mapping) and int(item.get("tier") or 99) <= int(search_cfg.get("ats_max_tier") or 2)
     ]
     if not queries:
-        queries = [
-            str(item.get("query") or "").strip()
-            for item in queries_cfg
-            if isinstance(item, Mapping)
-        ]
+        queries = [str(item.get("query") or "").strip() for item in queries_cfg if isinstance(item, Mapping)]
     queries = [query for query in queries if query] or [""]
     locations_cfg = search_cfg.get("locations", [])
     locations = [
@@ -1402,25 +1392,19 @@ def _source_ats_kind(source_id: str, adapter_config: Mapping[str, Any]) -> AtsKi
 
 def _board_token(source_id: str, adapter_config: Mapping[str, Any]) -> str:
     return str(
-        adapter_config.get("board_token")
-        or _token_from_seed_url(adapter_config)
-        or source_id.split(":", 1)[-1]
+        adapter_config.get("board_token") or _token_from_seed_url(adapter_config) or source_id.split(":", 1)[-1]
     ).strip()
 
 
 def _site_token(source_id: str, adapter_config: Mapping[str, Any]) -> str:
     return str(
-        adapter_config.get("site")
-        or _token_from_seed_url(adapter_config)
-        or source_id.split(":", 1)[-1]
+        adapter_config.get("site") or _token_from_seed_url(adapter_config) or source_id.split(":", 1)[-1]
     ).strip()
 
 
 def _board_name(source_id: str, adapter_config: Mapping[str, Any]) -> str:
     return str(
-        adapter_config.get("board_name")
-        or _token_from_seed_url(adapter_config)
-        or source_id.split(":", 1)[-1]
+        adapter_config.get("board_name") or _token_from_seed_url(adapter_config) or source_id.split(":", 1)[-1]
     ).strip()
 
 
@@ -1449,12 +1433,12 @@ def _token_from_seed_url(adapter_config: Mapping[str, Any]) -> str:
 
 
 def _company_name(source: Any, adapter_config: Mapping[str, Any]) -> str | None:
-    return str(
-        adapter_config.get("company")
-        or adapter_config.get("name")
-        or getattr(source, "display_name", "")
-        or ""
-    ).strip() or None
+    return (
+        str(
+            adapter_config.get("company") or adapter_config.get("name") or getattr(source, "display_name", "") or ""
+        ).strip()
+        or None
+    )
 
 
 def _looks_protected(url: str) -> bool:
