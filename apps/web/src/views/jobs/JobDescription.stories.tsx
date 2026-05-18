@@ -27,6 +27,19 @@ export const ManyParagraphs: Story = {
   },
 };
 
+export const Markdown: Story = {
+  args: {
+    text: [
+      "**Welcome to the good side of tech 👋**",
+      "Build [patient-facing products](https://example.com) with a platform-as-product mindset.",
+      "",
+      "- Lead engineering teams",
+      "- Keep 75% hands-on coding",
+      "- Improve `SDLC` automation",
+    ].join("\n"),
+  },
+};
+
 export const Empty: Story = {
   args: { text: "" },
 };

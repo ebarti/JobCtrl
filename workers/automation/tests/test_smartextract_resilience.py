@@ -73,8 +73,18 @@ def test_limited_smart_extract_uses_requested_workers(
             "total": 2,
             "titles": 2,
             "jobs": [
-                {"url": f"{url}/one", "title": "Head of Engineering", "location": "Barcelona, Spain"},
-                {"url": f"{url}/two", "title": "Director of Engineering", "location": "Barcelona, Spain"},
+                {
+                    "url": f"{url}/one",
+                    "title": "Head of Engineering",
+                    "location": "Barcelona, Spain",
+                    "description": "Lead engineering teams.",
+                },
+                {
+                    "url": f"{url}/two",
+                    "title": "Director of Engineering",
+                    "location": "Barcelona, Spain",
+                    "description": "Own engineering delivery.",
+                },
             ],
         }
 
