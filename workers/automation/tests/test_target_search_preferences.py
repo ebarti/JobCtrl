@@ -3,6 +3,10 @@ from __future__ import annotations
 import sqlite3
 
 from jobhunter import config
+from jobhunter.infrastructure.discovery.location_filter import (
+    configured_location_filters,
+    location_matches_target,
+)
 
 
 def test_profile_target_search_overrides_discovery_queries_and_locations() -> None:
@@ -31,6 +35,34 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
     assert merged["defaults"]["country_indeed"] == "spain"
     assert "Barcelona, Spain" in merged["location_accept"]
     assert "Canada" in merged["location_reject_non_remote"]
+
+
+def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
+    merged = config._apply_profile_target_search(
+        {
+            "queries": [{"query": "software engineer", "tier": 1}],
+            "locations": [{"label": "zurich", "location": "Zurich"}],
+            "location_accept": ["Switzerland", "Zurich"],
+            "location": {
+                "accept_patterns": ["Remote", "Switzerland", "Zurich", "Europe", "EMEA"],
+                "reject_patterns": ["United States"],
+            },
+        },
+        {
+            "roles": ["Director of Engineering"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Remote, Hybrid"],
+        },
+    )
+
+    accept, reject = configured_location_filters(merged)
+
+    assert "Barcelona, Spain" in accept
+    assert "Switzerland" not in accept
+    assert "Zurich" not in accept
+    assert location_matches_target("Barcelona, Spain (Remote)", accept=accept, reject=reject)
+    assert location_matches_target("Remote EMEA", accept=accept, reject=reject)
+    assert not location_matches_target("Switzerland - Zurich", accept=accept, reject=reject)
 
 
 def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkeypatch) -> None:

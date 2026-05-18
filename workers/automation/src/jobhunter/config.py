@@ -73,8 +73,7 @@ _EUROPE_LOCATION_ACCEPTS = (
     "Europe",
     "European Union",
     "EU",
-    "Remote",
-    "Anywhere",
+    "EMEA",
 )
 
 _AMERICA_LOCATION_REJECTS = (
@@ -203,6 +202,7 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
         next_cfg["ats_max_tier"] = 1
 
     if locations:
+        location_accept = _dedupe_strings([*locations])
         next_cfg["locations"] = [
             {
                 "label": _source_slug(location),
@@ -212,6 +212,10 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
             for index, location in enumerate(locations)
         ]
         next_cfg["location_labels"] = [_source_slug(location) for location in locations]
+        next_cfg["location_accept"] = location_accept
+        location_cfg = dict(next_cfg.get("location") or {})
+        location_cfg["accept_patterns"] = location_accept
+        next_cfg["location"] = location_cfg
 
     if _target_prefers_europe_from_values(locations):
         defaults = dict(next_cfg.get("defaults") or {})
@@ -219,9 +223,13 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
         next_cfg["defaults"] = defaults
         next_cfg["country"] = "Spain"
         next_cfg["target_region"] = "europe"
+        location_accept = _dedupe_strings([*locations, *_EUROPE_LOCATION_ACCEPTS])
         next_cfg["location_accept"] = _dedupe_strings(
-            [*_string_list(next_cfg.get("location_accept")), *locations, *_EUROPE_LOCATION_ACCEPTS]
+            location_accept
         )
+        location_cfg = dict(next_cfg.get("location") or {})
+        location_cfg["accept_patterns"] = location_accept
+        next_cfg["location"] = location_cfg
         next_cfg["location_reject_non_remote"] = _dedupe_strings(
             [*_string_list(next_cfg.get("location_reject_non_remote")), *_AMERICA_LOCATION_REJECTS]
         )
