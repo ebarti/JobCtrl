@@ -130,8 +130,8 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
     assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
     assert calls == [
         ("jobspy", 1, None),
-        ("workday", 1, 1),
-        ("smartextract", 1, 1),
+        ("workday", 1, 4),
+        ("smartextract", 1, 4),
     ]
 
 

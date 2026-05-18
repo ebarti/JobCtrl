@@ -872,7 +872,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     except Exception:
         log.debug("Failed to seed discovery control queues", exc_info=True)
     schedule = _plan_discovery_schedule(limit)
-    bounded_workers = 1 if limit > 0 else workers
+    bounded_workers = max(1, workers)
     start_count = _pipeline_job_count() if limit > 0 else 0
 
     # JobSpy — skip if disabled in config or module not installed

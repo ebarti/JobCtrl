@@ -37,6 +37,25 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
     assert "Canada" in merged["location_reject_non_remote"]
 
 
+def test_profile_target_search_strips_role_notes_from_queries() -> None:
+    merged = config._apply_profile_target_search(
+        {"queries": [{"query": "software engineer", "tier": 1}]},
+        {
+            "roles": [
+                "Head of Platform | Preferred work model: Remote | Onsite if required: Barcelona, Spain",
+                "CISO",
+            ],
+            "locations": [],
+            "work_models": [],
+        },
+    )
+
+    assert merged["queries"] == [
+        {"query": "Head of Platform", "tier": 1},
+        {"query": "CISO", "tier": 1},
+    ]
+
+
 def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
     merged = config._apply_profile_target_search(
         {

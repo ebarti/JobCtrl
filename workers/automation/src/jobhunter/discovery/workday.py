@@ -30,6 +30,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.state import record_job_event
 
@@ -192,6 +193,7 @@ def search_employer(
     search_text: str,
     location_filter: bool = True,
     max_results: int = 0,
+    max_pages: int = 25,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
 ) -> list[dict]:
@@ -201,7 +203,7 @@ def search_employer(
     all_jobs: list[dict] = []
     offset = 0
     page_size = 20
-    max_pages = 25  # Cap at 500 results
+    max_pages = max(1, max_pages)  # Workday pages are 20 postings each.
     total = None
 
     while True:
@@ -220,6 +222,9 @@ def search_employer(
             break
 
         for j in postings:
+            title = j.get("title", "")
+            if not title_matches_query(title, search_text):
+                continue
             loc = j.get("locationsText", "")
             if location_filter and accept_locs is not None and reject_locs is not None:
                 if not _location_ok(loc, accept_locs, reject_locs):
@@ -227,7 +232,7 @@ def search_employer(
 
             all_jobs.append(
                 {
-                    "title": j.get("title", ""),
+                    "title": title,
                     "location": loc,
                     "posted": j.get("postedOn", ""),
                     "external_path": j.get("externalPath", ""),
@@ -440,9 +445,42 @@ def _process_one(
     accept_locs: list[str],
     reject_locs: list[str],
     limit: int = 0,
+    max_pages_per_employer: int = 25,
     run_id: str | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
+    result = _search_and_fetch_one(
+        employer_key,
+        employers,
+        search_text,
+        location_filter,
+        accept_locs,
+        reject_locs,
+        limit=limit,
+        max_pages_per_employer=max_pages_per_employer,
+    )
+    jobs = result.pop("jobs", [])
+    if not jobs:
+        return result
+
+    conn = get_connection()
+    new, existing = store_results(conn, jobs, employers, limit=limit, run_id=run_id)
+    log.info("%s: %d new, %d already in DB", result["employer"], new, existing)
+
+    return {**result, "new": new, "existing": existing}
+
+
+def _search_and_fetch_one(
+    employer_key: str,
+    employers: dict,
+    search_text: str,
+    location_filter: bool,
+    accept_locs: list[str],
+    reject_locs: list[str],
+    limit: int = 0,
+    max_pages_per_employer: int = 25,
+) -> dict:
+    """Search one employer and fetch details without writing to storage."""
     emp = employers[employer_key]
 
     try:
@@ -452,6 +490,7 @@ def _process_one(
             search_text,
             location_filter=location_filter,
             max_results=limit,
+            max_pages=max_pages_per_employer,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
         )
@@ -467,11 +506,7 @@ def _process_one(
     except Exception as e:
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
 
-    conn = get_connection()
-    new, existing = store_results(conn, jobs, employers, limit=limit, run_id=run_id)
-    log.info("%s: %d new, %d already in DB", emp["name"], new, existing)
-
-    return {"employer": emp["name"], "query": search_text, "found": len(jobs), "new": new, "existing": existing}
+    return {"employer": emp["name"], "query": search_text, "found": len(jobs), "new": 0, "existing": 0, "jobs": jobs}
 
 
 # -- Main orchestrator -------------------------------------------------------
@@ -487,6 +522,7 @@ def scrape_employers(
     reject_locs: list[str] | None = None,
     workers: int = 1,
     limit: int = 0,
+    max_pages_per_employer: int = 25,
     run_id: str | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
@@ -513,30 +549,58 @@ def scrape_employers(
 
     valid_keys = [k for k in employer_keys if k in employers]
 
-    if limit > 0:
-        workers = 1
-
     if workers > 1 and len(valid_keys) > 1:
         # Parallel mode
         completed = 0
         with ThreadPoolExecutor(max_workers=min(workers, len(valid_keys))) as pool:
-            futures = {
-                pool.submit(
-                    _process_one,
-                    key,
-                    employers,
-                    search_text,
-                    location_filter,
-                    accept_locs,
-                    reject_locs,
-                    0,
-                    run_id,
-                ): key
-                for key in valid_keys
-            }
+            if limit > 0:
+                futures = {
+                    pool.submit(
+                        _search_and_fetch_one,
+                        key,
+                        employers,
+                        search_text,
+                        location_filter,
+                        accept_locs,
+                        reject_locs,
+                        limit,
+                        max_pages_per_employer,
+                    ): key
+                    for key in valid_keys
+                }
+            else:
+                futures = {
+                    pool.submit(
+                        _process_one,
+                        key,
+                        employers,
+                        search_text,
+                        location_filter,
+                        accept_locs,
+                        reject_locs,
+                        0,
+                        max_pages_per_employer,
+                        run_id,
+                    ): key
+                    for key in valid_keys
+                }
             for future in as_completed(futures):
                 result = future.result()
                 completed += 1
+                jobs = result.pop("jobs", [])
+                if jobs:
+                    remaining = max(limit - total_found, 0) if limit > 0 else 0
+                    if limit <= 0 or remaining > 0:
+                        jobs_to_store = jobs[:remaining] if limit > 0 else jobs
+                        conn = get_connection()
+                        new, existing = store_results(
+                            conn,
+                            jobs_to_store,
+                            employers,
+                            limit=remaining if limit > 0 else 0,
+                            run_id=run_id,
+                        )
+                        result = {**result, "found": len(jobs_to_store), "new": new, "existing": existing}
                 total_new += result["new"]
                 total_existing += result["existing"]
                 total_found += result["found"]
@@ -555,6 +619,10 @@ def scrape_employers(
                         errors,
                         elapsed,
                     )
+                if limit > 0 and total_found >= limit:
+                    for pending in futures:
+                        pending.cancel()
+                    break
     else:
         # Sequential mode (default)
         completed = 0
@@ -570,6 +638,7 @@ def scrape_employers(
                 accept_locs,
                 reject_locs,
                 remaining if limit > 0 else 0,
+                max_pages_per_employer,
                 run_id,
             )
             completed += 1
@@ -650,6 +719,7 @@ def run_workday_discovery(
         setup_proxy(proxy)
 
     location_filter = search_cfg.get("workday_location_filter", True)
+    max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)
 
     log.info("Workday crawl: %d queries x %d employers (workers=%d)", len(queries), len(employers), workers)
 
@@ -670,6 +740,7 @@ def run_workday_discovery(
             reject_locs=reject_locs,
             workers=workers,
             limit=remaining if limit > 0 else 0,
+            max_pages_per_employer=max_pages_per_employer,
             run_id=run_id,
         )
         grand_new += result["new"]
@@ -691,3 +762,19 @@ def run_workday_discovery(
         "existing": grand_existing,
         "queries": len(queries),
     }
+
+
+def _workday_max_pages_per_employer(search_cfg: dict, *, limit: int) -> int:
+    configured = _positive_int(search_cfg.get("workday_max_pages_per_employer"), 25)
+    if limit <= 0:
+        return configured
+    limited = _positive_int(search_cfg.get("workday_limited_max_pages_per_employer"), 1)
+    return min(configured, limited)
+
+
+def _positive_int(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default

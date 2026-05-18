@@ -33,6 +33,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -83,9 +84,10 @@ def _store_jobs_filtered(
     strategy: str,
     accept_locs: list[str],
     reject_locs: list[str],
+    query: str | list[str] | None = None,
     limit: int = 0,
 ) -> tuple[int, int]:
-    """Store jobs with location filtering. Returns (new, existing)."""
+    """Store jobs with title and location filtering. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
@@ -98,6 +100,9 @@ def _store_jobs_filtered(
         if not url:
             continue
         if not _location_ok(job.get("location"), accept_locs, reject_locs):
+            filtered += 1
+            continue
+        if not _title_matches_target_query(job.get("title"), query):
             filtered += 1
             continue
         try:
@@ -121,9 +126,17 @@ def _store_jobs_filtered(
             existing += 1
 
     if filtered:
-        log.info("Filtered %d jobs (wrong location)", filtered)
+        log.info("Filtered %d jobs (wrong title/location)", filtered)
     conn.commit()
     return new, existing
+
+
+def _title_matches_target_query(title: str | None, query: str | list[str] | None) -> bool:
+    if isinstance(query, list):
+        if not query:
+            return True
+        return any(title_matches_query(title, item) for item in query)
+    return title_matches_query(title, query)
 
 
 # -- Page intelligence collector ---------------------------------------------
@@ -1037,6 +1050,7 @@ def build_scrape_targets(
                         "name": site_name,
                         "url": expanded_url,
                         "query": query,
+                        "queries": [query],
                     }
                 )
         else:
@@ -1047,6 +1061,7 @@ def build_scrape_targets(
                     "name": site_name,
                     "url": expanded_url,
                     "query": None,
+                    "queries": queries,
                 }
             )
 
@@ -1079,7 +1094,6 @@ def _run_all(
     total_existing = 0
 
     if limit > 0:
-        workers = 1
         targets = targets[:limit]
 
     def _process_result(r: dict, target: dict) -> None:
@@ -1096,6 +1110,7 @@ def _run_all(
                 r.get("strategy", "?"),
                 accept_locs,
                 reject_locs,
+                query=target.get("query") or target.get("queries"),
                 limit=remaining if limit > 0 else 0,
             )
             total_new += new

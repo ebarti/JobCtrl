@@ -20,6 +20,7 @@ from jobhunter.domain.discovery.source_registry import (
     SourceRegistryEntry,
     SourceState,
 )
+from jobhunter.discovery.title_filter import normalize_query
 from jobhunter.infrastructure.observability import source_validation_span
 
 log = logging.getLogger(__name__)
@@ -197,7 +198,8 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
 
     next_cfg = dict(search_cfg)
     if roles:
-        next_cfg["queries"] = [{"query": role, "tier": 1} for role in roles]
+        role_queries = _dedupe_strings(normalize_query(role) for role in roles)
+        next_cfg["queries"] = [{"query": role, "tier": 1} for role in role_queries]
         next_cfg["workday_max_tier"] = 1
         next_cfg["ats_max_tier"] = 1
 
