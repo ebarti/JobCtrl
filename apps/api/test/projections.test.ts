@@ -271,6 +271,52 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("backfills legacy jobs inserted after the first projection refresh", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const firstRes = await app.inject({ method: "GET", url: "/v1/jobs" });
+        expect(firstRes.statusCode, firstRes.body).toBe(200);
+
+        const db = new Database(dbPath);
+        db.prepare(
+          "INSERT INTO jobs (url, title, site, strategy, location, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+        ).run(
+          "https://example.com/jobs/late-legacy",
+          "Late Legacy Engineer",
+          "Workday",
+          "workday_api",
+          "Barcelona, Spain",
+          "2026-05-06T09:00:00+00:00",
+        );
+        db.close();
+
+        const secondRes = await app.inject({ method: "GET", url: "/v1/jobs" });
+        expect(secondRes.statusCode, secondRes.body).toBe(200);
+        const late = secondRes
+          .json()
+          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/late-legacy");
+        expect(late).toMatchObject({
+          title: "Late Legacy Engineer",
+          source: "Workday",
+          location: "Barcelona, Spain",
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("jobs endpoints expose latest score evidence from job_scores", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

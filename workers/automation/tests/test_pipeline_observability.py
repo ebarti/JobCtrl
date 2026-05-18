@@ -72,7 +72,7 @@ def test_discover_emits_source_events(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0: None),
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -109,7 +109,7 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
         sys.modules,
         "jobhunter.discovery.workday",
         SimpleNamespace(
-            run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.append(
+            run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: calls.append(
                 ("workday", limit, workers)
             )
         ),
@@ -205,7 +205,7 @@ def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
         sys.modules,
         "jobhunter.discovery.workday",
         SimpleNamespace(
-            run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.setdefault(
+            run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: calls.setdefault(
                 "employers",
                 sorted((employers or {}).keys()),
             )
@@ -237,7 +237,7 @@ def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.append("workday")),
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: calls.append("workday")),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -252,7 +252,7 @@ def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     assert result == {"jobspy": "ok", "workday": "skipped_limit", "smartextract": "skipped_limit"}
 
 
-def test_discover_limit_skips_remaining_sources_after_existing_candidate(monkeypatch):
+def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate(monkeypatch):
     calls: list[str] = []
 
     monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
@@ -269,7 +269,7 @@ def test_discover_limit_skips_remaining_sources_after_existing_candidate(monkeyp
     monkeypatch.setitem(
         sys.modules,
         "jobhunter.discovery.workday",
-        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0: calls.append("workday")),
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: calls.append("workday")),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -280,8 +280,8 @@ def test_discover_limit_skips_remaining_sources_after_existing_candidate(monkeyp
 
     result = runner._run_discover(workers=4, limit=1)
 
-    assert calls == ["jobspy"]
-    assert result == {"jobspy": "ok", "workday": "skipped_limit", "smartextract": "skipped_limit"}
+    assert calls == ["jobspy", "workday", "smartextract"]
+    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
 
 
 def test_enrich_limit_propagates_to_runner(monkeypatch):

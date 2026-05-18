@@ -19,11 +19,19 @@ from html.parser import HTMLParser
 
 from jobhunter import config
 from jobhunter.config import CONFIG_DIR
-from jobhunter.database import get_connection, init_db, resurface_deleted_job
+from jobhunter.database import get_connection, init_db
+from jobhunter.domain.discovery.identity import AtsKind
+from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobhunter.domain.discovery.value_objects import JobMetadata, PostingUrl, SearchStrategy, Source
+from jobhunter.domain.events.base import DomainEvent
+from jobhunter.domain.ports.discovery import ScrapedJobPosting
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobhunter.state import record_job_event
 
 log = logging.getLogger(__name__)
 
@@ -294,59 +302,134 @@ def fetch_details(employer: dict, jobs: list[dict]) -> list[dict]:
 # -- DB storage --------------------------------------------------------------
 
 
-def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict, limit: int = 0) -> tuple[int, int]:
-    """Store corporate jobs in DB. Returns (new, existing)."""
+class _DiscoveryEventPublisher:
+    """Persist Workday discovery domain events for API projections."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def publish(self, event: DomainEvent) -> None:
+        payload = {"tenantId": str(event.tenant_id), **event.payload}
+        job_url = (
+            payload.get("job_id")
+            or payload.get("jobId")
+            or payload.get("posting_url")
+            or payload.get("postingUrl")
+        )
+        record_job_event(
+            self._conn,
+            str(job_url) if job_url else None,
+            "discover",
+            event.event_type,
+            message=event.event_type,
+            payload=payload,
+            occurred_at=event.occurred_at,
+        )
+        self._conn.commit()
+
+
+def _job_url(job: dict, employers: dict) -> str:
+    url = str(job.get("apply_url") or "").strip()
+    if url:
+        return url
+    emp = employers.get(job.get("employer_key", ""), {})
+    if emp and job.get("external_path"):
+        return f"{emp['base_url']}/{emp['site_id']}{job['external_path']}"
+    return ""
+
+
+def _source_id(job: dict, employers: dict) -> str:
+    employer_key = str(job.get("employer_key") or "").strip()
+    employer = employers.get(employer_key, {}) if employer_key else {}
+    configured = str(employer.get("_source_id") or "").strip() if isinstance(employer, dict) else ""
+    if configured:
+        return configured
+    slug = re.sub(r"[^a-z0-9]+", "-", employer_key.lower()).strip("-")
+    return f"workday:{slug or 'unknown'}"
+
+
+def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
+    url = _job_url(job, employers)
+    if not url:
+        return None
+    description = str(job.get("full_description") or "")
+    return ScrapedJobPosting(
+        posting_url=PostingUrl(value=url),
+        source=Source(board=str(job.get("employer_name") or "Workday")),
+        metadata=JobMetadata(
+            title=str(job.get("title") or ""),
+            salary="",
+            description=description[:500] if description else "",
+            location=str(job.get("location") or ""),
+        ),
+        strategy=SearchStrategy.WORKDAY_API,
+        source_id=_source_id(job, employers),
+        source_native_id=str(job.get("job_req_id") or job.get("external_path") or url),
+        canonical_url=url,
+        ats_kind=AtsKind.WORKDAY,
+    )
+
+
+def _update_detail_columns(conn: sqlite3.Connection, job: dict, url: str, now: str) -> None:
+    description = str(job.get("full_description") or "")
+    full_description = description if len(description) > 200 else None
+    conn.execute(
+        """
+        UPDATE jobs
+        SET full_description = COALESCE(?, full_description),
+            application_url = COALESCE(?, application_url),
+            detail_scraped_at = COALESCE(?, detail_scraped_at),
+            detail_error = COALESCE(?, detail_error)
+        WHERE url = ?
+        """,
+        (
+            full_description,
+            url,
+            now if full_description else None,
+            job.get("detail_error"),
+            url,
+        ),
+    )
+
+
+def store_results(
+    conn: sqlite3.Connection,
+    jobs: list[dict],
+    employers: dict,
+    limit: int = 0,
+    run_id: str | None = None,
+) -> tuple[int, int]:
+    """Store corporate jobs through the Discovery write boundary."""
     now = datetime.now(timezone.utc).isoformat()
-    new = 0
-    existing = 0
+    postings: list[ScrapedJobPosting] = []
+    detail_updates: list[tuple[dict, str]] = []
 
     for job in jobs:
-        if limit > 0 and new + existing >= limit:
+        if limit > 0 and len(postings) >= limit:
             break
-        url = job.get("apply_url", "")
-        if not url:
-            emp = employers.get(job.get("employer_key", ""), {})
-            if emp and job.get("external_path"):
-                url = f"{emp['base_url']}/{emp['site_id']}{job['external_path']}"
-        if not url:
+        posting = _posting_from_job(job, employers)
+        if posting is None:
             continue
+        postings.append(posting)
+        detail_updates.append((job, posting.posting_url.value))
 
-        description = job.get("full_description", "")
-        short_desc = description[:500] if description else None
-        full_description = description if len(description) > 200 else None
-        detail_scraped_at = now if full_description else None
-        detail_error = job.get("detail_error")
+    if not postings:
+        return 0, 0
 
-        site = job.get("employer_name", "Corporate")
-        strategy = "workday_api"
+    summary = DiscoverJobsUseCase(
+        repository=SqliteJobRepository(conn),
+        publisher=_DiscoveryEventPublisher(conn),
+    ).execute(
+        tenant_id=LOCAL_TENANT,
+        postings=postings,
+        run_id=run_id,
+    )
 
-        try:
-            conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, "
-                "discovered_at, full_description, application_url, detail_scraped_at, detail_error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    url,
-                    job.get("title"),
-                    None,
-                    short_desc,
-                    job.get("location"),
-                    site,
-                    strategy,
-                    now,
-                    full_description,
-                    url,
-                    detail_scraped_at,
-                    detail_error,
-                ),
-            )
-            new += 1
-        except sqlite3.IntegrityError:
-            resurface_deleted_job(conn, url, resurfaced_at=now)
-            existing += 1
+    for job, url in detail_updates:
+        _update_detail_columns(conn, job, url, now)
 
     conn.commit()
-    return new, existing
+    return summary.new_jobs, summary.observed
 
 
 def _process_one(
@@ -357,6 +440,7 @@ def _process_one(
     accept_locs: list[str],
     reject_locs: list[str],
     limit: int = 0,
+    run_id: str | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -384,7 +468,7 @@ def _process_one(
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
 
     conn = get_connection()
-    new, existing = store_results(conn, jobs, employers, limit=limit)
+    new, existing = store_results(conn, jobs, employers, limit=limit, run_id=run_id)
     log.info("%s: %d new, %d already in DB", emp["name"], new, existing)
 
     return {"employer": emp["name"], "query": search_text, "found": len(jobs), "new": new, "existing": existing}
@@ -403,6 +487,7 @@ def scrape_employers(
     reject_locs: list[str] | None = None,
     workers: int = 1,
     limit: int = 0,
+    run_id: str | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -445,6 +530,7 @@ def scrape_employers(
                     accept_locs,
                     reject_locs,
                     0,
+                    run_id,
                 ): key
                 for key in valid_keys
             }
@@ -484,6 +570,7 @@ def scrape_employers(
                 accept_locs,
                 reject_locs,
                 remaining if limit > 0 else 0,
+                run_id,
             )
             completed += 1
             total_new += result["new"]
@@ -516,7 +603,12 @@ def scrape_employers(
 # -- Public entry point ------------------------------------------------------
 
 
-def run_workday_discovery(employers: dict | None = None, workers: int = 1, limit: int = 0) -> dict:
+def run_workday_discovery(
+    employers: dict | None = None,
+    workers: int = 1,
+    limit: int = 0,
+    run_id: str | None = None,
+) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
     Loads employer registry from config/employers.yaml (or uses the provided
@@ -578,6 +670,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1, limit
             reject_locs=reject_locs,
             workers=workers,
             limit=remaining if limit > 0 else 0,
+            run_id=run_id,
         )
         grand_new += result["new"]
         grand_existing += result["existing"]

@@ -515,6 +515,20 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (job.url) dirtyJobs.add(job.url);
     }
   }
+  if (tableExists(db, "jobs")) {
+    const missingProjectedJobs = allRows<{ url: string }>(
+      db,
+      `SELECT j.url
+       FROM jobs j
+       LEFT JOIN job_list_projections p
+         ON p.tenant_id = ? AND p.job_id = j.url
+       WHERE p.job_id IS NULL`,
+      [tenantId],
+    );
+    for (const job of missingProjectedJobs) {
+      if (job.url) dirtyJobs.add(job.url);
+    }
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.

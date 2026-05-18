@@ -1102,13 +1102,28 @@ def _run_all(
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
 
+    def _site_error_result(target: dict, exc: Exception) -> dict:
+        name = str(target.get("name") or "Unknown")
+        log.error("%s failed: %s", name, exc)
+        return {
+            "name": name,
+            "status": "ERROR",
+            "strategy": "?",
+            "total": 0,
+            "titles": 0,
+            "error": str(exc),
+        }
+
     if workers > 1 and len(targets) > 1:
         # Parallel mode
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
             future_to_target = {pool.submit(_run_one_site, target["name"], target["url"]): target for target in targets}
             for future in as_completed(future_to_target):
                 target = future_to_target[future]
-                r = future.result()
+                try:
+                    r = future.result()
+                except Exception as exc:
+                    r = _site_error_result(target, exc)
                 results.append(r)
                 _process_result(r, target)
     else:
@@ -1121,7 +1136,10 @@ def _run_all(
                 label = f"{target['name']} [{target['query']}]"
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
-            r = _run_one_site(target["name"], target["url"])
+            try:
+                r = _run_one_site(target["name"], target["url"])
+            except Exception as exc:
+                r = _site_error_result(target, exc)
             results.append(r)
             _process_result(r, target)
 
@@ -1135,9 +1153,16 @@ def _run_all(
         log.info("%-10s | %-25s | %s", r["status"], r["name"], detail)
 
     passed = sum(1 for r in results if r["status"] == "PASS")
+    errors = sum(1 for r in results if r["status"] == "ERROR")
     log.info("%d/%d PASS", passed, len(results))
 
-    return {"total_new": total_new, "total_existing": total_existing, "passed": passed, "total": len(results)}
+    return {
+        "total_new": total_new,
+        "total_existing": total_existing,
+        "passed": passed,
+        "errors": errors,
+        "total": len(results),
+    }
 
 
 # -- Public entry point ------------------------------------------------------
