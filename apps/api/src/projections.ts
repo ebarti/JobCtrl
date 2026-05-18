@@ -1012,7 +1012,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const title = stringField(job.title) || "Untitled";
   const site = stringField(job.site);
   const applicationUrl = enrichment.applicationUrl ?? nullableString(job.application_url);
-  const employer = companyName(site, applicationUrl ?? jobUrl);
+  const employer = stringField(job.company) || companyName(site, applicationUrl ?? jobUrl);
 
   const firstActionable =
     stages.find((s) => !["succeeded", "skipped"].includes(s.state)) ?? stages[stages.length - 1];

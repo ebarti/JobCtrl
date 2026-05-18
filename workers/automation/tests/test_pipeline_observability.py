@@ -135,6 +135,43 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
     ]
 
 
+def test_discover_passes_remaining_limit_to_downstream_sources(monkeypatch):
+    calls: list[tuple[str, int]] = []
+    job_count = {"value": 100}
+
+    def run_jobspy(cfg=None, limit=0):
+        calls.append(("jobspy", limit))
+        job_count["value"] = 106
+        return {"new": 6, "existing": 0, "errors": 0}
+
+    def run_workday(employers=None, workers=1, limit=0, run_id=None):
+        calls.append(("workday", limit))
+        job_count["value"] = 108
+        return {"new": 2, "existing": 0, "errors": 0}
+
+    monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(runner, "_pipeline_job_count", lambda: job_count["value"], raising=False)
+    monkeypatch.setitem(sys.modules, "jobhunter.discovery.jobspy", SimpleNamespace(run_discovery=run_jobspy))
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(run_workday_discovery=run_workday),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(
+            run_smart_extract=lambda sites=None, workers=1, limit=0: calls.append(("smartextract", limit))
+        ),
+    )
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+
+    result = runner._run_discover(workers=4, limit=10)
+
+    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert calls == [("jobspy", 10), ("workday", 4), ("smartextract", 2)]
+
+
 def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
     calls: dict[str, object] = {}
 
@@ -221,6 +258,32 @@ def test_discover_filters_adapter_inputs_to_runnable_sources(monkeypatch):
     runner._run_discover(workers=4, limit=0)
 
     assert calls == {"boards": ["linkedin"], "employers": ["acme"]}
+
+
+def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:
+    source = runner.ScheduledSource(
+        source_id="smart_extract:welcometothejungle",
+        display_name="WelcomeToTheJungle",
+        source_kind=SourceKind.SMART_EXTRACT,
+        priority=SourcePriority.FALLBACK,
+        configured_state=SourceState.EXPERIMENTAL,
+        crawl_budget=1,
+        decision="run",
+        reason="test",
+        recommended_state="normal",
+        adapter_config={
+            "name": "WelcomeToTheJungle",
+            "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
+        },
+    )
+
+    assert runner._smart_extract_sites((source,)) == [
+        {
+            "name": "WelcomeToTheJungle",
+            "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
+            "type": "search",
+        }
+    ]
 
 
 def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):

@@ -719,6 +719,12 @@ def _discover_limit_consumed(start_count: int, limit: int, source_result: Any = 
     return _discover_limit_reached(start_count, limit)
 
 
+def _discover_remaining_limit(start_count: int, limit: int) -> int:
+    if limit <= 0:
+        return 0
+    return max(limit - (_pipeline_job_count() - start_count), 0)
+
+
 def _load_source_quality_snapshots() -> tuple[SourceQualitySnapshot, ...]:
     try:
         conn = get_connection()
@@ -837,10 +843,19 @@ def _smart_extract_sites(sources: tuple[ScheduledSource, ...]) -> list[dict]:
             {
                 "name": str(source.adapter_config.get("name") or source.display_name),
                 "url": url,
-                "type": str(source.adapter_config.get("type") or "static"),
+                "type": _smart_extract_site_type(source.adapter_config, url),
             }
         )
     return sites
+
+
+def _smart_extract_site_type(adapter_config: dict[str, object], url: str) -> str:
+    configured_type = str(adapter_config.get("type") or "").strip()
+    if configured_type:
+        return configured_type
+    if "{query_encoded}" in url or "{query}" in url:
+        return "search"
+    return "static"
 
 
 def _optional_float(value: object) -> float | None:
@@ -931,7 +946,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
                 ats_sources,
                 search_cfg=search_cfg,
                 run_id=run_id or f"discovery:ats_api:{uuid.uuid4().hex}",
-                limit=_scheduled_limit_for_sources(ats_sources, limit),
+                limit=_scheduled_limit_for_sources(ats_sources, _discover_remaining_limit(start_count, limit)),
             )
             return source_results["ats_api"]
 
@@ -957,7 +972,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         source_results["workday"] = run_workday_discovery(
             employers=_workday_employers_for_sources(workday_sources),
             workers=bounded_workers,
-            limit=_scheduled_limit(schedule, "workday", limit),
+            limit=_scheduled_limit(schedule, "workday", _discover_remaining_limit(start_count, limit)),
             run_id=run_id,
         )
         return source_results["workday"]
@@ -984,7 +999,10 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         source_results["smartextract"] = run_smart_extract(
             sites=_smart_extract_sites(smart_extract_sources),
             workers=bounded_workers,
-            limit=_scheduled_limit_for_sources(smart_extract_sources, limit),
+            limit=_scheduled_limit_for_sources(
+                smart_extract_sources,
+                _discover_remaining_limit(start_count, limit),
+            ),
         )
         return source_results["smartextract"]
 

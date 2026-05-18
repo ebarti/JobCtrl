@@ -603,12 +603,17 @@ def _adapter_config_from_row(row: sqlite3.Row) -> dict:
     if not seed_url:
         return {}
     display_name = str(row["display_name"] or row["source_id"]).strip()
+    source_type = "search" if _url_has_search_placeholder(seed_url) else "static"
     return {
         "name": display_name,
         "url": seed_url,
-        "type": "static",
+        "type": source_type,
         "base_url": seed_url,
     }
+
+
+def _url_has_search_placeholder(url: str) -> bool:
+    return "{query_encoded}" in url or "{query}" in url
 
 
 def _merge_local_source_registry(

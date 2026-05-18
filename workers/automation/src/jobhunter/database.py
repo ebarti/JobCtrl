@@ -70,7 +70,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     so it won't destroy existing data.
 
     Schema columns by stage:
-      - Discovery:  url, title, salary, description, location, site, strategy, discovered_at
+      - Discovery:  url, title, company, salary, description, location, site, strategy, discovered_at
       - Enrichment: full_description, application_url, detail_scraped_at, detail_error
       - Scoring:    fit_score, score_reasoning, scored_at
       - Tailoring:  tailored_resume_path, tailored_at, tailor_attempts
@@ -96,6 +96,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             -- Discovery stage (smart_extract / job_search)
             url                   TEXT PRIMARY KEY,
             title                 TEXT,
+            company               TEXT,
             salary                TEXT,
             description           TEXT,
             location              TEXT,
@@ -211,6 +212,7 @@ _ALL_COLUMNS: dict[str, str] = {
     # Discovery
     "url": "TEXT PRIMARY KEY",
     "title": "TEXT",
+    "company": "TEXT",
     "salary": "TEXT",
     "description": "TEXT",
     "location": "TEXT",
@@ -2069,11 +2071,12 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict], site: str, strategy: 
             continue
         try:
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     url,
                     job.get("title"),
+                    job.get("company"),
                     job.get("salary"),
                     job.get("description"),
                     job.get("location"),
@@ -2104,6 +2107,24 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict], site: str, strategy: 
             )
             new += 1
         except sqlite3.IntegrityError:
+            company = str(job.get("company") or "").strip()
+            if company:
+                cursor = conn.execute(
+                    "UPDATE jobs SET company = ? WHERE url = ? AND (company IS NULL OR company = '')",
+                    (company, url),
+                )
+                if cursor.rowcount:
+                    from jobhunter.state import record_job_event
+
+                    record_job_event(
+                        conn,
+                        url,
+                        "discover",
+                        "JobMetadataUpdated",
+                        message=f"Job company backfilled from {site}",
+                        payload={"company": company, "source": site},
+                        occurred_at=now,
+                    )
             resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 

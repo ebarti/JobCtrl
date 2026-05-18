@@ -31,6 +31,7 @@ def test_smart_extract_store_filters_title_and_location(
             {
                 "url": "https://example.com/director-engineering",
                 "title": "Director of Engineering",
+                "company": "ExampleCo",
                 "location": "Remote EMEA",
             },
         ]
@@ -45,8 +46,8 @@ def test_smart_extract_store_filters_title_and_location(
             query="Director of Engineering",
         ) == (1, 0)
 
-        stored = conn.execute("SELECT title FROM jobs").fetchall()
-        assert [row[0] if isinstance(row, tuple) else row["title"] for row in stored] == ["Director of Engineering"]
+        stored = conn.execute("SELECT title, company FROM jobs").fetchall()
+        assert [(row["title"], row["company"]) for row in stored] == [("Director of Engineering", "ExampleCo")]
     finally:
         close_connection(db_path)
 

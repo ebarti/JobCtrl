@@ -250,6 +250,7 @@ class SqliteJobRepository:
                 """
                 UPDATE jobs SET
                     title = ?,
+                    company = COALESCE(NULLIF(company, ''), ?),
                     salary = ?,
                     description = ?,
                     location = ?,
@@ -260,6 +261,7 @@ class SqliteJobRepository:
                 """,
                 (
                     job.metadata.title,
+                    None if job.employer.is_unknown() else job.employer.name,
                     job.metadata.salary,
                     job.metadata.description,
                     job.metadata.location,
@@ -273,13 +275,14 @@ class SqliteJobRepository:
             self._conn.execute(
                 """
                 INSERT INTO jobs (
-                    url, title, salary, description, location,
+                    url, title, company, salary, description, location,
                     site, strategy, discovered_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.posting_url.value,
                     job.metadata.title,
+                    None if job.employer.is_unknown() else job.employer.name,
                     job.metadata.salary,
                     job.metadata.description,
                     job.metadata.location,

@@ -96,6 +96,38 @@ def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
     ]
 
 
+def test_job_projection_uses_explicit_company_before_source(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (url, title, company, site, strategy, location, salary,
+                          discovered_at, application_url, description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://www.linkedin.com/jobs/view/1",
+            "Head of Engineering",
+            "Keyrock",
+            "linkedin",
+            "jobspy",
+            "Barcelona, Spain",
+            "",
+            utc_now(),
+            "https://www.linkedin.com/jobs/view/1",
+            "x",
+        ),
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT employer FROM job_list_projections WHERE job_id = ?",
+        ("https://www.linkedin.com/jobs/view/1",),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "Keyrock"
+
+
 def test_feedback_only_history_rebuilds_source_quality(conn: sqlite3.Connection) -> None:
     record_job_event(
         conn,

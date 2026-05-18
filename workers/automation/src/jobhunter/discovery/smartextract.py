@@ -107,11 +107,12 @@ def _store_jobs_filtered(
             continue
         try:
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     url,
                     job.get("title"),
+                    job.get("company"),
                     job.get("salary"),
                     job.get("description"),
                     job.get("location"),
@@ -122,6 +123,24 @@ def _store_jobs_filtered(
             )
             new += 1
         except sqlite3.IntegrityError:
+            company = str(job.get("company") or "").strip()
+            if company:
+                cursor = conn.execute(
+                    "UPDATE jobs SET company = ? WHERE url = ? AND (company IS NULL OR company = '')",
+                    (company, url),
+                )
+                if cursor.rowcount:
+                    from jobhunter.state import record_job_event
+
+                    record_job_event(
+                        conn,
+                        url,
+                        "discover",
+                        "JobMetadataUpdated",
+                        message="Job company backfilled from SmartExtract",
+                        payload={"company": company, "source": site},
+                        occurred_at=now,
+                    )
             resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 

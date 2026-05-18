@@ -173,3 +173,67 @@ def test_source_registry_filters_america_only_sources_for_europe_target() -> Non
     by_id = {entry.source_id for entry in registry}
     assert "smart_extract:job-bank-canada" not in by_id
     assert "smart_extract:welcometothejungle" in by_id
+
+
+def test_local_source_registry_row_preserves_search_site_type(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE source_registry_entries (
+          tenant_id TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          owner TEXT NOT NULL,
+          priority TEXT NOT NULL,
+          state TEXT NOT NULL,
+          policy_id TEXT NOT NULL,
+          seed_url TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, source_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO source_registry_entries (
+          tenant_id, source_id, kind, display_name, owner, priority,
+          state, policy_id, seed_url, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            "smart_extract:welcometothejungle",
+            "smart_extract",
+            "WelcomeToTheJungle",
+            "system",
+            "fallback",
+            "experimental",
+            "smart_extract_experimental",
+            "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
+            "2026-05-18T00:00:00Z",
+            "2026-05-18T00:00:00Z",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+
+    registry = config.load_source_registry(
+        search_cfg={"target_region": "europe", "boards": ["linkedin"]},
+        sites_cfg={
+            "sites": [
+                {
+                    "name": "WelcomeToTheJungle",
+                    "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
+                    "type": "search",
+                }
+            ]
+        },
+        employers_cfg={"employers": {}},
+    )
+
+    by_id = {entry.source_id: entry for entry in registry}
+    assert by_id["smart_extract:welcometothejungle"].adapter_config["type"] == "search"

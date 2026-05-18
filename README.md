@@ -116,8 +116,9 @@ For development of the local TypeScript API and current React/Vite shell:
 pnpm test
 ```
 
-Discovery can use `python-jobspy` when installed. If `jobhunter doctor` reports
-that JobSpy is missing, install it with the command shown by the doctor output.
+Discovery includes `python-jobspy` for broad-board scraping through JobSpy.
+If `jobhunter doctor` reports JobSpy is missing, rerun
+`uv --project workers/automation sync`.
 
 ## First-Time Setup
 

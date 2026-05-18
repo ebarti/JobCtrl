@@ -32,7 +32,8 @@ dependencies = [
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
     "opentelemetry-instrumentation-httpx>=0.48b0",
-    ]
+    "python-jobspy>=1.1.82",
+]
 
 [project.optional-dependencies]
 dev = ["build>=1.2", "pytest>=7.0", "pytest-asyncio>=0.23", "ruff>=0.1"]
