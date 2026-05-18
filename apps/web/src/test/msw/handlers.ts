@@ -214,6 +214,14 @@ export const handlers = [
     const body = (await request.json()) as { jobKeys?: string[] };
     return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
   }),
+  http.post("*/v1/jobs/bulk-hide", async ({ request }) => {
+    const body = (await request.json()) as { jobKeys?: string[] };
+    return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
+  }),
+  http.post("*/v1/jobs/bulk-unhide", async ({ request }) => {
+    const body = (await request.json()) as { jobKeys?: string[] };
+    return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
+  }),
   http.get("*/v1/jobs/:jobKey", ({ params }) =>
     HttpResponse.json(makeJobDetail({
       ...makeJobsPage().items[0]!,
@@ -224,6 +232,12 @@ export const handlers = [
     HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
   ),
   http.post("*/v1/jobs/:jobKey/restore", ({ params }) =>
+    HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
+  ),
+  http.post("*/v1/jobs/:jobKey/hide", ({ params }) =>
+    HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
+  ),
+  http.post("*/v1/jobs/:jobKey/unhide", ({ params }) =>
     HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
   ),
   http.post("*/v1/jobs/:jobKey/score-correction", async ({ params, request }) => {

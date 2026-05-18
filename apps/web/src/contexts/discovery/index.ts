@@ -13,9 +13,11 @@ export {
 
 export { useDeleteJobMutation } from "./hooks/useDeleteJobMutation.js";
 export { useDeleteJobsBulkMutation } from "./hooks/useDeleteJobsBulkMutation.js";
+export { useHideJobsBulkMutation } from "./hooks/useHideJobsBulkMutation.js";
 export { useImportJobMutation } from "./hooks/useImportJobMutation.js";
 export { useRestoreJobMutation } from "./hooks/useRestoreJobMutation.js";
 export { useRestoreJobsBulkMutation } from "./hooks/useRestoreJobsBulkMutation.js";
+export { useUnhideJobsBulkMutation } from "./hooks/useUnhideJobsBulkMutation.js";
 
 export {
   jobDeletedHandler,

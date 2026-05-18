@@ -361,6 +361,65 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
   return { ok: true, count: jobKeys.length, jobKeys };
 }
 
+export function hideJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {
+  return hideJobs(db, { allMatching: false, jobKeys: [jobKey], reason: request.reason });
+}
+
+export function hideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  ensureHiddenJobsTable(db);
+  const hiddenAt = new Date().toISOString();
+  const jobKeys = mutableJobKeys(db, request);
+  const statement = db.prepare(`
+    INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+    VALUES (?, ?, ?, NULL)
+    ON CONFLICT(job_url) DO UPDATE SET
+      hidden_at = excluded.hidden_at,
+      reason = excluded.reason,
+      unhidden_at = NULL
+  `);
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      statement.run(jobUrl, hiddenAt, request.reason ?? null);
+      recordActionEvent(db, {
+        jobUrl,
+        stage: currentMutableStage(db, jobUrl),
+        eventType: "JobHidden",
+        level: "info",
+        message: "Job hidden from the local API.",
+        payload: { reason: request.reason ?? "" },
+      });
+    }
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
+export function unhideJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
+  return unhideJobs(db, { allMatching: false, jobKeys: [jobKey] });
+}
+
+export function unhideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  ensureHiddenJobsTable(db);
+  const unhiddenAt = new Date().toISOString();
+  const jobKeys = mutableJobKeys(db, request);
+  const statement = db.prepare("UPDATE jobhunter_hidden_jobs SET unhidden_at = ? WHERE job_url = ? AND unhidden_at IS NULL");
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      statement.run(unhiddenAt, jobUrl);
+      recordActionEvent(db, {
+        jobUrl,
+        stage: currentMutableStage(db, jobUrl),
+        eventType: "JobUnhidden",
+        level: "info",
+        message: "Job unhidden from hidden jobs.",
+        payload: {},
+      });
+    }
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
 export function writeSettingsConfig(paths: { settingsPath: string }, request: SettingsUpdateRequest): SettingsResponse {
   const next = readJsonObject(paths.settingsPath);
   let wrote = false;
@@ -483,6 +542,18 @@ function ensureDeletedJobsTable(db: SqliteDatabase): void {
       deleted_at TEXT NOT NULL,
       reason TEXT,
       restored_at TEXT,
+      FOREIGN KEY(job_url) REFERENCES jobs(url)
+    )`,
+  ).run();
+}
+
+function ensureHiddenJobsTable(db: SqliteDatabase): void {
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS jobhunter_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
+      unhidden_at TEXT,
       FOREIGN KEY(job_url) REFERENCES jobs(url)
     )`,
   ).run();

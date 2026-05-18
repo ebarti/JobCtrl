@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 
 from jobhunter import config
 from jobhunter.config import CONFIG_DIR
-from jobhunter.database import get_connection, init_db
+from jobhunter.database import get_connection, init_db, resurface_deleted_job
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
@@ -342,6 +342,7 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict, l
             )
             new += 1
         except sqlite3.IntegrityError:
+            resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     conn.commit()

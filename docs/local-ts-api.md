@@ -25,6 +25,14 @@ Both processes refresh projections idempotently via the shared
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, and `scoredAt`. `scoreReasoning` remains on
 the wire as a compatibility summary during the scoring evidence migration.
+The jobs list `deleted` filter accepts `active`, `deleted`, `hidden`, or `all`.
+Deleted jobs are temporary removals: discovery clears the delete tombstone when
+the same posting is observed again. Hidden jobs use a separate
+`jobhunter_hidden_jobs` tombstone and remain suppressed from active/deleted
+lists, dashboard totals, artifacts, workflow runs, and activity until an unhide
+mutation clears that hidden tombstone. The API exposes bulk hide/unhide routes
+at `POST /v1/jobs/bulk-hide` and `POST /v1/jobs/bulk-unhide`, plus single-job
+`POST /v1/jobs/:key/hide` and `POST /v1/jobs/:key/unhide`.
 
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,

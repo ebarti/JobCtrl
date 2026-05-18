@@ -176,6 +176,22 @@ export class JobHunterApiClient {
     return this.post("/v1/jobs/bulk-restore", body);
   }
 
+  hideJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/hide`, body);
+  }
+
+  hideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-hide", body);
+  }
+
+  unhideJob(jobKey: string): Promise<JobMutationResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/unhide`);
+  }
+
+  unhideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-unhide", body);
+  }
+
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/score-correction`, body);
   }

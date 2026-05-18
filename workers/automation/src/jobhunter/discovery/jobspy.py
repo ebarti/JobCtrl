@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 
 from jobhunter import config
-from jobhunter.database import get_connection, init_db
+from jobhunter.database import get_connection, init_db, resurface_deleted_job
 
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobhunter.infrastructure.network`` so the Enrichment context's
@@ -151,6 +151,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
             )
             new += 1
         except sqlite3.IntegrityError:
+            resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     conn.commit()

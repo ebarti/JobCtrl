@@ -87,6 +87,8 @@ import {
 import {
   cancelJobAction,
   correctScore,
+  hideJob,
+  hideJobs,
   InputError,
   markJobApplied,
   markJobSkipped,
@@ -96,6 +98,8 @@ import {
   resolveJobUrl,
   softDeleteJob,
   softDeleteJobs,
+  unhideJob,
+  unhideJobs,
   writeSettingsConfig,
 } from "./write-model.js";
 
@@ -373,6 +377,22 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => restoreJobs(db, body));
   });
 
+  app.post("/v1/jobs/bulk-hide", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => hideJobs(db, body));
+  });
+
+  app.post("/v1/jobs/bulk-unhide", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => unhideJobs(db, body));
+  });
+
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => {
       const detail = getJobDetail(db, decodeRouteParam(request.params.jobKey));
@@ -413,6 +433,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/restore", async (request, reply) =>
     withWritableDb(reply, options.dbPath, (db) => restoreJob(db, decodeRouteParam(request.params.jobKey))),
+  );
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/hide", async (request, reply) => {
+    const body = parseBody(reply, DeleteJobRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => hideJob(db, decodeRouteParam(request.params.jobKey), body));
+  });
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/unhide", async (request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => unhideJob(db, decodeRouteParam(request.params.jobKey))),
   );
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/retry-stage", async (request, reply) => {

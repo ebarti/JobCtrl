@@ -258,6 +258,12 @@ pnpm web:dev
 The Vite dev server proxies `/v1/*` to the local API by default. Set
 `VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
 
+The Jobs tab separates temporary removal from permanent suppression. Deleting a
+job moves it to the Deleted tab; a later discovery run can resurface that job if
+the posting is found again. Hiding a job moves it to the Hidden tab and keeps it
+hidden across future discovery runs until you select it there and use **unhide
+selected**.
+
 The Pipelines tab includes global stage starts. Each stage (`discover`,
 `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has its own tab with
 persisted local config, and the tab only shows controls that the selected stage

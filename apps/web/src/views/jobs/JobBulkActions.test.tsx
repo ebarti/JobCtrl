@@ -30,7 +30,8 @@ describe("<JobBulkActions>", () => {
         onSelectPage={() => {}}
         onSelectAllMatching={() => {}}
         onClearSelection={() => {}}
-        onMutateSelected={onMutate}
+        onPrimaryAction={onMutate}
+        onHideSelected={() => {}}
       />,
     );
     await user.click(screen.getByRole("button", { name: /delete selected/i }));
@@ -49,7 +50,8 @@ describe("<JobBulkActions>", () => {
         onSelectPage={() => {}}
         onSelectAllMatching={() => {}}
         onClearSelection={() => {}}
-        onMutateSelected={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /delete selected/i })).toBeDisabled();
@@ -67,10 +69,53 @@ describe("<JobBulkActions>", () => {
         onSelectPage={() => {}}
         onSelectAllMatching={() => {}}
         onClearSelection={() => {}}
-        onMutateSelected={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /restore selected/i })).toBeInTheDocument();
+  });
+
+  it("flips to an unhide label when the hidden tab is active", () => {
+    render(
+      <JobBulkActions
+        search={{ ...baseSearch, deleted: "hidden" }}
+        selectedCount={2}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /unhide selected/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^hide selected$/i })).not.toBeInTheDocument();
+  });
+
+  it("invokes onHideSelected from active jobs", async () => {
+    const user = userEvent.setup();
+    const onHide = vi.fn();
+    render(
+      <JobBulkActions
+        search={baseSearch}
+        selectedCount={1}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={onHide}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /hide selected/i }));
+    expect(onHide).toHaveBeenCalledTimes(1);
   });
 
   it("calls onSetDeleted when switching tabs", async () => {
@@ -87,10 +132,13 @@ describe("<JobBulkActions>", () => {
         onSelectPage={() => {}}
         onSelectAllMatching={() => {}}
         onClearSelection={() => {}}
-        onMutateSelected={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
       />,
     );
     await user.click(screen.getByRole("button", { name: /deleted jobs/i }));
     expect(onSet).toHaveBeenCalledWith("deleted");
+    await user.click(screen.getByRole("button", { name: /hidden jobs/i }));
+    expect(onSet).toHaveBeenCalledWith("hidden");
   });
 });

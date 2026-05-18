@@ -185,8 +185,7 @@ class DiscoverJobsUseCase:
         materialised = list(postings)
         run_id = run_id or self._run_id_factory()
         decisions: list[DiscoveryDecision] = [
-            self._ingest_one(tenant_id=tenant_id, posting=p, run_id=run_id)
-            for p in materialised
+            self._ingest_one(tenant_id=tenant_id, posting=p, run_id=run_id) for p in materialised
         ]
         return DiscoveryRunSummary(
             total=len(decisions),
@@ -352,10 +351,7 @@ class DiscoverJobsUseCase:
     ) -> DiscoveryDecision:
         observed_url = identity.canonical_url or posting.posting_url.value
         normalized_observed = normalize_observed_url(observed_url)
-        is_distinct_url = (
-            normalized_observed != normalize_observed_url(str(owner_id))
-            and normalized_observed != ""
-        )
+        is_distinct_url = normalized_observed != normalize_observed_url(str(owner_id)) and normalized_observed != ""
 
         if identity.confidence < MIN_AUTO_MERGE_CONFIDENCE and is_distinct_url:
             duplicate_link_id = f"dup:{uuid.uuid4().hex}"
@@ -394,6 +390,9 @@ class DiscoverJobsUseCase:
             result="observed",
             confidence=identity.confidence,
         ):
+            existing = self._repository.load(tenant_id, owner_id)
+            if existing is not None and existing.is_deleted:
+                self._repository.save(existing.restore())
             self._repository.attach_source_observation(
                 tenant_id,
                 owner_id,
@@ -428,9 +427,7 @@ class DiscoverJobsUseCase:
                 duplicate_link_id=duplicate_link_id,
                 surviving_job_id=str(owner_id),
                 superseded_job_or_observation_id=observation_id,
-                reason="canonical_url_match"
-                if identity.canonical_url
-                else "source_native_id_match",
+                reason="canonical_url_match" if identity.canonical_url else "source_native_id_match",
                 confidence=identity.confidence,
                 linked_at=observed_at,
             )

@@ -13,7 +13,7 @@ import sqlite3
 
 import pytest
 
-from jobhunter.database import init_db
+from jobhunter.database import init_db, resurface_deleted_job
 from jobhunter.domain.discovery import (
     Employer,
     Job,
@@ -89,9 +89,7 @@ def test_save_idempotent_preserves_discovered_at(conn: sqlite3.Connection) -> No
     original = _make_job()
     repo.save(original)
 
-    rediscovered = original.with_metadata(
-        JobMetadata(title="Staff Engineer", salary="$250k", location="Remote")
-    )
+    rediscovered = original.with_metadata(JobMetadata(title="Staff Engineer", salary="$250k", location="Remote"))
     # Bump the discovered_at on the in-memory aggregate; the persisted
     # row should keep the original timestamp.
     rediscovered = Job.discover(
@@ -194,8 +192,7 @@ def test_soft_delete_writes_tombstone_row(conn: sqlite3.Connection) -> None:
     assert deleted is not None and deleted.is_deleted
 
     row = conn.execute(
-        "SELECT deleted_at, reason, restored_at FROM jobhunter_deleted_jobs "
-        "WHERE job_url = ?",
+        "SELECT deleted_at, reason, restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
         (str(job.job_id),),
     ).fetchone()
     assert row is not None
@@ -247,6 +244,34 @@ def test_restore_clears_tombstone(conn: sqlite3.Connection) -> None:
     ).fetchone()
     assert row is not None
     assert row["restored_at"] is not None
+
+
+def test_resurface_deleted_job_clears_tombstone_and_records_event(conn: sqlite3.Connection) -> None:
+    repo = SqliteJobRepository(conn)
+    job = _make_job()
+    repo.save(job)
+    repo.soft_delete(
+        LOCAL_TENANT,
+        job.job_id,
+        reason="not right now",
+        deleted_at="2026-05-02T00:00:00+00:00",
+    )
+
+    resurface_deleted_job(conn, str(job.job_id), resurfaced_at="2026-05-03T00:00:00+00:00")
+
+    row = conn.execute(
+        "SELECT restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
+        (str(job.job_id),),
+    ).fetchone()
+    assert row is not None
+    assert row["restored_at"] == "2026-05-03T00:00:00+00:00"
+    event = conn.execute(
+        "SELECT event_type, message FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1",
+        (str(job.job_id),),
+    ).fetchone()
+    assert event is not None
+    assert event["event_type"] == "JobRestored"
+    assert event["message"] == "Job resurfaced because discovery observed it again."
 
 
 def test_restore_is_noop_for_undeleted_job(conn: sqlite3.Connection) -> None:

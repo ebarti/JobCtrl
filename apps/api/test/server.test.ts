@@ -420,6 +420,57 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("hides jobs in a separate tab and unhides them without using deleted state", async () => {
+    const app = buildApp(options);
+
+    const hide = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-hide",
+      payload: {
+        allMatching: false,
+        jobKeys: ["https://example.com/jobs/blocked-tailor"],
+        reason: "never show again",
+      },
+    });
+    expect(hide.statusCode, hide.body).toBe(200);
+    expect(hide.json()).toMatchObject({ ok: true, count: 1 });
+
+    const active = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active&sort=title&dir=asc" });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(active.json().pagination.total).toBe(2);
+    expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).not.toContain(
+      "https://example.com/jobs/blocked-tailor",
+    );
+
+    const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(deleted.json().pagination.total).toBe(0);
+
+    const hidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden" });
+    expect(hidden.statusCode, hidden.body).toBe(200);
+    expect(hidden.json().pagination.total).toBe(1);
+    expect(hidden.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/blocked-tailor",
+      hiddenAt: expect.any(String),
+      deletedAt: null,
+    });
+
+    const unhide = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-unhide",
+      payload: { allMatching: true, filter: { deleted: "hidden" }, jobKeys: [] },
+    });
+    expect(unhide.statusCode, unhide.body).toBe(200);
+    expect(unhide.json()).toMatchObject({ ok: true, count: 1 });
+
+    const restoredActive = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active" });
+    expect(restoredActive.json().pagination.total).toBe(3);
+    const emptyHidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden" });
+    expect(emptyHidden.json().pagination.total).toBe(0);
+
+    await app.close();
+  });
+
   it("derives apply state from apply_run_projections when legacy jobs columns are NULL", async () => {
     // PR 4 of the Temporal stack: ``apply_run_projections`` (sourced
     // from ``job_events`` by the Python projection builder) is the

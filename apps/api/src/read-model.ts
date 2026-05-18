@@ -111,6 +111,7 @@ interface JobListProjectionRow extends Record<string, unknown> {
   applied_at: string | null;
   artifact_count: number;
   deleted_at: string | null;
+  hidden_at: string | null;
   last_updated_at: string | null;
 }
 
@@ -230,7 +231,8 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
   refreshProjections(db, DEFAULT_TENANT);
   const sortColumn = SQL_JOB_SORT_COLUMNS[query.sort] ?? "discovered_at";
-  const filter = jobSqlFilter(query);
+  const filter = jobSqlFilter(db, query);
+  const projectionSelect = jobProjectionSelect(db);
 
   if (!query.q) {
     const total = countJobProjections(db, filter);
@@ -240,7 +242,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
     const direction = query.dir === "asc" ? "ASC" : "DESC";
     const rows = allRows<JobListProjectionRow>(
       db,
-      `SELECT * FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
+      `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
       [...filter.params, query.pageSize, offset],
     );
     const summaries = rows.map(rowToJobSummary);
@@ -251,7 +253,7 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   // projection table makes this cheap — it's already denormalised).
   const allMatching = allRows<JobListProjectionRow>(
     db,
-    `SELECT * FROM job_list_projections${filter.where}`,
+    `SELECT ${projectionSelect} FROM job_list_projections${filter.where}`,
     filter.params,
   );
   const normalizedQuery = query.q.toLowerCase();
@@ -263,10 +265,10 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
 export function matchingJobKeys(db: SqliteDatabase, filter: Partial<BulkJobMutationFilter> = {}): string[] {
   const query = normalizeMutationFilter(filter);
   refreshProjections(db, DEFAULT_TENANT);
-  const sqlFilter = jobSqlFilter(query);
+  const sqlFilter = jobSqlFilter(db, query);
   const rows = allRows<JobListProjectionRow>(
     db,
-    `SELECT * FROM job_list_projections${sqlFilter.where}`,
+    `SELECT ${jobProjectionSelect(db)} FROM job_list_projections${sqlFilter.where}`,
     sqlFilter.params,
   );
   const normalizedQuery = query.q.toLowerCase();
@@ -302,7 +304,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
 function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRow | null {
   const direct = getRow<JobListProjectionRow>(
     db,
-    "SELECT * FROM job_list_projections WHERE tenant_id = ? AND job_id = ?",
+    `SELECT ${jobProjectionSelect(db)} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`,
     [DEFAULT_TENANT, jobKey],
   );
   if (direct) return direct;
@@ -310,7 +312,7 @@ function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRo
   return (
     getRow<JobListProjectionRow>(
       db,
-      "SELECT * FROM job_list_projections WHERE tenant_id = ? AND application_url = ? LIMIT 1",
+      `SELECT ${jobProjectionSelect(db)} FROM job_list_projections WHERE tenant_id = ? AND application_url = ? LIMIT 1`,
       [DEFAULT_TENANT, jobKey],
     ) ?? null
   );
@@ -322,11 +324,15 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ap.job_id AND d.restored_at IS NULL"
     : "";
+  const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+    ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = ap.job_id AND h.unhidden_at IS NULL"
+    : "";
   const deletedWhere = tableExists(db, "jobhunter_deleted_jobs") ? " AND d.job_url IS NULL" : "";
+  const hiddenWhere = tableExists(db, "jobhunter_hidden_jobs") ? " AND h.job_url IS NULL" : "";
   const rows = allRows<ArtifactProjectionRow>(
     db,
-    `SELECT ap.* FROM artifact_list_projections ap${deletedJoin}
-     WHERE ap.tenant_id = ?${deletedWhere}`,
+    `SELECT ap.* FROM artifact_list_projections ap${deletedJoin}${hiddenJoin}
+     WHERE ap.tenant_id = ?${deletedWhere}${hiddenWhere}`,
     [DEFAULT_TENANT],
   );
   const artifacts = rows.map(rowToArtifactSummary).filter((artifact) => {
@@ -404,6 +410,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
     deletedAt: row.deleted_at,
+    hiddenAt: row.hidden_at,
   };
 }
 
@@ -763,13 +770,26 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
   };
 }
 
-function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
+function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string; params: SqliteValue[] } {
   const clauses: string[] = ["tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
+  const hasHiddenTable = tableExists(db, "jobhunter_hidden_jobs");
   if (query.deleted === "active") {
     clauses.push("deleted_at IS NULL");
+    if (hasHiddenTable) {
+      clauses.push("NOT EXISTS (SELECT 1 FROM jobhunter_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
+    }
   } else if (query.deleted === "deleted") {
     clauses.push("deleted_at IS NOT NULL");
+    if (hasHiddenTable) {
+      clauses.push("NOT EXISTS (SELECT 1 FROM jobhunter_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
+    }
+  } else if (query.deleted === "hidden") {
+    clauses.push(
+      hasHiddenTable
+        ? "EXISTS (SELECT 1 FROM jobhunter_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)"
+        : "1 = 0",
+    );
   }
   if (query.stage) {
     clauses.push("current_stage = ?");
@@ -796,6 +816,18 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
     params.push(query.maxFitScore);
   }
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
+}
+
+function jobProjectionSelect(db: SqliteDatabase): string {
+  if (!tableExists(db, "jobhunter_hidden_jobs")) {
+    return "job_list_projections.*, NULL AS hidden_at";
+  }
+  return `job_list_projections.*,
+          (SELECT h.hidden_at
+             FROM jobhunter_hidden_jobs h
+            WHERE h.job_url = job_list_projections.job_id
+              AND h.unhidden_at IS NULL
+            LIMIT 1) AS hidden_at`;
 }
 
 function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
@@ -922,7 +954,14 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
   const hideDeletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = e.job_url AND d.restored_at IS NULL"
     : "";
-  const hideDeletedWhere = tableExists(db, "jobhunter_deleted_jobs") ? "WHERE d.job_url IS NULL" : "";
+  const hideHiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+    ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
+    : "";
+  const hiddenClauses = [
+    tableExists(db, "jobhunter_deleted_jobs") ? "d.job_url IS NULL" : "",
+    tableExists(db, "jobhunter_hidden_jobs") ? "h.job_url IS NULL" : "",
+  ].filter(Boolean);
+  const hiddenWhere = hiddenClauses.length ? `WHERE ${hiddenClauses.join(" AND ")}` : "";
   const sql = `
     SELECT
       e.event_id,
@@ -937,7 +976,8 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     FROM job_events e
     LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
     ${hideDeletedJoin}
-    ${hideDeletedWhere}
+    ${hideHiddenJoin}
+    ${hiddenWhere}
     ORDER BY e.occurred_at DESC, e.event_id DESC
     LIMIT 20`;
   return allRows<Record<string, unknown>>(db, sql, [DEFAULT_TENANT]).map((row) => ({
@@ -982,15 +1022,21 @@ export function listWorkflowRuns(
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
     : "";
+  const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+    ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
+    : "";
   const where: string[] = ["arp.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
   if (tableExists(db, "jobhunter_deleted_jobs")) {
     where.push("d.job_url IS NULL");
   }
+  if (tableExists(db, "jobhunter_hidden_jobs")) {
+    where.push("h.job_url IS NULL");
+  }
   const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
   const rows = allRows<ApplyRunProjectionRow>(
     db,
-    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}${whereSql}
+    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}${hiddenJoin}${whereSql}
      ORDER BY arp.started_at DESC, arp.run_id DESC`,
     params,
   );
@@ -1041,11 +1087,15 @@ function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
     ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
     : "";
+  const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+    ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
+    : "";
   const deletedWhere = tableExists(db, "jobhunter_deleted_jobs") ? " AND d.job_url IS NULL" : "";
+  const hiddenWhere = tableExists(db, "jobhunter_hidden_jobs") ? " AND h.job_url IS NULL" : "";
   const rows = allRows<ApplyRunProjectionRow>(
     db,
-    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}
-     WHERE arp.tenant_id = ?${deletedWhere}
+    `SELECT arp.* FROM apply_run_projections arp${deletedJoin}${hiddenJoin}
+     WHERE arp.tenant_id = ?${deletedWhere}${hiddenWhere}
      ORDER BY arp.started_at DESC LIMIT 12`,
     [DEFAULT_TENANT],
   );

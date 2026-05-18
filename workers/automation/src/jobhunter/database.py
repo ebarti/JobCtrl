@@ -35,7 +35,7 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     """
     path = str(db_path or DB_PATH)
 
-    if not hasattr(_local, 'connections'):
+    if not hasattr(_local, "connections"):
         _local.connections = {}
 
     conn = _local.connections.get(path)
@@ -57,7 +57,7 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
 def close_connection(db_path: Path | str | None = None) -> None:
     """Close the cached connection for the current thread."""
     path = str(db_path or DB_PATH)
-    if hasattr(_local, 'connections'):
+    if hasattr(_local, "connections"):
         conn = _local.connections.pop(path, None)
         if conn is not None:
             conn.close()
@@ -742,12 +742,17 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
     now = datetime.now(timezone.utc).isoformat()
     max_attempts = {"discover": 1, "enrich": 3, "score": 3, "tailor": 5, "cover": 5, "pdf": 3, "apply": 3}
 
-    def _insert(job_url: str, stage: str, state: str, *,
-                attempt_count: int = 0,
-                error_code: str | None = None,
-                error_message: str | None = None,
-                started_at: str | None = None,
-                finished_at: str | None = None) -> None:
+    def _insert(
+        job_url: str,
+        stage: str,
+        state: str,
+        *,
+        attempt_count: int = 0,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
         conn.execute(
             """
             INSERT OR IGNORE INTO job_stage_states (
@@ -758,9 +763,16 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, 0)
             """,
             (
-                job_url, stage, state, attempt_count, max_attempts.get(stage),
-                started_at, now, finished_at,
-                error_code, error_message,
+                job_url,
+                stage,
+                state,
+                attempt_count,
+                max_attempts.get(stage),
+                started_at,
+                now,
+                finished_at,
+                error_code,
+                error_message,
                 0 if state == "blocked" else 1,
             ),
         )
@@ -783,15 +795,12 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
         apply_error = row["apply_error"] if isinstance(row, sqlite3.Row) else row[15]
 
         # discover — always succeeded if the row exists.
-        _insert(url, "discover", "succeeded",
-                attempt_count=1, finished_at=discovered_at or now)
+        _insert(url, "discover", "succeeded", attempt_count=1, finished_at=discovered_at or now)
 
         # enrich
         has_enrichment = bool(full_description) or bool(detail_scraped_at)
         if detail_error and not has_enrichment:
-            _insert(url, "enrich", "failed",
-                    error_code="LEGACY_DETAIL_ERROR",
-                    error_message=str(detail_error))
+            _insert(url, "enrich", "failed", error_code="LEGACY_DETAIL_ERROR", error_message=str(detail_error))
             enrich_succeeded = False
         elif has_enrichment:
             _insert(url, "enrich", "succeeded", finished_at=detail_scraped_at or now)
@@ -806,9 +815,7 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
             _insert(url, "score", "succeeded", finished_at=now)
             score_succeeded = True
         elif not enrich_succeeded:
-            _insert(url, "score", "blocked",
-                    error_code="BLOCKED",
-                    error_message="Enrichment has not completed.")
+            _insert(url, "score", "blocked", error_code="BLOCKED", error_message="Enrichment has not completed.")
             score_succeeded = False
         else:
             _insert(url, "score", "pending")
@@ -821,15 +828,17 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
             _insert(url, "tailor", "succeeded", attempt_count=attempts, finished_at=now)
             tailor_succeeded = True
         elif not score_succeeded:
-            _insert(url, "tailor", "blocked",
-                    error_code="BLOCKED",
-                    error_message="score has not completed.")
+            _insert(url, "tailor", "blocked", error_code="BLOCKED", error_message="score has not completed.")
             tailor_succeeded = False
         elif attempts >= max_attempts["tailor"]:
-            _insert(url, "tailor", "exhausted",
-                    attempt_count=attempts,
-                    error_code="EXHAUSTED",
-                    error_message="tailor attempts exhausted.")
+            _insert(
+                url,
+                "tailor",
+                "exhausted",
+                attempt_count=attempts,
+                error_code="EXHAUSTED",
+                error_message="tailor attempts exhausted.",
+            )
             tailor_succeeded = False
         else:
             _insert(url, "tailor", "pending", attempt_count=attempts)
@@ -841,14 +850,16 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
         if has_cover:
             _insert(url, "cover", "succeeded", attempt_count=c_attempts, finished_at=now)
         elif not tailor_succeeded:
-            _insert(url, "cover", "blocked",
-                    error_code="BLOCKED",
-                    error_message="tailor has not completed.")
+            _insert(url, "cover", "blocked", error_code="BLOCKED", error_message="tailor has not completed.")
         elif c_attempts >= max_attempts["cover"]:
-            _insert(url, "cover", "exhausted",
-                    attempt_count=c_attempts,
-                    error_code="EXHAUSTED",
-                    error_message="cover attempts exhausted.")
+            _insert(
+                url,
+                "cover",
+                "exhausted",
+                attempt_count=c_attempts,
+                error_code="EXHAUSTED",
+                error_message="cover attempts exhausted.",
+            )
         else:
             _insert(url, "cover", "pending", attempt_count=c_attempts)
 
@@ -856,9 +867,7 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
         if tailor_succeeded:
             _insert(url, "pdf", "succeeded", finished_at=now)
         else:
-            _insert(url, "pdf", "blocked",
-                    error_code="BLOCKED",
-                    error_message="tailor has not completed.")
+            _insert(url, "pdf", "blocked", error_code="BLOCKED", error_message="tailor has not completed.")
 
         # apply
         if applied_at or (apply_status and str(apply_status).lower() == "applied"):
@@ -866,13 +875,9 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
         elif apply_status and str(apply_status).lower() == "in_progress":
             _insert(url, "apply", "running")
         elif apply_error:
-            _insert(url, "apply", "failed",
-                    error_code="LEGACY_APPLY_ERROR",
-                    error_message=str(apply_error))
+            _insert(url, "apply", "failed", error_code="LEGACY_APPLY_ERROR", error_message=str(apply_error))
         elif not tailor_succeeded:
-            _insert(url, "apply", "blocked",
-                    error_code="BLOCKED",
-                    error_message="Materials are not ready.")
+            _insert(url, "apply", "blocked", error_code="BLOCKED", error_message="Materials are not ready.")
         else:
             _insert(url, "apply", "pending")
 
@@ -911,9 +916,7 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
         )
     """)
-    existing_score_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()
-    }
+    existing_score_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_scores)").fetchall()}
     if "criteria_json" not in existing_score_cols:
         conn.execute("ALTER TABLE job_scores ADD COLUMN criteria_json TEXT NOT NULL DEFAULT '{}'")
     if "trace_json" not in existing_score_cols:
@@ -929,9 +932,7 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
 
     # One-shot backfill from the legacy columns. Only fires when
     # job_scores has no rows AND there are jobs with a legacy fit_score.
-    backfill_count = conn.execute(
-        "SELECT COUNT(*) FROM job_scores"
-    ).fetchone()[0]
+    backfill_count = conn.execute("SELECT COUNT(*) FROM job_scores").fetchone()[0]
     if backfill_count == 0:
         legacy_rows = conn.execute(
             """
@@ -946,16 +947,8 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             for row in legacy_rows:
                 url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
                 fit = row["fit_score"] if isinstance(row, sqlite3.Row) else row[1]
-                reasoning = (
-                    row["score_reasoning"]
-                    if isinstance(row, sqlite3.Row)
-                    else row[2]
-                )
-                scored_at = (
-                    row["scored_at"]
-                    if isinstance(row, sqlite3.Row)
-                    else row[3]
-                )
+                reasoning = row["score_reasoning"] if isinstance(row, sqlite3.Row) else row[2]
+                scored_at = row["scored_at"] if isinstance(row, sqlite3.Row) else row[3]
                 breakdown_json = json.dumps(
                     {
                         "technical_fit": 0,
@@ -1081,9 +1074,7 @@ def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]
 
     # Idempotent backfill from the legacy ``jobs`` columns. Fires only
     # when ``job_materials`` is empty.
-    backfill_count = conn.execute(
-        "SELECT COUNT(*) FROM job_materials"
-    ).fetchone()[0]
+    backfill_count = conn.execute("SELECT COUNT(*) FROM job_materials").fetchone()[0]
     if backfill_count == 0:
         legacy_rows = conn.execute(
             """
@@ -1173,21 +1164,13 @@ def _backfill_one_materials_row(
 
     artifacts: list[tuple[str, str, str, int | None, str]] = []
     if tailor_path:
-        artifacts.append(
-            ("tailored_resume", tailor_path, "text", _size(tailor_path), tailor_at)
-        )
+        artifacts.append(("tailored_resume", tailor_path, "text", _size(tailor_path), tailor_at))
     if resume_pdf:
-        artifacts.append(
-            ("resume_pdf", resume_pdf, "latex_pdf", _size(resume_pdf), tailor_at)
-        )
+        artifacts.append(("resume_pdf", resume_pdf, "latex_pdf", _size(resume_pdf), tailor_at))
     if cover_path:
-        artifacts.append(
-            ("cover_letter", cover_path, "text", _size(cover_path), cover_at)
-        )
+        artifacts.append(("cover_letter", cover_path, "text", _size(cover_path), cover_at))
     if cover_pdf:
-        artifacts.append(
-            ("cover_letter_pdf", cover_pdf, "html_pdf", _size(cover_pdf), cover_at)
-        )
+        artifacts.append(("cover_letter_pdf", cover_pdf, "html_pdf", _size(cover_pdf), cover_at))
 
     for artifact_type, path, render_format, size, created in artifacts:
         conn.execute(
@@ -1260,9 +1243,7 @@ def ensure_enrichment_tables(conn: sqlite3.Connection | None = None) -> list[str
     )
 
     # Idempotent one-shot backfill from the legacy columns.
-    backfill_count = conn.execute(
-        "SELECT COUNT(*) FROM job_enrichments"
-    ).fetchone()[0]
+    backfill_count = conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0]
     if backfill_count == 0:
         legacy_rows = conn.execute(
             """
@@ -1625,13 +1606,9 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
 
     # Idempotent one-shot backfill: every existing jobs row gets one
     # observation row using its legacy URL / site / discovered_at.
-    backfilled = conn.execute(
-        "SELECT COUNT(*) FROM job_source_observations"
-    ).fetchone()[0]
+    backfilled = conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
     if backfilled == 0:
-        legacy_jobs = conn.execute(
-            "SELECT url, site, strategy, discovered_at FROM jobs"
-        ).fetchall()
+        legacy_jobs = conn.execute("SELECT url, site, strategy, discovered_at FROM jobs").fetchall()
         if legacy_jobs:
             now = datetime.now(timezone.utc).isoformat()
             for row in legacy_jobs:
@@ -1667,9 +1644,7 @@ def _backfill_one_observation_row(
 
     url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
     site = (row["site"] if isinstance(row, sqlite3.Row) else row[1]) or "unknown"
-    discovered_at = (
-        row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]
-    ) or now
+    discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]) or now
     if not url:
         return
     source_native_id = url  # fall back to the URL when we have nothing better
@@ -1711,21 +1686,13 @@ _ENRICHMENT_JOIN: str = (
     "ON jss_enrich.job_url = jobs.url AND jss_enrich.stage = 'enrich'"
 )
 
-_EFFECTIVE_FULL_DESCRIPTION: str = (
-    "COALESCE(je.full_description, jobs.full_description)"
-)
-_EFFECTIVE_APPLICATION_URL: str = (
-    "COALESCE(je.application_url, jobs.application_url)"
-)
-_EFFECTIVE_DETAIL_SCRAPED_AT: str = (
-    "COALESCE(je.enriched_at, jobs.detail_scraped_at)"
-)
+_EFFECTIVE_FULL_DESCRIPTION: str = "COALESCE(je.full_description, jobs.full_description)"
+_EFFECTIVE_APPLICATION_URL: str = "COALESCE(je.application_url, jobs.application_url)"
+_EFFECTIVE_DETAIL_SCRAPED_AT: str = "COALESCE(je.enriched_at, jobs.detail_scraped_at)"
 # Per §7.1 the canonical "this job has been enriched" predicate is the
 # aggregate's terminal status; un-backfilled rows fall back to the legacy
 # detail_scraped_at column.
-_ENRICHMENT_DONE: str = (
-    "(je.current_status = 'enriched' OR jobs.detail_scraped_at IS NOT NULL)"
-)
+_ENRICHMENT_DONE: str = "(je.current_status = 'enriched' OR jobs.detail_scraped_at IS NOT NULL)"
 # Phase 7 (S-26 round-1 review M3): the aggregate status is the primary
 # enrichment signal, but the live local DB can contain historical jobs with
 # legacy description columns and a canonical ``job_stage_states.enrich =
@@ -1850,8 +1817,7 @@ _LATEST_SCORE_JOIN: str = (
 
 _EFFECTIVE_FIT_SCORE: str = "COALESCE(js.js_fit_score, jobs.fit_score)"
 _SCORE_ELIGIBLE_FOR_DOWNSTREAM: str = (
-    "(COALESCE(js.js_eligibility_status, '') != 'blocked' "
-    "AND COALESCE(js.js_hard_blocker_count, 0) = 0)"
+    "(COALESCE(js.js_eligibility_status, '') != 'blocked' AND COALESCE(js.js_hard_blocker_count, 0) = 0)"
 )
 
 
@@ -1883,10 +1849,7 @@ _LATEST_APPLY_RUN_JOIN: str = (
 
 # Applied = any apply run with status='succeeded' for the job (we
 # COALESCE with the legacy column so historical rows stay visible).
-_EFFECTIVE_APPLIED_AT: str = (
-    "CASE WHEN ar.ar_status = 'succeeded' THEN ar.ar_finished_at "
-    "ELSE jobs.applied_at END"
-)
+_EFFECTIVE_APPLIED_AT: str = "CASE WHEN ar.ar_status = 'succeeded' THEN ar.ar_finished_at ELSE jobs.applied_at END"
 
 # Apply status string suitable for read-model consumption — collapses
 # ``starting`` / ``in_progress`` into the historical ``in_progress``
@@ -1978,9 +1941,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     stats["total"] = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
 
     # By site breakdown
-    rows = conn.execute(
-        "SELECT site, COUNT(*) as cnt FROM jobs GROUP BY site ORDER BY cnt DESC"
-    ).fetchall()
+    rows = conn.execute("SELECT site, COUNT(*) as cnt FROM jobs GROUP BY site ORDER BY cnt DESC").fetchall()
     stats["by_site"] = [(row[0], row[1]) for row in rows]
 
     # Enrichment stage — Phase 7 (S-26): read through the
@@ -1992,8 +1953,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["with_description"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} "
-        f"WHERE {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} WHERE {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL"
     ).fetchone()[0]
 
     stats["detail_errors"] = conn.execute(
@@ -2006,8 +1966,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     # reflect new scores written through ScoreRepository (jobs.fit_score is
     # now NULL on the new path).
     stats["scored"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} "
-        f"WHERE {_EFFECTIVE_FIT_SCORE} IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} WHERE {_EFFECTIVE_FIT_SCORE} IS NOT NULL"
     ).fetchone()[0]
 
     stats["unscored"] = conn.execute(
@@ -2033,8 +1992,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     # signal that lives in ``job_stage_states``. Without these joins the
     # dashboard would freeze at the backfill snapshot value.
     stats["tailored"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} "
-        f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL"
     ).fetchone()[0]
 
     stats["untailored_eligible"] = conn.execute(
@@ -2053,8 +2011,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["with_cover_letter"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} "
-        f"WHERE {_EFFECTIVE_COVER_PATH} IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_MATERIALS_JOIN} WHERE {_EFFECTIVE_COVER_PATH} IS NOT NULL"
     ).fetchone()[0]
 
     stats["cover_exhausted"] = conn.execute(
@@ -2067,8 +2024,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     # join so dashboard counts reflect lifecycle events (jobs.applied_at /
     # apply_status / apply_error are NULL on the new write path).
     stats["applied"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} "
-        f"WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL"
     ).fetchone()[0]
 
     stats["apply_errors"] = conn.execute(
@@ -2091,8 +2047,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     return stats
 
 
-def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
-               site: str, strategy: str) -> tuple[int, int]:
+def store_jobs(conn: sqlite3.Connection, jobs: list[dict], site: str, strategy: str) -> tuple[int, int]:
     """Store discovered jobs, skipping duplicates by URL.
 
     Args:
@@ -2116,8 +2071,16 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, job.get("title"), job.get("salary"), job.get("description"),
-                 job.get("location"), site, strategy, now),
+                (
+                    url,
+                    job.get("title"),
+                    job.get("salary"),
+                    job.get("description"),
+                    job.get("location"),
+                    site,
+                    strategy,
+                    now,
+                ),
             )
             from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
@@ -2141,10 +2104,46 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
             )
             new += 1
         except sqlite3.IntegrityError:
+            resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     conn.commit()
     return new, existing
+
+
+def resurface_deleted_job(conn: sqlite3.Connection, job_url: str, *, resurfaced_at: str) -> None:
+    """Clear a temporary delete tombstone when Discovery sees a job again.
+
+    Hidden jobs are tracked in a separate table and are intentionally not
+    touched here, so a hidden job remains suppressed across discoveries.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT,
+            FOREIGN KEY(job_url) REFERENCES jobs(url)
+        )
+        """
+    )
+    cursor = conn.execute(
+        "UPDATE jobhunter_deleted_jobs SET restored_at = ? WHERE job_url = ? AND restored_at IS NULL",
+        (resurfaced_at, job_url),
+    )
+    if cursor.rowcount:
+        from jobhunter.state import record_job_event
+
+        record_job_event(
+            conn,
+            job_url,
+            "discover",
+            "JobRestored",
+            message="Job resurfaced because discovery observed it again.",
+            occurred_at=resurfaced_at,
+            payload={"reason": "rediscovered"},
+        )
 
 
 def load_job_with_enrichment(
@@ -2209,11 +2208,13 @@ def load_job_with_enrichment(
     return record
 
 
-def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
-                      stage: str = "discovered",
-                      min_score: int | None = None,
-                      limit: int = 100,
-                      retailor: bool = False) -> list[dict]:
+def get_jobs_by_stage(
+    conn: sqlite3.Connection | None = None,
+    stage: str = "discovered",
+    min_score: int | None = None,
+    limit: int = 100,
+    retailor: bool = False,
+) -> list[dict]:
     """Fetch jobs filtered by pipeline stage.
 
     Args:
@@ -2268,8 +2269,8 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
-        if retailor else
-        f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+        if retailor
+        else f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
@@ -2280,10 +2281,7 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         "discovered": "1=1",
         "pending_detail": _ENRICHMENT_PENDING,
         "enriched": f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL",
-        "pending_score": (
-            f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
-            f"AND {_EFFECTIVE_FIT_SCORE} IS NULL"
-        ),
+        "pending_score": (f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL AND {_EFFECTIVE_FIT_SCORE} IS NULL"),
         "scored": f"{_EFFECTIVE_FIT_SCORE} IS NOT NULL",
         "pending_tailor": pending_tailor_where,
         "pending_cover": (
@@ -2326,11 +2324,7 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     # Optional post-filter — also routed through the join so it sees new
     # rows. Triggered by callers passing ``min_score=N`` for the
     # "scored / tailored / applied" stages.
-    if (
-        min_score is not None
-        and stage in ("scored", "tailored", "applied")
-        and _EFFECTIVE_FIT_SCORE not in where
-    ):
+    if min_score is not None and stage in ("scored", "tailored", "applied") and _EFFECTIVE_FIT_SCORE not in where:
         where += f" AND {_EFFECTIVE_FIT_SCORE} >= ?"
         params.append(min_score)
 

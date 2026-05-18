@@ -28,7 +28,7 @@ from playwright.sync_api import sync_playwright
 
 from jobhunter import config
 from jobhunter.config import CONFIG_DIR
-from jobhunter.database import init_db, get_stats
+from jobhunter.database import get_stats, init_db, resurface_deleted_job
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
@@ -117,6 +117,7 @@ def _store_jobs_filtered(
             )
             new += 1
         except sqlite3.IntegrityError:
+            resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     if filtered:
