@@ -168,6 +168,14 @@ export class JobHunterApiClient {
     return this.post("/v1/jobs/bulk-delete", body);
   }
 
+  permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse> {
+    return this.delete(`/v1/jobs/${encodeURIComponent(jobKey)}/permanent`);
+  }
+
+  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-delete-permanent", body);
+  }
+
   restoreJob(jobKey: string): Promise<JobMutationResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/restore`);
   }

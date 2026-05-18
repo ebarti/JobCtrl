@@ -32,6 +32,7 @@ describe("<JobBulkActions>", () => {
         onClearSelection={() => {}}
         onPrimaryAction={onMutate}
         onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
       />,
     );
     await user.click(screen.getByRole("button", { name: /delete selected/i }));
@@ -52,6 +53,7 @@ describe("<JobBulkActions>", () => {
         onClearSelection={() => {}}
         onPrimaryAction={() => {}}
         onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /delete selected/i })).toBeDisabled();
@@ -71,6 +73,7 @@ describe("<JobBulkActions>", () => {
         onClearSelection={() => {}}
         onPrimaryAction={() => {}}
         onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /restore selected/i })).toBeInTheDocument();
@@ -90,6 +93,7 @@ describe("<JobBulkActions>", () => {
         onClearSelection={() => {}}
         onPrimaryAction={() => {}}
         onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
       />,
     );
     expect(screen.getByRole("button", { name: /unhide selected/i })).toBeInTheDocument();
@@ -112,10 +116,34 @@ describe("<JobBulkActions>", () => {
         onClearSelection={() => {}}
         onPrimaryAction={() => {}}
         onHideSelected={onHide}
+        onPermanentlyDeleteSelected={() => {}}
       />,
     );
     await user.click(screen.getByRole("button", { name: /hide selected/i }));
     expect(onHide).toHaveBeenCalledTimes(1);
+  });
+
+  it("invokes permanent delete from deleted jobs", async () => {
+    const user = userEvent.setup();
+    const onPermanentDelete = vi.fn();
+    render(
+      <JobBulkActions
+        search={{ ...baseSearch, deleted: "deleted" }}
+        selectedCount={1}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={onPermanentDelete}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /delete permanently selected/i }));
+    expect(onPermanentDelete).toHaveBeenCalledTimes(1);
   });
 
   it("calls onSetDeleted when switching tabs", async () => {
@@ -134,6 +162,7 @@ describe("<JobBulkActions>", () => {
         onClearSelection={() => {}}
         onPrimaryAction={() => {}}
         onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
       />,
     );
     await user.click(screen.getByRole("button", { name: /deleted jobs/i }));

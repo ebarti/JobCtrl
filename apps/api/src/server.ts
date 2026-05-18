@@ -92,6 +92,8 @@ import {
   InputError,
   markJobApplied,
   markJobSkipped,
+  permanentlyDeleteJob,
+  permanentlyDeleteJobs,
   resetJobStage,
   restoreJob,
   restoreJobs,
@@ -369,6 +371,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
   });
 
+  app.post("/v1/jobs/bulk-delete-permanent", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJobs(db, body));
+  });
+
   app.post("/v1/jobs/bulk-restore", async (request, reply) => {
     const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
     if (!body) {
@@ -430,6 +440,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJob(db, decodeRouteParam(request.params.jobKey), body));
   });
+
+  app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/permanent", async (request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJob(db, decodeRouteParam(request.params.jobKey))),
+  );
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/restore", async (request, reply) =>
     withWritableDb(reply, options.dbPath, (db) => restoreJob(db, decodeRouteParam(request.params.jobKey))),

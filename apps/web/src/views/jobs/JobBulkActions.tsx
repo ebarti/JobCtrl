@@ -12,6 +12,7 @@ export interface JobBulkActionsProps {
   onClearSelection: () => void;
   onPrimaryAction: () => void;
   onHideSelected: () => void;
+  onPermanentlyDeleteSelected: () => void;
 }
 
 export function JobBulkActions({
@@ -26,6 +27,7 @@ export function JobBulkActions({
   onClearSelection,
   onPrimaryAction,
   onHideSelected,
+  onPermanentlyDeleteSelected,
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
@@ -75,6 +77,16 @@ export function JobBulkActions({
           onClick={onHideSelected}
         >
           hide selected
+        </button>
+      ) : null}
+      {restoring || hidden ? (
+        <button
+          className="tab danger-action"
+          type="button"
+          disabled={!selectedCount || loading}
+          onClick={onPermanentlyDeleteSelected}
+        >
+          delete permanently selected
         </button>
       ) : null}
       <button

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
 import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
+import { usePermanentlyDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/usePermanentlyDeleteJobsBulkMutation.js";
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
@@ -48,6 +49,7 @@ export function JobsView() {
   const { data, isFetching, error } = useJobsListQuery(jobsListInput(search));
   const deleteJobs = useDeleteJobsBulkMutation();
   const hideJobs = useHideJobsBulkMutation();
+  const permanentlyDeleteJobs = usePermanentlyDeleteJobsBulkMutation();
   const restoreJobs = useRestoreJobsBulkMutation();
   const unhideJobs = useUnhideJobsBulkMutation();
   const message = error instanceof Error ? error.message : null;
@@ -140,7 +142,11 @@ export function JobsView() {
   const hidden = search.deleted === "hidden";
   const primaryMutation = hidden ? unhideJobs : restoring ? restoreJobs : deleteJobs;
   const mutateBusy =
-    deleteJobs.isPending || hideJobs.isPending || restoreJobs.isPending || unhideJobs.isPending;
+    deleteJobs.isPending ||
+    hideJobs.isPending ||
+    permanentlyDeleteJobs.isPending ||
+    restoreJobs.isPending ||
+    unhideJobs.isPending;
 
   const selectedPayload = (): BulkJobMutationRequest =>
     allMatchingSelected
@@ -169,6 +175,10 @@ export function JobsView() {
 
   const hideSelected = () => {
     mutateSelected(hideJobs, "Hide");
+  };
+
+  const permanentlyDeleteSelected = () => {
+    mutateSelected(permanentlyDeleteJobs, "Permanently delete");
   };
 
   const selectedCount = allMatchingSelected
@@ -201,6 +211,7 @@ export function JobsView() {
           onClearSelection={clearSelection}
           onPrimaryAction={mutatePrimarySelected}
           onHideSelected={hideSelected}
+          onPermanentlyDeleteSelected={permanentlyDeleteSelected}
         />
         <JobsTable
           data={data ?? null}

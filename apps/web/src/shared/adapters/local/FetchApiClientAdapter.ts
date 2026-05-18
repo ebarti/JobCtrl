@@ -80,6 +80,12 @@ export class FetchApiClientAdapter implements ApiClientPort {
   deleteJobs(body: Parameters<JobHunterApiClient["deleteJobs"]>[0]) {
     return this.client.deleteJobs(body);
   }
+  permanentlyDeleteJob(jobKey: string) {
+    return this.client.permanentlyDeleteJob(jobKey);
+  }
+  permanentlyDeleteJobs(body: Parameters<JobHunterApiClient["permanentlyDeleteJobs"]>[0]) {
+    return this.client.permanentlyDeleteJobs(body);
+  }
   restoreJob(jobKey: string) {
     return this.client.restoreJob(jobKey);
   }

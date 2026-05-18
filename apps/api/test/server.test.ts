@@ -471,6 +471,81 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("permanently deletes job rows and clears delete/hide tombstones so rediscovery can add them again", async () => {
+    const app = buildApp(options);
+    const readyUrl = "https://example.com/jobs/ready";
+    const blockedUrl = "https://example.com/jobs/blocked-tailor";
+
+    const softDelete = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-delete",
+      payload: { allMatching: false, jobKeys: [readyUrl] },
+    });
+    const hide = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-hide",
+      payload: { allMatching: false, jobKeys: [blockedUrl] },
+    });
+    expect(softDelete.statusCode, softDelete.body).toBe(200);
+    expect(hide.statusCode, hide.body).toBe(200);
+
+    const permanentDelete = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-delete-permanent",
+      payload: { allMatching: false, jobKeys: [readyUrl, blockedUrl] },
+    });
+    expect(permanentDelete.statusCode, permanentDelete.body).toBe(200);
+    expect(permanentDelete.json()).toMatchObject({ ok: true, count: 2, jobKeys: [readyUrl, blockedUrl] });
+
+    const active = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active&sort=title&dir=asc" });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(active.json().pagination.total).toBe(1);
+    expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+      "https://example.com/jobs/failed-score",
+    ]);
+
+    const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
+    expect(deleted.json().pagination.total).toBe(0);
+    const hidden = await app.inject({ method: "GET", url: "/v1/jobs?deleted=hidden" });
+    expect(hidden.json().pagination.total).toBe(0);
+
+    const detail = await app.inject({ method: "GET", url: `/v1/jobs/${encodeURIComponent(readyUrl)}` });
+    expect(detail.statusCode, detail.body).toBe(404);
+
+    const db = new Database(options.dbPath);
+    expect(countRows(db, "jobs", "url", readyUrl)).toBe(0);
+    expect(countRows(db, "jobhunter_deleted_jobs", "job_url", readyUrl)).toBe(0);
+    expect(countRows(db, "jobhunter_hidden_jobs", "job_url", blockedUrl)).toBe(0);
+    expect(countRows(db, "job_stage_states", "job_url", readyUrl)).toBe(0);
+    expect(countRows(db, "job_scores", "job_url", readyUrl)).toBe(0);
+
+    insertJob(db, {
+      url: readyUrl,
+      title: "Rediscovered Engineer",
+      site: "ExampleCo",
+      fitScore: null,
+    });
+    db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(readyUrl, "discover", "JobDiscovered", "info", "Rediscovered after permanent delete.", "2026-04-30T10:00:00+00:00");
+    db.close();
+
+    const rediscovered = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=active&q=rediscovered&sort=title&dir=asc",
+    });
+    expect(rediscovered.statusCode, rediscovered.body).toBe(200);
+    expect(rediscovered.json().pagination.total).toBe(1);
+    expect(rediscovered.json().items[0]).toMatchObject({
+      jobKey: readyUrl,
+      title: "Rediscovered Engineer",
+      deletedAt: null,
+      hiddenAt: null,
+    });
+
+    await app.close();
+  });
+
   it("derives apply state from apply_run_projections when legacy jobs columns are NULL", async () => {
     // PR 4 of the Temporal stack: ``apply_run_projections`` (sourced
     // from ``job_events`` by the Python projection builder) is the
@@ -2211,6 +2286,13 @@ function insertJob(
     job.tailoredPath ?? null,
     job.tailoredPath ? "2026-04-29T10:03:00+00:00" : null,
   );
+}
+
+function countRows(db: Database.Database, tableName: string, columnName: string, value: string): number {
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE ${columnName} = ?`).get(value) as {
+    count: number;
+  };
+  return Number(row.count);
 }
 
 function insertScore(

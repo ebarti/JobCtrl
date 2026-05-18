@@ -262,7 +262,10 @@ The Jobs tab separates temporary removal from permanent suppression. Deleting a
 job moves it to the Deleted tab; a later discovery run can resurface that job if
 the posting is found again. Hiding a job moves it to the Hidden tab and keeps it
 hidden across future discovery runs until you select it there and use **unhide
-selected**.
+selected**. Deleted and hidden rows can also be permanently deleted from the
+local database; discovery can add the same posting again later because that
+action clears the delete/hide tombstones instead of creating a new suppression
+record.
 
 The Pipelines tab includes global stage starts. Each stage (`discover`,
 `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has its own tab with

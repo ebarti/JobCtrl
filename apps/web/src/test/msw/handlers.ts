@@ -210,6 +210,10 @@ export const handlers = [
     const body = (await request.json()) as { jobKeys?: string[] };
     return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
   }),
+  http.post("*/v1/jobs/bulk-delete-permanent", async ({ request }) => {
+    const body = (await request.json()) as { jobKeys?: string[] };
+    return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
+  }),
   http.post("*/v1/jobs/bulk-restore", async ({ request }) => {
     const body = (await request.json()) as { jobKeys?: string[] };
     return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
@@ -229,6 +233,9 @@ export const handlers = [
     })),
   ),
   http.delete("*/v1/jobs/:jobKey", ({ params }) =>
+    HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
+  ),
+  http.delete("*/v1/jobs/:jobKey/permanent", ({ params }) =>
     HttpResponse.json(jobMutationResponse([String(params["jobKey"])])),
   ),
   http.post("*/v1/jobs/:jobKey/restore", ({ params }) =>

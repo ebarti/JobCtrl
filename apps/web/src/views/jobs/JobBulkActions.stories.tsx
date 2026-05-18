@@ -20,6 +20,7 @@ const meta = {
     onClearSelection: () => {},
     onPrimaryAction: () => {},
     onHideSelected: () => {},
+    onPermanentlyDeleteSelected: () => {},
   },
 } satisfies Meta<typeof JobBulkActions>;
 

@@ -32,7 +32,11 @@ the same posting is observed again. Hidden jobs use a separate
 lists, dashboard totals, artifacts, workflow runs, and activity until an unhide
 mutation clears that hidden tombstone. The API exposes bulk hide/unhide routes
 at `POST /v1/jobs/bulk-hide` and `POST /v1/jobs/bulk-unhide`, plus single-job
-`POST /v1/jobs/:key/hide` and `POST /v1/jobs/:key/unhide`.
+`POST /v1/jobs/:key/hide` and `POST /v1/jobs/:key/unhide`. Permanent delete is
+available at `POST /v1/jobs/bulk-delete-permanent` and
+`DELETE /v1/jobs/:key/permanent`; it removes the job row plus job-scoped state,
+projection rows, and delete/hide tombstones. It does not write a new suppression
+record, so rediscovery can add the same posting again later.
 
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
