@@ -42,6 +42,7 @@ from jobhunter.domain.discovery.value_objects import (
 )
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.tenant import TenantId
+from jobhunter.infrastructure.discovery.location_filter import location_matches_target
 from jobhunter.infrastructure.observability.adapter_spans import adapter_fetch_span
 
 log = logging.getLogger(__name__)
@@ -138,12 +139,16 @@ class WorkdayBoardAdapter:
         http: HttpFetcher | None = None,
         page_size: int = 20,
         max_pages: int = 25,
+        location_accept: Iterable[str] = (),
+        location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._employer = employer
         self._http = http or default_http_fetcher
         self._page_size = page_size
         self._max_pages = max_pages
+        self._location_accept = tuple(location_accept)
+        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -184,10 +189,7 @@ class WorkdayBoardAdapter:
     _last_page_count: int = 0
 
     def _iter_postings(self, *, query: str, location: str) -> Iterator[ScrapedJobPosting]:
-        url = (
-            f"{self._employer.base_url}/wday/cxs/{self._employer.tenant}/"
-            f"{self._employer.site_id}/jobs"
-        )
+        url = f"{self._employer.base_url}/wday/cxs/{self._employer.tenant}/{self._employer.site_id}/jobs"
         offset = 0
         pages = 0
         while pages < self._max_pages:
@@ -205,9 +207,7 @@ class WorkdayBoardAdapter:
             if not postings:
                 break
             for posting in postings:
-                yielded = self._to_scraped(
-                    posting, query=query, location_filter=location
-                )
+                yielded = self._to_scraped(posting, query=query, location_filter=location)
                 if yielded is not None:
                     yield yielded
             pages += 1
@@ -234,15 +234,14 @@ class WorkdayBoardAdapter:
         # "yield postings matching the query".
         if query.strip() and query.strip().lower() not in title.lower():
             return None
-        canonical_url = (
-            f"{self._employer.base_url}/{self._employer.site_id}{external_path}"
-        )
+        canonical_url = f"{self._employer.base_url}/{self._employer.site_id}{external_path}"
         source_native_id = external_path.split("/")[-1] or external_path
         location = str(posting.get("locationsText") or "").strip()
-        if (
-            location_filter.strip()
-            and location
-            and location_filter.strip().lower() not in location.lower()
+        if not location_matches_target(
+            location,
+            accept=self._location_accept,
+            reject=self._location_reject,
+            search_location=location_filter,
         ):
             return None
         return ScrapedJobPosting(
@@ -283,11 +282,15 @@ class GreenhouseBoardAdapter:
         board_token: str,
         http: HttpFetcher | None = None,
         company: str | None = None,
+        location_accept: Iterable[str] = (),
+        location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._board_token = board_token
         self._http = http or default_http_fetcher
         self._company = company
+        self._location_accept = tuple(location_accept)
+        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -295,9 +298,7 @@ class GreenhouseBoardAdapter:
 
     @property
     def url(self) -> str:
-        return (
-            f"https://boards-api.greenhouse.io/v1/boards/{self._board_token}/jobs"
-        )
+        return f"https://boards-api.greenhouse.io/v1/boards/{self._board_token}/jobs"
 
     def scrape(
         self,
@@ -348,7 +349,12 @@ class GreenhouseBoardAdapter:
             loc = str(loc_obj.get("name") or "").strip()
         elif isinstance(loc_obj, str):
             loc = loc_obj.strip()
-        if location and loc and location.lower() not in loc.lower():
+        if not location_matches_target(
+            loc,
+            accept=self._location_accept,
+            reject=self._location_reject,
+            search_location=location,
+        ):
             return None
         company = str(raw.get("company_name") or self._company or "").strip()
         return ScrapedJobPosting(
@@ -388,11 +394,15 @@ class LeverBoardAdapter:
         site: str,
         http: HttpFetcher | None = None,
         company: str | None = None,
+        location_accept: Iterable[str] = (),
+        location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._site = site
         self._http = http or default_http_fetcher
         self._company = company
+        self._location_accept = tuple(location_accept)
+        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -443,7 +453,12 @@ class LeverBoardAdapter:
             return None
         cats = raw.get("categories") or {}
         loc = str(cats.get("location") or "").strip() if isinstance(cats, dict) else ""
-        if location and loc and location.lower() not in loc.lower():
+        if not location_matches_target(
+            loc,
+            accept=self._location_accept,
+            reject=self._location_reject,
+            search_location=location,
+        ):
             return None
         company = self._company or f"lever:{self._site}"
         return ScrapedJobPosting(
@@ -482,11 +497,15 @@ class AshbyBoardAdapter:
         board_name: str,
         http: HttpFetcher | None = None,
         company: str | None = None,
+        location_accept: Iterable[str] = (),
+        location_reject: Iterable[str] = (),
     ) -> None:
         self._source_id = source_id
         self._board_name = board_name
         self._http = http or default_http_fetcher
         self._company = company
+        self._location_accept = tuple(location_accept)
+        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -494,9 +513,7 @@ class AshbyBoardAdapter:
 
     @property
     def url(self) -> str:
-        return (
-            f"https://api.ashbyhq.com/posting-api/job-board/{self._board_name}"
-        )
+        return f"https://api.ashbyhq.com/posting-api/job-board/{self._board_name}"
 
     def scrape(
         self,
@@ -538,7 +555,12 @@ class AshbyBoardAdapter:
         if query.strip() and query.strip().lower() not in title.lower():
             return None
         loc = str(raw.get("location") or raw.get("locationName") or "").strip()
-        if location and loc and location.lower() not in loc.lower():
+        if not location_matches_target(
+            loc,
+            accept=self._location_accept,
+            reject=self._location_reject,
+            search_location=location,
+        ):
             return None
         company = self._company or f"ashby:{self._board_name}"
         return ScrapedJobPosting(

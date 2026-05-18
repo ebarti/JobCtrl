@@ -14,17 +14,23 @@ from datetime import datetime, timezone
 
 from jobhunter import config
 from jobhunter.database import get_connection, init_db
+
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobhunter.infrastructure.network`` so the Enrichment context's
 # Playwright fetcher can import it without depending on this Discovery
 # module. Imported here for the local call sites in ``_run_one_search``
 # / ``_full_crawl``.
+from jobhunter.infrastructure.discovery.location_filter import (
+    configured_location_filters,
+    location_matches_target,
+)
 from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
 
 
 # -- Retry wrapper -----------------------------------------------------------
+
 
 def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
     """Call scrape_jobs with retry on transient failures."""
@@ -53,46 +59,26 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
 
 # -- Location filtering ------------------------------------------------------
 
+
 def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
     """Extract accept/reject location lists from search config.
 
     Falls back to sensible defaults if not defined in the YAML.
     """
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
-    return accept, reject
+    return configured_location_filters(search_cfg)
 
 
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
     """Check if a job location passes the user's location filter.
 
-    Remote jobs are always accepted. Non-remote jobs must match an accept
-    pattern and not match a reject pattern.
+    Remote jobs are accepted only after explicit reject geography is checked.
+    Non-remote jobs must match an accept pattern and not match a reject pattern.
     """
-    if not location:
-        return True  # unknown location -- keep it, let scorer decide
-
-    loc = location.lower()
-
-    # Remote jobs always OK
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    # Reject non-remote matches
-    for r in reject:
-        if r.lower() in loc:
-            return False
-
-    # Accept matches
-    for a in accept:
-        if a.lower() in loc:
-            return True
-
-    # No match -- reject unknown
-    return False
+    return location_matches_target(location, accept=accept, reject=reject)
 
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
+
 
 def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit: int = 0) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
@@ -149,8 +135,19 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, "
                 "full_description, application_url, detail_scraped_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, title, salary, description, location_str, site_label, strategy, now,
-                 full_description, apply_url, detail_scraped_at),
+                (
+                    url,
+                    title,
+                    salary,
+                    description,
+                    location_str,
+                    site_label,
+                    strategy,
+                    now,
+                    full_description,
+                    apply_url,
+                    detail_scraped_at,
+                ),
             )
             new += 1
         except sqlite3.IntegrityError:
@@ -161,6 +158,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
 
 
 # -- Single search execution -------------------------------------------------
+
 
 def _run_one_search(
     search: dict,
@@ -177,7 +175,7 @@ def _run_one_search(
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
-    label = f"\"{s['query']}\" in {s['location']} {'(remote)' if s.get('remote') else ''}"
+    label = f'"{s["query"]}" in {s["location"]} {"(remote)" if s.get("remote") else ""}'
     if "tier" in s:
         label += f" [tier {s['tier']}]"
 
@@ -239,6 +237,7 @@ def _run_one_search(
 
     import pandas as pd
     import warnings
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
         df = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
@@ -249,10 +248,16 @@ def _run_one_search(
 
     # Filter by location before storing
     before = len(df)
-    df = df[df.apply(lambda row: _location_ok(
-        str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None,
-        accept_locs, reject_locs,
-    ), axis=1)]
+    df = df[
+        df.apply(
+            lambda row: _location_ok(
+                str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None,
+                accept_locs,
+                reject_locs,
+            ),
+            axis=1,
+        )
+    ]
     filtered = before - len(df)
 
     conn = get_connection()
@@ -267,6 +272,7 @@ def _run_one_search(
 
 
 # -- Single query search -----------------------------------------------------
+
 
 def search_jobs(
     query: str,
@@ -284,7 +290,7 @@ def search_jobs(
 
     proxy_config = parse_proxy(proxy) if proxy else None
 
-    log.info("Search: \"%s\" in %s | sites=%s | remote=%s", query, location, sites, remote_only)
+    log.info('Search: "%s" in %s | sites=%s | remote=%s', query, location, sites, remote_only)
 
     kwargs = {
         "site_name": sites,
@@ -336,6 +342,7 @@ def search_jobs(
 
 # -- Full crawl (all queries x all locations) --------------------------------
 
+
 def _full_crawl(
     search_cfg: dict,
     tiers: list[int] | None = None,
@@ -369,18 +376,19 @@ def _full_crawl(
     searches = []
     for q in queries:
         for loc in locs:
-            searches.append({
-                "query": q["query"],
-                "location": loc["location"],
-                "remote": loc.get("remote", False),
-                "tier": q.get("tier", 0),
-            })
+            searches.append(
+                {
+                    "query": q["query"],
+                    "location": loc["location"],
+                    "remote": loc.get("remote", False),
+                    "tier": q.get("tier", 0),
+                }
+            )
 
     proxy_config = parse_proxy(proxy) if proxy else None
 
     log.info("Full crawl: %d search combinations", len(searches))
-    log.info("Sites: %s | Results/site: %d | Hours old: %d",
-             ", ".join(sites), results_per_site, hours_old)
+    log.info("Sites: %s | Results/site: %d | Hours old: %d", ", ".join(sites), results_per_site, hours_old)
 
     # Ensure DB schema is ready
     init_db()
@@ -395,9 +403,16 @@ def _full_crawl(
         if limit > 0 and remaining <= 0:
             break
         result = _run_one_search(
-            s, sites, min(results_per_site, remaining) if limit > 0 else results_per_site, hours_old,
-            proxy_config, defaults, max_retries,
-            accept_locs, reject_locs, glassdoor_map,
+            s,
+            sites,
+            min(results_per_site, remaining) if limit > 0 else results_per_site,
+            hours_old,
+            proxy_config,
+            defaults,
+            max_retries,
+            accept_locs,
+            reject_locs,
+            glassdoor_map,
             limit=remaining if limit > 0 else 0,
         )
         completed += 1
@@ -406,15 +421,26 @@ def _full_crawl(
         total_errors += result["errors"]
 
         if completed % 5 == 0 or completed == len(searches):
-            log.info("Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
-                     completed, len(searches), total_new, total_existing, total_errors)
+            log.info(
+                "Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
+                completed,
+                len(searches),
+                total_new,
+                total_existing,
+                total_errors,
+            )
 
     # Final stats
     conn = get_connection()
     db_total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
 
-    log.info("Full crawl complete: %d new | %d dupes | %d errors | %d total in DB",
-             total_new, total_existing, total_errors, db_total)
+    log.info(
+        "Full crawl complete: %d new | %d dupes | %d errors | %d total in DB",
+        total_new,
+        total_existing,
+        total_errors,
+        db_total,
+    )
 
     return {
         "new": total_new,
@@ -426,6 +452,7 @@ def _full_crawl(
 
 
 # -- Public entry point ------------------------------------------------------
+
 
 def run_discovery(cfg: dict | None = None, limit: int = 0) -> dict:
     """Main entry point for JobSpy-based job discovery.
