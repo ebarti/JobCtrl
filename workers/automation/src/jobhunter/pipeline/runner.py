@@ -1248,10 +1248,12 @@ _PENDING_SQL: dict[str, str] = {
     "tailor": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
         f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"{db_module._SCORE_DOWNSTREAM_STATE_JOIN} "
         f"{db_module._ENRICHMENT_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+        f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
         f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -1259,10 +1261,12 @@ _PENDING_SQL: dict[str, str] = {
     "cover": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
         f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
+        f"{db_module._SCORE_DOWNSTREAM_STATE_JOIN} "
         f"{db_module._ENRICHMENT_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+        f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {db_module._EFFECTIVE_TAILOR_PATH} != '' "
         f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
         f"AND {db_module._COVER_NOT_EXHAUSTED} "
@@ -1294,12 +1298,14 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
             if retailor else
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
             f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -1307,7 +1313,7 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
         return conn.execute(
             f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
             f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
-            f"{db_module._ENRICHMENT_JOIN} "
+            f"{db_module._SCORE_DOWNSTREAM_STATE_JOIN} {db_module._ENRICHMENT_JOIN} "
             f"WHERE {where}",
             (min_score,),
         ).fetchone()[0]

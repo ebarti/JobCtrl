@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.scoring.aggregate import JobScore
+from jobhunter.domain.scoring.aggregate import JobScore, ScoreStaleMarker
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobhunter.domain.tenant import TenantId
 
@@ -22,6 +22,7 @@ from jobhunter.domain.ports.llm import LlmMessage, LlmPort, LlmRole
 
 __all__ = [
     "ScoreRepository",
+    "ScoreStalenessRepository",
     "ScoringPolicyRepository",
     "LlmPort",
     "LlmMessage",
@@ -98,4 +99,24 @@ class ScoringPolicyRepository(Protocol):
 
     def save_correction_signal(self, signal: CorrectionSignal) -> ScoringPolicy:
         """Persist the next policy version derived from a correction signal."""
+        ...
+
+
+class ScoreStalenessRepository(Protocol):
+    """Persistence port for score-staleness markers."""
+
+    def mark_comparable_scores_stale(
+        self,
+        *,
+        tenant_id: TenantId,
+        stale_reason: str,
+        new_policy_id: str,
+        new_policy_version: int,
+        marked_at: str,
+    ) -> list[ScoreStaleMarker]:
+        """Mark latest uncorrected scores with older policy traces stale."""
+        ...
+
+    def resolve_for_score(self, score: JobScore) -> int:
+        """Resolve active stale markers satisfied by a new persisted score."""
         ...

@@ -42,6 +42,7 @@ from jobhunter.domain.scoring import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.state import ensure_job_stage_rows, set_stage_state
 
 
 @pytest.fixture()
@@ -77,6 +78,22 @@ def _save_score(
             scored_at=datetime.now(timezone.utc).isoformat(),
         )
     )
+
+
+def _insert_active_score_staleness_marker(conn: sqlite3.Connection, url: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_score_staleness (
+            tenant_id, job_url, stale_reason,
+            old_policy_id, old_policy_version,
+            new_policy_id, new_policy_version,
+            marked_at, resolved, resolved_at, resolved_by_score_version
+        ) VALUES (?, ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+                  'local:scoring-policy-v2', 2, ?, 0, NULL, NULL)
+        """,
+        (str(LOCAL_TENANT), url, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +207,40 @@ def test_pending_cover_excludes_high_score_blocked_jobs(
     assert url_blocked not in urls
 
 
+@pytest.mark.parametrize("stage", ["pending_tailor", "pending_cover"])
+@pytest.mark.parametrize(
+    ("score_state", "active_marker"),
+    [
+        ("stale", True),
+        ("pending", False),
+        ("succeeded", True),
+    ],
+)
+def test_downstream_materials_selectors_exclude_non_current_scores(
+    conn: sqlite3.Connection,
+    stage: str,
+    score_state: str,
+    active_marker: bool,
+) -> None:
+    url = f"https://example.com/job/non-current-{stage}-{score_state}-{active_marker}"
+    _seed_enriched_job(conn, url)
+    _save_score(conn, url, fit=9)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(conn, url, "score", score_state, validate_transition=False)
+    if active_marker:
+        _insert_active_score_staleness_marker(conn, url)
+    if stage == "pending_cover":
+        conn.execute(
+            "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
+            ("/tmp/tailored.txt", "2024-01-02T00:00:00+00:00", url),
+        )
+        conn.commit()
+
+    pending = get_jobs_by_stage(conn=conn, stage=stage, min_score=7)
+    urls = {row["url"] for row in pending}
+    assert url not in urls
+
+
 def test_get_jobs_by_stage_returns_canonical_score_in_dict(
     conn: sqlite3.Connection,
 ) -> None:
@@ -285,3 +336,19 @@ def test_pipeline_count_pending_tailor_picks_repository_scores(
     monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
 
     assert pipeline._count_pending("tailor", min_score=7) == 1
+
+
+def test_pipeline_count_pending_tailor_excludes_pending_rescore(
+    conn: sqlite3.Connection, monkeypatch
+) -> None:
+    from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
+
+    url = "https://example.com/job/pipeline-tailor-pending-rescore"
+    _seed_enriched_job(conn, url)
+    _save_score(conn, url, fit=8)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(conn, url, "score", "pending", validate_transition=False)
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
+
+    assert pipeline._count_pending("tailor", min_score=7) == 0

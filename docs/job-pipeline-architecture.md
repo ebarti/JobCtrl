@@ -494,6 +494,11 @@ classDiagram
   correction-derived calibration anchors; current behavior preserves rubric
   weights and thresholds while making later score traces cite the new policy
   version and anchor IDs.
+- Marks comparable latest uncorrected scores stale in `job_score_staleness`
+  when a correction creates a newer scoring policy version. Corrected score
+  versions are excluded. Successful uncorrected rescores under the newer policy
+  resolve the stale marker; the local API can also reset active stale markers
+  for explicit `jobhunter run score --rescore` processing.
 - Updates legacy-compatible score fields where needed by queue selectors.
 - Publishes score events consumed by Pipeline and Operations.
 - Refreshes dashboard score distributions and job list score badges.

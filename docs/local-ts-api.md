@@ -29,7 +29,13 @@ the wire as a compatibility summary during the scoring evidence migration.
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
 `CorrectScoreUseCase` policy update path because this local API mutation writes
-directly to SQLite instead of crossing the Python JSON-RPC boundary.
+directly to SQLite instead of crossing the Python JSON-RPC boundary. When the
+policy version changes, the API also marks comparable latest uncorrected scores
+stale in `job_score_staleness`; corrected score versions are not marked stale.
+`POST /v1/scoring/stale-scores/actions/reset-for-rescore` clears active stale
+markers and resets their score stage to `pending` for an explicit rescore. The
+backend command that consumes those reset jobs is `jobhunter run score --rescore`
+or the batch API action with `stage: "score"` and `rescore: true`.
 The jobs list `deleted` filter accepts `active`, `deleted`, `hidden`, or `all`.
 Deleted jobs are temporary removals: discovery clears the delete tombstone when
 the same posting is observed again. Hidden jobs use a separate

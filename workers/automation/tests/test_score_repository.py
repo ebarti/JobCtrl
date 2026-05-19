@@ -21,11 +21,17 @@ from jobhunter.domain.scoring import (
     JobScore,
     MatchedKeywords,
     ScoreBreakdown,
+    ScoreCorrection,
     ScoreTrace,
     ScoringCriteria,
 )
+from jobhunter.domain.scoring.use_cases import CorrectScoreUseCase
 from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.infrastructure.scoring import (
+    SqliteScoreRepository,
+    SqliteScoreStalenessRepository,
+    SqliteScoringPolicyRepository,
+)
 from jobhunter.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
 
 
@@ -45,7 +51,14 @@ def _seed_job(conn: sqlite3.Connection, url: str = "https://example.com/job/1") 
     return url
 
 
-def _build_score(url: str, version: int = 1, fit: int = 7) -> JobScore:
+def _build_score(
+    url: str,
+    version: int = 1,
+    fit: int = 7,
+    *,
+    trace: ScoreTrace | None = None,
+    correction: ScoreCorrection | None = None,
+) -> JobScore:
     return JobScore(
         tenant_id=LOCAL_TENANT,
         job_id=JobId(url),
@@ -54,6 +67,8 @@ def _build_score(url: str, version: int = 1, fit: int = 7) -> JobScore:
         breakdown=ScoreBreakdown(technical_fit=8, experience_fit=6, role_fit=7, reasoning="ok"),
         matched_keywords=MatchedKeywords.from_iterable(["python", "fastapi"]),
         scored_at=datetime.now(timezone.utc).isoformat(),
+        trace=trace or ScoreTrace(),
+        correction=correction,
     )
 
 
@@ -279,6 +294,92 @@ def test_list_by_score_range_validates_inputs(conn: sqlite3.Connection) -> None:
         repo.list_by_score_range(LOCAL_TENANT, min_score=0)
     with pytest.raises(ValueError):
         repo.list_by_score_range(LOCAL_TENANT, min_score=8, max_score=4)
+
+
+# ---------------------------------------------------------------------------
+# Staleness markers
+# ---------------------------------------------------------------------------
+
+
+def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_on_rescore(
+    conn: sqlite3.Connection,
+) -> None:
+    target_url = _seed_job(conn, url="https://example.com/job/corrected")
+    comparable_url = _seed_job(conn, url="https://example.com/job/comparable")
+    current_url = _seed_job(conn, url="https://example.com/job/current-policy")
+    already_corrected_url = _seed_job(conn, url="https://example.com/job/already-corrected")
+    policy_v1 = ScoreTrace(
+        scoring_policy_id="local:scoring-policy-v1",
+        scoring_policy_version=1,
+    )
+    policy_v2 = ScoreTrace(
+        scoring_policy_id="local:scoring-policy-v2",
+        scoring_policy_version=2,
+    )
+    repo = SqliteScoreRepository(conn)
+    repo.save(_build_score(target_url, trace=policy_v1))
+    repo.save(_build_score(comparable_url, trace=policy_v1))
+    repo.save(_build_score(current_url, trace=policy_v2))
+    already_corrected = _build_score(already_corrected_url, trace=policy_v1)
+    repo.save(already_corrected)
+    repo.save(
+        already_corrected.with_correction(
+            ScoreCorrection(
+                corrected_fit_score=FitScore.create(8),
+                rationale="Already reviewed.",
+                corrected_by=LOCAL_TENANT,
+                corrected_at="2024-01-01T00:01:00+00:00",
+            )
+        )
+    )
+
+    CorrectScoreUseCase(
+        repository=repo,
+        policy_repository=SqliteScoringPolicyRepository(conn),
+        staleness_repository=SqliteScoreStalenessRepository(conn),
+    ).execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(target_url),
+        corrected_fit_score=FitScore.create(9),
+        rationale="Manual review found stronger fit.",
+        corrected_at="2024-01-02T00:00:00+00:00",
+    )
+
+    rows = conn.execute(
+        """
+        SELECT job_url, stale_reason, old_policy_version, new_policy_version, resolved
+        FROM job_score_staleness
+        ORDER BY job_url
+        """
+    ).fetchall()
+    assert [row["job_url"] for row in rows] == [comparable_url]
+    assert rows[0]["stale_reason"] == "scoring_policy_changed"
+    assert rows[0]["old_policy_version"] == 1
+    assert rows[0]["new_policy_version"] == 2
+    assert rows[0]["resolved"] == 0
+    stale_stage = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+        (comparable_url,),
+    ).fetchone()
+    assert stale_stage["state"] == "stale"
+    stale_event = conn.execute(
+        "SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1",
+        (comparable_url,),
+    ).fetchone()
+    assert stale_event["event_type"] == "ScoreMarkedStale"
+
+    repo.save(_build_score(comparable_url, version=2, fit=8, trace=policy_v2))
+
+    resolved = conn.execute(
+        """
+        SELECT resolved, resolved_by_score_version
+        FROM job_score_staleness
+        WHERE job_url = ?
+        """,
+        (comparable_url,),
+    ).fetchone()
+    assert resolved["resolved"] == 1
+    assert resolved["resolved_by_score_version"] == 2
 
 
 # ---------------------------------------------------------------------------

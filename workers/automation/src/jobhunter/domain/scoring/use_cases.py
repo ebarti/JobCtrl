@@ -37,7 +37,12 @@ from jobhunter.domain.events import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
+from jobhunter.domain.ports.scoring import (
+    LlmPort,
+    ScoreRepository,
+    ScoreStalenessRepository,
+    ScoringPolicyRepository,
+)
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
@@ -572,10 +577,12 @@ class CorrectScoreUseCase:
         repository: ScoreRepository,
         publisher: EventPublisher | None = None,
         policy_repository: ScoringPolicyRepository | None = None,
+        staleness_repository: ScoreStalenessRepository | None = None,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
         self._policy_repository = policy_repository
+        self._staleness_repository = staleness_repository
 
     def execute(
         self,
@@ -601,7 +608,11 @@ class CorrectScoreUseCase:
         )
         new_score = previous.with_correction(correction)
         self._repository.save(new_score)
-        self._persist_policy_correction_signal(previous=previous, correction=correction)
+        new_policy = self._persist_policy_correction_signal(
+            previous=previous,
+            correction=correction,
+        )
+        self._mark_stale_scores(previous=previous, new_policy=new_policy, marked_at=correction.corrected_at)
         self._publish_corrected(previous=previous, new=new_score)
         return new_score
 
@@ -610,9 +621,9 @@ class CorrectScoreUseCase:
         *,
         previous: JobScore,
         correction: ScoreCorrection,
-    ) -> None:
+    ) -> ScoringPolicy | None:
         if self._policy_repository is None:
-            return
+            return None
         signal = CorrectionSignal(
             tenant_id=previous.tenant_id,
             job_id=str(previous.job_id),
@@ -631,10 +642,28 @@ class CorrectScoreUseCase:
             None,
         )
         if callable(save_correction_signal):
-            save_correction_signal(signal)
-            return
+            return save_correction_signal(signal)
         current = self._policy_repository.get_current(previous.tenant_id)
-        self._policy_repository.save(current.with_correction_signal(signal))
+        next_policy = current.with_correction_signal(signal)
+        self._policy_repository.save(next_policy)
+        return next_policy
+
+    def _mark_stale_scores(
+        self,
+        *,
+        previous: JobScore,
+        new_policy: ScoringPolicy | None,
+        marked_at: str,
+    ) -> None:
+        if self._staleness_repository is None or new_policy is None:
+            return
+        self._staleness_repository.mark_comparable_scores_stale(
+            tenant_id=previous.tenant_id,
+            stale_reason="scoring_policy_changed",
+            new_policy_id=new_policy.policy_id,
+            new_policy_version=new_policy.version,
+            marked_at=marked_at,
+        )
 
     def _publish_corrected(self, *, previous: JobScore, new: JobScore) -> None:
         if self._publisher is None or new.correction is None:

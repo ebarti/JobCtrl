@@ -28,6 +28,7 @@ import {
   ProfileImportRequestSchema,
   ProfileUpdateRequestSchema,
   QuarantineDecisionSchema,
+  ResetStaleScoresForRescoreRequestSchema,
   RetryStageRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
@@ -98,6 +99,7 @@ import {
   resetJobStage,
   restoreJob,
   restoreJobs,
+  resetStaleScoresForRescore,
   resolveJobUrl,
   softDeleteJob,
   softDeleteJobs,
@@ -420,6 +422,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
     },
   );
+
+  app.post("/v1/scoring/stale-scores/actions/reset-for-rescore", async (request, reply) => {
+    const body = parseBody(reply, ResetStaleScoresForRescoreRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => resetStaleScoresForRescore(db, body));
+  });
 
   app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) => {
     const body = parseBody(reply, DeleteJobRequestSchema, request.body ?? {});

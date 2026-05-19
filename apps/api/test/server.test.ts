@@ -836,6 +836,161 @@ describe("local TypeScript API", () => {
     }
   });
 
+  it("marks comparable uncorrected scores stale when API correction changes the scoring policy", async () => {
+    const seedDb = new Database(options.dbPath);
+    const comparableUrl = "https://example.com/jobs/comparable-old-policy";
+    const currentPolicyUrl = "https://example.com/jobs/current-policy";
+    const alreadyCorrectedUrl = "https://example.com/jobs/already-corrected";
+    insertJob(seedDb, {
+      url: comparableUrl,
+      title: "Comparable Engineer",
+      site: "ExampleCo",
+      fitScore: 7,
+    });
+    insertScore(seedDb, comparableUrl, 1, 7, { policyVersion: 1 });
+    insertStage(seedDb, comparableUrl, "score", "succeeded");
+    insertJob(seedDb, {
+      url: currentPolicyUrl,
+      title: "Already Current Engineer",
+      site: "ExampleCo",
+      fitScore: 8,
+    });
+    insertScore(seedDb, currentPolicyUrl, 1, 8, { policyVersion: 2 });
+    insertStage(seedDb, currentPolicyUrl, "score", "succeeded");
+    insertJob(seedDb, {
+      url: alreadyCorrectedUrl,
+      title: "Reviewed Engineer",
+      site: "ExampleCo",
+      fitScore: 6,
+    });
+    insertScore(seedDb, alreadyCorrectedUrl, 1, 6, { policyVersion: 1 });
+    insertScore(seedDb, alreadyCorrectedUrl, 2, 8, {
+      correction: {
+        corrected_fit_score: 8,
+        rationale: "Already corrected.",
+        corrected_by: "local",
+        corrected_at: "2026-04-29T10:06:00+00:00",
+      },
+      policyVersion: 1,
+    });
+    insertStage(seedDb, alreadyCorrectedUrl, "score", "succeeded");
+    seedDb.close();
+
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/score-correction`,
+      payload: { correctedScore: 6, reason: "Manual review found a seniority mismatch." },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+
+    const db = new Database(options.dbPath);
+    try {
+      const comparable = db
+        .prepare(
+          `SELECT stale_reason, old_policy_version, new_policy_version, resolved
+           FROM job_score_staleness
+           WHERE job_url = ?`,
+        )
+        .get(comparableUrl) as {
+        stale_reason: string;
+        old_policy_version: number;
+        new_policy_version: number;
+        resolved: number;
+      };
+      expect(comparable).toMatchObject({
+        stale_reason: "scoring_policy_changed",
+        old_policy_version: 1,
+        new_policy_version: 2,
+        resolved: 0,
+      });
+      const excludedRows = db
+        .prepare(
+          `SELECT job_url
+           FROM job_score_staleness
+           WHERE job_url IN (?, ?, ?)`,
+        )
+        .all("https://example.com/jobs/ready", currentPolicyUrl, alreadyCorrectedUrl);
+      expect(excludedRows).toEqual([]);
+      const staleStage = db
+        .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+        .get(comparableUrl) as { state: string };
+      expect(staleStage.state).toBe("stale");
+      const event = db
+        .prepare("SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1")
+        .get(comparableUrl) as { event_type: string };
+      expect(event.event_type).toBe("ScoreMarkedStale");
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
+  it("resets stale score markers for explicit rescore through the API", async () => {
+    const staleUrl = "https://example.com/jobs/stale-score";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: staleUrl,
+      title: "Stale Engineer",
+      site: "ExampleCo",
+      fitScore: 7,
+    });
+    insertScore(seedDb, staleUrl, 1, 7, { policyVersion: 1 });
+    insertStage(seedDb, staleUrl, "score", "stale");
+    createScoreStalenessTable(seedDb);
+    seedDb
+      .prepare(
+        `INSERT INTO job_score_staleness (
+           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           new_policy_id, new_policy_version, marked_at, resolved
+         ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+           'local:scoring-policy-v2', 2, '2026-04-29T10:07:00+00:00', 0)`,
+      )
+      .run(staleUrl);
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/scoring/stale-scores/actions/reset-for-rescore",
+      payload: { limit: 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [staleUrl],
+      nextAction: "jobhunter run score --rescore",
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      const marker = db
+        .prepare("SELECT resolved, resolved_at FROM job_score_staleness WHERE job_url = ?")
+        .get(staleUrl) as { resolved: number; resolved_at: string | null };
+      expect(marker.resolved).toBe(1);
+      expect(marker.resolved_at).toBeTruthy();
+      const stage = db
+        .prepare("SELECT state, attempt_count FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+        .get(staleUrl) as { state: string; attempt_count: number };
+      expect(stage).toMatchObject({ state: "pending", attempt_count: 0 });
+      const event = db
+        .prepare("SELECT event_type, payload_json FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1")
+        .get(staleUrl) as { event_type: string; payload_json: string };
+      expect(event.event_type).toBe("ScoreRescoreRequested");
+      expect(JSON.parse(event.payload_json)).toMatchObject({
+        nextAction: "jobhunter run score --rescore",
+        newPolicyVersion: 2,
+      });
+    } finally {
+      db.close();
+      await app.close();
+    }
+  });
+
   it("returns artifact detail by artifact id", async () => {
     const app = buildApp(options);
     const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_txt" });
@@ -2307,12 +2462,17 @@ function insertScore(
   jobUrl: string,
   version: number,
   fitScore: number,
+  options: {
+    correction?: Record<string, unknown> | null;
+    policyVersion?: number;
+    policyId?: string;
+  } = {},
 ): void {
   db.prepare(
     `INSERT INTO job_scores (
       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
-      scored_at, correction_json, criteria_json, trace_json
-    ) VALUES (?, ?, 'local', ?, ?, ?, ?, NULL, ?, ?)`,
+    scored_at, correction_json, criteria_json, trace_json
+    ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jobUrl,
     version,
@@ -2331,6 +2491,11 @@ function insertScore(
     }),
     JSON.stringify(["platform"]),
     "2026-04-29T10:02:00+00:00",
+    options.correction === undefined
+      ? null
+      : options.correction === null
+        ? null
+        : JSON.stringify(options.correction),
     JSON.stringify({
       min_fit_score: 7,
       criteria_text: "Seeded criteria.",
@@ -2344,10 +2509,38 @@ function insertScore(
       model: "seed",
       criteria_version: "seeded-criteria",
       profile_snapshot_version: 1,
+      ...(options.policyVersion === undefined
+        ? {}
+        : {
+            scoring_policy_id: options.policyId ?? `local:scoring-policy-v${options.policyVersion}`,
+            scoring_policy_version: options.policyVersion,
+          }),
       parser_warnings: [],
       correction_history: [],
     }),
   );
+}
+
+function createScoreStalenessTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_score_staleness (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      stale_reason TEXT NOT NULL,
+      old_policy_id TEXT NOT NULL DEFAULT '',
+      old_policy_version INTEGER NOT NULL,
+      new_policy_id TEXT NOT NULL DEFAULT '',
+      new_policy_version INTEGER NOT NULL,
+      marked_at TEXT NOT NULL,
+      resolved INTEGER NOT NULL DEFAULT 0,
+      resolved_at TEXT,
+      resolved_by_score_version INTEGER,
+      PRIMARY KEY (
+        tenant_id, job_url, stale_reason,
+        old_policy_version, new_policy_version
+      )
+    )
+  `);
 }
 
 function insertStage(
