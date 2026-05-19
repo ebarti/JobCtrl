@@ -77,6 +77,20 @@ def test_policy_owned_fit_band_thresholds_are_deterministic() -> None:
     assert policy.fit_band_for_score(1) == "poor"
 
 
+def test_policy_rejects_inverted_fit_band_threshold_order() -> None:
+    with pytest.raises(ValueError, match="fit band thresholds must follow"):
+        ScoringPolicy(
+            tenant_id=LOCAL_TENANT,
+            fit_band_thresholds=(
+                FitBandThreshold("excellent", 7),
+                FitBandThreshold("strong", 9),
+                FitBandThreshold("plausible", 5),
+                FitBandThreshold("stretch", 3),
+                FitBandThreshold("poor", 1),
+            ),
+        )
+
+
 def test_sqlite_policy_repository_seeds_default_policy(conn: sqlite3.Connection) -> None:
     repo = SqliteScoringPolicyRepository(conn)
 

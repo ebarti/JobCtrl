@@ -383,15 +383,22 @@ def _validated_fit_band_thresholds(
     bands = [threshold.band for threshold in threshold_values]
     if set(bands) != set(FIT_BANDS) or len(bands) != len(FIT_BANDS):
         raise ValueError(f"ScoringPolicy fit band thresholds must cover {FIT_BANDS}")
-    sorted_values = tuple(
-        sorted(threshold_values, key=lambda threshold: threshold.minimum_score, reverse=True)
-    )
-    minimums = [threshold.minimum_score for threshold in sorted_values]
+    threshold_by_band = {threshold.band: threshold for threshold in threshold_values}
+    canonical_values = tuple(threshold_by_band[band] for band in FIT_BANDS)
+    minimums = [threshold.minimum_score for threshold in canonical_values]
     if len(minimums) != len(set(minimums)):
         raise ValueError("ScoringPolicy fit band thresholds must have unique minimum scores")
-    if sorted_values[-1].minimum_score != 1:
+    if canonical_values[-1].minimum_score != 1:
         raise ValueError("ScoringPolicy fit band thresholds must include a floor of 1")
-    return sorted_values
+    if any(
+        higher.minimum_score <= lower.minimum_score
+        for higher, lower in zip(canonical_values, canonical_values[1:])
+    ):
+        raise ValueError(
+            "ScoringPolicy fit band thresholds must follow "
+            "excellent > strong > plausible > stretch > poor == 1"
+        )
+    return canonical_values
 
 
 def _resolution_reason(breakdown: ScoreBreakdown) -> str:
