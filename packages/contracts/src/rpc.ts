@@ -153,6 +153,7 @@ export const RunStageParamsSchema = z
   .object({
     tenantId: TenantParam,
     stage: z.enum(STAGES),
+    stages: z.array(z.enum(STAGES)).min(1).max(STAGES.length).optional(),
     jobUrl: z.string().optional(),
     limit: z.number().int().min(0).default(0),
     workers: z.number().int().min(1).default(1),
@@ -161,6 +162,9 @@ export const RunStageParamsSchema = z
     dryRun: z.boolean().default(false),
     rescore: z.boolean().default(false),
     retailor: z.boolean().default(false),
+    headless: z.boolean().default(false),
+    model: z.string().trim().min(1).max(80).default("haiku"),
+    continuous: z.boolean().default(false),
   })
   .strict();
 export type RunStageParams = z.infer<typeof RunStageParamsSchema>;

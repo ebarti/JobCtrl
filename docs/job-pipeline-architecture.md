@@ -42,7 +42,7 @@ implementations where possible, but they differ in orchestration.
 
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
-| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API dispatches each selected stage. Non-apply calls JSON-RPC `run_stage`; apply calls JSON-RPC `apply`. | All user-facing stages |
+| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends the ordered stage list to JSON-RPC `run_stage`, which starts one `JobPipelineWorkflow`; apply steps run as child `ApplyWorkflow` executions. | All user-facing stages |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes stages sequentially or streaming. | Non-apply stages |
 | Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches each non-apply stage as a Temporal activity. | Non-apply stages |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
@@ -58,9 +58,9 @@ sequenceDiagram
     participant Dispatcher as defaultActionDispatcher
     participant JsonRpc as SubprocessJsonRpcAdapter
     participant Rpc as jobhunter rpc<br/>JsonRpcServer
-    participant Action as run_local_action
-    participant Runner as pipeline.runner
     participant Temporal as Temporal
+    participant Activity as Stage activity
+    participant Runner as pipeline.runner
     participant DB as SQLite
     participant SSE as SSE / projections
 
@@ -68,27 +68,25 @@ sequenceDiagram
     Web->>Api: POST /v1/pipeline/actions/run-stage
     Api->>Dispatcher: Build ActionCommandPayload per stage
 
-    alt discover/enrich/score/tailor/cover/pdf
-        Dispatcher->>JsonRpc: call("run_stage", params)
-        JsonRpc->>Rpc: JSON-RPC line over stdin/stdout
-        Rpc->>Action: run_stage handler
-        Action->>Runner: run_pipeline(stages=[stage])
+    Dispatcher->>JsonRpc: call("run_stage", ordered stages)
+    JsonRpc->>Rpc: JSON-RPC line over stdin/stdout
+    Rpc->>Temporal: start JobPipelineWorkflow(stages)
+    Temporal-->>Rpc: workflow handle
+    Rpc-->>JsonRpc: {runId, workflowId}
+
+    alt discover/enrich/score/tailor/cover/pdf step
+        Temporal->>Activity: execute stage activity
+        Activity->>Runner: run_pipeline(stages=[stage])
         Runner->>DB: stage writes, events, artifacts
-        Runner-->>Action: LocalActionResult
-        Action-->>Rpc: JSON-RPC result
-        Rpc-->>JsonRpc: response
-        JsonRpc-->>Dispatcher: dispatch result
-    else apply
-        Dispatcher->>JsonRpc: call("apply", params)
-        JsonRpc->>Rpc: JSON-RPC line over stdin/stdout
-        Rpc->>Temporal: start ApplyWorkflow
-        Temporal-->>Rpc: workflow handle
-        Rpc-->>JsonRpc: {runId, workflowId}
+    else apply step
+        Temporal->>Temporal: execute child ApplyWorkflow
         Temporal->>DB: ApplyRun* events while workflow runs
     end
 
+    JsonRpc-->>Dispatcher: dispatch result
+
     Dispatcher-->>Api: action response
-    Api-->>Web: 200 for sync stages, 202 if apply queued
+    Api-->>Web: 202 if workflow queued, 200 if start failed
     DB->>SSE: projections refresh / events stream
     SSE-->>Web: invalidate query cache and update UI
 ```
@@ -206,9 +204,12 @@ instead of submitting applications.
   for pending work and finish only when their upstream producers are done and
   they have no remaining work.
 
-The UI `run-stage` endpoint dispatches selected stages in request order from
-the TS API. Each non-apply stage call still enters the Python runner as a
-single-stage `run_pipeline(stages=[stage])` invocation.
+The UI `run-stage` endpoint preserves request order by starting one
+`JobPipelineWorkflow` for the selected stage list. Non-apply stages run
+serially as Temporal activities; each activity still enters the Python runner
+as a single-stage `run_pipeline(stages=[stage])` invocation. `apply` remains
+the dedicated `ApplyWorkflow`, executed as a child workflow when it appears in
+the ordered pipeline list.
 
 ## Phase 1: Discover
 

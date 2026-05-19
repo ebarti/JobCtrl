@@ -34,6 +34,7 @@ import {
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
+  type Stage,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
 import { databaseExists, openDatabase } from "./db.js";
@@ -87,15 +88,21 @@ import {
 import {
   cancelJobAction,
   correctScore,
+  hideJob,
+  hideJobs,
   InputError,
   markJobApplied,
   markJobSkipped,
+  permanentlyDeleteJob,
+  permanentlyDeleteJobs,
   resetJobStage,
   restoreJob,
   restoreJobs,
   resolveJobUrl,
   softDeleteJob,
   softDeleteJobs,
+  unhideJob,
+  unhideJobs,
   writeSettingsConfig,
 } from "./write-model.js";
 
@@ -304,48 +311,35 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     const actions: ActionRunResponse[] = [];
-    let applyQueued = false;
-    for (const stage of body.stages) {
-      const command: ActionCommandPayload =
-        stage === "apply"
-          ? {
-              action: "apply" as const,
-              jobKey: PIPELINE_ACTION_JOB_KEY,
-              stage,
-              limit: body.limit,
-              workers: body.workers,
-              minScore: body.minScore,
-              dryRun: body.dryRun,
-              headless: body.headless,
-              model: body.model,
-              continuous: body.continuous,
-            }
-          : {
-              action: "run_stage" as const,
-              jobKey: PIPELINE_ACTION_JOB_KEY,
-              stage,
-              limit: body.limit,
-              workers: body.workers,
-              minScore: body.minScore,
-              validationMode: body.validationMode,
-              dryRun: body.dryRun,
-              rescore: body.rescore,
-              retailor: body.retailor,
-            };
-      const dispatch = await actionDispatcher(command, actionContext);
-      actions.push(buildActionResponse(command, dispatch));
-      if (command.action === "apply" && dispatch.status === "queued") {
-        applyQueued = true;
-      }
-      if (dispatch.status === "failed") {
-        break;
-      }
+    const firstStage = body.stages[0] as Stage | undefined;
+    if (!firstStage) {
+      void reply.code(400);
+      return undefined;
     }
-    void reply.code(applyQueued ? 202 : 200);
+    const command: ActionCommandPayload = {
+      action: "run_stage" as const,
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+      stage: firstStage,
+      stages: body.stages,
+      limit: body.limit,
+      workers: body.workers,
+      minScore: body.minScore,
+      validationMode: body.validationMode,
+      dryRun: body.dryRun,
+      rescore: body.rescore,
+      retailor: body.retailor,
+      headless: body.headless,
+      model: body.model,
+      continuous: body.continuous,
+    };
+    const dispatch = await actionDispatcher(command, actionContext);
+    actions.push(buildActionResponse(command, dispatch));
+    const status = stageRunStatus(actions);
+    void reply.code(dispatch.status === "queued" && status !== "failed" ? 202 : 200);
     return {
       ok: true,
       action: "run_stage",
-      status: stageRunStatus(actions),
+      status,
       jobKey: PIPELINE_ACTION_JOB_KEY,
       count: actions.length,
       command: body,
@@ -365,12 +359,36 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJobs(db, body));
   });
 
+  app.post("/v1/jobs/bulk-delete-permanent", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJobs(db, body));
+  });
+
   app.post("/v1/jobs/bulk-restore", async (request, reply) => {
     const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
     if (!body) {
       return undefined;
     }
     return withWritableDb(reply, options.dbPath, (db) => restoreJobs(db, body));
+  });
+
+  app.post("/v1/jobs/bulk-hide", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => hideJobs(db, body));
+  });
+
+  app.post("/v1/jobs/bulk-unhide", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => unhideJobs(db, body));
   });
 
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) =>
@@ -411,8 +429,24 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => softDeleteJob(db, decodeRouteParam(request.params.jobKey), body));
   });
 
+  app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/permanent", async (request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => permanentlyDeleteJob(db, decodeRouteParam(request.params.jobKey))),
+  );
+
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/restore", async (request, reply) =>
     withWritableDb(reply, options.dbPath, (db) => restoreJob(db, decodeRouteParam(request.params.jobKey))),
+  );
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/hide", async (request, reply) => {
+    const body = parseBody(reply, DeleteJobRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => hideJob(db, decodeRouteParam(request.params.jobKey), body));
+  });
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/unhide", async (request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => unhideJob(db, decodeRouteParam(request.params.jobKey))),
   );
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/retry-stage", async (request, reply) => {

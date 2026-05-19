@@ -6,11 +6,12 @@ Per S-11 the initial method set covers:
   ``mark_skipped``, ``cancel_stage``.  These mutate ``job_stage_states``
   through the same write API the TS surface uses (``state.reset_job_stage``
   / ``state.set_stage_state``).
-* Existing local-action wrappers — ``run_stage``, ``profile_import``.
-  These delegate to ``actions.run_local_action``.
+* Existing local-action wrappers — ``profile_import`` delegates to
+  ``actions.run_local_action``.
 * Workflow starters — ``apply`` returns a :class:`WorkflowStartSpec` for
-  :class:`ApplyWorkflow`; the server starts it on the Temporal task queue
-  and ships back ``{"runId", "workflowId", "firstExecutionRunId"}``.
+  :class:`ApplyWorkflow`; ``run_stage`` returns one for
+  :class:`JobPipelineWorkflow`. The server starts them on the Temporal task
+  queue and ships back ``{"runId", "workflowId", "firstExecutionRunId"}``.
 * Cooperative cancellation — ``cancel_run`` cancels an in-flight workflow
   via the injected canceler.
 
@@ -32,9 +33,11 @@ from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobhunter.infrastructure.rpc.workflow_starter import WorkflowCanceler
+from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, utc_now
 
 logger = logging.getLogger(__name__)
+WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "pdf", "apply"}
 
 
 def _tenant_id(params: dict[str, Any]) -> str:
@@ -152,21 +155,37 @@ def cancel_stage(params: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def run_stage(params: dict[str, Any]) -> dict[str, Any]:
-    _tenant_id(params)
-    stage = str(_require(params, "stage"))
-    request = LocalActionRequest(
-        stage=stage,
-        job_url=params.get("jobUrl"),
-        limit=int(params.get("limit", 0)),
-        workers=int(params.get("workers", 1)),
+def _stage_list(params: dict[str, Any]) -> list[str]:
+    raw_stages = params.get("stages")
+    if isinstance(raw_stages, list) and raw_stages:
+        stages = [str(stage) for stage in raw_stages]
+    else:
+        stages = [str(_require(params, "stage"))]
+    invalid = [stage for stage in stages if stage not in WORKFLOW_STAGES]
+    if invalid:
+        raise invalid_params(f"unsupported pipeline stage for workflow: {', '.join(invalid)}")
+    return stages
+
+
+def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
+    tenant_id = _tenant_id(params)
+    stages = _stage_list(params)
+    payload = JobPipelineWorkflowInput(
+        tenant_id=tenant_id,
+        stages=stages,
         min_score=int(params.get("minScore", 7)),
+        workers=int(params.get("workers", 1)),
+        limit=int(params.get("limit", 0)),
         validation_mode=str(params.get("validationMode", "normal")),
         dry_run=bool(params.get("dryRun", False)),
         rescore=bool(params.get("rescore", False)),
         retailor=bool(params.get("retailor", False)),
+        job_url=params.get("jobUrl") if params.get("jobUrl") else None,
+        headless=bool(params.get("headless", False)),
+        model=str(params.get("model", "haiku")),
+        continuous=bool(params.get("continuous", False)),
     )
-    return run_local_action(request).to_dict()
+    return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
 
 
 def profile_import(params: dict[str, Any]) -> dict[str, Any]:
@@ -232,11 +251,11 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("mark_applied", mark_applied, mode="sync")
     server.register("mark_skipped", mark_skipped, mode="sync")
     server.register("cancel_stage", cancel_stage, mode="sync")
-    # Local-action wrappers — sync; ``run_stage`` and ``profile_import`` keep
-    # their sync result shape until a follow-up converts them to workflows.
-    server.register("run_stage", run_stage, mode="sync")
+    # Local-action wrapper — synchronous import until the profile workflow
+    # becomes the API path.
     server.register("profile_import", profile_import, mode="sync")
     # Workflow starters.
+    server.register("run_stage", run_stage, mode="workflow")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

@@ -20,7 +20,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 
 import yaml
 from bs4 import BeautifulSoup
@@ -28,11 +28,12 @@ from playwright.sync_api import sync_playwright
 
 from jobhunter import config
 from jobhunter.config import CONFIG_DIR
-from jobhunter.database import init_db, get_stats
+from jobhunter.database import get_stats, init_db, resurface_deleted_job
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -83,32 +84,43 @@ def _store_jobs_filtered(
     strategy: str,
     accept_locs: list[str],
     reject_locs: list[str],
+    query: str | list[str] | None = None,
     limit: int = 0,
+    source_url: str | None = None,
 ) -> tuple[int, int]:
-    """Store jobs with location filtering. Returns (new, existing)."""
+    """Store usable jobs with title, location, and description filtering."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
     filtered = 0
+    missing_description = 0
 
     for job in jobs:
         if limit > 0 and new + existing >= limit:
             break
-        url = job.get("url")
+        url = _normalize_job_url(job.get("url"), source_url)
         if not url:
             continue
         if not _location_ok(job.get("location"), accept_locs, reject_locs):
             filtered += 1
             continue
+        if not _title_matches_target_query(job.get("title"), query):
+            filtered += 1
+            continue
+        description = _job_description_text(job)
+        if not description:
+            missing_description += 1
+            continue
         try:
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     url,
                     job.get("title"),
+                    job.get("company"),
                     job.get("salary"),
-                    job.get("description"),
+                    description,
                     job.get("location"),
                     site,
                     strategy,
@@ -117,12 +129,75 @@ def _store_jobs_filtered(
             )
             new += 1
         except sqlite3.IntegrityError:
+            company = str(job.get("company") or "").strip()
+            update_fields: list[str] = []
+            update_values: list[str] = []
+            if company:
+                update_fields.append("company = CASE WHEN company IS NULL OR company = '' THEN ? ELSE company END")
+                update_values.append(company)
+            if description:
+                update_fields.append(
+                    "description = CASE WHEN description IS NULL OR description = '' THEN ? ELSE description END"
+                )
+                update_values.append(description)
+            if update_fields:
+                update_predicates: list[str] = []
+                if company:
+                    update_predicates.append("(company IS NULL OR company = '')")
+                if description:
+                    update_predicates.append("(description IS NULL OR description = '')")
+                cursor = conn.execute(
+                    f"UPDATE jobs SET {', '.join(update_fields)} WHERE url = ? "
+                    f"AND ({' OR '.join(update_predicates)})",
+                    (*update_values, url),
+                )
+                if cursor.rowcount:
+                    from jobhunter.state import record_job_event
+
+                    record_job_event(
+                        conn,
+                        url,
+                        "discover",
+                        "JobMetadataUpdated",
+                        message="Job metadata backfilled from SmartExtract",
+                        payload={"company": company or None, "description": bool(description), "source": site},
+                        occurred_at=now,
+                    )
+            resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     if filtered:
-        log.info("Filtered %d jobs (wrong location)", filtered)
+        log.info("Filtered %d jobs (wrong title/location)", filtered)
+    if missing_description:
+        log.info("Filtered %d jobs (missing description)", missing_description)
     conn.commit()
     return new, existing
+
+
+def _title_matches_target_query(title: str | None, query: str | list[str] | None) -> bool:
+    if isinstance(query, list):
+        if not query:
+            return True
+        return any(title_matches_query(title, item) for item in query)
+    return title_matches_query(title, query)
+
+
+def _job_description_text(job: dict) -> str | None:
+    """Return the best usable discovered description for a job."""
+    for key in ("description", "full_description"):
+        value = str(job.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _normalize_job_url(url: object, source_url: str | None = None) -> str | None:
+    value = str(url or "").strip()
+    if not value:
+        return None
+    if source_url:
+        return urljoin(source_url, value)
+    return value
 
 
 # -- Page intelligence collector ---------------------------------------------
@@ -510,7 +585,7 @@ Below is a lightweight intelligence briefing -- JSON-LD data, intercepted API re
 Pick the BEST strategy:
 
 1. "json_ld" -- ONLY if briefing shows JobPosting JSON-LD entries (it will say "usable!")
-2. "api_response" -- ONLY if an intercepted API response has job-like fields (name, title, salary, description, location, slug)
+2. "api_response" -- ONLY if an intercepted API response has job-like fields (name, title, company, salary, description, location, slug)
 3. "css_selectors" -- when neither JSON-LD nor API data has job data
 
 HOW TO THINK:
@@ -523,10 +598,10 @@ HOW TO THINK:
 Return ONLY valid JSON:
 
 For json_ld:
-{{"strategy":"json_ld","reasoning":"...","extraction":{{"title":"title","salary":"baseSalary_path_or_null","description":"description","location":"jobLocation[0].address.addressCountry","url":"url_field"}}}}
+{{"strategy":"json_ld","reasoning":"...","extraction":{{"title":"title","company":"hiringOrganization.name","salary":"baseSalary_path_or_null","description":"description","location":"jobLocation[0].address.addressCountry","url":"url_field"}}}}
 
 For api_response:
-{{"strategy":"api_response","reasoning":"...","extraction":{{"url_pattern":"actual.url.substring","items_path":"path.to.the.array","title":"field_in_each_item","salary":"salary_field_or_null","description":"description_field_or_null","location":"location_path","url":"url_field"}}}}
+{{"strategy":"api_response","reasoning":"...","extraction":{{"url_pattern":"actual.url.substring","items_path":"path.to.the.array","title":"field_in_each_item","company":"company_field_or_null","salary":"salary_field_or_null","description":"description_field_or_null","location":"location_path","url":"url_field"}}}}
 
 For css_selectors:
 {{"strategy":"css_selectors","reasoning":"...","extraction":{{}}}}
@@ -640,6 +715,7 @@ Your task:
 Return a JSON object:
 - "job_card": CSS selector matching each job card (MUST match ALL cards on the page)
 - "title": selector RELATIVE to the card for the job title
+- "company": selector relative to card for the employer name, or null
 - "salary": selector relative to card for salary, or null
 - "description": selector relative to card for description snippet, or null
 - "location": selector relative to card for location, or null
@@ -745,7 +821,7 @@ def execute_json_ld(intel: dict, plan: dict) -> list[dict]:
         if not isinstance(entry, dict) or entry.get("@type") != "JobPosting":
             continue
         job: dict = {}
-        for field in ["title", "salary", "description", "location", "url"]:
+        for field in ["title", "company", "salary", "description", "location", "url"]:
             path = ext.get(field)
             if not path or path == "null":
                 job[field] = None
@@ -781,7 +857,7 @@ def execute_api_response(intel: dict, plan: dict) -> list[dict]:
         if not isinstance(item, dict):
             continue
         job: dict = {}
-        for field in ["title", "salary", "description", "location", "url"]:
+        for field in ["title", "company", "salary", "description", "location", "url"]:
             path = ext.get(field)
             if not path or path == "null":
                 job[field] = None
@@ -838,7 +914,7 @@ def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
     jobs: list[dict] = []
     for card in cards:
         job: dict = {}
-        for field in ["title", "salary", "description", "location", "url"]:
+        for field in ["title", "company", "salary", "description", "location", "url"]:
             sel = selectors.get(field)
             if not sel or sel == "null":
                 job[field] = None
@@ -956,15 +1032,16 @@ def _run_one_site(name: str, url: str) -> dict:
     # Step 4: Report
     titles = sum(1 for j in jobs if j.get("title"))
     total = len(jobs)
-    status = "PASS" if total > 0 and titles / max(total, 1) >= 0.8 else "FAIL" if total == 0 else "PARTIAL"
-
     urls = sum(1 for j in jobs if j.get("url"))
     salaries = sum(1 for j in jobs if j.get("salary"))
-    descs = sum(1 for j in jobs if j.get("description"))
+    descs = sum(1 for j in jobs if _job_description_text(j))
+    usable = sum(1 for j in jobs if j.get("title") and j.get("url") and _job_description_text(j))
+    status = "PASS" if total > 0 and usable / max(total, 1) >= 0.8 else "FAIL" if total == 0 or usable == 0 else "PARTIAL"
     log.info(
-        "RESULT: %s -- %d jobs, %d titles, %d urls, %d salaries, %d descriptions",
+        "RESULT: %s -- %d jobs, %d usable, %d titles, %d urls, %d salaries, %d descriptions",
         status,
         total,
+        usable,
         titles,
         urls,
         salaries,
@@ -1036,6 +1113,7 @@ def build_scrape_targets(
                         "name": site_name,
                         "url": expanded_url,
                         "query": query,
+                        "queries": [query],
                     }
                 )
         else:
@@ -1046,6 +1124,7 @@ def build_scrape_targets(
                     "name": site_name,
                     "url": expanded_url,
                     "query": None,
+                    "queries": queries,
                 }
             )
 
@@ -1078,7 +1157,6 @@ def _run_all(
     total_existing = 0
 
     if limit > 0:
-        workers = 1
         targets = targets[:limit]
 
     def _process_result(r: dict, target: dict) -> None:
@@ -1095,11 +1173,25 @@ def _run_all(
                 r.get("strategy", "?"),
                 accept_locs,
                 reject_locs,
+                query=target.get("query") or target.get("queries"),
                 limit=remaining if limit > 0 else 0,
+                source_url=target.get("url"),
             )
             total_new += new
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
+
+    def _site_error_result(target: dict, exc: Exception) -> dict:
+        name = str(target.get("name") or "Unknown")
+        log.error("%s failed: %s", name, exc)
+        return {
+            "name": name,
+            "status": "ERROR",
+            "strategy": "?",
+            "total": 0,
+            "titles": 0,
+            "error": str(exc),
+        }
 
     if workers > 1 and len(targets) > 1:
         # Parallel mode
@@ -1107,7 +1199,10 @@ def _run_all(
             future_to_target = {pool.submit(_run_one_site, target["name"], target["url"]): target for target in targets}
             for future in as_completed(future_to_target):
                 target = future_to_target[future]
-                r = future.result()
+                try:
+                    r = future.result()
+                except Exception as exc:
+                    r = _site_error_result(target, exc)
                 results.append(r)
                 _process_result(r, target)
     else:
@@ -1120,7 +1215,10 @@ def _run_all(
                 label = f"{target['name']} [{target['query']}]"
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
-            r = _run_one_site(target["name"], target["url"])
+            try:
+                r = _run_one_site(target["name"], target["url"])
+            except Exception as exc:
+                r = _site_error_result(target, exc)
             results.append(r)
             _process_result(r, target)
 
@@ -1134,9 +1232,16 @@ def _run_all(
         log.info("%-10s | %-25s | %s", r["status"], r["name"], detail)
 
     passed = sum(1 for r in results if r["status"] == "PASS")
+    errors = sum(1 for r in results if r["status"] == "ERROR")
     log.info("%d/%d PASS", passed, len(results))
 
-    return {"total_new": total_new, "total_existing": total_existing, "passed": passed, "total": len(results)}
+    return {
+        "total_new": total_new,
+        "total_existing": total_existing,
+        "passed": passed,
+        "errors": errors,
+        "total": len(results),
+    }
 
 
 # -- Public entry point ------------------------------------------------------

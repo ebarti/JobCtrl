@@ -18,7 +18,9 @@ const meta = {
     onSelectPage: () => {},
     onSelectAllMatching: () => {},
     onClearSelection: () => {},
-    onMutateSelected: () => {},
+    onPrimaryAction: () => {},
+    onHideSelected: () => {},
+    onPermanentlyDeleteSelected: () => {},
   },
 } satisfies Meta<typeof JobBulkActions>;
 
@@ -35,6 +37,13 @@ export const RestoringDeleted: Story = {
   args: {
     search: { ...baseSearch, deleted: "deleted" },
     selectedCount: 5,
+  },
+};
+
+export const HiddenJobs: Story = {
+  args: {
+    search: { ...baseSearch, deleted: "hidden" },
+    selectedCount: 2,
   },
 };
 

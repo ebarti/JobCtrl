@@ -389,6 +389,40 @@ def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
     assert duplicate_row["reason"] == "canonical_url_match"
 
 
+def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    repo.soft_delete(
+        LOCAL_TENANT,
+        JobId("https://boards.greenhouse.io/acme/jobs/123"),
+        reason="not relevant right now",
+        deleted_at="2026-05-13T00:00:00Z",
+    )
+
+    summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-2")
+
+    assert summary.total == 1
+    assert summary.new_jobs == 0
+    assert summary.observed == 1
+    resurfaced = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
+    assert resurfaced is not None
+    assert resurfaced.is_deleted is False
+    tombstone = conn.execute(
+        "SELECT restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
+        ("https://boards.greenhouse.io/acme/jobs/123",),
+    ).fetchone()
+    assert tombstone is not None
+    assert tombstone["restored_at"] == "2026-05-12T00:00:00Z"
+
+
 def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     conn: sqlite3.Connection,
 ) -> None:
@@ -435,7 +469,10 @@ def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     rejected = publisher.events[0]
     assert rejected.payload["candidate_ids"][0] == "https://boards.greenhouse.io/acme/jobs/123"
     assert rejected.payload["reason"] == "confidence_below_threshold"
-    assert repo.list_observations(
-        LOCAL_TENANT,
-        JobId("https://boards.greenhouse.io/acme/jobs/123"),
-    )[0].run_id == "run-1"
+    assert (
+        repo.list_observations(
+            LOCAL_TENANT,
+            JobId("https://boards.greenhouse.io/acme/jobs/123"),
+        )[0].run_id
+        == "run-1"
+    )

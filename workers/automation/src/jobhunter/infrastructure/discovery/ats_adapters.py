@@ -43,6 +43,7 @@ from jobhunter.domain.discovery.value_objects import (
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.tenant import TenantId
 from jobhunter.infrastructure.discovery.location_filter import location_matches_target
+from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.observability.adapter_spans import adapter_fetch_span
 
 log = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ class WorkdayBoardAdapter:
         # filtered set (the API treats ``searchText`` as a soft hint).
         # Re-apply the filter on title so the adapter contract holds:
         # "yield postings matching the query".
-        if query.strip() and query.strip().lower() not in title.lower():
+        if not title_matches_query(title, query):
             return None
         canonical_url = f"{self._employer.base_url}/{self._employer.site_id}{external_path}"
         source_native_id = external_path.split("/")[-1] or external_path
@@ -337,7 +338,7 @@ class GreenhouseBoardAdapter:
         gh_id = raw.get("id")
         if not title or not absolute_url or gh_id is None:
             return None
-        if query.strip() and query.strip().lower() not in title.lower():
+        if not title_matches_query(title, query):
             # Lightweight server-side filter so callers can pass a
             # non-empty query without the API raising.
             return None
@@ -449,7 +450,7 @@ class LeverBoardAdapter:
         posting_id = str(raw.get("id") or "").strip()
         if not text or not hosted_url or not posting_id:
             return None
-        if query.strip() and query.strip().lower() not in text.lower():
+        if not title_matches_query(text, query):
             return None
         cats = raw.get("categories") or {}
         loc = str(cats.get("location") or "").strip() if isinstance(cats, dict) else ""
@@ -552,7 +553,7 @@ class AshbyBoardAdapter:
         posting_id = str(raw.get("id") or "").strip()
         if not title or not job_url or not posting_id:
             return None
-        if query.strip() and query.strip().lower() not in title.lower():
+        if not title_matches_query(title, query):
             return None
         loc = str(raw.get("location") or raw.get("locationName") or "").strip()
         if not location_matches_target(

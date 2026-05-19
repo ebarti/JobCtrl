@@ -13,7 +13,7 @@ import type {
   StageState,
   StageSummary,
 } from "./contracts.js";
-import { STAGES } from "./contracts.js";
+import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import {
   isValidTransition,
   deserializeStageStateKind,
@@ -361,6 +361,81 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
   return { ok: true, count: jobKeys.length, jobKeys };
 }
 
+export function hideJob(db: SqliteDatabase, jobKey: string, request: DeleteJobRequest = {}): JobMutationResponse {
+  return hideJobs(db, { allMatching: false, jobKeys: [jobKey], reason: request.reason });
+}
+
+export function hideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  ensureHiddenJobsTable(db);
+  const hiddenAt = new Date().toISOString();
+  const jobKeys = mutableJobKeys(db, request);
+  const statement = db.prepare(`
+    INSERT INTO jobhunter_hidden_jobs (job_url, hidden_at, reason, unhidden_at)
+    VALUES (?, ?, ?, NULL)
+    ON CONFLICT(job_url) DO UPDATE SET
+      hidden_at = excluded.hidden_at,
+      reason = excluded.reason,
+      unhidden_at = NULL
+  `);
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      statement.run(jobUrl, hiddenAt, request.reason ?? null);
+      recordActionEvent(db, {
+        jobUrl,
+        stage: currentMutableStage(db, jobUrl),
+        eventType: "JobHidden",
+        level: "info",
+        message: "Job hidden from the local API.",
+        payload: { reason: request.reason ?? "" },
+      });
+    }
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
+export function unhideJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
+  return unhideJobs(db, { allMatching: false, jobKeys: [jobKey] });
+}
+
+export function unhideJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  ensureHiddenJobsTable(db);
+  const unhiddenAt = new Date().toISOString();
+  const jobKeys = mutableJobKeys(db, request);
+  const statement = db.prepare("UPDATE jobhunter_hidden_jobs SET unhidden_at = ? WHERE job_url = ? AND unhidden_at IS NULL");
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      statement.run(unhiddenAt, jobUrl);
+      recordActionEvent(db, {
+        jobUrl,
+        stage: currentMutableStage(db, jobUrl),
+        eventType: "JobUnhidden",
+        level: "info",
+        message: "Job unhidden from hidden jobs.",
+        payload: {},
+      });
+    }
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
+export function permanentlyDeleteJob(db: SqliteDatabase, jobKey: string): JobMutationResponse {
+  return permanentlyDeleteJobs(db, { allMatching: false, jobKeys: [jobKey] });
+}
+
+export function permanentlyDeleteJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  const jobKeys = mutableJobKeys(db, request);
+  const transaction = db.transaction((keys: string[]) => {
+    for (const jobUrl of keys) {
+      purgeJobRows(db, jobUrl);
+    }
+    invalidateOperationsProjections(db);
+  });
+  transaction(jobKeys);
+  return { ok: true, count: jobKeys.length, jobKeys };
+}
+
 export function writeSettingsConfig(paths: { settingsPath: string }, request: SettingsUpdateRequest): SettingsResponse {
   const next = readJsonObject(paths.settingsPath);
   let wrote = false;
@@ -488,6 +563,18 @@ function ensureDeletedJobsTable(db: SqliteDatabase): void {
   ).run();
 }
 
+function ensureHiddenJobsTable(db: SqliteDatabase): void {
+  db.prepare(
+    `CREATE TABLE IF NOT EXISTS jobhunter_hidden_jobs (
+      job_url TEXT PRIMARY KEY,
+      hidden_at TEXT NOT NULL,
+      reason TEXT,
+      unhidden_at TEXT,
+      FOREIGN KEY(job_url) REFERENCES jobs(url)
+    )`,
+  ).run();
+}
+
 function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): string[] {
   if (request.allMatching) {
     return uniqueJobKeys(matchingJobKeys(db, request.filter ?? {}));
@@ -499,6 +586,50 @@ function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): st
 
 function uniqueJobKeys(jobKeys: string[]): string[] {
   return Array.from(new Set(jobKeys.map((jobKey) => jobKey.trim()).filter(Boolean)));
+}
+
+function purgeJobRows(db: SqliteDatabase, jobUrl: string): void {
+  deleteWhere(db, "jobhunter_deleted_jobs", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "jobhunter_hidden_jobs", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_stage_states", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_events", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_artifacts", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_scores", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_materials_artifacts", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_materials", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_enrichments", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_source_observations", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_canonical_identities", "job_url = ?", [jobUrl]);
+  deleteWhere(db, "job_duplicate_links", "surviving_job_id = ? OR superseded_job_or_observation_id = ?", [
+    jobUrl,
+    jobUrl,
+  ]);
+  deleteWhere(db, "apply_run_projections", "job_id = ?", [jobUrl]);
+  deleteWhere(db, "artifact_list_projections", "job_id = ?", [jobUrl]);
+  deleteWhere(db, "job_detail_projections", "job_id = ?", [jobUrl]);
+  deleteWhere(db, "job_list_projections", "job_id = ?", [jobUrl]);
+  deleteWhere(db, "discovery_quarantine_entries", "job_id = ? OR job_key = ? OR posting_url = ?", [
+    jobUrl,
+    jobUrl,
+    jobUrl,
+  ]);
+  deleteWhere(db, "discovery_feedback", "job_key = ?", [jobUrl]);
+  deleteWhere(db, "jobs", "url = ?", [jobUrl]);
+}
+
+function invalidateOperationsProjections(db: SqliteDatabase): void {
+  deleteWhere(db, "job_list_projections", "1 = 1", []);
+  deleteWhere(db, "job_detail_projections", "1 = 1", []);
+  deleteWhere(db, "artifact_list_projections", "1 = 1", []);
+  deleteWhere(db, "dashboard_projections", "1 = 1", []);
+  deleteWhere(db, "event_watermarks", "projection_name = ?", [PROJECTION_WATERMARK_NAME]);
+}
+
+function deleteWhere(db: SqliteDatabase, tableName: string, whereSql: string, params: SqliteValue[]): void {
+  if (!tableExists(db, tableName)) {
+    return;
+  }
+  db.prepare(`DELETE FROM ${tableName} WHERE ${whereSql}`).run(...params);
 }
 
 function ensureJobScoresTable(db: SqliteDatabase): void {

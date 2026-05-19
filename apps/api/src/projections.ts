@@ -515,6 +515,20 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (job.url) dirtyJobs.add(job.url);
     }
   }
+  if (tableExists(db, "jobs")) {
+    const missingProjectedJobs = allRows<{ url: string }>(
+      db,
+      `SELECT j.url
+       FROM jobs j
+       LEFT JOIN job_list_projections p
+         ON p.tenant_id = ? AND p.job_id = j.url
+       WHERE p.job_id IS NULL`,
+      [tenantId],
+    );
+    for (const job of missingProjectedJobs) {
+      if (job.url) dirtyJobs.add(job.url);
+    }
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
@@ -998,7 +1012,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const title = stringField(job.title) || "Untitled";
   const site = stringField(job.site);
   const applicationUrl = enrichment.applicationUrl ?? nullableString(job.application_url);
-  const employer = companyName(site, applicationUrl ?? jobUrl);
+  const employer = stringField(job.company) || companyName(site, applicationUrl ?? jobUrl);
 
   const firstActionable =
     stages.find((s) => !["succeeded", "skipped"].includes(s.state)) ?? stages[stages.length - 1];
@@ -1290,6 +1304,12 @@ function pdfSibling(value: string | null | undefined): string | null {
 }
 
 function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void {
+  const hiddenWhere = tableExists(db, "jobhunter_hidden_jobs")
+    ? `AND NOT EXISTS (
+         SELECT 1 FROM jobhunter_hidden_jobs h
+         WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
+       )`
+    : "";
   const rows = allRows<{
     job_id: string;
     current_stage: string;
@@ -1303,7 +1323,9 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     db,
     `SELECT job_id, current_stage, current_state, apply_status, applied_at,
             deleted_at, fit_score, source
-     FROM job_list_projections WHERE tenant_id = ?`,
+     FROM job_list_projections jlp
+     WHERE tenant_id = ?
+       ${hiddenWhere}`,
     [tenantId],
   );
   const active = rows.filter((row) => !row.deleted_at);
@@ -1320,12 +1342,21 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   ).length;
   let dryRuns = 0;
   if (tableExists(db, "apply_run_projections")) {
-    if (tableExists(db, "jobhunter_deleted_jobs")) {
+    if (tableExists(db, "jobhunter_deleted_jobs") || tableExists(db, "jobhunter_hidden_jobs")) {
+      const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
+        ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
+        : "";
+      const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+        ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
+        : "";
+      const hiddenWhere = [
+        tableExists(db, "jobhunter_deleted_jobs") ? "d.job_url IS NULL" : "",
+        tableExists(db, "jobhunter_hidden_jobs") ? "h.job_url IS NULL" : "",
+      ].filter(Boolean).join(" AND ");
       const dryRunsRow = getRow<{ c: number }>(
         db,
-        `SELECT COUNT(*) AS c FROM apply_run_projections arp
-         LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL
-         WHERE arp.dry_run = 1 AND d.job_url IS NULL`,
+        `SELECT COUNT(*) AS c FROM apply_run_projections arp${deletedJoin}${hiddenJoin}
+         WHERE arp.dry_run = 1 AND ${hiddenWhere}`,
       );
       dryRuns = dryRunsRow ? Number(dryRunsRow.c) : 0;
     } else {

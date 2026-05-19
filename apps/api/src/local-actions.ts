@@ -45,6 +45,8 @@ export interface ActionDispatchResult {
   status: string;
   actionId?: string;
   runId?: string;
+  workflowId?: string;
+  firstExecutionRunId?: string;
   result?: unknown;
   message?: string;
 }
@@ -124,15 +126,32 @@ export function createActionDispatcher(
     }
     if (rpcCall.method === "apply") {
       // workflow start — server returns { runId } (the Temporal workflow id).
-      const runId = extractRunId(response.result);
+      const workflowStart = extractWorkflowStart(response.result);
       const result: ActionDispatchResult = {
         status: "queued",
         result: response.result,
       };
-      if (runId) result.runId = runId;
+      if (workflowStart.runId) result.runId = workflowStart.runId;
+      if (workflowStart.workflowId) result.workflowId = workflowStart.workflowId;
+      if (workflowStart.firstExecutionRunId) {
+        result.firstExecutionRunId = workflowStart.firstExecutionRunId;
+      }
       return result;
     }
     if (rpcCall.method === "run_stage") {
+      const workflowStart = extractWorkflowStart(response.result);
+      if (workflowStart.runId) {
+        const result: ActionDispatchResult = {
+          status: "queued",
+          runId: workflowStart.runId,
+          result: response.result,
+        };
+        if (workflowStart.workflowId) result.workflowId = workflowStart.workflowId;
+        if (workflowStart.firstExecutionRunId) {
+          result.firstExecutionRunId = workflowStart.firstExecutionRunId;
+        }
+        return result;
+      }
       const status = extractStatus(response.result) ?? "succeeded";
       const result: ActionDispatchResult = {
         status,
@@ -260,6 +279,12 @@ export function buildActionResponse(
   if (dispatch.message) {
     response.message = dispatch.message;
   }
+  if (dispatch.workflowId) {
+    response.workflowId = dispatch.workflowId;
+  }
+  if (dispatch.firstExecutionRunId) {
+    response.firstExecutionRunId = dispatch.firstExecutionRunId;
+  }
   if (extra.stage) {
     response.stage = extra.stage;
   }
@@ -303,9 +328,16 @@ function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
 }
 
 function runStageRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+  const stages =
+    command.stages && command.stages.length > 0
+      ? command.stages
+      : command.stage
+        ? [command.stage]
+        : [];
   const params: Record<string, unknown> = {
     tenantId: "local",
     stage: command.stage,
+    stages,
     limit: command.limit ?? 25,
     workers: command.workers ?? 1,
     minScore: command.minScore ?? 7,
@@ -313,6 +345,9 @@ function runStageRpcParams(command: ActionCommandPayload): Record<string, unknow
     dryRun: command.dryRun ?? false,
     rescore: Boolean(command.rescore),
     retailor: Boolean(command.retailor),
+    headless: Boolean(command.headless),
+    model: command.model ?? "haiku",
+    continuous: Boolean(command.continuous),
   };
   if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
     params.jobUrl = command.jobKey;
@@ -337,10 +372,19 @@ function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> 
   return params;
 }
 
-function extractRunId(result: unknown): string | null {
-  if (!isRecord(result)) return null;
-  const runId = result.runId;
-  return typeof runId === "string" ? runId : null;
+function extractWorkflowStart(result: unknown): {
+  runId: string | null;
+  workflowId: string | null;
+  firstExecutionRunId: string | null;
+} {
+  if (!isRecord(result)) {
+    return { runId: null, workflowId: null, firstExecutionRunId: null };
+  }
+  const runId = typeof result.runId === "string" ? result.runId : null;
+  const workflowId = typeof result.workflowId === "string" ? result.workflowId : null;
+  const firstExecutionRunId =
+    typeof result.firstExecutionRunId === "string" ? result.firstExecutionRunId : null;
+  return { runId, workflowId, firstExecutionRunId };
 }
 
 function extractActionId(result: unknown): string | null {

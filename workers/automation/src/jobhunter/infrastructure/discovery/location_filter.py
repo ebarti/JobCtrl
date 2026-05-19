@@ -8,11 +8,157 @@ from typing import Any
 
 
 REMOTE_MARKERS = ("remote", "anywhere", "work from home", "wfh", "distributed")
+US_LOCATION_ALIASES = (
+    "usa",
+    "us",
+    "u.s.",
+    "u.s.a.",
+    "united states",
+    "alabama",
+    "alaska",
+    "arizona",
+    "arkansas",
+    "california",
+    "colorado",
+    "connecticut",
+    "delaware",
+    "florida",
+    "georgia",
+    "hawaii",
+    "idaho",
+    "illinois",
+    "indiana",
+    "iowa",
+    "kansas",
+    "kentucky",
+    "louisiana",
+    "maine",
+    "maryland",
+    "massachusetts",
+    "michigan",
+    "minnesota",
+    "mississippi",
+    "missouri",
+    "montana",
+    "nebraska",
+    "nevada",
+    "new hampshire",
+    "new jersey",
+    "new mexico",
+    "new york",
+    "north carolina",
+    "north dakota",
+    "ohio",
+    "oklahoma",
+    "oregon",
+    "pennsylvania",
+    "rhode island",
+    "south carolina",
+    "south dakota",
+    "tennessee",
+    "texas",
+    "utah",
+    "vermont",
+    "virginia",
+    "washington",
+    "washington dc",
+    "west virginia",
+    "wisconsin",
+    "wyoming",
+    "al",
+    "ak",
+    "az",
+    "ar",
+    "ca",
+    "co",
+    "ct",
+    "de",
+    "fl",
+    "ga",
+    "hi",
+    "id",
+    "il",
+    "in",
+    "ia",
+    "ks",
+    "ky",
+    "la",
+    "me",
+    "md",
+    "ma",
+    "mi",
+    "mn",
+    "ms",
+    "mo",
+    "mt",
+    "ne",
+    "nv",
+    "nh",
+    "nj",
+    "nm",
+    "ny",
+    "nc",
+    "nd",
+    "oh",
+    "ok",
+    "or",
+    "pa",
+    "ri",
+    "sc",
+    "sd",
+    "tn",
+    "tx",
+    "ut",
+    "vt",
+    "va",
+    "wa",
+    "dc",
+    "wv",
+    "wi",
+    "wy",
+)
+CANADA_LOCATION_ALIASES = (
+    "canada",
+    "canadian",
+    "can",
+    "ca",
+    "alberta",
+    "british columbia",
+    "manitoba",
+    "new brunswick",
+    "newfoundland",
+    "newfoundland and labrador",
+    "northwest territories",
+    "nova scotia",
+    "nunavut",
+    "ontario",
+    "prince edward island",
+    "quebec",
+    "québec",
+    "saskatchewan",
+    "yukon",
+    "ab",
+    "bc",
+    "mb",
+    "nb",
+    "nl",
+    "nt",
+    "ns",
+    "nu",
+    "on",
+    "pe",
+    "qc",
+    "sk",
+    "yt",
+)
 REJECT_ALIASES = {
-    "usa": ("usa", "us", "u.s.", "u.s.a.", "united states"),
-    "u.s.": ("usa", "us", "u.s.", "u.s.a.", "united states"),
-    "u.s.a.": ("usa", "us", "u.s.", "u.s.a.", "united states"),
-    "united states": ("usa", "us", "u.s.", "u.s.a.", "united states"),
+    "usa": US_LOCATION_ALIASES,
+    "us": US_LOCATION_ALIASES,
+    "u.s.": US_LOCATION_ALIASES,
+    "u.s.a.": US_LOCATION_ALIASES,
+    "united states": US_LOCATION_ALIASES,
+    "canada": CANADA_LOCATION_ALIASES,
+    "canada only": CANADA_LOCATION_ALIASES,
 }
 
 
@@ -41,20 +187,21 @@ def location_matches_target(
     rejected for a Spain/Europe search while "Remote EMEA" still passes.
     """
 
+    concrete_accept = _concrete_accept_patterns(accept)
     if not location:
-        return True
+        return not concrete_accept
 
     normalized = _normalize(location)
     if _matches_reject(normalized, reject):
         return False
 
-    if search_location and _matches(normalized, search_location):
+    if search_location and _matches(normalized, search_location) and not concrete_accept:
         return True
 
-    if _matches_any(normalized, accept):
+    if _matches_any(normalized, concrete_accept):
         return True
 
-    return _matches_any(normalized, REMOTE_MARKERS)
+    return not concrete_accept and _matches_any(normalized, REMOTE_MARKERS)
 
 
 def _string_list(value: object) -> list[str]:
@@ -76,6 +223,10 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 def _matches_any(location: str, patterns: Sequence[str]) -> bool:
     return any(_matches(location, pattern) for pattern in patterns)
+
+
+def _concrete_accept_patterns(patterns: Sequence[str]) -> list[str]:
+    return [pattern for pattern in patterns if _normalize(pattern) not in REMOTE_MARKERS]
 
 
 def _matches_reject(location: str, patterns: Sequence[str]) -> bool:

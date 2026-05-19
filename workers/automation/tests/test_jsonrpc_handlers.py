@@ -6,17 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from jobhunter import actions
 from jobhunter.actions import LocalActionRequest, LocalActionResult
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.domain.rpc.messages import (
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     JsonRpcRequest,
+    WorkflowStartSpec,
 )
 from jobhunter.infrastructure.rpc import handlers as handlers_mod
 from jobhunter.infrastructure.rpc.handlers import register_default_handlers
 from jobhunter.infrastructure.rpc.server import JsonRpcServer
+from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 
 
 class _StubHandle:
@@ -230,41 +231,100 @@ def test_missing_tenant_id_falls_back_to_local(tmp_db: Path, caplog) -> None:
 
 
 # ---------------------------------------------------------------------------
-# run_stage / apply / profile_import — delegate to actions.run_local_action
+# run_stage / apply / profile_import
 # ---------------------------------------------------------------------------
 
 
-def test_run_stage_delegates_to_run_local_action(tmp_db: Path, monkeypatch) -> None:
+def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("pipeline-wf", "pipeline-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="run_stage",
+            params={
+                "tenantId": "local",
+                "stage": "score",
+                "stages": ["score", "tailor"],
+                "limit": 5,
+                "workers": 2,
+                "minScore": 8,
+                "validationMode": "strict",
+                "dryRun": True,
+                "rescore": True,
+                "retailor": True,
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    body = response.to_dict()
+    assert body["result"] == {
+        "runId": "pipeline-wf",
+        "workflowId": "pipeline-wf",
+        "firstExecutionRunId": "pipeline-run",
+    }
+    assert len(seen) == 1
+    assert seen[0].workflow is JobPipelineWorkflow
+    (payload,) = seen[0].args
+    assert payload == JobPipelineWorkflowInput(
+        tenant_id="local",
+        stages=["score", "tailor"],
+        min_score=8,
+        workers=2,
+        limit=5,
+        validation_mode="strict",
+        dry_run=True,
+        rescore=True,
+        retailor=True,
+    )
+
+
+def test_profile_import_remains_sync_local_action(tmp_db: Path, monkeypatch) -> None:
     captured: list[LocalActionRequest] = []
+    started_workflows: list[WorkflowStartSpec] = []
 
     def fake_run(request: LocalActionRequest) -> LocalActionResult:
         captured.append(request)
         return LocalActionResult(
             ok=True,
-            action_id="act-1",
+            action_id="act-profile",
             stage=request.stage,
             status="succeeded",
             started_at="t0",
             finished_at="t1",
             duration_ms=1,
+            result={"draft": {}},
         )
 
-    monkeypatch.setattr(handlers_mod, "run_local_action", fake_run)
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        started_workflows.append(spec)
+        return _StubHandle("unexpected-wf")
 
-    server = _server()
+    monkeypatch.setattr(handlers_mod, "run_local_action", fake_run)
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
     response = server.dispatch(
         JsonRpcRequest(
-            method="run_stage",
-            params={"tenantId": "local", "stage": "score", "limit": 5, "workers": 2},
+            method="profile_import",
+            params={"tenantId": "local", "pdfPath": "/tmp/resume.pdf"},
             id=1,
         )
     )
     assert response is not None
     body = response.to_dict()
     assert body["result"]["ok"] is True
-    assert captured[0].stage == "score"
-    assert captured[0].limit == 5
-    assert captured[0].workers == 2
+    assert captured[0].stage == "profile_import"
+    assert captured[0].pdf_path == "/tmp/resume.pdf"
+    assert started_workflows == []
 
 
 def test_profile_import_requires_pdf_path(tmp_db: Path) -> None:
@@ -272,7 +332,3 @@ def test_profile_import_requires_pdf_path(tmp_db: Path) -> None:
     response = server.dispatch(JsonRpcRequest(method="profile_import", params={"tenantId": "local"}, id=1))
     assert response is not None
     assert response.to_dict()["error"]["code"] == INVALID_PARAMS
-
-
-# Silence unused-import warnings.
-_ = actions

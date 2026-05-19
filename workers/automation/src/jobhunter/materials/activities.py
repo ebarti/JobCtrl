@@ -22,6 +22,7 @@ class TailorActivityInput:
     limit: int = 0
     workers: int = 1
     validation_mode: str = "normal"
+    dry_run: bool = False
     retailor: bool = False
 
 
@@ -48,6 +49,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
             workers=payload.workers,
             validation_mode=payload.validation_mode,
             limit=payload.limit,
+            dry_run=payload.dry_run,
             retailor=payload.retailor,
         )
 
@@ -80,6 +82,7 @@ class CoverActivityInput:
     min_score: int = 7
     limit: int = 0
     validation_mode: str = "normal"
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
             min_score=payload.min_score,
             validation_mode=payload.validation_mode,
             limit=payload.limit,
+            dry_run=payload.dry_run,
         )
 
     result = await run_blocking_with_heartbeat(
@@ -133,6 +137,7 @@ class PdfActivityInput:
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     limit: int = 0
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,7 +157,11 @@ async def pdf_activity(payload: PdfActivityInput) -> PdfActivityOutput:
     from jobhunter.pipeline import run_pipeline
 
     def _do() -> dict[str, Any]:
-        return run_pipeline(stages=["pdf"], limit=payload.limit)
+        return run_pipeline(
+            stages=["pdf"],
+            limit=payload.limit,
+            dry_run=payload.dry_run,
+        )
 
     result = await run_blocking_with_heartbeat(
         _do,

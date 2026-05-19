@@ -10,7 +10,9 @@ export interface JobBulkActionsProps {
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
   onClearSelection: () => void;
-  onMutateSelected: () => void;
+  onPrimaryAction: () => void;
+  onHideSelected: () => void;
+  onPermanentlyDeleteSelected: () => void;
 }
 
 export function JobBulkActions({
@@ -23,9 +25,13 @@ export function JobBulkActions({
   onSelectPage,
   onSelectAllMatching,
   onClearSelection,
-  onMutateSelected,
+  onPrimaryAction,
+  onHideSelected,
+  onPermanentlyDeleteSelected,
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
+  const hidden = search.deleted === "hidden";
+  const primaryLabel = hidden ? "unhide selected" : restoring ? "restore selected" : "delete selected";
   return (
     <div className="bulk-bar">
       <div className="tabs">
@@ -43,6 +49,13 @@ export function JobBulkActions({
         >
           deleted jobs
         </button>
+        <button
+          className={`tab ${hidden ? "on" : ""}`}
+          type="button"
+          onClick={() => onSetDeleted("hidden")}
+        >
+          hidden jobs
+        </button>
       </div>
       <span className="meta">
         {selectedCount ? `${selectedCount} selected` : "select jobs to manage"}
@@ -56,13 +69,33 @@ export function JobBulkActions({
       <button className="tab" type="button" disabled={!selectedCount} onClick={onClearSelection}>
         clear selected
       </button>
+      {!hidden ? (
+        <button
+          className="tab danger-action"
+          type="button"
+          disabled={!selectedCount || loading}
+          onClick={onHideSelected}
+        >
+          hide selected
+        </button>
+      ) : null}
+      {restoring || hidden ? (
+        <button
+          className="tab danger-action"
+          type="button"
+          disabled={!selectedCount || loading}
+          onClick={onPermanentlyDeleteSelected}
+        >
+          delete permanently selected
+        </button>
+      ) : null}
       <button
-        className={`tab ${restoring ? "on" : "danger-action"}`}
+        className={`tab ${restoring || hidden ? "on" : "danger-action"}`}
         type="button"
         disabled={!selectedCount || loading}
-        onClick={onMutateSelected}
+        onClick={onPrimaryAction}
       >
-        {restoring ? "restore selected" : "delete selected"}
+        {primaryLabel}
       </button>
     </div>
   );

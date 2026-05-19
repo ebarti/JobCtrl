@@ -72,6 +72,7 @@ export const sampleJob: JobSummary = {
   applyStatus: null,
   appliedAt: null,
   deletedAt: null,
+  hiddenAt: null,
 };
 
 export const sampleSecondaryJob: JobSummary = {

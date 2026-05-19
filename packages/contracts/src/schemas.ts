@@ -22,7 +22,7 @@ export const STAGE_STATES = [
   "stale",
 ] as const;
 export type StageState = (typeof STAGE_STATES)[number];
-export const JOB_DELETED_FILTERS = ["active", "deleted", "all"] as const;
+export const JOB_DELETED_FILTERS = ["active", "deleted", "hidden", "all"] as const;
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
 
 export const JOB_SORT_FIELDS = [
@@ -563,6 +563,7 @@ export interface JobSummary {
   applyStatus: string | null;
   appliedAt: string | null;
   deletedAt: string | null;
+  hiddenAt: string | null;
 }
 
 export interface ArtifactSummary {
@@ -710,7 +711,7 @@ export interface ActionCommandPayload {
     | "profile_import";
   jobKey: string;
   stage?: Stage;
-  stages?: MaterialStage[];
+  stages?: Stage[];
   resetAttempts?: boolean;
   runAfter?: boolean;
   dryRun?: boolean;
@@ -730,6 +731,8 @@ export interface ActionCommandPayload {
 export interface ActionRunResponse {
   ok: true;
   runId: string;
+  workflowId?: string;
+  firstExecutionRunId?: string;
   actionId: string;
   action: ActionCommandPayload["action"];
   status: string;

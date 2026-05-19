@@ -116,8 +116,9 @@ For development of the local TypeScript API and current React/Vite shell:
 pnpm test
 ```
 
-Discovery can use `python-jobspy` when installed. If `jobhunter doctor` reports
-that JobSpy is missing, install it with the command shown by the doctor output.
+Discovery includes `python-jobspy` for broad-board scraping through JobSpy.
+If `jobhunter doctor` reports JobSpy is missing, rerun
+`uv --project workers/automation sync`.
 
 ## First-Time Setup
 
@@ -257,6 +258,15 @@ pnpm web:dev
 
 The Vite dev server proxies `/v1/*` to the local API by default. Set
 `VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
+
+The Jobs tab separates temporary removal from permanent suppression. Deleting a
+job moves it to the Deleted tab; a later discovery run can resurface that job if
+the posting is found again. Hiding a job moves it to the Hidden tab and keeps it
+hidden across future discovery runs until you select it there and use **unhide
+selected**. Deleted and hidden rows can also be permanently deleted from the
+local database; discovery can add the same posting again later because that
+action clears the delete/hide tombstones instead of creating a new suppression
+record.
 
 The Pipelines tab includes global stage starts. Each stage (`discover`,
 `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has its own tab with

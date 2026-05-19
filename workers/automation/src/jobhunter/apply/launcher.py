@@ -98,7 +98,7 @@ _claude_procs: dict[int, subprocess.Popen] = {}
 _claude_lock = threading.Lock()
 
 atexit.register(cleanup_on_exit)
-if platform.system() != "Windows":
+if platform.system() != "Windows" and threading.current_thread() is threading.main_thread():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
@@ -1220,6 +1220,7 @@ def main(
     poll_interval: int = 60,
     workers: int = 1,
     snapshot: ProfileSnapshot | None = None,
+    install_signal_handlers: bool = True,
 ) -> tuple[int, int]:
     global POLL_INTERVAL
     POLL_INTERVAL = poll_interval
@@ -1281,7 +1282,8 @@ def main(
             kill_all_chrome()
             raise KeyboardInterrupt
 
-    signal.signal(signal.SIGINT, _sigint_handler)
+    if install_signal_handlers:
+        signal.signal(signal.SIGINT, _sigint_handler)
 
     try:
         with Live(render_full(), console=console, refresh_per_second=2) as live:

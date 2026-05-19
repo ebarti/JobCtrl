@@ -80,11 +80,29 @@ export class FetchApiClientAdapter implements ApiClientPort {
   deleteJobs(body: Parameters<JobHunterApiClient["deleteJobs"]>[0]) {
     return this.client.deleteJobs(body);
   }
+  permanentlyDeleteJob(jobKey: string) {
+    return this.client.permanentlyDeleteJob(jobKey);
+  }
+  permanentlyDeleteJobs(body: Parameters<JobHunterApiClient["permanentlyDeleteJobs"]>[0]) {
+    return this.client.permanentlyDeleteJobs(body);
+  }
   restoreJob(jobKey: string) {
     return this.client.restoreJob(jobKey);
   }
   restoreJobs(body: Parameters<JobHunterApiClient["restoreJobs"]>[0]) {
     return this.client.restoreJobs(body);
+  }
+  hideJob(jobKey: string, body: Parameters<JobHunterApiClient["hideJob"]>[1] = {}) {
+    return this.client.hideJob(jobKey, body);
+  }
+  hideJobs(body: Parameters<JobHunterApiClient["hideJobs"]>[0]) {
+    return this.client.hideJobs(body);
+  }
+  unhideJob(jobKey: string) {
+    return this.client.unhideJob(jobKey);
+  }
+  unhideJobs(body: Parameters<JobHunterApiClient["unhideJobs"]>[0]) {
+    return this.client.unhideJobs(body);
   }
   correctScore(jobKey: string, body: Parameters<JobHunterApiClient["correctScore"]>[1]) {
     return this.client.correctScore(jobKey, body);

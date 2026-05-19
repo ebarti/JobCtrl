@@ -168,12 +168,36 @@ export class JobHunterApiClient {
     return this.post("/v1/jobs/bulk-delete", body);
   }
 
+  permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse> {
+    return this.delete(`/v1/jobs/${encodeURIComponent(jobKey)}/permanent`);
+  }
+
+  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-delete-permanent", body);
+  }
+
   restoreJob(jobKey: string): Promise<JobMutationResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/restore`);
   }
 
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
     return this.post("/v1/jobs/bulk-restore", body);
+  }
+
+  hideJob(jobKey: string, body: DeleteJobRequest = {}): Promise<JobMutationResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/hide`, body);
+  }
+
+  hideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-hide", body);
+  }
+
+  unhideJob(jobKey: string): Promise<JobMutationResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/unhide`);
+  }
+
+  unhideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-unhide", body);
   }
 
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {

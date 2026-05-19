@@ -4,7 +4,10 @@ import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
+import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
+import { usePermanentlyDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/usePermanentlyDeleteJobsBulkMutation.js";
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
+import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
@@ -45,7 +48,10 @@ export function JobsView() {
 
   const { data, isFetching, error } = useJobsListQuery(jobsListInput(search));
   const deleteJobs = useDeleteJobsBulkMutation();
+  const hideJobs = useHideJobsBulkMutation();
+  const permanentlyDeleteJobs = usePermanentlyDeleteJobsBulkMutation();
   const restoreJobs = useRestoreJobsBulkMutation();
+  const unhideJobs = useUnhideJobsBulkMutation();
   const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -133,29 +139,46 @@ export function JobsView() {
   };
 
   const restoring = search.deleted === "deleted";
-  const mutation = restoring ? restoreJobs : deleteJobs;
-  const mutateBusy = mutation.isPending;
+  const hidden = search.deleted === "hidden";
+  const primaryMutation = hidden ? unhideJobs : restoring ? restoreJobs : deleteJobs;
+  const mutateBusy =
+    deleteJobs.isPending ||
+    hideJobs.isPending ||
+    permanentlyDeleteJobs.isPending ||
+    restoreJobs.isPending ||
+    unhideJobs.isPending;
 
-  const mutateSelected = () => {
+  const selectedPayload = (): BulkJobMutationRequest =>
+    allMatchingSelected
+      ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
+      : { allMatching: false, jobKeys: selectedKeys };
+
+  const mutateSelected = (
+    mutation: typeof deleteJobs,
+    label: string,
+  ) => {
     const count = allMatchingSelected ? (data?.pagination.total ?? 0) : selectedKeys.length;
     if (!count) {
       return;
     }
-    if (
-      !window.confirm(
-        `${restoring ? "Restore" : "Soft delete"} ${count} selected job${
-          count === 1 ? "" : "s"
-        }?`,
-      )
-    ) {
+    if (!window.confirm(`${label} ${count} selected job${count === 1 ? "" : "s"}?`)) {
       return;
     }
-    const payload: BulkJobMutationRequest = allMatchingSelected
-      ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
-      : { allMatching: false, jobKeys: selectedKeys };
-    mutation.mutate(payload, {
+    mutation.mutate(selectedPayload(), {
       onSuccess: () => clearSelection(),
     });
+  };
+
+  const mutatePrimarySelected = () => {
+    mutateSelected(primaryMutation, hidden ? "Unhide" : restoring ? "Restore" : "Delete");
+  };
+
+  const hideSelected = () => {
+    mutateSelected(hideJobs, "Hide");
+  };
+
+  const permanentlyDeleteSelected = () => {
+    mutateSelected(permanentlyDeleteJobs, "Permanently delete");
   };
 
   const selectedCount = allMatchingSelected
@@ -186,7 +209,9 @@ export function JobsView() {
           onSelectPage={selectPage}
           onSelectAllMatching={selectAllMatching}
           onClearSelection={clearSelection}
-          onMutateSelected={mutateSelected}
+          onPrimaryAction={mutatePrimarySelected}
+          onHideSelected={hideSelected}
+          onPermanentlyDeleteSelected={permanentlyDeleteSelected}
         />
         <JobsTable
           data={data ?? null}

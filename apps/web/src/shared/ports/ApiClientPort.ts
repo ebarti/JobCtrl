@@ -97,8 +97,14 @@ export interface ApiClientPort {
   job(jobKey: string): Promise<JobDetail>;
   deleteJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
   deleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  permanentlyDeleteJob(jobKey: string): Promise<JobMutationResponse>;
+  permanentlyDeleteJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   restoreJob(jobKey: string): Promise<JobMutationResponse>;
   restoreJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  hideJob(jobKey: string, body?: DeleteJobRequest): Promise<JobMutationResponse>;
+  hideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  unhideJob(jobKey: string): Promise<JobMutationResponse>;
+  unhideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;

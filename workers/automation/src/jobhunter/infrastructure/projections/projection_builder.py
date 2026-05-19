@@ -377,7 +377,7 @@ class ProjectionBuilder:
             enrichment.get("application_url")
             or _row_nullable_str(job_row, "application_url")
         )
-        employer = _company_name(site, application_url or job_url)
+        employer = _row_str(job_row, "company") or _company_name(site, application_url or job_url)
 
         # currentStage/State: first non-succeeded/non-skipped stage.
         current_stage = "discover"
@@ -1145,7 +1145,7 @@ class ProjectionBuilder:
         # "Untitled" / "Unknown company".
         try:
             meta = self._conn.execute(
-                "SELECT title, site FROM jobs WHERE url = ? LIMIT 1",
+                "SELECT title, site, company FROM jobs WHERE url = ? LIMIT 1",
                 (job_url,),
             ).fetchone()
         except sqlite3.OperationalError:
@@ -1154,7 +1154,8 @@ class ProjectionBuilder:
             title = _row_str(meta, "title") or title
             site = _row_str(meta, "site") or site
 
-        employer = _company_name(site, job_url)
+        employer = _row_str(meta, "company") if meta is not None else ""
+        employer = employer or _company_name(site, job_url)
 
         events_payload: list[dict] = []
         for event in events:

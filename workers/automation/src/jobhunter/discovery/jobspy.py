@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 
 from jobhunter import config
-from jobhunter.database import get_connection, init_db
+from jobhunter.database import get_connection, init_db, resurface_deleted_job
 
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobhunter.infrastructure.network`` so the Enrichment context's
@@ -24,6 +24,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
             continue
 
         title = str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None
+        company = _nullable_str(row.get("company"))
         location_str = str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None
 
         # Build salary string from min/max
@@ -132,12 +134,13 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
 
         try:
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, "
+                "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at, "
                 "full_description, application_url, detail_scraped_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     url,
                     title,
+                    company,
                     salary,
                     description,
                     location_str,
@@ -151,10 +154,39 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
             )
             new += 1
         except sqlite3.IntegrityError:
+            if company:
+                cursor = conn.execute(
+                    "UPDATE jobs SET company = ? WHERE url = ? AND (company IS NULL OR company = '')",
+                    (company, url),
+                )
+                if cursor.rowcount:
+                    from jobhunter.state import record_job_event
+
+                    record_job_event(
+                        conn,
+                        url,
+                        "discover",
+                        "JobMetadataUpdated",
+                        message="Job company backfilled from JobSpy",
+                        payload={"company": company, "source": site_label},
+                        occurred_at=now,
+                    )
+            resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     conn.commit()
     return new, existing
+
+
+def _nullable_str(value: object) -> str | None:
+    text = str(value).strip()
+    if not text or text == "nan":
+        return None
+    return text
+
+
+def _title_ok(title: str | None, query: str | None) -> bool:
+    return title_matches_query(title, query)
 
 
 # -- Single search execution -------------------------------------------------
@@ -207,6 +239,8 @@ def _run_one_search(
         try:
             df = _scrape_with_retry(kwargs, max_retries=max_retries)
             all_dfs.append(df)
+        except ImportError:
+            raise
         except Exception as e:
             log.error("[%s] (non-gd): %s", label, e)
 
@@ -228,6 +262,8 @@ def _run_one_search(
         try:
             gd_df = _scrape_with_retry(gd_kwargs, max_retries=max_retries)
             all_dfs.append(gd_df)
+        except ImportError:
+            raise
         except Exception as e:
             log.error("[%s] (glassdoor): %s", label, e)
 
@@ -246,7 +282,7 @@ def _run_one_search(
         log.info("[%s] 0 results", label)
         return {"new": 0, "existing": 0, "errors": 0, "filtered": 0, "total": 0, "label": label}
 
-    # Filter by location before storing
+    # Filter by role title and location before storing.
     before = len(df)
     df = df[
         df.apply(
@@ -258,14 +294,28 @@ def _run_one_search(
             axis=1,
         )
     ]
-    filtered = before - len(df)
+    location_filtered = before - len(df)
+    after_location = len(df)
+    df = df[
+        df.apply(
+            lambda row: _title_ok(
+                str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
+                s["query"],
+            ),
+            axis=1,
+        )
+    ]
+    title_filtered = after_location - len(df)
+    filtered = location_filtered + title_filtered
 
     conn = get_connection()
     new, existing = store_jobspy_results(conn, df, s["query"], limit=limit)
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
-    if filtered:
-        msg += f", {filtered} filtered (location)"
+    if location_filtered:
+        msg += f", {location_filtered} filtered (location)"
+    if title_filtered:
+        msg += f", {title_filtered} filtered (title)"
     log.info(msg)
 
     return {"new": new, "existing": existing, "errors": 0, "filtered": filtered, "total": before, "label": label}
@@ -357,8 +407,6 @@ def _full_crawl(
     """Run all search queries from search config across all locations."""
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
-    if limit > 0 and sites:
-        sites = sites[:1]
 
     # Build search combinations from config
     queries = search_cfg.get("queries", [])
@@ -396,6 +444,8 @@ def _full_crawl(
     total_new = 0
     total_existing = 0
     total_errors = 0
+    total_found = 0
+    total_filtered = 0
     completed = 0
 
     for s in searches:
@@ -419,6 +469,8 @@ def _full_crawl(
         total_new += result["new"]
         total_existing += result["existing"]
         total_errors += result["errors"]
+        total_found += result.get("total", 0)
+        total_filtered += result.get("filtered", 0)
 
         if completed % 5 == 0 or completed == len(searches):
             log.info(
@@ -441,11 +493,16 @@ def _full_crawl(
         total_errors,
         db_total,
     )
+    if completed > 0 and total_errors == completed and total_new + total_existing == 0:
+        raise RuntimeError(f"JobSpy failed for all {completed} search combination(s)")
 
     return {
+        "total": total_new + total_existing,
+        "raw_total": total_found,
         "new": total_new,
         "existing": total_existing,
         "errors": total_errors,
+        "filtered": total_filtered,
         "db_total": db_total,
         "queries": completed,
     }

@@ -210,24 +210,33 @@ export function StructuredProfileEditor({
     label: string,
     type = "text",
     attrs: Record<string, unknown> = {},
-  ) => (
-    <label className="field">
-      <span>{label}</span>
-      <input
-        {...attrs}
-        type={type}
-        value={textAt(profile, path)}
-        onChange={(event) =>
-          updateProfilePath(
-            path,
-            type === "number" ? constrainedNumberOrEmpty(event.target.value, attrs) : event.target.value,
-          )
-        }
-      />
-    </label>
-  );
+  ) => {
+    const { valueKind, ...inputAttrs } = attrs;
+    return (
+      <label className="field">
+        <span>{label}</span>
+        <input
+          {...inputAttrs}
+          type={type}
+          value={textAt(profile, path)}
+          onChange={(event) =>
+            updateProfilePath(
+              path,
+              type === "number"
+                ? constrainedNumberOrEmpty(event.target.value, attrs, valueKind === "text")
+                : event.target.value,
+            )
+          }
+        />
+      </label>
+    );
+  };
 
-  const constrainedNumberOrEmpty = (value: string, attrs: Record<string, unknown>) => {
+  const constrainedNumberOrEmpty = (
+    value: string,
+    attrs: Record<string, unknown>,
+    keepText = false,
+  ) => {
     const parsed = numberOrEmpty(value);
     if (parsed === "" || typeof parsed !== "number") {
       return parsed;
@@ -237,7 +246,8 @@ export function StructuredProfileEditor({
     }
     const min = typeof attrs["min"] === "number" ? attrs["min"] : undefined;
     const max = typeof attrs["max"] === "number" ? attrs["max"] : undefined;
-    return Math.min(max ?? parsed, Math.max(min ?? parsed, parsed));
+    const constrained = Math.min(max ?? parsed, Math.max(min ?? parsed, parsed));
+    return keepText ? String(constrained) : constrained;
   };
 
   const years = profileYearOptions();
@@ -650,6 +660,7 @@ export function StructuredProfileEditor({
               {textField("experience.years_of_experience_total", "Total years of experience", "number", {
                 min: 0,
                 step: 1,
+                valueKind: "text",
               })}
               {textField("experience.education_level", "Education level")}
               {textField("experience.current_job_title", "Current job title")}
@@ -949,16 +960,19 @@ export function StructuredProfileEditor({
               {selectField("availability.available_for_contract", "Available for contract", ["No", "Yes"])}
               {textField("compensation.salary_expectation", "Salary expectation", "number", {
                 min: 0,
-                step: 1000,
+                step: 1,
+                valueKind: "text",
               })}
               {textField("compensation.salary_currency", "Salary currency")}
               {textField("compensation.salary_range_min", "Salary range min", "number", {
                 min: 0,
-                step: 1000,
+                step: 1,
+                valueKind: "text",
               })}
               {textField("compensation.salary_range_max", "Salary range max", "number", {
                 min: 0,
-                step: 1000,
+                step: 1,
+                valueKind: "text",
               })}
               {textField("compensation.currency_conversion_note", "Currency note")}
             </div>

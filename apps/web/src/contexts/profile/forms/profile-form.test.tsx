@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -130,6 +130,27 @@ describe("<ProfileForm>", () => {
 
     expect(screen.getByLabelText("Remote")).toBeChecked();
     expect(screen.getByLabelText("Hybrid")).toBeChecked();
+  });
+
+  it("saves edited compensation number fields as profile strings", async () => {
+    const user = userEvent.setup();
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const salaryRangeMin = await screen.findByLabelText("Salary range min");
+    await user.clear(salaryRangeMin);
+    await user.type(salaryRangeMin, "165001");
+    expect(salaryRangeMin).toBeValid();
+    await user.click(screen.getByRole("button", { name: /^save all$/i }));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]?.[0];
+    expect(JSON.parse(request.profileText).compensation.salary_range_min).toBe("165001");
   });
 
   it("clamps max bullets to the allowed positive range", async () => {

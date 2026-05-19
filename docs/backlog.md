@@ -32,21 +32,18 @@ deferred until the local product is solid.
 
 ### Worker Reliability
 
-- Extend workflow-run records to non-apply local actions. `apply` now runs
-  through Temporal and is visible through `apply_run_projections` /
-  `/v1/workflow-runs`, but `run_stage` and `profile_import` are still sync
-  RPCs that emit `job_events` and return an in-memory `LocalActionResult`
-  (`workers/automation/src/jobhunter/actions.py:48`) without a durable
-  workflow-run record. Without a uniform run record, the dashboard cannot show
-  running / queued / failed status for non-apply work.
-- Add cancellation for queued or running non-apply local actions. `apply`
-  cooperatively cancels via `cancel_run` (PR #36), but `run_stage` /
-  `profile_import` still run synchronously inside the JSON-RPC handler and have
-  no cancel surface, and `cancel_stage`
-  (`workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`) only
-  flips the stage row to `canceled` post-hoc. Migrating these handlers to
-  workflows gets cooperative cancel for free; a shorter-term option is to add a
-  cancel token surface for the in-process sync handlers.
+- Extend workflow-run projections beyond apply. Global `run_stage` now starts
+  `JobPipelineWorkflow` and returns a workflow ID to the API, and apply steps
+  inside that pipeline run as child `ApplyWorkflow` executions. However,
+  `/v1/workflow-runs` is still backed by apply-run projections. A uniform
+  workflow-run projection is still needed if the dashboard should list
+  discover/enrich/score/tailor/cover/pdf workflow lifecycle rows alongside
+  apply runs.
+- Add cancellation UX for queued or running non-apply local actions.
+  `run_stage` now has a Temporal workflow ID, so cooperative cancellation can
+  use `cancel_run`, but the UI still needs a first-class cancel control for
+  those pipeline runs. `profile_import` remains synchronous inside the JSON-RPC
+  handler and still has no cancel surface.
 - Record `score_report` artifacts. PR 7 of the Temporal stack wired
   `state.record_job_artifact` into `apply.launcher.mark_result` so the
   per-worker agent log (`LOG_DIR/worker-{worker_id}.log`) lands in
@@ -76,9 +73,9 @@ canonical stage-state writer cleanup, apply-log artifact registration, and
 Langfuse/OpenTelemetry wiring have landed.
 
 Remaining local reliability work is tracked in the Worker Reliability bullets
-above: non-apply `run_stage` / `profile_import` still need durable workflow-run
-records and cooperative cancellation if the UI must show or stop them like
-apply runs.
+above: non-apply `run_stage` now uses Temporal but still needs workflow-run
+projection parity and UI cancellation; `profile_import` remains the synchronous
+JSON-RPC local action.
 
 Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)):
 

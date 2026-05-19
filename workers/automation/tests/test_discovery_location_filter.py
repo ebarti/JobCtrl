@@ -18,7 +18,12 @@ def test_remote_country_scoped_locations_do_not_bypass_reject_patterns() -> None
         "Remote - US",
         "USA, Remote",
         "U.S. Remote",
+        "Remote Texas",
+        "California - Remote",
+        "Remote New Jersey",
+        "Virginia - Washington DC Metro - Remote",
         "Remote Canada",
+        "CAN, Quebec - Full Time Remote",
         "North America Remote",
         "Brazil Remote Work",
     ):
@@ -42,6 +47,21 @@ def test_remote_region_locations_pass_when_region_is_accepted() -> None:
             reject=EUROPE_REJECT,
             search_location="Remote",
         )
+
+
+def test_generic_remote_does_not_match_when_specific_locations_are_configured() -> None:
+    assert not location_matches_target(
+        "Remote",
+        accept=EUROPE_ACCEPT,
+        reject=EUROPE_REJECT,
+        search_location="Remote",
+    )
+    assert not location_matches_target(
+        "",
+        accept=EUROPE_ACCEPT,
+        reject=EUROPE_REJECT,
+        search_location="Remote",
+    )
 
 
 def test_short_accept_patterns_match_tokens_not_substrings() -> None:

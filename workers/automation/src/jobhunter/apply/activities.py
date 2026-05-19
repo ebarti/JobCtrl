@@ -55,9 +55,11 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
       policy can fire on transient browser / network / executor failures.
     """
 
-    def _run_apply() -> tuple[int, int]:
-        from jobhunter.apply.launcher import main as apply_main
+    # ``apply.launcher`` installs process signal handlers at import time; import
+    # it on the activity event-loop thread before handing work to the executor.
+    from jobhunter.apply.launcher import main as apply_main
 
+    def _run_apply() -> tuple[int, int]:
         # ``continuous=True`` selects the launcher's run-forever poll mode,
         # which it activates via ``limit == 0``.  Otherwise enforce a floor
         # of one to keep ``limit < 1`` calls from no-oping.
@@ -70,6 +72,7 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
             model=payload.model,
             dry_run=payload.dry_run,
             workers=payload.workers,
+            install_signal_handlers=False,
         )
 
     activity.heartbeat("apply starting")

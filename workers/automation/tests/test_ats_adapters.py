@@ -111,6 +111,47 @@ def test_workday_adapter_rejects_country_scoped_remote_locations() -> None:
     assert [posting.metadata.location for posting in postings] == ["Remote EMEA"]
 
 
+def test_workday_adapter_rejects_loose_title_matches() -> None:
+    def http(
+        url: str,
+        *,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "total": 2,
+            "jobPostings": [
+                {
+                    "title": "Independent Trauma Counsellor",
+                    "externalPath": "/job/EMEA/Independent-Trauma-Counsellor_JR-123",
+                    "locationsText": "Remote EMEA",
+                },
+                {
+                    "title": "Director of Engineering",
+                    "externalPath": "/job/EMEA/Director-of-Engineering_JR-456",
+                    "locationsText": "Remote EMEA",
+                },
+            ],
+        }
+
+    adapter = WorkdayBoardAdapter(
+        source_id="workday:acme",
+        employer=WorkdayEmployer(
+            employer_key="acme",
+            name="Acme Corp",
+            base_url="https://acme.wd1.myworkdayjobs.com",
+            tenant="acme",
+            site_id="External",
+        ),
+        http=http,
+        location_accept=["Spain", "Europe", "EMEA"],
+    )
+
+    postings = list(adapter.scrape(tenant_id=LOCAL_TENANT, query="Director of Engineering", location="Remote"))
+
+    assert [posting.metadata.title for posting in postings] == ["Director of Engineering"]
+
+
 def test_greenhouse_adapter_maps_job_board_payload_to_scraped_posting() -> None:
     def http(url: str) -> dict[str, Any]:
         assert url == "https://boards-api.greenhouse.io/v1/boards/acme/jobs"

@@ -19,6 +19,7 @@ class DiscoverActivityInput:
     tenant_id: str
     limit: int = 0
     workers: int = 1
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,12 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
     from jobhunter.pipeline import run_pipeline
 
     def _do() -> dict[str, Any]:
-        return run_pipeline(stages=["discover"], workers=payload.workers, limit=payload.limit)
+        return run_pipeline(
+            stages=["discover"],
+            workers=payload.workers,
+            limit=payload.limit,
+            dry_run=payload.dry_run,
+        )
 
     result = await run_blocking_with_heartbeat(
         _do,
