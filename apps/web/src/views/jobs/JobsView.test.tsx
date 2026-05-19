@@ -12,6 +12,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
+import { makeJobsPage, sampleJob } from "../../test/fixtures/projections.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { JobsView } from "./JobsView.js";
@@ -220,6 +221,54 @@ describe("<JobsView> bulk delete integration", () => {
 
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]?.jobKeys?.length).toBe(1);
+  });
+
+  it("shows stale score state and posts selected stale scores for rescore reset", async () => {
+    const user = userEvent.setup();
+    const staleJob = {
+      ...sampleJob,
+      jobKey: "job-stale",
+      currentStage: "score" as const,
+      currentState: "stale" as const,
+      scoreStaleness: {
+        isStale: true,
+        staleReason: "scoring_policy_changed",
+        currentPolicyVersion: 1,
+        targetPolicyVersion: 2,
+        markedAt: "2026-04-29T10:07:00+00:00",
+        pendingExplicitRescore: true,
+      },
+    };
+    const calls: Array<{ jobKeys?: string[] }> = [];
+    server.use(
+      http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([staleJob]))),
+      http.post("*/v1/scoring/stale-scores/actions/reset-for-rescore", async ({ request }) => {
+        const body = (await request.json()) as { jobKeys?: string[] };
+        calls.push(body);
+        return HttpResponse.json({
+          ok: true,
+          count: body.jobKeys?.length ?? 0,
+          jobKeys: body.jobKeys ?? [],
+          nextAction: "jobhunter run score --rescore",
+        });
+      }),
+    );
+
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness);
+    const { container } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByText(/stale score v1 -> v2/i)).toBeInTheDocument(), {
+      timeout: 5_000,
+    });
+    const checkboxes = container.querySelectorAll<HTMLInputElement>("input[type='checkbox']");
+    const rowCheckbox = Array.from(checkboxes).find(
+      (input) => input.getAttribute("aria-label")?.includes("Select row") ?? false,
+    ) ?? checkboxes[1]!;
+    await user.click(rowCheckbox);
+    await user.click(screen.getByRole("button", { name: /reset stale selected/i }));
+
+    await waitFor(() => expect(calls).toEqual([{ jobKeys: ["job-stale"], limit: 0 }]));
   });
 });
 

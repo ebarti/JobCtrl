@@ -29,6 +29,9 @@ describe("<ScoreCorrectionControl>", () => {
         reason: "Manual review found a mismatch.",
       }),
     );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Scoring policy updated; comparable scores may be stale.",
+    );
   });
 
   it("blocks empty corrected scores before optimistic mutation", async () => {

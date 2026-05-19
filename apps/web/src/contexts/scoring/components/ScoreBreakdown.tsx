@@ -103,6 +103,16 @@ export function ScoreBreakdown({
           Criteria {scoreCriteria.criteriaVersion || "unversioned"} | minimum {scoreCriteria.minFitScore}/10
         </p>
       ) : null}
+      {scoreTrace?.scoringPolicyVersion ? (
+        <p className="muted">
+          Policy v{scoreTrace.scoringPolicyVersion}
+          {scoreTrace.rubricVersion ? ` | ${scoreTrace.rubricVersion}` : ""}
+          {scoreTrace.policyAnchorCount ? ` | ${scoreTrace.policyAnchorCount} anchors` : ""}
+          {scoreTrace.calibrationAdjustment
+            ? ` | adjustment ${formatSigned(scoreTrace.calibrationAdjustment)}`
+            : ""}
+        </p>
+      ) : null}
       {scoreTrace?.parserWarnings.length ? (
         <p className="muted">Parser warnings: {scoreTrace.parserWarnings.join(", ")}</p>
       ) : null}
@@ -113,6 +123,10 @@ export function ScoreBreakdown({
       ) : null}
     </div>
   );
+}
+
+function formatSigned(value: number): string {
+  return value > 0 ? `+${value}` : String(value);
 }
 
 function SignalList({

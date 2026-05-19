@@ -7,8 +7,10 @@ import { OpenArtifactButton } from "../../contexts/materials/components/OpenArti
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
+import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import { ScoreBreakdown } from "../../contexts/scoring/components/ScoreBreakdown.js";
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
+import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
@@ -71,6 +73,20 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
               <ApplyHistory jobId={detail.job.jobKey} />
             </Section>
             <Section title="Score breakdown">
+              {detail.job.scoreStaleness.isStale ? (
+                <div className="score-policy-row">
+                  <ScoreStalenessBadge staleness={detail.job.scoreStaleness} />
+                  <span className="muted">
+                    scoring policy updated; reset this score before rescoring
+                  </span>
+                  <ResetStaleScoresButton
+                    className="tab on"
+                    jobKeys={[detail.job.jobKey]}
+                    label="reset for rescore"
+                    staleCount={1}
+                  />
+                </div>
+              ) : null}
               <ScoreBreakdown
                 fitScore={detail.job.fitScore}
                 scoreBreakdown={detail.job.scoreBreakdown}

@@ -63,11 +63,18 @@ export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
 export const ResetStaleScoresForRescoreRequestSchema = z
   .object({
     limit: z.coerce.number().int().min(0).max(500).default(0),
+    jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
   })
   .strict();
 export type ResetStaleScoresForRescoreRequest = z.infer<
   typeof ResetStaleScoresForRescoreRequestSchema
 >;
+export interface ResetStaleScoresForRescoreResponse {
+  ok: true;
+  count: number;
+  jobKeys: string[];
+  nextAction: string;
+}
 
 export const GenerateMaterialsRequestSchema = z
   .object({
@@ -531,6 +538,14 @@ export interface ScoreTrace {
   model: string;
   criteriaVersion: string;
   profileSnapshotVersion: number;
+  scoringPolicyId: string;
+  scoringPolicyVersion: number;
+  rubricVersion: string;
+  rawWeightedScore: number | null;
+  calibrationAdjustment: number;
+  policyAnchorCount: number;
+  resolvedFitBand: string;
+  resolutionReason: string;
   parserWarnings: string[];
   correctionHistory: ScoreCorrection[];
 }
@@ -541,6 +556,15 @@ export interface ScoreCorrection {
   rationale: string;
   correctedBy: string;
   correctedAt: string;
+}
+
+export interface ScoreStaleness {
+  isStale: boolean;
+  staleReason: string | null;
+  currentPolicyVersion: number | null;
+  targetPolicyVersion: number | null;
+  markedAt: string | null;
+  pendingExplicitRescore: boolean;
 }
 
 export interface JobSummary {
@@ -563,6 +587,7 @@ export interface JobSummary {
   scoreCriteria: ScoringCriteriaSnapshot | null;
   scoreTrace: ScoreTrace | null;
   scoreCorrection: ScoreCorrection | null;
+  scoreStaleness: ScoreStaleness;
   currentStage: Stage;
   currentState: StageState;
   errorCode: string | null;

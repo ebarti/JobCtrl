@@ -261,6 +261,15 @@ export const handlers = [
       },
     }));
   }),
+  http.post("*/v1/scoring/stale-scores/actions/reset-for-rescore", async ({ request }) => {
+    const body = (await request.json()) as { jobKeys?: string[] };
+    return HttpResponse.json({
+      ok: true,
+      count: body.jobKeys?.length ?? 0,
+      jobKeys: body.jobKeys ?? [],
+      nextAction: "jobhunter run score --rescore",
+    });
+  }),
   http.post("*/v1/jobs/:jobKey/actions/retry-stage", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "retry_stage")),
   ),

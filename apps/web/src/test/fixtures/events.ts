@@ -30,6 +30,7 @@ import {
   createResumeApproved,
   createResumeFailed,
   createScoreCorrected,
+  createScoreRescoreRequested,
   createSourceLocationCandidateDiscovered,
   createSourceLocationCandidatePromoted,
   createSourceRegistryEntryCreated,
@@ -230,6 +231,13 @@ export const eventByType = {
     correctedScore: 9,
     reason: "manual override",
     correctedAt: NOW,
+  }),
+  ScoreRescoreRequested: createScoreRescoreRequested(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    staleReason: "scoring_policy_changed",
+    oldPolicyVersion: 1,
+    newPolicyVersion: 2,
+    nextAction: "jobhunter run score --rescore",
   }),
   ResumeApproved: createResumeApproved(LOCAL_TENANT, {
     jobId: JOB_ID,

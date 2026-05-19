@@ -4,6 +4,7 @@ import { type ChangeEvent, type MouseEvent } from "react";
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
+import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import type { JobSummary } from "../../contexts/operations/types.js";
 import { formatCompanySource } from "../../shared/lib/formatters.js";
@@ -51,7 +52,12 @@ export const jobColumns: ColumnDef<JobSummary>[] = [
     header: "Fit score",
     enableSorting: true,
     accessorFn: (row) => row.fitScore,
-    cell: ({ row }) => <ScoreBadge score={row.original.fitScore} />,
+    cell: ({ row }) => (
+      <div className="score-cell">
+        <ScoreBadge score={row.original.fitScore} />
+        <ScoreStalenessBadge staleness={row.original.scoreStaleness} />
+      </div>
+    ),
   },
   {
     id: "title",

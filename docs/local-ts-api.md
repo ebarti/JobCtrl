@@ -23,8 +23,14 @@ Both processes refresh projections idempotently via the shared
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
-`scoreKeywords`, `scoreVersion`, and `scoredAt`. `scoreReasoning` remains on
-the wire as a compatibility summary during the scoring evidence migration.
+`scoreKeywords`, `scoreVersion`, `scoredAt`, `scoreTrace`, and
+`scoreStaleness`. `scoreTrace` includes policy-facing metadata such as scoring
+policy version, rubric version, calibration adjustment, and policy anchor
+counts without exposing raw policy anchor payloads. `scoreStaleness` reports
+unresolved stale markers, including the stale reason, current and target policy
+versions, marked time, and whether the score is waiting for explicit rescore
+reset. `scoreReasoning` remains on the wire as a compatibility summary during
+the scoring evidence migration.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
@@ -34,8 +40,10 @@ policy version changes, the API also marks comparable latest uncorrected scores
 stale in `job_score_staleness`; corrected score versions are not marked stale.
 `POST /v1/scoring/stale-scores/actions/reset-for-rescore` clears active stale
 markers and resets their score stage to `pending` for an explicit rescore. The
-backend command that consumes those reset jobs is `jobhunter run score --rescore`
-or the batch API action with `stage: "score"` and `rescore: true`.
+body accepts `jobKeys` for selected stale scores or an empty list for all active
+stale scores, plus optional `limit` for bounded resets. The backend command
+that consumes those reset jobs is `jobhunter run score --rescore` or the batch
+API action with `stage: "score"` and `rescore: true`.
 The jobs list `deleted` filter accepts `active`, `deleted`, `hidden`, or `all`.
 Deleted jobs are temporary removals: discovery clears the delete tombstone when
 the same posting is observed again. Hidden jobs use a separate

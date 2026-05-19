@@ -99,6 +99,10 @@ interface JobListProjectionRow extends Record<string, unknown> {
   score_criteria_json: string | null;
   score_trace_json: string | null;
   score_correction_json: string | null;
+  score_stale_reason: string | null;
+  score_stale_old_policy_version: number | null;
+  score_stale_new_policy_version: number | null;
+  score_stale_marked_at: string | null;
   current_stage: string;
   current_state: string;
   current_error_code: string | null;
@@ -401,6 +405,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     scoreCriteria: parseScoreCriteria(row.score_criteria_json),
     scoreTrace: parseScoreTrace(row.score_trace_json),
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
+    scoreStaleness: parseScoreStaleness(row),
     currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
     currentState: (isStageState(row.current_state) ? row.current_state : "pending") as StageState,
     errorCode: row.current_error_code,
@@ -473,8 +478,28 @@ function parseScoreTrace(value: string | null): JobSummary["scoreTrace"] {
     model: stringField(parsed.model),
     criteriaVersion: stringField(parsed.criteria_version ?? parsed.criteriaVersion),
     profileSnapshotVersion: Number(parsed.profile_snapshot_version ?? parsed.profileSnapshotVersion ?? 0),
+    scoringPolicyId: stringField(parsed.scoring_policy_id ?? parsed.scoringPolicyId),
+    scoringPolicyVersion: Number(parsed.scoring_policy_version ?? parsed.scoringPolicyVersion ?? 0),
+    rubricVersion: stringField(parsed.rubric_version ?? parsed.rubricVersion),
+    rawWeightedScore: nullableNumber(parsed.raw_weighted_score ?? parsed.rawWeightedScore),
+    calibrationAdjustment: Number(parsed.calibration_adjustment ?? parsed.calibrationAdjustment ?? 0),
+    policyAnchorCount: parseStringList(parsed.anchor_ids ?? parsed.anchorIds).length,
+    resolvedFitBand: stringField(parsed.resolved_fit_band ?? parsed.resolvedFitBand),
+    resolutionReason: stringField(parsed.resolution_reason ?? parsed.resolutionReason),
     parserWarnings: parseStringList(parsed.parser_warnings ?? parsed.parserWarnings),
     correctionHistory: parseCorrectionList(parsed.correction_history ?? parsed.correctionHistory),
+  };
+}
+
+function parseScoreStaleness(row: JobListProjectionRow): JobSummary["scoreStaleness"] {
+  const staleReason = nullableString(row.score_stale_reason);
+  return {
+    isStale: Boolean(staleReason),
+    staleReason,
+    currentPolicyVersion: nullableNumber(row.score_stale_old_policy_version),
+    targetPolicyVersion: nullableNumber(row.score_stale_new_policy_version),
+    markedAt: nullableString(row.score_stale_marked_at),
+    pendingExplicitRescore: Boolean(staleReason),
   };
 }
 
@@ -819,15 +844,49 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
 }
 
 function jobProjectionSelect(db: SqliteDatabase): string {
-  if (!tableExists(db, "jobhunter_hidden_jobs")) {
-    return "job_list_projections.*, NULL AS hidden_at";
-  }
+  const hiddenSelect = tableExists(db, "jobhunter_hidden_jobs")
+    ? `(SELECT h.hidden_at
+          FROM jobhunter_hidden_jobs h
+         WHERE h.job_url = job_list_projections.job_id
+           AND h.unhidden_at IS NULL
+         LIMIT 1) AS hidden_at`
+    : "NULL AS hidden_at";
+  const stalenessSelect = tableExists(db, "job_score_staleness")
+    ? `(SELECT s.stale_reason
+          FROM job_score_staleness s
+         WHERE s.tenant_id = job_list_projections.tenant_id
+           AND s.job_url = job_list_projections.job_id
+           AND s.resolved = 0
+         ORDER BY s.marked_at DESC
+         LIMIT 1) AS score_stale_reason,
+       (SELECT s.old_policy_version
+          FROM job_score_staleness s
+         WHERE s.tenant_id = job_list_projections.tenant_id
+           AND s.job_url = job_list_projections.job_id
+           AND s.resolved = 0
+         ORDER BY s.marked_at DESC
+         LIMIT 1) AS score_stale_old_policy_version,
+       (SELECT s.new_policy_version
+          FROM job_score_staleness s
+         WHERE s.tenant_id = job_list_projections.tenant_id
+           AND s.job_url = job_list_projections.job_id
+           AND s.resolved = 0
+         ORDER BY s.marked_at DESC
+         LIMIT 1) AS score_stale_new_policy_version,
+       (SELECT s.marked_at
+          FROM job_score_staleness s
+         WHERE s.tenant_id = job_list_projections.tenant_id
+           AND s.job_url = job_list_projections.job_id
+           AND s.resolved = 0
+         ORDER BY s.marked_at DESC
+         LIMIT 1) AS score_stale_marked_at`
+    : `NULL AS score_stale_reason,
+       NULL AS score_stale_old_policy_version,
+       NULL AS score_stale_new_policy_version,
+       NULL AS score_stale_marked_at`;
   return `job_list_projections.*,
-          (SELECT h.hidden_at
-             FROM jobhunter_hidden_jobs h
-            WHERE h.job_url = job_list_projections.job_id
-              AND h.unhidden_at IS NULL
-            LIMIT 1) AS hidden_at`;
+          ${hiddenSelect},
+          ${stalenessSelect}`;
 }
 
 function jobFilterPayload(query: JobListQuery): Record<string, unknown> {

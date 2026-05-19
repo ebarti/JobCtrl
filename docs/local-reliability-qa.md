@@ -52,7 +52,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Discovery RFC production wiring stops auto-approving located parseable sources, feeding API-visible manual queues, canonical ATS ingestion, manual-capture imports, snapshot persistence, or acceptance evidence | `workers/automation/tests/test_discovery_production_wiring.py` uses a Barcelona/Spain tech-leadership fixture and report covering lead yield, candidate sources, manual-action count, canonical verification rate, duplicate/quarantine counts, source-quality updates, and scoring handoff count |
 | Hybrid retrieval picks stale or weak candidates before LLM scoring | `workers/automation/tests/test_hybrid_search_index.py`; `workers/automation/tests/test_scorer.py::test_run_scoring_preselects_retrieval_top_k_before_llm` |
 | Scoring prompt/schema/model changes silently regress parse validity, bands, blockers, ranking, or correction agreement | `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_scoring_eval*.py`; update the synthetic scoring fixtures or document why a scoring change does not affect them |
-| Score corrections change the policy but leave comparable uncorrected scores fresh, mark corrected versions stale, or fail to clear stale markers for explicit rescore | `workers/automation/tests/test_score_repository.py`; `apps/api/test/server.test.ts` |
+| Score corrections change the policy but leave comparable uncorrected scores fresh, mark corrected versions stale, fail to expose stale policy metadata in jobs list/detail, or fail to clear selected/all stale markers for explicit rescore | `workers/automation/tests/test_score_repository.py`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/scoring/hooks/useResetStaleScoresForRescoreMutation.test.ts`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 
 ## Frontend QA
 
@@ -69,6 +69,14 @@ commands listed under the "Frontend" section of
 | Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 9 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the eight Operations read hooks plus `useActivityEventQuery`. The original plan named `tsd`; the implementation uses Vitest's typecheck mode — same artifact (typed test files), same gate, integrated runner (cf. target §10.6). |
 | End-to-end (Playwright headless) | 8 specs in `apps/web/e2e/tests/` (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `settings`, `wizard`) | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `materials.spec.ts` is `test.fixme`'d pending the `GenerateMaterialsUseCase` backend exposure (tracked in `docs/backlog.md`). |
 | A11y suites (Vitest + `axe-core` + `jest-axe`) | 9 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, and command components — fails on critical violations (target §10.7). |
+
+### Scoring Policy Feedback Smoke
+
+For UI changes around score correction learning, verify the jobs table shows
+the compact stale-score badge on unresolved stale scores, the job drawer shows
+the policy update state, and the reset control posts to
+`/v1/scoring/stale-scores/actions/reset-for-rescore` before running
+`jobhunter run score --rescore` or the score stage with `rescore: true`.
 
 ### Parity tests
 

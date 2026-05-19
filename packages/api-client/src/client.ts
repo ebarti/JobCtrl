@@ -38,6 +38,8 @@ import type {
   QuarantineDecisionResponse,
   QuarantineListResponse,
   RetryStageRequest,
+  ResetStaleScoresForRescoreRequest,
+  ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
   SettingsUpdateRequest,
   SettingsResponse,
@@ -202,6 +204,12 @@ export class JobHunterApiClient {
 
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/score-correction`, body);
+  }
+
+  resetStaleScoresForRescore(
+    body: ResetStaleScoresForRescoreRequest = { limit: 0, jobKeys: [] },
+  ): Promise<ResetStaleScoresForRescoreResponse> {
+    return this.post("/v1/scoring/stale-scores/actions/reset-for-rescore", body);
   }
 
   workflowRuns(

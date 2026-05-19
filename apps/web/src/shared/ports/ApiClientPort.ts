@@ -38,6 +38,8 @@ import type {
   QuarantineDecisionResponse,
   QuarantineListResponse,
   RetryStageRequest,
+  ResetStaleScoresForRescoreRequest,
+  ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
   SettingsResponse,
   SettingsUpdateRequest,
@@ -106,6 +108,9 @@ export interface ApiClientPort {
   unhideJob(jobKey: string): Promise<JobMutationResponse>;
   unhideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse>;
+  resetStaleScoresForRescore(
+    body: ResetStaleScoresForRescoreRequest,
+  ): Promise<ResetStaleScoresForRescoreResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
 

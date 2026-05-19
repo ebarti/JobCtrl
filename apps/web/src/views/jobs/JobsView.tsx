@@ -101,6 +101,17 @@ export function JobsView() {
     () => Object.entries(rowSelection).filter(([, on]) => on).map(([key]) => key),
     [rowSelection],
   );
+  const staleKeysOnPage = useMemo(
+    () => (data?.items ?? []).filter((job) => job.scoreStaleness.isStale).map((job) => job.jobKey),
+    [data?.items],
+  );
+  const selectedStaleKeys = useMemo(
+    () =>
+      allMatchingSelected
+        ? []
+        : selectedKeys.filter((jobKey) => staleKeysOnPage.includes(jobKey)),
+    [allMatchingSelected, selectedKeys, staleKeysOnPage],
+  );
 
   const selectAllMatching = () => {
     setRowSelection({});
@@ -202,6 +213,8 @@ export function JobsView() {
         <JobBulkActions
           search={search}
           selectedCount={selectedCount}
+          staleCount={staleKeysOnPage.length}
+          selectedStaleKeys={selectedStaleKeys}
           hasItems={Boolean(data?.items.length)}
           hasAnyMatching={Boolean(data?.pagination.total)}
           loading={mutateBusy || isFetching}
@@ -212,6 +225,7 @@ export function JobsView() {
           onPrimaryAction={mutatePrimarySelected}
           onHideSelected={hideSelected}
           onPermanentlyDeleteSelected={permanentlyDeleteSelected}
+          onResetStaleSuccess={clearSelection}
         />
         <JobsTable
           data={data ?? null}

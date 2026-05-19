@@ -68,6 +68,14 @@ function patchJobSummary(job: JobSummary, variables: CorrectScoreVariables): Job
   return {
     ...job,
     fitScore: variables.correctedScore,
+    scoreStaleness: {
+      isStale: false,
+      staleReason: null,
+      currentPolicyVersion: null,
+      targetPolicyVersion: null,
+      markedAt: null,
+      pendingExplicitRescore: false,
+    },
     scoreCorrection: {
       correctedScore: variables.correctedScore,
       rationale: variables.reason,

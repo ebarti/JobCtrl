@@ -27,7 +27,7 @@ import {
   createPostingContentSnapshotCaptured,
   createPostingContentSnapshotFailed,
 } from "../src/events/enrichment.js";
-import { createJobScored } from "../src/events/scoring.js";
+import { createJobScored, createScoreRescoreRequested } from "../src/events/scoring.js";
 import { createResumeApproved, createMaterialsExhausted } from "../src/events/materials.js";
 import { createApplicationSubmitted, createApplyRunStarted } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
@@ -508,7 +508,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(44);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(45);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -670,6 +670,13 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         keywords: [],
         version: 1,
         scoredAt: "t",
+      }).eventType,
+      createScoreRescoreRequested(LOCAL_TENANT, {
+        jobId: "j",
+        staleReason: "scoring_policy_changed",
+        oldPolicyVersion: 1,
+        newPolicyVersion: 2,
+        nextAction: "run_score",
       }).eventType,
       createResumeApproved(LOCAL_TENANT, {
         jobId: "j",
