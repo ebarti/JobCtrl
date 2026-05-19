@@ -6,40 +6,53 @@ worker.
 ## Install
 
 ```bash
-corepack pnpm install
-uv --project workers/automation sync --extra dev
+pnpm dev:setup
 ```
+
+`pnpm dev:setup` installs the Node workspace dependencies and runs
+`uv --project workers/automation sync --extra dev`, which installs the Python
+automation worker, `python-jobspy`, JobSpy's locked transitive dependencies, and
+the Python dev tools used by local checks.
 
 ## Run
 
 ```bash
-pnpm api:dev
-pnpm web:dev
-uv --project workers/automation run jobhunter doctor
+pnpm dev
 ```
 
-The Vite web dev server proxies `/v1/*` to the local API by default.
+`pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
+TypeScript API, Vite web app, and the JobHunter Temporal worker. The launcher
+tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and defaults to:
 
-### Local Temporal dev server
+- API data dir: `JOBHUNTER_DIR=${HOME}/.jobhunter`
+- API bind: `JOBHUNTER_API_HOST=127.0.0.1`,
+  `JOBHUNTER_API_PORT=8766`
+- Web API base URL: `VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766`
+- Web port: `5173` (`JOBHUNTER_WEB_PORT` can override it)
 
-The Python worker uses [Temporal](https://docs.temporal.io/) as its workflow
-engine. Start the dev server in its own terminal:
+Use the launcher for day-to-day process management:
+
+```bash
+pnpm dev:status
+pnpm dev:logs worker
+pnpm dev:stop
+scripts/dev list
+```
+
+Run individual components only when troubleshooting a specific process:
 
 ```bash
 temporal server start-dev
-```
-
-That binds the frontend gRPC service on `127.0.0.1:7233` and the Web UI on
-`http://127.0.0.1:8233`. With it running, `jobhunter doctor` reports
-`Temporal: reachable` and the worker process can connect:
-
-```bash
+pnpm api:dev
+pnpm web:dev
 uv --project workers/automation run jobhunter worker
+uv --project workers/automation run jobhunter doctor
 ```
 
-`jobhunter worker` is the long-lived process that picks up workflow + activity
-tasks from the `jobhunter-default` queue. Run it alongside `pnpm api:dev` and
-`pnpm web:dev` whenever you want the full local stack live.
+The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
+the Web UI on `http://127.0.0.1:8233`. With it running, `jobhunter doctor`
+reports `Temporal: reachable`. The Vite web dev server proxies `/v1/*` to the
+local API by default.
 
 ## Verify
 

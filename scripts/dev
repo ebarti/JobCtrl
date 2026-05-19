@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/dev — JobHunter local dev fleet launcher.
 #
-# Daemonizes api / web / worker into background processes, tracks each by
+# Daemonizes temporal / api / web / worker into background processes, tracks each by
 # PID file under .dev/pids/, captures stdout+stderr to .dev/logs/, and
 # exposes individual start/stop/restart/logs so you can bounce one
 # without nuking the others.
@@ -12,6 +12,7 @@
 #   scripts/dev restart [name...]  Stop then start
 #   scripts/dev status             Show pid + alive state for all known
 #   scripts/dev logs <name>        tail -f the log file for one process
+#   scripts/dev setup              Install/sync Node and Python dependencies
 #   scripts/dev list               Print the process registry
 #   scripts/dev help               Show this message
 
@@ -25,14 +26,15 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 
 # Process registry. To add a process: extend `process_names` and add a
 # matching arm in `process_command`.
-process_names() { echo "api web worker"; }
+process_names() { echo "temporal api web worker"; }
 
 process_command() {
   case "$1" in
-    api)    echo "pnpm --filter @jobhunter/api dev" ;;
-    web)    echo "pnpm --filter @jobhunter/web dev" ;;
-    worker) echo "uv --project workers/automation run jobhunter worker" ;;
-    *)      return 1 ;;
+    temporal) echo "temporal server start-dev" ;;
+    api)      echo "pnpm --filter @jobhunter/api dev" ;;
+    web)      echo 'pnpm --filter @jobhunter/web dev -- --port "$JOBHUNTER_WEB_PORT"' ;;
+    worker)   echo "uv --project workers/automation run jobhunter worker" ;;
+    *)        return 1 ;;
   esac
 }
 
@@ -77,6 +79,14 @@ load_env_file() {
   # shellcheck disable=SC1090,SC1091
   source "$ROOT/.env"
   set +a
+}
+
+set_default_env() {
+  export JOBHUNTER_DIR="${JOBHUNTER_DIR:-$HOME/.jobhunter}"
+  export JOBHUNTER_API_HOST="${JOBHUNTER_API_HOST:-127.0.0.1}"
+  export JOBHUNTER_API_PORT="${JOBHUNTER_API_PORT:-8766}"
+  export VITE_JOBHUNTER_API_BASE_URL="${VITE_JOBHUNTER_API_BASE_URL:-http://${JOBHUNTER_API_HOST}:${JOBHUNTER_API_PORT}}"
+  export JOBHUNTER_WEB_PORT="${JOBHUNTER_WEB_PORT:-5173}"
 }
 
 start_one() {
@@ -132,6 +142,7 @@ stop_one() {
 
 cmd_start() {
   load_env_file
+  set_default_env
   local targets=("$@")
   if [[ ${#targets[@]} -eq 0 ]]; then
     for n in $(process_names); do targets+=("$n"); done
@@ -184,6 +195,11 @@ cmd_logs() {
   exec tail -F "$log"
 }
 
+cmd_setup() {
+  ( cd "$ROOT" && corepack pnpm install )
+  ( cd "$ROOT" && uv --project workers/automation sync --extra dev )
+}
+
 cmd_list() {
   for n in $(process_names); do
     printf "%-10s %s\n" "$n" "$(process_command "$n")"
@@ -203,6 +219,7 @@ main() {
     restart) cmd_restart "$@" ;;
     status)  cmd_status ;;
     logs)    cmd_logs "$@" ;;
+    setup)   cmd_setup ;;
     list)    cmd_list ;;
     help|-h|--help) cmd_help ;;
     *) echo "dev: unknown command '$sub'" >&2; cmd_help; exit 2 ;;
