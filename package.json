@@ -9,6 +9,11 @@
     "node": ">=20.19.0"
   },
   "scripts": {
+    "dev": "scripts/dev start",
+    "dev:setup": "scripts/dev setup",
+    "dev:status": "scripts/dev status",
+    "dev:stop": "scripts/dev stop",
+    "dev:logs": "scripts/dev logs",
     "api:dev": "corepack pnpm --filter @jobhunter/api dev",
     "api:start": "corepack pnpm --filter @jobhunter/api start",
     "api:check": "corepack pnpm --filter @jobhunter/api check",

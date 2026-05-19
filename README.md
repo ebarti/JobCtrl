@@ -82,8 +82,9 @@ Core pipeline:
   Gemini, OpenAI, and local HTTP-backed providers are supported through
   environment variables.
 - A TeX distribution with `pdflatex` for PDF output.
-- Temporal dev server (`temporal server start-dev`) for the workflow engine
-  the Python worker runs against. See `docs/local-development.md`.
+- Temporal CLI with dev server support (`temporal server start-dev`) for the
+  workflow engine the Python worker runs against. The local dev launcher starts
+  it for you; see `docs/local-development.md`.
 
 Local API and web UI:
 
@@ -105,12 +106,24 @@ functionality is available on your machine.
 ```bash
 git clone https://github.com/ebarti/JobHunter.git
 cd JobHunter
-corepack pnpm install
-uv --project workers/automation sync
+pnpm dev:setup
 uv --project workers/automation run jobhunter doctor
 ```
 
-For development of the local TypeScript API and current React/Vite shell:
+Start the full local dev stack for UI/API job runs:
+
+```bash
+pnpm dev
+```
+
+`pnpm dev:setup` installs the Node workspace dependencies and syncs the
+uv-managed Python automation environment, including `python-jobspy` and its
+locked transitive dependencies plus the Python dev extras used by local checks.
+`pnpm dev` also invokes the Python worker through `uv run`, which re-syncs the
+worker environment if needed, but first-time setup should use `pnpm dev:setup`
+so dependency failures are separated from process startup.
+
+For verification:
 
 ```bash
 pnpm test
@@ -244,16 +257,30 @@ structured success or failure data.
 
 ## Local UI
 
-Run the local TypeScript API:
+Start the full local development stack:
 
 ```bash
-pnpm api:dev
+pnpm dev
 ```
 
-Run the current React/Vite web shell:
+That launches the Temporal dev server, local TypeScript API, React/Vite web app,
+and JobHunter Temporal worker. The launcher defaults to `~/.jobhunter`,
+`127.0.0.1:8766` for the API, and `127.0.0.1:5173` for the web app. Inspect or
+stop the stack with:
 
 ```bash
+pnpm dev:status
+pnpm dev:logs worker
+pnpm dev:stop
+```
+
+For troubleshooting, run individual components in separate terminals:
+
+```bash
+temporal server start-dev
+pnpm api:dev
 pnpm web:dev
+uv --project workers/automation run jobhunter worker
 ```
 
 The Vite dev server proxies `/v1/*` to the local API by default. Set
@@ -380,8 +407,7 @@ Common environment variables:
 Install dependencies:
 
 ```bash
-corepack pnpm install
-uv --project workers/automation sync --extra dev
+pnpm dev:setup
 ```
 
 Run the standard checks:
@@ -409,8 +435,7 @@ flows without touching `~/.jobhunter`:
 
 ```bash
 pnpm qa:seed -- /tmp/jobhunter-qa
-JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm api:dev
-VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
+JOBHUNTER_DIR=/tmp/jobhunter-qa pnpm dev
 ```
 
 Build the Python package:
