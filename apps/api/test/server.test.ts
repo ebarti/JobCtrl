@@ -955,7 +955,7 @@ describe("local TypeScript API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/scoring/stale-scores/actions/reset-for-rescore",
-      payload: { limit: 1 },
+      payload: { limit: 1, jobKeys: [staleUrl] },
     });
 
     expect(response.statusCode, response.body).toBe(200);
@@ -987,6 +987,69 @@ describe("local TypeScript API", () => {
       });
     } finally {
       db.close();
+      await app.close();
+    }
+  });
+
+  it("exposes score policy trace and unresolved staleness on job list and detail payloads", async () => {
+    const staleUrl = "https://example.com/jobs/stale-read-model";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: staleUrl,
+      title: "Read Model Stale Engineer",
+      site: "ExampleCo",
+      fitScore: 7,
+    });
+    insertScore(seedDb, staleUrl, 1, 7, { policyVersion: 1 });
+    insertStage(seedDb, staleUrl, "score", "stale");
+    createScoreStalenessTable(seedDb);
+    seedDb
+      .prepare(
+        `INSERT INTO job_score_staleness (
+           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           new_policy_id, new_policy_version, marked_at, resolved
+         ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+           'local:scoring-policy-v2', 2, '2026-04-29T10:07:00+00:00', 0)`,
+      )
+      .run(staleUrl);
+    seedDb.close();
+
+    const app = buildApp(options);
+    try {
+      const listResponse = await app.inject({ method: "GET", url: "/v1/jobs?pageSize=200" });
+      const detailResponse = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent(staleUrl)}`,
+      });
+
+      expect(listResponse.statusCode, listResponse.body).toBe(200);
+      expect(detailResponse.statusCode, detailResponse.body).toBe(200);
+      const listJob = listResponse.json().items.find((job: { jobKey: string }) => job.jobKey === staleUrl);
+      expect(listJob).toMatchObject({
+      scoreTrace: {
+        scoringPolicyId: "local:scoring-policy-v1",
+        scoringPolicyVersion: 1,
+        policyAnchorCount: 0,
+      },
+        scoreStaleness: {
+          isStale: true,
+          staleReason: "scoring_policy_changed",
+          currentPolicyVersion: 1,
+          targetPolicyVersion: 2,
+          markedAt: "2026-04-29T10:07:00+00:00",
+          pendingExplicitRescore: true,
+        },
+      });
+      expect(detailResponse.json().job).toMatchObject({
+        jobKey: staleUrl,
+        scoreStaleness: listJob.scoreStaleness,
+      scoreTrace: {
+        scoringPolicyVersion: 1,
+      },
+    });
+      expect(JSON.stringify(listJob.scoreTrace)).not.toContain("anchor_ids");
+      expect(JSON.stringify(listJob.scoreTrace)).not.toContain("anchorIds");
+    } finally {
       await app.close();
     }
   });

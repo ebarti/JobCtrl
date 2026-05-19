@@ -30,6 +30,23 @@ describe("<ScoreBreakdown>", () => {
           targetCriteria: "Remote leadership.",
           criteriaVersion: "criteria-1",
         }}
+        scoreTrace={{
+          promptVersion: "score-fit-assessment-v1",
+          schemaVersion: "score-fit-assessment-v1",
+          model: "test",
+          criteriaVersion: "criteria-1",
+          profileSnapshotVersion: 1,
+          scoringPolicyId: "local:scoring-policy-v2",
+          scoringPolicyVersion: 2,
+          rubricVersion: "default-scoring-rubric-v1",
+          rawWeightedScore: 8.1,
+          calibrationAdjustment: -0.5,
+          policyAnchorCount: 2,
+          resolvedFitBand: "strong",
+          resolutionReason: "weighted policy score",
+          parserWarnings: [],
+          correctionHistory: [],
+        }}
       />,
     );
 
@@ -49,6 +66,9 @@ describe("<ScoreBreakdown>", () => {
     expect(screen.getByText("public company scale")).toBeInTheDocument();
     expect(screen.getByText("incident leadership")).toBeInTheDocument();
     expect(screen.getByText(/Criteria criteria-1/)).toBeInTheDocument();
+    expect(screen.getByText(/Policy v2/)).toBeInTheDocument();
+    expect(screen.getByText(/2 anchors/)).toBeInTheDocument();
+    expect(screen.queryByText("anchor-a")).not.toBeInTheDocument();
     expect(screen.getByText(/version 2/i)).toBeInTheDocument();
     expect(screen.getByText(/2026-05-05/)).toBeInTheDocument();
   });

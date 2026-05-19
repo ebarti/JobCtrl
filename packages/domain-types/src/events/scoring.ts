@@ -48,3 +48,25 @@ export function createScoreCorrected(
 ): ScoreCorrected {
   return createDomainEvent("ScoreCorrected", tenantId, payload);
 }
+
+// -- ScoreRescoreRequested --------------------------------------------------
+
+export interface ScoreRescoreRequestedPayload {
+  readonly jobId: string;
+  readonly staleReason: string;
+  readonly oldPolicyVersion: number;
+  readonly newPolicyVersion: number;
+  readonly nextAction: string;
+}
+
+export type ScoreRescoreRequested = DomainEvent<
+  "ScoreRescoreRequested",
+  ScoreRescoreRequestedPayload
+>;
+
+export function createScoreRescoreRequested(
+  tenantId: TenantId,
+  payload: ScoreRescoreRequestedPayload,
+): ScoreRescoreRequested {
+  return createDomainEvent("ScoreRescoreRequested", tenantId, payload);
+}

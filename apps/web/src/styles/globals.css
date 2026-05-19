@@ -377,6 +377,13 @@ textarea {
   padding: 10px 16px;
 }
 
+.bulk-bar .tab,
+.score-policy-row .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .tabs {
   display: inline-flex;
   gap: 4px;
@@ -1119,6 +1126,28 @@ textarea {
 
 .fit.mid {
   color: var(--warn);
+}
+
+.score-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.score-stale-tag {
+  border-color: rgba(181, 71, 58, 0.3);
+  background: rgba(181, 71, 58, 0.08);
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+.score-policy-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 12px;
 }
 
 .tag,

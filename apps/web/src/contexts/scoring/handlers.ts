@@ -1,4 +1,4 @@
-import type { JobScored, ScoreCorrected } from "@jobhunter/domain-types";
+import type { JobScored, ScoreCorrected, ScoreRescoreRequested } from "@jobhunter/domain-types";
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
@@ -11,6 +11,14 @@ export const jobScoredHandler = (event: JobScored): readonly InvalidationItem[] 
 ];
 
 export const scoreCorrectedHandler = (event: ScoreCorrected): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const scoreRescoreRequestedHandler = (
+  event: ScoreRescoreRequested,
+): readonly InvalidationItem[] => [
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),

@@ -8,6 +8,8 @@ import type {
   DeleteJobRequest,
   JobMutationResponse,
   MarkJobActionRequest,
+  ResetStaleScoresForRescoreRequest,
+  ResetStaleScoresForRescoreResponse,
   SettingsResponse,
   SettingsUpdateRequest,
   Stage,
@@ -332,17 +334,22 @@ export function correctScore(
 
 export function resetStaleScoresForRescore(
   db: SqliteDatabase,
-  request: { limit?: number } = {},
-): { ok: true; count: number; jobKeys: string[]; nextAction: string } {
+  request: ResetStaleScoresForRescoreRequest = { limit: 0, jobKeys: [] },
+): ResetStaleScoresForRescoreResponse {
   ensureScoreStalenessTable(db);
   const limit = Math.max(0, Math.floor(request.limit ?? 0));
+  const jobKeysFilter = [...new Set((request.jobKeys ?? []).map((key) => key.trim()).filter(Boolean))];
+  const selectedWhere = jobKeysFilter.length
+    ? ` AND job_url IN (${jobKeysFilter.map(() => "?").join(", ")})`
+    : "";
   const rows = allRows<Record<string, unknown>>(
     db,
     `SELECT job_url, stale_reason, old_policy_version, new_policy_version
      FROM job_score_staleness
      WHERE tenant_id = 'local' AND resolved = 0
+       ${selectedWhere}
      ORDER BY marked_at ASC${limit > 0 ? " LIMIT ?" : ""}`,
-    limit > 0 ? [limit] : [],
+    [...jobKeysFilter, ...(limit > 0 ? [limit] : [])],
   );
   const now = new Date().toISOString();
   const jobKeys = rows.map((row) => String(row.job_url ?? "")).filter(Boolean);

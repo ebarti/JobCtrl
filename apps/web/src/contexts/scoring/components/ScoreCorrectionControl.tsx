@@ -54,6 +54,9 @@ export function ScoreCorrectionControl({ jobId, currentScore }: ScoreCorrectionC
       <button aria-label="Save score correction" disabled={disabled} type="submit">
         <Check aria-hidden="true" size={16} />
       </button>
+      {mutation.isSuccess ? (
+        <small role="status">Scoring policy updated; comparable scores may be stale.</small>
+      ) : null}
       {mutation.isError ? <small role="alert">{mutation.error.message}</small> : null}
     </form>
   );

@@ -92,6 +92,9 @@ export {
   type ScoreCorrectedPayload,
   type ScoreCorrected,
   createScoreCorrected,
+  type ScoreRescoreRequestedPayload,
+  type ScoreRescoreRequested,
+  createScoreRescoreRequested,
 } from "./scoring.js";
 
 export {
@@ -190,7 +193,7 @@ import type {
   PostingContentSnapshotCaptured,
   PostingContentSnapshotFailed,
 } from "./enrichment.js";
-import type { JobScored, ScoreCorrected } from "./scoring.js";
+import type { JobScored, ScoreCorrected, ScoreRescoreRequested } from "./scoring.js";
 import type {
   CoverLetterGenerated,
   MaterialsExhausted,
@@ -242,6 +245,7 @@ export type DomainEventUnion =
   | ContentDuplicateCandidateDetected
   | JobScored
   | ScoreCorrected
+  | ScoreRescoreRequested
   | ResumeApproved
   | ResumeFailed
   | CoverLetterGenerated
@@ -290,6 +294,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ContentDuplicateCandidateDetected",
   "JobScored",
   "ScoreCorrected",
+  "ScoreRescoreRequested",
   "ResumeApproved",
   "ResumeFailed",
   "CoverLetterGenerated",

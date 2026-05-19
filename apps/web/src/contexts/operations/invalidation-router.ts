@@ -54,7 +54,11 @@ import {
   stageStartedHandler,
 } from "../pipeline/handlers.js";
 import { profileImportedHandler, profileUpdatedHandler } from "../profile/handlers.js";
-import { jobScoredHandler, scoreCorrectedHandler } from "../scoring/handlers.js";
+import {
+  jobScoredHandler,
+  scoreCorrectedHandler,
+  scoreRescoreRequestedHandler,
+} from "../scoring/handlers.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
 
@@ -119,6 +123,7 @@ export const handlers: HandlerMap = {
   ContentDuplicateCandidateDetected: contentDuplicateCandidateDetectedHandler,
   JobScored: jobScoredHandler,
   ScoreCorrected: scoreCorrectedHandler,
+  ScoreRescoreRequested: scoreRescoreRequestedHandler,
   ResumeApproved: resumeApprovedHandler,
   ResumeFailed: resumeFailedHandler,
   CoverLetterGenerated: coverLetterGeneratedHandler,

@@ -1,8 +1,11 @@
+import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export interface JobBulkActionsProps {
   search: JobsSearch;
   selectedCount: number;
+  staleCount?: number;
+  selectedStaleKeys?: readonly string[];
   hasItems: boolean;
   hasAnyMatching: boolean;
   loading: boolean;
@@ -13,11 +16,14 @@ export interface JobBulkActionsProps {
   onPrimaryAction: () => void;
   onHideSelected: () => void;
   onPermanentlyDeleteSelected: () => void;
+  onResetStaleSuccess?: () => void;
 }
 
 export function JobBulkActions({
   search,
   selectedCount,
+  staleCount = 0,
+  selectedStaleKeys = [],
   hasItems,
   hasAnyMatching,
   loading,
@@ -28,6 +34,7 @@ export function JobBulkActions({
   onPrimaryAction,
   onHideSelected,
   onPermanentlyDeleteSelected,
+  onResetStaleSuccess = () => {},
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
@@ -69,6 +76,14 @@ export function JobBulkActions({
       <button className="tab" type="button" disabled={!selectedCount} onClick={onClearSelection}>
         clear selected
       </button>
+      {staleCount || selectedStaleKeys.length ? (
+        <ResetStaleScoresButton
+          jobKeys={selectedStaleKeys}
+          staleCount={selectedStaleKeys.length || staleCount}
+          label={selectedStaleKeys.length ? "reset stale selected" : "reset all stale scores"}
+          onSuccess={onResetStaleSuccess}
+        />
+      ) : null}
       {!hidden ? (
         <button
           className="tab danger-action"
