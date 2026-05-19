@@ -402,6 +402,39 @@ def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot
     )
 
 
+def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(
+        {
+            "score": 10,
+            "technical_fit": 2,
+            "experience_fit": 2,
+            "role_fit": 2,
+            "fit_band": "excellent",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": ["senior ownership", "platform depth"],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "The overall LLM score is inconsistent with its dimensions.",
+        }
+    )
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=_job("https://example.com/job/low-dimensions"),
+        profile_snapshot=profile_snapshot,
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 2
+    assert outcome.score.breakdown.fit_band == "poor"
+    assert outcome.score.trace.scoring_policy_version == 1
+    assert outcome.score.trace.rubric_version == "default-scoring-rubric-v1"
+    assert outcome.score.trace.raw_weighted_score == 2.0
+
+
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:
     repo = _MemoryRepo()
     # Payload missing the required ``score`` field — parser flags ok=False.

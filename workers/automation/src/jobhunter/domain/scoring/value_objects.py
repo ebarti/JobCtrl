@@ -29,7 +29,7 @@ import hashlib
 import json
 from collections.abc import Iterable as IterableABC
 from collections.abc import Mapping as MappingABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from jobhunter.domain.tenant import TenantId
@@ -80,6 +80,20 @@ def _int_or_default(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    parsed = _float_or_none(value)
+    return default if parsed is None else parsed
 
 
 def fit_band_for_score(score: int) -> str:
@@ -427,11 +441,16 @@ class ScoreTrace:
     model: str = "llm-port-default"
     criteria_version: str = ""
     profile_snapshot_version: int = 0
+    scoring_policy_version: int = 0
+    rubric_version: str = ""
+    raw_weighted_score: float | None = None
+    calibration_adjustment: float = 0.0
+    anchor_ids: tuple[str, ...] = ()
     parser_warnings: tuple[str, ...] = ()
     correction_history: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
-        for name in ("prompt_version", "schema_version", "model", "criteria_version"):
+        for name in ("prompt_version", "schema_version", "model", "criteria_version", "rubric_version"):
             value = str(getattr(self, name) or "").strip()
             object.__setattr__(self, name, value)
         try:
@@ -439,6 +458,18 @@ class ScoreTrace:
         except (TypeError, ValueError):
             profile_version = 0
         object.__setattr__(self, "profile_snapshot_version", profile_version)
+        object.__setattr__(
+            self,
+            "scoring_policy_version",
+            _int_or_default(self.scoring_policy_version, 0),
+        )
+        object.__setattr__(self, "raw_weighted_score", _float_or_none(self.raw_weighted_score))
+        object.__setattr__(
+            self,
+            "calibration_adjustment",
+            _float_or_default(self.calibration_adjustment, 0.0),
+        )
+        object.__setattr__(self, "anchor_ids", _clean_strings(self.anchor_ids))
         object.__setattr__(self, "parser_warnings", _clean_strings(self.parser_warnings))
         history = []
         for raw in self.correction_history:
@@ -458,6 +489,22 @@ class ScoreTrace:
                 data.get("profile_snapshot_version", data.get("profileSnapshotVersion", 0)),
                 0,
             ),
+            scoring_policy_version=_int_or_default(
+                data.get(
+                    "scoring_policy_version",
+                    data.get("scoringPolicyVersion", data.get("policy_version", data.get("policyVersion", 0))),
+                ),
+                0,
+            ),
+            rubric_version=str(data.get("rubric_version", data.get("rubricVersion", ""))),
+            raw_weighted_score=_float_or_none(
+                data.get("raw_weighted_score", data.get("rawWeightedScore"))
+            ),
+            calibration_adjustment=_float_or_default(
+                data.get("calibration_adjustment", data.get("calibrationAdjustment", 0.0)),
+                0.0,
+            ),
+            anchor_ids=_clean_strings(data.get("anchor_ids", data.get("anchorIds", ()))),
             parser_warnings=_clean_strings(data.get("parser_warnings", data.get("parserWarnings", ()))),
             correction_history=tuple(
                 item for item in data.get("correction_history", data.get("correctionHistory", ())) or ()
@@ -466,14 +513,22 @@ class ScoreTrace:
         )
 
     def with_parser_warnings(self, warnings: Iterable[Any]) -> "ScoreTrace":
-        return ScoreTrace(
-            prompt_version=self.prompt_version,
-            schema_version=self.schema_version,
-            model=self.model,
-            criteria_version=self.criteria_version,
-            profile_snapshot_version=self.profile_snapshot_version,
+        return replace(
+            self,
             parser_warnings=(*self.parser_warnings, *_clean_strings(warnings)),
-            correction_history=self.correction_history,
+        )
+
+    def with_policy_resolution(self, resolved_score: Any) -> "ScoreTrace":
+        return replace(
+            self,
+            scoring_policy_version=int(getattr(resolved_score, "policy_version", 0) or 0),
+            rubric_version=str(getattr(resolved_score, "rubric_version", "") or ""),
+            raw_weighted_score=_float_or_none(getattr(resolved_score, "raw_weighted_score", None)),
+            calibration_adjustment=_float_or_default(
+                getattr(resolved_score, "calibration_adjustment", 0.0),
+                0.0,
+            ),
+            anchor_ids=_clean_strings(getattr(resolved_score, "anchor_ids", ())),
         )
 
     def with_correction(
@@ -482,13 +537,8 @@ class ScoreTrace:
         original_score: int,
         correction: ScoreCorrection,
     ) -> "ScoreTrace":
-        return ScoreTrace(
-            prompt_version=self.prompt_version,
-            schema_version=self.schema_version,
-            model=self.model,
-            criteria_version=self.criteria_version,
-            profile_snapshot_version=self.profile_snapshot_version,
-            parser_warnings=self.parser_warnings,
+        return replace(
+            self,
             correction_history=(
                 *self.correction_history,
                 {
@@ -508,6 +558,11 @@ class ScoreTrace:
             "model": self.model,
             "criteria_version": self.criteria_version,
             "profile_snapshot_version": self.profile_snapshot_version,
+            "scoring_policy_version": self.scoring_policy_version,
+            "rubric_version": self.rubric_version,
+            "raw_weighted_score": self.raw_weighted_score,
+            "calibration_adjustment": self.calibration_adjustment,
+            "anchor_ids": list(self.anchor_ids),
             "parser_warnings": list(self.parser_warnings),
             "correction_history": list(self.correction_history),
         }

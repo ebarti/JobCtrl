@@ -15,9 +15,12 @@ import pytest
 
 from jobhunter.database import init_db
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.scoring import ScoringCriteria
+from jobhunter.domain.scoring import ScoringCriteria, ScoringPolicy, WeightedScoreDimension
 from jobhunter.domain.tenant import LOCAL_TENANT
-from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.infrastructure.scoring import (
+    SqliteScoreRepository,
+    SqliteScoringPolicyRepository,
+)
 from jobhunter.scoring import scorer as scorer_module
 
 
@@ -176,6 +179,49 @@ def test_score_job_writes_only_to_job_scores(
     assert legacy_row["fit_score"] is None
     assert legacy_row["score_reasoning"] is None
     assert legacy_row["scored_at"] is None
+
+
+def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+) -> None:
+    url = "https://example.com/job/policy"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    SqliteScoringPolicyRepository(conn).save(
+        ScoringPolicy(
+            tenant_id=LOCAL_TENANT,
+            version=2,
+            rubric_version="technical-only-v2",
+            dimensions=(WeightedScoreDimension(name="technical_fit", weight=1.0),),
+            created_at="2024-01-01T00:00:00+00:00",
+        )
+    )
+    llm = _ScriptedLlm(
+        {
+            "score": 10,
+            "technical_fit": 1,
+            "experience_fit": 10,
+            "role_fit": 10,
+            "keywords": ["python"],
+            "reasoning": "Low technical fit despite high overall score.",
+        }
+    )
+
+    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone())
+    outcome = scorer_module.score_job(
+        profile_snapshot,
+        job_dict,
+        repository=repo,
+        llm_port=llm,
+    )
+
+    assert outcome.ok is True
+    persisted = repo.load(LOCAL_TENANT, JobId(url))
+    assert persisted is not None
+    assert persisted.fit_score.value == 1
+    assert persisted.trace.scoring_policy_version == 2
+    assert persisted.trace.rubric_version == "technical-only-v2"
 
 
 # ---------------------------------------------------------------------------

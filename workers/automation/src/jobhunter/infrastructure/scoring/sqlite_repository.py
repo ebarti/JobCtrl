@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
+from jobhunter.database import ensure_scoring_policy_tables
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring.aggregate import JobScore
+from jobhunter.domain.scoring.policy import ScoringPolicy
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
@@ -62,6 +65,11 @@ class SqliteScoreRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """SQLite connection backing this repository."""
+        return self._conn
 
     # ------------------------------------------------------------------
     # Read
@@ -230,3 +238,80 @@ class SqliteScoreRepository:
             trace=ScoreTrace.from_dict(trace_data),
             correction=ScoreCorrection.from_dict(correction_data) if correction_data else None,
         )
+
+
+class SqliteScoringPolicyRepository:
+    """SQLite-backed current policy adapter for the Scoring context."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        ensure_scoring_policy_tables(conn)
+
+    def get_current(self, tenant_id: TenantId) -> ScoringPolicy:
+        row = self._conn.execute(
+            """
+            SELECT tenant_id, version, rubric_json, anchors_json, created_at,
+                   created_from_event_id
+            FROM scoring_policies
+            WHERE tenant_id = ?
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (str(tenant_id),),
+        ).fetchone()
+        if row is not None:
+            return self._row_to_policy(row)
+
+        policy = ScoringPolicy.default(tenant_id, created_at=_utc_now())
+        self.save(policy)
+        return policy
+
+    def save(self, policy: ScoringPolicy) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO scoring_policies (
+                tenant_id, version, rubric_json, anchors_json, created_at,
+                created_from_event_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(policy.tenant_id),
+                policy.version,
+                json.dumps(policy.to_rubric_dict(), sort_keys=True),
+                json.dumps(policy.to_anchors_list(), sort_keys=True),
+                policy.created_at or _utc_now(),
+                policy.created_from_event_id,
+            ),
+        )
+        self._conn.commit()
+
+    @staticmethod
+    def _row_to_policy(row: Any) -> ScoringPolicy:
+        if isinstance(row, sqlite3.Row):
+            tenant_id = row["tenant_id"]
+            version = row["version"]
+            rubric_json = row["rubric_json"]
+            anchors_json = row["anchors_json"]
+            created_at = row["created_at"]
+            created_from_event_id = row["created_from_event_id"]
+        else:
+            (
+                tenant_id,
+                version,
+                rubric_json,
+                anchors_json,
+                created_at,
+                created_from_event_id,
+            ) = row
+        return ScoringPolicy.from_persistence(
+            tenant_id=TenantId(str(tenant_id)),
+            version=int(version),
+            rubric=json.loads(rubric_json) if rubric_json else {},
+            anchors=json.loads(anchors_json) if anchors_json else [],
+            created_at=str(created_at),
+            created_from_event_id=created_from_event_id,
+        )
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
