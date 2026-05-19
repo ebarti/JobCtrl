@@ -220,8 +220,12 @@ def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
     persisted = repo.load(LOCAL_TENANT, JobId(url))
     assert persisted is not None
     assert persisted.fit_score.value == 1
+    assert persisted.trace.scoring_policy_id == "local:scoring-policy-v2"
     assert persisted.trace.scoring_policy_version == 2
     assert persisted.trace.rubric_version == "technical-only-v2"
+    assert persisted.trace.resolved_dimensions == (
+        {"name": "technical_fit", "value": 1, "weight": 1.0, "weighted_value": 1.0},
+    )
 
 
 # ---------------------------------------------------------------------------

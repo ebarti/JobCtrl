@@ -49,7 +49,6 @@ from jobhunter.domain.scoring.value_objects import (
     ScoreCorrection,
     ScoreTrace,
     ScoringCriteria,
-    fit_band_for_score,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 
@@ -516,7 +515,7 @@ class ScoreJobUseCase:
             experience_fit=parse.breakdown.experience_fit,
             role_fit=parse.breakdown.role_fit,
             reasoning=parse.breakdown.reasoning,
-            fit_band=fit_band_for_score(resolved.fit_score.value),
+            fit_band=resolved.fit_band,
             confidence=parse.breakdown.confidence,
             eligibility=parse.breakdown.eligibility,
             matched_signals=parse.breakdown.matched_signals,

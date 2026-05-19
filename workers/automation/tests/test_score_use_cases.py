@@ -430,9 +430,33 @@ def test_score_job_resolves_final_score_from_policy_not_llm_overall(profile_snap
     assert outcome.score is not None
     assert outcome.score.fit_score.value == 2
     assert outcome.score.breakdown.fit_band == "poor"
+    assert outcome.score.trace.scoring_policy_id == "local:scoring-policy-v1"
     assert outcome.score.trace.scoring_policy_version == 1
     assert outcome.score.trace.rubric_version == "default-scoring-rubric-v1"
     assert outcome.score.trace.raw_weighted_score == 2.0
+    assert outcome.score.trace.resolved_fit_band == "poor"
+    assert outcome.score.trace.resolution_reason == "weighted_dimensions+missing_signals_traced"
+    assert outcome.score.trace.resolved_dimensions == (
+        {"name": "technical_fit", "value": 2, "weight": 0.45, "weighted_value": 0.9},
+        {"name": "experience_fit", "value": 2, "weight": 0.3, "weighted_value": 0.6},
+        {"name": "role_fit", "value": 2, "weight": 0.25, "weighted_value": 0.5},
+    )
+    assert outcome.score.trace.fit_band_thresholds == (
+        {"band": "excellent", "minimum_score": 9},
+        {"band": "strong", "minimum_score": 7},
+        {"band": "plausible", "minimum_score": 5},
+        {"band": "stretch", "minimum_score": 3},
+        {"band": "poor", "minimum_score": 1},
+    )
+    assert outcome.score.trace.policy_evidence == {
+        "confidence": "high",
+        "eligibility_status": "eligible",
+        "hard_blocker_count": 0,
+        "warning_count": 0,
+        "matched_signal_count": 1,
+        "missing_signal_count": 2,
+        "transferable_signal_count": 0,
+    }
 
 
 def test_score_job_returns_error_on_unparseable_response(profile_snapshot) -> None:

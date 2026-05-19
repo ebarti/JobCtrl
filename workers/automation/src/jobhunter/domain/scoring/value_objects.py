@@ -75,6 +75,26 @@ def _clean_mapping(value: Mapping[str, Any] | dict[str, Any] | None) -> dict[str
     return json.loads(json.dumps(dict(value), sort_keys=True, default=str))
 
 
+def _clean_mapping_tuple(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, IterableABC) or isinstance(value, (str, bytes, MappingABC)):
+        return ()
+    return tuple(_clean_mapping(item) for item in value if isinstance(item, MappingABC))
+
+
+def _policy_object_tuple_to_dicts(value: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, IterableABC) or isinstance(value, (str, bytes, MappingABC)):
+        return ()
+    entries: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, MappingABC):
+            entries.append(_clean_mapping(item))
+        elif hasattr(item, "to_dict"):
+            mapped = item.to_dict()
+            if isinstance(mapped, MappingABC):
+                entries.append(_clean_mapping(mapped))
+    return tuple(entries)
+
+
 def _int_or_default(value: Any, default: int) -> int:
     try:
         return int(value)
@@ -441,16 +461,31 @@ class ScoreTrace:
     model: str = "llm-port-default"
     criteria_version: str = ""
     profile_snapshot_version: int = 0
+    scoring_policy_id: str = ""
     scoring_policy_version: int = 0
     rubric_version: str = ""
     raw_weighted_score: float | None = None
     calibration_adjustment: float = 0.0
     anchor_ids: tuple[str, ...] = ()
+    resolved_fit_band: str = ""
+    resolution_reason: str = ""
+    resolved_dimensions: tuple[dict[str, Any], ...] = ()
+    fit_band_thresholds: tuple[dict[str, Any], ...] = ()
+    policy_evidence: dict[str, Any] = field(default_factory=dict)
     parser_warnings: tuple[str, ...] = ()
     correction_history: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
-        for name in ("prompt_version", "schema_version", "model", "criteria_version", "rubric_version"):
+        for name in (
+            "prompt_version",
+            "schema_version",
+            "model",
+            "criteria_version",
+            "scoring_policy_id",
+            "rubric_version",
+            "resolved_fit_band",
+            "resolution_reason",
+        ):
             value = str(getattr(self, name) or "").strip()
             object.__setattr__(self, name, value)
         try:
@@ -470,6 +505,17 @@ class ScoreTrace:
             _float_or_default(self.calibration_adjustment, 0.0),
         )
         object.__setattr__(self, "anchor_ids", _clean_strings(self.anchor_ids))
+        object.__setattr__(
+            self,
+            "resolved_dimensions",
+            _clean_mapping_tuple(self.resolved_dimensions),
+        )
+        object.__setattr__(
+            self,
+            "fit_band_thresholds",
+            _clean_mapping_tuple(self.fit_band_thresholds),
+        )
+        object.__setattr__(self, "policy_evidence", _clean_mapping(self.policy_evidence))
         object.__setattr__(self, "parser_warnings", _clean_strings(self.parser_warnings))
         history = []
         for raw in self.correction_history:
@@ -489,6 +535,13 @@ class ScoreTrace:
                 data.get("profile_snapshot_version", data.get("profileSnapshotVersion", 0)),
                 0,
             ),
+            scoring_policy_id=str(
+                data.get(
+                    "scoring_policy_id",
+                    data.get("scoringPolicyId", data.get("policy_id", data.get("policyId", ""))),
+                )
+                or ""
+            ),
             scoring_policy_version=_int_or_default(
                 data.get(
                     "scoring_policy_version",
@@ -505,6 +558,21 @@ class ScoreTrace:
                 0.0,
             ),
             anchor_ids=_clean_strings(data.get("anchor_ids", data.get("anchorIds", ()))),
+            resolved_fit_band=str(
+                data.get("resolved_fit_band", data.get("resolvedFitBand", "")) or ""
+            ),
+            resolution_reason=str(
+                data.get("resolution_reason", data.get("resolutionReason", "")) or ""
+            ),
+            resolved_dimensions=_clean_mapping_tuple(
+                data.get("resolved_dimensions", data.get("resolvedDimensions", ()))
+            ),
+            fit_band_thresholds=_clean_mapping_tuple(
+                data.get("fit_band_thresholds", data.get("fitBandThresholds", ()))
+            ),
+            policy_evidence=_clean_mapping(
+                data.get("policy_evidence", data.get("policyEvidence", {}))
+            ),
             parser_warnings=_clean_strings(data.get("parser_warnings", data.get("parserWarnings", ()))),
             correction_history=tuple(
                 item for item in data.get("correction_history", data.get("correctionHistory", ())) or ()
@@ -521,6 +589,7 @@ class ScoreTrace:
     def with_policy_resolution(self, resolved_score: Any) -> "ScoreTrace":
         return replace(
             self,
+            scoring_policy_id=str(getattr(resolved_score, "policy_id", "") or ""),
             scoring_policy_version=int(getattr(resolved_score, "policy_version", 0) or 0),
             rubric_version=str(getattr(resolved_score, "rubric_version", "") or ""),
             raw_weighted_score=_float_or_none(getattr(resolved_score, "raw_weighted_score", None)),
@@ -529,6 +598,17 @@ class ScoreTrace:
                 0.0,
             ),
             anchor_ids=_clean_strings(getattr(resolved_score, "anchor_ids", ())),
+            resolved_fit_band=str(getattr(resolved_score, "fit_band", "") or ""),
+            resolution_reason=str(getattr(resolved_score, "resolution_reason", "") or ""),
+            resolved_dimensions=_policy_object_tuple_to_dicts(
+                getattr(resolved_score, "dimensions", ())
+            ),
+            fit_band_thresholds=_policy_object_tuple_to_dicts(
+                getattr(resolved_score, "fit_band_thresholds", ())
+            ),
+            policy_evidence=_clean_mapping(
+                getattr(resolved_score, "evidence_summary", {})
+            ),
         )
 
     def with_correction(
@@ -558,11 +638,17 @@ class ScoreTrace:
             "model": self.model,
             "criteria_version": self.criteria_version,
             "profile_snapshot_version": self.profile_snapshot_version,
+            "scoring_policy_id": self.scoring_policy_id,
             "scoring_policy_version": self.scoring_policy_version,
             "rubric_version": self.rubric_version,
             "raw_weighted_score": self.raw_weighted_score,
             "calibration_adjustment": self.calibration_adjustment,
             "anchor_ids": list(self.anchor_ids),
+            "resolved_fit_band": self.resolved_fit_band,
+            "resolution_reason": self.resolution_reason,
+            "resolved_dimensions": list(self.resolved_dimensions),
+            "fit_band_thresholds": list(self.fit_band_thresholds),
+            "policy_evidence": self.policy_evidence,
             "parser_warnings": list(self.parser_warnings),
             "correction_history": list(self.correction_history),
         }

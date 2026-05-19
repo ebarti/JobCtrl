@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from jobhunter.database import init_db
-from jobhunter.domain.scoring import ScoreBreakdown, ScoringPolicy
+from jobhunter.domain.scoring import FitBandThreshold, ScoreBreakdown, ScoringPolicy
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import SqliteScoringPolicyRepository
 
@@ -32,6 +32,8 @@ def test_default_policy_resolves_score_from_weighted_dimensions() -> None:
     resolved = policy.resolve(breakdown)
 
     assert resolved.fit_score.value == 6
+    assert resolved.fit_band == "plausible"
+    assert resolved.policy_id == "local:scoring-policy-v1"
     assert resolved.raw_weighted_score == pytest.approx(6.4)
     assert resolved.calibration_adjustment == 0.0
     assert resolved.anchor_ids == ()
@@ -40,6 +42,39 @@ def test_default_policy_resolves_score_from_weighted_dimensions() -> None:
         "experience_fit": 6,
         "role_fit": 4,
     }
+    assert resolved.fit_band_thresholds[0].to_dict() == {
+        "band": "excellent",
+        "minimum_score": 9,
+    }
+    assert resolved.resolution_reason == "weighted_dimensions+low_confidence_traced"
+    assert resolved.evidence_summary == {
+        "confidence": "low",
+        "eligibility_status": "unknown",
+        "hard_blocker_count": 0,
+        "warning_count": 0,
+        "matched_signal_count": 0,
+        "missing_signal_count": 0,
+        "transferable_signal_count": 0,
+    }
+
+
+def test_policy_owned_fit_band_thresholds_are_deterministic() -> None:
+    policy = ScoringPolicy(
+        tenant_id=LOCAL_TENANT,
+        fit_band_thresholds=(
+            FitBandThreshold("poor", 1),
+            FitBandThreshold("excellent", 10),
+            FitBandThreshold("strong", 8),
+            FitBandThreshold("plausible", 6),
+            FitBandThreshold("stretch", 3),
+        ),
+    )
+
+    assert policy.fit_band_for_score(10) == "excellent"
+    assert policy.fit_band_for_score(8) == "strong"
+    assert policy.fit_band_for_score(6) == "plausible"
+    assert policy.fit_band_for_score(3) == "stretch"
+    assert policy.fit_band_for_score(1) == "poor"
 
 
 def test_sqlite_policy_repository_seeds_default_policy(conn: sqlite3.Connection) -> None:
@@ -63,6 +98,13 @@ def test_sqlite_policy_repository_seeds_default_policy(conn: sqlite3.Connection)
     assert row["tenant_id"] == str(LOCAL_TENANT)
     assert row["version"] == 1
     assert json.loads(row["rubric_json"])["rubric_version"] == "default-scoring-rubric-v1"
+    assert json.loads(row["rubric_json"])["fit_band_thresholds"] == [
+        {"band": "excellent", "minimum_score": 9},
+        {"band": "strong", "minimum_score": 7},
+        {"band": "plausible", "minimum_score": 5},
+        {"band": "stretch", "minimum_score": 3},
+        {"band": "poor", "minimum_score": 1},
+    ]
     assert json.loads(row["anchors_json"]) == []
     assert row["created_at"]
     assert row["created_from_event_id"] is None
@@ -88,3 +130,4 @@ def test_sqlite_policy_repository_returns_highest_policy_version(
     assert policy.version == 2
     assert policy.rubric_version == "rubric-v2"
     assert policy.created_from_event_id == 42
+    assert policy.fit_band_thresholds[-1].band == "poor"

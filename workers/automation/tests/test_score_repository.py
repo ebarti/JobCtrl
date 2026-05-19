@@ -104,11 +104,22 @@ def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) 
             model="fake-model",
             criteria_version="criteria-1",
             profile_snapshot_version=3,
+            scoring_policy_id="local:scoring-policy-v2",
             scoring_policy_version=2,
             rubric_version="default-scoring-rubric-v1",
             raw_weighted_score=8.65,
             calibration_adjustment=0.0,
             anchor_ids=("anchor-a",),
+            resolved_fit_band="excellent",
+            resolution_reason="weighted_dimensions",
+            resolved_dimensions=(
+                {"name": "technical_fit", "value": 9, "weight": 0.45},
+            ),
+            fit_band_thresholds=(
+                {"band": "excellent", "minimum_score": 9},
+                {"band": "strong", "minimum_score": 7},
+            ),
+            policy_evidence={"confidence": "high", "eligibility_status": "eligible"},
             parser_warnings=("missing_confidence",),
         ),
     )
@@ -121,11 +132,25 @@ def test_save_and_load_round_trips_criteria_and_trace(conn: sqlite3.Connection) 
     assert loaded.criteria.profile_preferences["target_work_models"] == "remote"
     assert loaded.trace.model == "fake-model"
     assert loaded.trace.profile_snapshot_version == 3
+    assert loaded.trace.scoring_policy_id == "local:scoring-policy-v2"
     assert loaded.trace.scoring_policy_version == 2
     assert loaded.trace.rubric_version == "default-scoring-rubric-v1"
     assert loaded.trace.raw_weighted_score == 8.65
     assert loaded.trace.calibration_adjustment == 0.0
     assert loaded.trace.anchor_ids == ("anchor-a",)
+    assert loaded.trace.resolved_fit_band == "excellent"
+    assert loaded.trace.resolution_reason == "weighted_dimensions"
+    assert loaded.trace.resolved_dimensions == (
+        {"name": "technical_fit", "value": 9, "weight": 0.45},
+    )
+    assert loaded.trace.fit_band_thresholds == (
+        {"band": "excellent", "minimum_score": 9},
+        {"band": "strong", "minimum_score": 7},
+    )
+    assert loaded.trace.policy_evidence == {
+        "confidence": "high",
+        "eligibility_status": "eligible",
+    }
     assert loaded.trace.parser_warnings == ("missing_confidence",)
 
 
@@ -154,11 +179,17 @@ def test_load_legacy_trace_without_policy_metadata(conn: sqlite3.Connection) -> 
 
     assert loaded is not None
     assert loaded.trace.prompt_version == "legacy"
+    assert loaded.trace.scoring_policy_id == ""
     assert loaded.trace.scoring_policy_version == 0
     assert loaded.trace.rubric_version == ""
     assert loaded.trace.raw_weighted_score is None
     assert loaded.trace.calibration_adjustment == 0.0
     assert loaded.trace.anchor_ids == ()
+    assert loaded.trace.resolved_fit_band == ""
+    assert loaded.trace.resolution_reason == ""
+    assert loaded.trace.resolved_dimensions == ()
+    assert loaded.trace.fit_band_thresholds == ()
+    assert loaded.trace.policy_evidence == {}
 
 
 def test_load_returns_none_when_no_score(conn: sqlite3.Connection) -> None:
