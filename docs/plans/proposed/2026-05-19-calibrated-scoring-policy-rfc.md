@@ -264,6 +264,8 @@ anchor with lower confidence.
 Scoring changes must expand the existing local harness. Required metrics:
 
 - Parse validity for structured evidence.
+- Deterministic policy-resolution accuracy independent from the raw LLM
+  overall score.
 - Dimension consistency against synthetic fixtures.
 - Band accuracy.
 - Hard-blocker precision and recall.
@@ -272,6 +274,9 @@ Scoring changes must expand the existing local harness. Required metrics:
 - Pairwise anchor consistency.
 - Stale-score detection precision on correction fixtures.
 - Reproducibility for same policy version and same extracted facts.
+- Governance counters: current policy version, rubric version, anchor count,
+  unresolved/resolved stale-marker counts, correction count, and correction
+  agreement signal.
 
 Evaluation sets should include:
 
@@ -283,6 +288,12 @@ Evaluation sets should include:
 
 Scoring prompt/schema/model changes must update eval fixtures or explain why
 the change cannot affect scoring behavior.
+
+Eval and governance outputs must stay non-sensitive. They may include
+synthetic dimensions, aggregate counts, policy/rubric versions, and correction
+agreement values. They must not include raw job URLs, correction rationales,
+anchor IDs, resumes, job descriptions, generated artifacts, API keys, browser
+profile data, local database paths, or application logs.
 
 ## Observability
 
@@ -351,10 +362,14 @@ This document plus a narrow backlog pointer.
 ### PR 6 - Evaluation And Governance Hardening
 
 - Extend `workers/automation/src/jobhunter/scoring/eval.py`.
-- Add pairwise anchor consistency and stale-score detection metrics.
-- Add correction fixtures.
+- Add deterministic policy-resolution checks independent from raw LLM overall
+  score, cross-job consistency checks, and stale-score detection checks.
+- Add correction-learning checks proving anchors/stale markers are created,
+  subsequent traces cite updated policy metadata, and stale scores stay out of
+  downstream queues until explicit reset/rescore.
 - Update `docs/local-reliability-qa.md` and architecture docs.
-- Add a local scoring policy report if useful for operator review.
+- Add a local scoring policy governance report for operator review without
+  exposing raw URLs, rationales, anchors, artifacts, or local paths.
 
 ## Done Criteria
 
