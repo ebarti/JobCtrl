@@ -52,6 +52,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Discovery RFC production wiring stops auto-approving located parseable sources, feeding API-visible manual queues, canonical ATS ingestion, manual-capture imports, snapshot persistence, or acceptance evidence | `workers/automation/tests/test_discovery_production_wiring.py` uses a Barcelona/Spain tech-leadership fixture and report covering lead yield, candidate sources, manual-action count, canonical verification rate, duplicate/quarantine counts, source-quality updates, and scoring handoff count |
 | Hybrid retrieval picks stale or weak candidates before LLM scoring | `workers/automation/tests/test_hybrid_search_index.py`; `workers/automation/tests/test_scorer.py::test_run_scoring_preselects_retrieval_top_k_before_llm` |
 | Scoring prompt/schema/model changes silently regress parse validity, bands, blockers, ranking, or correction agreement | `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_scoring_eval*.py`; update the synthetic scoring fixtures or document why a scoring change does not affect them |
+| Score corrections change the policy but leave comparable uncorrected scores fresh, mark corrected versions stale, or fail to clear stale markers for explicit rescore | `workers/automation/tests/test_score_repository.py`; `apps/api/test/server.test.ts` |
 
 ## Frontend QA
 

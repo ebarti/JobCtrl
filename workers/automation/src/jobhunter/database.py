@@ -932,6 +932,7 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         ON job_scores(job_url, version DESC)
     """)
     ensure_scoring_policy_tables(conn)
+    ensure_score_staleness_tables(conn)
 
     # One-shot backfill from the legacy columns. Only fires when
     # job_scores has no rows AND there are jobs with a legacy fit_score.
@@ -995,7 +996,7 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                 )
 
     conn.commit()
-    return ["job_scores", "scoring_policies"]
+    return ["job_scores", "scoring_policies", "job_score_staleness"]
 
 
 def ensure_scoring_policy_tables(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -1028,6 +1029,49 @@ def ensure_scoring_policy_tables(conn: sqlite3.Connection | None = None) -> list
     )
     conn.commit()
     return ["scoring_policies"]
+
+
+def ensure_score_staleness_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create score-staleness markers used after scoring-policy changes."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_score_staleness (
+            tenant_id                 TEXT NOT NULL DEFAULT 'local',
+            job_url                   TEXT NOT NULL,
+            stale_reason              TEXT NOT NULL,
+            old_policy_id             TEXT NOT NULL DEFAULT '',
+            old_policy_version        INTEGER NOT NULL,
+            new_policy_id             TEXT NOT NULL DEFAULT '',
+            new_policy_version        INTEGER NOT NULL,
+            marked_at                 TEXT NOT NULL,
+            resolved                  INTEGER NOT NULL DEFAULT 0,
+            resolved_at               TEXT,
+            resolved_by_score_version INTEGER,
+            PRIMARY KEY (
+                tenant_id, job_url, stale_reason,
+                old_policy_version, new_policy_version
+            ),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_score_staleness_unresolved
+        ON job_score_staleness(tenant_id, resolved, marked_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_score_staleness_job
+        ON job_score_staleness(tenant_id, job_url, resolved)
+        """
+    )
+    conn.commit()
+    return ["job_score_staleness"]
 
 
 def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]:

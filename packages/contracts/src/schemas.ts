@@ -60,6 +60,15 @@ export const RetryStageRequestSchema = z
   .strict();
 export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
 
+export const ResetStaleScoresForRescoreRequestSchema = z
+  .object({
+    limit: z.coerce.number().int().min(0).max(500).default(0),
+  })
+  .strict();
+export type ResetStaleScoresForRescoreRequest = z.infer<
+  typeof ResetStaleScoresForRescoreRequestSchema
+>;
+
 export const GenerateMaterialsRequestSchema = z
   .object({
     stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover", "pdf"]),

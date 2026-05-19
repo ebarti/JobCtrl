@@ -9,6 +9,7 @@ from jobhunter.infrastructure.scoring.feedback import (
 )
 from jobhunter.infrastructure.scoring.sqlite_repository import (
     SqliteScoreRepository,
+    SqliteScoreStalenessRepository,
     SqliteScoringPolicyRepository,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "LocalScoringCriteriaProvider",
     "ScoringFeedbackSignal",
     "SqliteScoreRepository",
+    "SqliteScoreStalenessRepository",
     "SqliteScoringPolicyRepository",
     "collect_feedback_signals",
     "rank_jobs_with_feedback",

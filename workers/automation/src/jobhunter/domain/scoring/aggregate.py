@@ -168,3 +168,30 @@ class JobScore:
             "trace": self.trace.to_dict(),
             "correction": self.correction.to_dict() if self.correction else None,
         }
+
+
+@dataclass(frozen=True)
+class ScoreStaleMarker:
+    """Persisted marker that a latest score was produced by an older policy."""
+
+    tenant_id: TenantId
+    job_id: JobId
+    stale_reason: str
+    old_policy_id: str
+    old_policy_version: int
+    new_policy_id: str
+    new_policy_version: int
+    marked_at: str
+    resolved: bool = False
+    resolved_at: str | None = None
+    resolved_by_score_version: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.old_policy_version < 0:
+            raise ValueError("old_policy_version must be >= 0")
+        if self.new_policy_version < 0:
+            raise ValueError("new_policy_version must be >= 0")
+        if not self.stale_reason.strip():
+            raise ValueError("stale_reason must be non-empty")
+        if not self.marked_at.strip():
+            raise ValueError("marked_at must be non-empty")
