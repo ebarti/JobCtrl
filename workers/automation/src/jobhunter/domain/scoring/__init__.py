@@ -19,6 +19,7 @@ from jobhunter.domain.scoring.value_objects import (
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.policy import (
     CalibrationAnchor,
+    CorrectionSignal,
     FitBandThreshold,
     ResolvedScore,
     ScoringPolicy,
@@ -51,6 +52,7 @@ __all__ = [
     "ScoringCriteria",
     "JobScore",
     "CalibrationAnchor",
+    "CorrectionSignal",
     "FitBandThreshold",
     "ResolvedScore",
     "ScoringPolicy",

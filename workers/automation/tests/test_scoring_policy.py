@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 from jobhunter.database import init_db
-from jobhunter.domain.scoring import FitBandThreshold, ScoreBreakdown, ScoringPolicy
+from jobhunter.domain.scoring import (
+    CorrectionSignal,
+    FitBandThreshold,
+    FitScore,
+    ScoreBreakdown,
+    ScoringPolicy,
+)
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import SqliteScoringPolicyRepository
 
@@ -56,6 +62,69 @@ def test_default_policy_resolves_score_from_weighted_dimensions() -> None:
         "missing_signal_count": 0,
         "transferable_signal_count": 0,
     }
+
+
+def test_policy_correction_signal_creates_next_version_anchor() -> None:
+    policy = ScoringPolicy.default(LOCAL_TENANT, created_at="2024-01-01T00:00:00+00:00")
+    signal = CorrectionSignal(
+        tenant_id=LOCAL_TENANT,
+        job_id="https://example.com/job/anchor",
+        original_score=FitScore.create(5),
+        corrected_score=FitScore.create(8),
+        rationale="Manual review found stronger platform evidence.",
+        corrected_at="2024-01-02T00:00:00+00:00",
+        source_policy_id=policy.policy_id,
+        source_policy_version=policy.version,
+        score_dimensions=(
+            {"name": "technical_fit", "value": 5, "weight": 0.45},
+            {"name": "experience_fit", "value": 5, "weight": 0.3},
+            {"name": "role_fit", "value": 5, "weight": 0.25},
+        ),
+        evidence_summary={"confidence": "medium", "missing_signal_count": 1},
+    )
+
+    updated = policy.with_correction_signal(signal)
+    serialized_signal = signal.to_dict()
+    serialized_signal_json = json.dumps(serialized_signal)
+    resolved = updated.resolve(
+        ScoreBreakdown(
+            technical_fit=7,
+            experience_fit=7,
+            role_fit=7,
+            reasoning="Later score.",
+        )
+    )
+
+    assert updated.version == 2
+    assert serialized_signal["job_ref_hash"].startswith("sha256:")
+    assert serialized_signal["correction_delta"] == 3
+    assert serialized_signal["correction_direction"] == "increased"
+    assert "https://example.com/job/anchor" not in serialized_signal_json
+    assert "Manual review found stronger platform evidence." not in serialized_signal_json
+    assert "job_id" not in serialized_signal
+    assert "rationale" not in serialized_signal
+    assert updated.dimensions == policy.dimensions
+    assert updated.fit_band_thresholds == policy.fit_band_thresholds
+    assert len(updated.anchors) == 1
+    anchor = updated.anchors[0]
+    assert anchor.anchor_id == signal.anchor_id
+    assert anchor.original_fit_score == FitScore.create(5)
+    assert anchor.corrected_fit_score == FitScore.create(8)
+    assert anchor.job_id == ""
+    assert anchor.rationale == ""
+    assert anchor.job_ref_hash.startswith("sha256:")
+    assert anchor.correction_delta == 3
+    assert anchor.correction_direction == "increased"
+    assert anchor.source_policy_version == 1
+    assert anchor.dimension_scores[0]["name"] == "technical_fit"
+    serialized_anchor = updated.to_anchors_list()[0]
+    serialized_anchor_json = json.dumps(serialized_anchor)
+    assert "https://example.com/job/anchor" not in serialized_anchor_json
+    assert "Manual review found stronger platform evidence." not in serialized_anchor_json
+    assert "job_id" not in serialized_anchor
+    assert "rationale" not in serialized_anchor
+    assert resolved.fit_score.value == 7
+    assert resolved.anchor_ids == (anchor.anchor_id,)
 
 
 def test_policy_owned_fit_band_thresholds_are_deterministic() -> None:
@@ -145,3 +214,84 @@ def test_sqlite_policy_repository_returns_highest_policy_version(
     assert policy.rubric_version == "rubric-v2"
     assert policy.created_from_event_id == 42
     assert policy.fit_band_thresholds[-1].band == "poor"
+
+
+def test_sqlite_policy_repository_persists_correction_signal_anchor(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteScoringPolicyRepository(conn)
+    current = repo.get_current(LOCAL_TENANT)
+    signal = CorrectionSignal(
+        tenant_id=LOCAL_TENANT,
+        job_id="https://example.com/job/sqlite-anchor",
+        original_score=FitScore.create(4),
+        corrected_score=FitScore.create(7),
+        rationale="Correction should become calibration evidence.",
+        corrected_at="2024-01-03T00:00:00+00:00",
+        source_policy_id=current.policy_id,
+        source_policy_version=current.version,
+        score_dimensions=({"name": "technical_fit", "value": 4},),
+        evidence_summary={"confidence": "low"},
+    )
+
+    saved = repo.save_correction_signal(signal)
+    loaded = repo.get_current(LOCAL_TENANT)
+    anchors_json = conn.execute(
+        """
+        SELECT anchors_json
+        FROM scoring_policies
+        WHERE tenant_id = ? AND version = 2
+        """,
+        (str(LOCAL_TENANT),),
+    ).fetchone()["anchors_json"]
+
+    assert saved.version == 2
+    assert loaded.version == 2
+    assert loaded.anchors[0].anchor_id == signal.anchor_id
+    assert loaded.anchors[0].corrected_fit_score == FitScore.create(7)
+    assert loaded.anchors[0].job_ref_hash.startswith("sha256:")
+    assert "https://example.com/job/sqlite-anchor" not in anchors_json
+    assert "Correction should become calibration evidence." not in anchors_json
+    assert loaded.resolve(ScoreBreakdown(reasoning="next")).anchor_ids == (
+        signal.anchor_id,
+    )
+
+
+def test_sqlite_policy_repository_loads_pr2_anchor_rows(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT INTO scoring_policies (
+            tenant_id, version, rubric_json, anchors_json, created_at,
+            created_from_event_id
+        ) VALUES (?, 7, ?, ?, ?, NULL)
+        """,
+        (
+            str(LOCAL_TENANT),
+            json.dumps(ScoringPolicy.default(LOCAL_TENANT).to_rubric_dict()),
+            json.dumps(
+                [
+                    {
+                        "anchor_id": "legacy-anchor",
+                        "job_id": "https://example.com/job/legacy",
+                        "fit_score": 6,
+                        "rationale": "Existing PR2 anchor shape.",
+                        "dimensions": ["technical_fit"],
+                        "created_at": "2024-01-04T00:00:00+00:00",
+                    }
+                ]
+            ),
+            "2024-01-04T00:00:00+00:00",
+        ),
+    )
+
+    policy = SqliteScoringPolicyRepository(conn).get_current(LOCAL_TENANT)
+
+    assert policy.version == 7
+    assert policy.anchors[0].anchor_id == "legacy-anchor"
+    assert policy.anchors[0].fit_score == FitScore.create(6)
+    assert policy.anchors[0].corrected_fit_score == FitScore.create(6)
+    serialized_anchor = policy.to_anchors_list()[0]
+    serialized_anchor_json = json.dumps(serialized_anchor)
+    assert serialized_anchor["job_ref_hash"].startswith("sha256:")
+    assert "https://example.com/job/legacy" not in serialized_anchor_json
+    assert "Existing PR2 anchor shape." not in serialized_anchor_json

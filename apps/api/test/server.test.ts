@@ -676,6 +676,56 @@ describe("local TypeScript API", () => {
   });
 
   it("corrects a score through the API and records correction evidence", async () => {
+    const legacyJobUrl = "https://example.com/jobs/private-legacy";
+    const legacyReason = "Legacy correction mentioned a private resume detail.";
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      CREATE TABLE IF NOT EXISTS scoring_policies (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        version INTEGER NOT NULL,
+        rubric_json TEXT NOT NULL,
+        anchors_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        created_from_event_id INTEGER,
+        PRIMARY KEY (tenant_id, version)
+      )
+    `);
+    seedDb
+      .prepare(
+        `INSERT INTO scoring_policies (
+           tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id
+         ) VALUES ('local', 1, ?, ?, ?, NULL)`,
+      )
+      .run(
+        JSON.stringify({
+          rubric_version: "default-scoring-rubric-v1",
+          dimensions: [
+            { name: "technical_fit", weight: 0.45 },
+            { name: "experience_fit", weight: 0.3 },
+            { name: "role_fit", weight: 0.25 },
+          ],
+          fit_band_thresholds: [
+            { band: "excellent", minimum_score: 9 },
+            { band: "strong", minimum_score: 7 },
+            { band: "plausible", minimum_score: 5 },
+            { band: "stretch", minimum_score: 3 },
+            { band: "poor", minimum_score: 1 },
+          ],
+        }),
+        JSON.stringify([
+          {
+            anchor_id: "legacy-anchor",
+            job_id: legacyJobUrl,
+            fit_score: 5,
+            rationale: legacyReason,
+            dimensions: ["technical_fit"],
+            created_at: "2026-04-29T10:03:00+00:00",
+          },
+        ]),
+        "2026-04-29T10:03:00+00:00",
+      );
+    seedDb.close();
+
     const app = buildApp(options);
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
     const response = await app.inject({
@@ -732,6 +782,54 @@ describe("local TypeScript API", () => {
         originalScore: 9,
         correctedScore: 6,
       });
+      const policies = db
+        .prepare(
+          `SELECT version, rubric_json, anchors_json
+           FROM scoring_policies
+           WHERE tenant_id = 'local'
+           ORDER BY version`,
+        )
+        .all() as Array<{ version: number; rubric_json: string; anchors_json: string }>;
+      expect(policies.map((policy) => policy.version)).toEqual([1, 2]);
+      const updatedPolicy = policies[1];
+      expect(updatedPolicy).toBeDefined();
+      expect(JSON.parse(updatedPolicy!.rubric_json)).toMatchObject({
+        rubric_version: "default-scoring-rubric-v1",
+        dimensions: [
+          { name: "technical_fit", weight: 0.45 },
+          { name: "experience_fit", weight: 0.3 },
+          { name: "role_fit", weight: 0.25 },
+        ],
+      });
+      expect(updatedPolicy!.anchors_json).not.toContain("https://example.com/jobs/ready");
+      expect(updatedPolicy!.anchors_json).not.toContain("Manual review found a seniority mismatch.");
+      const anchors = JSON.parse(updatedPolicy!.anchors_json) as Array<Record<string, unknown>>;
+      expect(updatedPolicy!.anchors_json).not.toContain(legacyJobUrl);
+      expect(updatedPolicy!.anchors_json).not.toContain(legacyReason);
+      expect(anchors).toHaveLength(2);
+      const anchor = anchors.find((item) => String(item.anchor_id ?? "").startsWith("correction-anchor-"));
+      expect(anchor).toBeDefined();
+      expect(anchor).toMatchObject({
+        job_ref_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        fit_score: 6,
+        original_fit_score: 9,
+        corrected_fit_score: 6,
+        correction_delta: -3,
+        correction_direction: "decreased",
+        source_policy_version: 0,
+      });
+      expect(anchor).not.toHaveProperty("job_id");
+      expect(anchor).not.toHaveProperty("rationale");
+      expect(anchor!.anchor_id).toMatch(/^correction-anchor-/);
+      expect(anchor!.dimensions).toEqual(["technical_fit", "experience_fit", "role_fit"]);
+      const legacyAnchor = anchors.find((item) => item.anchor_id === "legacy-anchor");
+      expect(legacyAnchor).toBeDefined();
+      expect(legacyAnchor).toMatchObject({
+        job_ref_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        fit_score: 5,
+      });
+      expect(legacyAnchor).not.toHaveProperty("job_id");
+      expect(legacyAnchor).not.toHaveProperty("rationale");
     } finally {
       db.close();
       await app.close();

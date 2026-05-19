@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import type {
   BulkJobMutationRequest,
@@ -33,6 +34,20 @@ const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   pdf: 3,
   apply: 3,
 };
+
+const DEFAULT_SCORING_RUBRIC_VERSION = "default-scoring-rubric-v1";
+const DEFAULT_SCORING_DIMENSIONS = [
+  { name: "technical_fit", weight: 0.45 },
+  { name: "experience_fit", weight: 0.3 },
+  { name: "role_fit", weight: 0.25 },
+] as const;
+const DEFAULT_FIT_BAND_THRESHOLDS = [
+  { band: "excellent", minimum_score: 9 },
+  { band: "strong", minimum_score: 7 },
+  { band: "plausible", minimum_score: 5 },
+  { band: "stretch", minimum_score: 3 },
+  { band: "poor", minimum_score: 1 },
+] as const;
 
 /**
  * Validate a stage-state transition using the §8.5 state machine
@@ -284,6 +299,12 @@ export function correctScore(
     String(latest.criteria_json ?? "{}"),
     JSON.stringify(trace),
   );
+  persistScoringPolicyCorrection(db, {
+    jobUrl,
+    latest,
+    correctedScore: request.correctedScore,
+    correctedAt: now,
+  });
   recordActionEvent(db, {
     jobUrl,
     stage: "score",
@@ -657,6 +678,110 @@ function ensureJobScoresTable(db: SqliteDatabase): void {
   }
 }
 
+function ensureScoringPoliciesTable(db: SqliteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scoring_policies (
+      tenant_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      rubric_json TEXT NOT NULL,
+      anchors_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      created_from_event_id INTEGER,
+      PRIMARY KEY (tenant_id, version)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_scoring_policies_current
+    ON scoring_policies(tenant_id, version DESC)
+  `);
+}
+
+function persistScoringPolicyCorrection(
+  db: SqliteDatabase,
+  input: {
+    jobUrl: string;
+    latest: Record<string, unknown>;
+    correctedScore: number;
+    correctedAt: string;
+  },
+): void {
+  ensureScoringPoliciesTable(db);
+  const current = getCurrentScoringPolicyRow(db, input.correctedAt);
+  const previousTrace = parseObjectOrDefault(String(input.latest.trace_json ?? "{}"));
+  const previousBreakdown = parseObjectOrDefault(String(input.latest.breakdown_json ?? "{}"));
+  const originalScore = Number(input.latest.fit_score ?? 0);
+  const correctionDelta = input.correctedScore - originalScore;
+  const anchor = sanitizePolicyAnchor({
+    anchor_id: correctionAnchorId({
+      tenant_id: "local",
+      job_id: input.jobUrl,
+      original_score: originalScore,
+      corrected_score: input.correctedScore,
+      corrected_at: input.correctedAt,
+      source_policy_version: Number(previousTrace.scoring_policy_version ?? 0),
+    }),
+    job_ref_hash: policyAnchorJobRefHash(input.jobUrl),
+    fit_score: input.correctedScore,
+    original_fit_score: originalScore,
+    corrected_fit_score: input.correctedScore,
+    correction_delta: correctionDelta,
+    correction_direction: correctionDirection(correctionDelta),
+    dimensions: extractDimensionNames(previousTrace, previousBreakdown),
+    dimension_scores: extractDimensionScores(previousTrace, previousBreakdown),
+    evidence_summary: extractPolicyEvidence(previousTrace, previousBreakdown),
+    source_policy_id: String(previousTrace.scoring_policy_id ?? ""),
+    source_policy_version: Number(previousTrace.scoring_policy_version ?? 0),
+    created_at: input.correctedAt,
+  });
+  const anchors = upsertAnchor(parseAnchorList(current.anchors_json), anchor);
+  db.prepare(
+    `INSERT INTO scoring_policies (
+       tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id
+     ) VALUES ('local', ?, ?, ?, ?, NULL)`,
+  ).run(
+    Number(current.version) + 1,
+    current.rubric_json,
+    JSON.stringify(anchors),
+    input.correctedAt,
+  );
+}
+
+function getCurrentScoringPolicyRow(
+  db: SqliteDatabase,
+  createdAt: string,
+): {
+  version: number;
+  rubric_json: string;
+  anchors_json: string;
+} {
+  const latest = getRow<{
+    version: number;
+    rubric_json: string;
+    anchors_json: string;
+  }>(
+    db,
+    `SELECT version, rubric_json, anchors_json
+     FROM scoring_policies
+     WHERE tenant_id = 'local'
+     ORDER BY version DESC
+     LIMIT 1`,
+  );
+  if (latest) {
+    return {
+      version: Number(latest.version),
+      rubric_json: normalizeRubricJson(latest.rubric_json),
+      anchors_json: latest.anchors_json || "[]",
+    };
+  }
+  const rubricJson = JSON.stringify(defaultScoringRubric());
+  db.prepare(
+    `INSERT INTO scoring_policies (
+       tenant_id, version, rubric_json, anchors_json, created_at, created_from_event_id
+     ) VALUES ('local', 1, ?, '[]', ?, NULL)`,
+  ).run(rubricJson, createdAt);
+  return { version: 1, rubric_json: rubricJson, anchors_json: "[]" };
+}
+
 function appendCorrectionHistory(
   rawTrace: unknown,
   correction: Record<string, unknown>,
@@ -686,6 +811,229 @@ function parseObjectOrDefault(text: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function defaultScoringRubric(): Record<string, unknown> {
+  return {
+    rubric_version: DEFAULT_SCORING_RUBRIC_VERSION,
+    dimensions: [...DEFAULT_SCORING_DIMENSIONS],
+    fit_band_thresholds: [...DEFAULT_FIT_BAND_THRESHOLDS],
+    rounding: "nearest_integer_half_up",
+    fit_score_range: [1, 10],
+    confidence_handling: "trace_only",
+    eligibility_handling: "trace_only",
+  };
+}
+
+function normalizeRubricJson(raw: unknown): string {
+  const text = String(raw ?? "");
+  if (!text) {
+    return JSON.stringify(defaultScoringRubric());
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return isRecord(parsed) ? JSON.stringify(parsed) : JSON.stringify(defaultScoringRubric());
+  } catch {
+    return JSON.stringify(defaultScoringRubric());
+  }
+}
+
+function parseAnchorList(raw: unknown): Record<string, unknown>[] {
+  try {
+    const parsed: unknown = JSON.parse(String(raw ?? "[]"));
+    return Array.isArray(parsed) ? parsed.filter(isRecord).map(sanitizePolicyAnchor) : [];
+  } catch {
+    return [];
+  }
+}
+
+function upsertAnchor(
+  anchors: Record<string, unknown>[],
+  anchor: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const anchorId = String(anchor.anchor_id ?? "");
+  let replaced = false;
+  const next = anchors.map((existing) => {
+    if (String(existing.anchor_id ?? "") !== anchorId) {
+      return existing;
+    }
+    replaced = true;
+    return anchor;
+  });
+  return replaced ? next : [...next, anchor];
+}
+
+function correctionAnchorId(payload: Record<string, unknown>): string {
+  const digest = stablePolicyHash(payload).slice(0, 12);
+  return `correction-anchor-${digest}`;
+}
+
+function policyAnchorJobRefHash(jobUrl: string): string {
+  return `sha256:${stablePolicyHash({ tenant_id: "local", job_id: jobUrl })}`;
+}
+
+function stablePolicyHash(payload: Record<string, unknown>): string {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(payload, Object.keys(payload).sort()))
+    .digest("hex");
+}
+
+function correctionDirection(delta: number): "increased" | "decreased" | "unchanged" {
+  if (delta > 0) {
+    return "increased";
+  }
+  if (delta < 0) {
+    return "decreased";
+  }
+  return "unchanged";
+}
+
+function sanitizePolicyAnchor(anchor: Record<string, unknown>): Record<string, unknown> {
+  const originalScore = numberOrNull(anchor.original_fit_score ?? anchor.originalFitScore ?? anchor.original_score);
+  const correctedScore = numberOrNull(
+    anchor.corrected_fit_score ?? anchor.correctedFitScore ?? anchor.corrected_score ?? anchor.fit_score ?? anchor.fitScore,
+  );
+  const delta = numberOrNull(anchor.correction_delta ?? anchor.correctionDelta) ?? (
+    originalScore === null || correctedScore === null ? 0 : correctedScore - originalScore
+  );
+  const jobRefHash = String(anchor.job_ref_hash ?? anchor.jobRefHash ?? "").trim()
+    || legacyPolicyAnchorJobRefHash(String(anchor.job_id ?? anchor.jobId ?? "").trim());
+  return {
+    anchor_id: String(anchor.anchor_id ?? anchor.anchorId ?? ""),
+    ...(jobRefHash ? { job_ref_hash: jobRefHash } : {}),
+    fit_score: numberOrNull(anchor.fit_score ?? anchor.fitScore),
+    original_fit_score: originalScore,
+    corrected_fit_score: correctedScore,
+    correction_delta: delta,
+    correction_direction: correctionDirection(delta),
+    dimensions: anchorDimensions(anchor),
+    dimension_scores: sanitizeAnchorDimensionScores(anchor.dimension_scores ?? anchor.dimensionScores),
+    evidence_summary: sanitizeAnchorEvidence(anchor.evidence_summary ?? anchor.evidenceSummary),
+    source_policy_id: String(anchor.source_policy_id ?? anchor.sourcePolicyId ?? ""),
+    source_policy_version: numberOrNull(anchor.source_policy_version ?? anchor.sourcePolicyVersion) ?? 0,
+    created_at: String(anchor.created_at ?? anchor.createdAt ?? ""),
+  };
+}
+
+function legacyPolicyAnchorJobRefHash(jobUrl: string): string {
+  return jobUrl ? `sha256:${stablePolicyHash({ tenant_id: "", job_id: jobUrl })}` : "";
+}
+
+function extractDimensionScores(
+  trace: Record<string, unknown>,
+  breakdown: Record<string, unknown>,
+): Record<string, unknown>[] {
+  if (Array.isArray(trace.resolved_dimensions)) {
+    const dimensions = trace.resolved_dimensions.filter(isRecord).map(cleanJsonRecord);
+    if (dimensions.length) {
+      return dimensions;
+    }
+  }
+  return ["technical_fit", "experience_fit", "role_fit"].map((name) => ({
+    name,
+    value: Number(breakdown[name] ?? 0),
+  }));
+}
+
+function extractDimensionNames(
+  trace: Record<string, unknown>,
+  breakdown: Record<string, unknown>,
+): string[] {
+  return extractDimensionScores(trace, breakdown)
+    .map((dimension) => String(dimension.name ?? "").trim())
+    .filter((name) => name.length > 0);
+}
+
+function extractPolicyEvidence(
+  trace: Record<string, unknown>,
+  breakdown: Record<string, unknown>,
+): Record<string, unknown> {
+  if (isRecord(trace.policy_evidence)) {
+    return sanitizeAnchorEvidence(trace.policy_evidence);
+  }
+  const eligibility = isRecord(breakdown.eligibility) ? breakdown.eligibility : {};
+  return sanitizeAnchorEvidence({
+    confidence: String(breakdown.confidence ?? "medium"),
+    eligibility_status: String(eligibility.status ?? "unknown"),
+    hard_blocker_count: Array.isArray(eligibility.hard_blockers) ? eligibility.hard_blockers.length : 0,
+    warning_count: Array.isArray(eligibility.warnings) ? eligibility.warnings.length : 0,
+    matched_signal_count: Array.isArray(breakdown.matched_signals) ? breakdown.matched_signals.length : 0,
+    missing_signal_count: Array.isArray(breakdown.missing_signals) ? breakdown.missing_signals.length : 0,
+    transferable_signal_count: Array.isArray(breakdown.transferable_signals)
+      ? breakdown.transferable_signals.length
+      : 0,
+  });
+}
+
+function anchorDimensions(anchor: Record<string, unknown>): string[] {
+  if (Array.isArray(anchor.dimensions)) {
+    return anchor.dimensions.map((value) => String(value).trim()).filter((value) => value.length > 0);
+  }
+  return sanitizeAnchorDimensionScores(anchor.dimension_scores ?? anchor.dimensionScores)
+    .map((dimension) => String(dimension.name ?? "").trim())
+    .filter((name) => name.length > 0);
+}
+
+function sanitizeAnchorDimensionScores(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isRecord).map((dimension) => {
+    const cleaned: Record<string, unknown> = {};
+    const name = String(dimension.name ?? "").trim();
+    if (name) {
+      cleaned.name = name;
+    }
+    for (const key of ["value", "weight", "weighted_value"] as const) {
+      const number = numberOrNull(dimension[key]);
+      if (number !== null) {
+        cleaned[key] = number;
+      }
+    }
+    return cleaned;
+  }).filter((dimension) => Object.keys(dimension).length > 0);
+}
+
+function sanitizeAnchorEvidence(value: unknown): Record<string, unknown> {
+  const raw = isRecord(value) ? value : {};
+  const cleaned: Record<string, unknown> = {};
+  const confidence = String(raw.confidence ?? "").trim().toLowerCase();
+  if (["low", "medium", "high"].includes(confidence)) {
+    cleaned.confidence = confidence;
+  }
+  const eligibilityStatus = String(raw.eligibility_status ?? raw.eligibilityStatus ?? "").trim().toLowerCase();
+  if (["eligible", "warning", "blocked", "unknown"].includes(eligibilityStatus)) {
+    cleaned.eligibility_status = eligibilityStatus;
+  }
+  for (const key of [
+    "hard_blocker_count",
+    "warning_count",
+    "matched_signal_count",
+    "missing_signal_count",
+    "transferable_signal_count",
+  ] as const) {
+    const number = numberOrNull(raw[key]);
+    if (number !== null) {
+      cleaned[key] = Math.max(Math.trunc(number), 0);
+    }
+  }
+  return cleaned;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || typeof value === "boolean" || value === "") {
+    return null;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+  return number;
+}
+
+function cleanJsonRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
 /**

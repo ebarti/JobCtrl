@@ -24,7 +24,7 @@ from typing import Any
 from jobhunter.database import ensure_scoring_policy_tables
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring.aggregate import JobScore
-from jobhunter.domain.scoring.policy import ScoringPolicy
+from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
@@ -284,6 +284,12 @@ class SqliteScoringPolicyRepository:
             ),
         )
         self._conn.commit()
+
+    def save_correction_signal(self, signal: CorrectionSignal) -> ScoringPolicy:
+        current = self.get_current(signal.tenant_id)
+        next_policy = current.with_correction_signal(signal)
+        self.save(next_policy)
+        return next_policy
 
     @staticmethod
     def _row_to_policy(row: Any) -> ScoringPolicy:
