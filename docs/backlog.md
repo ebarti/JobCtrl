@@ -63,6 +63,16 @@ deferred until the local product is solid.
   expose `(TenantId, JobId)` semantics and PR 4's `apply_runs → workflow
   runs` collapse can extend uniformly to the non-apply stages.
 
+### Scoring Calibration
+
+- Implement the calibrated scoring policy RFC in
+  [`docs/plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md`](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md).
+  Current scoring stores rich evidence and corrections, but the LLM still
+  returns one absolute 1..10 score per job. Corrections should become
+  calibration anchors in a versioned scoring policy, future scoring should use
+  that policy immediately, comparable uncorrected scores should be marked
+  stale, and bulk rescoring should remain explicit/user-triggered.
+
 ### Workflow Orchestration (Local Temporal)
 
 Delivered by
