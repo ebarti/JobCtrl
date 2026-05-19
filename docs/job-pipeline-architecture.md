@@ -490,6 +490,10 @@ classDiagram
 
 - Reads enriched job content and profile target preferences.
 - Writes versioned `job_scores` rows with criteria and trace metadata.
+- Writes versioned `scoring_policies` rows when user corrections create
+  correction-derived calibration anchors; current behavior preserves rubric
+  weights and thresholds while making later score traces cite the new policy
+  version and anchor IDs.
 - Updates legacy-compatible score fields where needed by queue selectors.
 - Publishes score events consumed by Pipeline and Operations.
 - Refreshes dashboard score distributions and job list score badges.

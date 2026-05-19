@@ -25,6 +25,11 @@ Both processes refresh projections idempotently via the shared
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, and `scoredAt`. `scoreReasoning` remains on
 the wire as a compatibility summary during the scoring evidence migration.
+`POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
+version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
+table with a correction-derived calibration anchor. It mirrors the Python
+`CorrectScoreUseCase` policy update path because this local API mutation writes
+directly to SQLite instead of crossing the Python JSON-RPC boundary.
 The jobs list `deleted` filter accepts `active`, `deleted`, `hidden`, or `all`.
 Deleted jobs are temporary removals: discovery clears the delete tombstone when
 the same posting is observed again. Hidden jobs use a separate

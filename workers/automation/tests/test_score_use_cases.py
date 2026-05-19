@@ -20,6 +20,7 @@ from jobhunter.domain.scoring import (
     JobScore,
     MatchedKeywords,
     ScoreBreakdown,
+    ScoringPolicy,
     ScoringCriteria,
 )
 from jobhunter.domain.scoring.services import ScoreParser
@@ -71,6 +72,30 @@ class _MemoryRepo:
             if min_score <= latest.fit_score.value <= max_score:
                 out.append(latest)
         return out
+
+
+class _MemoryPolicyRepo:
+    """In-memory ``ScoringPolicyRepository`` keyed by tenant."""
+
+    def __init__(self) -> None:
+        self._policies: dict[str, list[ScoringPolicy]] = {}
+
+    def get_current(self, tenant_id):
+        rows = self._policies.get(str(tenant_id))
+        if rows:
+            return rows[-1]
+        policy = ScoringPolicy.default(tenant_id, created_at="2024-01-01T00:00:00+00:00")
+        self.save(policy)
+        return policy
+
+    def save(self, policy: ScoringPolicy) -> None:
+        self._policies.setdefault(str(policy.tenant_id), []).append(policy)
+
+    def save_correction_signal(self, signal):
+        current = self.get_current(signal.tenant_id)
+        policy = current.with_correction_signal(signal)
+        self.save(policy)
+        return policy
 
 
 class _ScriptedLlm:
@@ -554,6 +579,73 @@ def test_correct_score_publishes_corrected_event_and_persists() -> None:
     assert received[0].event_type == "ScoreCorrected"
     assert received[0].payload["original_score"] == 5
     assert received[0].payload["corrected_score"] == 9
+
+
+def test_correct_score_updates_policy_and_subsequent_score_traces_anchor(
+    profile_snapshot,
+) -> None:
+    repo = _MemoryRepo()
+    policy_repo = _MemoryPolicyRepo()
+    url = "https://example.com/job/policy-correction"
+    llm = _ScriptedLlm(
+        {
+            "score": 5,
+            "technical_fit": 5,
+            "experience_fit": 5,
+            "role_fit": 5,
+            "fit_band": "plausible",
+            "confidence": "medium",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": ["platform leadership"],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "Initial policy-backed score.",
+        },
+        {
+            "score": 7,
+            "technical_fit": 7,
+            "experience_fit": 7,
+            "role_fit": 7,
+            "fit_band": "strong",
+            "confidence": "medium",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python", "platform"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python", "platform"],
+            "reasoning": "Subsequent score should cite the learned anchor.",
+        },
+    )
+    scorer = ScoreJobUseCase(repository=repo, llm=llm, policy_repository=policy_repo)
+
+    first = scorer.score(job=_job(url), profile_snapshot=profile_snapshot)
+    assert first.score is not None
+    assert first.score.trace.scoring_policy_version == 1
+
+    CorrectScoreUseCase(repository=repo, policy_repository=policy_repo).execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        corrected_fit_score=FitScore.create(8),
+        rationale="Manual review found stronger platform evidence.",
+        corrected_at="2024-01-02T00:00:00+00:00",
+    )
+
+    policy = policy_repo.get_current(LOCAL_TENANT)
+    assert policy.version == 2
+    assert len(policy.anchors) == 1
+    assert policy.anchors[0].original_fit_score == FitScore.create(5)
+    assert policy.anchors[0].corrected_fit_score == FitScore.create(8)
+    assert policy.anchors[0].source_policy_version == 1
+
+    second = scorer.score(
+        job=_job("https://example.com/job/after-correction"),
+        profile_snapshot=profile_snapshot,
+    )
+
+    assert second.score is not None
+    assert second.score.trace.scoring_policy_version == 2
+    assert second.score.trace.anchor_ids == (policy.anchors[0].anchor_id,)
 
 
 def test_correct_score_raises_when_no_existing_score() -> None:

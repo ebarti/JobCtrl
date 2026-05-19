@@ -40,7 +40,7 @@ from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
-from jobhunter.domain.scoring.policy import ScoringPolicy
+from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
@@ -571,9 +571,11 @@ class CorrectScoreUseCase:
         *,
         repository: ScoreRepository,
         publisher: EventPublisher | None = None,
+        policy_repository: ScoringPolicyRepository | None = None,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
+        self._policy_repository = policy_repository
 
     def execute(
         self,
@@ -599,8 +601,40 @@ class CorrectScoreUseCase:
         )
         new_score = previous.with_correction(correction)
         self._repository.save(new_score)
+        self._persist_policy_correction_signal(previous=previous, correction=correction)
         self._publish_corrected(previous=previous, new=new_score)
         return new_score
+
+    def _persist_policy_correction_signal(
+        self,
+        *,
+        previous: JobScore,
+        correction: ScoreCorrection,
+    ) -> None:
+        if self._policy_repository is None:
+            return
+        signal = CorrectionSignal(
+            tenant_id=previous.tenant_id,
+            job_id=str(previous.job_id),
+            original_score=previous.fit_score,
+            corrected_score=correction.corrected_fit_score,
+            rationale=correction.rationale,
+            corrected_at=correction.corrected_at,
+            source_policy_id=previous.trace.scoring_policy_id,
+            source_policy_version=previous.trace.scoring_policy_version,
+            score_dimensions=_dimension_signal_from_score(previous),
+            evidence_summary=_policy_evidence_from_score(previous),
+        )
+        save_correction_signal = getattr(
+            self._policy_repository,
+            "save_correction_signal",
+            None,
+        )
+        if callable(save_correction_signal):
+            save_correction_signal(signal)
+            return
+        current = self._policy_repository.get_current(previous.tenant_id)
+        self._policy_repository.save(current.with_correction_signal(signal))
 
     def _publish_corrected(self, *, previous: JobScore, new: JobScore) -> None:
         if self._publisher is None or new.correction is None:
@@ -619,6 +653,30 @@ class CorrectScoreUseCase:
             self._publisher.publish(event)
         except Exception:  # noqa: BLE001
             log.exception("Failed to publish ScoreCorrected event for %s", new.job_id)
+
+
+def _dimension_signal_from_score(score: JobScore) -> tuple[dict[str, Any], ...]:
+    if score.trace.resolved_dimensions:
+        return score.trace.resolved_dimensions
+    return (
+        {"name": "technical_fit", "value": score.breakdown.technical_fit},
+        {"name": "experience_fit", "value": score.breakdown.experience_fit},
+        {"name": "role_fit", "value": score.breakdown.role_fit},
+    )
+
+
+def _policy_evidence_from_score(score: JobScore) -> dict[str, Any]:
+    if score.trace.policy_evidence:
+        return score.trace.policy_evidence
+    return {
+        "confidence": score.breakdown.confidence,
+        "eligibility_status": score.breakdown.eligibility.status,
+        "hard_blocker_count": len(score.breakdown.eligibility.hard_blockers),
+        "warning_count": len(score.breakdown.eligibility.warnings),
+        "matched_signal_count": len(score.breakdown.matched_signals),
+        "missing_signal_count": len(score.breakdown.missing_signals),
+        "transferable_signal_count": len(score.breakdown.transferable_signals),
+    }
 
 
 __all__ = [

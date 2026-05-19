@@ -126,6 +126,10 @@ The score breakdown separates soft fit from hard eligibility. `fit_band`,
 are exposed through the local API and jobs drawer. User corrections create a new
 score version, preserve the correction rationale, publish `ScoreCorrected`, and
 can be read back as transparent feedback signals alongside existing job actions.
+They also create a non-sensitive correction signal that is persisted as a
+calibration anchor on the next `scoring_policies` version. The current policy
+keeps rubric weights and fit-band thresholds stable; subsequent scores load the
+latest policy version and include the active anchor IDs in `trace_json`.
 
 This is not an employer-side candidate selection system. If JobHunter is ever
 used to rank people for hiring decisions, the architecture needs a separate

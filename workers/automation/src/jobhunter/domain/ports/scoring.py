@@ -14,7 +14,7 @@ from typing import Protocol
 
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring.aggregate import JobScore
-from jobhunter.domain.scoring.policy import ScoringPolicy
+from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobhunter.domain.tenant import TenantId
 
 # Re-export the shared LLM port — Scoring is one of its consumers.
@@ -94,4 +94,8 @@ class ScoringPolicyRepository(Protocol):
 
     def save(self, policy: ScoringPolicy) -> None:
         """Persist a ``ScoringPolicy`` version."""
+        ...
+
+    def save_correction_signal(self, signal: CorrectionSignal) -> ScoringPolicy:
+        """Persist the next policy version derived from a correction signal."""
         ...
