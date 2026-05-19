@@ -1863,6 +1863,29 @@ _TAILOR_NOT_EXHAUSTED: str = "(jss_t.jss_t_state IS NULL OR jss_t.jss_t_state !=
 _COVER_NOT_EXHAUSTED: str = "(jss_c.jss_c_state IS NULL OR jss_c.jss_c_state != 'exhausted')"
 
 
+# Stale-score guard for downstream stages. Legacy rows can have a pending
+# score-stage row while their usable score still lives only in
+# ``jobs.fit_score``; those remain eligible unless explicitly stale or
+# carrying an unresolved marker. Once the usable score comes from
+# ``job_scores``, downstream work requires a succeeded score-stage row.
+_SCORE_DOWNSTREAM_STATE_JOIN: str = (
+    "LEFT JOIN ("
+    "SELECT job_url AS jss_s_job_url, state AS jss_s_state "
+    "FROM job_stage_states WHERE stage = 'score'"
+    ") jss_s ON jss_s.jss_s_job_url = jobs.url "
+    "LEFT JOIN ("
+    "SELECT DISTINCT job_url AS jss_stale_job_url "
+    "FROM job_score_staleness WHERE resolved = 0"
+    ") jss_stale ON jss_stale.jss_stale_job_url = jobs.url"
+)
+_SCORE_CURRENT_FOR_DOWNSTREAM: str = (
+    "(jss_stale.jss_stale_job_url IS NULL "
+    "AND (jss_s.jss_s_state IS NULL "
+    "OR jss_s.jss_s_state = 'succeeded' "
+    "OR (js.js_fit_score IS NULL AND jss_s.jss_s_state != 'stale')))"
+)
+
+
 # ---------------------------------------------------------------------------
 # job_scores read fragments — used by every selector / stat that previously
 # read bare ``jobs.fit_score``. After Phase 5 the canonical fit score lives
@@ -2076,9 +2099,10 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["untailored_eligible"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_ENRICHMENT_JOIN} "
+        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} "
         f"WHERE {_EFFECTIVE_FIT_SCORE} >= 7 "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+        f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL"
     ).fetchone()[0]
@@ -2114,10 +2138,11 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["ready_to_apply"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+        f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
         f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
         f"AND {_EFFECTIVE_FIT_SCORE} >= 7 "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+        f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
         f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
         f"AND {_EFFECTIVE_APPLICATION_URL} != ''"
@@ -2365,11 +2390,13 @@ def get_jobs_by_stage(
     pending_tailor_where = (
         f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+        f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
         if retailor
         else f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+        f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
         f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5"
@@ -2385,6 +2412,7 @@ def get_jobs_by_stage(
         "pending_cover": (
             f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {_EFFECTIVE_TAILOR_PATH} != '' "
             f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
             f"AND {_COVER_NOT_EXHAUSTED} "
@@ -2402,6 +2430,7 @@ def get_jobs_by_stage(
             f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
             f"AND {_EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
             f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
             f"AND {_EFFECTIVE_APPLICATION_URL} != '' "
@@ -2459,7 +2488,8 @@ def get_jobs_by_stage(
         f"{_EFFECTIVE_APPLIED_AT} AS effective_applied_at, "
         f"{_EFFECTIVE_APPLY_STATUS} AS effective_apply_status "
         f"FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-        f"{_LATEST_STAGE_ATTEMPTS_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+        f"{_LATEST_STAGE_ATTEMPTS_JOIN} {_SCORE_DOWNSTREAM_STATE_JOIN} "
+        f"{_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )

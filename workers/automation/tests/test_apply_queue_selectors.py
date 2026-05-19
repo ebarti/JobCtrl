@@ -18,6 +18,7 @@ from jobhunter.database import (
     get_stats,
     init_db,
 )
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
@@ -79,6 +80,50 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
     conn.commit()
 
 
+def _insert_allowed_score(conn, url: str, *, fit_score: int = 9) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            job_url, version, tenant_id, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', ?, ?, '["python"]', ?, NULL, '{}', '{}')
+        """,
+        (
+            url,
+            fit_score,
+            json.dumps(
+                {
+                    "reasoning": "Strong match.",
+                    "eligibility": {
+                        "status": "eligible",
+                        "hard_blockers": [],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            "2026-05-14T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+
+def _insert_active_score_staleness_marker(conn, url: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO job_score_staleness (
+            tenant_id, job_url, stale_reason,
+            old_policy_id, old_policy_version,
+            new_policy_id, new_policy_version,
+            marked_at, resolved, resolved_at, resolved_by_score_version
+        ) VALUES (?, ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+                  'local:scoring-policy-v2', 2, '2026-05-19T00:00:00+00:00', 0, NULL, NULL)
+        """,
+        (str(LOCAL_TENANT), url),
+    )
+    conn.commit()
+
+
 def _emit_started(conn, url: str, run_id: str, *, when: str = "t0") -> None:
     record_job_event(
         conn,
@@ -125,6 +170,28 @@ def test_pending_apply_excludes_high_score_blocked_jobs(conn):
     urls = {row["url"] for row in rows}
     assert "https://example.com/allowed" in urls
     assert "https://example.com/blocked" not in urls
+
+
+@pytest.mark.parametrize(
+    ("score_state", "active_marker"),
+    [
+        ("stale", True),
+        ("pending", False),
+        ("succeeded", True),
+    ],
+)
+def test_pending_apply_excludes_non_current_scores(conn, score_state: str, active_marker: bool):
+    url = f"https://example.com/non-current-apply-{score_state}-{active_marker}"
+    _insert_apply_ready_job(conn, url=url)
+    _insert_allowed_score(conn, url)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(conn, url, "score", score_state, validate_transition=False)
+    if active_marker:
+        _insert_active_score_staleness_marker(conn, url)
+
+    rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+    urls = {row["url"] for row in rows}
+    assert url not in urls
 
 
 def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
