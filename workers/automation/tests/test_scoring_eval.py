@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from jobhunter.database import init_db
+from jobhunter.domain.scoring import ScoringPolicy
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.scoring.eval import (
     ScoringEvalPrediction,
+    ScoringPolicyEvalCase,
+    build_scoring_governance_report,
     evaluate_predictions,
+    evaluate_policy_resolution,
     load_cases,
     prediction_from_payload,
+    resolve_policy_predictions,
 )
 
 
@@ -52,3 +59,80 @@ def test_prediction_from_payload_marks_invalid_parse_without_user_data() -> None
     assert valid.score == 8
     assert valid.hard_blockers == ("below minimum salary",)
     assert invalid.score is None
+
+
+def test_policy_resolution_eval_is_independent_from_raw_llm_score() -> None:
+    policy = ScoringPolicy.default(LOCAL_TENANT)
+    cases = [
+        ScoringPolicyEvalCase(
+            job_id="similar-raw-low",
+            dimensions={"technical_fit": 8, "experience_fit": 7, "role_fit": 8},
+            expected_fit_score=8,
+            expected_fit_band="strong",
+            raw_llm_score=6,
+            ideal_rank=2,
+            consistency_group="platform-leadership",
+        ),
+        ScoringPolicyEvalCase(
+            job_id="similar-raw-high",
+            dimensions={"technical_fit": 8, "experience_fit": 7, "role_fit": 8},
+            expected_fit_score=8,
+            expected_fit_band="strong",
+            raw_llm_score=9,
+            ideal_rank=3,
+            consistency_group="platform-leadership",
+        ),
+        ScoringPolicyEvalCase(
+            job_id="materially-stronger",
+            dimensions={"technical_fit": 9, "experience_fit": 9, "role_fit": 8},
+            expected_fit_score=9,
+            expected_fit_band="excellent",
+            raw_llm_score=7,
+            ideal_rank=1,
+        ),
+        ScoringPolicyEvalCase(
+            job_id="materially-weaker",
+            dimensions={"technical_fit": 4, "experience_fit": 4, "role_fit": 4},
+            expected_fit_score=4,
+            expected_fit_band="stretch",
+            raw_llm_score=8,
+            ideal_rank=4,
+        ),
+    ]
+
+    predictions = resolve_policy_predictions(cases, policy)
+    report = evaluate_policy_resolution(cases, policy, k=4)
+
+    assert [(item.job_id, item.policy_score, item.policy_fit_band) for item in predictions] == [
+        ("similar-raw-low", 8, "strong"),
+        ("similar-raw-high", 8, "strong"),
+        ("materially-stronger", 9, "excellent"),
+        ("materially-weaker", 4, "stretch"),
+    ]
+    assert report.to_dict() == {
+        "policy_score_accuracy": 1.0,
+        "policy_band_accuracy": 1.0,
+        "raw_llm_band_accuracy": 0.0,
+        "consistency_group_agreement": 1.0,
+        "ndcg_at_k": 1.0,
+    }
+
+
+def test_governance_report_does_not_initialize_policy_rows(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "jobhunter.db")
+    before = conn.execute("SELECT COUNT(*) FROM scoring_policies").fetchone()[0]
+
+    report = build_scoring_governance_report(conn)
+    after = conn.execute("SELECT COUNT(*) FROM scoring_policies").fetchone()[0]
+
+    assert before == 0
+    assert after == 0
+    assert report.to_dict() == {
+        "policy_version": 1,
+        "rubric_version": "default-scoring-rubric-v1",
+        "anchor_count": 0,
+        "stale_unresolved_count": 0,
+        "stale_resolved_count": 0,
+        "correction_signal_count": 0,
+        "correction_agreement": None,
+    }

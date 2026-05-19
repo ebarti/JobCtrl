@@ -499,6 +499,11 @@ classDiagram
   versions are excluded. Successful uncorrected rescores under the newer policy
   resolve the stale marker; the local API can also reset active stale markers
   for explicit `jobhunter run score --rescore` processing.
+- Supports a local, non-sensitive scoring governance report for QA. The report
+  summarizes current policy version, rubric version, anchor count, unresolved
+  and resolved stale-marker counts, correction count, and correction agreement
+  signal without emitting raw job URLs, correction rationales, anchor IDs,
+  resumes, generated artifacts, or local paths.
 - Updates legacy-compatible score fields where needed by queue selectors.
 - Publishes score events consumed by Pipeline and Operations.
 - Refreshes dashboard score distributions and job list score badges.
@@ -508,7 +513,10 @@ classDiagram
 `limit` applies after retrieval preselection. `rescore=true` allows jobs with
 existing scores back into the candidate pool. Parser warnings and failed LLM
 calls are recorded so score failures do not masquerade as successful low-fit
-results.
+results. Scoring prompt, model, schema, rubric, or policy changes must run the
+local scoring eval gate documented in `docs/local-reliability-qa.md`; the gate
+checks deterministic policy resolution separately from the raw LLM score and
+pins stale-score exclusion until explicit reset/rescore.
 
 ## Phase 4: Tailor
 

@@ -8,13 +8,14 @@ directly by these tests to seed the backfill path.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from jobhunter.database import ensure_score_tables, init_db
+from jobhunter.database import ensure_score_tables, get_jobs_by_stage, init_db
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring import (
     FitScore,
@@ -22,10 +23,11 @@ from jobhunter.domain.scoring import (
     MatchedKeywords,
     ScoreBreakdown,
     ScoreCorrection,
+    ScoreParseResult,
     ScoreTrace,
     ScoringCriteria,
 )
-from jobhunter.domain.scoring.use_cases import CorrectScoreUseCase
+from jobhunter.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import (
     SqliteScoreRepository,
@@ -33,6 +35,8 @@ from jobhunter.infrastructure.scoring import (
     SqliteScoringPolicyRepository,
 )
 from jobhunter.infrastructure.scoring.sqlite_repository import ScoreVersionConflict
+from jobhunter.scoring.eval import build_scoring_governance_report
+from jobhunter.state import set_stage_state
 
 
 @pytest.fixture()
@@ -380,6 +384,168 @@ def test_score_correction_marks_comparable_uncorrected_scores_stale_and_resolve_
     ).fetchone()
     assert resolved["resolved"] == 1
     assert resolved["resolved_by_score_version"] == 2
+
+
+def test_score_correction_governance_report_and_downstream_staleness_gate(
+    conn: sqlite3.Connection,
+) -> None:
+    target_url = _seed_job(conn, url="https://example.com/job/eval-corrected")
+    comparable_url = _seed_job(conn, url="https://example.com/job/eval-comparable")
+    subsequent_url = _seed_job(conn, url="https://example.com/job/eval-subsequent")
+    repo = SqliteScoreRepository(conn)
+    policy_repo = SqliteScoringPolicyRepository(conn)
+    staleness_repo = SqliteScoreStalenessRepository(conn)
+    policy_v1 = policy_repo.get_current(LOCAL_TENANT)
+    target_resolution = policy_v1.resolve(
+        ScoreBreakdown(
+            technical_fit=5,
+            experience_fit=5,
+            role_fit=5,
+            reasoning="Initial score before correction.",
+        )
+    )
+    comparable_resolution = policy_v1.resolve(
+        ScoreBreakdown(
+            technical_fit=8,
+            experience_fit=7,
+            role_fit=8,
+            reasoning="Comparable score under the original policy.",
+        )
+    )
+
+    repo.save(
+        _build_score(
+            target_url,
+            fit=target_resolution.fit_score.value,
+            trace=ScoreTrace().with_policy_resolution(target_resolution),
+        )
+    )
+    repo.save(
+        _build_score(
+            comparable_url,
+            fit=comparable_resolution.fit_score.value,
+            trace=ScoreTrace().with_policy_resolution(comparable_resolution),
+        )
+    )
+    set_stage_state(
+        conn,
+        comparable_url,
+        "score",
+        "succeeded",
+        validate_transition=False,
+    )
+    pending_before = {
+        row["url"]
+        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
+    }
+    assert comparable_url in pending_before
+
+    CorrectScoreUseCase(
+        repository=repo,
+        policy_repository=policy_repo,
+        staleness_repository=staleness_repo,
+    ).execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(target_url),
+        corrected_fit_score=FitScore.create(9),
+        rationale="Manual review found stronger platform evidence.",
+        corrected_at="2024-01-02T00:00:00+00:00",
+    )
+
+    policy_v2 = policy_repo.get_current(LOCAL_TENANT)
+    governance = build_scoring_governance_report(conn, correction_agreement=1.0)
+    governance_payload = json.dumps(governance.to_dict(), sort_keys=True)
+
+    assert policy_v2.version == 2
+    assert len(policy_v2.anchors) == 1
+    assert governance.to_dict() == {
+        "policy_version": 2,
+        "rubric_version": "default-scoring-rubric-v1",
+        "anchor_count": 1,
+        "stale_unresolved_count": 1,
+        "stale_resolved_count": 0,
+        "correction_signal_count": 1,
+        "correction_agreement": 1.0,
+    }
+    assert "https://example.com/job" not in governance_payload
+    assert "Manual review" not in governance_payload
+    assert policy_v2.anchors[0].anchor_id not in governance_payload
+
+    pending_after_correction = {
+        row["url"]
+        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
+    }
+    assert comparable_url not in pending_after_correction
+
+    scorer = ScoreJobUseCase(
+        repository=repo,
+        llm=object(),
+        policy_repository=policy_repo,
+    )
+    subsequent = scorer.persist_outcome(
+        job={"url": subsequent_url},
+        parse=ScoreParseResult(
+            ok=True,
+            fit_score=FitScore.create(10),
+            breakdown=ScoreBreakdown(
+                technical_fit=7,
+                experience_fit=7,
+                role_fit=7,
+                reasoning="Subsequent score after correction.",
+            ),
+            keywords=MatchedKeywords.from_iterable(["python"]),
+        ),
+    )
+
+    assert subsequent.ok is True
+    assert subsequent.score is not None
+    assert subsequent.score.trace.scoring_policy_version == 2
+    assert subsequent.score.trace.rubric_version == "default-scoring-rubric-v1"
+    assert subsequent.score.trace.anchor_ids == (policy_v2.anchors[0].anchor_id,)
+
+    markers = staleness_repo.reset_for_rescore(
+        LOCAL_TENANT,
+        reset_at="2024-01-02T00:05:00+00:00",
+    )
+    pending_after_reset = {
+        row["url"]
+        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
+    }
+    assert [str(marker.job_id) for marker in markers] == [comparable_url]
+    assert comparable_url not in pending_after_reset
+
+    refreshed_resolution = policy_v2.resolve(
+        ScoreBreakdown(
+            technical_fit=8,
+            experience_fit=7,
+            role_fit=8,
+            reasoning="Explicit rescore under updated policy.",
+        )
+    )
+    repo.save(
+        _build_score(
+            comparable_url,
+            version=2,
+            fit=refreshed_resolution.fit_score.value,
+            trace=ScoreTrace().with_policy_resolution(refreshed_resolution),
+        )
+    )
+    set_stage_state(
+        conn,
+        comparable_url,
+        "score",
+        "succeeded",
+        validate_transition=False,
+    )
+
+    final_governance = build_scoring_governance_report(conn, correction_agreement=1.0)
+    pending_after_rescore = {
+        row["url"]
+        for row in get_jobs_by_stage(conn, "pending_tailor", min_score=7, limit=0)
+    }
+    assert final_governance.stale_unresolved_count == 0
+    assert final_governance.stale_resolved_count == 1
+    assert comparable_url in pending_after_rescore
 
 
 # ---------------------------------------------------------------------------
