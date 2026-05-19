@@ -15,6 +15,7 @@ class EnrichActivityInput:
     tenant_id: str
     limit: int = 0
     workers: int = 1
+    dry_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,10 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
 
     def _do() -> dict[str, Any]:
         return run_pipeline(
-            stages=["enrich"], workers=payload.workers, limit=payload.limit
+            stages=["enrich"],
+            workers=payload.workers,
+            limit=payload.limit,
+            dry_run=payload.dry_run,
         )
 
     result = await run_blocking_with_heartbeat(

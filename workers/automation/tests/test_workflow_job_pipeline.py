@@ -19,6 +19,8 @@ from temporalio.exceptions import ApplicationError, CancelledError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
+from jobhunter.apply.activities import apply_activity
+from jobhunter.apply.workflow import ApplyWorkflow
 from jobhunter.discovery.activities import discover_activity
 from jobhunter.enrichment.activities import enrich_activity
 from jobhunter.materials.activities import (
@@ -48,6 +50,7 @@ def _all_activities():
         tailor_activity,
         cover_activity,
         pdf_activity,
+        apply_activity,
     ]
 
 
@@ -116,33 +119,47 @@ async def test_pipeline_workflow_rejects_unknown_stage_as_non_retryable():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_workflow_rejects_apply_stage_with_pointer_to_apply_workflow():
-    """Passing ``apply`` is rejected with a clear pointer to ``ApplyWorkflow``."""
-    queue = f"pipeline-apply-rejected-{uuid.uuid4()}"
+async def test_pipeline_workflow_runs_apply_as_child_workflow():
+    """Passing ``apply`` delegates to ``ApplyWorkflow`` while preserving order."""
+    queue = f"pipeline-apply-{uuid.uuid4()}"
 
-    async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue=queue,
-            workflows=[JobPipelineWorkflow],
-            activities=_all_activities(),
-            workflow_runner=UnsandboxedWorkflowRunner(),
-        ):
-            with pytest.raises(WorkflowFailureError) as exc_info:
-                await env.client.execute_workflow(
+    with patch("jobhunter.apply.launcher.main", return_value=(1, 0)) as apply_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, ApplyWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
                     JobPipelineWorkflow.run,
                     JobPipelineWorkflowInput(
                         tenant_id="local",
                         stages=["apply"],
+                        dry_run=True,
+                        model="sonnet",
+                        headless=True,
+                        min_score=8,
+                        limit=2,
+                        workers=3,
                     ),
-                    id=f"pipeline-apply-rejected-wf-{uuid.uuid4()}",
+                    id=f"pipeline-apply-wf-{uuid.uuid4()}",
                     task_queue=queue,
                 )
 
-    cause = exc_info.value.cause
-    assert isinstance(cause, ApplicationError)
-    assert cause.non_retryable is True
-    assert "ApplyWorkflow" in str(cause.message)
+    assert result.stages_completed == ["apply"]
+    assert result.stages_failed == []
+    assert apply_mock.call_args.kwargs == {
+        "limit": 2,
+        "target_url": None,
+        "min_score": 8,
+        "headless": True,
+        "model": "sonnet",
+        "dry_run": True,
+        "workers": 3,
+        "install_signal_handlers": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -217,6 +234,45 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
         for call in runner_mock.call_args_list
     }
     assert by_stage == {"tailor": "lenient", "cover": "lenient"}
+
+
+@pytest.mark.asyncio
+async def test_pipeline_workflow_preserves_stage_options():
+    queue = f"pipeline-options-{uuid.uuid4()}"
+
+    with patch(
+        "jobhunter.pipeline.run_pipeline",
+        return_value=_OK_RESULT,
+    ) as runner_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["score", "tailor"],
+                        dry_run=True,
+                        rescore=True,
+                        retailor=True,
+                    ),
+                    id=f"pipeline-options-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    by_stage = {
+        call.kwargs["stages"][0]: call.kwargs
+        for call in runner_mock.call_args_list
+    }
+    assert by_stage["score"]["dry_run"] is True
+    assert by_stage["score"]["rescore"] is True
+    assert by_stage["tailor"]["dry_run"] is True
+    assert by_stage["tailor"]["retailor"] is True
 
 
 # ---------------------------------------------------------------------------

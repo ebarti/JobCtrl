@@ -89,21 +89,15 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(result.status).toBe("queued");
   });
 
-  it("maps a global run-stage action to the run_stage RPC method", async () => {
+  it("maps a global run-stage workflow start to a queued action", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({
       jsonrpc: "2.0",
       id: 1,
       result: {
-        ok: true,
-        action_id: "act-worker-score",
-        stage: "score",
-        status: "dry_run",
-        started_at: "2026-05-10T11:00:00.000Z",
-        finished_at: "2026-05-10T11:00:00.000Z",
-        duration_ms: 0,
-        dry_run: true,
-        result: { planned: 3 },
+        runId: "pipeline-wf",
+        workflowId: "pipeline-wf",
+        firstExecutionRunId: "first-exec-run-id",
       },
     } as JsonRpcResponse);
     const dispatcher = createActionDispatcher(fake);
@@ -130,6 +124,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       params: {
         tenantId: "local",
         stage: "score",
+        stages: ["score"],
         limit: 20,
         workers: 4,
         minScore: 8,
@@ -137,14 +132,18 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         dryRun: true,
         rescore: true,
         retailor: false,
+        headless: false,
+        model: "haiku",
+        continuous: false,
       },
     });
     expect(result).toMatchObject({
-      actionId: "act-worker-score",
-      status: "dry_run",
+      status: "queued",
+      runId: "pipeline-wf",
       result: {
-        status: "dry_run",
-        result: { planned: 3 },
+        runId: "pipeline-wf",
+        workflowId: "pipeline-wf",
+        firstExecutionRunId: "first-exec-run-id",
       },
     });
   });

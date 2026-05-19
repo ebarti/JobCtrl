@@ -67,6 +67,7 @@ async def test_apply_activity_invokes_apply_main_and_returns_ok():
     assert kwargs["min_score"] == 8
     assert kwargs["headless"] is True
     assert kwargs["model"] == "haiku"
+    assert kwargs["install_signal_handlers"] is False
     assert output.status == "ok"
     assert output.applied == 2
     assert output.failed == 0

@@ -15,6 +15,7 @@ class ScoreActivityInput:
     tenant_id: str
     limit: int = 0
     workers: int = 1
+    dry_run: bool = False
     rescore: bool = False
 
 
@@ -39,6 +40,7 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
             stages=["score"],
             workers=payload.workers,
             limit=payload.limit,
+            dry_run=payload.dry_run,
             rescore=payload.rescore,
         )
 

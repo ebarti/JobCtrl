@@ -34,6 +34,7 @@ import {
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
+  type Stage,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
 import { databaseExists, openDatabase } from "./db.js";
@@ -310,48 +311,35 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     const actions: ActionRunResponse[] = [];
-    let applyQueued = false;
-    for (const stage of body.stages) {
-      const command: ActionCommandPayload =
-        stage === "apply"
-          ? {
-              action: "apply" as const,
-              jobKey: PIPELINE_ACTION_JOB_KEY,
-              stage,
-              limit: body.limit,
-              workers: body.workers,
-              minScore: body.minScore,
-              dryRun: body.dryRun,
-              headless: body.headless,
-              model: body.model,
-              continuous: body.continuous,
-            }
-          : {
-              action: "run_stage" as const,
-              jobKey: PIPELINE_ACTION_JOB_KEY,
-              stage,
-              limit: body.limit,
-              workers: body.workers,
-              minScore: body.minScore,
-              validationMode: body.validationMode,
-              dryRun: body.dryRun,
-              rescore: body.rescore,
-              retailor: body.retailor,
-            };
-      const dispatch = await actionDispatcher(command, actionContext);
-      actions.push(buildActionResponse(command, dispatch));
-      if (command.action === "apply" && dispatch.status === "queued") {
-        applyQueued = true;
-      }
-      if (dispatch.status === "failed") {
-        break;
-      }
+    const firstStage = body.stages[0] as Stage | undefined;
+    if (!firstStage) {
+      void reply.code(400);
+      return undefined;
     }
-    void reply.code(applyQueued ? 202 : 200);
+    const command: ActionCommandPayload = {
+      action: "run_stage" as const,
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+      stage: firstStage,
+      stages: body.stages,
+      limit: body.limit,
+      workers: body.workers,
+      minScore: body.minScore,
+      validationMode: body.validationMode,
+      dryRun: body.dryRun,
+      rescore: body.rescore,
+      retailor: body.retailor,
+      headless: body.headless,
+      model: body.model,
+      continuous: body.continuous,
+    };
+    const dispatch = await actionDispatcher(command, actionContext);
+    actions.push(buildActionResponse(command, dispatch));
+    const status = stageRunStatus(actions);
+    void reply.code(dispatch.status === "queued" && status !== "failed" ? 202 : 200);
     return {
       ok: true,
       action: "run_stage",
-      status: stageRunStatus(actions),
+      status,
       jobKey: PIPELINE_ACTION_JOB_KEY,
       count: actions.length,
       command: body,

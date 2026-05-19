@@ -711,7 +711,7 @@ export interface ActionCommandPayload {
     | "profile_import";
   jobKey: string;
   stage?: Stage;
-  stages?: MaterialStage[];
+  stages?: Stage[];
   resetAttempts?: boolean;
   runAfter?: boolean;
   dryRun?: boolean;
@@ -731,6 +731,8 @@ export interface ActionCommandPayload {
 export interface ActionRunResponse {
   ok: true;
   runId: string;
+  workflowId?: string;
+  firstExecutionRunId?: string;
   actionId: string;
   action: ActionCommandPayload["action"];
   status: string;

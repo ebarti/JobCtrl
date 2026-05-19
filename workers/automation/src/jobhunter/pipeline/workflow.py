@@ -11,6 +11,7 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
+    from jobhunter.apply.workflow import ApplyWorkflow, ApplyWorkflowInput
     from jobhunter.discovery.activities import (
         DiscoverActivityInput,
         discover_activity,
@@ -43,9 +44,9 @@ class JobPipelineWorkflowInput:
     single ``(TenantId, JobId)`` for the discover/enrich/score/tailor/cover/pdf
     stages.
 
-    The per-job apply path lives in ``ApplyWorkflow`` (``apply/workflow.py``);
-    passing ``"apply"`` in ``stages`` raises a non-retryable
-    ``ApplicationError``.
+    The apply step is delegated to ``ApplyWorkflow`` as a child workflow so
+    mixed requests such as ``score -> tailor -> apply`` preserve request-order
+    semantics while all work still runs under Temporal.
     """
 
     tenant_id: str
@@ -54,6 +55,13 @@ class JobPipelineWorkflowInput:
     workers: int = 1
     limit: int = 0
     validation_mode: str = "normal"
+    dry_run: bool = False
+    rescore: bool = False
+    retailor: bool = False
+    job_url: str | None = None
+    headless: bool = False
+    model: str = "haiku"
+    continuous: bool = False
 
 
 @dataclass(frozen=True)
@@ -120,6 +128,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tenant_id=payload.tenant_id,
                 workers=payload.workers,
                 limit=payload.limit,
+                dry_run=payload.dry_run,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -132,6 +141,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tenant_id=payload.tenant_id,
                 workers=payload.workers,
                 limit=payload.limit,
+                dry_run=payload.dry_run,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -144,6 +154,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tenant_id=payload.tenant_id,
                 workers=payload.workers,
                 limit=payload.limit,
+                dry_run=payload.dry_run,
+                rescore=payload.rescore,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -158,6 +170,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workers=payload.workers,
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
+                dry_run=payload.dry_run,
+                retailor=payload.retailor,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -171,6 +185,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 min_score=payload.min_score,
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
+                dry_run=payload.dry_run,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -179,15 +194,30 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
     if stage == "pdf":
         return await workflow.execute_activity(
             pdf_activity,
-            PdfActivityInput(tenant_id=payload.tenant_id, limit=payload.limit),
+            PdfActivityInput(
+                tenant_id=payload.tenant_id,
+                limit=payload.limit,
+                dry_run=payload.dry_run,
+            ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
             retry_policy=_DEFAULT_RETRY,
         )
     if stage == "apply":
-        raise ApplicationError(
-            "apply is not orchestrated by JobPipelineWorkflow; use ApplyWorkflow",
-            non_retryable=True,
+        return await workflow.execute_child_workflow(
+            ApplyWorkflow.run,
+            ApplyWorkflowInput(
+                tenant_id=payload.tenant_id,
+                job_url=payload.job_url,
+                dry_run=payload.dry_run,
+                headless=payload.headless,
+                model=payload.model,
+                min_score=payload.min_score,
+                workers=payload.workers,
+                limit=payload.limit,
+                continuous=payload.continuous,
+            ),
+            id=f"{workflow.info().workflow_id}-apply",
         )
     raise ApplicationError(
         f"Unknown stage: {stage}",
