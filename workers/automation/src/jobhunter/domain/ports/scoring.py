@@ -14,6 +14,7 @@ from typing import Protocol
 
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring.aggregate import JobScore
+from jobhunter.domain.scoring.policy import ScoringPolicy
 from jobhunter.domain.tenant import TenantId
 
 # Re-export the shared LLM port — Scoring is one of its consumers.
@@ -21,6 +22,7 @@ from jobhunter.domain.ports.llm import LlmMessage, LlmPort, LlmRole
 
 __all__ = [
     "ScoreRepository",
+    "ScoringPolicyRepository",
     "LlmPort",
     "LlmMessage",
     "LlmRole",
@@ -76,4 +78,20 @@ class ScoreRepository(Protocol):
         max_score: int = 10,
     ) -> list[JobScore]:
         """Return latest-version scores whose ``fit_score`` is within range."""
+        ...
+
+
+class ScoringPolicyRepository(Protocol):
+    """Persistence port for the current versioned scoring policy."""
+
+    def get_current(self, tenant_id: TenantId) -> ScoringPolicy:
+        """Return the current ``ScoringPolicy`` for the tenant.
+
+        Implementations may synthesize and persist the default policy when
+        none exists yet.
+        """
+        ...
+
+    def save(self, policy: ScoringPolicy) -> None:
+        """Persist a ``ScoringPolicy`` version."""
         ...

@@ -931,6 +931,7 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         CREATE INDEX IF NOT EXISTS idx_job_scores_job_version
         ON job_scores(job_url, version DESC)
     """)
+    ensure_scoring_policy_tables(conn)
 
     # One-shot backfill from the legacy columns. Only fires when
     # job_scores has no rows AND there are jobs with a legacy fit_score.
@@ -994,7 +995,39 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                 )
 
     conn.commit()
-    return ["job_scores"]
+    return ["job_scores", "scoring_policies"]
+
+
+def ensure_scoring_policy_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create scoring-policy persistence tables.
+
+    The current policy lives outside ``job_scores`` so score rows can keep
+    an immutable trace of which policy version resolved them.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scoring_policies (
+            tenant_id              TEXT NOT NULL,
+            version                INTEGER NOT NULL,
+            rubric_json            TEXT NOT NULL,
+            anchors_json           TEXT NOT NULL DEFAULT '[]',
+            created_at             TEXT NOT NULL,
+            created_from_event_id  INTEGER,
+            PRIMARY KEY (tenant_id, version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_scoring_policies_current
+        ON scoring_policies(tenant_id, version DESC)
+        """
+    )
+    conn.commit()
+    return ["scoring_policies"]
 
 
 def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]:

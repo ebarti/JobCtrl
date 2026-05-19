@@ -27,7 +27,7 @@ from typing import Any
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage
 from jobhunter.domain.ports.events import EventPublisher
-from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository
+from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.retrieval import (
     HybridSearchIndex,
@@ -41,7 +41,11 @@ from jobhunter.domain.scoring.value_objects import ScoringCriteria
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import get_llm_adapter
 from jobhunter.infrastructure.profile.factory import get_profile_repository
-from jobhunter.infrastructure.scoring import LocalScoringCriteriaProvider, SqliteScoreRepository
+from jobhunter.infrastructure.scoring import (
+    LocalScoringCriteriaProvider,
+    SqliteScoreRepository,
+    SqliteScoringPolicyRepository,
+)
 from jobhunter.state import (
     ensure_job_stage_rows,
     record_job_event,
@@ -60,6 +64,7 @@ log = logging.getLogger(__name__)
 def _build_use_case(
     *,
     repository: ScoreRepository | None = None,
+    policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
 ) -> ScoreJobUseCase:
@@ -70,10 +75,20 @@ def _build_use_case(
     until first use.
     """
     if repository is None:
-        repository = SqliteScoreRepository(get_connection())
+        conn = get_connection()
+        repository = SqliteScoreRepository(conn)
+        if policy_repository is None:
+            policy_repository = SqliteScoringPolicyRepository(conn)
+    elif policy_repository is None and isinstance(repository, SqliteScoreRepository):
+        policy_repository = SqliteScoringPolicyRepository(repository.connection)
     if llm_port is None:
         llm_port = get_llm_adapter()
-    return ScoreJobUseCase(repository=repository, llm=llm_port, publisher=publisher)
+    return ScoreJobUseCase(
+        repository=repository,
+        llm=llm_port,
+        publisher=publisher,
+        policy_repository=policy_repository,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +102,7 @@ def score_job(
     *,
     use_case: ScoreJobUseCase | None = None,
     repository: ScoreRepository | None = None,
+    policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
@@ -103,6 +119,7 @@ def score_job(
     if use_case is None:
         use_case = _build_use_case(
             repository=repository,
+            policy_repository=policy_repository,
             llm_port=llm_port,
             publisher=publisher,
         )
@@ -121,6 +138,7 @@ def run_scoring(
     workers: int = 1,
     *,
     repository: ScoreRepository | None = None,
+    policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
@@ -150,9 +168,12 @@ def run_scoring(
     conn = get_connection()
     if repository is None:
         repository = SqliteScoreRepository(conn)
+    if policy_repository is None:
+        policy_repository = SqliteScoringPolicyRepository(conn)
 
     use_case = _build_use_case(
         repository=repository,
+        policy_repository=policy_repository,
         llm_port=llm_port,
         publisher=publisher,
     )

@@ -17,6 +17,13 @@ from jobhunter.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobhunter.domain.scoring.aggregate import JobScore
+from jobhunter.domain.scoring.policy import (
+    CalibrationAnchor,
+    FitBandThreshold,
+    ResolvedScore,
+    ScoringPolicy,
+    WeightedScoreDimension,
+)
 from jobhunter.domain.scoring.services import (
     ConstraintChecker,
     EligibilityChecker,
@@ -43,6 +50,11 @@ __all__ = [
     "ScoreTrace",
     "ScoringCriteria",
     "JobScore",
+    "CalibrationAnchor",
+    "FitBandThreshold",
+    "ResolvedScore",
+    "ScoringPolicy",
+    "WeightedScoreDimension",
     "ConstraintChecker",
     "EligibilityChecker",
     "ScoreParser",

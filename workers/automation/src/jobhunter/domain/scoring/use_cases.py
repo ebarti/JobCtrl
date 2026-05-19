@@ -21,7 +21,7 @@ tests can swap fakes without monkey-patching.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
 
@@ -37,9 +37,10 @@ from jobhunter.domain.events import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository
+from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
+from jobhunter.domain.scoring.policy import ScoringPolicy
 from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
@@ -249,6 +250,8 @@ class ScoreJobUseCase:
         publisher: EventPublisher | None = None,
         parser: ScoreParser | None = None,
         constraints: ConstraintChecker | None = None,
+        policy_repository: ScoringPolicyRepository | None = None,
+        policy: ScoringPolicy | None = None,
         prompt: str = SCORE_PROMPT,
     ) -> None:
         self._repository = repository
@@ -256,6 +259,8 @@ class ScoreJobUseCase:
         self._publisher = publisher
         self._parser = parser or ScoreParser()
         self._constraints = constraints or ConstraintChecker()
+        self._policy_repository = policy_repository
+        self._policy = policy
         self._prompt = prompt
 
     # ------------------------------------------------------------------
@@ -348,11 +353,12 @@ class ScoreJobUseCase:
                 error=parse.error or "Unknown parse error",
             )
 
+        resolved_parse = self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
         scored_at = _utc_now()
         new_score = self._build_aggregate(
             tenant_id=tenant_id,
             job=job,
-            parse=parse,
+            parse=resolved_parse,
             scored_at=scored_at,
         )
         self._repository.save(new_score)
@@ -490,6 +496,37 @@ class ScoreJobUseCase:
             scored_at=scored_at,
             criteria=parse.criteria,
             trace=parse.trace,
+        )
+
+    def _resolve_with_policy(
+        self,
+        *,
+        parse: ScoreParseResult,
+        tenant_id: TenantId,
+    ) -> ScoreParseResult:
+        policy = (
+            self._policy_repository.get_current(tenant_id)
+            if self._policy_repository is not None
+            else self._policy or ScoringPolicy.default(tenant_id)
+        )
+        resolved = policy.resolve(parse.breakdown)
+        breakdown = ScoreBreakdown(
+            technical_fit=parse.breakdown.technical_fit,
+            experience_fit=parse.breakdown.experience_fit,
+            role_fit=parse.breakdown.role_fit,
+            reasoning=parse.breakdown.reasoning,
+            fit_band=resolved.fit_band,
+            confidence=parse.breakdown.confidence,
+            eligibility=parse.breakdown.eligibility,
+            matched_signals=parse.breakdown.matched_signals,
+            missing_signals=parse.breakdown.missing_signals,
+            transferable_signals=parse.breakdown.transferable_signals,
+        )
+        return replace(
+            parse,
+            fit_score=resolved.fit_score,
+            breakdown=breakdown,
+            trace=parse.trace.with_policy_resolution(resolved),
         )
 
     def _publish_scored(self, score: JobScore) -> None:
