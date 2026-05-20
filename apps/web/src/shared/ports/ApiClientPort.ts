@@ -116,6 +116,7 @@ export interface ApiClientPort {
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;
+  artifactPreviewPdfUrl(artifactId: string, cacheKey?: number | string): string;
   openArtifact(artifactId: string): Promise<ArtifactOpenResponse>;
 
   profile(): Promise<ProfileConfigResponse>;

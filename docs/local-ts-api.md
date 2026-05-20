@@ -13,6 +13,12 @@ tables are empty, the API can seed them once from legacy `profile.json`,
 `resume_style.json`, and `resume_template.tex`; subsequent writes update only
 SQLite and reconstruct the existing response object shape for frontend/client
 compatibility.
+Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
+tailored resumes are present, the API handles that event by dispatching a
+background `tailor -> pdf` pipeline run with `retailor=true`, `dryRun=false`,
+and no item limit. The Python materials generation path creates a new materials
+generation for each re-tailored job and preserves the prior generation as
+historical/superseded artifact data.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
@@ -20,6 +26,12 @@ maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 `ProjectionBuilder` (`workers/automation/src/jobhunter/infrastructure/projections/`).
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
+Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
+`GET /v1/artifacts/:artifactId/preview.pdf` for inline preview of registered
+PDF artifacts. The preview route serves only known PDF artifact files from the
+local artifact projection; it returns `404` for missing metadata/files and
+`415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
+route still delegates to the local OS opener.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,

@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { artifactStatusDescription } from "../lib/artifact-status-copy.js";
 import { artifactStatusTone } from "../lib/artifact-status-tone.js";
 
 export interface ArtifactStatusBadgeProps {
@@ -7,5 +8,14 @@ export interface ArtifactStatusBadgeProps {
 }
 
 export function ArtifactStatusBadge({ status }: ArtifactStatusBadgeProps): JSX.Element {
-  return <span className={`tag ${artifactStatusTone(status)}`}>{status}</span>;
+  const description = artifactStatusDescription(status);
+  return (
+    <span
+      aria-label={`${status}: ${description}`}
+      className={`tag ${artifactStatusTone(status)}`}
+      title={description}
+    >
+      {status}
+    </span>
+  );
 }

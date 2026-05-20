@@ -226,6 +226,15 @@ export class JobHunterApiClient {
     return this.get(`/v1/artifacts/${encodeURIComponent(artifactId)}`);
   }
 
+  artifactPreviewPdfUrl(artifactId: string, cacheKey?: QueryValue): string {
+    const path = `/v1/artifacts/${encodeURIComponent(artifactId)}/preview.pdf`;
+    const url = new URL(`${this.baseUrl}${path}`, this.baseUrl ? undefined : "http://jobhunter.local");
+    if (cacheKey !== undefined && cacheKey !== null && cacheKey !== "") {
+      url.searchParams.set("v", String(cacheKey));
+    }
+    return this.baseUrl ? url.href : `${url.pathname}${url.search}`;
+  }
+
   openArtifact(artifactId: string): Promise<ArtifactOpenResponse> {
     return this.post(`/v1/artifacts/${encodeURIComponent(artifactId)}/open`);
   }

@@ -67,6 +67,7 @@ beforeEach(() => {
     resumeStylePath: path.join(tempDir, "resume_style.json"),
     resumeTemplatePath: path.join(tempDir, "resume_template.tex"),
     settingsPath: path.join(tempDir, "dashboard.json"),
+    actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
   };
   seedDatabase(options.dbPath);
   fs.writeFileSync(options.profilePath, JSON.stringify(validProfileFixture("Jordan Candidate")));
@@ -1195,6 +1196,7 @@ describe("local TypeScript API", () => {
     const artifactId = encodeURIComponent(artifact.artifactId);
 
     const detailResponse = await app.inject({ method: "GET", url: `/v1/artifacts/${artifactId}` });
+    const previewResponse = await app.inject({ method: "GET", url: `/v1/artifacts/${artifactId}/preview.pdf` });
     const openResponse = await app.inject({ method: "POST", url: `/v1/artifacts/${artifactId}/open` });
 
     expect(detailResponse.statusCode, detailResponse.body).toBe(200);
@@ -1206,6 +1208,9 @@ describe("local TypeScript API", () => {
         type: "tailored_resume_pdf",
       },
     });
+    expect(previewResponse.statusCode, previewResponse.body).toBe(200);
+    expect(previewResponse.headers["content-type"]).toContain("application/pdf");
+    expect(previewResponse.body).toBe("%PDF test");
     expect(openResponse.statusCode, openResponse.body).toBe(200);
     expect(openResponse.json()).toMatchObject({
       ok: true,
@@ -1891,6 +1896,54 @@ describe("local TypeScript API", () => {
       });
       expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_experience_bullets").get()).toMatchObject({
         count: 1,
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("records profile updates and starts an event-driven re-tailoring run", async () => {
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-retailor" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Event Driven Candidate") },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "pipeline",
+        stage: "tailor",
+        stages: ["tailor", "pdf"],
+        dryRun: false,
+        limit: 0,
+        minScore: 0,
+        retailor: true,
+      }),
+      { appDir: tempDir },
+    );
+
+    const db = new Database(options.dbPath);
+    try {
+      const event = db
+        .prepare(
+          "SELECT job_url, stage, event_type, payload_json FROM job_events WHERE event_type = 'ProfileUpdated' ORDER BY event_id DESC LIMIT 1",
+        )
+        .get() as { job_url: string | null; stage: string | null; event_type: string; payload_json: string };
+      expect(event).toMatchObject({
+        job_url: null,
+        stage: null,
+        event_type: "ProfileUpdated",
+      });
+      expect(JSON.parse(event.payload_json)).toMatchObject({
+        tenantId: "local",
+        changedSections: ["profile"],
+        updatedAt: expect.any(String),
       });
     } finally {
       db.close();
