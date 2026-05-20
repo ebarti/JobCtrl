@@ -21,6 +21,8 @@ class ApplyActivityInput:
     # ``tenant_id`` is currently informational; runners read from
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     job_url: str | None = None
     limit: int = 1
     min_score: int = 7
@@ -57,7 +59,13 @@ async def apply_activity(payload: ApplyActivityInput) -> ApplyActivityOutput:
 
     # ``apply.launcher`` installs process signal handlers at import time; import
     # it on the activity event-loop thread before handing work to the executor.
+    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobhunter.apply.launcher import main as apply_main
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
 
     def _run_apply() -> tuple[int, int]:
         # ``continuous=True`` selects the launcher's run-forever poll mode,

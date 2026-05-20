@@ -94,6 +94,7 @@ import {
   recordProfileUpdatedEvent,
   shouldRetailorForProfileUpdate,
 } from "./profile-events.js";
+import { dbFileIdentity, readWorkerHealth } from "./worker-health.js";
 import {
   cancelJobAction,
   correctScore,
@@ -143,7 +144,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const manualCaptureImporter = options.manualCaptureImporter ?? createWorkerManualCaptureImporter();
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
   const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
-  const actionContext = { appDir };
+  const actionContext = { appDir, dbPath: options.dbPath };
 
   void app.register(cors, {
     origin: LOCAL_ORIGIN_PATTERNS,
@@ -167,7 +168,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/health", async () => ({
     ok: true,
     dbPath: options.dbPath,
+    appDir,
     dbExists: databaseExists(options.dbPath),
+    dbIdentity: dbFileIdentity(options.dbPath),
+    worker: readWorkerHealth(options.dbPath),
   }));
 
   registerEventStreamRoute(app, { dbPath: options.dbPath });

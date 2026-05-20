@@ -39,6 +39,7 @@ const AUTOMATION_PROJECT_DIR = path.resolve(API_SRC_DIR, "../../../workers/autom
 
 export interface ActionDispatchContext {
   appDir: string;
+  dbPath: string;
 }
 
 export interface ActionDispatchResult {
@@ -108,7 +109,7 @@ export function createActionDispatcher(
       return { status: "reset", message: "Stage reset for retry." };
     }
 
-    const rpcCall = mapCommandToRpc(command);
+    const rpcCall = mapCommandToRpc(command, context);
     if (!rpcCall) {
       return {
         status: "unsupported",
@@ -296,21 +297,21 @@ interface RpcCall {
   params: Record<string, unknown>;
 }
 
-function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
+function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchContext): RpcCall | null {
   if (command.action === "run_stage") {
     if (!command.stage) return null;
-    return { method: "run_stage", params: runStageRpcParams(command) };
+    return { method: "run_stage", params: runStageRpcParams(command, context) };
   }
   if (command.action === "retry_stage") {
     if (!command.stage || !command.runAfter) return null;
     if (command.stage === "apply") {
-      return { method: "apply", params: applyRpcParams(command) };
+      return { method: "apply", params: applyRpcParams(command, context) };
     }
     return null;
   }
   if (command.action === "generate_materials") return null;
   if (command.action === "apply") {
-    return { method: "apply", params: applyRpcParams(command) };
+    return { method: "apply", params: applyRpcParams(command, context) };
   }
   if (command.action === "cancel") {
     // PR 3 added the cancel_run JSON-RPC method on the worker side; without
@@ -327,7 +328,7 @@ function mapCommandToRpc(command: ActionCommandPayload): RpcCall | null {
   return null;
 }
 
-function runStageRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
   const stages =
     command.stages && command.stages.length > 0
       ? command.stages
@@ -336,6 +337,8 @@ function runStageRpcParams(command: ActionCommandPayload): Record<string, unknow
         : [];
   const params: Record<string, unknown> = {
     tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
     stage: command.stage,
     stages,
     limit: command.limit ?? 25,
@@ -355,9 +358,11 @@ function runStageRpcParams(command: ActionCommandPayload): Record<string, unknow
   return params;
 }
 
-function applyRpcParams(command: ActionCommandPayload): Record<string, unknown> {
+function applyRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
   const params: Record<string, unknown> = {
     tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
     limit: command.limit ?? 1,
     workers: command.workers ?? 1,
     minScore: command.minScore ?? 7,

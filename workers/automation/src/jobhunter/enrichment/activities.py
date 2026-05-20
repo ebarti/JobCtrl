@@ -13,6 +13,8 @@ class EnrichActivityInput:
     # ``tenant_id`` is currently informational; runners read from
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     limit: int = 0
     workers: int = 1
     dry_run: bool = False
@@ -32,7 +34,13 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
+    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobhunter.pipeline import run_pipeline
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
 
     def _do() -> dict[str, Any]:
         return run_pipeline(

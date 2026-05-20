@@ -22,6 +22,8 @@ def test_apply_handler_returns_workflow_start_spec() -> None:
     spec = apply_action(
         {
             "tenantId": "local",
+            "expectedAppDir": "/tmp/jobhunter",
+            "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
             "jobUrl": "https://example.com/job/1",
             "limit": 2,
             "model": "sonnet",
@@ -38,6 +40,8 @@ def test_apply_handler_returns_workflow_start_spec() -> None:
     assert isinstance(payload, ApplyWorkflowInput)
     assert payload == ApplyWorkflowInput(
         tenant_id="local",
+        expected_app_dir="/tmp/jobhunter",
+        expected_db_path="/tmp/jobhunter/jobhunter.db",
         job_url="https://example.com/job/1",
         dry_run=True,
         headless=True,

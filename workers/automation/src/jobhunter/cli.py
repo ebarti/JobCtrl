@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -1195,6 +1196,10 @@ def worker(
         get_temporal_client,
     )
     from jobhunter.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
+    from jobhunter.infrastructure.runtime_identity import (
+        current_runtime_identity,
+        write_worker_heartbeat,
+    )
 
     queue = task_queue or JOBHUNTER_TASK_QUEUE
 
@@ -1206,12 +1211,23 @@ def worker(
             activities=ACTIVITIES,
             task_queue=queue,
         )
+        identity = current_runtime_identity()
+        heartbeat_worker_id = write_worker_heartbeat(task_queue=queue)
+        heartbeat_task = asyncio.create_task(
+            _worker_heartbeat_loop(queue, heartbeat_worker_id)
+        )
         console.print(
             f"[bold blue]JobHunter worker[/bold blue] running on task queue "
             f"[bold]{queue}[/bold] with {len(WORKFLOWS)} workflow(s) and "
-            f"{len(ACTIVITIES)} activity(ies) — Ctrl-C to stop."
+            f"{len(ACTIVITIES)} activity(ies) against DB "
+            f"[bold]{identity.db_path}[/bold] — Ctrl-C to stop."
         )
-        await worker.run()
+        try:
+            await worker.run()
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
 
     from jobhunter.infrastructure.observability import shutdown_otel
 
@@ -1221,6 +1237,14 @@ def worker(
         # Flush any in-flight spans so the BatchSpanProcessor doesn't drop
         # them on Ctrl-C.
         shutdown_otel()
+
+
+async def _worker_heartbeat_loop(task_queue: str, worker_id: str) -> None:
+    from jobhunter.infrastructure.runtime_identity import write_worker_heartbeat
+
+    while True:
+        await asyncio.sleep(15)
+        write_worker_heartbeat(task_queue=task_queue, worker_id=worker_id)
 
 
 @app.command()

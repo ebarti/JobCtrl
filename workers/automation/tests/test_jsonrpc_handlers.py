@@ -250,6 +250,8 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
             method="run_stage",
             params={
                 "tenantId": "local",
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
                 "stage": "score",
                 "stages": ["score", "tailor"],
                 "limit": 5,
@@ -276,6 +278,8 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
     (payload,) = seen[0].args
     assert payload == JobPipelineWorkflowInput(
         tenant_id="local",
+        expected_app_dir="/tmp/jobhunter",
+        expected_db_path="/tmp/jobhunter/jobhunter.db",
         stages=["score", "tailor"],
         min_score=8,
         workers=2,

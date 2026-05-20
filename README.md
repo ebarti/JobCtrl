@@ -274,6 +274,11 @@ pnpm dev:logs worker
 pnpm dev:stop
 ```
 
+The API health endpoint reports the API app/database identity and the latest
+Temporal worker heartbeat. The web topbar alerts when the worker is missing or
+stale, and pipeline stage buttons stay disabled until the worker is
+heartbeating against the same local database.
+
 For troubleshooting, run individual components in separate terminals:
 
 ```bash

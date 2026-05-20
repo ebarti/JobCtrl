@@ -125,9 +125,105 @@ describe("local TypeScript API", () => {
     expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:8765");
     expect(response.json()).toMatchObject({
       ok: true,
+      appDir: tempDir,
       dbPath: options.dbPath,
       dbExists: true,
+      worker: {
+        status: "missing",
+        expectedDbPath: options.dbPath,
+        expectedAppDir: tempDir,
+        heartbeat: null,
+      },
     });
+
+    await app.close();
+  });
+
+  it("reports a healthy Temporal worker heartbeat from the API database", async () => {
+    insertWorkerHeartbeat(options.dbPath, {
+      workerId: "worker-1",
+      appDir: tempDir,
+      dbPath: options.dbPath,
+      lastSeenAt: new Date().toISOString(),
+    });
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/health",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      worker: {
+        status: "healthy",
+        expectedDbPath: options.dbPath,
+        expectedAppDir: tempDir,
+        heartbeat: {
+          workerId: "worker-1",
+          appDir: tempDir,
+          dbPath: options.dbPath,
+          taskQueue: "jobhunter-default",
+        },
+      },
+    });
+
+    await app.close();
+  });
+
+  it("reports a stale Temporal worker heartbeat", async () => {
+    insertWorkerHeartbeat(options.dbPath, {
+      workerId: "worker-stale",
+      appDir: tempDir,
+      dbPath: options.dbPath,
+      lastSeenAt: "2026-01-01T00:00:00.000Z",
+    });
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/health",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      worker: {
+        status: "stale",
+        heartbeat: {
+          workerId: "worker-stale",
+        },
+      },
+    });
+
+    await app.close();
+  });
+
+  it("reports a mismatched Temporal worker heartbeat", async () => {
+    insertWorkerHeartbeat(options.dbPath, {
+      workerId: "worker-wrong-db",
+      appDir: path.join(tempDir, "other-app"),
+      dbPath: path.join(tempDir, "other-app", "jobhunter.db"),
+      lastSeenAt: new Date().toISOString(),
+    });
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/health",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      worker: {
+        status: "mismatched",
+        expectedDbPath: options.dbPath,
+        expectedAppDir: tempDir,
+        heartbeat: {
+          workerId: "worker-wrong-db",
+          appDir: path.join(tempDir, "other-app"),
+          dbPath: path.join(tempDir, "other-app", "jobhunter.db"),
+        },
+      },
+    });
+    expect(response.json().worker.message).toContain("does not match");
 
     await app.close();
   });
@@ -1395,7 +1491,7 @@ describe("local TypeScript API", () => {
         runAfter: true,
         dryRun: true,
       }),
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -1452,7 +1548,7 @@ describe("local TypeScript API", () => {
           limit: 1,
           dryRun: true,
         },
-        { appDir: tempDir },
+        { appDir: tempDir, dbPath: options.dbPath },
       ),
     ).resolves.toMatchObject({
       status: "unsupported",
@@ -1468,7 +1564,7 @@ describe("local TypeScript API", () => {
           limit: 1,
           dryRun: true,
         },
-        { appDir: tempDir },
+        { appDir: tempDir, dbPath: options.dbPath },
       ),
     ).resolves.toMatchObject({
       status: "unsupported",
@@ -1515,7 +1611,7 @@ describe("local TypeScript API", () => {
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -1587,7 +1683,7 @@ describe("local TypeScript API", () => {
         continuous: true,
         jobKey: "pipeline",
       }),
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -1637,7 +1733,7 @@ describe("local TypeScript API", () => {
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ action: "run_stage", stage: "score", jobKey: "pipeline" }),
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -1757,7 +1853,7 @@ describe("local TypeScript API", () => {
     await waitForExpectation(() => expect(dispatch).toHaveBeenCalled());
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ action: "run_stage", stage: "apply", stages: ["apply"], dryRun: true, jobKey: "pipeline" }),
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -1925,7 +2021,7 @@ describe("local TypeScript API", () => {
         minScore: 0,
         retailor: true,
       }),
-      { appDir: tempDir },
+      { appDir: tempDir, dbPath: options.dbPath },
     );
 
     const db = new Database(options.dbPath);
@@ -2088,7 +2184,7 @@ describe("local TypeScript API", () => {
         importStyle: true,
         pdfBytes: expect.any(Buffer),
       }),
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -2124,7 +2220,7 @@ describe("local TypeScript API", () => {
         profile: expect.objectContaining({ personal: expect.objectContaining({ full_name: "Jordan Candidate" }) }),
         templateText: "\\documentclass{article}",
       },
-      expect.objectContaining({ appDir: tempDir }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
     await app.close();
@@ -2525,6 +2621,47 @@ function seedDatabase(dbPath: string): void {
     "succeeded",
     1,
     "2026-04-29T10:15:00+00:00",
+  );
+  db.close();
+}
+
+function insertWorkerHeartbeat(
+  dbPath: string,
+  heartbeat: {
+    workerId: string;
+    appDir: string;
+    dbPath: string;
+    lastSeenAt: string;
+  },
+): void {
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worker_runtime_heartbeats (
+      worker_id TEXT PRIMARY KEY,
+      component TEXT NOT NULL,
+      pid INTEGER NOT NULL,
+      hostname TEXT NOT NULL,
+      app_dir TEXT NOT NULL,
+      db_path TEXT NOT NULL,
+      task_queue TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+  `);
+  db.prepare(
+    `INSERT INTO worker_runtime_heartbeats
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    heartbeat.workerId,
+    "temporal-worker",
+    1234,
+    "localhost",
+    heartbeat.appDir,
+    heartbeat.dbPath,
+    "jobhunter-default",
+    "2026-05-20T10:00:00.000Z",
+    heartbeat.lastSeenAt,
   );
   db.close();
 }
