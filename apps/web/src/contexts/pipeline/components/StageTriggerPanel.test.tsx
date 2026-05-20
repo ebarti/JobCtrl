@@ -165,7 +165,7 @@ describe("StageTriggerPanel", () => {
       count: 1,
       command: {
         stages: ["discover"],
-        limit: 1,
+        limit: 1000,
         workers: 1,
         minScore: 7,
         validationMode: "normal" as const,
@@ -182,15 +182,17 @@ describe("StageTriggerPanel", () => {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.clear(screen.getByLabelText("Limit"));
-    await user.type(screen.getByLabelText("Limit"), "1");
+    const limitInput = screen.getByLabelText("Limit");
+    expect(limitInput).toHaveAttribute("max", "1000");
+    await user.clear(limitInput);
+    await user.type(limitInput, "1000");
     await user.click(screen.getByLabelText("Dry run"));
     await user.click(screen.getByRole("button", { name: "Run Discover" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
     expect(runPipelineStages).toHaveBeenCalledWith({
       stages: ["discover"],
-      limit: 1,
+      limit: 1000,
       workers: 1,
       minScore: 7,
       validationMode: "normal",

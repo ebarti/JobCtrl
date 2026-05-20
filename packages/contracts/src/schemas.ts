@@ -98,7 +98,7 @@ export type ApplyJobRequest = z.infer<typeof ApplyJobRequestSchema>;
 export const RunPipelineStagesRequestSchema = z
   .object({
     stages: z.array(z.enum(STAGES)).min(1).max(STAGES.length),
-    limit: z.coerce.number().int().min(1).max(500).default(25),
+    limit: z.coerce.number().int().min(1).max(1000).default(25),
     workers: z.coerce.number().int().min(1).max(16).default(1),
     minScore: z.coerce.number().int().min(0).max(10).default(7),
     validationMode: z.enum(PIPELINE_VALIDATION_MODES).default("normal"),

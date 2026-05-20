@@ -233,7 +233,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             <span>Limit</span>
             <input
               min={1}
-              max={500}
+              max={1000}
               type="number"
               value={config.limit}
               onChange={(event) => patchConfig({ limit: event.target.value })}

@@ -1626,7 +1626,7 @@ describe("local TypeScript API", () => {
       url: "/v1/pipeline/actions/run-stage",
       payload: {
         stages: ["score", "tailor", "apply"],
-        limit: 12,
+        limit: 1000,
         workers: 3,
         minScore: 8,
         validationMode: "strict",
@@ -1656,7 +1656,7 @@ describe("local TypeScript API", () => {
             jobKey: "pipeline",
             stage: "score",
             stages: ["score", "tailor", "apply"],
-            limit: 12,
+            limit: 1000,
             workers: 3,
             minScore: 8,
             validationMode: "strict",

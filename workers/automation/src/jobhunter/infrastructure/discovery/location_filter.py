@@ -151,6 +151,20 @@ CANADA_LOCATION_ALIASES = (
     "sk",
     "yt",
 )
+SPAIN_LOCATION_ALIASES = (
+    "spain",
+    "españa",
+    "es",
+)
+EUROPE_LOCATION_ALIASES = (
+    "europe",
+    "european union",
+    "eu",
+    "emea",
+    "spain",
+    "españa",
+    "es",
+)
 REJECT_ALIASES = {
     "usa": US_LOCATION_ALIASES,
     "us": US_LOCATION_ALIASES,
@@ -159,6 +173,86 @@ REJECT_ALIASES = {
     "united states": US_LOCATION_ALIASES,
     "canada": CANADA_LOCATION_ALIASES,
     "canada only": CANADA_LOCATION_ALIASES,
+}
+ACCEPT_ALIASES = {
+    "spain": SPAIN_LOCATION_ALIASES,
+    "españa": SPAIN_LOCATION_ALIASES,
+    "barcelona": ("barcelona",),
+    "madrid": ("madrid",),
+    "valencia": ("valencia",),
+    "europe": EUROPE_LOCATION_ALIASES,
+    "european union": EUROPE_LOCATION_ALIASES,
+    "eu": EUROPE_LOCATION_ALIASES,
+    "emea": EUROPE_LOCATION_ALIASES,
+}
+ACCEPTED_COUNTRY_CONTEXT_ALIASES = frozenset(
+    (*SPAIN_LOCATION_ALIASES, *EUROPE_LOCATION_ALIASES)
+)
+AMBIGUOUS_REJECT_ABBREVIATIONS = {
+    "al",
+    "ak",
+    "az",
+    "ar",
+    "ca",
+    "co",
+    "ct",
+    "de",
+    "fl",
+    "ga",
+    "hi",
+    "id",
+    "il",
+    "in",
+    "ia",
+    "ks",
+    "ky",
+    "la",
+    "me",
+    "md",
+    "ma",
+    "mi",
+    "mn",
+    "ms",
+    "mo",
+    "mt",
+    "ne",
+    "nv",
+    "nh",
+    "nj",
+    "nm",
+    "ny",
+    "nc",
+    "nd",
+    "oh",
+    "ok",
+    "or",
+    "pa",
+    "ri",
+    "sc",
+    "sd",
+    "tn",
+    "tx",
+    "ut",
+    "vt",
+    "va",
+    "wa",
+    "dc",
+    "wv",
+    "wi",
+    "wy",
+    "ab",
+    "bc",
+    "mb",
+    "nb",
+    "nl",
+    "nt",
+    "ns",
+    "nu",
+    "on",
+    "pe",
+    "qc",
+    "sk",
+    "yt",
 }
 
 
@@ -192,7 +286,7 @@ def location_matches_target(
         return not concrete_accept
 
     normalized = _normalize(location)
-    if _matches_reject(normalized, reject):
+    if _matches_reject(normalized, reject, accept=concrete_accept):
         return False
 
     if search_location and _matches(normalized, search_location) and not concrete_accept:
@@ -222,17 +316,41 @@ def _dedupe(values: Sequence[str]) -> list[str]:
 
 
 def _matches_any(location: str, patterns: Sequence[str]) -> bool:
-    return any(_matches(location, pattern) for pattern in patterns)
+    return any(_matches_pattern_or_alias(location, pattern) for pattern in patterns)
 
 
 def _concrete_accept_patterns(patterns: Sequence[str]) -> list[str]:
     return [pattern for pattern in patterns if _normalize(pattern) not in REMOTE_MARKERS]
 
 
-def _matches_reject(location: str, patterns: Sequence[str]) -> bool:
+def _matches_reject(location: str, patterns: Sequence[str], *, accept: Sequence[str]) -> bool:
+    accepted_country_context = _has_accepted_country_context(location, accept)
     for pattern in patterns:
         aliases = REJECT_ALIASES.get(_normalize(pattern), (pattern,))
-        if _matches_any(location, aliases):
+        for alias in aliases:
+            normalized_alias = _normalize(alias)
+            if (
+                accepted_country_context
+                and normalized_alias in AMBIGUOUS_REJECT_ABBREVIATIONS
+            ):
+                continue
+            if _matches(location, alias):
+                return True
+    return False
+
+
+def _matches_pattern_or_alias(location: str, pattern: str | None) -> bool:
+    aliases = ACCEPT_ALIASES.get(_normalize(pattern), (pattern,))
+    return any(_matches(location, alias) for alias in aliases)
+
+
+def _has_accepted_country_context(location: str, accept: Sequence[str]) -> bool:
+    for pattern in accept:
+        aliases = ACCEPT_ALIASES.get(_normalize(pattern), ())
+        if any(
+            alias in ACCEPTED_COUNTRY_CONTEXT_ALIASES and _matches(location, alias)
+            for alias in aliases
+        ):
             return True
     return False
 
