@@ -93,6 +93,26 @@ def test_jobspy_filters_results_by_target_title(monkeypatch):
     assert result["filtered"] == 1
 
 
+def test_jobspy_linkedin_location_parser_tolerates_unknown_country():
+    from bs4 import BeautifulSoup
+    from jobspy.linkedin import LinkedIn
+
+    jobspy._patch_jobspy_linkedin_location_parser()
+
+    metadata = BeautifulSoup(
+        """
+        <div class="base-search-card__metadata">
+          <span class="job-search-card__location">Sarajevo, Federation, Bosnia and Herzegovina</span>
+        </div>
+        """,
+        "html.parser",
+    )
+
+    location = LinkedIn()._get_location(metadata)
+
+    assert location.display_location() == "Sarajevo, Federation, Bosnia and Herzegovina"
+
+
 def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
@@ -109,7 +129,9 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
             ]
         )
         assert jobspy.store_jobspy_results(conn, first, "Head of Engineering", limit=10) == (1, 0)
-        row = conn.execute("SELECT company FROM jobs WHERE url = ?", ("https://www.linkedin.com/jobs/view/1",)).fetchone()
+        row = conn.execute(
+            "SELECT company FROM jobs WHERE url = ?", ("https://www.linkedin.com/jobs/view/1",)
+        ).fetchone()
         assert row["company"] == "Keyrock"
 
         conn.execute("UPDATE jobs SET company = '' WHERE url = ?", ("https://www.linkedin.com/jobs/view/1",))
@@ -127,7 +149,9 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         )
 
         assert jobspy.store_jobspy_results(conn, duplicate, "Head of Engineering", limit=10) == (0, 1)
-        row = conn.execute("SELECT company FROM jobs WHERE url = ?", ("https://www.linkedin.com/jobs/view/1",)).fetchone()
+        row = conn.execute(
+            "SELECT company FROM jobs WHERE url = ?", ("https://www.linkedin.com/jobs/view/1",)
+        ).fetchone()
         assert row["company"] == "Keyrock"
         event = conn.execute(
             "SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1",

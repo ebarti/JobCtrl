@@ -52,29 +52,28 @@ PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
 
 DEFAULT_JOBSPY_BOARDS = ("indeed", "linkedin", "zip_recruiter")
+TARGET_SEARCH_MIN_HOURS_OLD = 24 * 30
 
 _EUROPE_TARGET_MARKERS = (
-    "barcelona",
     "spain",
     "españa",
-    "madrid",
-    "valencia",
     "europe",
     "european union",
     " eu",
     "eu ",
 )
 
-_EUROPE_LOCATION_ACCEPTS = (
-    "Barcelona",
-    "Spain",
-    "España",
-    "Madrid",
-    "Valencia",
+_REMOTE_EUROPE_LOCATION_ACCEPTS = (
     "Europe",
     "European Union",
     "EU",
     "EMEA",
+)
+
+_SPAIN_LOCATION_ACCEPTS = (
+    "Spain",
+    "España",
+    "ES",
 )
 
 _AMERICA_LOCATION_REJECTS = (
@@ -91,6 +90,58 @@ _AMERICA_LOCATION_REJECTS = (
     "LATAM",
     "Americas",
 )
+
+_EUROPEAN_COUNTRY_ALIASES = {
+    "albania": ("albania",),
+    "andorra": ("andorra",),
+    "austria": ("austria",),
+    "belarus": ("belarus",),
+    "belgium": ("belgium",),
+    "bosnia and herzegovina": ("bosnia and herzegovina", "bosnia"),
+    "bulgaria": ("bulgaria",),
+    "croatia": ("croatia",),
+    "cyprus": ("cyprus",),
+    "czech republic": ("czech republic", "czechia"),
+    "denmark": ("denmark",),
+    "estonia": ("estonia",),
+    "finland": ("finland",),
+    "france": ("france",),
+    "germany": ("germany",),
+    "greece": ("greece",),
+    "hungary": ("hungary",),
+    "iceland": ("iceland",),
+    "ireland": ("ireland",),
+    "italy": ("italy",),
+    "kosovo": ("kosovo",),
+    "latvia": ("latvia",),
+    "liechtenstein": ("liechtenstein",),
+    "lithuania": ("lithuania",),
+    "luxembourg": ("luxembourg",),
+    "malta": ("malta",),
+    "moldova": ("moldova",),
+    "monaco": ("monaco",),
+    "montenegro": ("montenegro",),
+    "netherlands": ("netherlands", "the netherlands"),
+    "north macedonia": ("north macedonia", "macedonia"),
+    "norway": ("norway",),
+    "poland": ("poland",),
+    "portugal": ("portugal",),
+    "romania": ("romania",),
+    "san marino": ("san marino",),
+    "serbia": ("serbia",),
+    "slovakia": ("slovakia",),
+    "slovenia": ("slovenia",),
+    "spain": ("spain", "españa", "es"),
+    "sweden": ("sweden",),
+    "switzerland": ("switzerland",),
+    "ukraine": ("ukraine",),
+    "united kingdom": ("united kingdom", "uk", "great britain", "england", "scotland", "wales"),
+    "vatican city": ("vatican city", "vatican"),
+}
+
+_INDEED_COUNTRY_BY_TARGET_COUNTRY = {
+    "spain": "spain",
+}
 
 _AMERICA_ONLY_SOURCE_MARKERS = (
     "canada",
@@ -127,7 +178,8 @@ def get_chrome_path() -> str:
     if system == "Windows":
         candidates = [
             Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe",
-            Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
+            / "Google/Chrome/Application/chrome.exe",
             Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/Application/chrome.exe",
         ]
     elif system == "Darwin":
@@ -152,9 +204,7 @@ def get_chrome_path() -> str:
         if found:
             return found
 
-    raise FileNotFoundError(
-        "Chrome/Chromium not found. Install Chrome or set CHROME_PATH environment variable."
-    )
+    raise FileNotFoundError("Chrome/Chromium not found. Install Chrome or set CHROME_PATH environment variable.")
 
 
 def get_chrome_user_data() -> Path:
@@ -177,6 +227,7 @@ def ensure_dirs():
 def load_search_config() -> dict:
     """Load search configuration, honoring the profile target-search fields."""
     import yaml
+
     if not SEARCH_CONFIG_PATH.exists():
         # Fall back to package-shipped example
         example = CONFIG_DIR / "searches.example.yaml"
@@ -204,39 +255,150 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
         next_cfg["ats_max_tier"] = 1
 
     if locations:
-        location_accept = _dedupe_strings([*locations])
-        next_cfg["locations"] = [
-            {
-                "label": _source_slug(location),
-                "location": location,
-                "remote": _target_location_is_remote(location, work_models[index] if index < len(work_models) else ""),
-            }
-            for index, location in enumerate(locations)
-        ]
-        next_cfg["location_labels"] = [_source_slug(location) for location in locations]
-        next_cfg["location_accept"] = location_accept
+        target_locations = _build_target_location_config(locations, work_models)
+        next_cfg["locations"] = target_locations["locations"]
+        next_cfg["location_labels"] = [item["label"] for item in target_locations["locations"]]
+        next_cfg["location_accept"] = target_locations["accept"]
         location_cfg = dict(next_cfg.get("location") or {})
-        location_cfg["accept_patterns"] = location_accept
+        location_cfg["accept_patterns"] = target_locations["accept"]
         next_cfg["location"] = location_cfg
 
-    if _target_prefers_europe_from_values(locations):
-        defaults = dict(next_cfg.get("defaults") or {})
-        defaults.setdefault("country_indeed", "spain")
-        next_cfg["defaults"] = defaults
-        next_cfg["country"] = "Spain"
-        next_cfg["target_region"] = "europe"
-        location_accept = _dedupe_strings([*locations, *_EUROPE_LOCATION_ACCEPTS])
-        next_cfg["location_accept"] = _dedupe_strings(
-            location_accept
-        )
-        location_cfg = dict(next_cfg.get("location") or {})
-        location_cfg["accept_patterns"] = location_accept
-        next_cfg["location"] = location_cfg
-        next_cfg["location_reject_non_remote"] = _dedupe_strings(
-            [*_string_list(next_cfg.get("location_reject_non_remote")), *_AMERICA_LOCATION_REJECTS]
-        )
+        if target_locations["europe"]:
+            defaults = dict(next_cfg.get("defaults") or {})
+            defaults["hours_old"] = max(_positive_int(defaults.get("hours_old")), TARGET_SEARCH_MIN_HOURS_OLD)
+            if target_locations["country_indeed"]:
+                defaults.setdefault("country_indeed", target_locations["country_indeed"])
+            next_cfg["defaults"] = defaults
+            if target_locations["country"]:
+                next_cfg["country"] = target_locations["country"]
+            next_cfg["target_region"] = "europe"
+            next_cfg["location_reject_non_remote"] = _dedupe_strings(
+                [*_string_list(next_cfg.get("location_reject_non_remote")), *_AMERICA_LOCATION_REJECTS]
+            )
 
     return next_cfg
+
+
+def _build_target_location_config(locations: list[str], work_models: list[str]) -> dict:
+    search_locations: list[dict] = []
+    accept: list[str] = []
+    first_country = ""
+    first_indeed_country = ""
+    europe = False
+
+    for index, raw_location in enumerate(locations):
+        location = str(raw_location or "").strip()
+        if not location:
+            continue
+        work_model = work_models[index] if index < len(work_models) else ""
+        wants_remote, wants_local = _target_work_model_flags(work_model)
+        country = _target_location_country(location)
+        country_key = _country_key(country)
+        is_european_country = _is_european_country(country_key)
+
+        if wants_local:
+            _append_search_location(search_locations, location=location, remote=False)
+            accept.append(location)
+
+        if wants_remote:
+            remote_country = _display_country(country) or location
+            _append_search_location(search_locations, location=remote_country, remote=True)
+            accept.extend(_country_location_accepts(country_key, remote_country))
+            if is_european_country:
+                _append_search_location(
+                    search_locations,
+                    location="European Union",
+                    remote=True,
+                    label="europe-remote",
+                )
+                accept.extend(_REMOTE_EUROPE_LOCATION_ACCEPTS)
+
+        if is_european_country:
+            europe = True
+            first_country = first_country or (_display_country(country) or location)
+            first_indeed_country = first_indeed_country or _INDEED_COUNTRY_BY_TARGET_COUNTRY.get(country_key, "")
+
+    return {
+        "locations": search_locations,
+        "accept": _dedupe_strings(accept),
+        "country": first_country,
+        "country_indeed": first_indeed_country,
+        "europe": europe,
+    }
+
+
+def _append_search_location(
+    search_locations: list[dict],
+    *,
+    location: str,
+    remote: bool,
+    label: str | None = None,
+) -> None:
+    entry = {
+        "label": label or _source_slug(location),
+        "location": location,
+        "remote": remote,
+    }
+    key = (entry["label"], entry["location"], entry["remote"])
+    if key not in {(item["label"], item["location"], item["remote"]) for item in search_locations}:
+        search_locations.append(entry)
+
+
+def _target_work_model_flags(work_model: str) -> tuple[bool, bool]:
+    target = str(work_model or "").lower()
+    wants_remote = any(marker in target for marker in ("remote", "anywhere", "distributed"))
+    wants_local = any(marker in target for marker in ("hybrid", "on-site", "onsite", "on site", "office"))
+    if not wants_remote and not wants_local:
+        wants_local = True
+    return wants_remote, wants_local
+
+
+def _target_location_country(location: str) -> str:
+    parts = [part.strip() for part in str(location or "").split(",") if part.strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return parts[-1]
+
+
+def _display_country(country: str) -> str:
+    country_key = _country_key(country)
+    if country_key == "spain":
+        return "Spain"
+    for canonical, aliases in _EUROPEAN_COUNTRY_ALIASES.items():
+        if country_key == canonical or country_key in aliases:
+            return canonical.title()
+    return country.strip()
+
+
+def _country_key(country: str) -> str:
+    normalized = str(country or "").strip().lower()
+    for canonical, aliases in _EUROPEAN_COUNTRY_ALIASES.items():
+        if normalized == canonical or normalized in aliases:
+            return canonical
+    return normalized
+
+
+def _positive_int(value: object) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return result if result > 0 else 0
+
+
+def _is_european_country(country_key: str) -> bool:
+    return country_key in _EUROPEAN_COUNTRY_ALIASES
+
+
+def _country_location_accepts(country_key: str, fallback: str) -> list[str]:
+    if country_key == "spain":
+        return list(_SPAIN_LOCATION_ACCEPTS)
+    aliases = _EUROPEAN_COUNTRY_ALIASES.get(country_key)
+    if aliases:
+        return [alias.title() if len(alias) > 3 else alias.upper() for alias in aliases]
+    return [fallback]
 
 
 def _load_profile_target_search() -> dict[str, list[str]]:
@@ -280,11 +442,7 @@ def _split_target_text(value: object) -> list[str]:
     if value is None:
         return []
     cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
-    return [
-        item.strip()
-        for item in re.split(r"[;\n]+", cleaned)
-        if item.strip()
-    ]
+    return [item.strip() for item in re.split(r"[;\n]+", cleaned) if item.strip()]
 
 
 def _profile_home_location(row: sqlite3.Row) -> list[str]:
@@ -341,6 +499,7 @@ def _dedupe_strings(values: list[str]) -> list[str]:
 def load_sites_config() -> dict:
     """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
     import yaml
+
     path = CONFIG_DIR / "sites.yaml"
     if not path.exists():
         return {}
@@ -382,9 +541,7 @@ def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) 
         return boards
     if legacy_sites:
         if warn:
-            log.warning(
-                "searches.yaml key 'sites' is deprecated for JobSpy board selection; use 'boards'."
-            )
+            log.warning("searches.yaml key 'sites' is deprecated for JobSpy board selection; use 'boards'.")
         return legacy_sites
     return list(DEFAULT_JOBSPY_BOARDS)
 
@@ -504,9 +661,7 @@ def _configured_sources(sites_cfg: dict) -> list[SourceRegistryEntry]:
         if not isinstance(item, dict):
             continue
         source_id = str(item.get("id") or item.get("source_id") or "").strip()
-        display_name = str(
-            item.get("display_name") or item.get("name") or source_id
-        ).strip()
+        display_name = str(item.get("display_name") or item.get("name") or source_id).strip()
         if not source_id or not display_name:
             continue
         kind = _enum_value(SourceKind, item.get("kind"), SourceKind.EMPLOYER_CAREERS_PAGE)
@@ -758,9 +913,11 @@ DEFAULTS = {
     "viewport": "1280x900",
 }
 
+
 def load_env():
     """Load environment variables from ~/.jobhunter/.env if it exists."""
     from dotenv import load_dotenv
+
     if ENV_PATH.exists():
         load_dotenv(ENV_PATH)
     # Also try CWD .env as fallback
@@ -822,6 +979,7 @@ def check_tier(required: int, feature: str) -> None:
         return
 
     from rich.console import Console
+
     _console = Console(stderr=True)
 
     missing: list[str] = []

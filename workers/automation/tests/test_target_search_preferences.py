@@ -30,10 +30,15 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
         {"query": "Head of Engineering", "tier": 1},
     ]
     assert merged["locations"] == [
-        {"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": True}
+        {"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False},
+        {"label": "spain", "location": "Spain", "remote": True},
+        {"label": "europe-remote", "location": "European Union", "remote": True},
     ]
+    assert merged["defaults"]["hours_old"] == 720
     assert merged["defaults"]["country_indeed"] == "spain"
     assert "Barcelona, Spain" in merged["location_accept"]
+    assert "Spain" in merged["location_accept"]
+    assert "Europe" in merged["location_accept"]
     assert "Canada" in merged["location_reject_non_remote"]
 
 
@@ -82,6 +87,73 @@ def test_profile_target_locations_replace_legacy_location_accept_patterns() -> N
     assert location_matches_target("Barcelona, Spain (Remote)", accept=accept, reject=reject)
     assert location_matches_target("Remote EMEA", accept=accept, reject=reject)
     assert not location_matches_target("Switzerland - Zurich", accept=accept, reject=reject)
+
+
+def test_hybrid_target_locations_filter_to_exact_target_location() -> None:
+    merged = config._apply_profile_target_search(
+        {
+            "queries": [{"query": "software engineer", "tier": 1}],
+            "locations": [{"label": "remote", "location": "Remote", "remote": True}],
+        },
+        {
+            "roles": ["Director of Engineering"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Hybrid"],
+        },
+    )
+
+    accept, reject = configured_location_filters(merged)
+
+    assert merged["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
+    assert "Europe" not in accept
+    assert "EMEA" not in accept
+    assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
+    assert location_matches_target("Barcelona, Spain", accept=accept, reject=reject)
+    assert not location_matches_target("Remote EMEA", accept=accept, reject=reject)
+    assert not location_matches_target("Remote Spain", accept=accept, reject=reject)
+    assert not location_matches_target("Madrid, MD, ES", accept=accept, reject=reject)
+
+
+def test_remote_european_target_locations_filter_country_and_europe_remote() -> None:
+    merged = config._apply_profile_target_search(
+        {"queries": [{"query": "software engineer", "tier": 1}]},
+        {
+            "roles": ["Director of Engineering"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Remote"],
+        },
+    )
+
+    accept, reject = configured_location_filters(merged)
+
+    assert merged["locations"] == [
+        {"label": "spain", "location": "Spain", "remote": True},
+        {"label": "europe-remote", "location": "European Union", "remote": True},
+    ]
+    assert "Barcelona, Spain" not in accept
+    assert "Spain" in accept
+    assert "Europe" in accept
+    assert location_matches_target("Remote Spain", accept=accept, reject=reject)
+    assert location_matches_target("Remote EMEA", accept=accept, reject=reject)
+    assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
+    assert not location_matches_target("Remote United States", accept=accept, reject=reject)
+    assert not location_matches_target("Barcelona, Venezuela", accept=accept, reject=reject)
+
+
+def test_profile_target_search_preserves_larger_configured_lookback() -> None:
+    merged = config._apply_profile_target_search(
+        {
+            "queries": [{"query": "software engineer", "tier": 1}],
+            "defaults": {"hours_old": 1440},
+        },
+        {
+            "roles": ["Director of Engineering"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Remote"],
+        },
+    )
+
+    assert merged["defaults"]["hours_old"] == 1440
 
 
 def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkeypatch) -> None:
@@ -144,9 +216,7 @@ defaults:
         "Director of Engineering",
         "VP Engineering",
     ]
-    assert loaded["locations"] == [
-        {"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}
-    ]
+    assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
     assert loaded["target_region"] == "europe"
 
 

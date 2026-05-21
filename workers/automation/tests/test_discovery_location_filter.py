@@ -51,6 +51,17 @@ def test_remote_region_locations_pass_when_region_is_accepted() -> None:
         )
 
 
+def test_composite_target_locations_require_city_and_country_context() -> None:
+    accept = ["Barcelona, Spain"]
+    reject = EUROPE_REJECT
+
+    assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
+    assert location_matches_target("Barcelona, Spain", accept=accept, reject=reject)
+    assert not location_matches_target("Barcelona, Venezuela", accept=accept, reject=reject)
+    assert not location_matches_target("Madrid, MD, ES", accept=accept, reject=reject)
+    assert not location_matches_target("Remote Spain", accept=accept, reject=reject)
+
+
 def test_generic_remote_does_not_match_when_specific_locations_are_configured() -> None:
     assert not location_matches_target(
         "Remote",

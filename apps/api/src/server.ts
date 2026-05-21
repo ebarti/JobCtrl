@@ -84,9 +84,11 @@ import {
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
   ProfileInputError,
+  parseProfileUpdateProfile,
   readProfileConfig,
   writeProfileConfig,
 } from "./profile-store.js";
+import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
   handleProfileUpdatedEvent,
   hasRetailorableResumes,
@@ -130,6 +132,7 @@ export interface BuildAppOptions {
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
   manualCaptureImporter?: ManualCaptureImporter;
+  placeValidator?: PlaceValidator;
   profileImporter?: ProfileImporter;
   profilePreviewRenderer?: ProfilePreviewRenderer;
   logger?: boolean;
@@ -781,6 +784,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!databaseExists(options.dbPath)) {
       void reply.code(503);
       return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+    }
+    try {
+      const nextProfile = parseProfileUpdateProfile(body);
+      if (nextProfile) {
+        await validateProfileTargetPlaces(nextProfile, options.placeValidator);
+      }
+    } catch (error) {
+      if (error instanceof ProfileInputError) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_profile", message: error.message };
+      }
+      throw error;
     }
     const db = openDatabase(options.dbPath);
     let profileResponse: ProfileConfigResponse | undefined;

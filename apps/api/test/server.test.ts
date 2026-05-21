@@ -36,6 +36,16 @@ function validProfileFixture(fullName: string): Record<string, unknown> {
   };
 }
 
+function profileWithTargetSearch(fullName: string, location: string, workModel: string): Record<string, unknown> {
+  return {
+    ...validProfileFixture(fullName),
+    experience: {
+      target_locations: location,
+      target_work_models: workModel,
+    },
+  };
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -1996,6 +2006,56 @@ describe("local TypeScript API", () => {
     } finally {
       db.close();
     }
+
+    await app.close();
+  });
+
+  it("validates target-search locations before saving profile preferences", async () => {
+    const placeValidator = vi.fn(async (place: string) => place === "Barcelona, Spain");
+    const app = buildApp({ ...options, placeValidator });
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Location Target", "Barcelona, Spain", "Remote"),
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(placeValidator).toHaveBeenCalledWith("Barcelona, Spain");
+    const db = new Database(options.dbPath);
+    try {
+      expect(
+        db.prepare("SELECT experience_target_locations, experience_target_work_models FROM candidate_profiles").get(),
+      ).toMatchObject({
+        experience_target_locations: "Barcelona, Spain",
+        experience_target_work_models: "Remote",
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
+  it("rejects target-search locations that do not resolve to real places", async () => {
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-retailor" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch, placeValidator: vi.fn(async () => false) });
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Bad Location", "Atlantis", "Hybrid"),
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "invalid_profile",
+      message: 'target location "Atlantis" does not resolve to a real place.',
+    });
+    expect(dispatch).not.toHaveBeenCalled();
 
     await app.close();
   });

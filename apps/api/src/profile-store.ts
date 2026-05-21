@@ -408,6 +408,13 @@ export function writeProfileConfig(
   return readProfileConfig(db, paths);
 }
 
+export function parseProfileUpdateProfile(request: ProfileUpdateRequest): ProfileShape | undefined {
+  if (request.profile === undefined && request.profileText === undefined) {
+    return undefined;
+  }
+  return parseProfileInput(request.profile, request.profileText);
+}
+
 function importLegacyProfileIfNeeded(db: SqliteDatabase, paths: ProfilePaths): void {
   if (getProfileRow(db) || !fs.existsSync(paths.profilePath)) {
     return;

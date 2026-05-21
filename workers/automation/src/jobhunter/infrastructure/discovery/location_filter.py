@@ -340,19 +340,37 @@ def _matches_reject(location: str, patterns: Sequence[str], *, accept: Sequence[
 
 
 def _matches_pattern_or_alias(location: str, pattern: str | None) -> bool:
-    aliases = ACCEPT_ALIASES.get(_normalize(pattern), (pattern,))
+    normalized = _normalize(pattern)
+    if "," in normalized:
+        return all(
+            _matches_pattern_or_alias(location, part)
+            for part in (item.strip() for item in normalized.split(","))
+            if part
+        )
+    aliases = ACCEPT_ALIASES.get(normalized, (pattern,))
     return any(_matches(location, alias) for alias in aliases)
 
 
 def _has_accepted_country_context(location: str, accept: Sequence[str]) -> bool:
     for pattern in accept:
-        aliases = ACCEPT_ALIASES.get(_normalize(pattern), ())
+        aliases = _aliases_for_pattern(pattern)
         if any(
             alias in ACCEPTED_COUNTRY_CONTEXT_ALIASES and _matches(location, alias)
             for alias in aliases
         ):
             return True
     return False
+
+
+def _aliases_for_pattern(pattern: str | None) -> tuple[str | None, ...]:
+    normalized = _normalize(pattern)
+    if "," not in normalized:
+        return ACCEPT_ALIASES.get(normalized, (pattern,))
+    aliases: list[str | None] = []
+    for part in (item.strip() for item in normalized.split(",")):
+        if part:
+            aliases.extend(ACCEPT_ALIASES.get(part, (part,)))
+    return tuple(aliases)
 
 
 def _matches(location: str, pattern: str | None) -> bool:

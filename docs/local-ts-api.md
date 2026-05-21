@@ -138,10 +138,14 @@ batch size.
 Discover honors the profile Target search saved from the Preferences tab.
 Target roles replace the active discovery query list, target locations replace
 the active location list, and the worker falls back to profile city/country when
-target locations are blank. Spain or Europe targets set JobSpy's Indeed country
-to Spain, add Europe/remote location accepts, reject America-only non-remote
-locations, and filter API-visible America-only source rows from
-`GET /v1/discovery/sources`.
+target locations are blank. The API validates target locations as real places
+before saving profile preferences. Hybrid and on-site target work models search
+and filter only the target location. Remote target work models search and filter
+the target country, and European countries also add an Europe-remote search and
+accept pattern. Profile-driven discovery searches at least the last 30 days
+unless local config sets a larger window. Spain or Europe targets set JobSpy's
+Indeed country to Spain, reject America-only non-remote locations, and filter
+API-visible America-only source rows from `GET /v1/discovery/sources`.
 
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same

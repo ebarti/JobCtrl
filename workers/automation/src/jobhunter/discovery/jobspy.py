@@ -44,6 +44,8 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
             "pip install pydantic tls-client requests markdownify regex"
         ) from exc
 
+    _patch_jobspy_linkedin_location_parser()
+
     for attempt in range(max_retries + 1):
         try:
             return scrape_jobs(**kwargs)
@@ -56,6 +58,47 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
                 time.sleep(wait)
             else:
                 raise
+
+
+def _patch_jobspy_linkedin_location_parser() -> None:
+    """Keep unsupported LinkedIn country names from aborting the whole scrape."""
+    try:
+        from jobspy.linkedin import LinkedIn
+        from jobspy.model import Country, Location
+    except ImportError:
+        return
+
+    if getattr(LinkedIn, "_jobhunter_tolerates_unknown_countries", False):
+        return
+
+    def _country_or_text(country: str):
+        try:
+            return Country.from_string(country)
+        except ValueError:
+            return country
+
+    def _get_location(self, metadata_card):
+        location = Location(country=_country_or_text(getattr(self, "country", "worldwide")))
+        if metadata_card is None:
+            return location
+
+        location_tag = metadata_card.find("span", class_="job-search-card__location")
+        location_string = location_tag.text.strip() if location_tag else "N/A"
+        parts = location_string.split(", ")
+        if len(parts) == 2:
+            city, state = parts
+            return Location(
+                city=city,
+                state=state,
+                country=_country_or_text(getattr(self, "country", "worldwide")),
+            )
+        if len(parts) == 3:
+            city, state, country = parts
+            return Location(city=city, state=state, country=_country_or_text(country))
+        return location
+
+    LinkedIn._get_location = _get_location
+    LinkedIn._jobhunter_tolerates_unknown_countries = True
 
 
 # -- Location filtering ------------------------------------------------------

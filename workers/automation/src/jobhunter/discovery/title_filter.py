@@ -38,6 +38,10 @@ _TOKEN_ALIASES: dict[str, tuple[tuple[str, ...], ...]] = {
     "it": (("it",), ("information",), ("technology",)),
 }
 
+_QUERY_ALIASES: tuple[tuple[frozenset[str], tuple[tuple[str, ...], ...]], ...] = (
+    (frozenset(("director", "platform", "engineering")), (("platform", "director"),)),
+)
+
 
 def title_matches_query(title: str | None, query: str | None) -> bool:
     """Return whether a posting title satisfies a target search query."""
@@ -50,7 +54,10 @@ def title_matches_query(title: str | None, query: str | None) -> bool:
     query_tokens = [token for token in _tokens(normalized_query) if token not in _STOPWORDS]
     if not query_tokens:
         return False
-    return all(_token_matches_title(token, title_tokens) for token in query_tokens)
+    return all(_token_matches_title(token, title_tokens) for token in query_tokens) or _query_alias_matches(
+        query_tokens,
+        title_tokens,
+    )
 
 
 def normalize_query(query: str | None) -> str:
@@ -64,6 +71,17 @@ def normalize_query(query: str | None) -> str:
 def _token_matches_title(token: str, title_tokens: set[str]) -> bool:
     alternatives: Sequence[tuple[str, ...]] = _TOKEN_ALIASES.get(token, ((token,),))
     return any(all(part in title_tokens for part in alternative) for alternative in alternatives)
+
+
+def _query_alias_matches(query_tokens: Sequence[str], title_tokens: set[str]) -> bool:
+    query_token_set = frozenset(query_tokens)
+    for required_query_tokens, title_aliases in _QUERY_ALIASES:
+        if required_query_tokens.issubset(query_token_set) and any(
+            all(part in title_tokens for part in title_alias)
+            for title_alias in title_aliases
+        ):
+            return True
+    return False
 
 
 def _tokens(value: str | None) -> list[str]:
