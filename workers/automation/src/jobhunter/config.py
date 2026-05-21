@@ -259,8 +259,10 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
         next_cfg["locations"] = target_locations["locations"]
         next_cfg["location_labels"] = [item["label"] for item in target_locations["locations"]]
         next_cfg["location_accept"] = target_locations["accept"]
+        next_cfg["location_accept_local"] = target_locations["local_accept"]
         location_cfg = dict(next_cfg.get("location") or {})
         location_cfg["accept_patterns"] = target_locations["accept"]
+        location_cfg["local_accept_patterns"] = target_locations["local_accept"]
         next_cfg["location"] = location_cfg
 
         if target_locations["europe"]:
@@ -282,6 +284,7 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
 def _build_target_location_config(locations: list[str], work_models: list[str]) -> dict:
     search_locations: list[dict] = []
     accept: list[str] = []
+    local_accept: list[str] = []
     first_country = ""
     first_indeed_country = ""
     europe = False
@@ -299,6 +302,7 @@ def _build_target_location_config(locations: list[str], work_models: list[str]) 
         if wants_local:
             _append_search_location(search_locations, location=location, remote=False)
             accept.append(location)
+            local_accept.append(location)
 
         if wants_remote:
             remote_country = _display_country(country) or location
@@ -321,6 +325,7 @@ def _build_target_location_config(locations: list[str], work_models: list[str]) 
     return {
         "locations": search_locations,
         "accept": _dedupe_strings(accept),
+        "local_accept": _dedupe_strings(local_accept),
         "country": first_country,
         "country_indeed": first_indeed_country,
         "europe": europe,

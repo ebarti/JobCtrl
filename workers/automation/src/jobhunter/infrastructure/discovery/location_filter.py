@@ -268,12 +268,25 @@ def configured_location_filters(search_cfg: Mapping[str, Any]) -> tuple[list[str
     return _dedupe(accept), _dedupe(reject)
 
 
+def configured_local_location_accepts(search_cfg: Mapping[str, Any]) -> list[str]:
+    """Return location patterns that are valid for non-remote postings."""
+
+    accept = [*_string_list(search_cfg.get("location_accept_local"))]
+    nested = search_cfg.get("location")
+    if isinstance(nested, Mapping):
+        accept.extend(_string_list(nested.get("local_accept_patterns")))
+    return _dedupe(accept)
+
+
 def location_matches_target(
     location: str | None,
     *,
     accept: Sequence[str],
     reject: Sequence[str],
     search_location: str | None = None,
+    remote_required: bool = False,
+    is_remote: bool | None = None,
+    local_accept: Sequence[str] = (),
 ) -> bool:
     """Return whether a posting location fits the configured target.
 
@@ -288,6 +301,10 @@ def location_matches_target(
     normalized = _normalize(location)
     if _matches_reject(normalized, reject, accept=concrete_accept):
         return False
+
+    has_remote_signal = bool(is_remote) or _matches_any(normalized, REMOTE_MARKERS)
+    if remote_required and not has_remote_signal:
+        return _matches_any(normalized, _concrete_accept_patterns(local_accept))
 
     if search_location and _matches(normalized, search_location) and not concrete_accept:
         return True
