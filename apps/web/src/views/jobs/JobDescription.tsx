@@ -177,5 +177,30 @@ function trimMarkdownMarkers(text: string): string {
 }
 
 function unescapeMarkdown(text: string): string {
-  return text.replace(/\\([\\`*_{}\[\]()#+\-.!>])/g, "$1");
+  return decodeHtmlEntities(text)
+    .replace(/\\+&/g, "&")
+    .replace(/\\([\\`*_{}\[\]()#+\-.!>])/g, "$1");
+}
+
+function decodeHtmlEntities(text: string): string {
+  const namedEntities: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: " ",
+    quot: "\"",
+  };
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, name: string) => {
+    const normalized = name.toLowerCase();
+    if (normalized.startsWith("#x")) {
+      const codePoint = Number.parseInt(normalized.slice(2), 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+    }
+    if (normalized.startsWith("#")) {
+      const codePoint = Number.parseInt(normalized.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : entity;
+    }
+    return namedEntities[normalized] ?? entity;
+  });
 }

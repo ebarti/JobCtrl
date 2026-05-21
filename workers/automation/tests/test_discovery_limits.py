@@ -221,6 +221,34 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         close_connection(db_path)
 
 
+def test_jobspy_normalizes_source_locations_before_storage(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        results = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://es.indeed.com/viewjob?jk=remote-spain",
+                    "title": "Director, Product Management",
+                    "company": "Vonage",
+                    "location": "En remoto, ES",
+                    "is_remote": True,
+                    "site": "indeed",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, results, "Director", limit=10) == (1, 0)
+        row = conn.execute(
+            "SELECT location FROM jobs WHERE url = ?",
+            ("https://es.indeed.com/viewjob?jk=remote-spain",),
+        ).fetchone()
+
+        assert row["location"] == "Spain (Remote)"
+    finally:
+        close_connection(db_path)
+
+
 def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch):
     def missing_jobspy(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
         raise ImportError("python-jobspy is not installed")

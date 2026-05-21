@@ -4,6 +4,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_local_location_accepts,
     configured_location_filters,
     location_matches_target,
+    normalize_location_display,
 )
 
 
@@ -152,3 +153,10 @@ def test_configured_location_filters_reads_nested_and_legacy_shapes() -> None:
     )
 
     assert local_accept == ["Barcelona, Spain", "Madrid, Spain"]
+
+
+def test_normalize_location_display_expands_source_country_codes() -> None:
+    assert normalize_location_display("ES", is_remote=True) == "Spain (Remote)"
+    assert normalize_location_display("En remoto, ES (Remote)") == "Spain (Remote)"
+    assert normalize_location_display("Barcelona, CT, ES", is_remote=True) == "Barcelona, Catalonia, Spain (Remote)"
+    assert normalize_location_display("Madrid, MD, ES") == "Madrid, Community of Madrid, Spain"

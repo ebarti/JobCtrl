@@ -22,6 +22,7 @@
  */
 import { PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { normalizeJobLocation } from "./location-normalization.js";
 
 const STAGE_ORDER: readonly string[] = STAGES;
 const SOURCE_BOARD_NAMES = new Set(["greenhouse", "linkedin", "talent.com"]);
@@ -1089,7 +1090,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     employer,
     site || "unknown",
     stringField(job.strategy),
-    stringField(job.location),
+    normalizeJobLocation(stringField(job.location)),
     stringField(job.salary),
     applicationUrl,
     nullableString(job.discovered_at),

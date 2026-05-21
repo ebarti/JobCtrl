@@ -24,6 +24,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     configured_local_location_accepts,
     location_matches_target,
+    normalize_location_display,
 )
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.network.proxy import parse_proxy
@@ -177,10 +178,9 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
         description = str(row.get("description", "")) if str(row.get("description", "")) != "nan" else None
         site_name = str(row.get("site", source_label))
         is_remote = _truthy_remote(row.get("is_remote", False))
+        location_str = normalize_location_display(location_str, is_remote=is_remote)
 
         site_label = f"{site_name}"
-        if is_remote:
-            location_str = f"{location_str} (Remote)" if location_str else "Remote"
 
         strategy = "jobspy"
 

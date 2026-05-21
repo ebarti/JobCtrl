@@ -40,6 +40,7 @@ import type {
 } from "./contracts.js";
 import { ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
+import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
 
 const DEFAULT_TENANT = "local";
@@ -392,7 +393,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
     strategy: row.strategy ?? "",
-    location: row.location ?? "",
+    location: normalizeJobLocation(row.location),
     salary: row.salary ?? "",
     discoveredAt: row.discovered_at,
     applicationUrl: row.application_url,

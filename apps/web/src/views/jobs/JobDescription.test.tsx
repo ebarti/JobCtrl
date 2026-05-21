@@ -29,4 +29,10 @@ describe("JobDescription", () => {
     expect(screen.getByText("<script>alert('xss')</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
   });
+
+  it("renders escaped markdown and html entities as plain text", () => {
+    render(<JobDescription text="- Lead BSS \\&amp; Platform Services" />);
+
+    expect(screen.getByText("Lead BSS & Platform Services")).toBeInTheDocument();
+  });
 });

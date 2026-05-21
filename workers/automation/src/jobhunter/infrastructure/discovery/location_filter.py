@@ -254,6 +254,11 @@ AMBIGUOUS_REJECT_ABBREVIATIONS = {
     "sk",
     "yt",
 }
+SPAIN_REGION_LABELS = {
+    "AN": "Andalusia",
+    "CT": "Catalonia",
+    "MD": "Community of Madrid",
+}
 
 
 def configured_location_filters(search_cfg: Mapping[str, Any]) -> tuple[list[str], list[str]]:
@@ -313,6 +318,34 @@ def location_matches_target(
         return True
 
     return not concrete_accept and _matches_any(normalized, REMOTE_MARKERS)
+
+
+def normalize_location_display(location: str | None, *, is_remote: bool | None = None) -> str:
+    """Return a human-readable location string for source-provided locations."""
+
+    raw = str(location or "").strip()
+    if not raw:
+        return "Remote" if is_remote else ""
+
+    remote = bool(is_remote) or bool(
+        re.search(r"\b(remote|en remoto|remoto|teletrabajo|work from home|wfh)\b", raw, re.I)
+    )
+    without_remote_markers = re.sub(r"\s*\((remote|en remoto|remoto)\)\s*", " ", raw, flags=re.I)
+    parts = [
+        part.strip()
+        for part in without_remote_markers.split(",")
+        if part.strip()
+        and not re.search(r"\b(remote|en remoto|remoto|teletrabajo|work from home|wfh)\b", part, re.I)
+    ]
+    has_spain = any(_is_spain_country_token(part) for part in parts)
+    normalized_parts = [
+        normalized
+        for normalized in (_normalize_location_part(part, has_spain=has_spain) for part in parts)
+        if normalized
+    ]
+    deduped = _dedupe_adjacent(normalized_parts)
+    base = ", ".join(deduped) if deduped else ("Remote" if remote else raw)
+    return f"{base} (Remote)" if remote and not re.search(r"\bremote\b", base, re.I) else base
 
 
 def _string_list(value: object) -> list[str]:
@@ -397,6 +430,29 @@ def _matches(location: str, pattern: str | None) -> bool:
     if normalized.isalnum() and len(normalized) <= 3:
         return re.search(rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])", location) is not None
     return normalized in location
+
+
+def _normalize_location_part(part: str, *, has_spain: bool) -> str:
+    token = part.strip()
+    if not token:
+        return ""
+    if _is_spain_country_token(token):
+        return "Spain"
+    if has_spain:
+        return SPAIN_REGION_LABELS.get(token.upper(), token)
+    return token
+
+
+def _is_spain_country_token(part: str) -> bool:
+    return bool(re.fullmatch(r"ES|ESP|Spain|España", part.strip(), re.I))
+
+
+def _dedupe_adjacent(parts: Sequence[str]) -> list[str]:
+    result: list[str] = []
+    for part in parts:
+        if not result or result[-1].casefold() != part.casefold():
+            result.append(part)
+    return result
 
 
 def _normalize(value: str | None) -> str:
