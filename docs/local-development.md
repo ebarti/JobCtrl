@@ -21,8 +21,13 @@ pnpm dev
 ```
 
 `pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
-TypeScript API, Vite web app, and the JobHunter Temporal worker. The launcher
-tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and defaults to:
+TypeScript API, Vite web app, and the JobHunter Temporal worker. Before each
+component starts, the launcher stops the previous tracked JobHunter process
+tree for that component, so rerunning `pnpm dev` starts from a clean owned
+stack. It runs in the foreground so supervised terminals keep the child
+processes alive; keep the terminal open and stop the stack with Ctrl-C. The
+launcher tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and
+defaults to:
 
 - API data dir: `JOBHUNTER_DIR=${HOME}/.jobhunter`
 - API bind: `JOBHUNTER_API_HOST=127.0.0.1`,
@@ -30,13 +35,19 @@ tracks PIDs under `.dev/pids/`, writes logs under `.dev/logs/`, and defaults to:
 - Web API base URL: `VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766`
 - Web port: `5173` (`JOBHUNTER_WEB_PORT` can override it)
 
-Use the launcher for day-to-day process management:
+Inspect the foreground stack from another terminal:
 
 ```bash
 pnpm dev:status
 pnpm dev:logs worker
-pnpm dev:stop
 scripts/dev list
+```
+
+For a detached background stack in a normal shell, use the explicit daemon mode:
+
+```bash
+pnpm dev:start
+pnpm dev:stop
 ```
 
 Run individual components only when troubleshooting a specific process:

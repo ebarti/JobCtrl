@@ -28,6 +28,9 @@ For worker-backed pipeline smoke, run the full local stack and confirm
 pnpm dev
 ```
 
+`pnpm dev` is the attached full-stack launcher; keep it running while exercising
+the UI and stop it with Ctrl-C when the QA pass is finished.
+
 For destructive browser QA, seed a disposable workspace:
 
 ```bash

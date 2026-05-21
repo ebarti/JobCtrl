@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # scripts/dev — JobHunter local dev fleet launcher.
 #
-# Daemonizes temporal / api / web / worker into background processes, tracks each by
-# PID file under .dev/pids/, captures stdout+stderr to .dev/logs/, and
-# exposes individual start/stop/restart/logs so you can bounce one
-# without nuking the others.
+# Runs or daemonizes temporal / api / web / worker, tracks each by PID file
+# under .dev/pids/, captures stdout+stderr to .dev/logs/, and starts from a
+# clean owned process tree so stale local stack processes do not survive
+# between launches.
 #
 # Usage:
+#   scripts/dev run [name...]      Run named processes in the foreground
 #   scripts/dev start [name...]    Start named processes (or all if none given)
 #   scripts/dev stop  [name...]    Stop named (or all)
 #   scripts/dev restart [name...]  Stop then start
@@ -19,7 +20,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEV_DIR="$ROOT/.dev"
+DEV_DIR="${JOBHUNTER_DEV_DIR:-$ROOT/.dev}"
 PID_DIR="$DEV_DIR/pids"
 LOG_DIR="$DEV_DIR/logs"
 mkdir -p "$PID_DIR" "$LOG_DIR"
@@ -32,7 +33,7 @@ process_command() {
   case "$1" in
     temporal) echo "temporal server start-dev" ;;
     api)      echo "pnpm --filter @jobhunter/api dev" ;;
-    web)      echo 'pnpm --filter @jobhunter/web dev -- --port "$JOBHUNTER_WEB_PORT"' ;;
+    web)      echo 'pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port "$JOBHUNTER_WEB_PORT"' ;;
     worker)   echo "uv --project workers/automation run jobhunter worker" ;;
     *)        return 1 ;;
   esac
@@ -69,6 +70,73 @@ kill_tree() {
   kill "-$sig" "$pid" 2>/dev/null || true
 }
 
+collect_tree_pids() {
+  local pid="$1"
+  echo "$pid"
+  local child
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    collect_tree_pids "$child"
+  done
+}
+
+is_alive_pid() {
+  local pid="$1" stat
+  kill -0 "$pid" 2>/dev/null || return 1
+  stat=$(ps -o stat= -p "$pid" 2>/dev/null | awk '{ print $1 }')
+  [[ "$stat" != *Z* ]]
+}
+
+wait_pids_gone() {
+  local pids="$1" ticks="$2" interval="$3"
+  local i target alive
+  for i in $(seq 1 "$ticks"); do
+    alive=0
+    for target in $pids; do
+      if is_alive_pid "$target"; then
+        alive=1
+        break
+      fi
+    done
+    [[ "$alive" -eq 0 ]] && return 0
+    sleep "$interval"
+  done
+  return 1
+}
+
+stop_pid_tree() {
+  local pid="$1"
+  local pids target
+  local wait_ticks="${JOBHUNTER_STOP_WAIT_TICKS:-50}"
+  local wait_interval="${JOBHUNTER_STOP_WAIT_INTERVAL_SECONDS:-0.1}"
+  local kill_wait_ticks="${JOBHUNTER_KILL_WAIT_TICKS:-20}"
+  pids=$(collect_tree_pids "$pid" | awk '/^[0-9]+$/ && $1 > 0 && !seen[$1]++')
+  for target in $pids; do
+    kill -TERM "$target" 2>/dev/null || true
+  done
+
+  # Wait for graceful shutdown before SIGKILL; tests can shorten this.
+  wait_pids_gone "$pids" "$wait_ticks" "$wait_interval" && return 0
+
+  for target in $pids; do
+    kill -KILL "$target" 2>/dev/null || true
+  done
+
+  if ! wait_pids_gone "$pids" "$kill_wait_ticks" "$wait_interval"; then
+    echo "dev: failed to stop process tree rooted at $pid" >&2
+    return 1
+  fi
+}
+
+ensure_not_running() {
+  local name="$1"
+  if is_running "$name"; then
+    echo "$name: stopping previous process tree (pid $(read_pid "$name"))"
+    stop_one "$name" >/dev/null
+  else
+    rm -f "$(pid_file "$name")"
+  fi
+}
+
 # Load $ROOT/.env into the current shell so spawned children inherit
 # secrets (Langfuse keys, Gemini keys, etc.). Node and Python do not
 # auto-source .env at startup — leaving this off would silently disable
@@ -95,22 +163,60 @@ start_one() {
     echo "dev: unknown process '$name' (try: $(process_names))" >&2
     return 1
   fi
-  if is_running "$name"; then
-    echo "$name: already running (pid $(read_pid "$name"))"
-    return 0
-  fi
-  rm -f "$(pid_file "$name")"
+  ensure_not_running "$name"
   local cmd log
   cmd=$(process_command "$name")
   log=$(log_file "$name")
   : > "$log"
   # Use `nohup` so the child survives the launching shell; `bash -c`
   # gives the command a single PID we can track and tree-kill later.
-  ( cd "$ROOT" && nohup bash -c "exec $cmd" >>"$log" 2>&1 ) &
+  ( cd "$ROOT" && exec nohup bash -c "exec $cmd" ) </dev/null >>"$log" 2>&1 &
   local pid=$!
-  disown "$pid" 2>/dev/null || true
+  disown 2>/dev/null || true
   echo "$pid" > "$(pid_file "$name")"
   echo "$name: started (pid $pid, logs $log)"
+}
+
+run_pids=()
+run_names=()
+run_cleaned=0
+
+run_cleanup() {
+  [[ "$run_cleaned" -eq 0 ]] || return 0
+  run_cleaned=1
+  local i name pid
+  for i in "${!run_pids[@]}"; do
+    name="${run_names[$i]}"
+    pid="${run_pids[$i]}"
+    if stop_pid_tree "$pid"; then
+      rm -f "$(pid_file "$name")"
+    fi
+  done
+}
+
+start_run_one() {
+  local name="$1"
+  if ! is_known "$name"; then
+    echo "dev: unknown process '$name' (try: $(process_names))" >&2
+    return 1
+  fi
+  ensure_not_running "$name"
+  local cmd log
+  cmd=$(process_command "$name")
+  log=$(log_file "$name")
+  : > "$log"
+  (
+    set -o pipefail
+    cd "$ROOT"
+    bash -c "exec $cmd" 2>&1 \
+      | tee -a "$log" \
+      | awk -v name="$name" '{ print "[" name "] " $0; fflush(); }'
+  ) &
+  local pid=$!
+  echo "$pid" > "$(pid_file "$name")"
+  run_names+=("$name")
+  run_pids+=("$pid")
+  echo "$name: running in foreground (pid $pid, logs $log)"
 }
 
 stop_one() {
@@ -126,16 +232,7 @@ stop_one() {
   fi
   local pid
   pid=$(read_pid "$name")
-  kill_tree "$pid" TERM
-  # Wait up to 5s for graceful shutdown before SIGKILL.
-  local i
-  for i in $(seq 1 50); do
-    kill -0 "$pid" 2>/dev/null || break
-    sleep 0.1
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill_tree "$pid" KILL
-  fi
+  stop_pid_tree "$pid" || return 1
   rm -f "$(pid_file "$name")"
   echo "$name: stopped"
 }
@@ -148,6 +245,40 @@ cmd_start() {
     for n in $(process_names); do targets+=("$n"); done
   fi
   for n in "${targets[@]}"; do start_one "$n"; done
+}
+
+cmd_run() {
+  load_env_file
+  set_default_env
+  local targets=("$@")
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    for n in $(process_names); do targets+=("$n"); done
+  fi
+
+  trap 'run_cleanup; exit 130' INT
+  trap 'run_cleanup; exit 143' TERM
+  trap 'run_cleanup' EXIT
+
+  local n
+  for n in "${targets[@]}"; do start_run_one "$n"; done
+
+  echo "dev: foreground run active; press Ctrl-C to stop ($(IFS=,; echo "${targets[*]}"))"
+
+  local i name pid status
+  while true; do
+    for i in "${!run_pids[@]}"; do
+      name="${run_names[$i]}"
+      pid="${run_pids[$i]}"
+      if ! kill -0 "$pid" 2>/dev/null; then
+        status=0
+        wait "$pid" || status=$?
+        echo "dev: $name exited (status $status); stopping foreground run" >&2
+        run_cleanup
+        exit "$status"
+      fi
+    done
+    sleep 1
+  done
 }
 
 cmd_stop() {
@@ -207,13 +338,15 @@ cmd_list() {
 }
 
 cmd_help() {
-  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
   local sub="${1:-help}"
   shift || true
+  [[ "${1:-}" == "--" ]] && shift
   case "$sub" in
+    run)     cmd_run "$@" ;;
     start)   cmd_start "$@" ;;
     stop)    cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;

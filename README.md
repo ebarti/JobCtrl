@@ -119,9 +119,11 @@ pnpm dev
 `pnpm dev:setup` installs the Node workspace dependencies and syncs the
 uv-managed Python automation environment, including `python-jobspy` and its
 locked transitive dependencies plus the Python dev extras used by local checks.
-`pnpm dev` also invokes the Python worker through `uv run`, which re-syncs the
-worker environment if needed, but first-time setup should use `pnpm dev:setup`
-so dependency failures are separated from process startup.
+`pnpm dev` runs the process supervisor in the foreground and also invokes the
+Python worker through `uv run`, which re-syncs the worker environment if needed.
+Keep that terminal open while using the app and stop it with Ctrl-C. First-time
+setup should use `pnpm dev:setup` so dependency failures are separated from
+process startup.
 
 For verification:
 
@@ -264,13 +266,23 @@ pnpm dev
 ```
 
 That launches the Temporal dev server, local TypeScript API, React/Vite web app,
-and JobHunter Temporal worker. The launcher defaults to `~/.jobhunter`,
-`127.0.0.1:8766` for the API, and `127.0.0.1:5173` for the web app. Inspect or
-stop the stack with:
+and JobHunter Temporal worker in the foreground. Before each component starts,
+the launcher stops the previous tracked JobHunter process tree for that
+component, so rerunning `pnpm dev` starts from a clean owned stack. Keep the
+terminal open and use Ctrl-C to stop the stack. The launcher defaults to
+`~/.jobhunter`,
+`127.0.0.1:8766` for the API, and `127.0.0.1:5173` for the web app. Inspect the
+stack from another terminal with:
 
 ```bash
 pnpm dev:status
 pnpm dev:logs worker
+```
+
+For a detached background stack, use the explicit daemon mode:
+
+```bash
+pnpm dev:start
 pnpm dev:stop
 ```
 
