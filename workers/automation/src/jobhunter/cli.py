@@ -1200,6 +1200,8 @@ def worker(
         current_runtime_identity,
         write_worker_heartbeat,
     )
+    from jobhunter.database import get_connection
+    from jobhunter.state import recover_orphaned_running_stages
 
     queue = task_queue or JOBHUNTER_TASK_QUEUE
 
@@ -1212,10 +1214,16 @@ def worker(
             task_queue=queue,
         )
         identity = current_runtime_identity()
+        recovered = recover_orphaned_running_stages(get_connection())
         heartbeat_worker_id = write_worker_heartbeat(task_queue=queue)
         heartbeat_task = asyncio.create_task(
             _worker_heartbeat_loop(queue, heartbeat_worker_id)
         )
+        if recovered:
+            console.print(
+                f"[yellow]Recovered {recovered} orphaned pipeline stage run(s) "
+                "from prior worker shutdown.[/yellow]"
+            )
         console.print(
             f"[bold blue]JobHunter worker[/bold blue] running on task queue "
             f"[bold]{queue}[/bold] with {len(WORKFLOWS)} workflow(s) and "
