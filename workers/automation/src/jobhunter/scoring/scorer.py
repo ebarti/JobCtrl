@@ -21,14 +21,18 @@ from __future__ import annotations
 
 import logging
 import time
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.job_content_identity import job_content_fingerprint
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.retrieval import (
     HybridSearchIndex,
     preselect_jobs_for_scoring,
@@ -226,8 +230,54 @@ def run_scoring(
         )
         record_job_event(conn, job["url"], "score", "StageStarted", message="Scoring started")
 
+    reusable_scores = (
+        {}
+        if rescore
+        else _reusable_scores_by_content_key(
+            conn=conn,
+            jobs=jobs,
+            repository=repository,
+            tenant_id=tenant_id,
+            criteria=criteria,
+            profile_snapshot=profile_snapshot,
+        )
+    )
+    pending_by_key: dict[str, dict[str, Any]] = {}
+    duplicate_jobs_by_representative: dict[str, list[dict[str, Any]]] = {}
+    jobs_to_compute: list[dict[str, Any]] = []
+    reused_results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
+    for job in jobs:
+        content_key = _score_content_key(job)
+        if content_key is None:
+            jobs_to_compute.append(job)
+            continue
+        reusable_score = reusable_scores.get(content_key)
+        if reusable_score is not None:
+            try:
+                outcome = _persist_reused_score(
+                    repository=repository,
+                    tenant_id=tenant_id,
+                    job=job,
+                    source_score=reusable_score,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface as a stage failure
+                log.error("Score reuse failed for %r: %s", job.get("title", "?"), exc)
+                outcome = ScoreJobOutcome(
+                    ok=False,
+                    score=None,
+                    error=f"Score reuse failed: {exc}",
+                )
+            reused_results.append((job, outcome))
+            continue
+        representative = pending_by_key.get(content_key)
+        if representative is None:
+            pending_by_key[content_key] = job
+            jobs_to_compute.append(job)
+            continue
+        duplicate_jobs_by_representative.setdefault(representative["url"], []).append(job)
+
     t0 = time.time()
-    results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
+    results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
     errors = 0
 
     # Worker threads run the LLM step only — the SQLite connection is not
@@ -242,7 +292,7 @@ def run_scoring(
                 resume_text=resume_text,
                 criteria=criteria,
             ): job
-            for job in jobs
+            for job in jobs_to_compute
         }
         for completed, future in enumerate(as_completed(future_to_job), start=1):
             job = future_to_job[future]
@@ -265,13 +315,40 @@ def run_scoring(
                     )
 
             results.append((job, outcome))
-            if not outcome.ok:
-                errors += 1
+            for duplicate_job in duplicate_jobs_by_representative.get(job["url"], ()):
+                if outcome.ok and outcome.score is not None:
+                    try:
+                        duplicate_outcome = _persist_reused_score(
+                            repository=repository,
+                            tenant_id=tenant_id,
+                            job=duplicate_job,
+                            source_score=outcome.score,
+                        )
+                    except Exception as exc:  # noqa: BLE001 — surface as a stage failure
+                        log.error(
+                            "Score reuse failed for duplicate %r: %s",
+                            duplicate_job.get("title", "?"),
+                            exc,
+                        )
+                        duplicate_outcome = ScoreJobOutcome(
+                            ok=False,
+                            score=None,
+                            error=f"Score reuse failed: {exc}",
+                        )
+                else:
+                    duplicate_outcome = ScoreJobOutcome(
+                        ok=False,
+                        score=None,
+                        error=outcome.error or "Scoring failed",
+                    )
+                results.append((duplicate_job, duplicate_outcome))
             score_value = outcome.score.fit_score.value if outcome.ok and outcome.score else 0
             log.info(
                 "[%d/%d] score=%d  %s",
-                completed, len(jobs), score_value, str(job.get("title", "?"))[:60],
+                completed, len(jobs_to_compute), score_value, str(job.get("title", "?"))[:60],
             )
+
+    errors = sum(1 for _, outcome in results if not outcome.ok)
 
     finished_at = utc_now()
     for job, outcome in results:
@@ -361,6 +438,112 @@ def _retrieval_source_limit(limit: int) -> int:
     if limit <= 0:
         return 0
     return max(limit * 5, 50)
+
+
+def _score_content_key(job: dict[str, Any]) -> str | None:
+    return job_content_fingerprint(
+        title=job.get("title"),
+        company=job.get("company"),
+        description=job.get("full_description"),
+        description_limit=6000,
+    )
+
+
+def _reusable_scores_by_content_key(
+    *,
+    conn: sqlite3.Connection,
+    jobs: list[dict[str, Any]],
+    repository: ScoreRepository,
+    tenant_id: TenantId,
+    criteria: ScoringCriteria,
+    profile_snapshot: ProfileSnapshot,
+) -> dict[str, JobScore]:
+    wanted_keys = {key for job in jobs if (key := _score_content_key(job)) is not None}
+    if not wanted_keys:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT j.url, j.title, j.company,
+               COALESCE(je.full_description, j.full_description) AS full_description
+        FROM jobs j
+        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        INNER JOIN (
+            SELECT s.job_url, MAX(s.version) AS max_version
+            FROM job_scores s
+            WHERE s.tenant_id = ?
+            GROUP BY s.job_url
+        ) latest ON latest.job_url = j.url
+        INNER JOIN job_scores s
+            ON s.job_url = latest.job_url
+           AND s.version = latest.max_version
+           AND s.tenant_id = ?
+        ORDER BY s.scored_at DESC
+        """,
+        (str(tenant_id), str(tenant_id)),
+    ).fetchall()
+
+    reusable: dict[str, JobScore] = {}
+    for row in rows:
+        job = dict(row)
+        key = _score_content_key(job)
+        if key is None or key not in wanted_keys or key in reusable:
+            continue
+        score = repository.load(tenant_id, JobId(str(job["url"])))
+        if score is None or not _score_matches_context(
+            score=score,
+            criteria=criteria,
+            profile_snapshot=profile_snapshot,
+        ):
+            continue
+        reusable[key] = score
+    return reusable
+
+
+def _score_matches_context(
+    *,
+    score: JobScore,
+    criteria: ScoringCriteria,
+    profile_snapshot: ProfileSnapshot,
+) -> bool:
+    if score.trace.criteria_version != criteria.criteria_version:
+        return False
+    if score.trace.profile_snapshot_version != profile_snapshot.version:
+        return False
+    return True
+
+
+def _persist_reused_score(
+    *,
+    repository: ScoreRepository,
+    tenant_id: TenantId,
+    job: dict[str, Any],
+    source_score: JobScore,
+) -> ScoreJobOutcome:
+    job_id = JobId(str(job["url"]))
+    previous = repository.load(tenant_id, job_id)
+    scored_at = utc_now()
+    if previous is None:
+        copied = JobScore.initial(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            fit_score=source_score.fit_score,
+            breakdown=source_score.breakdown,
+            matched_keywords=source_score.matched_keywords,
+            scored_at=scored_at,
+            criteria=source_score.criteria,
+            trace=source_score.trace,
+        )
+    else:
+        copied = previous.next_version(
+            fit_score=source_score.fit_score,
+            breakdown=source_score.breakdown,
+            matched_keywords=source_score.matched_keywords,
+            scored_at=scored_at,
+            criteria=source_score.criteria,
+            trace=source_score.trace,
+        )
+    repository.save(copied)
+    return ScoreJobOutcome(ok=True, score=copied)
 
 
 # ---------------------------------------------------------------------------
