@@ -134,6 +134,10 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
 
 ### UI Quality
 
+- Add configurable jobs-table columns. The default Jobs table should keep
+  critical operational columns such as Source visible, but users need a
+  first-class control for choosing which columns are shown and hidden, with
+  persisted preferences per local profile or workspace.
 - Spike the best long-term resume rendering path. Evaluate whether to keep
   LaTeX as the PDF source of truth, switch to Tectonic, replace LaTeX with a
   different document engine such as Typst, or move to an HTML/CSS paged-media
