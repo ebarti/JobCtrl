@@ -52,6 +52,35 @@ afterEach(() => {
 });
 
 describe("<JobsView> bulk delete integration", () => {
+  it("checks visible row checkboxes after selecting all matching jobs", async () => {
+    const user = userEvent.setup();
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness);
+    const { container } = render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByText(/Acme Corp/i)).toBeInTheDocument(), {
+      timeout: 5_000,
+    });
+
+    await user.click(screen.getByRole("button", { name: /select all matching/i }));
+    await waitFor(() => expect(screen.getByText(/2 selected/i)).toBeInTheDocument());
+
+    const checkboxes = Array.from(
+      container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"),
+    );
+    const rowCheckboxes = checkboxes.filter(
+      (input) =>
+        input.getAttribute("aria-label")?.startsWith("Select ") &&
+        input.getAttribute("aria-label") !== "Select all rows on this page",
+    );
+
+    expect(screen.getByRole("checkbox", { name: /select all rows on this page/i })).toBeChecked();
+    expect(rowCheckboxes.length).toBeGreaterThan(0);
+    for (const checkbox of rowCheckboxes) {
+      expect(checkbox).toBeChecked();
+    }
+  });
+
   it("selects rows via checkbox, clicks delete, confirms, and posts to /v1/jobs/bulk-delete", async () => {
     const user = userEvent.setup();
     const calls: Array<{ jobKeys?: string[] }> = [];

@@ -1,4 +1,5 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
+import { useMemo } from "react";
 
 import type { JobSummary, PaginatedResponse } from "../../contexts/operations/types.js";
 import { DataTable } from "../../shared/ui/data-table.js";
@@ -34,6 +35,17 @@ export function JobsTable({
   onPageSizeChange,
   onOpenJob,
 }: JobsTableProps) {
+  const displayedRowSelection = useMemo<RowSelectionState>(() => {
+    if (!allMatchingSelected) {
+      return rowSelection;
+    }
+    const next: RowSelectionState = {};
+    for (const job of data?.items ?? []) {
+      next[job.jobKey] = true;
+    }
+    return next;
+  }, [allMatchingSelected, data?.items, rowSelection]);
+
   return (
     <DataTable<JobSummary>
       data={data?.items ?? []}
@@ -47,7 +59,7 @@ export function JobsTable({
       rowClassName="data-row job"
       sorting={sorting}
       onSortingChange={onSortingChange}
-      rowSelection={rowSelection}
+      rowSelection={displayedRowSelection}
       onRowSelectionChange={onRowSelectionChange}
       onRowActivate={(row) => onOpenJob(row.jobKey)}
       rowAriaSelected={(row) => allMatchingSelected || Boolean(rowSelection[row.jobKey])}
