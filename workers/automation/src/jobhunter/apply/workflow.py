@@ -26,6 +26,8 @@ with workflow.unsafe.imports_passed_through():
 @dataclass(frozen=True)
 class ApplyWorkflowInput:
     tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     job_url: str | None = None
     dry_run: bool = False
     headless: bool = False
@@ -68,6 +70,8 @@ class ApplyWorkflow:
                 apply_activity,
                 ApplyActivityInput(
                     tenant_id=payload.tenant_id,
+                    expected_app_dir=payload.expected_app_dir,
+                    expected_db_path=payload.expected_db_path,
                     job_url=payload.job_url,
                     limit=payload.limit,
                     min_score=payload.min_score,

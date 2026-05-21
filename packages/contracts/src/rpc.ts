@@ -152,6 +152,8 @@ export type CancelStageResult = z.infer<typeof CancelStageResultSchema>;
 export const RunStageParamsSchema = z
   .object({
     tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
     stage: z.enum(STAGES),
     stages: z.array(z.enum(STAGES)).min(1).max(STAGES.length).optional(),
     jobUrl: z.string().optional(),
@@ -172,6 +174,8 @@ export type RunStageParams = z.infer<typeof RunStageParamsSchema>;
 export const ApplyParamsSchema = z
   .object({
     tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
     jobUrl: z.string().optional(),
     limit: z.number().int().min(1).default(1),
     workers: z.number().int().min(1).default(1),

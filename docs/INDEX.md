@@ -14,6 +14,8 @@
   `GET /v1/events/stream` SSE contract.
 - `local-reliability-qa.md`: local QA checklist, regression matrix, and the
   frontend test pyramid + a11y bar.
+- `requirements.md`: product requirements that must stay true as
+  implementation changes.
 - `decisions.md`: accepted architecture decisions.
 - `delivered.md`: delivery history by PR.
 - `backlog.md`: deferred local and hosted work.

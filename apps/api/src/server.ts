@@ -26,6 +26,7 @@ import {
   ManualCaptureDismissSchema,
   ManualCaptureImportSchema,
   ProfileImportRequestSchema,
+  type ProfileConfigResponse,
   ProfileUpdateRequestSchema,
   QuarantineDecisionSchema,
   ResetStaleScoresForRescoreRequestSchema,
@@ -83,9 +84,19 @@ import {
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
   ProfileInputError,
+  parseProfileUpdateProfile,
   readProfileConfig,
   writeProfileConfig,
 } from "./profile-store.js";
+import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
+import {
+  handleProfileUpdatedEvent,
+  hasRetailorableResumes,
+  profileChangedSections,
+  recordProfileUpdatedEvent,
+  shouldRetailorForProfileUpdate,
+} from "./profile-events.js";
+import { dbFileIdentity, readWorkerHealth } from "./worker-health.js";
 import {
   cancelJobAction,
   correctScore,
@@ -121,6 +132,7 @@ export interface BuildAppOptions {
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
   manualCaptureImporter?: ManualCaptureImporter;
+  placeValidator?: PlaceValidator;
   profileImporter?: ProfileImporter;
   profilePreviewRenderer?: ProfilePreviewRenderer;
   logger?: boolean;
@@ -135,7 +147,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const manualCaptureImporter = options.manualCaptureImporter ?? createWorkerManualCaptureImporter();
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
   const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
-  const actionContext = { appDir };
+  const actionContext = { appDir, dbPath: options.dbPath };
 
   void app.register(cors, {
     origin: LOCAL_ORIGIN_PATTERNS,
@@ -159,7 +171,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/health", async () => ({
     ok: true,
     dbPath: options.dbPath,
+    appDir,
     dbExists: databaseExists(options.dbPath),
+    dbIdentity: dbFileIdentity(options.dbPath),
+    worker: readWorkerHealth(options.dbPath),
   }));
 
   registerEventStreamRoute(app, { dbPath: options.dbPath });
@@ -668,6 +683,34 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }),
   );
 
+  app.get<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/preview.pdf", async (request, reply) => {
+    const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));
+    if (!detail) {
+      void reply.code(404);
+      return { ok: false, error: "artifact_not_found" };
+    }
+    if ("ok" in detail && detail.ok === false) {
+      return detail;
+    }
+    if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
+      void reply.code(415);
+      return { ok: false, error: "artifact_preview_unsupported" };
+    }
+    if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
+      void reply.code(404);
+      return { ok: false, error: "artifact_missing" };
+    }
+
+    return reply
+      .type("application/pdf")
+      .header("cache-control", "no-store")
+      .header(
+        "content-disposition",
+        `inline; filename="${path.basename(detail.artifact.localPath).replaceAll('"', "")}"`,
+      )
+      .send(fs.createReadStream(detail.artifact.localPath));
+  });
+
   app.post<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/open", async (request, reply) => {
     const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));
     if (!detail) {
@@ -742,9 +785,24 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(503);
       return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
     }
-    const db = openDatabase(options.dbPath);
     try {
-      return writeProfileConfig(
+      const nextProfile = parseProfileUpdateProfile(body);
+      if (nextProfile) {
+        await validateProfileTargetPlaces(nextProfile, options.placeValidator);
+      }
+    } catch (error) {
+      if (error instanceof ProfileInputError) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_profile", message: error.message };
+      }
+      throw error;
+    }
+    const db = openDatabase(options.dbPath);
+    let profileResponse: ProfileConfigResponse | undefined;
+    let profileUpdatedEvent: ReturnType<typeof recordProfileUpdatedEvent> = null;
+    let queueRetailor = false;
+    try {
+      profileResponse = writeProfileConfig(
         db,
         {
           profilePath: options.profilePath,
@@ -753,6 +811,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         },
         body,
       );
+      profileUpdatedEvent = recordProfileUpdatedEvent(db, profileChangedSections(body));
+      queueRetailor = shouldRetailorForProfileUpdate(body) && hasRetailorableResumes(db);
     } catch (error) {
       if (error instanceof InputError || error instanceof ProfileInputError) {
         void reply.code(400);
@@ -762,6 +822,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     } finally {
       db.close();
     }
+    if (profileUpdatedEvent && queueRetailor) {
+      try {
+        await handleProfileUpdatedEvent(profileUpdatedEvent, actionDispatcher, actionContext);
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to dispatch profile-update re-tailoring run");
+      }
+    }
+    return profileResponse;
   });
 
   app.post("/v1/profile/import-resume", async (request, reply) => {
@@ -836,6 +904,10 @@ function decodeRouteParam(value: string): string {
   } catch {
     return value;
   }
+}
+
+function isPdfArtifact(artifactType: string, localPath: string): boolean {
+  return artifactType.toLowerCase().endsWith("_pdf") || localPath.toLowerCase().endsWith(".pdf");
 }
 
 function unsupportedPerJobMaterialAction(jobKey?: string): {

@@ -18,6 +18,8 @@ class TailorActivityInput:
     # ``tenant_id`` is currently informational; runners read from
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     min_score: int = 7
     limit: int = 0
     workers: int = 1
@@ -40,7 +42,13 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
+    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobhunter.pipeline import run_pipeline
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
 
     def _do() -> dict[str, Any]:
         return run_pipeline(
@@ -79,6 +87,8 @@ class CoverActivityInput:
     # ``tenant_id`` is currently informational; runners read from
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     min_score: int = 7
     limit: int = 0
     validation_mode: str = "normal"
@@ -99,7 +109,13 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
+    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobhunter.pipeline import run_pipeline
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
 
     def _do() -> dict[str, Any]:
         return run_pipeline(
@@ -136,6 +152,8 @@ class PdfActivityInput:
     # ``tenant_id`` is currently informational; runners read from
     # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     limit: int = 0
     dry_run: bool = False
 
@@ -154,7 +172,13 @@ async def pdf_activity(payload: PdfActivityInput) -> PdfActivityOutput:
     from jobhunter.infrastructure.temporal.run_in_activity import (
         run_blocking_with_heartbeat,
     )
+    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobhunter.pipeline import run_pipeline
+
+    assert_activity_runtime(
+        expected_app_dir=payload.expected_app_dir,
+        expected_db_path=payload.expected_db_path,
+    )
 
     def _do() -> dict[str, Any]:
         return run_pipeline(

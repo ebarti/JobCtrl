@@ -274,6 +274,11 @@ pnpm dev:logs worker
 pnpm dev:stop
 ```
 
+The API health endpoint reports the API app/database identity and the latest
+Temporal worker heartbeat. The web topbar alerts when the worker is missing or
+stale, and pipeline stage buttons stay disabled until the worker is
+heartbeating against the same local database.
+
 For troubleshooting, run individual components in separate terminals:
 
 ```bash
@@ -379,9 +384,14 @@ working while sources are promoted or rejected.
 The Preferences tab's Target search fields are discovery inputs. Target roles
 replace the active discovery query list, target locations replace the active
 location list, and if target locations are blank the worker falls back to the
-profile city/country. A Spain or Europe target sets JobSpy's Indeed country to
-Spain, broadens Europe/remote location accepts, rejects America-only non-remote
-locations, and hides packaged America-only source rows from discovery controls.
+profile city/country. Target locations are validated as real places before they
+can be saved. Hybrid and on-site target work models search and filter only the
+target location. Remote target work models search and filter the target country,
+and European countries also add an Europe-remote search and accept pattern.
+Profile-driven discovery searches at least the last 30 days unless local config
+sets a larger window. A Spain or Europe target sets JobSpy's Indeed country to
+Spain, rejects America-only non-remote locations, and hides packaged
+America-only source rows from discovery controls.
 
 Common environment variables:
 

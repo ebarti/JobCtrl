@@ -1275,6 +1275,10 @@ textarea {
   box-shadow: -18px 0 42px rgba(0, 0, 0, 0.18);
 }
 
+.artifact-detail-drawer {
+  width: min(1180px, 88vw);
+}
+
 .drawer-close {
   position: sticky;
   top: 12px;
@@ -1298,6 +1302,23 @@ textarea {
 .drawer-head h2 {
   margin: 4px 0;
   font-size: 22px;
+}
+
+.artifact-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.42fr) minmax(420px, 0.58fr);
+  min-height: calc(100vh - 116px);
+}
+
+.artifact-detail-layout > .section {
+  min-width: 0;
+  border-right: 1px solid var(--rule);
+}
+
+.artifact-preview-panel {
+  min-width: 0;
+  min-height: 0;
+  background: #242424;
 }
 
 .external-link {
@@ -2123,6 +2144,19 @@ textarea {
     width: min(100vw, 760px);
   }
 
+  .artifact-detail-drawer {
+    width: min(100vw, 760px);
+  }
+
+  .artifact-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .artifact-detail-layout > .section {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
   .data-row.job,
   .data-row.artifact,
   .activity-row,
@@ -2206,5 +2240,9 @@ textarea {
 }
 
 .connection-pill[data-status="closed"]::before {
+  background: var(--danger);
+}
+
+.connection-pill[data-status="lost"]::before {
   background: var(--danger);
 }

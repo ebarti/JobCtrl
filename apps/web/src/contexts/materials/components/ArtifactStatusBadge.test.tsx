@@ -8,13 +8,16 @@ describe("<ArtifactStatusBadge>", () => {
     const { container } = render(<ArtifactStatusBadge status={status} />);
     expect(screen.getByText(status)).toBeInTheDocument();
     expect(container.querySelector("span")?.className).toMatch(/tag /);
+    expect(container.querySelector("span")?.getAttribute("title")).toBeTruthy();
   });
 
   it("snapshots approved", () => {
     const { container } = render(<ArtifactStatusBadge status="approved" />);
     expect(container.firstChild).toMatchInlineSnapshot(`
       <span
+        aria-label="approved: Approved means this generated material passed validation and is the accepted version for this job."
         class="tag ok"
+        title="Approved means this generated material passed validation and is the accepted version for this job."
       >
         approved
       </span>

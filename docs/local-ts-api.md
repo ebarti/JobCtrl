@@ -13,6 +13,12 @@ tables are empty, the API can seed them once from legacy `profile.json`,
 `resume_style.json`, and `resume_template.tex`; subsequent writes update only
 SQLite and reconstruct the existing response object shape for frontend/client
 compatibility.
+Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
+tailored resumes are present, the API handles that event by dispatching a
+background `tailor -> pdf` pipeline run with `retailor=true`, `dryRun=false`,
+and no item limit. The Python materials generation path creates a new materials
+generation for each re-tailored job and preserves the prior generation as
+historical/superseded artifact data.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
@@ -20,6 +26,12 @@ maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 `ProjectionBuilder` (`workers/automation/src/jobhunter/infrastructure/projections/`).
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
+Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
+`GET /v1/artifacts/:artifactId/preview.pdf` for inline preview of registered
+PDF artifacts. The preview route serves only known PDF artifact files from the
+local artifact projection; it returns `404` for missing metadata/files and
+`415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
+route still delegates to the local OS opener.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
@@ -126,14 +138,26 @@ batch size.
 Discover honors the profile Target search saved from the Preferences tab.
 Target roles replace the active discovery query list, target locations replace
 the active location list, and the worker falls back to profile city/country when
-target locations are blank. Spain or Europe targets set JobSpy's Indeed country
-to Spain, add Europe/remote location accepts, reject America-only non-remote
-locations, and filter API-visible America-only source rows from
-`GET /v1/discovery/sources`.
+target locations are blank. The API validates target locations as real places
+before saving profile preferences. Hybrid and on-site target work models search
+and filter only the target location. Remote target work models search and filter
+the target country, and European countries also add an Europe-remote search and
+accept pattern. Profile-driven discovery searches at least the last 30 days
+unless local config sets a larger window. Spain or Europe targets set JobSpy's
+Indeed country to Spain, reject America-only non-remote locations, and filter
+API-visible America-only source rows from `GET /v1/discovery/sources`.
 
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
-local SQLite database. Non-apply pipeline runs also emit pipeline-level
+local SQLite database. The API also passes `expectedAppDir` and
+`expectedDbPath` into worker-started workflows. Worker activities verify those
+runtime values before writing, and fail non-retryably if the Temporal worker is
+connected to a different local app directory or SQLite database. The worker
+writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
+returns the API app/database identity plus the latest worker heartbeat status.
+The web topbar surfaces missing or stale worker heartbeats, and the pipeline
+stage trigger blocks new worker-backed actions until the worker is healthy.
+Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,
 `DiscoveryRunCompleted`, and `DiscoveryRunFailed` for its JobSpy, Workday, and

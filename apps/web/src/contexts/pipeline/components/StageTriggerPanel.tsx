@@ -13,6 +13,7 @@ import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
+import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
 import type { DashboardSummary } from "../../operations/types.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
@@ -178,6 +179,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const dashboardSummary = useDashboardSummaryQuery();
+  const health = useHealthQuery();
   const activeStage = useStageTriggerStore((state) => state.activeStage);
   const config = useStageTriggerStore((state) => state.configs[state.activeStage]);
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
@@ -191,6 +193,8 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const visibleStageActivity = relevantPendingActivity ?? (!runStages.isPending ? stageActivity : null);
   const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
   const activeStagePanel = stagePanels[activeStage] ?? null;
+  const workerUnhealthy = Boolean(health.data && health.data.worker.status !== "healthy");
+  const workerHealthMessage = health.data?.worker.message ?? "Temporal worker health is unavailable.";
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
@@ -198,6 +202,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (workerUnhealthy) return;
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
     runStages.mutate({
@@ -228,7 +233,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             <span>Limit</span>
             <input
               min={1}
-              max={500}
+              max={1000}
               type="number"
               value={config.limit}
               onChange={(event) => patchConfig({ limit: event.target.value })}
@@ -340,11 +345,19 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       </div>
 
       <div className="stage-trigger-actions">
-        <Button disabled={runStages.isPending} type="submit">
+        <Button disabled={runStages.isPending || workerUnhealthy} type="submit">
           <Play aria-hidden="true" size={16} />
-          {runStages.isPending ? `Starting ${labelForStage(statusStage)}` : `Run ${labelForStage(activeStage)}`}
+          {workerUnhealthy
+            ? "Worker unavailable"
+            : runStages.isPending
+              ? `Starting ${labelForStage(statusStage)}`
+              : `Run ${labelForStage(activeStage)}`}
         </Button>
-        {runStages.isPending ? (
+        {workerUnhealthy ? (
+          <span className="status-line danger-action" role="alert">
+            {workerHealthMessage}
+          </span>
+        ) : runStages.isPending ? (
           <span className="status-line" role="status">
             {relevantPendingActivity
               ? stageActivityStatusLine(statusStage, relevantPendingActivity)

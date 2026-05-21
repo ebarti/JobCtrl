@@ -40,6 +40,8 @@ def test_remote_region_locations_pass_when_region_is_accepted() -> None:
         "Remote EMEA",
         "Europe Remote",
         "Barcelona, Spain (Remote)",
+        "Barcelona, CT, ES",
+        "Madrid, MD, ES",
     ):
         assert location_matches_target(
             location,
@@ -47,6 +49,17 @@ def test_remote_region_locations_pass_when_region_is_accepted() -> None:
             reject=EUROPE_REJECT,
             search_location="Remote",
         )
+
+
+def test_composite_target_locations_require_city_and_country_context() -> None:
+    accept = ["Barcelona, Spain"]
+    reject = EUROPE_REJECT
+
+    assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
+    assert location_matches_target("Barcelona, Spain", accept=accept, reject=reject)
+    assert not location_matches_target("Barcelona, Venezuela", accept=accept, reject=reject)
+    assert not location_matches_target("Madrid, MD, ES", accept=accept, reject=reject)
+    assert not location_matches_target("Remote Spain", accept=accept, reject=reject)
 
 
 def test_generic_remote_does_not_match_when_specific_locations_are_configured() -> None:
@@ -62,6 +75,22 @@ def test_generic_remote_does_not_match_when_specific_locations_are_configured() 
         reject=EUROPE_REJECT,
         search_location="Remote",
     )
+
+
+def test_america_abbreviations_still_reject_when_country_context_matches() -> None:
+    for location in (
+        "Hartford, CT, US",
+        "Remote US",
+        "Remote Canada",
+        "Toronto, ON, CA",
+        "Madrid, MD",
+    ):
+        assert not location_matches_target(
+            location,
+            accept=EUROPE_ACCEPT,
+            reject=EUROPE_REJECT,
+            search_location="Remote",
+        )
 
 
 def test_short_accept_patterns_match_tokens_not_substrings() -> None:

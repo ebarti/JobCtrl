@@ -4,7 +4,7 @@ import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
-import { sampleDashboardSummary } from "../../../test/fixtures/projections.js";
+import { sampleDashboardSummary, sampleHealthResponse } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { useStageTriggerStore } from "../stores/stage-trigger-store.js";
 import { StageTriggerPanel } from "./StageTriggerPanel.js";
@@ -20,6 +20,34 @@ describe("StageTriggerPanel", () => {
 
     expect(screen.getByLabelText("Dry run")).toBeChecked();
     expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+  });
+
+  it("blocks stage runs when the Temporal worker heartbeat is missing", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          health: vi.fn(async () => ({
+            ...sampleHealthResponse,
+            worker: {
+              ...sampleHealthResponse.worker,
+              status: "missing" as const,
+              message: "No Temporal worker heartbeat has been written to the API database.",
+              heartbeat: null,
+            },
+          })),
+          runPipelineStages,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No Temporal worker heartbeat has been written to the API database.",
+    );
+    await user.click(screen.getByRole("button", { name: "Worker unavailable" }));
+    expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
   it("renders a matching tabpanel for every stage trigger", () => {
@@ -137,7 +165,7 @@ describe("StageTriggerPanel", () => {
       count: 1,
       command: {
         stages: ["discover"],
-        limit: 1,
+        limit: 1000,
         workers: 1,
         minScore: 7,
         validationMode: "normal" as const,
@@ -154,15 +182,17 @@ describe("StageTriggerPanel", () => {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.clear(screen.getByLabelText("Limit"));
-    await user.type(screen.getByLabelText("Limit"), "1");
+    const limitInput = screen.getByLabelText("Limit");
+    expect(limitInput).toHaveAttribute("max", "1000");
+    await user.clear(limitInput);
+    await user.type(limitInput, "1000");
     await user.click(screen.getByLabelText("Dry run"));
     await user.click(screen.getByRole("button", { name: "Run Discover" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
     expect(runPipelineStages).toHaveBeenCalledWith({
       stages: ["discover"],
-      limit: 1,
+      limit: 1000,
       workers: 1,
       minScore: 7,
       validationMode: "normal",

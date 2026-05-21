@@ -51,6 +51,8 @@ class JobPipelineWorkflowInput:
 
     tenant_id: str
     stages: list[str]
+    expected_app_dir: str | None = None
+    expected_db_path: str | None = None
     min_score: int = 7
     workers: int = 1
     limit: int = 0
@@ -126,6 +128,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             discover_activity,
             DiscoverActivityInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
@@ -139,6 +143,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             enrich_activity,
             EnrichActivityInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
@@ -152,6 +158,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             score_activity,
             ScoreActivityInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
@@ -166,6 +174,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             tailor_activity,
             TailorActivityInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 min_score=payload.min_score,
                 workers=payload.workers,
                 limit=payload.limit,
@@ -182,6 +192,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             cover_activity,
             CoverActivityInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 min_score=payload.min_score,
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
@@ -196,6 +208,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             pdf_activity,
             PdfActivityInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
             ),
@@ -208,6 +222,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
             ApplyWorkflow.run,
             ApplyWorkflowInput(
                 tenant_id=payload.tenant_id,
+                expected_app_dir=payload.expected_app_dir,
+                expected_db_path=payload.expected_db_path,
                 job_url=payload.job_url,
                 dry_run=payload.dry_run,
                 headless=payload.headless,

@@ -15,8 +15,28 @@ import type { ApiHealthResponse } from "../../shared/ports/ApiClientPort.js";
 
 export const sampleHealthResponse: ApiHealthResponse = {
   ok: true,
+  appDir: "/tmp/jobhunter-test",
   dbPath: "/tmp/jobhunter-test/jobhunter.db",
   dbExists: true,
+  dbIdentity: "1:2",
+  worker: {
+    status: "healthy",
+    expectedDbPath: "/tmp/jobhunter-test/jobhunter.db",
+    expectedAppDir: "/tmp/jobhunter-test",
+    staleAfterSeconds: 45,
+    message: "Temporal worker heartbeat is current and uses the API database.",
+    heartbeat: {
+      workerId: "worker-test",
+      component: "temporal-worker",
+      pid: 123,
+      hostname: "localhost",
+      appDir: "/tmp/jobhunter-test",
+      dbPath: "/tmp/jobhunter-test/jobhunter.db",
+      taskQueue: "jobhunter-default",
+      startedAt: "2026-05-20T10:00:00.000Z",
+      lastSeenAt: "2026-05-20T10:00:10.000Z",
+    },
+  },
 };
 
 export const sampleJob: JobSummary = {

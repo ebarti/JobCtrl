@@ -56,8 +56,28 @@ import type {
 
 export interface ApiHealthResponse {
   ok: true;
+  appDir: string;
   dbPath: string;
   dbExists: boolean;
+  dbIdentity: string | null;
+  worker: {
+    status: "healthy" | "missing" | "stale" | "mismatched";
+    expectedDbPath: string;
+    expectedAppDir: string;
+    staleAfterSeconds: number;
+    message: string;
+    heartbeat: {
+      workerId: string;
+      component: string;
+      pid: number | null;
+      hostname: string;
+      appDir: string;
+      dbPath: string;
+      taskQueue: string;
+      startedAt: string;
+      lastSeenAt: string;
+    } | null;
+  };
 }
 
 export interface ApiClientPort {
@@ -116,6 +136,7 @@ export interface ApiClientPort {
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;
+  artifactPreviewPdfUrl(artifactId: string, cacheKey?: number | string): string;
   openArtifact(artifactId: string): Promise<ArtifactOpenResponse>;
 
   profile(): Promise<ProfileConfigResponse>;

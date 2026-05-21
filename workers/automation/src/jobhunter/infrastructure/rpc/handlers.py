@@ -172,6 +172,8 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
     stages = _stage_list(params)
     payload = JobPipelineWorkflowInput(
         tenant_id=tenant_id,
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
         stages=stages,
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
@@ -210,6 +212,8 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     payload = ApplyWorkflowInput(
         tenant_id=tenant_id,
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
         job_url=params.get("jobUrl"),
         dry_run=bool(params.get("dryRun", False)),
         headless=bool(params.get("headless", False)),
