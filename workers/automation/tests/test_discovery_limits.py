@@ -84,12 +84,71 @@ def test_jobspy_filters_results_by_target_title(monkeypatch):
         0,
         ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
         ["United States", "Canada"],
+        ["Barcelona, Spain"],
         {},
         limit=10,
     )
 
     assert stored_titles == ["Director of Engineering"]
     assert result["new"] == 1
+    assert result["filtered"] == 1
+
+
+def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypatch):
+    stored_locations: list[str] = []
+
+    def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
+        return pd.DataFrame(
+            [
+                {
+                    "job_url": "https://example.test/la-rinconada",
+                    "title": "Chief Information Officer",
+                    "location": "La Rinconada, AN, ES",
+                    "is_remote": False,
+                    "site": "indeed",
+                },
+                {
+                    "job_url": "https://example.test/barcelona",
+                    "title": "Chief Information Officer",
+                    "location": "Barcelona, CT, ES",
+                    "is_remote": False,
+                    "site": "indeed",
+                },
+                {
+                    "job_url": "https://example.test/remote-spain",
+                    "title": "Chief Information Officer",
+                    "location": "Spain",
+                    "is_remote": True,
+                    "site": "indeed",
+                },
+            ]
+        )
+
+    def fake_store(_conn, df, _source_label: str, limit: int = 0) -> tuple[int, int]:
+        stored_locations.extend(df["location"].tolist())
+        return len(df), 0
+
+    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
+    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
+    monkeypatch.setattr(jobspy, "store_jobspy_results", fake_store)
+
+    result = jobspy._run_one_search(
+        {"query": "Chief Information Officer", "location": "Spain", "remote": True},
+        ["indeed"],
+        10,
+        72,
+        None,
+        {"country_indeed": "spain"},
+        0,
+        ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+        ["United States", "Canada"],
+        ["Barcelona, Spain"],
+        {},
+        limit=10,
+    )
+
+    assert stored_locations == ["Barcelona, CT, ES", "Spain"]
+    assert result["new"] == 2
     assert result["filtered"] == 1
 
 
@@ -178,6 +237,7 @@ def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch)
             {"country_indeed": "spain"},
             0,
             ["Barcelona, Spain"],
+            [],
             [],
             {},
             limit=10,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from jobhunter.infrastructure.discovery.location_filter import (
+    configured_local_location_accepts,
     configured_location_filters,
     location_matches_target,
 )
@@ -49,6 +50,36 @@ def test_remote_region_locations_pass_when_region_is_accepted() -> None:
             reject=EUROPE_REJECT,
             search_location="Remote",
         )
+
+
+def test_remote_search_rejects_non_remote_country_hits_outside_local_target() -> None:
+    assert not location_matches_target(
+        "La Rinconada, AN, ES",
+        accept=["Spain", "Europe", "EMEA"],
+        reject=EUROPE_REJECT,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=False,
+        local_accept=["Barcelona, Spain"],
+    )
+    assert location_matches_target(
+        "Barcelona, CT, ES",
+        accept=["Spain", "Europe", "EMEA"],
+        reject=EUROPE_REJECT,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=False,
+        local_accept=["Barcelona, Spain"],
+    )
+    assert location_matches_target(
+        "La Rinconada, AN, ES",
+        accept=["Spain", "Europe", "EMEA"],
+        reject=EUROPE_REJECT,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=True,
+        local_accept=["Barcelona, Spain"],
+    )
 
 
 def test_composite_target_locations_require_city_and_country_context() -> None:
@@ -112,3 +143,12 @@ def test_configured_location_filters_reads_nested_and_legacy_shapes() -> None:
 
     assert accept == ["Remote", "Spain", "EMEA"]
     assert reject == ["USA", "Brazil"]
+
+    local_accept = configured_local_location_accepts(
+        {
+            "location_accept_local": ["Barcelona, Spain"],
+            "location": {"local_accept_patterns": ["Madrid, Spain"]},
+        }
+    )
+
+    assert local_accept == ["Barcelona, Spain", "Madrid, Spain"]

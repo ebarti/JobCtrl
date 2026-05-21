@@ -22,6 +22,7 @@ from jobhunter.database import get_connection, init_db, resurface_deleted_job
 # / ``_full_crawl``.
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
+    configured_local_location_accepts,
     location_matches_target,
 )
 from jobhunter.discovery.title_filter import title_matches_query
@@ -104,21 +105,39 @@ def _patch_jobspy_linkedin_location_parser() -> None:
 # -- Location filtering ------------------------------------------------------
 
 
-def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
+def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str], list[str]]:
     """Extract accept/reject location lists from search config.
 
     Falls back to sensible defaults if not defined in the YAML.
     """
-    return configured_location_filters(search_cfg)
+    accept, reject = configured_location_filters(search_cfg)
+    return accept, reject, configured_local_location_accepts(search_cfg)
 
 
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
+def _location_ok(
+    location: str | None,
+    accept: list[str],
+    reject: list[str],
+    *,
+    search_location: str | None = None,
+    remote_required: bool = False,
+    is_remote: bool | None = None,
+    local_accept: list[str] | None = None,
+) -> bool:
     """Check if a job location passes the user's location filter.
 
     Remote jobs are accepted only after explicit reject geography is checked.
     Non-remote jobs must match an accept pattern and not match a reject pattern.
     """
-    return location_matches_target(location, accept=accept, reject=reject)
+    return location_matches_target(
+        location,
+        accept=accept,
+        reject=reject,
+        search_location=search_location,
+        remote_required=remote_required,
+        is_remote=is_remote,
+        local_accept=local_accept or (),
+    )
 
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
@@ -157,7 +176,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
 
         description = str(row.get("description", "")) if str(row.get("description", "")) != "nan" else None
         site_name = str(row.get("site", source_label))
-        is_remote = row.get("is_remote", False)
+        is_remote = _truthy_remote(row.get("is_remote", False))
 
         site_label = f"{site_name}"
         if is_remote:
@@ -228,6 +247,13 @@ def _nullable_str(value: object) -> str | None:
     return text
 
 
+def _truthy_remote(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().casefold()
+    return text in {"1", "true", "yes", "remote"}
+
+
 def _title_ok(title: str | None, query: str | None) -> bool:
     return title_matches_query(title, query)
 
@@ -245,6 +271,7 @@ def _run_one_search(
     max_retries: int,
     accept_locs: list[str],
     reject_locs: list[str],
+    local_accept_locs: list[str],
     glassdoor_map: dict,
     limit: int = 0,
 ) -> dict:
@@ -333,6 +360,10 @@ def _run_one_search(
                 str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None,
                 accept_locs,
                 reject_locs,
+                search_location=s.get("location"),
+                remote_required=bool(s.get("remote")),
+                is_remote=_truthy_remote(row.get("is_remote", False)),
+                local_accept=local_accept_locs,
             ),
             axis=1,
         )
@@ -457,7 +488,7 @@ def _full_crawl(
     defaults = dict(search_cfg.get("defaults", {}))
     defaults.setdefault("country_indeed", search_cfg.get("country", "usa"))
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
-    accept_locs, reject_locs = _load_location_config(search_cfg)
+    accept_locs, reject_locs, local_accept_locs = _load_location_config(search_cfg)
 
     if tiers:
         queries = [q for q in queries if q.get("tier") in tiers]
@@ -505,6 +536,7 @@ def _full_crawl(
             max_retries,
             accept_locs,
             reject_locs,
+            local_accept_locs,
             glassdoor_map,
             limit=remaining if limit > 0 else 0,
         )

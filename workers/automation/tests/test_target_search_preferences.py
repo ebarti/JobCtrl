@@ -4,6 +4,7 @@ import sqlite3
 
 from jobhunter import config
 from jobhunter.infrastructure.discovery.location_filter import (
+    configured_local_location_accepts,
     configured_location_filters,
     location_matches_target,
 )
@@ -39,6 +40,7 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
     assert "Barcelona, Spain" in merged["location_accept"]
     assert "Spain" in merged["location_accept"]
     assert "Europe" in merged["location_accept"]
+    assert merged["location_accept_local"] == ["Barcelona, Spain"]
     assert "Canada" in merged["location_reject_non_remote"]
 
 
@@ -80,8 +82,10 @@ def test_profile_target_locations_replace_legacy_location_accept_patterns() -> N
     )
 
     accept, reject = configured_location_filters(merged)
+    local_accept = configured_local_location_accepts(merged)
 
     assert "Barcelona, Spain" in accept
+    assert local_accept == ["Barcelona, Spain"]
     assert "Switzerland" not in accept
     assert "Zurich" not in accept
     assert location_matches_target("Barcelona, Spain (Remote)", accept=accept, reject=reject)
@@ -103,8 +107,10 @@ def test_hybrid_target_locations_filter_to_exact_target_location() -> None:
     )
 
     accept, reject = configured_location_filters(merged)
+    local_accept = configured_local_location_accepts(merged)
 
     assert merged["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
+    assert local_accept == ["Barcelona, Spain"]
     assert "Europe" not in accept
     assert "EMEA" not in accept
     assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
@@ -125,19 +131,75 @@ def test_remote_european_target_locations_filter_country_and_europe_remote() -> 
     )
 
     accept, reject = configured_location_filters(merged)
+    local_accept = configured_local_location_accepts(merged)
 
     assert merged["locations"] == [
         {"label": "spain", "location": "Spain", "remote": True},
         {"label": "europe-remote", "location": "European Union", "remote": True},
     ]
     assert "Barcelona, Spain" not in accept
+    assert local_accept == []
     assert "Spain" in accept
     assert "Europe" in accept
     assert location_matches_target("Remote Spain", accept=accept, reject=reject)
     assert location_matches_target("Remote EMEA", accept=accept, reject=reject)
     assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
+    assert not location_matches_target(
+        "Barcelona, CT, ES",
+        accept=accept,
+        reject=reject,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=False,
+        local_accept=local_accept,
+    )
     assert not location_matches_target("Remote United States", accept=accept, reject=reject)
     assert not location_matches_target("Barcelona, Venezuela", accept=accept, reject=reject)
+
+
+def test_remote_plus_local_target_rejects_non_remote_country_only_hits() -> None:
+    merged = config._apply_profile_target_search(
+        {"queries": [{"query": "software engineer", "tier": 1}]},
+        {
+            "roles": ["Chief Information Officer"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Remote, Hybrid, On-site"],
+        },
+    )
+
+    accept, reject = configured_location_filters(merged)
+    local_accept = configured_local_location_accepts(merged)
+
+    assert "Spain" in accept
+    assert "Europe" in accept
+    assert local_accept == ["Barcelona, Spain"]
+    assert not location_matches_target(
+        "La Rinconada, AN, ES",
+        accept=accept,
+        reject=reject,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=False,
+        local_accept=local_accept,
+    )
+    assert location_matches_target(
+        "Barcelona, CT, ES",
+        accept=accept,
+        reject=reject,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=False,
+        local_accept=local_accept,
+    )
+    assert location_matches_target(
+        "La Rinconada, AN, ES",
+        accept=accept,
+        reject=reject,
+        search_location="Spain",
+        remote_required=True,
+        is_remote=True,
+        local_accept=local_accept,
+    )
 
 
 def test_profile_target_search_preserves_larger_configured_lookback() -> None:
