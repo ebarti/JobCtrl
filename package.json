@@ -9,8 +9,9 @@
     "node": ">=20.19.0"
   },
   "scripts": {
-    "dev": "scripts/dev start",
+    "dev": "scripts/dev run",
     "dev:setup": "scripts/dev setup",
+    "dev:start": "scripts/dev start",
     "dev:status": "scripts/dev status",
     "dev:stop": "scripts/dev stop",
     "dev:logs": "scripts/dev logs",

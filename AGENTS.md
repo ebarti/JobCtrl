@@ -15,11 +15,13 @@ Use these repository documents before making architectural, workflow, or QA deci
 
 ## How To Run The Project
 
-To be defined as a complete, single source of truth. Until this is finalized, infer the narrowest correct run command from the referenced docs and package metadata, then state the command before running it.
+Use `pnpm dev` for the full local development stack. It stops previously tracked JobHunter process trees for the selected components, then runs the Temporal dev server, TypeScript API, React/Vite web app, and JobHunter Temporal worker in the foreground so supervised terminals keep the child processes alive. Keep the terminal session open while using the app and stop it with Ctrl-C. Use `pnpm dev:start` only when an explicitly detached background stack is desired in a normal shell.
 
 Known local commands:
 
 - Python CLI: `uv --project workers/automation run jobhunter doctor`, `uv --project workers/automation run jobhunter run`, or targeted `uv --project workers/automation run jobhunter <command>` after dependencies are installed.
+- Full local stack: `pnpm dev` (attached foreground supervisor; preferred for agents and annotation).
+- Detached local stack: `pnpm dev:start`, then `pnpm dev:status`, `pnpm dev:logs <name>`, and `pnpm dev:stop`.
 - Temporal worker: `uv --project workers/automation run jobhunter worker` (long-lived workflow worker; needs `temporal server start-dev` running).
 - TypeScript API: `pnpm api:dev`.
 - Web app: `pnpm web:dev`.
