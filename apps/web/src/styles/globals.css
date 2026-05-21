@@ -966,8 +966,9 @@ textarea {
 
 .data-row.job {
   grid-template-columns:
-    28px 70px minmax(180px, 1.25fr) minmax(160px, 0.85fr)
-    minmax(150px, 0.85fr) 90px 105px 110px;
+    28px 70px minmax(180px, 1.2fr) minmax(140px, 0.7fr)
+    minmax(90px, 0.4fr) minmax(150px, 0.85fr) 80px 95px
+    105px 76px;
   gap: 14px;
 }
 

@@ -7,7 +7,6 @@ import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import type { JobSummary } from "../../contexts/operations/types.js";
-import { formatCompanySource } from "../../shared/lib/formatters.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
 
@@ -71,11 +70,14 @@ export const jobColumns: ColumnDef<JobSummary>[] = [
     header: "Company",
     enableSorting: true,
     accessorFn: (row) => row.company,
-    cell: ({ row }) => (
-      <span className="muted-cell">
-        {formatCompanySource(row.original.company, row.original.source)}
-      </span>
-    ),
+    cell: ({ row }) => <span className="muted-cell">{row.original.company || "-"}</span>,
+  },
+  {
+    id: "source",
+    header: "Source",
+    enableSorting: false,
+    accessorFn: (row) => row.source,
+    cell: ({ row }) => <span className="muted-cell">{row.original.source || "-"}</span>,
   },
   {
     id: "location",
