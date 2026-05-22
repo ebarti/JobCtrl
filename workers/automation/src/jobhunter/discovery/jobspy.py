@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 
 from jobhunter import config
 from jobhunter.database import get_connection, init_db, resurface_deleted_job
+from jobhunter.domain.discovery.identity import normalize_observed_url
+from jobhunter.domain.job_content_identity import job_content_fingerprint, normalize_identity_text
 
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobhunter.infrastructure.network`` so the Enrichment context's
@@ -24,6 +26,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     configured_local_location_accepts,
     location_matches_target,
+    normalize_location_display,
 )
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.network.proxy import parse_proxy
@@ -177,10 +180,9 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
         description = str(row.get("description", "")) if str(row.get("description", "")) != "nan" else None
         site_name = str(row.get("site", source_label))
         is_remote = _truthy_remote(row.get("is_remote", False))
+        location_str = normalize_location_display(location_str, is_remote=is_remote)
 
         site_label = f"{site_name}"
-        if is_remote:
-            location_str = f"{location_str} (Remote)" if location_str else "Remote"
 
         strategy = "jobspy"
 
@@ -193,6 +195,25 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
 
         # Extract apply URL if JobSpy provided it
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
+
+        duplicate_url = _find_existing_content_duplicate(
+            conn,
+            url=url,
+            title=title,
+            company=company,
+            full_description=full_description,
+        )
+        if duplicate_url:
+            _record_content_duplicate_link(
+                conn,
+                surviving_url=duplicate_url,
+                duplicate_url=url,
+                source=site_label,
+                observed_at=now,
+            )
+            resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
+            existing += 1
+            continue
 
         try:
             conn.execute(
@@ -245,6 +266,95 @@ def _nullable_str(value: object) -> str | None:
     if not text or text == "nan":
         return None
     return text
+
+
+def _find_existing_content_duplicate(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    title: str | None,
+    company: str | None,
+    full_description: str | None,
+) -> str | None:
+    incoming_key = job_content_fingerprint(
+        title=title,
+        company=company,
+        description=full_description,
+    )
+    if incoming_key is None:
+        return None
+    rows = conn.execute(
+        """
+        SELECT j.url, j.title, j.company,
+               COALESCE(je.full_description, j.full_description) AS full_description
+        FROM jobs j
+        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        WHERE j.url != ?
+          AND lower(trim(COALESCE(j.title, ''))) = ?
+          AND lower(trim(COALESCE(j.company, ''))) = ?
+        ORDER BY j.discovered_at ASC NULLS LAST, j.url ASC
+        """,
+        (
+            url,
+            normalize_identity_text(title),
+            normalize_identity_text(company),
+        ),
+    ).fetchall()
+    for existing in rows:
+        existing_key = job_content_fingerprint(
+            title=existing["title"],
+            company=existing["company"],
+            description=existing["full_description"],
+        )
+        if existing_key == incoming_key:
+            return str(existing["url"])
+    return None
+
+
+def _record_content_duplicate_link(
+    conn: sqlite3.Connection,
+    *,
+    surviving_url: str,
+    duplicate_url: str,
+    source: str,
+    observed_at: str,
+) -> None:
+    link_key = job_content_fingerprint(
+        title=surviving_url,
+        company=source,
+        description=duplicate_url,
+    )
+    if link_key is None:
+        return
+    duplicate_link_id = "content:" + link_key[:32]
+    normalized_url = normalize_observed_url(duplicate_url)
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO job_duplicate_links (
+            tenant_id, duplicate_link_id, surviving_job_id,
+            superseded_job_or_observation_id, reason, confidence, linked_at
+        ) VALUES ('local', ?, ?, ?, 'content_fingerprint_match', 0.95, ?)
+        """,
+        (duplicate_link_id, surviving_url, duplicate_url, observed_at),
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO job_source_observations (
+            tenant_id, source_observation_id, job_url, source_id,
+            source_native_id, observed_url, normalized_observed_url,
+            run_id, observed_at
+        ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'jobspy', ?)
+        """,
+        (
+            f"content-duplicate:{duplicate_link_id}",
+            surviving_url,
+            source,
+            duplicate_url,
+            duplicate_url,
+            normalized_url,
+            observed_at,
+        ),
+    )
 
 
 def _truthy_remote(value: object) -> bool:

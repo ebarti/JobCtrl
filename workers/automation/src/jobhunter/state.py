@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,9 @@ MAX_ATTEMPTS: dict[str, int | None] = {
     "pdf": 3,
     "apply": config.DEFAULTS["max_apply_attempts"],
 }
+
+ORPHANED_RUNNING_STAGE_GRACE_SECONDS = 150
+ORPHAN_RECOVERY_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_ORDER if stage != "apply")
 
 
 def utc_now() -> str:
@@ -98,6 +101,18 @@ def _duration_ms(started_at: str | None, finished_at: str | None) -> int | None:
     except ValueError:
         return None
     return max(0, int((finish - start).total_seconds() * 1000))
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +298,97 @@ def set_stage_state(
             existing[0] if not isinstance(existing, dict) else existing["version"]
         )
         raise OptimisticLockError(job_url, expected_version, actual or 0)
+
+
+def recover_orphaned_running_stages(
+    conn,
+    *,
+    stages: tuple[str, ...] | None = None,
+    stale_after_seconds: int = ORPHANED_RUNNING_STAGE_GRACE_SECONDS,
+    now: datetime | None = None,
+) -> int:
+    """Fail stale non-apply stage rows left ``running`` by a dead worker.
+
+    Stage activities mark per-job rows ``running`` before doing blocking work.
+    If the process dies before final state writes, those rows otherwise stay
+    visually active forever. The next worker startup owns this reconciliation.
+    ``apply`` is intentionally excluded because it has its own run-lock rescue.
+    """
+
+    recovery_stages = tuple(stages or ORPHAN_RECOVERY_STAGES)
+    if not recovery_stages:
+        return 0
+    invalid = [stage for stage in recovery_stages if stage not in ORPHAN_RECOVERY_STAGES]
+    if invalid:
+        raise ValueError(f"unsupported orphan recovery stage(s): {', '.join(invalid)}")
+
+    recovered_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = recovered_at - timedelta(seconds=max(0, stale_after_seconds))
+    placeholders = ", ".join("?" for _ in recovery_stages)
+    rows = conn.execute(
+        f"""
+        SELECT job_url, stage, attempt_count, started_at, updated_at
+        FROM job_stage_states
+        WHERE state = 'running'
+          AND stage IN ({placeholders})
+        """,
+        recovery_stages,
+    ).fetchall()
+
+    recovered = 0
+    recovered_at_iso = recovered_at.isoformat()
+    for row in rows:
+        updated_at = _parse_timestamp(row["updated_at"])
+        started_at = _parse_timestamp(row["started_at"])
+        last_seen = updated_at or started_at
+        if last_seen is not None and last_seen > cutoff:
+            continue
+
+        stage = str(row["stage"])
+        job_url = str(row["job_url"])
+        attempt_count = max(1, int(row["attempt_count"] or 0))
+        message = (
+            f"{stage} stage was left running by a prior worker and has been "
+            "marked failed for retry."
+        )
+        set_stage_state(
+            conn,
+            job_url,
+            stage,
+            "failed",
+            attempt_count=attempt_count,
+            started_at=row["started_at"],
+            finished_at=recovered_at_iso,
+            error_code="ORPHANED_STAGE_RUN",
+            error_message=message,
+            retryable=True,
+            next_action=f"jobhunter retry {stage} {job_url}",
+            metadata={
+                "recovered_at": recovered_at_iso,
+                "previous_updated_at": row["updated_at"],
+            },
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            stage,
+            "StageFailed",
+            level="error",
+            message=message,
+            occurred_at=recovered_at_iso,
+            payload={
+                "errorCode": "ORPHANED_STAGE_RUN",
+                "retryable": True,
+                "recoveredAt": recovered_at_iso,
+                "previousUpdatedAt": row["updated_at"],
+            },
+        )
+        recovered += 1
+
+    if recovered:
+        conn.commit()
+    return recovered
 
 
 def record_job_event(

@@ -40,6 +40,8 @@ class _ScriptedLlm:
 
     def __init__(self, *responses: dict | str) -> None:
         self._queue = list(responses)
+        self.calls = 0
+        self.messages = []
 
     def chat(  # pragma: no cover — structured-output cutover routes through chat_json
         self,
@@ -63,6 +65,8 @@ class _ScriptedLlm:
         max_tokens=None,
         thinking_budget=None,
     ) -> dict:
+        self.calls += 1
+        self.messages.append(messages)
         if not self._queue:
             return self._DRAIN
         next_payload = self._queue.pop(0)
@@ -108,11 +112,13 @@ def _seed_pending_job_with_description(
     title: str,
     description: str,
     discovered_at: str,
+    company: str = "Acme",
+    location: str = "Remote",
 ) -> None:
     conn.execute(
-        "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (url, title, "Acme", description, discovered_at),
+        "INSERT INTO jobs (url, title, company, site, location, full_description, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (url, title, company, "linkedin", location, description, discovered_at),
     )
     conn.commit()
 
@@ -228,6 +234,50 @@ def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
     )
 
 
+def test_score_job_prompt_uses_company_not_source(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+) -> None:
+    url = "https://example.com/job/company"
+    conn.execute(
+        "INSERT INTO jobs (url, title, company, site, full_description, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            url,
+            "Director, Security Engineering",
+            "Auctane",
+            "linkedin",
+            "Lead security engineering teams.",
+            "2024-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    repo = SqliteScoreRepository(conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 9,
+            "role_fit": 9,
+            "keywords": ["security"],
+            "reasoning": "ok",
+        }
+    )
+
+    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE url=?", (url,)).fetchone())
+    outcome = scorer_module.score_job(
+        profile_snapshot,
+        job_dict,
+        repository=repo,
+        llm_port=llm,
+    )
+
+    assert outcome.ok is True
+    prompt = llm.messages[0][1].content
+    assert "COMPANY: Auctane" in prompt
+    assert "COMPANY: linkedin" not in prompt
+
+
 # ---------------------------------------------------------------------------
 # run_scoring (batch)
 # ---------------------------------------------------------------------------
@@ -330,6 +380,133 @@ def test_run_scoring_loads_and_persists_local_scoring_criteria(
     assert loaded.criteria.criteria_text == "Favor platform reliability leadership."
     assert loaded.criteria.target_criteria == "Remote infrastructure roles."
     assert loaded.trace.criteria_version == criteria.criteria_version
+
+
+def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    description = "Lead security engineering, compliance, identity, and platform risk. " * 8
+    first_url = "https://www.linkedin.com/jobs/view/1"
+    duplicate_url = "https://www.linkedin.com/jobs/view/2"
+    _seed_pending_job_with_description(
+        conn,
+        url=first_url,
+        title="Director, Security Engineering - Remote in Spain",
+        company="Auctane",
+        location="Madrid, Community of Madrid, Spain (Remote)",
+        description=description,
+        discovered_at="2026-01-02T00:00:00+00:00",
+    )
+    _seed_pending_job_with_description(
+        conn,
+        url=duplicate_url,
+        title="Director, Security Engineering - Remote in Spain",
+        company="Auctane",
+        location="Seville, Andalusia, Spain (Remote)",
+        description=description,
+        discovered_at="2026-01-01T00:00:00+00:00",
+    )
+    repo = SqliteScoreRepository(conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 9,
+            "role_fit": 9,
+            "keywords": ["security"],
+            "reasoning": "ok",
+        },
+        {
+            "score": 3,
+            "technical_fit": 3,
+            "experience_fit": 3,
+            "role_fit": 3,
+            "keywords": ["security"],
+            "reasoning": "would diverge if called",
+        },
+    )
+
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="Security engineering leadership.",
+    )
+
+    assert summary["scored"] == 2
+    assert summary["errors"] == 0
+    assert llm.calls == 1
+    first_score = repo.load(LOCAL_TENANT, JobId(first_url))
+    duplicate_score = repo.load(LOCAL_TENANT, JobId(duplicate_url))
+    assert first_score is not None and first_score.fit_score.value == 9
+    assert duplicate_score is not None and duplicate_score.fit_score.value == 9
+
+
+def test_run_scoring_reuses_existing_same_content_score_without_llm(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    description = "Lead security engineering, compliance, identity, and platform risk. " * 8
+    scored_url = "https://www.linkedin.com/jobs/view/scored"
+    pending_url = "https://www.linkedin.com/jobs/view/pending-duplicate"
+    _seed_pending_job_with_description(
+        conn,
+        url=scored_url,
+        title="Director, Security Engineering - Remote in Spain",
+        company="Auctane",
+        description=description,
+        discovered_at="2026-01-01T00:00:00+00:00",
+    )
+    repo = SqliteScoreRepository(conn)
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    first_llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 9,
+            "role_fit": 9,
+            "keywords": ["security"],
+            "reasoning": "ok",
+        }
+    )
+    scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=first_llm,
+        resume_text="Security engineering leadership.",
+    )
+    _seed_pending_job_with_description(
+        conn,
+        url=pending_url,
+        title="Director, Security Engineering - Remote in Spain",
+        company="Auctane",
+        location="Seville, Andalusia, Spain (Remote)",
+        description=description,
+        discovered_at="2026-01-02T00:00:00+00:00",
+    )
+    second_llm = _ScriptedLlm(
+        {
+            "score": 3,
+            "technical_fit": 3,
+            "experience_fit": 3,
+            "role_fit": 3,
+            "keywords": ["security"],
+            "reasoning": "should not be called",
+        }
+    )
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=second_llm,
+        resume_text="Security engineering leadership.",
+    )
+
+    assert summary["scored"] == 1
+    assert summary["errors"] == 0
+    assert second_llm.calls == 0
+    pending_score = repo.load(LOCAL_TENANT, JobId(pending_url))
+    assert pending_score is not None and pending_score.fit_score.value == 9
 
 
 def test_run_scoring_records_failure_state_when_llm_returns_garbage(

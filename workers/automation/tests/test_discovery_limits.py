@@ -221,6 +221,82 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         close_connection(db_path)
 
 
+def test_jobspy_rejects_same_content_location_variants(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    description = "Lead security engineering, compliance, identity, and platform risk. " * 8
+    try:
+        first = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/4416248661",
+                    "title": "Director, Security Engineering - Remote in Spain",
+                    "company": "Auctane",
+                    "location": "Madrid, Spain",
+                    "site": "linkedin",
+                    "description": description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, first, "Security Engineering", limit=10) == (1, 0)
+
+        duplicate = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/4416235850",
+                    "title": "Director, Security Engineering - Remote in Spain",
+                    "company": "Auctane",
+                    "location": "Seville, Spain",
+                    "site": "linkedin",
+                    "description": description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, duplicate, "Security Engineering", limit=10) == (0, 1)
+
+        job_count = conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE company = 'Auctane'"
+        ).fetchone()[0]
+        assert job_count == 1
+        link = conn.execute(
+            "SELECT surviving_job_id, superseded_job_or_observation_id, reason "
+            "FROM job_duplicate_links"
+        ).fetchone()
+        assert link["surviving_job_id"] == "https://www.linkedin.com/jobs/view/4416248661"
+        assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4416235850"
+        assert link["reason"] == "content_fingerprint_match"
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_normalizes_source_locations_before_storage(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        results = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://es.indeed.com/viewjob?jk=remote-spain",
+                    "title": "Director, Product Management",
+                    "company": "Vonage",
+                    "location": "En remoto, ES",
+                    "is_remote": True,
+                    "site": "indeed",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, results, "Director", limit=10) == (1, 0)
+        row = conn.execute(
+            "SELECT location FROM jobs WHERE url = ?",
+            ("https://es.indeed.com/viewjob?jk=remote-spain",),
+        ).fetchone()
+
+        assert row["location"] == "Spain (Remote)"
+    finally:
+        close_connection(db_path)
+
+
 def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch):
     def missing_jobspy(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
         raise ImportError("python-jobspy is not installed")

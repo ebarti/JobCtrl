@@ -202,7 +202,7 @@ def _utc_now() -> str:
 def _build_job_blob(job: dict[str, Any]) -> str:
     return (
         f"TITLE: {job.get('title', '')}\n"
-        f"COMPANY: {job.get('site', '')}\n"
+        f"COMPANY: {job.get('company') or job.get('site', '')}\n"
         f"LOCATION: {job.get('location') or 'N/A'}\n\n"
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
