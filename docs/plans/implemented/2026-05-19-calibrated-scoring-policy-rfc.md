@@ -1,8 +1,17 @@
 # Calibrated Scoring Policy RFC
 
-> **Status:** proposed.
+> **Status:** implemented.
 > **Date:** 2026-05-19.
 > **Scope:** Scoring consistency, user score-correction feedback, explicit rescoring, and the implementation stack needed to make corrections change future scoring behavior.
+
+## Completion Status
+
+Implemented. The current codebase has the versioned scoring policy model,
+correction-derived calibration anchors, policy trace metadata, stale-score
+marking, explicit stale-score reset/rescore flow, API/web reflection, and
+non-sensitive scoring evaluation/governance coverage described by this RFC.
+The remaining sections preserve the original RFC text; references to current
+gaps describe the pre-implementation state.
 
 ## Problem
 
