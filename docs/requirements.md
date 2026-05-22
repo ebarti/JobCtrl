@@ -1,17 +1,110 @@
 # Requirements
 
-This file records product requirements that must remain true as implementation
-details change.
+This document consolidates JobHunter's software requirements from `docs/plans/`.
+Later dated plans override earlier conflicting direction. Requirements are split
+between behavioral requirements, which describe what the system should do for
+users, and technical requirements, which describe implementation constraints that
+must remain true.
 
-## Discovery Location Filtering
+## Behavioral Requirements
 
-- Target-search location inputs must be validated as real places before they
-  are saved.
-- For hybrid or on-site target work models, discovery filters exclusively for
-  the target location, for example `Barcelona, Spain`.
-- For remote target work models, discovery filters for the target country, for
-  example `Spain`.
-- For remote target work models in European countries, discovery must also
-  include jobs that are remote in Europe.
-- Profile-driven target discovery must search at least the last 30 days unless
-  the local search configuration explicitly sets a larger lookback window.
+### Product Safety
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| BR-001 | JobHunter must never submit applications, run destructive profile/database actions, or bypass third-party controls unless the user explicitly authorizes that behavior; this includes browser submission, CAPTCHA, paywall, login, rate-limit, and bot-control bypass. | Job seekers. | Keep automation safe, consent-driven, and compliant with site policies. | [README](../README.md), [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md) |
+
+### Operations And Workflow
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| BR-002 | Every job must expose explicit durable state for discovery, enrichment, scoring, tailoring, cover-letter, PDF, and apply stages, including blocked, failed, skipped, exhausted, canceled, stale, and running states where applicable. | Job seekers and operators. | Show what happened, what is blocked, and what can be retried without reading the database. | [job state dashboard plan](plans/implemented/2026-04-29-job-state-dashboard.md), [pipeline architecture](job-pipeline-architecture.md) |
+| BR-003 | Failed retryable stages must be retryable without rerunning the entire pipeline, and retrying one stage must not silently reset unrelated stage progress. | Job seekers. | Recover from local failures without duplicating work or losing progress. | [job state dashboard plan](plans/implemented/2026-04-29-job-state-dashboard.md), [local reliability QA](local-reliability-qa.md) |
+| BR-004 | Workflow execution must record event history, run identifiers, workflow identifiers, and current status for user-triggered and automated work. | Job seekers and maintainers. | Make long-running work observable, cancellable where possible, and debuggable. | [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md), [local TypeScript API](local-ts-api.md) |
+| BR-005 | Apply automation must expose clear status, logs, next action, retry options, dry-run state, and timeout failures per job. | Job seekers. | Make high-risk application steps inspectable before and after automation runs. | [pipeline architecture](job-pipeline-architecture.md), [local reliability QA](local-reliability-qa.md), [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md) |
+| BR-006 | The web app must show dashboard, jobs, artifacts, profile, workflow-run, and apply-run views backed by the TypeScript API. | Job seekers operating their search. | Provide a usable local product instead of requiring command-line or database work. | [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [local TypeScript API](local-ts-api.md) |
+| BR-007 | The operations dashboard must show stuck, failed, blocked, ready, active, and applied work, plus recent activity and active runs. | Job seekers and operators. | Prioritize the next useful action during a job search. | [job state dashboard plan](plans/implemented/2026-04-29-job-state-dashboard.md), [local TypeScript API](local-ts-api.md) |
+| BR-008 | Job detail views must show stage state, event history, artifacts, score detail, apply status, and safe available actions. | Job seekers. | Let users understand and control each job from one place. | [job state dashboard plan](plans/implemented/2026-04-29-job-state-dashboard.md), [pipeline architecture](job-pipeline-architecture.md), [local TypeScript API](local-ts-api.md) |
+| BR-009 | Lists must support stable filtering, sorting, pagination, deep links, and drawer state while background work updates local data. | Job seekers reviewing many jobs. | Keep navigation predictable as local data changes. | [frontend target](frontend-target.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [local TypeScript API](local-ts-api.md) |
+| BR-010 | UI actions must call structured API actions where backend support exists, returning accepted command state and run identifiers instead of relying only on copied shell commands. | Job seekers. | Replace copy-only command affordances with real product controls. | [TS/API architecture plan](plans/implemented/2026-05-01-ts-product-api-python-workers-architecture.md), [local TypeScript API](local-ts-api.md), [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md) |
+
+### Discovery And Enrichment
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| BR-011 | Discovery must prioritize Barcelona, Spain compatible technology leadership roles while remaining configurable through target roles, locations, and work models. | The current target job seeker. | Focus results on the user's active search instead of broad generic scraping. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md), [local TypeScript API](local-ts-api.md) |
+| BR-012 | Saved target-search locations must be validated as real places before they can drive discovery. | Job seekers configuring searches. | Prevent invalid searches from polluting results. | [local TypeScript API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
+| BR-013 | Hybrid and on-site discovery must filter exclusively for the target location, such as Barcelona, Spain. | Job seekers. | Keep location-bound results relevant to where the user can work. | [local TypeScript API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
+| BR-014 | Remote discovery must filter for the target country, such as Spain. | Job seekers. | Keep remote results aligned with the user's legal and practical work target. | [local TypeScript API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
+| BR-015 | Remote discovery for European target countries must also include jobs remote in Europe. | Job seekers. | Capture regional remote roles that are relevant even when not tied to one country. | [local TypeScript API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
+| BR-016 | Profile-driven target discovery must search at least the last 30 days unless local configuration sets a larger lookback window. | Job seekers. | Avoid stale searches while allowing broader local search windows when requested. | [local TypeScript API](local-ts-api.md) |
+| BR-017 | Aggregators and broad boards may provide leads, but JobHunter must prefer canonical employer, ATS, API, licensed feed, or official posting sources before downstream scoring and automation. | Job seekers. | Improve relevance, freshness, and applyability of jobs. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md), [pipeline architecture](job-pipeline-architecture.md) |
+| BR-018 | Source quality must be observable and support trusted, normal, experimental, quarantined, and disabled states. | Job seekers and maintainers. | Stop low-quality sources from degrading the pipeline. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md), [local reliability QA](local-reliability-qa.md) |
+| BR-019 | Manual capture must be available for useful leads that cannot be fetched safely, including user-provided URLs, saved HTML, pasted text, or email-derived posting content. | Job seekers. | Allow user-mediated progress without bypassing third-party protections. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md) |
+| BR-020 | Discovery and enrichment must preserve provenance, source observations, canonical URLs, apply URLs, active state, full descriptions, snapshots, and source-native identifiers where available. | Job seekers and maintainers. | Make jobs auditable, deduplicable, and useful for scoring and materials. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md), [pipeline architecture](job-pipeline-architecture.md) |
+| BR-021 | Deduplication must preserve source observations and avoid silently merging uncertain fuzzy matches; uncertain matches must be reviewed or quarantined. | Job seekers. | Reduce duplicate clutter without losing evidence or creating bad merges. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md), [pipeline architecture](job-pipeline-architecture.md) |
+
+### Scoring
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| BR-022 | Scoring must be an applicant-side decision aid, not an autonomous hiring or application decision. | Job seekers. | Help users prioritize while preserving human judgment. | [scoring intelligence plan](plans/implemented/2026-05-10-job-scoring-intelligence.md), [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md) |
+| BR-023 | Auto-apply must never be gated by score alone; hard blockers, missing materials, safety policy, and user approval requirements must still apply. | Job seekers. | Prevent high scores from overriding blockers, missing materials, or safety policy. | [scoring intelligence plan](plans/implemented/2026-05-10-job-scoring-intelligence.md), [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md) |
+| BR-024 | Persisted fit scores must be deterministic outputs of a versioned scoring policy over structured evidence, including technical fit, seniority/scope, role responsibility, domain fit, preferences/constraints, application leverage, and transferable fit. | Job seekers and maintainers. | Make scores comparable, explainable, and reproducible. | [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md), [pipeline architecture](job-pipeline-architecture.md) |
+| BR-025 | LLM scoring calls may extract evidence, gaps, blockers, transferable signals, confidence, and rationale, but must not be the final scoring authority. | Job seekers. | Reduce unsupported model opinion in decisions that affect applications. | [scoring intelligence plan](plans/implemented/2026-05-10-job-scoring-intelligence.md), [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md) |
+| BR-026 | Low confidence must mean review needed, not a disguised low score, and missing evidence must reduce confidence even when a model proposes high fit. | Job seekers. | Distinguish weak evidence from poor fit. | [scoring intelligence plan](plans/implemented/2026-05-10-job-scoring-intelligence.md), [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md) |
+| BR-027 | User score corrections must immediately affect future scoring, become calibration anchors, and mark comparable uncorrected scores stale until the user explicitly rescores them. | Job seekers. | Let the system learn from explicit user judgment without silently rewriting history. | [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md), [local TypeScript API](local-ts-api.md) |
+| BR-028 | Score details must expose fit, band, blockers, confidence, evidence, gaps, dimensions, policy version, stale state, and correction trace. | Job seekers. | Explain why a job is recommended, questionable, or blocked. | [scoring intelligence plan](plans/implemented/2026-05-10-job-scoring-intelligence.md), [local TypeScript API](local-ts-api.md) |
+
+### Materials, Profile, And Artifacts
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| BR-029 | Profile data, resume style, templates, generated materials, and artifacts must remain local by default. | Job seekers. | Preserve privacy for sensitive career material. | [DDD migration plan](plans/implemented/2026-05-06-ddd-migration.md), [pipeline architecture](job-pipeline-architecture.md) |
+| BR-030 | Profile editing must preserve existing profile, resume style, resume template, and import behavior until stable replacements are implemented. | Job seekers. | Avoid losing user configuration during architecture changes. | [TS/API architecture plan](plans/implemented/2026-05-01-ts-product-api-python-workers-architecture.md), [local TypeScript API](local-ts-api.md) |
+| BR-031 | Cover letters must require tailored-resume prerequisites before generation. | Job seekers. | Prevent inconsistent or unsupported application material. | [job state dashboard plan](plans/implemented/2026-04-29-job-state-dashboard.md), [local reliability QA](local-reliability-qa.md) |
+| BR-032 | PDF generation must operate only on known DB-backed material artifacts unless product behavior intentionally expands that scope. | Job seekers. | Prevent accidental conversion of unrelated local files. | [job state dashboard plan](plans/implemented/2026-04-29-job-state-dashboard.md), [local reliability QA](local-reliability-qa.md) |
+| BR-033 | Artifacts must be visible, inspectable, previewable where supported, and openable only through known local artifact metadata. | Job seekers. | Make generated outputs useful while avoiding unsafe file access. | [local TypeScript API](local-ts-api.md), [pipeline architecture](job-pipeline-architecture.md), [local reliability QA](local-reliability-qa.md) |
+
+## Technical Requirements
+
+### Product Surface And Runtime
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| TR-001 | JobHunter must use the TypeScript API, React web app, and Python automation engine as its current product surface; the removed Python dashboard server and generated dashboard HTML must not return as supported compatibility surfaces. | Users and maintainers. | Provide one clear supported architecture and avoid reviving the removed Python dashboard surface. | [architecture](architecture.md), [remove Python dashboard compatibility plan](plans/implemented/2026-05-03-remove-python-dashboard-compat.md) |
+| TR-002 | Hosted, multi-tenant, billing, managed browser, managed workflow, and cloud-storage features must remain deferred until explicit scale or product triggers are met. | Maintainers and future hosted users. | Protect the local product from premature SaaS complexity. | [architecture](architecture.md), [DDD migration plan](plans/implemented/2026-05-06-ddd-migration.md), [frontend target](frontend-target.md) |
+| TR-003 | The local stack must run a Temporal dev server, TypeScript API, React/Vite web app, and Python worker through a documented developer command, with `pnpm dev` as the full attached stack entry point. | Users and contributors running the app locally. | Make the full product path reproducible without stitching services together manually. | [README](../README.md), [package scripts](../package.json), [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md) |
+| TR-004 | The TypeScript API must expose typed local JSON endpoints for health, dashboard, jobs, artifacts, profile, settings, workflow runs, job events, event streaming, and actions. | The React app and local automation users. | Give the UI stable contracts instead of relying on SQLite inspection or shell output. | [local TypeScript API](local-ts-api.md), [local API plan](plans/implemented/2026-05-02-local-ts-api.md), [TS/API architecture plan](plans/implemented/2026-05-01-ts-product-api-python-workers-architecture.md) |
+| TR-005 | The API must use local-only defaults, including the documented loopback API address, and restrictive browser access. | Local users. | Avoid accidentally exposing private job-search data outside the machine. | [local TypeScript API](local-ts-api.md), [local API plan](plans/implemented/2026-05-02-local-ts-api.md) |
+| TR-006 | SQLite must remain the local source of truth until a hosted or scale trigger requires another database, and API, SSE, and worker activities must agree on the active database path. | Local users and maintainers. | Preserve a simple, inspectable, portable local data model. | [architecture](architecture.md), [local TypeScript API](local-ts-api.md), [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md) |
+
+### Architecture And State
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| TR-007 | JobHunter must model its domain through the Pipeline, Profile, Scoring, Materials, Discovery, Enrichment, Apply, and Operations contexts. | Maintainers. | Keep product behavior organized around stable domain boundaries. | [DDD target](ddd-target.md), [DDD migration plan](plans/implemented/2026-05-06-ddd-migration.md), [architecture](architecture.md) |
+| TR-008 | Temporal must orchestrate local long-running pipeline and apply workflows, with `JobPipelineWorkflow` handling non-apply stages and `ApplyWorkflow` handling apply automation. | Job seekers running local automation. | Provide durable workflow execution and cancellation for work that can outlive a single request. | [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md), [pipeline architecture](job-pipeline-architecture.md) |
+| TR-009 | JobHunter must publish local domain events to projection-backed read models with resumable projection state. | The API, UI, and maintainers. | Keep operational views accurate without coupling them to write internals. | [DDD migration plan](plans/implemented/2026-05-06-ddd-migration.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [architecture](architecture.md) |
+| TR-010 | The web app must receive local event updates through the API's `GET /v1/events/stream` SSE stream. | Job seekers monitoring active work. | Reflect worker progress without disruptive full-page refreshes. | [frontend target](frontend-target.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [local TypeScript API](local-ts-api.md) |
+| TR-011 | Realtime updates must preserve list context such as filters, selection, scroll position, and loading state where practical, using targeted updates where available and invalidation otherwise. | Job seekers reviewing and triaging jobs. | Prevent background workflow progress from interrupting active review. | [frontend target](frontend-target.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [backlog](backlog.md) |
+| TR-012 | The frontend must keep server state, URL state, and client-only state separate through TanStack Query, TanStack Router, and client-state stores or context. | Maintainers and users. | Avoid stale UI behavior and make workflows shareable or restorable through URLs. | [frontend target](frontend-target.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [decisions](decisions.md) |
+
+### Security And Observability
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| TR-013 | Credentials must use a secret port such as macOS Keychain or explicit environment variables, never SQLite, snapshots, logs, traces, or artifacts. | Job seekers. | Protect accounts used during local search and application workflows. | [Discovery RFC](plans/implemented/2026-05-12-job-search-discovery-rfc.md), [architecture](architecture.md) |
+| TR-014 | Observability must cover LLM, workflow, and JSON-RPC activity without exporting raw private content such as resumes, generated materials, job text, credentials, local paths, logs, or databases. | Maintainers and local operators. | Debug behavior and cost while preserving user privacy. | [architecture](architecture.md), [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md) |
+| TR-015 | Langfuse and telemetry export must be configurable and disableable, including a local disable path for private runs. | Job seekers and maintainers. | Support local privacy choices and development diagnostics. | [architecture](architecture.md), [Temporal stack plan](plans/implemented/2026-05-07-temporal-and-worker-reliability-stack.md) |
+
+### Verification And Quality
+
+| ID | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- |
+| TR-016 | Missing frontend event handlers or stage badges must be caught by tests that cover the domain event union and stage-state kinds. | Maintainers. | Keep new domain states from silently rendering incorrectly. | [frontend target](frontend-target.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md), [local reliability QA](local-reliability-qa.md) |
+| TR-017 | Scoring changes must be covered by evaluation fixtures and metrics for parsing, deterministic policy resolution, blockers, ranking, corrections, anchor consistency, stale-score precision, and reproducibility. | Maintainers. | Prevent prompt, policy, or parser changes from degrading decisions unnoticed. | [calibrated scoring policy RFC](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md), [local reliability QA](local-reliability-qa.md) |
+| TR-018 | Meaningful user-facing behavior changes must include product-path verification, not only unit tests. | Job seekers and maintainers. | Catch failures that only appear in real local workflows. | [local reliability QA](local-reliability-qa.md), [frontend TanStack migration plan](plans/implemented/2026-05-06-frontend-tanstack-migration.md) |
+| TR-019 | High-risk local workflows must stay covered by the reliability matrix, including dry-run apply, apply timeout, retry, blocking, artifact opening, profile save/discard, source filtering, stale-score correction, and global list sorting. | Job seekers. | Prevent regressions in workflows that can waste time or corrupt local state. | [local reliability QA](local-reliability-qa.md) |
+| TR-020 | Frontend accessibility defects found in production paths must be fixed or recorded as explicit backlog deferrals with production references. | Job seekers using assistive technology. | Keep the local UI usable and prevent silent a11y regressions. | [local reliability QA](local-reliability-qa.md), [backlog](backlog.md) |
+| TR-021 | Root scripts must expose the documented web test, type-level test, coverage, watch, and Playwright commands: `web:test`, `web:test:watch`, `web:test:coverage`, `web:test-d`, `web:e2e`, and `web:e2e:headed`. | Contributors. | Make verification discoverable and consistent from the repo root. | [root script backlog item](plans/proposed/2026-05-17-jobhunter-backlog-item-add-root.md), [package scripts](../package.json) |
