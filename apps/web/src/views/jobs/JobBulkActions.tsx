@@ -16,6 +16,8 @@ export interface JobBulkActionsProps {
   onPrimaryAction: () => void;
   onHideSelected: () => void;
   onPermanentlyDeleteSelected: () => void;
+  onRetryFailedSelected?: () => void;
+  onRetryAllFailed?: () => void;
   onResetStaleSuccess?: () => void;
 }
 
@@ -34,10 +36,13 @@ export function JobBulkActions({
   onPrimaryAction,
   onHideSelected,
   onPermanentlyDeleteSelected,
+  onRetryFailedSelected = () => {},
+  onRetryAllFailed = () => {},
   onResetStaleSuccess = () => {},
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
+  const retryableFailures = search.deleted === "active" && search.state === "failed";
   const primaryLabel = hidden ? "unhide selected" : restoring ? "restore selected" : "delete selected";
   return (
     <div className="bulk-bar">
@@ -83,6 +88,26 @@ export function JobBulkActions({
           label={selectedStaleKeys.length ? "reset stale selected" : "reset all stale scores"}
           onSuccess={onResetStaleSuccess}
         />
+      ) : null}
+      {retryableFailures ? (
+        <>
+          <button
+            className="tab on"
+            type="button"
+            disabled={!selectedCount || loading}
+            onClick={onRetryFailedSelected}
+          >
+            retry selected
+          </button>
+          <button
+            className="tab"
+            type="button"
+            disabled={!hasAnyMatching || loading}
+            onClick={onRetryAllFailed}
+          >
+            retry all failed
+          </button>
+        </>
       ) : null}
       {!hidden ? (
         <button

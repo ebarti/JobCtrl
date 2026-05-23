@@ -43,6 +43,11 @@ unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
 reset. `scoreReasoning` remains on the wire as a compatibility summary during
 the scoring evidence migration.
+Job summaries also include `discoverySource`, which is the observed source
+registry id when available and falls back to the discovery strategy/source pair
+for legacy rows. The jobs list accepts `minFitScore` and `maxFitScore` query
+parameters, and the same score bounds are accepted by all-matching bulk job
+mutations.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
@@ -68,6 +73,9 @@ available at `POST /v1/jobs/bulk-delete-permanent` and
 `DELETE /v1/jobs/:key/permanent`; it removes the job row plus job-scoped state,
 projection rows, and delete/hide tombstones. It does not write a new suppression
 record, so rediscovery can add the same posting again later.
+`POST /v1/jobs/bulk-retry-failed` accepts the same selected-job or
+all-matching bulk mutation body and resets each active failed or exhausted job's
+failed stage to `pending`; non-failed selected jobs are ignored.
 
 `/v1/dashboard/summary` includes `sourceHealth[]`, sourced from
 `source_quality_stats`. The projection is rebuilt from discovery run,
@@ -76,7 +84,10 @@ active-state events and user discovery feedback. It is the read-side signal the
 web dashboard uses for source health.
 
 Discovery product-control endpoints are local-first and share DTOs from
-`packages/contracts`:
+`packages/contracts`. The web Discovery page composes these endpoints into
+source-registry, source-locator, quarantine-review, and manual-capture tabs; the
+source registry renders as a filterable/sortable table so source type and policy
+metadata are visible as columns instead of compact badges:
 
 - `GET /v1/discovery/sources` lists source registry entries merged with
   `source_quality_stats`.

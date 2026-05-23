@@ -123,6 +123,36 @@ describe("<JobBulkActions>", () => {
     expect(onHide).toHaveBeenCalledTimes(1);
   });
 
+  it("shows retry actions for active failed jobs", async () => {
+    const user = userEvent.setup();
+    const onRetrySelected = vi.fn();
+    const onRetryAll = vi.fn();
+    render(
+      <JobBulkActions
+        search={{ ...baseSearch, state: "failed" }}
+        selectedCount={2}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+        onRetryFailedSelected={onRetrySelected}
+        onRetryAllFailed={onRetryAll}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /retry selected/i }));
+    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+
+    expect(onRetrySelected).toHaveBeenCalledTimes(1);
+    expect(onRetryAll).toHaveBeenCalledTimes(1);
+  });
+
   it("invokes permanent delete from deleted jobs", async () => {
     const user = userEvent.setup();
     const onPermanentDelete = vi.fn();

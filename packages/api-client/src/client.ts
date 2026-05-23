@@ -57,6 +57,18 @@ import type {
 type QueryValue = boolean | number | string | null | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 
+export class JobHunterApiError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+
+  constructor(status: number, statusText: string) {
+    super(`JobHunter API request failed: ${status} ${statusText}`);
+    this.name = "JobHunterApiError";
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
 export interface HealthResponse {
   ok: true;
   appDir: string;
@@ -222,6 +234,10 @@ export class JobHunterApiClient {
     return this.post("/v1/jobs/bulk-unhide", body);
   }
 
+  retryFailedJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+    return this.post("/v1/jobs/bulk-retry-failed", body);
+  }
+
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/score-correction`, body);
   }
@@ -363,7 +379,7 @@ export class JobHunterApiClient {
     }
     const response = await fetch(href, init);
     if (!response.ok) {
-      throw new Error(`JobHunter API request failed: ${response.status} ${response.statusText}`);
+      throw new JobHunterApiError(response.status, response.statusText);
     }
     return (await response.json()) as T;
   }

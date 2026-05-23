@@ -152,6 +152,20 @@ export function resetJobStage(
   return { jobUrl, stage: getStageState(db, jobUrl, stage) };
 }
 
+export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+  const candidates = mutableJobKeys(db, request);
+  const targets = candidates
+    .map((jobUrl) => ({ jobUrl, stage: currentFailedStage(db, jobUrl) }))
+    .filter((target): target is { jobUrl: string; stage: Stage } => target.stage !== null);
+  const transaction = db.transaction((rows: typeof targets) => {
+    for (const { jobUrl, stage } of rows) {
+      resetJobStage(db, jobUrl, stage, { resetAttempts: false });
+    }
+  });
+  transaction(targets);
+  return { ok: true, count: targets.length, jobKeys: targets.map((target) => target.jobUrl) };
+}
+
 export function markJobApplied(
   db: SqliteDatabase,
   jobKey: string,
@@ -1404,6 +1418,23 @@ function currentMutableStage(db: SqliteDatabase, jobUrl: string): Stage {
     return active.stage as Stage;
   }
   return "apply";
+}
+
+function currentFailedStage(db: SqliteDatabase, jobUrl: string): Stage | null {
+  if (!tableExists(db, "job_stage_states")) {
+    return null;
+  }
+  const rows = allRows<{ stage: Stage; state: string }>(
+    db,
+    "SELECT stage, state FROM job_stage_states WHERE job_url = ?",
+    [jobUrl],
+  );
+  const failedStages = new Set(
+    rows
+      .filter((row) => STAGES.includes(row.stage) && ["failed", "exhausted"].includes(row.state))
+      .map((row) => row.stage),
+  );
+  return STAGES.find((stage) => failedStages.has(stage)) ?? null;
 }
 
 function recordActionEvent(

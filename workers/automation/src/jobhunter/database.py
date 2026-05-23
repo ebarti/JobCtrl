@@ -444,6 +444,9 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     # AND legacy column data; after it runs, those jobs look identical
     # to jobs created through the post-DDD pipeline.
     _backfill_legacy_stage_states(conn)
+    from jobhunter.state import reconcile_dependency_blockers
+
+    reconcile_dependency_blockers(conn)
     conn.commit()
     return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks"]
 

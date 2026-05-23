@@ -573,6 +573,7 @@ export interface JobSummary {
   title: string;
   company: string;
   source: string;
+  discoverySource: string;
   strategy: string;
   location: string;
   salary: string;

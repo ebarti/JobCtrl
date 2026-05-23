@@ -33,7 +33,7 @@ from jobhunter.domain.pipeline_types import (
     serialize_stage_state,
 )
 from jobhunter.domain.tenant import TenantId
-from jobhunter.state import record_job_event, set_stage_state
+from jobhunter.state import reconcile_dependency_blockers, record_job_event, set_stage_state
 
 
 def _json_loads(value: str | None, default: Any) -> Any:
@@ -276,6 +276,7 @@ class SqlitePipelineStateRepository:
         """
         existing_states = self._existing_state_strings(state.job_url)
 
+        completed_stages: list[str] = []
         for stage, stage_state in state.stages.items():
             stage_str = serialize_stage(stage)
             new_state_str = serialize_stage_state(stage_state)
@@ -301,7 +302,11 @@ class SqlitePipelineStateRepository:
                 level=level,
                 message=_event_message(stage_state),
             )
+            if new_state_str == "succeeded":
+                completed_stages.append(stage_str)
 
+        for stage_str in completed_stages:
+            reconcile_dependency_blockers(self._conn, job_url=state.job_url, completed_stage=stage_str)
         state.version = state.version + 1
 
     def list_by_stage(

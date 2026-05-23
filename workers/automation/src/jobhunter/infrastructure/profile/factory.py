@@ -1,14 +1,15 @@
-"""Process-wide factory for the local Profile repository.
+"""Thread-local factory for the local Profile repository.
 
 The Phase-3 in-process event bus is a process-wide singleton owned by
-``infrastructure.events.get_default_publisher``; the profile repository
-follows the same pattern: a single ``SqliteProfileRepository`` is
-shared across the worker process so callers in ``actions.py``,
-``pipeline.py``, and the CLI all share the same SQLite-backed profile
-versioning and event publisher.
+``infrastructure.events.get_default_publisher``. The profile repository
+cannot follow that process-wide pattern because it owns a SQLite
+connection, and SQLite connections are thread-bound in local mode.
+Callers in ``actions.py``, ``pipeline.py``, and the CLI therefore share
+the same SQLite-backed profile tables and event publisher while each
+thread gets its own repository/connection pair.
 
-Tests can override the singleton via ``reset_profile_repository`` plus a
-custom ``build_profile_repository`` invocation.
+Tests can reset the thread-local cache via ``reset_profile_repository``
+plus a custom ``build_profile_repository`` invocation.
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ from jobhunter.infrastructure.profile.pdf_parser import PyPdfProfileParser
 from jobhunter.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 _lock = threading.Lock()
-_singleton: SqliteProfileRepository | None = None
+_generation = 0
+_local = threading.local()
 
 
 def build_profile_repository(
@@ -53,22 +55,33 @@ def build_profile_repository(
 
 
 def get_profile_repository() -> SqliteProfileRepository:
-    """Return the process-wide singleton repository.
+    """Return this thread's cached repository.
 
     Initialises lazily so that import-time has no side effects (matches the
-    pattern used by Phase 3's ``InProcessEventBus`` singleton).
+    pattern used by Phase 3's ``InProcessEventBus`` singleton). The cache is
+    deliberately thread-local: ``SqliteProfileRepository`` holds a
+    ``sqlite3.Connection``, and SQLite forbids using that object from a
+    different thread than the one that created it.
     """
-    global _singleton
     with _lock:
-        if _singleton is None:
-            _singleton = build_profile_repository()
-        return _singleton
+        generation = _generation
+    cached = getattr(_local, "repository", None)
+    cached_generation = getattr(_local, "generation", None)
+    if cached is None or cached_generation != generation:
+        cached = build_profile_repository()
+        _local.repository = cached
+        _local.generation = generation
+    return cached
 
 
 def reset_profile_repository() -> None:
-    """Drop the cached singleton — used by tests to reset between cases."""
-    global _singleton
+    """Invalidate cached repositories — used by tests to reset between cases."""
+    global _generation
     with _lock:
-        _singleton = None
+        _generation += 1
+    if hasattr(_local, "repository"):
+        delattr(_local, "repository")
+    if hasattr(_local, "generation"):
+        delattr(_local, "generation")
     # Clear the shared bus singleton too so the next test starts clean.
     reset_default_publisher()

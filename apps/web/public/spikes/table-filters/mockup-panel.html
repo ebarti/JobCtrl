@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Filter panel mockup</title>
+    <link rel="stylesheet" href="./table-spike.css" />
+  </head>
+  <body>
+    <main class="spike-shell">
+      <header class="spike-topbar">
+        <div class="brand-row">
+          <span class="brand-mark">jh</span>
+          <div>
+            <div class="eyebrow">Option C</div>
+            <h1>Grid-style filter panel</h1>
+            <p class="page-subtitle">
+              A richer grid pattern: headers stay compact and a persistent panel handles
+              multi-selects, text operators, and saved filter presets.
+            </p>
+          </div>
+        </div>
+        <nav class="nav-links" aria-label="Mockup pages">
+          <a class="nav-link" href="./">Overview</a>
+          <a class="nav-link" href="./mockup-command.html">Command filters</a>
+          <a class="nav-link" href="./mockup-sheet.html">Column filters</a>
+          <a class="nav-link active" href="./mockup-panel.html">Filter panel</a>
+        </nav>
+      </header>
+
+      <section class="mockup-wrap panel-layout">
+        <article class="table-panel">
+          <div class="table-panel-head">
+            <div>
+              <strong class="panel-title">Source registry</strong>
+              <p class="footer-note">Dense table, all columns sortable, filters live in the right rail.</p>
+            </div>
+            <div class="chip-row">
+              <span class="table-meta" data-row-count-for="panelTable">0 shown</span>
+              <span class="mini-chip blue" data-source-status>Loading live sources...</span>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table id="panelTable" data-spike-table>
+              <thead>
+                <tr>
+                  <th><button class="sort-button" data-sort-key="company" type="button">Company</button></th>
+                  <th><button class="sort-button" data-sort-key="sourceId" type="button">Source id</button></th>
+                  <th><button class="sort-button" data-sort-key="provider" type="button">Provider</button></th>
+                  <th><button class="sort-button" data-sort-key="kind" type="button">Kind</button></th>
+                  <th><button class="sort-button" data-sort-key="state" type="button">State</button></th>
+                  <th><button class="sort-button" data-sort-key="priority" type="button">Priority</button></th>
+                  <th><button class="sort-button" data-sort-key="observed" type="button">Observed</button></th>
+                  <th><button class="sort-button" data-sort-key="failures" type="button">Failures</button></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-company="Salesforce" data-failures="0" data-kind="ats api" data-observed="0" data-priority="canonical" data-provider="Workday ATS" data-source-id="workday:salesforce" data-state="active">
+                  <td><span class="company-cell"><strong>Salesforce</strong><span class="subtle">salesforce.wd1.myworkdayjobs.com</span></span></td>
+                  <td>workday:salesforce</td>
+                  <td>Workday ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td><span class="mini-chip green">canonical</span></td>
+                  <td>0</td>
+                  <td>0</td>
+                </tr>
+                <tr data-company="Workday" data-failures="0" data-kind="ats api" data-observed="14" data-priority="canonical" data-provider="Workday ATS" data-source-id="workday:workday" data-state="active">
+                  <td><span class="company-cell"><strong>Workday</strong><span class="subtle">workday.com</span></span></td>
+                  <td>workday:workday</td>
+                  <td>Workday ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td><span class="mini-chip green">canonical</span></td>
+                  <td>14</td>
+                  <td>0</td>
+                </tr>
+                <tr data-company="Stripe" data-failures="1" data-kind="ats api" data-observed="8" data-priority="canonical" data-provider="Greenhouse ATS" data-source-id="greenhouse:stripe" data-state="active">
+                  <td><span class="company-cell"><strong>Stripe</strong><span class="subtle">stripe.com/jobs</span></span></td>
+                  <td>greenhouse:stripe</td>
+                  <td>Greenhouse ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td><span class="mini-chip green">canonical</span></td>
+                  <td>8</td>
+                  <td>1</td>
+                </tr>
+                <tr data-company="4DayWeek" data-failures="0" data-kind="smart extract" data-observed="3" data-priority="fallback" data-provider="Smart extract" data-source-id="smart_extract:4dayweek" data-state="active">
+                  <td><span class="company-cell"><strong>4DayWeek</strong><span class="subtle">4dayweek.io</span></span></td>
+                  <td>smart_extract:4dayweek</td>
+                  <td>Smart extract</td>
+                  <td><span class="mini-chip amber">smart extract</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td><span class="mini-chip amber">fallback</span></td>
+                  <td>3</td>
+                  <td>0</td>
+                </tr>
+                <tr data-company="Indeed search" data-failures="2" data-kind="job board" data-observed="46" data-priority="normal" data-provider="Job board" data-source-id="jobspy:indeed" data-state="active">
+                  <td><span class="company-cell"><strong>Indeed search</strong><span class="subtle">job board source</span></span></td>
+                  <td>jobspy:indeed</td>
+                  <td>Job board</td>
+                  <td><span class="mini-chip blue">job board</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td><span class="mini-chip">normal</span></td>
+                  <td>46</td>
+                  <td>2</td>
+                </tr>
+                <tr data-company="Airtable" data-failures="0" data-kind="ats api" data-observed="5" data-priority="canonical" data-provider="Lever ATS" data-source-id="lever:airtable" data-state="active">
+                  <td><span class="company-cell"><strong>Airtable</strong><span class="subtle">airtable.com/careers</span></span></td>
+                  <td>lever:airtable</td>
+                  <td>Lever ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td><span class="mini-chip green">canonical</span></td>
+                  <td>5</td>
+                  <td>0</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <aside class="filter-panel" aria-label="Filters">
+          <div class="filter-builder-head">
+            <strong>Filters</strong>
+            <span class="mini-chip blue">4 active</span>
+          </div>
+          <div class="filter-group">
+            <label class="table-filter-label">Company text</label>
+            <div class="segmented">
+              <button
+                class="segment is-active"
+                data-op-for="company"
+                data-operator="contains"
+                data-table-id="panelTable"
+                type="button"
+              >
+                contains
+              </button>
+              <button
+                class="segment"
+                data-op-for="company"
+                data-operator="does_not_contain"
+                data-table-id="panelTable"
+                type="button"
+              >
+                does not contain
+              </button>
+            </div>
+            <input
+              class="text-input"
+              data-filter-key="company"
+              data-filter-type="text"
+              data-table-id="panelTable"
+              placeholder="Company text"
+              type="text"
+            />
+          </div>
+          <div class="filter-group">
+            <label class="table-filter-label">Provider multi-select</label>
+            <div class="check-list">
+              <label class="check-row"><input checked data-filter-key="provider" data-table-id="panelTable" type="checkbox" value="Workday ATS" /> Workday ATS</label>
+              <label class="check-row"><input checked data-filter-key="provider" data-table-id="panelTable" type="checkbox" value="Greenhouse ATS" /> Greenhouse ATS</label>
+              <label class="check-row"><input data-filter-key="provider" data-table-id="panelTable" type="checkbox" value="Smart extract" /> Smart extract</label>
+              <label class="check-row"><input data-filter-key="provider" data-table-id="panelTable" type="checkbox" value="JobSpy board" /> JobSpy board</label>
+              <label class="check-row"><input data-filter-key="provider" data-table-id="panelTable" type="checkbox" value="Lever ATS" /> Lever ATS</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <label class="table-filter-label">Kind multi-select</label>
+            <div class="check-list">
+              <label class="check-row"><input checked data-filter-key="kind" data-table-id="panelTable" type="checkbox" value="ats api" /> ats api</label>
+              <label class="check-row"><input data-filter-key="kind" data-table-id="panelTable" type="checkbox" value="smart extract" /> smart extract</label>
+              <label class="check-row"><input data-filter-key="kind" data-table-id="panelTable" type="checkbox" value="broad board" /> broad board</label>
+              <label class="check-row"><input data-filter-key="kind" data-table-id="panelTable" type="checkbox" value="niche board" /> niche board</label>
+            </div>
+          </div>
+          <div class="filter-group">
+            <label class="table-filter-label">Source id text</label>
+            <div class="segmented">
+              <button
+                class="segment is-active"
+                data-op-for="sourceId"
+                data-operator="contains"
+                data-table-id="panelTable"
+                type="button"
+              >
+                contains
+              </button>
+              <button
+                class="segment"
+                data-op-for="sourceId"
+                data-operator="does_not_contain"
+                data-table-id="panelTable"
+                type="button"
+              >
+                does not contain
+              </button>
+            </div>
+            <input
+              class="text-input"
+              data-filter-key="sourceId"
+              data-filter-type="text"
+              data-table-id="panelTable"
+              placeholder="workday, greenhouse..."
+              type="text"
+            />
+          </div>
+          <button class="button" type="button">Save filter preset</button>
+        </aside>
+      </section>
+    </main>
+    <script src="./table-spike.js"></script>
+  </body>
+</html>

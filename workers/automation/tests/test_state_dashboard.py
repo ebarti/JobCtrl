@@ -7,6 +7,7 @@ from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.state import (
     ensure_job_stage_rows,
     get_job_stage_states,
+    reconcile_dependency_blockers,
     set_stage_state,
 )
 
@@ -214,5 +215,143 @@ def test_transition_validation_can_be_bypassed(tmp_path):
         states = get_job_stage_states(conn, job)
         enrich = next(item for item in states if item["stage"] == "enrich")
         assert enrich["state"] == "succeeded"
+    finally:
+        close_connection(db_path)
+
+
+def test_score_success_unblocks_tailor_waiting_on_score(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        set_stage_state(
+            conn,
+            job["url"],
+            "tailor",
+            "blocked",
+            error_code="BLOCKED",
+            error_message="score has not completed.",
+        )
+
+        set_stage_state(conn, job["url"], "score", "running", started_at="2026-04-29T10:01:00+00:00")
+        set_stage_state(conn, job["url"], "score", "succeeded", finished_at="2026-04-29T10:02:00+00:00")
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT state, error_code, error_message, retryable "
+            "FROM job_stage_states WHERE job_url = ? AND stage = 'tailor'",
+            (job["url"],),
+        ).fetchone()
+        assert row["state"] == "pending"
+        assert row["error_code"] is None
+        assert row["error_message"] is None
+        assert row["retryable"] == 1
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_success_unblocks_cover_and_pdf_waiting_on_tailor(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        for stage in ("cover", "pdf"):
+            set_stage_state(
+                conn,
+                job["url"],
+                stage,
+                "blocked",
+                error_code="BLOCKED",
+                error_message="tailor has not completed.",
+            )
+
+        set_stage_state(conn, job["url"], "tailor", "running", started_at="2026-04-29T10:03:00+00:00")
+        set_stage_state(conn, job["url"], "tailor", "succeeded", finished_at="2026-04-29T10:04:00+00:00")
+        conn.commit()
+
+        rows = conn.execute(
+            "SELECT stage, state, error_message FROM job_stage_states "
+            "WHERE job_url = ? AND stage IN ('cover', 'pdf') ORDER BY stage",
+            (job["url"],),
+        ).fetchall()
+        assert [(row["stage"], row["state"], row["error_message"]) for row in rows] == [
+            ("cover", "pending", None),
+            ("pdf", "pending", None),
+        ]
+    finally:
+        close_connection(db_path)
+
+
+def test_dependency_reconciliation_preserves_unrelated_blockers(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        set_stage_state(
+            conn,
+            job["url"],
+            "tailor",
+            "blocked",
+            error_code="MIN_SCORE",
+            error_message="Fit score is below the tailoring threshold.",
+            validate_transition=False,
+        )
+        set_stage_state(conn, job["url"], "score", "running", started_at="2026-04-29T10:01:00+00:00")
+        set_stage_state(conn, job["url"], "score", "succeeded", finished_at="2026-04-29T10:02:00+00:00")
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT state, error_code, error_message FROM job_stage_states "
+            "WHERE job_url = ? AND stage = 'tailor'",
+            (job["url"],),
+        ).fetchone()
+        assert row["state"] == "blocked"
+        assert row["error_code"] == "MIN_SCORE"
+        assert row["error_message"] == "Fit score is below the tailoring threshold."
+    finally:
+        close_connection(db_path)
+
+
+def test_dependency_reconciliation_repairs_existing_stale_rows(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        set_stage_state(
+            conn,
+            job["url"],
+            "score",
+            "succeeded",
+            finished_at="2026-04-29T10:02:00+00:00",
+            validate_transition=False,
+        )
+        set_stage_state(
+            conn,
+            job["url"],
+            "tailor",
+            "blocked",
+            error_code="BLOCKED",
+            error_message="score has not completed.",
+        )
+
+        repaired = reconcile_dependency_blockers(conn)
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT state, error_message FROM job_stage_states "
+            "WHERE job_url = ? AND stage = 'tailor'",
+            (job["url"],),
+        ).fetchone()
+        assert repaired == 1
+        assert row["state"] == "pending"
+        assert row["error_message"] is None
     finally:
         close_connection(db_path)

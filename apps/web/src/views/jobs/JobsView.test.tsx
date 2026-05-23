@@ -19,7 +19,7 @@ import { JobsView } from "./JobsView.js";
 
 const SEARCH = "?stage=all&state=all&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
 
-function buildRouter(harness: ReturnType<typeof buildProviderHarness>) {
+function buildRouter(harness: ReturnType<typeof buildProviderHarness>, search = SEARCH) {
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const jobsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -34,7 +34,7 @@ function buildRouter(harness: ReturnType<typeof buildProviderHarness>) {
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([jobsRoute.addChildren([detailRoute])]),
-    history: createMemoryHistory({ initialEntries: [`/jobs${SEARCH}`] }),
+    history: createMemoryHistory({ initialEntries: [`/jobs${search}`] }),
   });
   return { router, queryClient: harness.queryClient, Wrapper: harness.Wrapper };
 }
@@ -298,6 +298,39 @@ describe("<JobsView> bulk delete integration", () => {
     await user.click(screen.getByRole("button", { name: /reset stale selected/i }));
 
     await waitFor(() => expect(calls).toEqual([{ jobKeys: ["job-stale"], limit: 0 }]));
+  });
+
+  it("posts all matching failed jobs to bulk retry from the failed filter", async () => {
+    const user = userEvent.setup();
+    const failedSearch = "?stage=all&state=failed&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
+    const calls: Array<{ allMatching?: boolean; filter?: { state?: string; deleted?: string }; jobKeys?: string[] }> = [];
+    server.use(
+      http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
+        const body = (await request.json()) as {
+          allMatching?: boolean;
+          filter?: { state?: string; deleted?: string };
+          jobKeys?: string[];
+        };
+        calls.push(body);
+        return HttpResponse.json({ ok: true, count: 2, jobKeys: ["job-1", "job-2"] });
+      }),
+    );
+
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, failedSearch);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /retry all failed/i })).toBeInTheDocument(), {
+      timeout: 5_000,
+    });
+    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0]).toMatchObject({
+      allMatching: true,
+      filter: { state: "failed", deleted: "active" },
+      jobKeys: [],
+    });
   });
 });
 

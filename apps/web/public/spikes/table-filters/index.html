@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JobHunter table filter spike</title>
+    <link rel="stylesheet" href="./table-spike.css" />
+  </head>
+  <body>
+    <main class="spike-shell">
+      <header class="spike-topbar">
+        <div class="brand-row">
+          <span class="brand-mark">jh</span>
+          <div>
+            <div class="eyebrow">UI spike</div>
+            <h1>Table filters that do not feel like native dropdowns</h1>
+            <p class="page-subtitle">
+              Disposable directions for JobHunter tables. Each mockup page fetches the
+              live local source registry from /v1/discovery/sources. Text filters combine
+              distinct-value multi-select with contains / does-not-contain predicates.
+            </p>
+          </div>
+        </div>
+        <nav class="nav-links" aria-label="Mockup pages">
+          <a class="nav-link active" href="./">Overview</a>
+          <a class="nav-link" href="./mockup-command.html">Command filters</a>
+          <a class="nav-link" href="./mockup-sheet.html">Column filters</a>
+          <a class="nav-link" href="./mockup-panel.html">Filter panel</a>
+          <a class="nav-link" href="./mockup-airtable.html">Airtable style</a>
+        </nav>
+      </header>
+
+      <section class="home-grid">
+        <article class="option-card">
+          <div class="tag-list">
+            <span class="mini-chip green">Current direction</span>
+            <span class="mini-chip">Airtable style</span>
+          </div>
+          <h2>Option D: Airtable-style grid</h2>
+          <p>
+            View sidebar, table tabs, compact toolbar, filter strip, and spreadsheet grid.
+            Every text-like field gets both a value checklist and a contains /
+            does-not-contain text predicate.
+          </p>
+          <span class="fit-label">Best match for the requested product feel.</span>
+          <a class="button" href="./mockup-airtable.html">Open mockup</a>
+        </article>
+
+        <article class="option-card">
+          <div class="tag-list">
+            <span class="mini-chip green">Best stack fit</span>
+            <span class="mini-chip">TanStack Table</span>
+            <span class="mini-chip">shadcn style</span>
+          </div>
+          <h2>Option A: command filters</h2>
+          <p>
+            Inspired by OpenStatus data-table-filters: filters live as readable chips,
+            adding a filter opens a command-style builder, and URL/server state can stay
+            separate from the table rendering layer.
+          </p>
+          <span class="fit-label">Best when users build temporary saved views.</span>
+          <a class="button" href="./mockup-command.html">Open mockup</a>
+        </article>
+
+        <article class="option-card">
+          <div class="tag-list">
+            <span class="mini-chip blue">Best for source registry</span>
+            <span class="mini-chip">Spreadsheet feel</span>
+          </div>
+          <h2>Option B: column filters</h2>
+          <p>
+            Filters sit on the column headers, like a filtered sheet. Each header owns
+            sorting, text operators, and multi-select menus. This maps directly to the
+            user feedback on the current Discovery source registry.
+          </p>
+          <span class="fit-label">Best when every column should be inspected and tuned.</span>
+          <a class="button" href="./mockup-sheet.html">Open mockup</a>
+        </article>
+
+        <article class="option-card">
+          <div class="tag-list">
+            <span class="mini-chip amber">Most powerful</span>
+            <span class="mini-chip">Grid pattern</span>
+          </div>
+          <h2>Option C: filter panel</h2>
+          <p>
+            Inspired by AG Grid and Material React Table: the table stays dense, while a
+            side panel holds richer boolean, text, and multi-select controls without
+            stretching header rows.
+          </p>
+          <span class="fit-label">Best when filters become complex or saved presets matter.</span>
+          <a class="button" href="./mockup-panel.html">Open mockup</a>
+        </article>
+
+        <article class="research-panel">
+          <h2>Spike recommendation</h2>
+          <ul>
+            <li>
+              Keep TanStack Table as the table engine. It already supports controlled sorting
+              and column filter state, including server-side filtering when needed.
+            </li>
+            <li>
+              Use an OpenStatus-style filter schema or a local equivalent so Jobs,
+              Discovery, Runs, and Artifacts do not each invent filter state differently.
+            </li>
+            <li>
+              For the Source registry specifically, prototype Option B first: filters on
+              the column headers match the Google Sheet mental model and make all tags
+              first-class columns.
+            </li>
+          </ul>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

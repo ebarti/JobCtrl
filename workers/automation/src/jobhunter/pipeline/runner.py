@@ -50,7 +50,7 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     seed_discovery_control_queues,
 )
 from jobhunter.infrastructure.observability.source_spans import discovery_run_span
-from jobhunter.state import record_job_event, utc_now
+from jobhunter.state import record_job_event, set_stage_state, utc_now
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -1110,10 +1110,89 @@ def _run_pdf(limit: int = 0) -> dict:
         pending = repository.list_pending_pdf(LOCAL_TENANT, limit=limit)
         for job_id in pending:
             use_case.execute(job_id=job_id, tenant_id=LOCAL_TENANT)
-        return {"status": "ok"}
+        reconciled = _reconcile_completed_pdf_stage_rows(conn)
+        remaining = repository.list_pending_pdf(LOCAL_TENANT, limit=limit)
+        return {
+            "status": "partial" if remaining else "ok",
+            "rendered": len(pending) - len(remaining),
+            "reconciled": reconciled,
+            "remaining": len(remaining),
+        }
     except Exception as e:
         log.error("PDF conversion failed: %s", e)
         return {"status": f"error: {e}"}
+
+
+def _reconcile_completed_pdf_stage_rows(conn, *, tenant_id=LOCAL_TENANT) -> int:
+    """Mark per-job PDF stage rows done when latest materials have all PDFs."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT s.job_url
+          FROM job_stage_states s
+          JOIN job_materials m
+            ON m.job_url = s.job_url
+           AND m.tenant_id = ?
+          JOIN (
+                SELECT job_url, MAX(generation) AS generation
+                  FROM job_materials
+                 WHERE tenant_id = ?
+                 GROUP BY job_url
+          ) latest
+            ON latest.job_url = m.job_url
+           AND latest.generation = m.generation
+         WHERE s.stage = 'pdf'
+           AND s.state IN ('pending', 'running')
+           AND EXISTS (
+                SELECT 1
+                  FROM job_materials_artifacts text
+                 WHERE text.job_url = m.job_url
+                   AND text.generation = m.generation
+                   AND text.status = 'approved'
+                   AND text.artifact_type IN ('tailored_resume', 'cover_letter')
+           )
+           AND NOT EXISTS (
+                SELECT 1
+                  FROM job_materials_artifacts text
+                  LEFT JOIN job_materials_artifacts pdf
+                    ON pdf.job_url = text.job_url
+                   AND pdf.generation = text.generation
+                   AND pdf.status = 'approved'
+                   AND (
+                        (text.artifact_type = 'tailored_resume'
+                         AND pdf.artifact_type = 'resume_pdf')
+                     OR (text.artifact_type = 'cover_letter'
+                         AND pdf.artifact_type = 'cover_letter_pdf')
+                   )
+                 WHERE text.job_url = m.job_url
+                   AND text.generation = m.generation
+                   AND text.status = 'approved'
+                   AND text.artifact_type IN ('tailored_resume', 'cover_letter')
+                   AND pdf.path IS NULL
+           )
+        """,
+        (str(tenant_id), str(tenant_id)),
+    ).fetchall()
+    finished_at = utc_now()
+    for row in rows:
+        job_url = row["job_url"]
+        set_stage_state(
+            conn,
+            job_url,
+            "pdf",
+            "succeeded",
+            attempt_count=1,
+            finished_at=finished_at,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "pdf",
+            "StageCompleted",
+            message="PDF artifacts available",
+        )
+    conn.commit()
+    return len(rows)
 
 
 # Map stage names to their runner functions. ``Callable`` (lowercase

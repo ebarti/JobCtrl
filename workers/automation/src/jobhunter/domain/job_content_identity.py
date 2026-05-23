@@ -4,15 +4,32 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_PUNCT_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+    }
+)
 
 
 def normalize_identity_text(value: object) -> str:
     """Return a case-insensitive, whitespace-stable identity component."""
 
-    return _WHITESPACE_RE.sub(" ", str(value or "").strip()).casefold()
+    text = unicodedata.normalize("NFKC", str(value or "").strip()).translate(_PUNCT_TRANSLATION)
+    return _WHITESPACE_RE.sub(" ", text).casefold()
 
 
 def job_content_fingerprint(

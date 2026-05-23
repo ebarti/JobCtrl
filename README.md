@@ -215,6 +215,10 @@ uv --project workers/automation run jobhunter retry tailor https://example.com/j
 `retry --run` can process other eligible pending work for some stages. Use it
 deliberately.
 
+In the local web UI, the dashboard Failures KPI opens the failed-jobs filter.
+From that Jobs view you can retry selected failed jobs or retry all currently
+matching failed jobs after confirmation.
+
 ## Auto-Apply
 
 Auto-apply launches local browser workers and can submit applications. Start
@@ -303,6 +307,11 @@ uv --project workers/automation run jobhunter worker
 The Vite dev server proxies `/v1/*` to the local API by default. Set
 `VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
 
+The Jobs tab can filter by stage, state, and fit-score range. Its source column
+shows the posting board first and the discovery source underneath when
+available, so broad-board results can be distinguished from canonical employer
+or ATS sources.
+
 The Jobs tab separates temporary removal from permanent suppression. Deleting a
 job moves it to the Deleted tab; a later discovery run can resurface that job if
 the posting is found again. Hiding a job moves it to the Hidden tab and keeps it
@@ -324,19 +333,21 @@ models. Non-apply stages emit pipeline lifecycle events; Discover also emits
 source-step events and scheduled discovery-run events for JobSpy, Workday, and
 Smart Extract so a stuck or low-quality source is visible before the request
 finishes. The dashboard source-health card summarizes the local source-quality
-projection used to budget and demote future crawls. The Discover stage in the
-Pipelines tab also exposes Discovery controls for the local source registry,
-source locator candidates, observed-source preview, quarantined leads, and
-manual-capture queue. Located parseable sources are automatically approved into
-the active source registry; manual review is reserved for blocked, ambiguous,
-or unparseable sources. These controls can add an experimental source, preview
+projection used to budget and demote future crawls. The Discovery page owns the
+local source registry, source locator candidates, observed-source preview,
+quarantined leads, and manual-capture queue. Its source registry tab renders
+sources as a filterable, sortable table with company, source id, source type,
+state, priority, recommendation, activity, run health, and quality-metric
+columns. Located parseable sources are automatically approved into the active
+source registry; manual review is reserved for blocked, ambiguous, or
+unparseable sources. These controls can add an experimental source, preview
 recently observed leads for a source, enable or quarantine a source, approve or
 reject quarantined leads, record source feedback, open a blocked lead in the
 local browser, and import a user-provided URL, current-page URL, pasted text,
 saved HTML, or email content as manual-capture provenance. Manual capture
 stores local provenance metadata and content hashes, not raw captured posting
 text in domain events. The `limit`
-control is honored by every stage tab, including `discover` and `enrich`, so
+control is honored by every pipeline stage tab, including `discover` and `enrich`, so
 local debug runs can be bounded to one job. A bounded Discover run stops
 remaining sources once the cap is reached. Tabs default to dry-run mode so apply
 automation does not submit applications unless you explicitly clear dry run.

@@ -5,12 +5,18 @@ import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export type KpiTarget = "all" | "failed" | "blocked" | "ready";
 
-const KPI_BASE: Pick<JobsSearch, "deleted" | "page"> = {
+const KPI_BASE: JobsSearch = {
+  q: "",
+  stage: "all",
+  state: "all",
   deleted: "active",
+  sort: "discovered_at",
+  dir: "desc",
   page: 1,
+  pageSize: 50,
 };
 
-export function kpiSearchFor(target: KpiTarget): Partial<JobsSearch> {
+export function kpiSearchFor(target: KpiTarget): JobsSearch {
   if (target === "failed") {
     return { ...KPI_BASE, state: "failed", stage: "all" };
   }

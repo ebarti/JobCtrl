@@ -15,6 +15,7 @@ import { Route as ProfileRouteImport } from "./routes/profile";
 import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as JobsRouteImport } from "./routes/jobs";
+import { Route as DiscoveryRouteImport } from "./routes/discovery";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
 import { Route as IndexRouteImport } from "./routes/index";
@@ -23,6 +24,7 @@ import { Route as RunsIndexRouteImport } from "./routes/runs.index";
 import { Route as ProfileIndexRouteImport } from "./routes/profile.index";
 import { Route as JobsIndexRouteImport } from "./routes/jobs.index";
 import { Route as ArtifactsIndexRouteImport } from "./routes/artifacts.index";
+import { Route as SpikesTableFiltersRouteImport } from "./routes/spikes.table-filters";
 import { Route as SettingsCredentialsRouteImport } from "./routes/settings.credentials";
 import { Route as RunsRunIdRouteImport } from "./routes/runs.$runId";
 import { Route as ProfileImportRouteImport } from "./routes/profile.import";
@@ -64,6 +66,11 @@ const JobsRoute = JobsRouteImport.update({
   path: "/jobs",
   getParentRoute: () => rootRouteImport,
 } as any);
+const DiscoveryRoute = DiscoveryRouteImport.update({
+  id: "/discovery",
+  path: "/discovery",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const DashboardRoute = DashboardRouteImport.update({
   id: "/dashboard",
   path: "/dashboard",
@@ -103,6 +110,11 @@ const ArtifactsIndexRoute = ArtifactsIndexRouteImport.update({
   id: "/",
   path: "/",
   getParentRoute: () => ArtifactsRoute,
+} as any);
+const SpikesTableFiltersRoute = SpikesTableFiltersRouteImport.update({
+  id: "/spikes/table-filters",
+  path: "/spikes/table-filters",
+  getParentRoute: () => rootRouteImport,
 } as any);
 const SettingsCredentialsRoute = SettingsCredentialsRouteImport.update({
   id: "/credentials",
@@ -159,6 +171,7 @@ export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
+  "/discovery": typeof DiscoveryRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -171,6 +184,7 @@ export interface FileRoutesByFullPath {
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
   "/profile/": typeof ProfileIndexRoute;
@@ -184,6 +198,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/dashboard": typeof DashboardRoute;
+  "/discovery": typeof DiscoveryRoute;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -192,6 +207,7 @@ export interface FileRoutesByTo {
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts": typeof ArtifactsIndexRoute;
   "/jobs": typeof JobsIndexRoute;
   "/profile": typeof ProfileIndexRoute;
@@ -207,6 +223,7 @@ export interface FileRoutesById {
   "/": typeof IndexRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
+  "/discovery": typeof DiscoveryRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -219,6 +236,7 @@ export interface FileRoutesById {
   "/profile/import": typeof ProfileImportRouteWithChildren;
   "/runs/$runId": typeof RunsRunIdRoute;
   "/settings/credentials": typeof SettingsCredentialsRoute;
+  "/spikes/table-filters": typeof SpikesTableFiltersRoute;
   "/artifacts/": typeof ArtifactsIndexRoute;
   "/jobs/": typeof JobsIndexRoute;
   "/profile/": typeof ProfileIndexRoute;
@@ -235,6 +253,7 @@ export interface FileRouteTypes {
     | "/"
     | "/artifacts"
     | "/dashboard"
+    | "/discovery"
     | "/jobs"
     | "/pipelines"
     | "/preferences"
@@ -247,6 +266,7 @@ export interface FileRouteTypes {
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
+    | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
     | "/profile/"
@@ -260,6 +280,7 @@ export interface FileRouteTypes {
   to:
     | "/"
     | "/dashboard"
+    | "/discovery"
     | "/pipelines"
     | "/preferences"
     | "/activity/$eventId"
@@ -268,6 +289,7 @@ export interface FileRouteTypes {
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
+    | "/spikes/table-filters"
     | "/artifacts"
     | "/jobs"
     | "/profile"
@@ -282,6 +304,7 @@ export interface FileRouteTypes {
     | "/"
     | "/artifacts"
     | "/dashboard"
+    | "/discovery"
     | "/jobs"
     | "/pipelines"
     | "/preferences"
@@ -294,6 +317,7 @@ export interface FileRouteTypes {
     | "/profile/import"
     | "/runs/$runId"
     | "/settings/credentials"
+    | "/spikes/table-filters"
     | "/artifacts/"
     | "/jobs/"
     | "/profile/"
@@ -309,6 +333,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
   ArtifactsRoute: typeof ArtifactsRouteWithChildren;
   DashboardRoute: typeof DashboardRoute;
+  DiscoveryRoute: typeof DiscoveryRoute;
   JobsRoute: typeof JobsRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
   PreferencesRoute: typeof PreferencesRoute;
@@ -316,6 +341,7 @@ export interface RootRouteChildren {
   RunsRoute: typeof RunsRouteWithChildren;
   SettingsRoute: typeof SettingsRouteWithChildren;
   ActivityEventIdRoute: typeof ActivityEventIdRoute;
+  SpikesTableFiltersRoute: typeof SpikesTableFiltersRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -360,6 +386,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs";
       fullPath: "/jobs";
       preLoaderRoute: typeof JobsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/discovery": {
+      id: "/discovery";
+      path: "/discovery";
+      fullPath: "/discovery";
+      preLoaderRoute: typeof DiscoveryRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/dashboard": {
@@ -417,6 +450,13 @@ declare module "@tanstack/react-router" {
       fullPath: "/artifacts/";
       preLoaderRoute: typeof ArtifactsIndexRouteImport;
       parentRoute: typeof ArtifactsRoute;
+    };
+    "/spikes/table-filters": {
+      id: "/spikes/table-filters";
+      path: "/spikes/table-filters";
+      fullPath: "/spikes/table-filters";
+      preLoaderRoute: typeof SpikesTableFiltersRouteImport;
+      parentRoute: typeof rootRouteImport;
     };
     "/settings/credentials": {
       id: "/settings/credentials";
@@ -588,6 +628,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRouteWithChildren,
   DashboardRoute: DashboardRoute,
+  DiscoveryRoute: DiscoveryRoute,
   JobsRoute: JobsRouteWithChildren,
   PipelinesRoute: PipelinesRoute,
   PreferencesRoute: PreferencesRoute,
@@ -595,6 +636,7 @@ const rootRouteChildren: RootRouteChildren = {
   RunsRoute: RunsRouteWithChildren,
   SettingsRoute: SettingsRouteWithChildren,
   ActivityEventIdRoute: ActivityEventIdRoute,
+  SpikesTableFiltersRoute: SpikesTableFiltersRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

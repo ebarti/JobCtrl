@@ -11,5 +11,6 @@ export function useJobDetailQuery(jobId: JobId): UseQueryResult<JobDetail> {
   return useQuery({
     queryKey: jobsKeys.detail(tenantId, jobId),
     queryFn: () => api.job(jobId),
+    meta: { suppressGlobalErrorToast: true },
   });
 }

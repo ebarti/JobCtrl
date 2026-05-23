@@ -265,6 +265,126 @@ def test_jobspy_rejects_same_content_location_variants(tmp_path):
         assert link["surviving_job_id"] == "https://www.linkedin.com/jobs/view/4416248661"
         assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4416235850"
         assert link["reason"] == "content_fingerprint_match"
+        observation = conn.execute(
+            "SELECT source_id FROM job_source_observations WHERE job_url = ?",
+            ("https://www.linkedin.com/jobs/view/4416248661",),
+        ).fetchone()
+        assert observation["source_id"] == "jobspy:linkedin"
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_content_dedupe_normalizes_typographic_punctuation(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    curly_description = "Own Vonage\u2019s platform services and partner APIs. " * 8
+    straight_description = "Own Vonage's platform services and partner APIs. " * 8
+    try:
+        first = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://es.indeed.com/viewjob?jk=curly",
+                    "title": "Director, Product Management (BSS/Platform Services)",
+                    "company": "Vonage",
+                    "location": "Spain",
+                    "site": "indeed",
+                    "description": curly_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, first, "Product", limit=10) == (1, 0)
+
+        duplicate = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://es.indeed.com/viewjob?jk=straight",
+                    "title": "Director, Product Management (BSS/Platform Services)",
+                    "company": "Vonage",
+                    "location": "Madrid, Spain",
+                    "site": "indeed",
+                    "description": straight_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, duplicate, "Product", limit=10) == (0, 1)
+        assert conn.execute("SELECT COUNT(*) FROM jobs WHERE company = 'Vonage'").fetchone()[0] == 1
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    description = "Own product platforms, billing, service delivery, and API lifecycle. " * 8
+    survivor_url = "https://es.indeed.com/viewjob?jk=canonical"
+    duplicate_url = "https://es.indeed.com/viewjob?jk=duplicate"
+    try:
+        first = pd.DataFrame(
+            [
+                {
+                    "job_url": survivor_url,
+                    "title": "Director, Product Management (BSS/Platform Services)",
+                    "company": "Vonage",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                    "description": description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, first, "Product", limit=10) == (1, 0)
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                url, title, company, location, site, strategy, discovered_at,
+                description, full_description, detail_scraped_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                duplicate_url,
+                "Director, Product Management (BSS/Platform Services)",
+                "Vonage",
+                "Madrid, Spain",
+                "indeed",
+                "jobspy",
+                "2026-05-21T10:00:00+00:00",
+                description,
+                description,
+                "2026-05-21T10:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            VALUES (?, ?, ?, NULL)
+            """,
+            (duplicate_url, "2026-05-21T11:00:00+00:00", "content duplicate"),
+        )
+        conn.commit()
+
+        rediscovered = pd.DataFrame(
+            [
+                {
+                    "job_url": duplicate_url,
+                    "title": "Director, Product Management (BSS/Platform Services)",
+                    "company": "Vonage",
+                    "location": "Madrid, Spain",
+                    "site": "indeed",
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, rediscovered, "Product", limit=10) == (0, 1)
+
+        tombstone = conn.execute(
+            "SELECT restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
+            (duplicate_url,),
+        ).fetchone()
+        assert tombstone["restored_at"] is None
+        link = conn.execute(
+            "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
+        ).fetchone()
+        assert link["surviving_job_id"] == survivor_url
+        assert link["superseded_job_or_observation_id"] == duplicate_url
+        assert link["reason"] == "content_fingerprint_match"
     finally:
         close_connection(db_path)
 

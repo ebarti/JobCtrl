@@ -52,6 +52,14 @@ MAX_ATTEMPTS: dict[str, int | None] = {
 
 ORPHANED_RUNNING_STAGE_GRACE_SECONDS = 150
 ORPHAN_RECOVERY_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_ORDER if stage != "apply")
+_DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "enrich": (("score", ("Enrichment has not completed.",)),),
+    "score": (("tailor", ("score has not completed.",)),),
+    "tailor": (
+        ("cover", ("tailor has not completed.",)),
+        ("pdf", ("tailor has not completed.",)),
+    ),
+}
 
 
 def utc_now() -> str:
@@ -299,6 +307,88 @@ def set_stage_state(
         )
         raise OptimisticLockError(job_url, expected_version, actual or 0)
 
+    if state == "succeeded":
+        reconcile_dependency_blockers(conn, job_url=job_url, completed_stage=stage, now=now)
+
+
+def reconcile_dependency_blockers(
+    conn,
+    *,
+    job_url: str | None = None,
+    completed_stage: str | None = None,
+    now: str | None = None,
+) -> int:
+    """Unblock stale downstream stages after their upstream stage succeeds.
+
+    Historical backfills and older runners could leave rows such as
+    ``tailor = blocked / "score has not completed."`` in place after the
+    score stage later succeeded.  The stage-state table is the canonical
+    source of truth, so repair that source directly instead of special-casing
+    the read model.
+    """
+    if completed_stage is not None and completed_stage not in _DEPENDENCY_BLOCKER_MESSAGES:
+        return 0
+
+    completed_stages = (
+        (completed_stage,)
+        if completed_stage is not None
+        else tuple(_DEPENDENCY_BLOCKER_MESSAGES)
+    )
+    updated_at = now or utc_now()
+    repaired = 0
+    for upstream in completed_stages:
+        for downstream, messages in _DEPENDENCY_BLOCKER_MESSAGES[upstream]:
+            message_placeholders = ", ".join("?" for _ in messages)
+            params: list[Any] = [downstream, *messages]
+            job_filter = ""
+            if job_url is not None:
+                job_filter = "AND downstream.job_url = ?"
+                params.append(job_url)
+            params.append(upstream)
+            rows = conn.execute(
+                f"""
+                SELECT downstream.job_url, downstream.stage, downstream.attempt_count
+                  FROM job_stage_states AS downstream
+                 WHERE downstream.stage = ?
+                   AND downstream.state = 'blocked'
+                   AND downstream.error_code = 'BLOCKED'
+                   AND downstream.error_message IN ({message_placeholders})
+                   {job_filter}
+                   AND EXISTS (
+                       SELECT 1
+                         FROM job_stage_states AS upstream
+                        WHERE upstream.job_url = downstream.job_url
+                          AND upstream.stage = ?
+                          AND upstream.state = 'succeeded'
+                   )
+                """,
+                params,
+            ).fetchall()
+            for row in rows:
+                blocked_job_url = str(row["job_url"])
+                set_stage_state(
+                    conn,
+                    blocked_job_url,
+                    downstream,
+                    "pending",
+                    attempt_count=int(row["attempt_count"] or 0),
+                )
+                record_job_event(
+                    conn,
+                    blocked_job_url,
+                    downstream,
+                    "StageReset",
+                    message=f"{downstream} unblocked after {upstream} completed.",
+                    occurred_at=updated_at,
+                    payload={
+                        "reason": "upstream_completed",
+                        "upstreamStage": upstream,
+                        "downstreamStage": downstream,
+                    },
+                )
+                repaired += 1
+    return repaired
+
 
 def recover_orphaned_running_stages(
     conn,
@@ -327,10 +417,11 @@ def recover_orphaned_running_stages(
     placeholders = ", ".join("?" for _ in recovery_stages)
     rows = conn.execute(
         f"""
-        SELECT job_url, stage, attempt_count, started_at, updated_at
-        FROM job_stage_states
-        WHERE state = 'running'
-          AND stage IN ({placeholders})
+        SELECT s.job_url, s.stage, s.attempt_count, s.started_at, s.updated_at
+        FROM job_stage_states s
+        JOIN jobs j ON j.url = s.job_url
+        WHERE s.state = 'running'
+          AND s.stage IN ({placeholders})
         """,
         recovery_stages,
     ).fetchall()

@@ -26,6 +26,7 @@ import pytest
 
 from jobhunter.database import get_connection, init_db
 from jobhunter.infrastructure.materials import SqliteMaterialsRepository
+from jobhunter.infrastructure.profile import factory as profile_factory
 from jobhunter.state import set_stage_state, ensure_job_stage_rows
 
 
@@ -67,6 +68,35 @@ def test_thread_local_sqlite_connection_isolation(db: sqlite3.Connection) -> Non
         "worker thread must get its own SQLite connection — a shared "
         "main-thread conn would crash with ProgrammingError"
     )
+
+
+def test_profile_repository_cache_is_thread_local(tmp_path: Path, monkeypatch) -> None:
+    """The profile repository also owns a SQLite connection.
+
+    A process-wide profile repository singleton is enough to reintroduce
+    the tailor-stage crash: Temporal activities run the sync pipeline in
+    executor threads, so a repository first created elsewhere cannot be
+    reused safely inside the activity worker thread.
+    """
+
+    monkeypatch.setattr(profile_factory.config, "PROFILE_PATH", tmp_path / "profile.json")
+    profile_factory.reset_profile_repository()
+
+    main_repo = profile_factory.get_profile_repository()
+    main_repo.load("local")
+    main_repo_id = id(main_repo)
+    main_conn_id = id(main_repo._conn)  # type: ignore[attr-defined]
+
+    def worker_gets_own_repo() -> tuple[int, int]:
+        worker_repo = profile_factory.get_profile_repository()
+        worker_repo.load("local")
+        return id(worker_repo), id(worker_repo._conn)  # type: ignore[attr-defined]
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        worker_repo_id, worker_conn_id = executor.submit(worker_gets_own_repo).result()
+
+    assert worker_repo_id != main_repo_id
+    assert worker_conn_id != main_conn_id
 
 
 def test_failed_to_running_transition_skips_validation(

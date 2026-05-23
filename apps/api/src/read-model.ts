@@ -84,6 +84,7 @@ interface JobListProjectionRow extends Record<string, unknown> {
   title: string;
   employer: string;
   source: string;
+  discovery_source: string;
   strategy: string;
   location: string;
   salary: string;
@@ -392,6 +393,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
+    discoverySource: displayDiscoverySource(row.discovery_source, row.strategy, row.source),
     strategy: row.strategy ?? "",
     location: normalizeJobLocation(row.location),
     salary: row.salary ?? "",
@@ -826,8 +828,9 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
     params.push(query.state);
   }
   if (query.source) {
-    clauses.push("LOWER(source) LIKE ?");
-    params.push(`%${query.source.toLowerCase()}%`);
+    clauses.push(`(LOWER(source) LIKE ? OR LOWER(${discoverySourceSqlExpression(db)}) LIKE ?)`);
+    const normalizedSource = `%${query.source.toLowerCase()}%`;
+    params.push(normalizedSource, normalizedSource);
   }
   if (query.company) {
     clauses.push("LOWER(employer) LIKE ?");
@@ -886,8 +889,54 @@ function jobProjectionSelect(db: SqliteDatabase): string {
        NULL AS score_stale_new_policy_version,
        NULL AS score_stale_marked_at`;
   return `job_list_projections.*,
+          ${discoverySourceSqlExpression(db)} AS discovery_source,
           ${hiddenSelect},
           ${stalenessSelect}`;
+}
+
+function discoverySourceFallback(strategy: string | null | undefined, source: string | null | undefined): string {
+  const normalizedStrategy = String(strategy ?? "").trim();
+  const normalizedSource = String(source ?? "").trim();
+  if (normalizedStrategy === "jobspy" && normalizedSource) {
+    return `jobspy:${normalizedSource.toLowerCase()}`;
+  }
+  return normalizedStrategy || "";
+}
+
+function displayDiscoverySource(
+  discoverySource: string | null | undefined,
+  strategy: string | null | undefined,
+  source: string | null | undefined,
+): string {
+  const observed = String(discoverySource ?? "").trim();
+  if (observed && !(strategy === "jobspy" && !observed.includes(":"))) {
+    return observed;
+  }
+  return discoverySourceFallback(strategy, observed || source);
+}
+
+function discoverySourceFallbackSql(): string {
+  return "CASE WHEN strategy = 'jobspy' AND source != '' THEN 'jobspy:' || LOWER(source) ELSE strategy END";
+}
+
+function discoverySourceSqlExpression(db: SqliteDatabase): string {
+  const observationSelect = tableExists(db, "job_source_observations") ? latestSourceObservationSql() : "NULL";
+  return `CASE
+            WHEN strategy = 'jobspy'
+             AND COALESCE(${observationSelect}, '') != ''
+             AND INSTR(${observationSelect}, ':') = 0
+              THEN 'jobspy:' || LOWER(${observationSelect})
+            ELSE COALESCE(${observationSelect}, ${discoverySourceFallbackSql()})
+          END`;
+}
+
+function latestSourceObservationSql(): string {
+  return `(SELECT o.source_id
+             FROM job_source_observations o
+            WHERE o.tenant_id = job_list_projections.tenant_id
+              AND o.job_url = job_list_projections.job_id
+            ORDER BY o.observed_at DESC, o.source_observation_id DESC
+            LIMIT 1)`;
 }
 
 function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
@@ -918,14 +967,27 @@ function countJobProjections(
 function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
   if (query.stage && job.currentStage !== query.stage) return false;
   if (query.state && job.currentState !== query.state) return false;
-  if (query.source && !job.source.toLowerCase().includes(query.source.toLowerCase())) return false;
+  if (
+    query.source &&
+    ![job.source, job.discoverySource].some((source) => source.toLowerCase().includes(query.source.toLowerCase()))
+  ) {
+    return false;
+  }
   if (query.company && !job.company.toLowerCase().includes(query.company.toLowerCase())) return false;
   if (query.minFitScore !== undefined && (job.fitScore ?? -1) < query.minFitScore) return false;
   if (query.maxFitScore !== undefined && (job.fitScore ?? 999) > query.maxFitScore) return false;
   if (!normalizedQuery) return true;
-  return [job.title, job.company, job.url, job.location, job.strategy, job.currentStage, job.currentState].some((value) =>
-    value.toLowerCase().includes(normalizedQuery),
-  );
+  return [
+    job.title,
+    job.company,
+    job.url,
+    job.location,
+    job.source,
+    job.discoverySource,
+    job.strategy,
+    job.currentStage,
+    job.currentState,
+  ].some((value) => value.toLowerCase().includes(normalizedQuery));
 }
 
 function compareJobs(left: JobSummary, right: JobSummary, field: string, direction: "asc" | "desc"): number {
@@ -1017,11 +1079,12 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
   const hideHiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
     ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
     : "";
-  const hiddenClauses = [
+  const activityClauses = [
+    "(e.job_url IS NULL OR e.job_url = '' OR jp.job_id IS NOT NULL)",
     tableExists(db, "jobhunter_deleted_jobs") ? "d.job_url IS NULL" : "",
     tableExists(db, "jobhunter_hidden_jobs") ? "h.job_url IS NULL" : "",
   ].filter(Boolean);
-  const hiddenWhere = hiddenClauses.length ? `WHERE ${hiddenClauses.join(" AND ")}` : "";
+  const activityWhere = `WHERE ${activityClauses.join(" AND ")}`;
   const sql = `
     SELECT
       e.event_id,
@@ -1037,7 +1100,7 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
     ${hideDeletedJoin}
     ${hideHiddenJoin}
-    ${hiddenWhere}
+    ${activityWhere}
     ORDER BY e.occurred_at DESC, e.event_id DESC
     LIMIT 20`;
   return allRows<Record<string, unknown>>(db, sql, [DEFAULT_TENANT]).map((row) => ({
