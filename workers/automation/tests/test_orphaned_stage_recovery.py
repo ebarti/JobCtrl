@@ -121,5 +121,24 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
         assert event["level"] == "error"
         assert "marked failed for retry" in event["message"]
         assert "ORPHANED_STAGE_RUN" in event["payload_json"]
+
+        metric = conn.execute(
+            """
+            SELECT stage, attempt_kind, outcome, failure_category,
+                   is_operational_failure, is_scrape_failure, is_retryable,
+                   job_url, error_class
+            FROM operational_attempt_metrics
+            WHERE job_url = ? AND stage = 'score'
+            ORDER BY metric_id DESC LIMIT 1
+            """,
+            (old_score_url,),
+        ).fetchone()
+        assert metric["attempt_kind"] == "orphan_recovery"
+        assert metric["outcome"] == "failed"
+        assert metric["failure_category"] == "orphaned_stage_run"
+        assert metric["is_operational_failure"] == 1
+        assert metric["is_scrape_failure"] == 0
+        assert metric["is_retryable"] == 1
+        assert metric["error_class"] == "ORPHANED_STAGE_RUN"
     finally:
         close_connection(db_path)

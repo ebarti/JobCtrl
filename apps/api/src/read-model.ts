@@ -199,6 +199,45 @@ interface SourceQualityProjectionRow extends Record<string, unknown> {
   updated_at: string | null;
 }
 
+interface OperationalMetricRow extends Record<string, unknown> {
+  metric_id: number;
+  stage: string;
+  source_id: string | null;
+  source_kind: string | null;
+  source_priority: string | null;
+  source_role: string | null;
+  adapter: string | null;
+  outcome: string;
+  failure_category: string | null;
+  is_operational_failure: number;
+  is_scrape_failure: number;
+  is_retryable: number;
+  run_id: string | null;
+  duration_ms: number | null;
+  error_class: string | null;
+}
+
+interface OperationalRollup {
+  key: string;
+  stage: string;
+  sourceId: string | null;
+  adapter: string | null;
+  sourceKind: string | null;
+  sourcePriority: string | null;
+  sourceRole: string | null;
+  attempts: number;
+  failures: number;
+  operationalFailures: number;
+  scrapeFailures: number;
+  retryableFailures: number;
+  durationTotal: number;
+  durationSamples: number;
+  lastOutcome: string | null;
+  lastFailureCategory: string | null;
+  lastErrorClass: string | null;
+  lastRunId: string | null;
+}
+
 const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   discovered_at: "discovered_at",
   title: "LOWER(title)",
@@ -215,6 +254,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     [DEFAULT_TENANT],
   );
   const dashboard = dashboardRow ?? defaultDashboardRow();
+  const operationalMetrics = buildOperationalMetrics(db);
   return {
     ok: true,
     generatedAt: dashboard.generated_at || new Date().toISOString(),
@@ -229,6 +269,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     funnel: parseFunnel(dashboard.funnel_json),
     activity: recentActivity(db),
     sourceHealth: listSourceHealth(db),
+    operationalMetrics,
     applyRuns: recentApplyRuns(db),
   };
 }
@@ -676,8 +717,10 @@ function defaultDashboardRow(): DashboardProjectionRow {
 }
 
 function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] {
+  const operationalBySource = operationalSourceRollups(db);
+  const seen = new Set<string>();
   if (!tableExists(db, "source_quality_stats")) {
-    return [];
+    return [...operationalBySource.values()].map((source) => sourceRollupToHealth(source));
   }
   const rows = allRows<SourceQualityProjectionRow>(
     db,
@@ -692,23 +735,197 @@ function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] 
      ORDER BY recommended_state DESC, observed_jobs DESC, source_id ASC`,
     [DEFAULT_TENANT],
   );
-  return rows.map((row) => ({
+  const sourceHealth = rows.map((row) => {
+    seen.add(row.source_id);
+    const operational = operationalBySource.get(row.source_id);
+    return {
+      sourceId: row.source_id,
+      recommendedState: row.recommended_state || "normal",
+      runCount: Number(row.run_count ?? 0),
+      failedRunCount: Number(row.failed_run_count ?? 0),
+      consecutiveFailures: Number(row.consecutive_failures ?? 0),
+      observedJobs: Number(row.observed_jobs ?? 0),
+      newJobs: Number(row.new_jobs ?? 0),
+      existingJobs: Number(row.existing_jobs ?? 0),
+      duplicateRate: nullableNumber(row.duplicate_rate),
+      activeVerificationRate: nullableNumber(row.active_verification_rate),
+      fullDescriptionSuccessRate: nullableNumber(row.full_description_success_rate),
+      applyUrlSuccessRate: nullableNumber(row.apply_url_success_rate),
+      operationalFailureCount: operational?.operationalFailures ?? 0,
+      scrapeFailureCount: operational?.scrapeFailures ?? 0,
+      retryableFailureCount: operational?.retryableFailures ?? 0,
+      lastFailureCategory: operational?.lastFailureCategory ?? null,
+      lastRunId: row.last_run_id ?? operational?.lastRunId ?? null,
+      lastErrorClass: row.last_error_class ?? operational?.lastErrorClass ?? null,
+      updatedAt: row.updated_at,
+    };
+  });
+  for (const source of operationalBySource.values()) {
+    if (!source.sourceId || seen.has(source.sourceId)) continue;
+    sourceHealth.push(sourceRollupToHealth(source));
+  }
+  return sourceHealth;
+}
+
+function buildOperationalMetrics(db: SqliteDatabase): DashboardSummary["operationalMetrics"] {
+  const rows = operationalMetricRows(db);
+  const byStage = new Map<string, OperationalRollup>();
+  const bySource = new Map<string, OperationalRollup>();
+  let attempts = 0;
+  let failures = 0;
+  let operationalFailures = 0;
+  let scrapeFailures = 0;
+  let retryableFailures = 0;
+
+  for (const row of rows) {
+    attempts += 1;
+    if (isFailureMetric(row)) failures += 1;
+    if (truthyNumber(row.is_operational_failure)) operationalFailures += 1;
+    if (truthyNumber(row.is_scrape_failure)) scrapeFailures += 1;
+    if (isFailureMetric(row) && truthyNumber(row.is_retryable)) retryableFailures += 1;
+    addOperationalRollup(byStage, row.stage || "unknown", row);
+    if (row.source_id) addOperationalRollup(bySource, row.source_id, row);
+  }
+
+  return {
+    attempts,
+    failures,
+    operationalFailures,
+    scrapeFailures,
+    retryableFailures,
+    byStage: [...byStage.values()].map((item) => rollupToStageMetric(item)),
+    bySource: [...bySource.values()].map((item) => rollupToSourceMetric(item)),
+  };
+}
+
+function operationalSourceRollups(db: SqliteDatabase): Map<string, OperationalRollup> {
+  const rollups = new Map<string, OperationalRollup>();
+  for (const row of operationalMetricRows(db)) {
+    if (row.source_id) addOperationalRollup(rollups, row.source_id, row);
+  }
+  return rollups;
+}
+
+function operationalMetricRows(db: SqliteDatabase): OperationalMetricRow[] {
+  if (!tableExists(db, "operational_attempt_metrics")) return [];
+  return allRows<OperationalMetricRow>(
+    db,
+    `SELECT metric_id, stage, source_id, source_kind, source_priority,
+            source_role, adapter, outcome, failure_category,
+            is_operational_failure, is_scrape_failure, is_retryable,
+            run_id, duration_ms, error_class
+     FROM operational_attempt_metrics
+     WHERE tenant_id = ? AND outcome != 'started'
+     ORDER BY occurred_at ASC, metric_id ASC`,
+    [DEFAULT_TENANT],
+  );
+}
+
+function addOperationalRollup(map: Map<string, OperationalRollup>, key: string, row: OperationalMetricRow): void {
+  const current = map.get(key) ?? {
+    key,
+    stage: row.stage || "unknown",
     sourceId: row.source_id,
-    recommendedState: row.recommended_state || "normal",
-    runCount: Number(row.run_count ?? 0),
-    failedRunCount: Number(row.failed_run_count ?? 0),
-    consecutiveFailures: Number(row.consecutive_failures ?? 0),
-    observedJobs: Number(row.observed_jobs ?? 0),
-    newJobs: Number(row.new_jobs ?? 0),
-    existingJobs: Number(row.existing_jobs ?? 0),
-    duplicateRate: nullableNumber(row.duplicate_rate),
-    activeVerificationRate: nullableNumber(row.active_verification_rate),
-    fullDescriptionSuccessRate: nullableNumber(row.full_description_success_rate),
-    applyUrlSuccessRate: nullableNumber(row.apply_url_success_rate),
-    lastRunId: row.last_run_id,
-    lastErrorClass: row.last_error_class,
-    updatedAt: row.updated_at,
-  }));
+    adapter: row.adapter,
+    sourceKind: row.source_kind,
+    sourcePriority: row.source_priority,
+    sourceRole: row.source_role,
+    attempts: 0,
+    failures: 0,
+    operationalFailures: 0,
+    scrapeFailures: 0,
+    retryableFailures: 0,
+    durationTotal: 0,
+    durationSamples: 0,
+    lastOutcome: null,
+    lastFailureCategory: null,
+    lastErrorClass: null,
+    lastRunId: null,
+  };
+  current.attempts += 1;
+  if (isFailureMetric(row)) current.failures += 1;
+  if (truthyNumber(row.is_operational_failure)) current.operationalFailures += 1;
+  if (truthyNumber(row.is_scrape_failure)) current.scrapeFailures += 1;
+  if (isFailureMetric(row) && truthyNumber(row.is_retryable)) current.retryableFailures += 1;
+  if (row.duration_ms !== null && row.duration_ms !== undefined) {
+    current.durationTotal += Number(row.duration_ms);
+    current.durationSamples += 1;
+  }
+  current.lastOutcome = row.outcome;
+  current.lastRunId = row.run_id ?? current.lastRunId;
+  current.adapter = row.adapter ?? current.adapter;
+  current.sourceKind = row.source_kind ?? current.sourceKind;
+  current.sourcePriority = row.source_priority ?? current.sourcePriority;
+  current.sourceRole = row.source_role ?? current.sourceRole;
+  if (isFailureMetric(row)) {
+    current.lastFailureCategory = row.failure_category;
+    current.lastErrorClass = row.error_class;
+  }
+  map.set(key, current);
+}
+
+function rollupToStageMetric(item: OperationalRollup): DashboardSummary["operationalMetrics"]["byStage"][number] {
+  return {
+    stage: item.stage,
+    attempts: item.attempts,
+    failures: item.failures,
+    operationalFailures: item.operationalFailures,
+    scrapeFailures: item.scrapeFailures,
+    retryableFailures: item.retryableFailures,
+    avgDurationMs: averageDuration(item),
+    lastOutcome: item.lastOutcome,
+    lastFailureCategory: item.lastFailureCategory,
+    lastErrorClass: item.lastErrorClass,
+  };
+}
+
+function rollupToSourceMetric(item: OperationalRollup): DashboardSummary["operationalMetrics"]["bySource"][number] {
+  return {
+    ...rollupToStageMetric(item),
+    sourceId: item.sourceId || item.key,
+    adapter: item.adapter,
+    sourceKind: item.sourceKind,
+    sourcePriority: item.sourcePriority,
+    sourceRole: item.sourceRole,
+    lastRunId: item.lastRunId,
+  };
+}
+
+function sourceRollupToHealth(source: OperationalRollup): DashboardSummary["sourceHealth"][number] {
+  return {
+    sourceId: source.sourceId || source.key,
+    recommendedState: "normal",
+    runCount: source.attempts,
+    failedRunCount: source.failures,
+    consecutiveFailures: source.lastOutcome === "failed" ? source.failures : 0,
+    observedJobs: 0,
+    newJobs: 0,
+    existingJobs: 0,
+    duplicateRate: null,
+    activeVerificationRate: null,
+    fullDescriptionSuccessRate: null,
+    applyUrlSuccessRate: null,
+    operationalFailureCount: source.operationalFailures,
+    scrapeFailureCount: source.scrapeFailures,
+    retryableFailureCount: source.retryableFailures,
+    lastFailureCategory: source.lastFailureCategory,
+    lastRunId: source.lastRunId,
+    lastErrorClass: source.lastErrorClass,
+    updatedAt: null,
+  };
+}
+
+function averageDuration(item: OperationalRollup): number | null {
+  if (item.durationSamples === 0) return null;
+  return Math.round(item.durationTotal / item.durationSamples);
+}
+
+function isFailureMetric(row: OperationalMetricRow): boolean {
+  return row.outcome === "failed" || row.outcome === "partial_failed";
+}
+
+function truthyNumber(value: unknown): boolean {
+  return Number(value ?? 0) !== 0;
 }
 
 function parseStages(stagesJson: string | undefined): StageSummary[] {

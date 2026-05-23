@@ -233,6 +233,50 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS operational_attempt_metrics (
+            metric_id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id               TEXT NOT NULL DEFAULT 'local',
+            occurred_at             TEXT NOT NULL,
+            stage                   TEXT NOT NULL,
+            source_id               TEXT,
+            source_kind             TEXT,
+            source_priority         TEXT,
+            source_role             TEXT,
+            adapter                 TEXT,
+            attempt_kind            TEXT NOT NULL,
+            outcome                 TEXT NOT NULL,
+            failure_category        TEXT,
+            is_operational_failure  INTEGER NOT NULL DEFAULT 0,
+            is_scrape_failure       INTEGER NOT NULL DEFAULT 0,
+            is_retryable            INTEGER NOT NULL DEFAULT 1,
+            run_id                  TEXT,
+            job_url                 TEXT,
+            duration_ms             INTEGER,
+            total_count             INTEGER,
+            new_count               INTEGER,
+            existing_count          INTEGER,
+            observed_count          INTEGER,
+            duplicate_count         INTEGER,
+            error_class             TEXT,
+            error_message           TEXT,
+            metadata_json           TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_operational_attempt_metrics_stage_time
+        ON operational_attempt_metrics(tenant_id, stage, occurred_at DESC, metric_id DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_operational_attempt_metrics_source_time
+        ON operational_attempt_metrics(tenant_id, source_id, occurred_at DESC, metric_id DESC)
+        """
+    )
     score_evidence_schema_changed = False
     for table_name, column_name, definition in SCORE_EVIDENCE_COLUMNS:
         score_evidence_schema_changed = (

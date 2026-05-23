@@ -49,6 +49,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Stages cannot be retried individually | `workers/automation/tests/test_state_dashboard.py` |
 | Explicit stage state loses to legacy columns | `workers/automation/tests/test_state_dashboard.py` |
 | Pipeline actions write events to a different DB, hide running stages, or ignore bounded stage limits | `apps/api/test/server.test.ts`; `apps/api/test/json-rpc-adapter.test.ts`; `workers/automation/tests/test_runtime_identity.py`; `workers/automation/tests/test_jsonrpc_handlers.py`; `workers/automation/tests/test_rpc_handlers_apply_workflow.py`; `workers/automation/tests/test_pipeline_observability.py`; `apps/web/src/contexts/pipeline/components/StageTriggerPanel.test.tsx`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
+| Operational metrics collapse scraper, manual abort, reload, orphan cleanup, harness, and unknown failures into one failed status | `workers/automation/tests/test_operational_metrics.py`; `workers/automation/tests/test_orphaned_stage_recovery.py`; `apps/api/test/projections.test.ts` |
 | PDF conversion publishes stray files | `workers/automation/tests/test_pdf_targets.py` |
 | Cover letters use the wrong resume | `workers/automation/tests/test_cover_requirements.py` |
 | Profile PDF import corrupts defaults | `workers/automation/tests/test_profile_import.py` |

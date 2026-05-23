@@ -23,6 +23,7 @@ from jobhunter.domain.pipeline.state_machine import is_valid_transition
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.domain.pipeline_types import deserialize_stage_state_kind
+from jobhunter.operational_metrics import record_operational_attempt_metric
 
 log = logging.getLogger(__name__)
 
@@ -472,6 +473,20 @@ def recover_orphaned_running_stages(
                 "recoveredAt": recovered_at_iso,
                 "previousUpdatedAt": row["updated_at"],
             },
+        )
+        record_operational_attempt_metric(
+            conn,
+            stage=stage,
+            attempt_kind="orphan_recovery",
+            outcome="failed",
+            job_url=job_url,
+            error_class="ORPHANED_STAGE_RUN",
+            error_message=message,
+            is_operational_failure=True,
+            is_scrape_failure=False,
+            is_retryable=True,
+            occurred_at=recovered_at_iso,
+            metadata={"previousUpdatedAt": row["updated_at"]},
         )
         recovered += 1
 

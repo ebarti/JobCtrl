@@ -116,6 +116,34 @@ function seedSchema(dbPath: string): void {
       trace_json TEXT NOT NULL DEFAULT '{}',
       PRIMARY KEY (job_url, version)
     );
+    CREATE TABLE operational_attempt_metrics (
+      metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      occurred_at TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      source_id TEXT,
+      source_kind TEXT,
+      source_priority TEXT,
+      source_role TEXT,
+      adapter TEXT,
+      attempt_kind TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      failure_category TEXT,
+      is_operational_failure INTEGER NOT NULL DEFAULT 0,
+      is_scrape_failure INTEGER NOT NULL DEFAULT 0,
+      is_retryable INTEGER NOT NULL DEFAULT 1,
+      run_id TEXT,
+      job_url TEXT,
+      duration_ms INTEGER,
+      total_count INTEGER,
+      new_count INTEGER,
+      existing_count INTEGER,
+      observed_count INTEGER,
+      duplicate_count INTEGER,
+      error_class TEXT,
+      error_message TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}'
+    );
   `);
   db.prepare(
     "INSERT INTO jobs (url, title, site, fit_score, score_reasoning, application_url) VALUES (?, ?, ?, ?, ?, ?)",
@@ -210,6 +238,71 @@ function insertEvent(
   db.prepare(
     "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(null, "discover", eventType, "info", eventType, occurredAt, JSON.stringify(payload));
+  db.close();
+}
+
+function insertOperationalMetric(
+  dbPath: string,
+  values: {
+    stage: string;
+    attemptKind: string;
+    outcome: string;
+    occurredAt: string;
+    sourceId?: string | null;
+    sourceKind?: string | null;
+    sourcePriority?: string | null;
+    sourceRole?: string | null;
+    adapter?: string | null;
+    failureCategory?: string | null;
+    operationalFailure?: boolean;
+    scrapeFailure?: boolean;
+    retryable?: boolean;
+    runId?: string | null;
+    durationMs?: number | null;
+    totalCount?: number | null;
+    newCount?: number | null;
+    existingCount?: number | null;
+    observedCount?: number | null;
+    duplicateCount?: number | null;
+    errorClass?: string | null;
+    errorMessage?: string | null;
+  },
+): void {
+  const db = new Database(dbPath);
+  db.prepare(
+    `INSERT INTO operational_attempt_metrics (
+      tenant_id, occurred_at, stage, source_id, source_kind, source_priority,
+      source_role, adapter, attempt_kind, outcome, failure_category,
+      is_operational_failure, is_scrape_failure, is_retryable, run_id,
+      duration_ms, total_count, new_count, existing_count, observed_count,
+      duplicate_count, error_class, error_message, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    values.occurredAt,
+    values.stage,
+    values.sourceId ?? null,
+    values.sourceKind ?? null,
+    values.sourcePriority ?? null,
+    values.sourceRole ?? null,
+    values.adapter ?? null,
+    values.attemptKind,
+    values.outcome,
+    values.failureCategory ?? null,
+    values.operationalFailure ? 1 : 0,
+    values.scrapeFailure ? 1 : 0,
+    values.retryable === false ? 0 : 1,
+    values.runId ?? null,
+    values.durationMs ?? null,
+    values.totalCount ?? null,
+    values.newCount ?? null,
+    values.existingCount ?? null,
+    values.observedCount ?? null,
+    values.duplicateCount ?? null,
+    values.errorClass ?? null,
+    values.errorMessage ?? null,
+    "{}",
+  );
   db.close();
 }
 
@@ -593,6 +686,129 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           lastRunId: "mixed-run",
           lastErrorClass: "TimeoutError",
         });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("exposes structured operational metrics without parsing free-text events", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "discovery_source",
+        outcome: "failed",
+        occurredAt: "2026-05-14T00:00:00Z",
+        sourceId: "jobspy:linkedin",
+        sourceKind: "broad_board",
+        sourcePriority: "lead_generator",
+        sourceRole: "lead_generator",
+        adapter: "jobspy",
+        failureCategory: "timeout",
+        operationalFailure: true,
+        scrapeFailure: true,
+        retryable: true,
+        runId: "run-jobspy-timeout",
+        durationMs: 1200,
+        observedCount: 3,
+        errorClass: "TimeoutError",
+        errorMessage: "Fetch timed out",
+      });
+      insertOperationalMetric(dbPath, {
+        stage: "discover",
+        attemptKind: "discovery_source",
+        outcome: "succeeded",
+        occurredAt: "2026-05-14T00:01:00Z",
+        sourceId: "workday:acme",
+        sourceKind: "ats_api",
+        sourcePriority: "canonical",
+        sourceRole: "canonical_source",
+        adapter: "workday",
+        runId: "run-workday-success",
+        durationMs: 400,
+        newCount: 1,
+        observedCount: 1,
+      });
+      insertOperationalMetric(dbPath, {
+        stage: "score",
+        attemptKind: "pipeline_stage",
+        outcome: "succeeded",
+        occurredAt: "2026-05-14T00:02:00Z",
+        durationMs: 80,
+        totalCount: 1,
+      });
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const res = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+        expect(res.statusCode, res.body).toBe(200);
+        const body = res.json();
+        expect(body.operationalMetrics).toMatchObject({
+          attempts: 3,
+          failures: 1,
+          operationalFailures: 1,
+          scrapeFailures: 1,
+          retryableFailures: 1,
+        });
+        expect(body.operationalMetrics.byStage).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              stage: "discover",
+              attempts: 2,
+              failures: 1,
+              scrapeFailures: 1,
+              lastFailureCategory: "timeout",
+              lastErrorClass: "TimeoutError",
+            }),
+            expect.objectContaining({
+              stage: "score",
+              attempts: 1,
+              failures: 0,
+              lastOutcome: "succeeded",
+            }),
+          ]),
+        );
+        expect(body.operationalMetrics.bySource).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              sourceId: "jobspy:linkedin",
+              adapter: "jobspy",
+              sourceRole: "lead_generator",
+              failures: 1,
+              scrapeFailures: 1,
+              lastRunId: "run-jobspy-timeout",
+            }),
+            expect.objectContaining({
+              sourceId: "workday:acme",
+              adapter: "workday",
+              sourceRole: "canonical_source",
+              failures: 0,
+              lastRunId: "run-workday-success",
+            }),
+          ]),
+        );
+        expect(body.sourceHealth).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              sourceId: "jobspy:linkedin",
+              operationalFailureCount: 1,
+              scrapeFailureCount: 1,
+              retryableFailureCount: 1,
+              lastFailureCategory: "timeout",
+              lastErrorClass: "TimeoutError",
+            }),
+          ]),
+        );
       } finally {
         await app.close();
       }
