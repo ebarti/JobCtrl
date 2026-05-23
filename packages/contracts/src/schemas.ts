@@ -574,6 +574,8 @@ export interface JobSummary {
   company: string;
   source: string;
   discoverySource: string;
+  postingSource: string;
+  postingSourceUrl: string | null;
   strategy: string;
   location: string;
   salary: string;

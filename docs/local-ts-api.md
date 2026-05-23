@@ -43,11 +43,13 @@ unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
 reset. `scoreReasoning` remains on the wire as a compatibility summary during
 the scoring evidence migration.
-Job summaries also include `discoverySource`, which is the observed source
-registry id when available and falls back to the discovery strategy/source pair
-for legacy rows. The jobs list accepts `minFitScore` and `maxFitScore` query
-parameters, and the same score bounds are accepted by all-matching bulk job
-mutations.
+Job summaries also include source provenance. `discoverySource` is the observed
+source registry id where the job was found and falls back to the discovery
+strategy/source pair for legacy rows. `postingSource` and `postingSourceUrl`
+come from canonical identity evidence when a broad-board result points at a
+known ATS or employer-owned posting. The jobs list accepts `minFitScore` and
+`maxFitScore` query parameters, and the same score bounds are accepted by
+all-matching bulk job mutations.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
@@ -106,6 +108,9 @@ metadata are visible as columns instead of compact badges:
   `GET /v1/discovery/manual-capture` expose the local review queues. Located
   parseable source candidates are auto-promoted into the active source registry;
   these queues are for blocked, ambiguous, unparseable, or legacy pending work.
+  JobSpy direct URLs feed this same loop: runnable ATS URLs are promoted into
+  the source registry, while unknown owner URLs or ATS URLs that still need
+  adapter configuration remain visible for review.
 - `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
   legacy source locator candidate into an active source registry entry and emits
   `SourceLocationCandidatePromoted`.

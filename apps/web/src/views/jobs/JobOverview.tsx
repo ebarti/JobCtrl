@@ -13,7 +13,8 @@ export function JobOverview({ detail }: JobOverviewProps) {
       <span>
         <small>
           {job.company}
-          {job.source && job.source !== job.company ? ` · source: ${job.source}` : ""}
+          {job.postingSource ? ` · posting: ${job.postingSource}` : ""}
+          {job.discoverySource ? ` · discovered via: ${job.discoverySource}` : ""}
         </small>
         <h2>{job.title}</h2>
         <p>

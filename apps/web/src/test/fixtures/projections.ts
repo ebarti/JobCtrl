@@ -46,6 +46,8 @@ export const sampleJob: JobSummary = {
   company: "Acme Corp",
   source: "Lever",
   discoverySource: "lever:acme",
+  postingSource: "lever:acme",
+  postingSourceUrl: "https://jobs.lever.co/acme/1",
   strategy: "ats:lever",
   location: "Remote (US)",
   salary: "$220k-$260k",

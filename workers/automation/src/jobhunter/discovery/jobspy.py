@@ -11,10 +11,11 @@ import logging
 import re
 import sqlite3
 import time
+import hashlib
 from datetime import datetime, timezone
 
 from jobhunter import config
-from jobhunter.database import get_connection, init_db, resurface_deleted_job
+from jobhunter.database import ensure_source_observation_tables, get_connection, init_db, resurface_deleted_job
 from jobhunter.domain.discovery.identity import normalize_observed_url
 from jobhunter.domain.job_content_identity import job_content_fingerprint, normalize_identity_text
 
@@ -148,7 +149,13 @@ def _location_ok(
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
 
 
-def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit: int = 0) -> tuple[int, int]:
+def store_jobspy_results(
+    conn: sqlite3.Connection,
+    df,
+    source_label: str,
+    limit: int = 0,
+    run_id: str = "jobspy",
+) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
@@ -195,8 +202,11 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
             full_description = description
             detail_scraped_at = now
 
-        # Extract apply URL if JobSpy provided it
-        apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
+        # Extract apply URL if JobSpy provided it. JobSpy's board URL remains
+        # the discovery observation; this direct URL can identify who owns the
+        # posting for future direct discovery.
+        apply_url = _nullable_str(row.get("job_url_direct"))
+        source_id = _jobspy_source_id(site_label)
 
         duplicate_url = _find_existing_content_duplicate(
             conn,
@@ -210,7 +220,22 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
                 conn,
                 surviving_url=duplicate_url,
                 duplicate_url=url,
-                source=_jobspy_source_id(site_label),
+                source=source_id,
+                observed_at=now,
+            )
+            _record_jobspy_source_observation(
+                conn,
+                job_url=duplicate_url,
+                observed_url=url,
+                source_id=source_id,
+                run_id=run_id,
+                observed_at=now,
+            )
+            _learn_posting_source(
+                conn,
+                job_url=duplicate_url,
+                posting_url=apply_url,
+                discovered_via_source_id=source_id,
                 observed_at=now,
             )
             resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
@@ -237,6 +262,21 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
                     detail_scraped_at,
                 ),
             )
+            _record_jobspy_source_observation(
+                conn,
+                job_url=url,
+                observed_url=url,
+                source_id=source_id,
+                run_id=run_id,
+                observed_at=now,
+            )
+            _learn_posting_source(
+                conn,
+                job_url=url,
+                posting_url=apply_url,
+                discovered_via_source_id=source_id,
+                observed_at=now,
+            )
             new += 1
         except sqlite3.IntegrityError:
             duplicate_url = _find_stored_content_duplicate_survivor(conn, url=url)
@@ -245,7 +285,22 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
                     conn,
                     surviving_url=duplicate_url,
                     duplicate_url=url,
-                    source=_jobspy_source_id(site_label),
+                    source=source_id,
+                    observed_at=now,
+                )
+                _record_jobspy_source_observation(
+                    conn,
+                    job_url=duplicate_url,
+                    observed_url=url,
+                    source_id=source_id,
+                    run_id=run_id,
+                    observed_at=now,
+                )
+                _learn_posting_source(
+                    conn,
+                    job_url=duplicate_url,
+                    posting_url=apply_url,
+                    discovered_via_source_id=source_id,
                     observed_at=now,
                 )
                 resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
@@ -268,6 +323,21 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
                         payload={"company": company, "source": site_label},
                         occurred_at=now,
                     )
+            _record_jobspy_source_observation(
+                conn,
+                job_url=url,
+                observed_url=url,
+                source_id=source_id,
+                run_id=run_id,
+                observed_at=now,
+            )
+            _learn_posting_source(
+                conn,
+                job_url=url,
+                posting_url=apply_url,
+                discovered_via_source_id=source_id,
+                observed_at=now,
+            )
             resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
@@ -276,8 +346,10 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
 
 
 def _nullable_str(value: object) -> str | None:
+    if value is None:
+        return None
     text = str(value).strip()
-    if not text or text == "nan":
+    if not text or text.casefold() in {"nan", "none", "nat", "<na>"}:
         return None
     return text
 
@@ -285,6 +357,112 @@ def _nullable_str(value: object) -> str | None:
 def _jobspy_source_id(source_label: str) -> str:
     slug = _SOURCE_SLUG_RE.sub("-", source_label.strip().lower()).strip("-")
     return f"jobspy:{slug or 'source'}"
+
+
+def _record_jobspy_source_observation(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    observed_url: str,
+    source_id: str,
+    run_id: str,
+    observed_at: str,
+) -> None:
+    ensure_source_observation_tables(conn)
+    normalized = normalize_observed_url(observed_url)
+    source_native_id = normalized or observed_url
+    observation_id = "jobspy:" + hashlib.sha256(
+        f"{source_id}:{source_native_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    updated = conn.execute(
+        """
+        UPDATE job_source_observations SET
+            source_observation_id = ?,
+            job_url = ?,
+            observed_url = ?,
+            normalized_observed_url = ?,
+            run_id = ?,
+            observed_at = ?
+        WHERE tenant_id = 'local' AND source_id = ? AND source_native_id = ?
+        """,
+        (observation_id, job_url, observed_url, normalized, run_id, observed_at, source_id, source_native_id),
+    )
+    if updated.rowcount == 0:
+        updated = conn.execute(
+            """
+            UPDATE job_source_observations SET
+                source_observation_id = ?,
+                job_url = ?,
+                source_id = ?,
+                source_native_id = ?,
+                observed_url = ?,
+                run_id = ?,
+                observed_at = ?
+            WHERE tenant_id = 'local' AND normalized_observed_url = ?
+            """,
+            (observation_id, job_url, source_id, source_native_id, observed_url, run_id, observed_at, normalized),
+        )
+    if updated.rowcount == 0:
+        conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id,
+                source_native_id, observed_url, normalized_observed_url,
+                run_id, observed_at
+            ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (observation_id, job_url, source_id, source_native_id, observed_url, normalized, run_id, observed_at),
+        )
+    from jobhunter.state import record_job_event
+
+    record_job_event(
+        conn,
+        job_url,
+        "discover",
+        "JobSourceObserved",
+        message="Job source observed.",
+        payload={
+            "tenantId": "local",
+            "job_id": job_url,
+            "jobId": job_url,
+            "source_observation_id": observation_id,
+            "sourceObservationId": observation_id,
+            "source_id": source_id,
+            "sourceId": source_id,
+            "source_native_id": source_native_id,
+            "sourceNativeId": source_native_id,
+            "observed_url": observed_url,
+            "observedUrl": observed_url,
+            "run_id": run_id,
+            "runId": run_id,
+            "observed_at": observed_at,
+            "observedAt": observed_at,
+        },
+        occurred_at=observed_at,
+    )
+
+
+def _learn_posting_source(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    posting_url: str | None,
+    discovered_via_source_id: str,
+    observed_at: str,
+) -> None:
+    if not posting_url:
+        return
+    from jobhunter.infrastructure.discovery.production_wiring import (
+        learn_posting_source_from_url,
+    )
+
+    learn_posting_source_from_url(
+        conn,
+        job_url=job_url,
+        posting_url=posting_url,
+        discovered_via_source_id=discovered_via_source_id,
+        observed_at=observed_at,
+    )
 
 
 def _find_existing_content_duplicate(
@@ -467,6 +645,7 @@ def _run_one_search(
     local_accept_locs: list[str],
     glassdoor_map: dict,
     limit: int = 0,
+    run_id: str = "jobspy",
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -576,7 +755,7 @@ def _run_one_search(
     filtered = location_filtered + title_filtered
 
     conn = get_connection()
-    new, existing = store_jobspy_results(conn, df, s["query"], limit=limit)
+    new, existing = store_jobspy_results(conn, df, s["query"], limit=limit, run_id=run_id)
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
     if location_filtered:
@@ -670,6 +849,7 @@ def _full_crawl(
     proxy: str | None = None,
     max_retries: int = 2,
     limit: int = 0,
+    run_id: str = "jobspy",
 ) -> dict:
     """Run all search queries from search config across all locations."""
     if sites is None:
@@ -732,6 +912,7 @@ def _full_crawl(
             local_accept_locs,
             glassdoor_map,
             limit=remaining if limit > 0 else 0,
+            run_id=run_id,
         )
         completed += 1
         total_new += result["new"]
@@ -779,7 +960,7 @@ def _full_crawl(
 # -- Public entry point ------------------------------------------------------
 
 
-def run_discovery(cfg: dict | None = None, limit: int = 0) -> dict:
+def run_discovery(cfg: dict | None = None, limit: int = 0, run_id: str | None = None) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
     Loads search queries and locations from the user's search config YAML,
@@ -815,4 +996,5 @@ def run_discovery(cfg: dict | None = None, limit: int = 0) -> dict:
         hours_old=hours_old,
         proxy=proxy,
         limit=limit,
+        run_id=run_id or "jobspy",
     )

@@ -311,9 +311,8 @@ The Vite dev server proxies `/v1/*` to the local API by default. Set
 `VITE_JOBHUNTER_API_BASE_URL` when the API runs on a different local origin.
 
 The Jobs tab can filter by stage, state, and fit-score range. Its source column
-shows the posting board first and the discovery source underneath when
-available, so broad-board results can be distinguished from canonical employer
-or ATS sources.
+shows the posting owner and the discovery source separately when available, so
+broad-board results can be distinguished from canonical employer or ATS sources.
 
 The Jobs tab separates temporary removal from permanent suppression. Deleting a
 job moves it to the Deleted tab; a later discovery run can resurface that job if
@@ -343,11 +342,16 @@ sources as a filterable, sortable table with company, source id, source type,
 state, priority, recommendation, activity, run health, and quality-metric
 columns. Located parseable sources are automatically approved into the active
 source registry; manual review is reserved for blocked, ambiguous, or
-unparseable sources. These controls can add an experimental source, preview
-recently observed leads for a source, enable or quarantine a source, approve or
-reject quarantined leads, record source feedback, open a blocked lead in the
-local browser, and import a user-provided URL, current-page URL, pasted text,
-saved HTML, or email content as manual-capture provenance. Manual capture
+unparseable sources. JobSpy broad-board results can also learn durable sources:
+when a result exposes a direct owner URL, JobHunter records the board
+provenance, links the job to the canonical posting URL, and promotes runnable
+ATS sources into the registry; unknown owner URLs and ATS URLs that still need
+adapter configuration stay in review. These controls can add an experimental
+source, preview recently observed leads for a source, enable or quarantine a
+source, approve or reject quarantined leads, record source feedback, open a
+blocked lead in the local browser, and import a user-provided URL, current-page
+URL, pasted text, saved HTML, or email content as manual-capture provenance.
+Manual capture
 stores local provenance metadata and content hashes, not raw captured posting
 text in domain events. The `limit`
 control is honored by every pipeline stage tab, including `discover` and `enrich`, so

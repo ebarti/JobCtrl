@@ -245,8 +245,8 @@ sequenceDiagram
     Runner->>Scheduler: plan(registry, source quality, global limit)
     Scheduler-->>Runner: DiscoverySchedule
 
-    Runner->>JobSpy: run_discovery(cfg, scheduled boards, limit)
-    JobSpy->>DB: insert jobs with strategy=jobspy
+    Runner->>JobSpy: run_discovery(cfg, scheduled boards, limit, run_id)
+    JobSpy->>DB: insert jobs, broad-board observations, learned source candidates
     Runner->>ATS: run_scheduled_ats_sources(...)
     ATS->>DB: create canonical jobs and source observations
     Runner->>Workday: run_workday_discovery(...)
@@ -284,7 +284,7 @@ classDiagram
       +adapter_config
     }
     class JobSpyAdapter {
-      +run_discovery(cfg, limit)
+      +run_discovery(cfg, limit, run_id)
     }
     class AtsApiScheduler {
       +run_scheduled_ats_sources()
@@ -319,10 +319,15 @@ classDiagram
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.
-- Writes `jobs`, source observations, canonical identity rows, quarantine
-  entries, discovery run rows, `job_events`, and source-level operational
-  attempt metrics.
+- Writes `jobs`, source observations, canonical identity rows, source-learning
+  registry updates, review queue entries, quarantine entries, discovery run
+  rows, `job_events`, and source-level operational attempt metrics.
 - Emits stage events and source-level discovery events.
+- Treats JobSpy result URLs as broad-board observations and JobSpy direct URLs
+  as owner-source evidence. Runnable ATS direct URLs are promoted into
+  `source_registry_entries`; ambiguous direct URLs and ATS URLs that still need
+  adapter configuration are surfaced through source locator/manual-capture
+  review instead of being ignored.
 - Classifies JobSpy board observations as `source_role=lead_generator` and
   root employer/ATS/API sources as `source_role=canonical_source`, so board
   discovery metrics do not collapse into canonical employer source health.

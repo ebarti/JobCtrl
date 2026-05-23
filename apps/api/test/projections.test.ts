@@ -455,6 +455,119 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("jobs endpoints expose discovered source and posting owner separately", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_source_observations (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          source_observation_id TEXT NOT NULL,
+          job_url TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          source_native_id TEXT NOT NULL,
+          observed_url TEXT NOT NULL,
+          normalized_observed_url TEXT NOT NULL,
+          run_id TEXT NOT NULL DEFAULT '',
+          observed_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, source_observation_id)
+        );
+        CREATE TABLE job_canonical_identities (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          job_url TEXT NOT NULL,
+          canonical_url TEXT NOT NULL,
+          ats_kind TEXT NOT NULL,
+          source_native_id TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          resolved_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, job_url)
+        );
+      `);
+      db.prepare(
+        `INSERT INTO job_source_observations (
+          tenant_id, source_observation_id, job_url, source_id,
+          source_native_id, observed_url, normalized_observed_url,
+          run_id, observed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "obs-linkedin",
+        "https://example.com/jobs/event-driven",
+        "jobspy:linkedin",
+        "https://www.linkedin.com/jobs/view/1",
+        "https://www.linkedin.com/jobs/view/1",
+        "https://www.linkedin.com/jobs/view/1",
+        "discovery:jobspy:test",
+        "2026-05-06T09:01:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO job_canonical_identities (
+          tenant_id, job_url, canonical_url, ats_kind, source_native_id,
+          confidence, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "https://example.com/jobs/event-driven",
+        "https://boards.greenhouse.io/acme/jobs/123456",
+        "greenhouse",
+        "123456",
+        0.82,
+        "2026-05-06T09:02:00+00:00",
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await app.inject({ method: "GET", url: "/v1/jobs" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+        const item = listRes
+          .json()
+          .items.find((j: { jobKey: string }) => j.jobKey === "https://example.com/jobs/event-driven");
+        expect(item).toMatchObject({
+          discoverySource: "jobspy:linkedin",
+          postingSource: "greenhouse:acme",
+          postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+        });
+
+        const sourceFilteredRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs?source=greenhouse%3Aacme&q=event",
+        });
+        expect(sourceFilteredRes.statusCode, sourceFilteredRes.body).toBe(200);
+        expect(sourceFilteredRes.json().items).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              jobKey: "https://example.com/jobs/event-driven",
+              postingSource: "greenhouse:acme",
+            }),
+          ]),
+        );
+
+        const detailRes = await app.inject({
+          method: "GET",
+          url: "/v1/jobs/https%3A%2F%2Fexample.com%2Fjobs%2Fevent-driven",
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+        expect(detailRes.json().job).toMatchObject({
+          discoverySource: "jobspy:linkedin",
+          postingSource: "greenhouse:acme",
+          postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123456",
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("jobs endpoints expose latest score evidence from job_scores", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
