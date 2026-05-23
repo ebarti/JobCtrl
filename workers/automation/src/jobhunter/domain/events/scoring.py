@@ -40,3 +40,18 @@ class ScoreCorrectedPayload:
 
 def create_score_corrected(tenant_id: TenantId, payload: ScoreCorrectedPayload) -> DomainEvent:
     return create_domain_event("ScoreCorrected", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class ScoreRescoreRequestedPayload:
+    job_id: str
+    stale_reason: str
+    old_policy_version: int
+    new_policy_version: int
+    next_action: str
+
+
+def create_score_rescore_requested(
+    tenant_id: TenantId, payload: ScoreRescoreRequestedPayload
+) -> DomainEvent:
+    return create_domain_event("ScoreRescoreRequested", tenant_id, asdict(payload))

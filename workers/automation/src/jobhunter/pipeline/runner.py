@@ -1685,7 +1685,7 @@ def run_single_job(
     do_tailor: bool = True,
     do_apply: bool = True,
     validation_mode: str = "normal",
-    model: str = "haiku",
+    model: str = "default",
     headless: bool = False,
     dry_run: bool = False,
 ) -> dict:

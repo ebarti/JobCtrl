@@ -62,7 +62,7 @@ class JobPipelineWorkflowInput:
     retailor: bool = False
     job_url: str | None = None
     headless: bool = False
-    model: str = "haiku"
+    model: str = "default"
     continuous: bool = False
 
 

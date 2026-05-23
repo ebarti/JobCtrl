@@ -349,7 +349,7 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     rescore: Boolean(command.rescore),
     retailor: Boolean(command.retailor),
     headless: Boolean(command.headless),
-    model: command.model ?? "haiku",
+    model: command.model ?? "default",
     continuous: Boolean(command.continuous),
   };
   if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
@@ -366,7 +366,7 @@ function applyRpcParams(command: ActionCommandPayload, context: ActionDispatchCo
     limit: command.limit ?? 1,
     workers: command.workers ?? 1,
     minScore: command.minScore ?? 7,
-    model: command.model ?? "haiku",
+    model: command.model ?? "default",
     dryRun: command.dryRun !== false,
     headless: Boolean(command.headless),
     continuous: Boolean(command.continuous),

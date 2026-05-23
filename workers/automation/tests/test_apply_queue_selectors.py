@@ -13,6 +13,7 @@ import pytest
 
 from jobhunter.database import (
     close_connection,
+    count_ready_to_apply,
     get_connection,
     get_jobs_by_stage,
     get_stats,
@@ -31,7 +32,12 @@ def conn(tmp_path):
     close_connection(db_path)
 
 
-def _insert_apply_ready_job(conn, *, url: str = "https://example.com/job"):
+def _insert_apply_ready_job(
+    conn,
+    *,
+    url: str = "https://example.com/job",
+    application_url: str | None = "https://example.com/apply",
+):
     conn.execute(
         """
         INSERT INTO jobs (
@@ -44,7 +50,7 @@ def _insert_apply_ready_job(conn, *, url: str = "https://example.com/job"):
             "Eng",
             "ExampleCo",
             "Build distributed systems.",
-            "https://example.com/apply",
+            application_url,
             9,
             "/tmp/resume.txt",
         ),
@@ -161,6 +167,28 @@ def test_pending_apply_includes_jobs_with_no_apply_run(conn):
     assert rows[0]["url"] == "https://example.com/job"
 
 
+def test_pending_apply_can_start_from_posting_url_when_direct_apply_url_missing(conn):
+    _insert_apply_ready_job(
+        conn,
+        url="https://example.com/posting-only",
+        application_url=None,
+    )
+
+    rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+
+    assert len(rows) == 1
+    assert rows[0]["url"] == "https://example.com/posting-only"
+    assert count_ready_to_apply(conn, min_score=7) == 1
+    assert (
+        count_ready_to_apply(
+            conn,
+            min_score=7,
+            target_url="https://example.com/posting-only",
+        )
+        == 1
+    )
+
+
 def test_pending_apply_excludes_high_score_blocked_jobs(conn):
     _insert_apply_ready_job(conn, url="https://example.com/allowed")
     _insert_apply_ready_job(conn, url="https://example.com/blocked")
@@ -257,6 +285,7 @@ def test_get_stats_reflects_apply_run_projections(conn):
     _insert_apply_ready_job(conn)
     stats = get_stats(conn)
     assert stats["applied"] == 0
+    assert stats["ready_to_apply"] == 1
 
     ensure_job_stage_rows(conn, "https://example.com/job")
     set_stage_state(

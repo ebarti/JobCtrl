@@ -25,6 +25,9 @@ function labelForStage(stage: Stage): string {
 }
 
 function labelForModel(model: string): string {
+  if (model === "default") {
+    return "Local default";
+  }
   return `${model.charAt(0).toUpperCase()}${model.slice(1)}`;
 }
 
@@ -112,7 +115,7 @@ function stageActivityStatusLine(stage: Stage, activity: StageActivity): string 
   return `${stageLabel} latest event: ${activity.message}${eventReference}.`;
 }
 
-const APPLY_MODEL_OPTIONS = ["haiku", "sonnet", "opus"] as const;
+const APPLY_MODEL_OPTIONS = ["default", "opus", "sonnet"] as const;
 
 interface StageControlSet {
   limit: boolean;
@@ -167,7 +170,7 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
   const trimmed = model.trim();
   return APPLY_MODEL_OPTIONS.includes(trimmed as (typeof APPLY_MODEL_OPTIONS)[number])
     ? (trimmed as (typeof APPLY_MODEL_OPTIONS)[number])
-    : "haiku";
+    : "default";
 }
 
 export interface StageTriggerPanelProps {
@@ -215,7 +218,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       rescore: controls.rescore ? config.rescore : false,
       retailor: controls.retailor ? config.retailor : false,
       headless: controls.headless ? config.headless : false,
-      model: controls.applyModel ? selectedApplyModel : "haiku",
+      model: controls.applyModel ? selectedApplyModel : "default",
       continuous: controls.continuous ? config.continuous : false,
     });
   };

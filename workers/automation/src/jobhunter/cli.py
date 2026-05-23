@@ -514,7 +514,7 @@ def action(
     validation: str = typer.Option("normal", "--validation", help="Validation mode for material generation."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Return the planned action without executing."),
     pdf_path: Optional[str] = typer.Option(None, "--pdf", help="Resume PDF path for profile_import."),
-    model: str = typer.Option("haiku", "--model", "-m", help="Apply action model."),
+    model: str = typer.Option("default", "--model", "-m", help="Apply action model. 'default' uses the local Claude Code default."),
     headless: bool = typer.Option(False, "--headless", help="Run apply browser action headless."),
 ) -> None:
     """Run a structured local action and print its JSON result."""
@@ -732,7 +732,7 @@ def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
-    model: str = typer.Option("haiku", "--model", "-m", help="Claude model name."),
+    model: str = typer.Option("default", "--model", "-m", help="Claude model name. 'default' uses the local Claude Code default."),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
@@ -747,7 +747,7 @@ def apply(
     _bootstrap()
 
     from jobhunter.config import APP_DIR as _app_dir, check_tier
-    from jobhunter.database import get_connection
+    from jobhunter.database import count_ready_to_apply, get_connection
     from jobhunter.domain.tenant import LOCAL_TENANT
     from jobhunter.infrastructure.profile import get_profile_repository
 
@@ -795,15 +795,11 @@ def apply(
     ready: int = 0
     if not (gen and url):
         conn = get_connection()
-        ready = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL"
-            " AND application_url IS NOT NULL AND application_url != ''"
-            " AND (apply_status IS NULL OR apply_status = 'failed')"
-        ).fetchone()[0]
+        ready = count_ready_to_apply(conn, min_score=min_score, target_url=url)
         if ready == 0:
             console.print(
                 "[red]No jobs ready to apply.[/red]\n"
-                "Jobs need a tailored resume and a direct application URL.\n"
+                "Jobs need a tailored resume and a posting or direct application URL.\n"
                 "Run [bold]jobhunter run enrich score tailor[/bold] to prepare applications."
             )
             raise typer.Exit(code=1)
@@ -821,8 +817,9 @@ def apply(
         mcp_path = _app_dir / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
         console.print("\n[bold]Run manually:[/bold]")
+        model_args = "" if model in {"", "default", "local-default"} else f"--model {model} "
         console.print(
-            f"  claude --model {model} -p "
+            f"  claude {model_args}-p "
             f"--mcp-config {mcp_path} "
             f"--permission-mode bypassPermissions < {prompt_file}"
         )
@@ -870,7 +867,7 @@ def job(
         "--validation",
         help="Validation strictness for tailor/cover. strict | normal | lenient.",
     ),
-    model: str = typer.Option("haiku", "--model", "-m", help="Claude model name for auto-apply."),
+    model: str = typer.Option("default", "--model", "-m", help="Claude model name for auto-apply. 'default' uses the local Claude Code default."),
     headless: bool = typer.Option(False, "--headless", help="Run browser in headless mode."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without executing."),
 ) -> None:

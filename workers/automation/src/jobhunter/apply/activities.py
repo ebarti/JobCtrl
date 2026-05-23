@@ -26,7 +26,7 @@ class ApplyActivityInput:
     job_url: str | None = None
     limit: int = 1
     min_score: int = 7
-    model: str = "haiku"
+    model: str = "default"
     headless: bool = False
     dry_run: bool = False
     workers: int = 1

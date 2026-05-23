@@ -51,7 +51,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         jobKey: "https://example.com/jobs/x",
         limit: 1,
         dryRun: true,
-        model: "haiku",
+        model: "default",
       },
       { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
     );
@@ -65,7 +65,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       jobUrl: "https://example.com/jobs/x",
       limit: 1,
       dryRun: true,
-      model: "haiku",
+      model: "default",
       headless: false,
     });
     expect(result).toMatchObject({ status: "queued", runId: "run-fake" });
@@ -137,7 +137,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         rescore: true,
         retailor: false,
         headless: false,
-        model: "haiku",
+        model: "default",
         continuous: false,
       },
     });

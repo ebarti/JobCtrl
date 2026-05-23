@@ -173,7 +173,7 @@ describe("StageTriggerPanel", () => {
         rescore: false,
         retailor: false,
         headless: false,
-        model: "haiku",
+        model: "default",
         continuous: false,
       },
       actions: [],
@@ -200,7 +200,7 @@ describe("StageTriggerPanel", () => {
       rescore: false,
       retailor: false,
       headless: false,
-      model: "haiku",
+      model: "default",
       continuous: false,
     });
   });
@@ -377,7 +377,7 @@ describe("StageTriggerPanel", () => {
         rescore: false,
         retailor: false,
         headless: false,
-        model: "haiku",
+        model: "default",
         continuous: false,
       },
       actions: [

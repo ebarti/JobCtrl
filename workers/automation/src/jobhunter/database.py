@@ -13,8 +13,9 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from jobhunter.config import DB_PATH
+from jobhunter.config import DB_PATH, DEFAULTS
 
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
@@ -1767,6 +1768,9 @@ _ENRICHMENT_JOIN: str = (
 
 _EFFECTIVE_FULL_DESCRIPTION: str = "COALESCE(je.full_description, jobs.full_description)"
 _EFFECTIVE_APPLICATION_URL: str = "COALESCE(je.application_url, jobs.application_url)"
+_EFFECTIVE_APPLY_TARGET_URL: str = (
+    f"COALESCE(NULLIF({_EFFECTIVE_APPLICATION_URL}, ''), jobs.url)"
+)
 _EFFECTIVE_DETAIL_SCRAPED_AT: str = "COALESCE(je.enriched_at, jobs.detail_scraped_at)"
 # Per §7.1 the canonical "this job has been enriched" predicate is the
 # aggregate's terminal status; un-backfilled rows fall back to the legacy
@@ -2144,11 +2148,65 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
-        f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
-        f"AND {_EFFECTIVE_APPLICATION_URL} != ''"
+        f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
+        f"AND {_EFFECTIVE_APPLY_TARGET_URL} != ''"
     ).fetchone()[0]
 
     return stats
+
+
+def count_ready_to_apply(
+    conn: sqlite3.Connection,
+    *,
+    min_score: int = 7,
+    target_url: str | None = None,
+) -> int:
+    """Count jobs the apply runner can actually acquire.
+
+    Apply can start from a direct application URL when enrichment found one,
+    or from the posting URL and let the autonomous agent click through. Keep
+    CLI/UI preflight aligned with the same canonical read model used by the
+    queue selectors instead of the legacy ``jobs.*`` columns.
+    """
+
+    where = [
+        f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
+        f"{_EFFECTIVE_TAILOR_PATH} != ''",
+        f"{_EFFECTIVE_FIT_SCORE} >= ?",
+        _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
+        _SCORE_CURRENT_FOR_DOWNSTREAM,
+        f"{_EFFECTIVE_APPLIED_AT} IS NULL",
+        f"{_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL",
+        f"{_EFFECTIVE_APPLY_TARGET_URL} != ''",
+        "NOT EXISTS ("
+        "SELECT 1 FROM job_stage_states jss_active "
+        "WHERE jss_active.job_url = jobs.url "
+        "AND jss_active.stage = 'apply' "
+        "AND jss_active.state IN ('running', 'succeeded')"
+        ")",
+        "COALESCE(("
+        "SELECT jss_a.attempt_count FROM job_stage_states jss_a "
+        "WHERE jss_a.job_url = jobs.url AND jss_a.stage = 'apply' LIMIT 1"
+        "), 0) < ?",
+        "(ar.ar_status IS NULL OR ar.ar_status NOT IN ('starting', 'in_progress'))",
+    ]
+    params: list[Any] = [min_score, DEFAULTS["max_apply_attempts"]]
+    if target_url:
+        like = f"%{target_url.split('?')[0].rstrip('/')}%"
+        where.append(
+            f"(jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ? "
+            f"OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)"
+        )
+        params.extend([target_url, target_url, like, like])
+
+    return int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
+            f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+            f"WHERE {' AND '.join(where)}",
+            params,
+        ).fetchone()[0]
+    )
 
 
 def store_jobs(conn: sqlite3.Connection, jobs: list[dict], site: str, strategy: str) -> tuple[int, int]:
@@ -2432,8 +2490,8 @@ def get_jobs_by_stage(
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
-            f"AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL "
-            f"AND {_EFFECTIVE_APPLICATION_URL} != '' "
+            f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
+            f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
             "AND (ar.ar_status IS NULL "
             "     OR ar.ar_status NOT IN ('starting', 'in_progress'))"
         ),

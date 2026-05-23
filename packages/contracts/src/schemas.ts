@@ -90,7 +90,7 @@ export const ApplyJobRequestSchema = z
     dryRun: z.boolean().default(true),
     headless: z.boolean().default(false),
     limit: z.number().int().min(1).max(200).default(1),
-    model: z.string().trim().min(1).max(80).default("haiku"),
+    model: z.string().trim().min(1).max(80).default("default"),
   })
   .strict();
 export type ApplyJobRequest = z.infer<typeof ApplyJobRequestSchema>;
@@ -106,7 +106,7 @@ export const RunPipelineStagesRequestSchema = z
     rescore: z.boolean().default(false),
     retailor: z.boolean().default(false),
     headless: z.boolean().default(false),
-    model: z.string().trim().min(1).max(80).default("haiku"),
+    model: z.string().trim().min(1).max(80).default("default"),
     continuous: z.boolean().default(false),
   })
   .strict()

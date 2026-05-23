@@ -39,7 +39,7 @@ const defaultConfig: StageTriggerConfig = {
   rescore: false,
   retailor: false,
   headless: false,
-  model: "haiku",
+  model: "default",
   continuous: false,
 };
 

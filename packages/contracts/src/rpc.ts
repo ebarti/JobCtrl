@@ -165,7 +165,7 @@ export const RunStageParamsSchema = z
     rescore: z.boolean().default(false),
     retailor: z.boolean().default(false),
     headless: z.boolean().default(false),
-    model: z.string().trim().min(1).max(80).default("haiku"),
+    model: z.string().trim().min(1).max(80).default("default"),
     continuous: z.boolean().default(false),
   })
   .strict();
@@ -181,7 +181,7 @@ export const ApplyParamsSchema = z
     workers: z.number().int().min(1).default(1),
     minScore: z.number().int().min(0).max(10).default(7),
     dryRun: z.boolean().default(false),
-    model: z.string().min(1).default("haiku"),
+    model: z.string().min(1).default("default"),
     headless: z.boolean().default(false),
     continuous: z.boolean().default(false),
   })

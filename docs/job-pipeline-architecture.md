@@ -868,7 +868,8 @@ classDiagram
 
 ### Data And Events
 
-- Reads eligible jobs, score/material/application URL data, and profile facts.
+- Reads eligible jobs, score/materials, posting or direct application URL data,
+  and profile facts.
 - Writes canonical apply stage state and `ApplyRunStarted`,
   `ApplyRunEventRecorded`, `ApplicationSubmitted`, or `ApplicationFailed`
   events.

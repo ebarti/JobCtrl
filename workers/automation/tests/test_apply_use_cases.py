@@ -183,22 +183,40 @@ def test_dry_run_returns_dry_run_complete_variant(monkeypatch, repo):
     assert outcome.apply_run.status == "dry_run_complete"
 
 
-def test_eligibility_skip_returns_skipped_outcome_without_persisting(monkeypatch, repo):
+def test_eligibility_accepts_posting_url_without_direct_application_url(monkeypatch, repo):
     _stub_legacy_prompt(monkeypatch)
-    use_case = _build_use_case(repo)
+    use_case = _build_use_case(
+        repo,
+        agent_result=AgentResult(
+            submission_result=DryRunComplete(navigated_to="https://example.com/job"),
+            duration_ms=100,
+        ),
+    )
     job = _ready_job()
     job["application_url"] = ""
+
     outcome = use_case.execute(
         job=job,
         snapshot=_FakeSnapshot(),
         worker_id=1,
         cdp_port=9222,
+        dry_run=True,
     )
-    assert outcome.skipped is True
-    assert outcome.skip_reason == "missing_application_url"
-    # Skipped runs are NOT persisted (the synthesised aggregate is
-    # discarded) — the repository stays empty.
-    assert repo.list_recent(LOCAL_TENANT, limit=10) == []
+
+    assert outcome.skipped is False
+    assert outcome.apply_run.status == "dry_run_complete"
+
+
+def test_eligibility_requires_some_apply_target_url():
+    checker = ApplyEligibilityChecker(max_attempts=3)
+    job = _ready_job()
+    job["application_url"] = ""
+    job["url"] = ""
+
+    outcome = checker.check(job=job)
+
+    assert outcome.ok is False
+    assert outcome.reason == "missing_apply_target_url"
 
 
 def test_agent_failure_variant_routes_to_failed(monkeypatch, repo):

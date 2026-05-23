@@ -24,12 +24,13 @@ def test_ready_job_is_eligible(checker):
     assert checker.check(job=_ready_job()).is_eligible
 
 
-def test_missing_application_url_blocks(checker):
+def test_missing_apply_target_url_blocks(checker):
     job = _ready_job()
     job["application_url"] = ""
+    job["url"] = ""
     result = checker.check(job=job)
     assert not result.ok
-    assert result.reason == "missing_application_url"
+    assert result.reason == "missing_apply_target_url"
 
 
 def test_missing_tailored_resume_blocks(checker):

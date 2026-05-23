@@ -126,7 +126,9 @@ uses the command key `pipeline` only as the local action response handle, not
 as a fake job URL. Successful workflow starts return `202` with the queued
 workflow ID. Workflow-start failures return `200` with the dispatcher-derived
 failed action.
-`dryRun` defaults to `true`, preserving apply safety.
+`dryRun` defaults to `true`, preserving apply safety. The apply model defaults
+to `default`, which omits `--model` and lets the local Claude Code
+configuration choose the active model.
 
 The `limit` field is forwarded to every stage. For `discover`, the Python
 runner passes it into JobSpy, Workday, and Smart Extract and forces bounded
