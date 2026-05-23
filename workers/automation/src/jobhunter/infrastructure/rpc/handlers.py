@@ -184,7 +184,7 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
         retailor=bool(params.get("retailor", False)),
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
         headless=bool(params.get("headless", False)),
-        model=str(params.get("model", "haiku")),
+        model=str(params.get("model", "default")),
         continuous=bool(params.get("continuous", False)),
     )
     return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
@@ -217,7 +217,7 @@ def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
         job_url=params.get("jobUrl"),
         dry_run=bool(params.get("dryRun", False)),
         headless=bool(params.get("headless", False)),
-        model=str(params.get("model", "haiku")),
+        model=str(params.get("model", "default")),
         min_score=int(params.get("minScore", 7)),
         workers=int(params.get("workers", 1)),
         limit=int(params.get("limit", 1)),

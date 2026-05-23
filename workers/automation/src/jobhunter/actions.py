@@ -38,7 +38,7 @@ class LocalActionRequest:
     dry_run: bool = False
     rescore: bool = False
     retailor: bool = False
-    model: str = "haiku"
+    model: str = "default"
     headless: bool = False
     continuous: bool = False
     pdf_path: str | None = None

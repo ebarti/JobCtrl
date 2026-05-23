@@ -245,7 +245,11 @@ uv --project workers/automation run jobhunter apply --reset-failed
 ```
 
 Auto-apply requires a prepared profile, generated materials, Chrome/Chromium,
-Node.js, and Claude Code CLI.
+Node.js, and Claude Code CLI. Jobs can start from a direct application URL
+when enrichment finds one, or from the original posting URL when the local
+agent needs to click through to the employer form. The default model is
+`default`, which lets Claude Code use its configured local model; pass
+`--model <name>` only when you want to override that local default.
 
 ## Structured Local Actions
 

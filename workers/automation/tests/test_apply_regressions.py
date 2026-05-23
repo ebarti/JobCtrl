@@ -20,13 +20,19 @@ from jobhunter.apply.launcher import (
     acquire_job,
     mark_result,
     release_lock,
+    worker_loop,
 )
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 
-def _insert_ready_job(conn, *, url: str = "https://example.com/job") -> None:
+def _insert_ready_job(
+    conn,
+    *,
+    url: str = "https://example.com/job",
+    application_url: str | None = "https://example.com/apply",
+) -> None:
     conn.execute(
         """
         INSERT INTO jobs (
@@ -39,7 +45,7 @@ def _insert_ready_job(conn, *, url: str = "https://example.com/job") -> None:
             "Platform Engineer",
             "ExampleCo",
             "Build distributed systems.",
-            "https://example.com/apply",
+            application_url,
             9,
             "/tmp/resume.txt",
             "/tmp/cover.txt",
@@ -138,6 +144,83 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
         assert payload["run_id"] == job["apply_run_id"]
     finally:
         close_connection(db_path)
+
+
+def test_acquire_job_accepts_posting_url_when_direct_apply_url_missing(tmp_path, monkeypatch):
+    """The agent can start from the posting URL and click through to Apply."""
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(
+        conn,
+        url="https://example.com/posting-only",
+        application_url=None,
+    )
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        job = acquire_job(worker_id=1)
+        assert job is not None
+        assert job["url"] == "https://example.com/posting-only"
+        assert job["application_url"] is None
+    finally:
+        close_connection(db_path)
+
+
+def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
+    """The worker loop should not launch Chrome before ``run_job``.
+
+    ``run_job`` now drives ``SubmitApplicationUseCase`` and ``ApplySaga``,
+    whose browser port owns launch/cleanup. Keeping the legacy outer launch
+    path would boot Chrome twice on the same CDP port.
+    """
+
+    job = {
+        "url": "https://example.com/job",
+        "title": "Platform Engineer",
+        "site": "ExampleCo",
+        "application_url": None,
+        "tailored_resume_path": "/tmp/resume.txt",
+        "fit_score": 9,
+    }
+    acquired = {"used": False}
+    marked = {}
+
+    def fake_acquire_job(**_kwargs):
+        if acquired["used"]:
+            return None
+        acquired["used"] = True
+        return job
+
+    def forbidden_outer_launch(*_args, **_kwargs):
+        raise AssertionError("worker_loop must not launch Chrome directly")
+
+    def fake_run_job(*_args, **_kwargs):
+        return "dry_run", 10
+
+    def fake_mark_result(url, status, **kwargs):
+        marked["url"] = url
+        marked["status"] = status
+        marked["duration_ms"] = kwargs.get("duration_ms")
+
+    monkeypatch.setattr("jobhunter.apply.launcher.acquire_job", fake_acquire_job)
+    monkeypatch.setattr(
+        "jobhunter.apply.launcher.launch_chrome",
+        forbidden_outer_launch,
+        raising=False,
+    )
+    monkeypatch.setattr("jobhunter.apply.launcher.run_job", fake_run_job)
+    monkeypatch.setattr("jobhunter.apply.launcher.mark_result", fake_mark_result)
+
+    applied, failed = worker_loop(worker_id=0, limit=1, dry_run=True, snapshot=object())
+
+    assert (applied, failed) == (0, 0)
+    assert marked == {
+        "url": "https://example.com/job",
+        "status": "dry_run",
+        "duration_ms": 10,
+    }
 
 
 def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatch):

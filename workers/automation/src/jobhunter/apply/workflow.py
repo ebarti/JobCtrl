@@ -31,7 +31,7 @@ class ApplyWorkflowInput:
     job_url: str | None = None
     dry_run: bool = False
     headless: bool = False
-    model: str = "haiku"
+    model: str = "default"
     min_score: int = 7
     workers: int = 1
     limit: int = 1

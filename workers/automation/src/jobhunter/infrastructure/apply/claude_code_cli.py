@@ -60,6 +60,7 @@ _RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
 # Reasons that get promoted from ``RESULT:FAILED:reason`` to a
 # dedicated SubmissionResult variant.
 _PROMOTED_FAILED_REASONS = {"captcha", "expired", "login_issue"}
+_DEFAULT_MODEL_SENTINELS = {"", "default", "local-default"}
 
 
 def _utc_now() -> str:
@@ -126,9 +127,11 @@ class ClaudeCodeCliAdapter:
         mcp_config_path = self._app_dir / f".mcp-apply-{worker_id}.json"
         mcp_config_path.write_text(json.dumps(prompt.mcp_config), encoding="utf-8")
 
-        cmd = [
-            "claude",
-            "--model", model,
+        model_label = (model or "").strip() or "default"
+        cmd = ["claude"]
+        if model_label not in _DEFAULT_MODEL_SENTINELS:
+            cmd.extend(["--model", model_label])
+        cmd.extend([
             "-p",
             "--mcp-config", str(mcp_config_path),
             "--permission-mode", "bypassPermissions",
@@ -136,7 +139,7 @@ class ClaudeCodeCliAdapter:
             "--disallowedTools", _DISALLOWED_TOOLS,
             "--output-format", "stream-json",
             "--verbose", "-",
-        ]
+        ])
 
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)
@@ -173,7 +176,7 @@ class ClaudeCodeCliAdapter:
                     "occurred_at": _utc_now(),
                     "level": "info",
                     "message": f"claude pid={proc.pid}",
-                    "payload": {"pid": proc.pid, "model": model, "cwd": worker_dir},
+                    "payload": {"pid": proc.pid, "model": model_label, "cwd": worker_dir},
                 }
             )
             assert proc.stdin is not None

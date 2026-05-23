@@ -65,7 +65,7 @@ class ApplyEligibilityChecker:
     column joins applied) plus the prior attempt count. The checker
     enforces:
 
-      * application_url is set,
+      * an apply target URL is set (direct application URL, or posting URL),
       * tailored_resume is set (the materials side already wrote a
         ``MaterialsSet`` aggregate),
       * the job has not been ``applied`` already (``apply_status`` /
@@ -94,9 +94,12 @@ class ApplyEligibilityChecker:
         job: Mapping[str, Any],
         attempts: int = 0,
     ) -> EligibilityResult:
-        application_url = (job.get("application_url") or "").strip()
-        if not application_url:
-            return EligibilityResult(ok=False, reason="missing_application_url")
+        apply_target_url = (
+            (job.get("application_url") or "").strip()
+            or (job.get("url") or "").strip()
+        )
+        if not apply_target_url:
+            return EligibilityResult(ok=False, reason="missing_apply_target_url")
 
         tailored = (job.get("tailored_resume_path") or "").strip()
         if not tailored:

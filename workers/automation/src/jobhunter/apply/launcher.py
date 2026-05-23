@@ -46,9 +46,7 @@ from jobhunter.apply.chrome import (
     BASE_CDP_PORT,
     _kill_process_tree,
     cleanup_on_exit,
-    cleanup_worker,
     kill_all_chrome,
-    launch_chrome,
     reset_worker_dir,
 )
 from jobhunter.apply.dashboard import (
@@ -61,6 +59,7 @@ from jobhunter.apply.dashboard import (
 from jobhunter.database import (
     _EFFECTIVE_APPLICATION_URL,
     _EFFECTIVE_APPLIED_AT,
+    _EFFECTIVE_APPLY_TARGET_URL,
     _EFFECTIVE_APPLY_STATUS,
     _EFFECTIVE_COVER_PATH,
     _EFFECTIVE_FIT_SCORE,
@@ -70,6 +69,8 @@ from jobhunter.database import (
     _LATEST_APPLY_RUN_JOIN,
     _LATEST_MATERIALS_JOIN,
     _LATEST_SCORE_JOIN,
+    _SCORE_DOWNSTREAM_STATE_JOIN,
+    _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
     _order_rows_by_feedback,
     get_connection,
@@ -197,7 +198,8 @@ def acquire_job(
         )
         common_joins = (
             f"{_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
-            f"{_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN}"
+            f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} "
+            f"{_LATEST_APPLY_RUN_JOIN}"
         )
 
         if target_url:
@@ -210,6 +212,7 @@ def acquire_job(
                        OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
                   AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+                  AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
                 LIMIT 1
                 """,
                 (target_url, target_url, like, like),
@@ -236,8 +239,8 @@ def acquire_job(
                 SELECT {common_columns}
                 FROM jobs {common_joins}
                 WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
-                  AND {_EFFECTIVE_APPLICATION_URL} IS NOT NULL
-                  AND {_EFFECTIVE_APPLICATION_URL} != ''
+                  AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
+                  AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
                   AND NOT EXISTS (
                       SELECT 1 FROM job_stage_states jss_active
                       WHERE jss_active.job_url = jobs.url
@@ -251,6 +254,7 @@ def acquire_job(
                   ) < ?
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+                  AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
                   {site_clause}
                   {url_clauses}
                 ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url
@@ -703,7 +707,7 @@ def _load_profile_snapshot() -> ProfileSnapshot:
 def gen_prompt(
     target_url: str,
     min_score: int = 7,
-    model: str = "sonnet",
+    model: str = "default",
     worker_id: int = 0,
     snapshot: ProfileSnapshot | None = None,
 ) -> Path | None:
@@ -932,7 +936,7 @@ def run_job(
     job: dict,
     port: int,
     worker_id: int = 0,
-    model: str = "sonnet",
+    model: str = "default",
     dry_run: bool = False,
     run_ctx: dict | None = None,
     snapshot: ProfileSnapshot | None = None,
@@ -1056,7 +1060,7 @@ def worker_loop(
     target_url: str | None = None,
     min_score: int = 7,
     headless: bool = False,
-    model: str = "sonnet",
+    model: str = "default",
     dry_run: bool = False,
     snapshot: ProfileSnapshot | None = None,
 ) -> tuple[int, int]:
@@ -1115,13 +1119,7 @@ def worker_loop(
             continue
 
         empty_polls = 0
-        chrome_proc = None
         try:
-            update_state(worker_id, run_id=run_ctx["run_id"], status="launching")
-            add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Launching Chrome...")
-            chrome_proc = launch_chrome(worker_id, port=port, headless=headless)
-            update_state(worker_id, run_id=run_ctx["run_id"], status="applying")
-
             result, duration_ms = run_job(
                 job,
                 port=port,
@@ -1193,9 +1191,6 @@ def worker_loop(
             release_lock(job["url"], run_ctx=run_ctx)
             failed += 1
             update_state(worker_id, jobs_failed=failed)
-        finally:
-            if chrome_proc:
-                cleanup_worker(worker_id, chrome_proc)
 
         jobs_done += 1
         if target_url:
@@ -1215,7 +1210,7 @@ def main(
     target_url: str | None = None,
     min_score: int = 7,
     headless: bool = False,
-    model: str = "sonnet",
+    model: str = "default",
     dry_run: bool = False,
     continuous: bool = False,
     poll_interval: int = 60,
