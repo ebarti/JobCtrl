@@ -7,8 +7,9 @@ This is the authoritative roadmap. Keep detailed historical proposals under
 
 Delivered work is archived in [`docs/delivered.md`](delivered.md) and the
 implemented plan directory. Discovery RFC production wiring and scoring
-intelligence are implemented via PR #61; the local Temporal stack, DDD /
-hexagonal migration, and frontend TanStack migration are also implemented.
+intelligence are implemented via PR #61; the calibrated scoring policy stack,
+local Temporal stack, DDD / hexagonal migration, and frontend TanStack
+migration are also implemented.
 
 The active local-product backlog is the remaining validation and hardening
 work below: realtime cache patching beyond apply-run timeline events,
@@ -65,13 +66,13 @@ deferred until the local product is solid.
 
 ### Scoring Calibration
 
-- Implement the calibrated scoring policy RFC in
-  [`docs/plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md`](plans/proposed/2026-05-19-calibrated-scoring-policy-rfc.md).
-  Current scoring stores rich evidence and corrections, but the LLM still
-  returns one absolute 1..10 score per job. Corrections should become
-  calibration anchors in a versioned scoring policy, future scoring should use
-  that policy immediately, comparable uncorrected scores should be marked
-  stale, and bulk rescoring should remain explicit/user-triggered.
+Delivered by
+[`docs/plans/implemented/2026-05-19-calibrated-scoring-policy-rfc.md`](plans/implemented/2026-05-19-calibrated-scoring-policy-rfc.md).
+The current scoring stack persists a versioned scoring policy, derives
+calibration anchors from user corrections, records policy metadata in score
+traces, marks comparable uncorrected scores stale, exposes explicit stale-score
+reset/rescore behavior, and reflects policy/staleness state in the local API
+and jobs UI.
 
 ### Workflow Orchestration (Local Temporal)
 
@@ -335,8 +336,8 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   installed for the Storybook test runner). The Vitest unit / hook /
   component suite, the type-level tests, and the standalone Playwright e2e
   specs at `apps/web/e2e/` are developer-local only — a regression in any
-  of those does not fail CI today. Wire the three jobs into
-  `typescript.yml` once the root aliases land.
+  of those does not fail CI today. Wire the three root aliases into
+  `typescript.yml`.
 - **Frontend ACL `JobId` is unbranded** —
   `apps/web/src/contexts/operations/types.ts` exports
   `type JobId = string` rather than re-exporting the branded

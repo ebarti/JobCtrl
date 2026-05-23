@@ -3,6 +3,24 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-05-22: Proposed Plan Status Reconciliation
+
+Plans:
+
+- `docs/plans/implemented/2026-05-17-jobhunter-backlog-item-add-root.md`
+- `docs/plans/implemented/2026-05-19-calibrated-scoring-policy-rfc.md`
+
+Delivered:
+
+- Root web test aliases now exist in `package.json` for unit, watch,
+  coverage, type-level, e2e, and headed e2e web test commands.
+- The calibrated scoring policy stack is implemented across the Python scoring
+  domain, SQLite adapters, TypeScript API write/read models, contracts, web
+  scoring components, invalidation handlers, and local eval/governance tests.
+- `docs/backlog.md` no longer lists the scoring policy RFC as active
+  implementation work, and its CI follow-up now assumes the root web aliases
+  already exist.
+
 ## 2026-05-14: Discovery RFC + Scoring Intelligence Completion
 
 Plans:

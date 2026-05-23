@@ -1,5 +1,12 @@
 # Add Root-Level Web Test Aliases
 
+## Completion Status
+
+Implemented. The root `package.json` now exposes `web:test`,
+`web:test:watch`, `web:test:coverage`, `web:test-d`, `web:e2e`, and
+`web:e2e:headed`, each delegating to the matching `@jobhunter/web` script.
+The original plan text below is retained as delivery history.
+
 ## Goal
 
 Add the missing root `pnpm` aliases for the web test commands named in the
