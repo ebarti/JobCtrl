@@ -15,7 +15,7 @@ SQLite and reconstruct the existing response object shape for frontend/client
 compatibility.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
-background `tailor -> pdf` pipeline run with `retailor=true`, `dryRun=false`,
+background `tailor` pipeline run with `retailor=true`, `dryRun=false`,
 and no item limit. The Python materials generation path creates a new materials
 generation for each re-tailored job and preserves the prior generation as
 historical/superseded artifact data.

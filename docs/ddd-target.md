@@ -362,9 +362,9 @@ PDFs) for jobs that pass the scoring threshold.
 - Application submission (that's Apply Automation)
 - Pipeline scheduling or retry logic (that's Pipeline Orchestration)
 
-**Boundary justification:** Materials Generation encompasses three current
-pipeline stages (tailor, cover, pdf) that share a tight invariant: cover
-letters require a tailored resume, PDFs require both. Grouping them in one
+**Boundary justification:** Materials Generation encompasses the two artifact
+pipeline stages (tailor, cover) that share a tight invariant: cover
+letters require a tailored resume, and each stage renders the PDFs it owns. Grouping them in one
 context lets the aggregate enforce these dependencies directly rather than
 through cross-aggregate eventual consistency. *Current pain point addressed:*
 `scoring/tailor.py` (820 LOC) mixes LLM prompts, validation, judge logic, PDF
@@ -2047,7 +2047,7 @@ single-user system.
 | **McpConfig** | Apply Automation | Playwright MCP server configuration for a browser automation session. |
 | **MessageGroupId** | Platform (Events) | SQS FIFO message group ID, set to `tenantId` to guarantee per-tenant event ordering in the cloud event bus. |
 | **NextAction** | Pipeline Orchestration | The recommended CLI command or UI action to advance a blocked or failed stage. |
-| **Pipeline** | Pipeline Orchestration | The canonical sequence of stages: discover → enrich → score → tailor → cover → pdf → apply. |
+| **Pipeline** | Pipeline Orchestration | The canonical sequence of stages: discover → enrich → score → tailor → cover → apply. |
 | **OutboxPoller** | Platform (Events) | A sidecar process that reads uncommitted domain events from the Postgres `outbox` table and publishes them to SQS FIFO. Guarantees at-least-once delivery with crash-consistency. |
 | **Port** | Hexagonal Architecture | An interface through which the application communicates with the outside world. Driving ports are use cases; driven ports are infrastructure dependencies. |
 | **PostingUrl** | Discovery | The original URL where a job was found on an external board. Dedup is global within a tenant (not per-source). |

@@ -5,7 +5,7 @@ job database, generated materials, browser state, and logs on your machine while
 helping you move jobs through a staged pipeline:
 
 ```text
-discover -> enrich -> score -> tailor -> cover -> pdf -> apply
+discover -> enrich -> score -> tailor -> cover -> apply
 ```
 
 The automation engine is Python. The newer product surface is a local
@@ -175,14 +175,13 @@ uv --project workers/automation run jobhunter enrich
 uv --project workers/automation run jobhunter score --workers 4
 uv --project workers/automation run jobhunter tailor --workers 4 --min-score 7
 uv --project workers/automation run jobhunter cover --min-score 7
-uv --project workers/automation run jobhunter pdf
 ```
 
 Run stages by name through the orchestrator:
 
 ```bash
 uv --project workers/automation run jobhunter run discover enrich score
-uv --project workers/automation run jobhunter run tailor cover pdf --validation normal
+uv --project workers/automation run jobhunter run tailor cover --validation normal
 uv --project workers/automation run jobhunter run --stream
 ```
 
@@ -322,7 +321,7 @@ action clears the delete/hide tombstones instead of creating a new suppression
 record.
 
 The Pipelines tab includes global stage starts. Each stage (`discover`,
-`enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`) has its own tab with
+`enrich`, `score`, `tailor`, `cover`, `apply`) has its own tab with
 persisted local config, and the tab only shows controls that the selected stage
 actually consumes. Running a tab submits that stage through the local API. The
 panel reports when the request is waiting on the local worker, whether the start
