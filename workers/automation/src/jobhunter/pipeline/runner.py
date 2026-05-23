@@ -1093,7 +1093,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     search_cfg = config.load_search_config() or {}
     jobspy_sources = schedule.for_prefix("jobspy")
 
-    def run_jobspy() -> dict:
+    def run_jobspy(run_id: str | None = None) -> dict:
         if search_cfg.get("disable_jobspy", False):
             console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
@@ -1113,10 +1113,27 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result
-        source_results["jobspy"] = run_discovery(
-            cfg=jobspy_cfg,
-            limit=_scheduled_limit(schedule, "jobspy", limit),
-        )
+        jobspy_limit = _scheduled_limit(schedule, "jobspy", limit)
+        try:
+            signature = inspect.signature(run_discovery)
+        except (TypeError, ValueError):
+            accepts_run_id = False
+        else:
+            accepts_run_id = (
+                "run_id" in signature.parameters
+                or any(
+                    param.kind is inspect.Parameter.VAR_KEYWORD
+                    for param in signature.parameters.values()
+                )
+            )
+        if accepts_run_id:
+            source_results["jobspy"] = run_discovery(
+                cfg=jobspy_cfg,
+                limit=jobspy_limit,
+                run_id=run_id,
+            )
+        else:
+            source_results["jobspy"] = run_discovery(cfg=jobspy_cfg, limit=jobspy_limit)
         return source_results["jobspy"]
 
     stats["jobspy"] = _run_discovery_source(

@@ -25,7 +25,7 @@ from jobhunter.database import (
     ensure_posting_snapshot_tables,
     ensure_source_observation_tables,
 )
-from jobhunter.domain.discovery.identity import AtsKind
+from jobhunter.domain.discovery.identity import AtsKind, CanonicalJobIdentity
 from jobhunter.domain.discovery.source_registry import (
     LocatorPolicy,
     ManualActionReason,
@@ -79,6 +79,16 @@ class SourceControlSeedSummary:
     registry_rows: int = 0
     locator_candidates: int = 0
     manual_action_count: int = 0
+
+
+@dataclass(frozen=True)
+class LearnedPostingSource:
+    """Outcome of learning a durable posting source from a discovered job."""
+
+    source_id: str | None
+    canonical_url: str | None
+    candidate_id: str | None
+    action: str
 
 
 @dataclass(frozen=True)
@@ -281,6 +291,102 @@ def run_deterministic_source_locator(
             _delete_locator_candidate(conn, candidate.candidate_id)
     conn.commit()
     return persisted, manual_actions
+
+
+def learn_posting_source_from_url(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    posting_url: str | None,
+    discovered_via_source_id: str,
+    observed_at: str,
+) -> LearnedPostingSource:
+    """Learn a durable owner source from a broad-board posting URL.
+
+    JobSpy often discovers a posting on a broad board while also exposing a
+    direct apply/detail URL. When that direct URL is a known ATS, promote the
+    owning ATS source into the registry and attach canonical identity to the
+    broad-board job. Unknown direct URLs are kept in local review queues.
+    """
+
+    candidate_url = str(posting_url or "").strip()
+    if not candidate_url:
+        return LearnedPostingSource(
+            source_id=None,
+            canonical_url=None,
+            candidate_id=None,
+            action="skipped",
+        )
+
+    ensure_worker_discovery_tables(conn)
+    detected = _detect_ats_kind(candidate_url)
+    if detected is None:
+        candidate = _source_location_candidate(
+            candidate_url=candidate_url,
+            source_kind=SourceKind.EMPLOYER_CAREERS_PAGE,
+            confidence=0.55,
+            detected_ats_kind=None,
+            employer_domain_matched=False,
+            source_id=None,
+            manual_reason=ManualActionReason.AMBIGUOUS_CAREER_SYSTEM,
+            retry_context={
+                "source": "broad_board_posting_url",
+                "discovered_via_source_id": discovered_via_source_id,
+                "job_url": job_url,
+            },
+        )
+        if _locator_candidate_is_new(conn, candidate):
+            _record_locator_event(conn, candidate)
+        _upsert_locator_candidate(conn, candidate)
+        _enqueue_manual_action_from_candidate(conn, candidate)
+        conn.commit()
+        return LearnedPostingSource(
+            source_id=None,
+            canonical_url=candidate_url,
+            candidate_id=candidate.candidate_id,
+            action="manual_review",
+        )
+
+    candidate = _source_location_candidate(
+        candidate_url=candidate_url,
+        source_kind=SourceKind.ATS_API,
+        confidence=0.82,
+        detected_ats_kind=detected.value,
+        employer_domain_matched=False,
+        source_id=discovered_via_source_id,
+        manual_reason=None,
+        retry_context={
+            "source": "broad_board_posting_url",
+            "discovered_via_source_id": discovered_via_source_id,
+            "job_url": job_url,
+        },
+    )
+    source_id = _source_id_from_locator_candidate(conn, candidate)
+    _promote_locator_candidate(conn, candidate)
+    identity = CanonicalJobIdentity(
+        canonical_url=candidate_url,
+        ats_kind=detected,
+        source_native_id=_source_native_id_from_url(candidate_url),
+        confidence=0.82,
+    )
+    SqliteJobRepository(conn).set_canonical_identity(
+        candidate.tenant_id,
+        JobId(job_url),
+        identity,
+    )
+    _record_canonical_identity_resolved_event(
+        conn,
+        job_url=job_url,
+        identity=identity,
+        occurred_at=observed_at,
+    )
+    conn.commit()
+    return LearnedPostingSource(
+        source_id=source_id,
+        canonical_url=candidate_url,
+        candidate_id=candidate.candidate_id,
+        action="promoted",
+    )
 
 
 def enqueue_manual_action_for_sources(
@@ -969,6 +1075,35 @@ def _record_source_registry_updated_event(
     )
 
 
+def _record_canonical_identity_resolved_event(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    identity: CanonicalJobIdentity,
+    occurred_at: str,
+) -> None:
+    record_job_event(
+        conn,
+        job_url,
+        "discover",
+        "CanonicalJobIdentityResolved",
+        message="Canonical job identity resolved.",
+        payload={
+            "tenantId": str(LOCAL_TENANT),
+            "job_id": job_url,
+            "jobId": job_url,
+            "canonical_url": identity.canonical_url,
+            "canonicalUrl": identity.canonical_url,
+            "ats_kind": identity.ats_kind.value,
+            "atsKind": identity.ats_kind.value,
+            "source_native_id": identity.source_native_id,
+            "sourceNativeId": identity.source_native_id,
+            "confidence": identity.confidence,
+        },
+        occurred_at=occurred_at,
+    )
+
+
 def _enqueue_manual_action_from_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
@@ -1118,6 +1253,22 @@ def _policy_id_for_promoted_source(
 
 def _slug_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-") or "source"
+
+
+def _source_native_id_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if "jobs" in segments:
+        index = segments.index("jobs")
+        if len(segments) > index + 1:
+            return segments[index + 1]
+    if "postings" in segments:
+        index = segments.index("postings")
+        if len(segments) > index + 2:
+            return segments[index + 2]
+    if segments:
+        return segments[-1]
+    return url
 
 
 def _record_ats_source_failure(

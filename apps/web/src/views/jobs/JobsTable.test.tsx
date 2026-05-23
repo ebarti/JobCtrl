@@ -11,7 +11,14 @@ function renderJobsTable() {
   return render(
     <JobsTable
       data={makeJobsPage([
-        { ...sampleJob, company: "Acme Corp", source: "LinkedIn", discoverySource: "jobspy:linkedin" },
+        {
+          ...sampleJob,
+          company: "Acme Corp",
+          source: "LinkedIn",
+          discoverySource: "jobspy:linkedin",
+          postingSource: "greenhouse:acme",
+          postingSourceUrl: "https://boards.greenhouse.io/acme/jobs/123",
+        },
       ])}
       loading={false}
       sorting={sorting}
@@ -33,10 +40,10 @@ describe("<JobsTable>", () => {
     renderJobsTable();
 
     expect(screen.getByText("Company")).toBeInTheDocument();
-    expect(screen.getByText("Source")).toBeInTheDocument();
+    expect(screen.getByText("Sources")).toBeInTheDocument();
     expect(screen.getByText("Acme Corp")).toBeInTheDocument();
-    expect(screen.getByText("LinkedIn")).toBeInTheDocument();
-    expect(screen.getByText("discovery jobspy:linkedin")).toBeInTheDocument();
+    expect(screen.getByText("posting greenhouse:acme")).toBeInTheDocument();
+    expect(screen.getByText("discovered via jobspy:linkedin")).toBeInTheDocument();
     expect(screen.queryByText(/Acme Corp.*LinkedIn/)).not.toBeInTheDocument();
   });
 });

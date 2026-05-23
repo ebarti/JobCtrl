@@ -74,13 +74,19 @@ export const jobColumns: ColumnDef<JobSummary>[] = [
   },
   {
     id: "source",
-    header: "Source",
+    header: "Sources",
     enableSorting: false,
-    accessorFn: (row) => row.source,
+    accessorFn: (row) => row.postingSource || row.source,
     cell: ({ row }) => (
       <TitleStack
-        primary={row.original.source || "-"}
-        secondary={row.original.discoverySource ? `discovery ${row.original.discoverySource}` : null}
+        primary={
+          row.original.postingSource
+            ? `posting ${row.original.postingSource}`
+            : row.original.source
+              ? `posting ${row.original.source}`
+              : "-"
+        }
+        secondary={row.original.discoverySource ? `discovered via ${row.original.discoverySource}` : null}
       />
     ),
   },

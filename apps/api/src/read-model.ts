@@ -84,6 +84,8 @@ interface JobListProjectionRow extends Record<string, unknown> {
   employer: string;
   source: string;
   discovery_source: string;
+  posting_source_url: string | null;
+  posting_source_ats_kind: string | null;
   strategy: string;
   location: string;
   salary: string;
@@ -434,6 +436,8 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
     discoverySource: displayDiscoverySource(row.discovery_source, row.strategy, row.source),
+    postingSource: displayPostingSource(row.posting_source_ats_kind, row.posting_source_url),
+    postingSourceUrl: row.posting_source_url,
     strategy: row.strategy ?? "",
     location: normalizeJobLocation(row.location),
     salary: row.salary ?? "",
@@ -1044,9 +1048,29 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
     params.push(query.state);
   }
   if (query.source) {
-    clauses.push(`(LOWER(source) LIKE ? OR LOWER(${discoverySourceSqlExpression(db)}) LIKE ?)`);
-    const normalizedSource = `%${query.source.toLowerCase()}%`;
-    params.push(normalizedSource, normalizedSource);
+    const postingSourceUrlSql = postingSourceUrlSqlExpression(db);
+    const postingSourceAtsKindSql = postingSourceAtsKindSqlExpression(db);
+    clauses.push(
+      `(LOWER(source) LIKE ?
+        OR LOWER(${discoverySourceSqlExpression(db)}) LIKE ?
+        OR LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
+        OR LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
+        OR (
+          LOWER(COALESCE(${postingSourceAtsKindSql}, '')) LIKE ?
+          AND LOWER(COALESCE(${postingSourceUrlSql}, '')) LIKE ?
+        ))`,
+    );
+    const normalizedSource = query.source.toLowerCase();
+    const [postingSourceKind, ...postingSourceOwnerParts] = normalizedSource.split(":");
+    const postingSourceOwner = postingSourceOwnerParts.join(":") || normalizedSource;
+    params.push(
+      `%${normalizedSource}%`,
+      `%${normalizedSource}%`,
+      `%${normalizedSource}%`,
+      `%${normalizedSource}%`,
+      `%${postingSourceKind}%`,
+      `%${postingSourceOwner}%`,
+    );
   }
   if (query.company) {
     clauses.push("LOWER(employer) LIKE ?");
@@ -1106,6 +1130,8 @@ function jobProjectionSelect(db: SqliteDatabase): string {
        NULL AS score_stale_marked_at`;
   return `job_list_projections.*,
           ${discoverySourceSqlExpression(db)} AS discovery_source,
+          ${postingSourceUrlSqlExpression(db)} AS posting_source_url,
+          ${postingSourceAtsKindSqlExpression(db)} AS posting_source_ats_kind,
           ${hiddenSelect},
           ${stalenessSelect}`;
 }
@@ -1155,6 +1181,24 @@ function latestSourceObservationSql(): string {
             LIMIT 1)`;
 }
 
+function postingSourceUrlSqlExpression(db: SqliteDatabase): string {
+  if (!tableExists(db, "job_canonical_identities")) return "NULL";
+  return `(SELECT c.canonical_url
+             FROM job_canonical_identities c
+            WHERE c.tenant_id = job_list_projections.tenant_id
+              AND c.job_url = job_list_projections.job_id
+            LIMIT 1)`;
+}
+
+function postingSourceAtsKindSqlExpression(db: SqliteDatabase): string {
+  if (!tableExists(db, "job_canonical_identities")) return "NULL";
+  return `(SELECT c.ats_kind
+             FROM job_canonical_identities c
+            WHERE c.tenant_id = job_list_projections.tenant_id
+              AND c.job_url = job_list_projections.job_id
+            LIMIT 1)`;
+}
+
 function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
   return {
     q: query.q,
@@ -1185,7 +1229,9 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
   if (query.state && job.currentState !== query.state) return false;
   if (
     query.source &&
-    ![job.source, job.discoverySource].some((source) => source.toLowerCase().includes(query.source.toLowerCase()))
+    ![job.source, job.discoverySource, job.postingSource, job.postingSourceUrl ?? ""].some((source) =>
+      source.toLowerCase().includes(query.source.toLowerCase()),
+    )
   ) {
     return false;
   }
@@ -1200,10 +1246,60 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
     job.location,
     job.source,
     job.discoverySource,
+    job.postingSource,
+    job.postingSourceUrl ?? "",
     job.strategy,
     job.currentStage,
     job.currentState,
   ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function displayPostingSource(
+  atsKind: string | null | undefined,
+  canonicalUrl: string | null | undefined,
+): string {
+  const normalizedKind = String(atsKind ?? "").trim().toLowerCase();
+  const normalizedUrl = String(canonicalUrl ?? "").trim();
+  if (!normalizedUrl || !normalizedKind || normalizedKind === "other") return "";
+  return `${normalizedKind}:${postingSourceSlug(normalizedUrl, normalizedKind)}`;
+}
+
+function postingSourceSlug(rawUrl: string, atsKind: string): string {
+  let host = "";
+  let segments: string[] = [];
+  try {
+    const parsed = new URL(rawUrl);
+    host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    segments = parsed.pathname.split("/").filter(Boolean);
+  } catch {
+    return slugText(rawUrl);
+  }
+  if (atsKind === "greenhouse") {
+    const boardsIndex = segments.indexOf("boards");
+    const board = boardsIndex >= 0 ? segments[boardsIndex + 1] : undefined;
+    if (board) return slugText(board);
+    const firstSegment = segments[0];
+    if (host.includes("greenhouse.io") && firstSegment) return slugText(firstSegment);
+  }
+  if (atsKind === "lever") {
+    const postingsIndex = segments.indexOf("postings");
+    const postingSite = postingsIndex >= 0 ? segments[postingsIndex + 1] : undefined;
+    if (postingSite) return slugText(postingSite);
+    const firstSegment = segments[0];
+    if (firstSegment) return slugText(firstSegment);
+  }
+  if (atsKind === "ashby") {
+    const boardIndex = segments.indexOf("job-board");
+    const board = boardIndex >= 0 ? segments[boardIndex + 1] : undefined;
+    if (board) return slugText(board);
+    const firstSegment = segments[0];
+    if (firstSegment) return slugText(firstSegment);
+  }
+  return slugText(host || rawUrl);
+}
+
+function slugText(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "source";
 }
 
 function compareJobs(left: JobSummary, right: JobSummary, field: string, direction: "asc" | "desc"): number {

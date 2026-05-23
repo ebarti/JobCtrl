@@ -66,7 +66,8 @@ def test_jobspy_filters_results_by_target_title(monkeypatch):
             ]
         )
 
-    def fake_store(_conn, df, _source_label: str, limit: int = 0) -> tuple[int, int]:
+    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
+        assert run_id == "jobspy"
         stored_titles.extend(df["title"].tolist())
         return len(df), 0
 
@@ -124,7 +125,8 @@ def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypat
             ]
         )
 
-    def fake_store(_conn, df, _source_label: str, limit: int = 0) -> tuple[int, int]:
+    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
+        assert run_id == "jobspy"
         stored_locations.extend(df["location"].tolist())
         return len(df), 0
 
@@ -213,10 +215,200 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         ).fetchone()
         assert row["company"] == "Keyrock"
         event = conn.execute(
-            "SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1",
+            "SELECT event_type FROM job_events WHERE job_url = ? AND event_type = 'JobMetadataUpdated' LIMIT 1",
             ("https://www.linkedin.com/jobs/view/1",),
         ).fetchone()
         assert event["event_type"] == "JobMetadataUpdated"
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        direct_url = "https://boards.greenhouse.io/acme/jobs/123456"
+        frame = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/4416248661",
+                    "job_url_direct": direct_url,
+                    "title": "Staff Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
+
+        observation = conn.execute(
+            """
+            SELECT source_id, observed_url, run_id
+            FROM job_source_observations
+            WHERE job_url = ?
+            """,
+            ("https://www.linkedin.com/jobs/view/4416248661",),
+        ).fetchone()
+        assert observation["source_id"] == "jobspy:linkedin"
+        assert observation["observed_url"] == "https://www.linkedin.com/jobs/view/4416248661"
+        assert observation["run_id"] == "jobspy"
+
+        identity = conn.execute(
+            """
+            SELECT canonical_url, ats_kind, source_native_id, confidence
+            FROM job_canonical_identities
+            WHERE job_url = ?
+            """,
+            ("https://www.linkedin.com/jobs/view/4416248661",),
+        ).fetchone()
+        assert identity["canonical_url"] == direct_url
+        assert identity["ats_kind"] == "greenhouse"
+        assert identity["source_native_id"] == "123456"
+        assert identity["confidence"] == 0.82
+
+        source = conn.execute(
+            """
+            SELECT source_id, kind, priority, state, seed_url
+            FROM source_registry_entries
+            WHERE source_id = 'greenhouse:acme'
+            """
+        ).fetchone()
+        assert dict(source) == {
+            "source_id": "greenhouse:acme",
+            "kind": "ats_api",
+            "priority": "canonical",
+            "state": "active",
+            "seed_url": direct_url,
+        }
+
+        events = {
+            row["event_type"]
+            for row in conn.execute("SELECT event_type FROM job_events").fetchall()
+        }
+        assert {
+            "JobSourceObserved",
+            "SourceRegistryEntryCreated",
+            "SourceLocationCandidatePromoted",
+            "CanonicalJobIdentityResolved",
+        }.issubset(events)
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_deduplicates_learned_sources_for_same_owner(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        frame = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/1",
+                    "job_url_direct": "https://boards.greenhouse.io/acme/jobs/111",
+                    "title": "Staff Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+                {
+                    "job_url": "https://www.indeed.com/viewjob?jk=2",
+                    "job_url_direct": "https://boards.greenhouse.io/acme/jobs/222",
+                    "title": "Principal Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (2, 0)
+
+        source_count = conn.execute(
+            "SELECT COUNT(*) FROM source_registry_entries WHERE source_id = 'greenhouse:acme'"
+        ).fetchone()[0]
+        assert source_count == 1
+        identities = conn.execute(
+            "SELECT COUNT(*) FROM job_canonical_identities WHERE ats_kind = 'greenhouse'"
+        ).fetchone()[0]
+        assert identities == 2
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_surfaces_ambiguous_direct_urls_for_source_review(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        direct_url = "https://careers.example.com/platform-engineer"
+        frame = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/9",
+                    "job_url_direct": direct_url,
+                    "title": "Platform Engineer",
+                    "company": "Example",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
+
+        candidate = conn.execute(
+            """
+            SELECT candidate_url, source_kind, confidence, manual_action_reason
+            FROM source_locator_candidates
+            WHERE candidate_url = ?
+            """,
+            (direct_url,),
+        ).fetchone()
+        assert candidate["source_kind"] == "employer_careers_page"
+        assert candidate["confidence"] == 0.55
+        assert candidate["manual_action_reason"] == "ambiguous_career_system"
+
+        manual = conn.execute(
+            """
+            SELECT originating_url, reason, status
+            FROM manual_capture_queue
+            WHERE originating_url = ?
+            """,
+            (direct_url,),
+        ).fetchone()
+        assert manual["reason"] == "ambiguous_career_system"
+        assert manual["status"] == "pending"
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_ignores_missing_direct_url_for_source_learning(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        frame = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/10",
+                    "job_url_direct": None,
+                    "title": "Platform Engineer",
+                    "company": "Example",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
+
+        job = conn.execute(
+            "SELECT application_url FROM jobs WHERE url = ?",
+            ("https://www.linkedin.com/jobs/view/10",),
+        ).fetchone()
+        assert job["application_url"] is None
+        assert conn.execute("SELECT COUNT(*) FROM job_canonical_identities").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM source_locator_candidates").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM manual_capture_queue").fetchone()[0] == 0
     finally:
         close_connection(db_path)
 
