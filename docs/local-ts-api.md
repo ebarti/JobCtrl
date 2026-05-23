@@ -108,9 +108,9 @@ metadata are visible as columns instead of compact badges:
   `GET /v1/discovery/manual-capture` expose the local review queues. Located
   parseable source candidates are auto-promoted into the active source registry;
   these queues are for blocked, ambiguous, unparseable, or legacy pending work.
-  JobSpy direct URLs feed this same loop: known ATS URLs are promoted into the
-  source registry, while unknown or ambiguous owner URLs remain visible for
-  review.
+  JobSpy direct URLs feed this same loop: runnable ATS URLs are promoted into
+  the source registry, while unknown owner URLs or ATS URLs that still need
+  adapter configuration remain visible for review.
 - `POST /v1/discovery/locator-candidates/:candidateId/promote` promotes a
   legacy source locator candidate into an active source registry entry and emits
   `SourceLocationCandidatePromoted`.

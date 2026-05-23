@@ -382,6 +382,71 @@ def test_jobspy_surfaces_ambiguous_direct_urls_for_source_review(tmp_path):
         close_connection(db_path)
 
 
+def test_jobspy_keeps_learned_workday_sources_in_review_until_runnable(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        direct_url = "https://acme.wd1.myworkdayjobs.com/en-US/acme/job/Platform-Engineer_JR-123"
+        frame = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/12",
+                    "job_url_direct": direct_url,
+                    "title": "Platform Engineer",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
+
+        identity = conn.execute(
+            """
+            SELECT canonical_url, ats_kind, source_native_id
+            FROM job_canonical_identities
+            WHERE job_url = ?
+            """,
+            ("https://www.linkedin.com/jobs/view/12",),
+        ).fetchone()
+        assert identity["canonical_url"] == direct_url
+        assert identity["ats_kind"] == "workday"
+        assert identity["source_native_id"] == "Platform-Engineer_JR-123"
+
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM source_registry_entries WHERE source_id LIKE 'workday:%'"
+            ).fetchone()[0]
+            == 0
+        )
+
+        candidate = conn.execute(
+            """
+            SELECT candidate_url, source_kind, detected_ats_kind, manual_action_reason
+            FROM source_locator_candidates
+            WHERE candidate_url = ?
+            """,
+            (direct_url,),
+        ).fetchone()
+        assert candidate["source_kind"] == "ats_api"
+        assert candidate["detected_ats_kind"] == "workday"
+        assert candidate["manual_action_reason"] == "ambiguous_career_system"
+
+        manual = conn.execute(
+            """
+            SELECT originating_url, reason, status
+            FROM manual_capture_queue
+            WHERE originating_url = ?
+            """,
+            (direct_url,),
+        ).fetchone()
+        assert manual["reason"] == "ambiguous_career_system"
+        assert manual["status"] == "pending"
+    finally:
+        close_connection(db_path)
+
+
 def test_jobspy_ignores_missing_direct_url_for_source_learning(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)

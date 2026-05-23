@@ -347,6 +347,53 @@ def learn_posting_source_from_url(
             action="manual_review",
         )
 
+    identity = CanonicalJobIdentity(
+        canonical_url=candidate_url,
+        ats_kind=detected,
+        source_native_id=_source_native_id_from_url(candidate_url),
+        confidence=0.82,
+    )
+    SqliteJobRepository(conn).set_canonical_identity(
+        LOCAL_TENANT,
+        JobId(job_url),
+        identity,
+    )
+    _record_canonical_identity_resolved_event(
+        conn,
+        job_url=job_url,
+        identity=identity,
+        occurred_at=observed_at,
+    )
+
+    if detected is AtsKind.WORKDAY:
+        candidate = _source_location_candidate(
+            candidate_url=candidate_url,
+            source_kind=SourceKind.ATS_API,
+            confidence=0.82,
+            detected_ats_kind=detected.value,
+            employer_domain_matched=False,
+            source_id=None,
+            manual_reason=ManualActionReason.AMBIGUOUS_CAREER_SYSTEM,
+            retry_context={
+                "source": "broad_board_posting_url",
+                "discovered_via_source_id": discovered_via_source_id,
+                "job_url": job_url,
+                "ats_kind": detected.value,
+                "reason": "workday_adapter_config_required",
+            },
+        )
+        if _locator_candidate_is_new(conn, candidate):
+            _record_locator_event(conn, candidate)
+        _upsert_locator_candidate(conn, candidate)
+        _enqueue_manual_action_from_candidate(conn, candidate)
+        conn.commit()
+        return LearnedPostingSource(
+            source_id=None,
+            canonical_url=candidate_url,
+            candidate_id=candidate.candidate_id,
+            action="manual_review",
+        )
+
     candidate = _source_location_candidate(
         candidate_url=candidate_url,
         source_kind=SourceKind.ATS_API,
@@ -363,23 +410,6 @@ def learn_posting_source_from_url(
     )
     source_id = _source_id_from_locator_candidate(conn, candidate)
     _promote_locator_candidate(conn, candidate)
-    identity = CanonicalJobIdentity(
-        canonical_url=candidate_url,
-        ats_kind=detected,
-        source_native_id=_source_native_id_from_url(candidate_url),
-        confidence=0.82,
-    )
-    SqliteJobRepository(conn).set_canonical_identity(
-        candidate.tenant_id,
-        JobId(job_url),
-        identity,
-    )
-    _record_canonical_identity_resolved_event(
-        conn,
-        job_url=job_url,
-        identity=identity,
-        occurred_at=observed_at,
-    )
     conn.commit()
     return LearnedPostingSource(
         source_id=source_id,

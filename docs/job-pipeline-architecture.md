@@ -324,9 +324,10 @@ classDiagram
   rows, `job_events`, and source-level operational attempt metrics.
 - Emits stage events and source-level discovery events.
 - Treats JobSpy result URLs as broad-board observations and JobSpy direct URLs
-  as owner-source evidence. Known ATS direct URLs are promoted into
-  `source_registry_entries`; ambiguous direct URLs are surfaced through source
-  locator/manual-capture review instead of being ignored.
+  as owner-source evidence. Runnable ATS direct URLs are promoted into
+  `source_registry_entries`; ambiguous direct URLs and ATS URLs that still need
+  adapter configuration are surfaced through source locator/manual-capture
+  review instead of being ignored.
 - Classifies JobSpy board observations as `source_role=lead_generator` and
   root employer/ATS/API sources as `source_role=canonical_source`, so board
   discovery metrics do not collapse into canonical employer source health.

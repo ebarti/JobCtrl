@@ -343,14 +343,15 @@ state, priority, recommendation, activity, run health, and quality-metric
 columns. Located parseable sources are automatically approved into the active
 source registry; manual review is reserved for blocked, ambiguous, or
 unparseable sources. JobSpy broad-board results can also learn durable sources:
-when a result exposes a known ATS direct URL, JobHunter records the board
-provenance, promotes the ATS source into the registry, and links the job to the
-canonical posting URL; unknown owner URLs stay in review. These controls can add
-an experimental source, preview recently observed leads for a source, enable or
-quarantine a source, approve or reject quarantined leads, record source
-feedback, open a blocked lead in the local browser, and import a user-provided
-URL, current-page URL, pasted text, saved HTML, or email content as
-manual-capture provenance. Manual capture
+when a result exposes a direct owner URL, JobHunter records the board
+provenance, links the job to the canonical posting URL, and promotes runnable
+ATS sources into the registry; unknown owner URLs and ATS URLs that still need
+adapter configuration stay in review. These controls can add an experimental
+source, preview recently observed leads for a source, enable or quarantine a
+source, approve or reject quarantined leads, record source feedback, open a
+blocked lead in the local browser, and import a user-provided URL, current-page
+URL, pasted text, saved HTML, or email content as manual-capture provenance.
+Manual capture
 stores local provenance metadata and content hashes, not raw captured posting
 text in domain events. The `limit`
 control is honored by every pipeline stage tab, including `discover` and `enrich`, so
