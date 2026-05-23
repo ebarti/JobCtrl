@@ -31,6 +31,11 @@ def in_memory_exporter(monkeypatch):
     exporter.clear()
 
 
+@pytest.fixture(autouse=True)
+def no_operational_metric_side_effects(monkeypatch):
+    monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
+
+
 def test_sequential_stage_emits_pipeline_span_and_stage_events(monkeypatch, in_memory_exporter):
     events: list[tuple[str, str, str, dict]] = []
 

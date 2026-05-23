@@ -148,6 +148,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_enrichment_tables(conn)
     ensure_posting_snapshot_tables(conn)
     ensure_discovery_run_tables(conn)
+    ensure_operational_metric_tables(conn)
     ensure_source_observation_tables(conn)
     ensure_discovery_control_tables(conn)
     ensure_projection_tables_in_db(conn)
@@ -203,6 +204,16 @@ def ensure_discovery_run_tables(conn: sqlite3.Connection | None = None) -> list[
     )
     conn.commit()
     return ["discovery_runs"]
+
+
+def ensure_operational_metric_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create Operations-owned append-only attempt metric tables."""
+    if conn is None:
+        conn = get_connection()
+
+    from jobhunter.operational_metrics import ensure_operational_metric_tables as ensure_tables
+
+    return ensure_tables(conn)
 
 
 # Complete column registry: column_name -> SQL type with optional default.

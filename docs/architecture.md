@@ -150,6 +150,7 @@ tables that back every read-model endpoint:
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
 | `discovery_run_projections`  | Scheduled discovery-run status, source ids, counts, and retry metadata. |
 | `source_quality_stats`       | Rolling per-source health rates used by the dashboard and discovery scheduler. |
+| `operational_attempt_metrics` | Append-only stage/source/apply attempt facts with outcome, source role, failure class, retryability, scrape/operational flags, counts, and durations. |
 
 The Python `ProjectionBuilder` (driven by `InProcessEventBus`) and the TS
 `refreshProjections` helper both read new rows from `job_events` since the

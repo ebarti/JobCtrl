@@ -77,6 +77,7 @@ from jobhunter.database import (
 from jobhunter.domain.apply.services import ApplyPromptBuilder
 from jobhunter.domain.apply.value_objects import ApplyPrompt, ApplyRunId, new_apply_run_id
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.operational_metrics import record_operational_attempt_metric
 from jobhunter.state import (
     ensure_job_stage_rows,
     record_job_artifact,
@@ -1227,6 +1228,19 @@ def main(
     _stop_event.clear()
     config.ensure_dirs()
     console = Console()
+    batch_run_id = f"apply:{uuid.uuid4().hex}"
+    batch_started = time.time()
+    metric_error_class: str | None = None
+    metric_error_message: str | None = None
+
+    _record_apply_batch_metric(
+        outcome="started",
+        run_id=batch_run_id,
+        target_url=target_url,
+        dry_run=dry_run,
+        workers=workers,
+        model=model,
+    )
 
     if snapshot is None:
         try:
@@ -1359,12 +1373,78 @@ def main(
         )
         console.print(f"Logs: {config.LOG_DIR}")
     except KeyboardInterrupt:
+        metric_error_class = "manual_abort_apply"
+        metric_error_message = "manual_abort_apply"
         pass
+    except Exception as exc:
+        metric_error_class = type(exc).__name__
+        metric_error_message = str(exc)
+        raise
     finally:
         _stop_event.set()
         kill_all_chrome()
+        if metric_error_class:
+            metric_outcome = "failed"
+        elif dry_run:
+            metric_outcome = "dry_run"
+        else:
+            metric_outcome = "succeeded" if total_failed == 0 else "failed"
+        _record_apply_batch_metric(
+            outcome=metric_outcome,
+            run_id=batch_run_id,
+            target_url=target_url,
+            dry_run=dry_run,
+            workers=workers,
+            model=model,
+            duration_ms=int((time.time() - batch_started) * 1000),
+            total_applied=total_applied,
+            total_failed=total_failed,
+            error_class=metric_error_class,
+            error_message=metric_error_message,
+        )
     _ = rescued
     return total_applied, total_failed
+
+
+def _record_apply_batch_metric(
+    *,
+    outcome: str,
+    run_id: str,
+    target_url: str | None,
+    dry_run: bool,
+    workers: int,
+    model: str,
+    duration_ms: int | None = None,
+    total_applied: int = 0,
+    total_failed: int = 0,
+    error_class: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    try:
+        conn = get_connection()
+        record_operational_attempt_metric(
+            conn,
+            stage="apply",
+            attempt_kind="apply_batch",
+            outcome=outcome,
+            adapter="browser",
+            run_id=run_id,
+            job_url=target_url,
+            duration_ms=duration_ms,
+            counts={"total": total_applied + total_failed},
+            error_class=error_class,
+            error_message=error_message,
+            metadata={
+                "dryRun": dry_run,
+                "workers": workers,
+                "model": model,
+                "applied": total_applied,
+                "failed": total_failed,
+            },
+        )
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to record apply operational metric")
 
 
 def _rescue_orphaned_running_apply(console: Console) -> int:

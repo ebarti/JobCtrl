@@ -81,7 +81,11 @@ failed stage to `pending`; non-failed selected jobs are ignored.
 `source_quality_stats`. The projection is rebuilt from discovery run,
 source-observation, duplicate, content snapshot, enrichment, apply-URL, and
 active-state events and user discovery feedback. It is the read-side signal the
-web dashboard uses for source health.
+web dashboard uses for source health. The same response also includes
+`operationalMetrics`, sourced from `operational_attempt_metrics`, plus
+per-source operational/scrape/retryable failure counts. These counters use
+structured stage/source/apply attempt rows, not label math over free-text event
+messages.
 
 Discovery product-control endpoints are local-first and share DTOs from
 `packages/contracts`. The web Discovery page composes these endpoints into

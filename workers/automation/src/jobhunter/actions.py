@@ -18,6 +18,7 @@ from uuid import uuid4
 from jobhunter import config
 from jobhunter.database import get_connection, init_db
 from jobhunter.infrastructure.profile import get_profile_repository
+from jobhunter.operational_metrics import record_operational_attempt_metric
 from jobhunter.pipeline import STAGE_ORDER, run_pipeline
 from jobhunter.state import record_job_event, utc_now
 
@@ -241,6 +242,8 @@ def _finish_action(
                 "error": error,
             },
         )
+        if request.dry_run:
+            _record_dry_run_metric(request, action_id, duration_ms)
     except Exception:  # noqa: BLE001 - action results must stay JSON-safe when event logging fails
         pass
     return LocalActionResult(
@@ -275,6 +278,27 @@ def _record_action_event(
         level=level,
         message=message,
         payload=payload,
+    )
+    conn.commit()
+
+
+def _record_dry_run_metric(request: LocalActionRequest, action_id: str, duration_ms: int) -> None:
+    conn = get_connection()
+    record_operational_attempt_metric(
+        conn,
+        stage=request.stage,
+        attempt_kind="local_action",
+        outcome="dry_run",
+        adapter="api",
+        run_id=action_id,
+        job_url=request.job_url,
+        duration_ms=duration_ms,
+        metadata={
+            "workers": request.workers,
+            "limit": request.limit,
+            "rescore": request.rescore,
+            "retailor": request.retailor,
+        },
     )
     conn.commit()
 

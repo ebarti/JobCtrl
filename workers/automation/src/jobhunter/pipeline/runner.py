@@ -39,7 +39,7 @@ from jobhunter.domain.discovery.scheduler import (
     ScheduledSource,
     SourceQualitySnapshot,
 )
-from jobhunter.domain.discovery.source_registry import SourceKind, SourceState
+from jobhunter.domain.discovery.source_registry import SourceKind, SourcePriority, SourceState
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery.sqlite_run_repository import (
     SqliteDiscoveryRunRepository,
@@ -49,6 +49,7 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     run_scheduled_ats_sources,
     seed_discovery_control_queues,
 )
+from jobhunter.operational_metrics import record_operational_attempt_metric
 from jobhunter.infrastructure.observability.source_spans import discovery_run_span
 from jobhunter.state import record_job_event, utc_now
 
@@ -117,6 +118,49 @@ def _record_pipeline_event(
         conn.commit()
     except Exception:
         log.exception("Failed to record pipeline event %s for stage %s", event_type, stage)
+
+
+def _record_operational_attempt(
+    *,
+    stage: str,
+    attempt_kind: str,
+    outcome: str,
+    source_id: str | None = None,
+    source_kind: str | None = None,
+    source_priority: str | None = None,
+    source_role: str | None = None,
+    adapter: str | None = None,
+    run_id: str | None = None,
+    job_url: str | None = None,
+    duration_ms: int | None = None,
+    counts: dict[str, Any] | None = None,
+    error_class: str | None = None,
+    error_message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        conn = get_connection()
+        record_operational_attempt_metric(
+            conn,
+            stage=stage,
+            attempt_kind=attempt_kind,
+            outcome=outcome,
+            source_id=source_id,
+            source_kind=source_kind,
+            source_priority=source_priority,
+            source_role=source_role,
+            adapter=adapter,
+            run_id=run_id,
+            job_url=job_url,
+            duration_ms=duration_ms,
+            counts=counts,
+            error_class=error_class,
+            error_message=error_message,
+            metadata=metadata,
+        )
+        conn.commit()
+    except Exception:
+        log.exception("Failed to record operational attempt metric for %s/%s", stage, attempt_kind)
 
 
 def _pipeline_event_payload(
@@ -200,6 +244,15 @@ def _stage_status(stage: str, result: dict[str, Any] | None) -> str:
     return status
 
 
+def _stage_counts(result: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return {}
+    counts = result.get("counts")
+    if isinstance(counts, dict):
+        return counts
+    return result
+
+
 def _run_stage_observed(
     stage: str,
     runner: _StageRunner,
@@ -217,6 +270,12 @@ def _run_stage_observed(
         f"{stage} stage started",
         {"mode": mode, "passNumber": pass_number, "startedAt": started},
     )
+    _record_operational_attempt(
+        stage=stage,
+        attempt_kind="pipeline_stage",
+        outcome="started",
+        metadata={"mode": mode, "passNumber": pass_number},
+    )
     t0 = time.time()
     with _pipeline_tracer().start_as_current_span(f"pipeline.stage.{stage}") as span:
         _set_pipeline_span_attributes(span, stage)
@@ -226,6 +285,7 @@ def _run_stage_observed(
             result = runner(**kwargs)
         except Exception as exc:
             elapsed = time.time() - t0
+            duration_ms = int(elapsed * 1000)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             _record_pipeline_event(
@@ -236,20 +296,32 @@ def _run_stage_observed(
                 {
                     "mode": mode,
                     "passNumber": pass_number,
-                    "durationMs": int(elapsed * 1000),
+                    "durationMs": duration_ms,
                     "error": str(exc),
                     "errorCode": type(exc).__name__,
                     "errorMessage": str(exc),
                 },
             )
+            _record_operational_attempt(
+                stage=stage,
+                attempt_kind="pipeline_stage",
+                outcome="failed",
+                duration_ms=duration_ms,
+                error_class=type(exc).__name__,
+                error_message=str(exc),
+                metadata={"mode": mode, "passNumber": pass_number},
+            )
             raise
 
         elapsed = time.time() - t0
+        duration_ms = int(elapsed * 1000)
         status = _stage_status(stage, result)
         span.set_attribute("jobhunter.pipeline.status", status)
-        span.set_attribute("jobhunter.pipeline.duration_ms", int(elapsed * 1000))
+        span.set_attribute("jobhunter.pipeline.duration_ms", duration_ms)
         if status not in ("ok", "partial", "skipped"):
             span.set_status(Status(StatusCode.ERROR, status))
+            error_class = str(result.get("error_class") or "stage_status_failed") if isinstance(result, dict) else "stage_status_failed"
+            error_message = str(result.get("error_message") or status) if isinstance(result, dict) else status
             _record_pipeline_event(
                 stage,
                 "StageFailed",
@@ -258,11 +330,21 @@ def _run_stage_observed(
                 {
                     "mode": mode,
                     "passNumber": pass_number,
-                    "durationMs": int(elapsed * 1000),
+                    "durationMs": duration_ms,
                     "error": status,
-                    "errorCode": "stage_status_failed",
-                    "errorMessage": status,
+                    "errorCode": error_class,
+                    "errorMessage": error_message,
                 },
+            )
+            _record_operational_attempt(
+                stage=stage,
+                attempt_kind="pipeline_stage",
+                outcome="failed",
+                duration_ms=duration_ms,
+                counts=_stage_counts(result),
+                error_class=error_class,
+                error_message=error_message,
+                metadata={"mode": mode, "passNumber": pass_number, "status": status},
             )
         else:
             _record_pipeline_event(
@@ -273,9 +355,17 @@ def _run_stage_observed(
                 {
                     "mode": mode,
                     "passNumber": pass_number,
-                    "durationMs": int(elapsed * 1000),
+                    "durationMs": duration_ms,
                     "status": status,
                 },
+            )
+            _record_operational_attempt(
+                stage=stage,
+                attempt_kind="pipeline_stage",
+                outcome="partial" if status == "partial" else ("skipped" if status == "skipped" else "succeeded"),
+                duration_ms=duration_ms,
+                counts=_stage_counts(result),
+                metadata={"mode": mode, "passNumber": pass_number, "status": status},
             )
         return result, elapsed, status
 
@@ -329,6 +419,12 @@ def _run_discovery_source(
         f"Discovery source {source} started",
         {"source": source, "sourceLabel": label, "runId": run_id, "sourceIds": list(source_ids)},
     )
+    _record_discovery_source_attempts(
+        source,
+        scheduled_sources,
+        "started",
+        run_id=run_id,
+    )
     t0 = time.time()
     with (
         _pipeline_tracer().start_as_current_span(f"pipeline.source.discover.{source}") as span,
@@ -346,6 +442,7 @@ def _run_discovery_source(
             result = _call_discovery_source(run, run_id)
         except Exception as exc:
             elapsed = time.time() - t0
+            duration_ms = int(elapsed * 1000)
             log.error("%s failed: %s", label, exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
@@ -376,6 +473,15 @@ def _run_discovery_source(
                 message=f"Discovery run {run_id} failed: {exc}",
                 occurred_at=failed_at,
             )
+            _record_discovery_source_attempts(
+                source,
+                scheduled_sources,
+                "failed",
+                run_id=run_id,
+                duration_ms=duration_ms,
+                error_class=type(exc).__name__,
+                error_message=str(exc),
+            )
             _record_pipeline_event(
                 "discover",
                 "StageFailed",
@@ -386,7 +492,7 @@ def _run_discovery_source(
                     "sourceLabel": label,
                     "runId": run_id,
                     "sourceIds": list(source_ids),
-                    "durationMs": int(elapsed * 1000),
+                    "durationMs": duration_ms,
                     "error": str(exc),
                     "errorCode": type(exc).__name__,
                     "errorMessage": str(exc),
@@ -395,6 +501,7 @@ def _run_discovery_source(
             return f"error: {exc}"
 
         elapsed = time.time() - t0
+        duration_ms = int(elapsed * 1000)
         counts = DiscoveryRunCounts.from_result(result)
         failed_source_ids = _failed_source_ids_from_result(result)
         completed_at = utc_now()
@@ -432,6 +539,17 @@ def _run_discovery_source(
         span.set_attribute("jobhunter.pipeline.source_status", status)
         span.set_attribute("jobhunter.discovery.result.total", counts.total)
         span.set_attribute("jobhunter.discovery.result.new_jobs", counts.new_jobs)
+        _record_discovery_source_attempts(
+            source,
+            scheduled_sources,
+            "partial_failed" if failed_source_ids else "succeeded",
+            run_id=run_id,
+            duration_ms=duration_ms,
+            counts=counts.to_dict(),
+            failed_source_ids=failed_source_ids,
+            error_class="partial_source_failure" if failed_source_ids else None,
+            error_message="One or more scheduled sources failed." if failed_source_ids else None,
+        )
         _record_pipeline_event(
             "discover",
             "StageCompleted",
@@ -442,11 +560,61 @@ def _run_discovery_source(
                 "sourceLabel": label,
                 "runId": run_id,
                 "sourceIds": list(source_ids),
-                "durationMs": int(elapsed * 1000),
+                "durationMs": duration_ms,
                 "status": status,
             },
         )
         return status
+
+
+def _record_discovery_source_attempts(
+    adapter: str,
+    scheduled_sources: tuple[ScheduledSource, ...],
+    outcome: str,
+    *,
+    run_id: str,
+    duration_ms: int | None = None,
+    counts: dict[str, Any] | None = None,
+    failed_source_ids: list[str] | None = None,
+    error_class: str | None = None,
+    error_message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    failed = set(failed_source_ids or [])
+    for source in scheduled_sources:
+        terminal_outcome = "failed" if source.source_id in failed else outcome
+        if outcome == "partial_failed" and source.source_id not in failed:
+            terminal_outcome = "succeeded"
+        _record_operational_attempt(
+            stage="discover",
+            attempt_kind="discovery_source",
+            outcome=terminal_outcome,
+            source_id=source.source_id,
+            source_kind=source.source_kind.value,
+            source_priority=source.priority.value,
+            source_role=_source_role(source),
+            adapter=adapter,
+            run_id=run_id,
+            duration_ms=duration_ms,
+            counts=counts,
+            error_class=error_class if terminal_outcome in {"failed", "partial_failed"} else None,
+            error_message=error_message if terminal_outcome in {"failed", "partial_failed"} else None,
+            metadata={
+                "decision": source.decision,
+                "reason": source.reason,
+                **(metadata or {}),
+            },
+        )
+
+
+def _source_role(source: ScheduledSource) -> str:
+    if source.priority == SourcePriority.LEAD_GENERATOR or source.source_kind == SourceKind.BROAD_BOARD:
+        return "lead_generator"
+    if source.priority == SourcePriority.CANONICAL or source.source_kind in {SourceKind.ATS_API, SourceKind.OFFICIAL_API}:
+        return "canonical_source"
+    if source.source_kind == SourceKind.USER_MEDIATED_CAPTURE:
+        return "user_mediated"
+    return "fallback_source"
 
 
 def _call_discovery_source(run: Callable[..., Any], run_id: str) -> Any:
@@ -551,7 +719,22 @@ def _record_skipped_discovery_run(
         message=f"Discovery run {run_id} skipped: {reason}",
         occurred_at=completed_at,
     )
-    return _skip_discovery_source(source, label, reason, run_id=run_id, source_ids=source_ids)
+    _record_discovery_source_attempts(
+        source,
+        scheduled_sources,
+        "skipped",
+        run_id=run_id,
+        counts={"total": 0, "new_jobs": 0, "existing_jobs": 0, "observed_jobs": 0, "duplicate_jobs": 0},
+        metadata={"skipReason": reason, "status": _skip_status(reason)},
+    )
+    return _skip_discovery_source(
+        source,
+        label,
+        reason,
+        run_id=run_id,
+        source_ids=source_ids,
+        record_metric=False,
+    )
 
 
 def _skip_discovery_source(
@@ -561,6 +744,7 @@ def _skip_discovery_source(
     *,
     run_id: str | None = None,
     source_ids: tuple[str, ...] = (),
+    record_metric: bool = True,
 ) -> str:
     status = _skip_status(reason)
     payload: dict[str, Any] = {
@@ -580,6 +764,16 @@ def _skip_discovery_source(
         f"Discovery source {source} skipped: {reason}",
         payload,
     )
+    if record_metric:
+        _record_operational_attempt(
+            stage="discover",
+            attempt_kind="discovery_source",
+            outcome="skipped",
+            adapter=source,
+            run_id=run_id,
+            counts={"total": 0, "new_jobs": 0, "existing_jobs": 0, "observed_jobs": 0, "duplicate_jobs": 0},
+            metadata={"skipReason": reason, "status": status, "sourceIds": list(source_ids)},
+        )
     return status
 
 
@@ -1024,7 +1218,7 @@ def _run_enrich(workers: int = 1, limit: int = 0) -> dict:
         return {"status": "ok"}
     except Exception as e:
         log.error("Enrichment failed: %s", e)
-        return {"status": f"error: {e}"}
+        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
 
 
 def _run_score(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict:
@@ -1035,7 +1229,7 @@ def _run_score(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict:
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)
-        return {"status": f"error: {e}"}
+        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
 
 
 def _run_tailor(
@@ -1058,7 +1252,7 @@ def _run_tailor(
         return {"status": "ok"}
     except Exception as e:
         log.error("Tailoring failed: %s", e)
-        return {"status": f"error: {e}"}
+        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
 
 
 def _run_cover(
@@ -1077,7 +1271,7 @@ def _run_cover(
         return {"status": "ok"}
     except Exception as e:
         log.error("Cover letter generation failed: %s", e)
-        return {"status": f"error: {e}"}
+        return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
 
 
 # Map stage names to their runner functions. ``Callable`` (lowercase
@@ -1565,6 +1759,12 @@ def run_pipeline(
         for name in ordered:
             meta = STAGE_META[name]
             console.print(f"    {name:<12s}  {meta['desc']}")
+            _record_operational_attempt(
+                stage=name,
+                attempt_kind="pipeline_stage",
+                outcome="dry_run",
+                metadata={"mode": mode, "planned": True},
+            )
         console.print("\n  No changes made.")
         return {"stages": [], "errors": {}, "elapsed": 0.0}
 

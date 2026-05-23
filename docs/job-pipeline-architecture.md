@@ -254,7 +254,7 @@ sequenceDiagram
     Runner->>Smart: run_smart_extract(...)
     Smart->>DB: insert jobs, quarantine, manual-capture queue
 
-    Runner->>DB: DiscoveryRun* and Stage* events
+    Runner->>DB: DiscoveryRun*, Stage*, and operational attempt metrics
     DB->>Ops: source-quality and dashboard projections refresh
     Ops-->>Api: API reads show new jobs/source health
 ```
@@ -320,8 +320,12 @@ classDiagram
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.
 - Writes `jobs`, source observations, canonical identity rows, quarantine
-  entries, discovery run rows, and `job_events`.
+  entries, discovery run rows, `job_events`, and source-level operational
+  attempt metrics.
 - Emits stage events and source-level discovery events.
+- Classifies JobSpy board observations as `source_role=lead_generator` and
+  root employer/ATS/API sources as `source_role=canonical_source`, so board
+  discovery metrics do not collapse into canonical employer source health.
 
 ### Failure And Limits
 
@@ -811,6 +815,7 @@ API endpoints owned by Operations:
 ```mermaid
 flowchart LR
     Events["job_events<br/>domain + lifecycle facts"]
+    Metrics["operational_attempt_metrics<br/>stage/source/apply facts"]
     StageRows["job_stage_states"]
     Aggregates["aggregate tables<br/>jobs, scores, materials, apply events"]
     Builder["ProjectionBuilder / refreshProjections"]
@@ -824,6 +829,7 @@ flowchart LR
     UI["React views + TanStack Query"]
 
     Events --> Builder
+    Metrics --> Builder
     StageRows --> Builder
     Aggregates --> Builder
     Builder --> JobList
@@ -844,6 +850,15 @@ flowchart LR
 This separation is why a stage can complete before every UI card visibly
 changes: the write path records durable facts first, then projection refresh and
 SSE invalidation make those facts visible to the frontend.
+
+Operational metrics are append-only rows written at pipeline boundaries rather
+than inferred from dashboard labels or free-form event messages. Rows include
+`stage`, `source_id`, source role, adapter, attempt kind, outcome,
+operational/scrape/retryable flags, counts, durations, `error_class`,
+`error_message`, `run_id`, and `job_url` when known. Discovery, enrichment,
+scoring, tailoring, cover generation, apply dry-runs, and orphan cleanup all
+record structured attempts so `discovery_runs.status='failed'` no longer has to
+carry unrelated failure causes by itself.
 
 ## Source Files
 

@@ -662,6 +662,7 @@ export interface DashboardSummary {
     at: string | null;
   }>;
   sourceHealth: SourceHealthSummary[];
+  operationalMetrics: OperationalMetricsSummary;
   applyRuns: Array<{
     runId: string;
     jobKey: string;
@@ -686,9 +687,45 @@ export interface SourceHealthSummary {
   activeVerificationRate: number | null;
   fullDescriptionSuccessRate: number | null;
   applyUrlSuccessRate: number | null;
+  operationalFailureCount: number;
+  scrapeFailureCount: number;
+  retryableFailureCount: number;
+  lastFailureCategory: string | null;
   lastRunId: string | null;
   lastErrorClass: string | null;
   updatedAt: string | null;
+}
+
+export interface OperationalMetricsSummary {
+  attempts: number;
+  failures: number;
+  operationalFailures: number;
+  scrapeFailures: number;
+  retryableFailures: number;
+  byStage: OperationalStageMetricSummary[];
+  bySource: OperationalSourceMetricSummary[];
+}
+
+export interface OperationalStageMetricSummary {
+  stage: string;
+  attempts: number;
+  failures: number;
+  operationalFailures: number;
+  scrapeFailures: number;
+  retryableFailures: number;
+  avgDurationMs: number | null;
+  lastOutcome: string | null;
+  lastFailureCategory: string | null;
+  lastErrorClass: string | null;
+}
+
+export interface OperationalSourceMetricSummary extends OperationalStageMetricSummary {
+  sourceId: string;
+  adapter: string | null;
+  sourceKind: string | null;
+  sourcePriority: string | null;
+  sourceRole: string | null;
+  lastRunId: string | null;
 }
 
 export interface JobDetail {
