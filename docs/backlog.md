@@ -37,7 +37,7 @@ deferred until the local product is solid.
   inside that pipeline run as child `ApplyWorkflow` executions. However,
   `/v1/workflow-runs` is still backed by apply-run projections. A uniform
   workflow-run projection is still needed if the dashboard should list
-  discover/enrich/score/tailor/cover/pdf workflow lifecycle rows alongside
+  discover/enrich/score/tailor/cover workflow lifecycle rows alongside
   apply runs.
 - Add cancellation UX for queued or running non-apply local actions.
   `run_stage` now has a Temporal workflow ID, so cooperative cancellation can

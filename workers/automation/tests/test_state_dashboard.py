@@ -95,7 +95,7 @@ def test_ensure_job_stage_rows_creates_all_stages(tmp_path):
         conn.commit()
 
         states = get_job_stage_states(conn, job)
-        assert len(states) == 7
+        assert len(states) == 6
 
         discover = next(item for item in states if item["stage"] == "discover")
         assert discover["state"] == "succeeded"
@@ -116,7 +116,7 @@ def test_get_job_stage_states_returns_defaults_for_missing_rows(tmp_path):
         job = _insert_job(conn)
         # Do NOT call ensure_job_stage_rows — no rows at all
         states = get_job_stage_states(conn, job)
-        assert len(states) == 7
+        assert len(states) == 6
         for item in states:
             assert item["state"] == "pending"
             assert item["attempt_count"] == 0

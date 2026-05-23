@@ -20,13 +20,13 @@ is intentionally function-based.
 The user-facing stage order is:
 
 ```text
-discover -> enrich -> score -> tailor -> cover -> pdf -> apply
+discover -> enrich -> score -> tailor -> cover -> apply
 ```
 
 The Python batch runner's `STAGE_ORDER` covers the non-apply stages:
 
 ```text
-discover -> enrich -> score -> tailor -> cover -> pdf
+discover -> enrich -> score -> tailor -> cover
 ```
 
 `apply` is deliberately separate. Non-apply stages currently run through the
@@ -74,7 +74,7 @@ sequenceDiagram
     Temporal-->>Rpc: workflow handle
     Rpc-->>JsonRpc: {runId, workflowId}
 
-    alt discover/enrich/score/tailor/cover/pdf step
+    alt discover/enrich/score/tailor/cover step
         Temporal->>Activity: execute stage activity
         Activity->>Runner: run_pipeline(stages=[stage])
         Runner->>DB: stage writes, events, artifacts
@@ -614,7 +614,8 @@ stage can be retried without losing successful materials.
 
 Cover creates job-specific cover letters for jobs that already have sufficient
 score/material context. It owns cover-letter text generation and persistence.
-It does not render every PDF; pending PDF rendering is handled by the PDF stage.
+It also renders the cover-letter PDF, so the stage outputs the artifacts Apply
+needs without relying on a later PDF-only phase.
 
 ### Sequence
 
@@ -640,6 +641,7 @@ sequenceDiagram
     Cover->>LLM: generate cover letter
     Cover->>Materials: save CoverLetter
     Cover->>Files: write cover letter artifact
+    Cover->>Files: render cover-letter PDF
     Cover->>DB: cover/material/stage events
 ```
 
@@ -659,6 +661,7 @@ classDiagram
     class MaterialsRepository {
       +load MaterialsSet
       +save CoverLetter
+      +save CoverLetterPdf
     }
     class LLMClient {
       +chat(messages, schema)
@@ -667,19 +670,23 @@ classDiagram
       +content
       +artifact_path
     }
+    class PlaywrightHtmlPdfAdapter {
+      +render cover-letter PDF
+    }
 
     RunCover --> CoverLetterRunner
     CoverLetterRunner --> ProfileRepository
     CoverLetterRunner --> MaterialsRepository
     CoverLetterRunner --> LLMClient
     CoverLetterRunner --> CoverLetter
+    CoverLetterRunner --> PlaywrightHtmlPdfAdapter
 ```
 
 ### Data And Events
 
 - Reads score, job, profile, and existing materials context.
-- Writes cover-letter material rows and local cover-letter files.
-- Publishes cover-letter generation events.
+- Writes cover-letter material rows plus local cover-letter text and PDF files.
+- Publishes cover-letter generation and PDF-rendered events.
 - Refreshes artifact and job detail projections.
 
 ### Failure And Limits
@@ -688,94 +695,7 @@ classDiagram
 Failures are local to individual jobs so a retry can continue from the remaining
 pending cover letters.
 
-## Phase 6: PDF
-
-### Purpose And Boundary
-
-PDF renders pending material artifacts to PDFs. Tailored resume PDFs are
-produced by the tailoring path today; the PDF stage focuses on pending PDF work
-recorded in the Materials repository, especially cover-letter PDFs.
-
-### Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Api as TS API
-    participant Rpc as JSON-RPC run_stage
-    participant Runner as _run_pdf
-    participant UseCase as RenderPdfUseCase
-    participant Repo as SqliteMaterialsRepository
-    participant Latex as LatexPdfAdapter
-    participant Html as PlaywrightHtmlPdfAdapter
-    participant Files as Local files
-    participant DB as SQLite
-
-    Api->>Rpc: run_stage(stage="pdf", limit)
-    Rpc->>Runner: run_pipeline(stages=["pdf"])
-    Runner->>Repo: list_pending_pdf(tenant, limit)
-    loop each pending job
-        Runner->>UseCase: execute(job_id, tenant_id)
-        UseCase->>Repo: load MaterialsSet
-        alt resume PDF
-            UseCase->>Latex: render resume PDF
-        else cover-letter PDF
-            UseCase->>Html: render cover-letter PDF
-        end
-        UseCase->>Files: write PDF artifact
-        UseCase->>Repo: save RenderedPdf
-    end
-    Runner->>DB: StageCompleted or StageFailed
-```
-
-### Components
-
-```mermaid
-classDiagram
-    class RunPdf {
-      +_run_pdf(limit)
-    }
-    class RenderPdfUseCase {
-      +execute(job_id, tenant_id)
-    }
-    class SqliteMaterialsRepository {
-      +list_pending_pdf(tenant, limit)
-      +load MaterialsSet
-      +save RenderedPdf
-    }
-    class LatexPdfAdapter {
-      +render resume PDF
-    }
-    class PlaywrightHtmlPdfAdapter {
-      +render cover-letter PDF
-    }
-    class RenderedPdf {
-      +path
-      +kind
-    }
-
-    RunPdf --> SqliteMaterialsRepository
-    RunPdf --> RenderPdfUseCase
-    RenderPdfUseCase --> SqliteMaterialsRepository
-    RenderPdfUseCase --> LatexPdfAdapter
-    RenderPdfUseCase --> PlaywrightHtmlPdfAdapter
-    RenderPdfUseCase --> RenderedPdf
-```
-
-### Data And Events
-
-- Reads pending PDF jobs from the Materials repository.
-- Writes rendered PDF artifacts and material records.
-- Emits PDF/material and pipeline lifecycle events.
-- Updates artifact projections.
-
-### Failure And Limits
-
-`limit` caps pending PDF jobs. Renderer failures stay attached to the material
-being rendered, which lets successful PDFs remain available while failed ones
-can be retried.
-
-## Phase 7: Apply
+## Phase 6: Apply
 
 ### Purpose And Boundary
 
