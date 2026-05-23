@@ -582,8 +582,15 @@ def _record_discovery_source_attempts(
 ) -> None:
     failed = set(failed_source_ids or [])
     for source in scheduled_sources:
-        terminal_outcome = "failed" if source.source_id in failed else outcome
-        if outcome == "partial_failed" and source.source_id not in failed:
+        if not source.should_run and outcome == "started":
+            continue
+        if not source.should_run:
+            terminal_outcome = "skipped"
+        elif source.source_id in failed:
+            terminal_outcome = "failed"
+        else:
+            terminal_outcome = outcome
+        if outcome == "partial_failed" and source.source_id not in failed and source.should_run:
             terminal_outcome = "succeeded"
         _record_operational_attempt(
             stage="discover",

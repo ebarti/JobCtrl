@@ -183,3 +183,59 @@ def test_discovery_source_attempts_model_board_and_canonical_source_roles(monkey
             "metadata": {"decision": "run", "reason": "root ats"},
         },
     ]
+
+
+def test_discovery_source_attempts_do_not_mark_skipped_sources_successful(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    sources = (
+        runner.ScheduledSource(
+            source_id="jobspy:linkedin",
+            display_name="LinkedIn",
+            source_kind=SourceKind.BROAD_BOARD,
+            priority=SourcePriority.LEAD_GENERATOR,
+            configured_state=SourceState.EXPERIMENTAL,
+            crawl_budget=10,
+            decision="run",
+            reason="primary board",
+            recommended_state="normal",
+            adapter_config={},
+        ),
+        runner.ScheduledSource(
+            source_id="jobspy:indeed",
+            display_name="Indeed",
+            source_kind=SourceKind.BROAD_BOARD,
+            priority=SourcePriority.LEAD_GENERATOR,
+            configured_state=SourceState.DISABLED,
+            crawl_budget=0,
+            decision="skip",
+            reason="source disabled",
+            recommended_state="disabled",
+            adapter_config={},
+        ),
+    )
+
+    monkeypatch.setattr(runner, "_record_operational_attempt", lambda **kwargs: calls.append(kwargs))
+
+    runner._record_discovery_source_attempts(
+        "jobspy",
+        sources,
+        "started",
+        run_id="run-started",
+    )
+
+    assert [call["source_id"] for call in calls] == ["jobspy:linkedin"]
+    assert [call["outcome"] for call in calls] == ["started"]
+
+    calls.clear()
+    runner._record_discovery_source_attempts(
+        "jobspy",
+        sources,
+        "succeeded",
+        run_id="run-succeeded",
+    )
+
+    assert [(call["source_id"], call["outcome"]) for call in calls] == [
+        ("jobspy:linkedin", "succeeded"),
+        ("jobspy:indeed", "skipped"),
+    ]
+    assert calls[1]["metadata"] == {"decision": "skip", "reason": "source disabled"}
