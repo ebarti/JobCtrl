@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "pdf", "apply"] as const;
+export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 
-export const MATERIAL_STAGES = ["tailor", "cover", "pdf"] as const;
+export const MATERIAL_STAGES = ["tailor", "cover"] as const;
 export type MaterialStage = (typeof MATERIAL_STAGES)[number];
 export const PIPELINE_VALIDATION_MODES = ["strict", "normal", "lenient"] as const;
 export type PipelineValidationMode = (typeof PIPELINE_VALIDATION_MODES)[number];
@@ -78,7 +78,7 @@ export interface ResetStaleScoresForRescoreResponse {
 
 export const GenerateMaterialsRequestSchema = z
   .object({
-    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover", "pdf"]),
+    stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover"]),
     dryRun: z.boolean().default(false),
     limit: z.number().int().min(1).max(200).default(1),
   })

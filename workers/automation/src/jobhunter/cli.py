@@ -719,15 +719,6 @@ def cover(
 
 
 @app.command()
-def pdf(
-    limit: int = typer.Option(0, "--limit", help="Maximum text artifacts to convert. 0 means all pending files."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
-) -> None:
-    """Run only the PDF conversion stage."""
-    _run_stage_command("pdf", dry_run=dry_run, limit=limit)
-
-
-@app.command()
 def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit (default: all ready jobs)."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),

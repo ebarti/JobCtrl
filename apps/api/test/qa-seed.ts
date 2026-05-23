@@ -280,7 +280,7 @@ export function seedQaDatabase(dbPath: string): void {
     description: "Project management role.",
   });
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover", "pdf"]) {
+  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
     insertStage(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", stage, "succeeded");
   }
   insertStage(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "pending");

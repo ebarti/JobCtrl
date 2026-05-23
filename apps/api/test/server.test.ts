@@ -803,7 +803,6 @@ describe("local TypeScript API", () => {
       "score",
       "tailor",
       "cover",
-      "pdf",
       "apply",
     ]);
     expect(body.artifacts[0]).toMatchObject({
@@ -1590,7 +1589,7 @@ describe("local TypeScript API", () => {
     const retryResponse = await app.inject({
       method: "POST",
       url: `/v1/jobs/${jobKey}/actions/retry-stage`,
-      payload: { stage: "pdf", runAfter: true, dryRun: true },
+      payload: { stage: "cover", runAfter: true, dryRun: true },
     });
 
     expect(generateResponse.statusCode, generateResponse.body).toBe(400);
@@ -1609,11 +1608,11 @@ describe("local TypeScript API", () => {
     expect(dispatch).not.toHaveBeenCalled();
 
     const db = new Database(options.dbPath);
-    const pdfStage = db
+    const coverStage = db
       .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?")
-      .get("https://example.com/jobs/ready", "pdf") as { state: string };
+      .get("https://example.com/jobs/ready", "cover") as { state: string };
     db.close();
-    expect(pdfStage.state).toBe("succeeded");
+    expect(coverStage.state).toBe("succeeded");
 
     await app.close();
   });
@@ -2145,7 +2144,7 @@ describe("local TypeScript API", () => {
         action: "run_stage",
         jobKey: "pipeline",
         stage: "tailor",
-        stages: ["tailor", "pdf"],
+        stages: ["tailor"],
         dryRun: false,
         limit: 0,
         minScore: 0,
@@ -2707,7 +2706,7 @@ function seedDatabase(dbPath: string): void {
     fitScore: 6,
   });
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover", "pdf"]) {
+  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
     insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
   }
   insertStage(db, "https://example.com/jobs/ready", "apply", "pending");

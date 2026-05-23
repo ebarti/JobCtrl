@@ -26,7 +26,7 @@ from jobhunter.domain.pipeline_types import deserialize_stage_state_kind
 
 log = logging.getLogger(__name__)
 
-STAGE_ORDER: tuple[str, ...] = ("discover", "enrich", "score", "tailor", "cover", "pdf", "apply")
+STAGE_ORDER: tuple[str, ...] = ("discover", "enrich", "score", "tailor", "cover", "apply")
 STATE_VALUES: tuple[str, ...] = (
     "pending",
     "queued",
@@ -46,7 +46,6 @@ MAX_ATTEMPTS: dict[str, int | None] = {
     "score": 3,
     "tailor": config.DEFAULTS["max_tailor_attempts"],
     "cover": 5,
-    "pdf": 3,
     "apply": config.DEFAULTS["max_apply_attempts"],
 }
 
@@ -57,7 +56,6 @@ _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]]
     "score": (("tailor", ("score has not completed.",)),),
     "tailor": (
         ("cover", ("tailor has not completed.",)),
-        ("pdf", ("tailor has not completed.",)),
     ),
 }
 
@@ -697,7 +695,6 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
         ``reset_job_stage`` is the in-place reset path.)
       * ``cover`` resets the cover-letter text + cover-letter PDF only;
         tailored resume + resume PDF stay intact.
-      * ``pdf`` resets only the two PDFs; text artifacts stay.
 
     Status is rolled back to the appropriate lifecycle state so the
     aggregate's invariants stay consistent.
@@ -717,9 +714,8 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
     elif stage == "cover":
         targets = ("cover_letter", "cover_letter_pdf")
         new_status = "resume_approved"
-    else:  # stage == "pdf"
-        targets = ("resume_pdf", "cover_letter_pdf")
-        new_status = None  # status doesn't change — PDFs were never gating
+    else:
+        return
 
     placeholders = ", ".join("?" for _ in targets)
     conn.execute(
@@ -761,7 +757,7 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         raise ValueError(f"no matching job found: {job_url_or_application_url}")
 
     job_url = row["url"]
-    # Round-2 review B3: tailor / cover / pdf resets MUST clear the
+    # Round-2 review B3: tailor / cover resets MUST clear the
     # ``job_materials_artifacts`` row(s) for the LATEST generation —
     # otherwise the new ``_LATEST_MATERIALS_JOIN`` queue selectors keep
     # the existing approved tailored_resume / cover_letter visible and
@@ -783,7 +779,6 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
             + (", cover_attempts = 0" if reset_attempts else "")
             + " WHERE url = ?"
         ),
-        "pdf": "UPDATE jobs SET cover_letter_at = cover_letter_at WHERE url = ?",
         "apply": (
             "UPDATE jobs SET apply_status = NULL, apply_error = NULL, agent_id = NULL, apply_task_id = NULL"
             + (", apply_attempts = 0" if reset_attempts else "")
@@ -794,7 +789,7 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
 
     # Materials-side reset (Phase 6, round-2 B3). Idempotent — safe when
     # job_materials hasn't been populated yet.
-    if stage in ("tailor", "cover", "pdf"):
+    if stage in ("tailor", "cover"):
         _reset_materials_artifacts(conn, job_url, stage)
     # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
     # materials reset for the enrichment aggregate. Without this the

@@ -1,4 +1,4 @@
-"""Temporal activities for the materials-generation stages (tailor / cover / pdf)."""
+"""Temporal activities for the materials-generation stages (tailor / cover)."""
 
 from __future__ import annotations
 
@@ -135,67 +135,6 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
     errors = dict(result.get("errors") or {})
     status = stages[0]["status"] if stages else ("failed" if errors else "ok")
     return CoverActivityOutput(
-        status=status,
-        elapsed=float(result.get("elapsed") or 0.0),
-        errors=errors,
-        stages=stages,
-    )
-
-
-# ---------------------------------------------------------------------------
-# PDF
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class PdfActivityInput:
-    # ``tenant_id`` is currently informational; runners read from
-    # ``LOCAL_TENANT`` until tenant scoping lands.
-    tenant_id: str
-    expected_app_dir: str | None = None
-    expected_db_path: str | None = None
-    limit: int = 0
-    dry_run: bool = False
-
-
-@dataclass(frozen=True)
-class PdfActivityOutput:
-    status: str
-    elapsed: float
-    errors: dict[str, str] = field(default_factory=dict)
-    stages: list[dict[str, Any]] = field(default_factory=list)
-
-
-@activity.defn(name="pdf")
-async def pdf_activity(payload: PdfActivityInput) -> PdfActivityOutput:
-    """Run the pdf-conversion stage via ``run_pipeline``."""
-    from jobhunter.infrastructure.temporal.run_in_activity import (
-        run_blocking_with_heartbeat,
-    )
-    from jobhunter.infrastructure.temporal.runtime_guard import assert_activity_runtime
-    from jobhunter.pipeline import run_pipeline
-
-    assert_activity_runtime(
-        expected_app_dir=payload.expected_app_dir,
-        expected_db_path=payload.expected_db_path,
-    )
-
-    def _do() -> dict[str, Any]:
-        return run_pipeline(
-            stages=["pdf"],
-            limit=payload.limit,
-            dry_run=payload.dry_run,
-        )
-
-    result = await run_blocking_with_heartbeat(
-        _do,
-        starting_message="pdf starting",
-        progress_message="pdf still running",
-    )
-    stages = list(result.get("stages") or [])
-    errors = dict(result.get("errors") or {})
-    status = stages[0]["status"] if stages else ("failed" if errors else "ok")
-    return PdfActivityOutput(
         status=status,
         elapsed=float(result.get("elapsed") or 0.0),
         errors=errors,

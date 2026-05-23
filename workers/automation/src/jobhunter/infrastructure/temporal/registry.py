@@ -16,7 +16,6 @@ from jobhunter.discovery.activities import discover_activity
 from jobhunter.enrichment.activities import enrich_activity
 from jobhunter.materials.activities import (
     cover_activity,
-    pdf_activity,
     tailor_activity,
 )
 from jobhunter.pipeline.workflow import JobPipelineWorkflow
@@ -34,7 +33,6 @@ ACTIVITIES: list[Callable[..., Any]] = [
     score_activity,
     tailor_activity,
     cover_activity,
-    pdf_activity,
     apply_activity,
     profile_import_activity,
 ]

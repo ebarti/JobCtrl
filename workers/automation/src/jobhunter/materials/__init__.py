@@ -1,1 +1,1 @@
-"""JobHunter materials package — Temporal activities for tailor, cover, pdf stages."""
+"""JobHunter materials package — Temporal activities for tailor and cover stages."""

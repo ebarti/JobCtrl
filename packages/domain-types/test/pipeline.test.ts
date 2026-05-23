@@ -21,8 +21,8 @@ import {
 } from "../src/pipeline.js";
 
 describe("Stage", () => {
-  it("has exactly 7 pipeline stages", () => {
-    expect(STAGES).toHaveLength(7);
+  it("has exactly 6 pipeline stages", () => {
+    expect(STAGES).toHaveLength(6);
   });
 
   it("contains all canonical stages in order", () => {
@@ -32,20 +32,17 @@ describe("Stage", () => {
       "Score",
       "Tailor",
       "Cover",
-      "Pdf",
       "Apply",
     ]);
   });
 
   it("serializeStage maps PascalCase to lowercase", () => {
     expect(serializeStage("Discover")).toBe("discover");
-    expect(serializeStage("Pdf")).toBe("pdf");
     expect(serializeStage("Apply")).toBe("apply");
   });
 
   it("deserializeStage maps lowercase to PascalCase", () => {
     expect(deserializeStage("discover")).toBe("Discover");
-    expect(deserializeStage("pdf")).toBe("Pdf");
     expect(deserializeStage("apply")).toBe("Apply");
   });
 

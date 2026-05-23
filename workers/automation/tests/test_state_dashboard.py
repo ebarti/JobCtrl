@@ -252,22 +252,21 @@ def test_score_success_unblocks_tailor_waiting_on_score(tmp_path):
         close_connection(db_path)
 
 
-def test_tailor_success_unblocks_cover_and_pdf_waiting_on_tailor(tmp_path):
+def test_tailor_success_unblocks_cover_waiting_on_tailor(tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
 
     try:
         job = _insert_job(conn)
         ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
-        for stage in ("cover", "pdf"):
-            set_stage_state(
-                conn,
-                job["url"],
-                stage,
-                "blocked",
-                error_code="BLOCKED",
-                error_message="tailor has not completed.",
-            )
+        set_stage_state(
+            conn,
+            job["url"],
+            "cover",
+            "blocked",
+            error_code="BLOCKED",
+            error_message="tailor has not completed.",
+        )
 
         set_stage_state(conn, job["url"], "tailor", "running", started_at="2026-04-29T10:03:00+00:00")
         set_stage_state(conn, job["url"], "tailor", "succeeded", finished_at="2026-04-29T10:04:00+00:00")
@@ -275,12 +274,11 @@ def test_tailor_success_unblocks_cover_and_pdf_waiting_on_tailor(tmp_path):
 
         rows = conn.execute(
             "SELECT stage, state, error_message FROM job_stage_states "
-            "WHERE job_url = ? AND stage IN ('cover', 'pdf') ORDER BY stage",
+            "WHERE job_url = ? AND stage = 'cover' ORDER BY stage",
             (job["url"],),
         ).fetchall()
         assert [(row["stage"], row["state"], row["error_message"]) for row in rows] == [
             ("cover", "pending", None),
-            ("pdf", "pending", None),
         ]
     finally:
         close_connection(db_path)

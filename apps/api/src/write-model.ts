@@ -33,7 +33,6 @@ const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   score: 3,
   tailor: 5,
   cover: 5,
-  pdf: 3,
   apply: 3,
 };
 
