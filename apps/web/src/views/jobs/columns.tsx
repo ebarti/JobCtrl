@@ -76,16 +76,10 @@ export const jobColumns: ColumnDef<JobSummary>[] = [
     id: "source",
     header: "Sources",
     enableSorting: false,
-    accessorFn: (row) => row.postingSource || row.source,
+    accessorFn: (row) => row.postingSource || row.discoverySource || row.source,
     cell: ({ row }) => (
       <TitleStack
-        primary={
-          row.original.postingSource
-            ? `posting ${row.original.postingSource}`
-            : row.original.source
-              ? `posting ${row.original.source}`
-              : "-"
-        }
+        primary={row.original.postingSource ? `posting ${row.original.postingSource}` : "-"}
         secondary={row.original.discoverySource ? `discovered via ${row.original.discoverySource}` : null}
       />
     ),
