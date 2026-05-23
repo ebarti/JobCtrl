@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Command filter mockup</title>
+    <link rel="stylesheet" href="./table-spike.css" />
+  </head>
+  <body>
+    <main class="spike-shell">
+      <header class="spike-topbar">
+        <div class="brand-row">
+          <span class="brand-mark">jh</span>
+          <div>
+            <div class="eyebrow">Option A</div>
+            <h1>Command filters with readable chips</h1>
+            <p class="page-subtitle">
+              Best fit for a TanStack Table plus shadcn/Radix implementation. The table
+              stays simple, while a reusable filter command builder owns multi-select and
+              text operators.
+            </p>
+          </div>
+        </div>
+        <nav class="nav-links" aria-label="Mockup pages">
+          <a class="nav-link" href="./">Overview</a>
+          <a class="nav-link active" href="./mockup-command.html">Command filters</a>
+          <a class="nav-link" href="./mockup-sheet.html">Column filters</a>
+          <a class="nav-link" href="./mockup-panel.html">Filter panel</a>
+        </nav>
+      </header>
+
+      <section class="mockup-wrap">
+        <div class="toolbar">
+          <div class="toolbar-stack">
+            <div class="toolbar-title">
+              <strong>Source registry</strong>
+              <span class="view-pill">Active sources</span>
+              <span class="table-meta" data-row-count-for="commandTable">0 shown</span>
+              <span class="mini-chip blue" data-source-status>Loading live sources...</span>
+            </div>
+            <div class="chip-row">
+              <span class="filter-chip green">State is active</span>
+              <span class="filter-chip blue">Provider is Workday ATS or Smart extract</span>
+              <span class="filter-chip">Company contains work</span>
+              <button class="ghost-button" type="button">+ Filter</button>
+              <button class="ghost-button" type="button">Save view</button>
+            </div>
+          </div>
+          <form class="filter-builder" aria-label="Command filter builder">
+            <div class="filter-builder-head">
+              <strong>Add filter</strong>
+              <span class="mini-chip">Command palette pattern</span>
+            </div>
+            <div class="builder-grid">
+              <div class="field">
+                <label>Column</label>
+                <span class="fake-select">Company <span>change</span></span>
+              </div>
+              <div class="field">
+                <label>Operator</label>
+                <div class="segmented">
+                  <button
+                    class="segment is-active"
+                    data-table-id="commandTable"
+                    data-op-for="company"
+                    data-operator="contains"
+                    type="button"
+                  >
+                    contains
+                  </button>
+                  <button
+                    class="segment"
+                    data-table-id="commandTable"
+                    data-op-for="company"
+                    data-operator="does_not_contain"
+                    type="button"
+                  >
+                    does not contain
+                  </button>
+                </div>
+              </div>
+              <div class="field full">
+                <label>Text</label>
+                <input
+                  class="text-input"
+                  data-filter-key="company"
+                  data-filter-type="text"
+                  data-table-id="commandTable"
+                  placeholder="Try work, sales, acme..."
+                  type="text"
+                  value="work"
+                />
+              </div>
+              <div class="field full">
+                <label>Provider multi-select</label>
+                <div class="check-list">
+                  <label class="check-row">
+                    <input
+                      checked
+                      data-filter-key="provider"
+                      data-table-id="commandTable"
+                      type="checkbox"
+                      value="Workday ATS"
+                    />
+                    Workday ATS
+                  </label>
+                  <label class="check-row">
+                    <input
+                      checked
+                      data-filter-key="provider"
+                      data-table-id="commandTable"
+                      type="checkbox"
+                      value="Smart extract"
+                    />
+                    Smart extract
+                  </label>
+                  <label class="check-row">
+                    <input
+                      data-filter-key="provider"
+                      data-table-id="commandTable"
+                      type="checkbox"
+                      value="Greenhouse ATS"
+                    />
+                    Greenhouse ATS
+                  </label>
+                  <label class="check-row">
+                    <input
+                      data-filter-key="provider"
+                      data-table-id="commandTable"
+                      type="checkbox"
+                      value="JobSpy board"
+                    />
+                    JobSpy board
+                  </label>
+                  <label class="check-row">
+                    <input
+                      data-filter-key="provider"
+                      data-table-id="commandTable"
+                      type="checkbox"
+                      value="Lever ATS"
+                    />
+                    Lever ATS
+                  </label>
+                </div>
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <article class="table-panel">
+          <div class="table-panel-head">
+            <div>
+              <strong class="panel-title">Filtered sources</strong>
+              <p class="footer-note">Every header is sortable. The filter UI is reusable across tables.</p>
+            </div>
+            <div class="table-actions">
+              <button class="ghost-button" type="button">Columns</button>
+              <button class="ghost-button" type="button">Export</button>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table id="commandTable" data-spike-table>
+              <thead>
+                <tr>
+                  <th><button class="sort-button" data-sort-key="company" type="button">Company</button></th>
+                  <th><button class="sort-button" data-sort-key="sourceId" type="button">Source id</button></th>
+                  <th><button class="sort-button" data-sort-key="provider" type="button">Provider</button></th>
+                  <th><button class="sort-button" data-sort-key="kind" type="button">Kind</button></th>
+                  <th><button class="sort-button" data-sort-key="state" type="button">State</button></th>
+                  <th><button class="sort-button" data-sort-key="observed" type="button">Observed</button></th>
+                  <th><button class="sort-button" data-sort-key="failures" type="button">Failures</button></th>
+                  <th><button class="sort-button" data-sort-key="lastRun" type="button">Last run</button></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-company="Workday" data-failures="0" data-kind="ats api" data-last-run="2026-05-22" data-observed="14" data-provider="Workday ATS" data-source-id="workday:workday" data-state="active">
+                  <td><span class="company-cell"><strong>Workday</strong><span class="subtle">workday.com</span></span></td>
+                  <td>workday:workday</td>
+                  <td>Workday ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td>14</td>
+                  <td>0</td>
+                  <td>5/22/2026</td>
+                </tr>
+                <tr data-company="Salesforce" data-failures="0" data-kind="ats api" data-last-run="2026-05-22" data-observed="0" data-provider="Workday ATS" data-source-id="workday:salesforce" data-state="active">
+                  <td><span class="company-cell"><strong>Salesforce</strong><span class="subtle">salesforce.wd1.myworkdayjobs.com</span></span></td>
+                  <td>workday:salesforce</td>
+                  <td>Workday ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td>0</td>
+                  <td>0</td>
+                  <td>5/22/2026</td>
+                </tr>
+                <tr data-company="Acme" data-failures="0" data-kind="ats api" data-last-run="2026-05-22" data-observed="0" data-provider="Workday ATS" data-source-id="workday:acme" data-state="active">
+                  <td><span class="company-cell"><strong>Acme</strong><span class="subtle">acme.wd10.myworkdayjobs.com</span></span></td>
+                  <td>workday:acme</td>
+                  <td>Workday ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td>0</td>
+                  <td>0</td>
+                  <td>5/22/2026</td>
+                </tr>
+                <tr data-company="4DayWeek" data-failures="0" data-kind="smart extract" data-last-run="2026-05-22" data-observed="3" data-provider="Smart extract" data-source-id="smart_extract:4dayweek" data-state="active">
+                  <td><span class="company-cell"><strong>4DayWeek</strong><span class="subtle">4dayweek.io</span></span></td>
+                  <td>smart_extract:4dayweek</td>
+                  <td>Smart extract</td>
+                  <td><span class="mini-chip amber">smart extract</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td>3</td>
+                  <td>0</td>
+                  <td>5/22/2026</td>
+                </tr>
+                <tr data-company="Stripe" data-failures="1" data-kind="ats api" data-last-run="2026-05-21" data-observed="8" data-provider="Greenhouse ATS" data-source-id="greenhouse:stripe" data-state="active">
+                  <td><span class="company-cell"><strong>Stripe</strong><span class="subtle">stripe.com/jobs</span></span></td>
+                  <td>greenhouse:stripe</td>
+                  <td>Greenhouse ATS</td>
+                  <td><span class="mini-chip green">ats api</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td>8</td>
+                  <td>1</td>
+                  <td>5/21/2026</td>
+                </tr>
+                <tr data-company="Indeed search" data-failures="2" data-kind="job board" data-last-run="2026-05-20" data-observed="46" data-provider="Job board" data-source-id="jobspy:indeed" data-state="active">
+                  <td><span class="company-cell"><strong>Indeed search</strong><span class="subtle">job board source</span></span></td>
+                  <td>jobspy:indeed</td>
+                  <td>Job board</td>
+                  <td><span class="mini-chip blue">job board</span></td>
+                  <td><span class="state-dot">active</span></td>
+                  <td>46</td>
+                  <td>2</td>
+                  <td>5/20/2026</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script src="./table-spike.js"></script>
+  </body>
+</html>

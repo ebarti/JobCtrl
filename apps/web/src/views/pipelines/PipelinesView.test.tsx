@@ -15,19 +15,31 @@ describe("PipelinesView", () => {
   it("hosts the pipeline action controls", () => {
     renderWithProviders(<PipelinesView />);
 
-    expect(screen.getByRole("heading", { name: "Pipeline actions" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Pipeline actions" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
   });
 
-  it("shows discovery controls only while the Discover pipeline stage is active", async () => {
+  it("shows the discovery page link only while the Discover pipeline stage is active", async () => {
     const user = userEvent.setup();
     renderWithProviders(<PipelinesView />);
 
-    expect(screen.getByRole("heading", { name: "Discovery controls" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Discovery" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open Discovery" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Discovery controls" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Score" }));
 
     expect(screen.getByRole("button", { name: "Run Score" })).toBeEnabled();
-    expect(screen.queryByRole("heading", { name: "Discovery controls" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open Discovery" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -26,7 +26,7 @@ from jobhunter.domain.pipeline_types import deserialize_stage_state_kind
 
 log = logging.getLogger(__name__)
 
-STAGE_ORDER: tuple[str, ...] = ("discover", "enrich", "score", "tailor", "cover", "pdf", "apply")
+STAGE_ORDER: tuple[str, ...] = ("discover", "enrich", "score", "tailor", "cover", "apply")
 STATE_VALUES: tuple[str, ...] = (
     "pending",
     "queued",
@@ -46,12 +46,18 @@ MAX_ATTEMPTS: dict[str, int | None] = {
     "score": 3,
     "tailor": config.DEFAULTS["max_tailor_attempts"],
     "cover": 5,
-    "pdf": 3,
     "apply": config.DEFAULTS["max_apply_attempts"],
 }
 
 ORPHANED_RUNNING_STAGE_GRACE_SECONDS = 150
 ORPHAN_RECOVERY_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_ORDER if stage != "apply")
+_DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "enrich": (("score", ("Enrichment has not completed.",)),),
+    "score": (("tailor", ("score has not completed.",)),),
+    "tailor": (
+        ("cover", ("tailor has not completed.",)),
+    ),
+}
 
 
 def utc_now() -> str:
@@ -299,6 +305,88 @@ def set_stage_state(
         )
         raise OptimisticLockError(job_url, expected_version, actual or 0)
 
+    if state == "succeeded":
+        reconcile_dependency_blockers(conn, job_url=job_url, completed_stage=stage, now=now)
+
+
+def reconcile_dependency_blockers(
+    conn,
+    *,
+    job_url: str | None = None,
+    completed_stage: str | None = None,
+    now: str | None = None,
+) -> int:
+    """Unblock stale downstream stages after their upstream stage succeeds.
+
+    Historical backfills and older runners could leave rows such as
+    ``tailor = blocked / "score has not completed."`` in place after the
+    score stage later succeeded.  The stage-state table is the canonical
+    source of truth, so repair that source directly instead of special-casing
+    the read model.
+    """
+    if completed_stage is not None and completed_stage not in _DEPENDENCY_BLOCKER_MESSAGES:
+        return 0
+
+    completed_stages = (
+        (completed_stage,)
+        if completed_stage is not None
+        else tuple(_DEPENDENCY_BLOCKER_MESSAGES)
+    )
+    updated_at = now or utc_now()
+    repaired = 0
+    for upstream in completed_stages:
+        for downstream, messages in _DEPENDENCY_BLOCKER_MESSAGES[upstream]:
+            message_placeholders = ", ".join("?" for _ in messages)
+            params: list[Any] = [downstream, *messages]
+            job_filter = ""
+            if job_url is not None:
+                job_filter = "AND downstream.job_url = ?"
+                params.append(job_url)
+            params.append(upstream)
+            rows = conn.execute(
+                f"""
+                SELECT downstream.job_url, downstream.stage, downstream.attempt_count
+                  FROM job_stage_states AS downstream
+                 WHERE downstream.stage = ?
+                   AND downstream.state = 'blocked'
+                   AND downstream.error_code = 'BLOCKED'
+                   AND downstream.error_message IN ({message_placeholders})
+                   {job_filter}
+                   AND EXISTS (
+                       SELECT 1
+                         FROM job_stage_states AS upstream
+                        WHERE upstream.job_url = downstream.job_url
+                          AND upstream.stage = ?
+                          AND upstream.state = 'succeeded'
+                   )
+                """,
+                params,
+            ).fetchall()
+            for row in rows:
+                blocked_job_url = str(row["job_url"])
+                set_stage_state(
+                    conn,
+                    blocked_job_url,
+                    downstream,
+                    "pending",
+                    attempt_count=int(row["attempt_count"] or 0),
+                )
+                record_job_event(
+                    conn,
+                    blocked_job_url,
+                    downstream,
+                    "StageReset",
+                    message=f"{downstream} unblocked after {upstream} completed.",
+                    occurred_at=updated_at,
+                    payload={
+                        "reason": "upstream_completed",
+                        "upstreamStage": upstream,
+                        "downstreamStage": downstream,
+                    },
+                )
+                repaired += 1
+    return repaired
+
 
 def recover_orphaned_running_stages(
     conn,
@@ -327,10 +415,11 @@ def recover_orphaned_running_stages(
     placeholders = ", ".join("?" for _ in recovery_stages)
     rows = conn.execute(
         f"""
-        SELECT job_url, stage, attempt_count, started_at, updated_at
-        FROM job_stage_states
-        WHERE state = 'running'
-          AND stage IN ({placeholders})
+        SELECT s.job_url, s.stage, s.attempt_count, s.started_at, s.updated_at
+        FROM job_stage_states s
+        JOIN jobs j ON j.url = s.job_url
+        WHERE s.state = 'running'
+          AND s.stage IN ({placeholders})
         """,
         recovery_stages,
     ).fetchall()
@@ -606,7 +695,6 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
         ``reset_job_stage`` is the in-place reset path.)
       * ``cover`` resets the cover-letter text + cover-letter PDF only;
         tailored resume + resume PDF stay intact.
-      * ``pdf`` resets only the two PDFs; text artifacts stay.
 
     Status is rolled back to the appropriate lifecycle state so the
     aggregate's invariants stay consistent.
@@ -626,9 +714,8 @@ def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
     elif stage == "cover":
         targets = ("cover_letter", "cover_letter_pdf")
         new_status = "resume_approved"
-    else:  # stage == "pdf"
-        targets = ("resume_pdf", "cover_letter_pdf")
-        new_status = None  # status doesn't change — PDFs were never gating
+    else:
+        return
 
     placeholders = ", ".join("?" for _ in targets)
     conn.execute(
@@ -670,7 +757,7 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
         raise ValueError(f"no matching job found: {job_url_or_application_url}")
 
     job_url = row["url"]
-    # Round-2 review B3: tailor / cover / pdf resets MUST clear the
+    # Round-2 review B3: tailor / cover resets MUST clear the
     # ``job_materials_artifacts`` row(s) for the LATEST generation —
     # otherwise the new ``_LATEST_MATERIALS_JOIN`` queue selectors keep
     # the existing approved tailored_resume / cover_letter visible and
@@ -692,7 +779,6 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
             + (", cover_attempts = 0" if reset_attempts else "")
             + " WHERE url = ?"
         ),
-        "pdf": "UPDATE jobs SET cover_letter_at = cover_letter_at WHERE url = ?",
         "apply": (
             "UPDATE jobs SET apply_status = NULL, apply_error = NULL, agent_id = NULL, apply_task_id = NULL"
             + (", apply_attempts = 0" if reset_attempts else "")
@@ -703,7 +789,7 @@ def reset_job_stage(conn, job_url_or_application_url: str, stage: str, *, reset_
 
     # Materials-side reset (Phase 6, round-2 B3). Idempotent — safe when
     # job_materials hasn't been populated yet.
-    if stage in ("tailor", "cover", "pdf"):
+    if stage in ("tailor", "cover"):
         _reset_materials_artifacts(conn, job_url, stage)
     # Enrichment-side reset (Phase 7, round-1 B1). Mirror of the
     # materials reset for the enrichment aggregate. Without this the

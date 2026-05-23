@@ -77,7 +77,12 @@ export const jobColumns: ColumnDef<JobSummary>[] = [
     header: "Source",
     enableSorting: false,
     accessorFn: (row) => row.source,
-    cell: ({ row }) => <span className="muted-cell">{row.original.source || "-"}</span>,
+    cell: ({ row }) => (
+      <TitleStack
+        primary={row.original.source || "-"}
+        secondary={row.original.discoverySource ? `discovery ${row.original.discoverySource}` : null}
+      />
+    ),
   },
   {
     id: "location",

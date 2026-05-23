@@ -12,14 +12,13 @@
 // Stage
 // ---------------------------------------------------------------------------
 
-/** The seven pipeline stages in canonical order (domain PascalCase). */
+/** The six pipeline stages in canonical order (domain PascalCase). */
 export const STAGES = [
   "Discover",
   "Enrich",
   "Score",
   "Tailor",
   "Cover",
-  "Pdf",
   "Apply",
 ] as const;
 
@@ -33,7 +32,6 @@ export type SerializedStage =
   | "score"
   | "tailor"
   | "cover"
-  | "pdf"
   | "apply";
 
 const STAGE_TO_SERIALIZED: Record<Stage, SerializedStage> = {
@@ -42,7 +40,6 @@ const STAGE_TO_SERIALIZED: Record<Stage, SerializedStage> = {
   Score: "score",
   Tailor: "tailor",
   Cover: "cover",
-  Pdf: "pdf",
   Apply: "apply",
 };
 
@@ -52,7 +49,6 @@ const SERIALIZED_TO_STAGE: Record<SerializedStage, Stage> = {
   score: "Score",
   tailor: "Tailor",
   cover: "Cover",
-  pdf: "Pdf",
   apply: "Apply",
 };
 

@@ -37,7 +37,7 @@ from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflow
 from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, utc_now
 
 logger = logging.getLogger(__name__)
-WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "pdf", "apply"}
+WORKFLOW_STAGES = {"discover", "enrich", "score", "tailor", "cover", "apply"}
 
 
 def _tenant_id(params: dict[str, Any]) -> str:

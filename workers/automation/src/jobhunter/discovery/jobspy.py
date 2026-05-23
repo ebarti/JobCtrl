@@ -8,6 +8,7 @@ search configuration YAML (searches.yaml) rather than being hardcoded.
 """
 
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
+_SOURCE_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 # -- Retry wrapper -----------------------------------------------------------
@@ -201,14 +203,14 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
             url=url,
             title=title,
             company=company,
-            full_description=full_description,
+            description=full_description or description,
         )
         if duplicate_url:
             _record_content_duplicate_link(
                 conn,
                 surviving_url=duplicate_url,
                 duplicate_url=url,
-                source=site_label,
+                source=_jobspy_source_id(site_label),
                 observed_at=now,
             )
             resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
@@ -237,6 +239,18 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str, limit:
             )
             new += 1
         except sqlite3.IntegrityError:
+            duplicate_url = _find_stored_content_duplicate_survivor(conn, url=url)
+            if duplicate_url and duplicate_url != url:
+                _record_content_duplicate_link(
+                    conn,
+                    surviving_url=duplicate_url,
+                    duplicate_url=url,
+                    source=_jobspy_source_id(site_label),
+                    observed_at=now,
+                )
+                resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
+                existing += 1
+                continue
             if company:
                 cursor = conn.execute(
                     "UPDATE jobs SET company = ? WHERE url = ? AND (company IS NULL OR company = '')",
@@ -268,47 +282,116 @@ def _nullable_str(value: object) -> str | None:
     return text
 
 
+def _jobspy_source_id(source_label: str) -> str:
+    slug = _SOURCE_SLUG_RE.sub("-", source_label.strip().lower()).strip("-")
+    return f"jobspy:{slug or 'source'}"
+
+
 def _find_existing_content_duplicate(
     conn: sqlite3.Connection,
     *,
     url: str,
     title: str | None,
     company: str | None,
-    full_description: str | None,
+    description: str | None,
+) -> str | None:
+    return _find_content_duplicate_survivor(
+        conn,
+        url=url,
+        title=title,
+        company=company,
+        description=description,
+        include_self=False,
+    )
+
+
+def _find_stored_content_duplicate_survivor(conn: sqlite3.Connection, *, url: str) -> str | None:
+    row = conn.execute(
+        """
+        SELECT j.title, j.company,
+               COALESCE(je.full_description, j.full_description, j.description) AS description
+        FROM jobs j
+        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        WHERE j.url = ?
+        """,
+        (url,),
+    ).fetchone()
+    if row is None:
+        return None
+    return _find_content_duplicate_survivor(
+        conn,
+        url=url,
+        title=row["title"],
+        company=row["company"],
+        description=row["description"],
+        include_self=True,
+    )
+
+
+def _find_content_duplicate_survivor(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    title: str | None,
+    company: str | None,
+    description: str | None,
+    include_self: bool,
 ) -> str | None:
     incoming_key = job_content_fingerprint(
         title=title,
         company=company,
-        description=full_description,
+        description=description,
     )
     if incoming_key is None:
         return None
+    _ensure_deleted_jobs_table(conn)
+    self_filter = "" if include_self else "AND j.url != ?"
+    params: tuple[object, ...] = (
+        normalize_identity_text(title),
+        normalize_identity_text(company),
+    )
+    if not include_self:
+        params = (url, *params)
     rows = conn.execute(
-        """
+        f"""
         SELECT j.url, j.title, j.company,
-               COALESCE(je.full_description, j.full_description) AS full_description
+               COALESCE(je.full_description, j.full_description, j.description) AS description,
+               CASE WHEN d.job_url IS NULL THEN 0 ELSE 1 END AS is_deleted
         FROM jobs j
         LEFT JOIN job_enrichments je ON je.job_url = j.url
-        WHERE j.url != ?
+        LEFT JOIN jobhunter_deleted_jobs d
+          ON d.job_url = j.url AND d.restored_at IS NULL
+        WHERE 1 = 1
+          {self_filter}
           AND lower(trim(COALESCE(j.title, ''))) = ?
           AND lower(trim(COALESCE(j.company, ''))) = ?
-        ORDER BY j.discovered_at ASC NULLS LAST, j.url ASC
+        ORDER BY is_deleted ASC, j.discovered_at ASC NULLS LAST, j.url ASC
         """,
-        (
-            url,
-            normalize_identity_text(title),
-            normalize_identity_text(company),
-        ),
+        params,
     ).fetchall()
     for existing in rows:
         existing_key = job_content_fingerprint(
             title=existing["title"],
             company=existing["company"],
-            description=existing["full_description"],
+            description=existing["description"],
         )
         if existing_key == incoming_key:
             return str(existing["url"])
     return None
+
+
+def _ensure_deleted_jobs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT,
+            FOREIGN KEY(job_url) REFERENCES jobs(url)
+        )
+        """
+    )
 
 
 def _record_content_duplicate_link(

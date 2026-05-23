@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Airtable-style source registry mockup</title>
+    <link rel="stylesheet" href="./table-spike.css" />
+  </head>
+  <body>
+    <main class="spike-shell airtable-page">
+      <section class="airtable-shell">
+        <aside class="airtable-icon-rail" aria-label="Workspace navigation">
+          <span class="base-icon">jh</span>
+          <button class="airtable-rail-button active" type="button">▦</button>
+          <button class="airtable-rail-button" type="button">◎</button>
+          <button class="airtable-rail-button" type="button">?</button>
+        </aside>
+
+        <div class="airtable-workspace">
+          <header class="airtable-basebar">
+            <div class="airtable-base-title">
+              <strong>JobHunter Discovery</strong>
+              <button class="airtable-chevron" type="button">⌄</button>
+            </div>
+            <nav class="airtable-base-nav" aria-label="Base sections">
+              <button class="active" type="button">Data</button>
+              <button type="button">Automations</button>
+              <button type="button">Interfaces</button>
+              <button type="button">Forms</button>
+            </nav>
+            <div class="airtable-base-actions">
+              <button type="button">Launch</button>
+              <button class="share-button" type="button">Share</button>
+            </div>
+          </header>
+
+          <nav class="airtable-tabs" aria-label="Tables">
+            <a class="airtable-tab active" href="./mockup-airtable.html">Sources</a>
+            <a class="airtable-tab" href="./mockup-sheet.html">Locator candidates</a>
+            <a class="airtable-tab" href="./mockup-panel.html">Manual capture</a>
+            <a class="airtable-tab" href="./">Spike overview</a>
+            <button class="airtable-tab add-tab" type="button">+ Add or import</button>
+            <span class="airtable-tab-spacer"></span>
+            <button class="airtable-tool" type="button">Tools ⌄</button>
+          </nav>
+
+          <section class="airtable-content">
+            <div class="airtable-viewbar">
+              <div class="airtable-view-title">
+                <button class="airtable-tool icon-only" type="button">☰</button>
+                <button class="airtable-tool active" type="button">▦ Grid view ⌄</button>
+              </div>
+              <div class="airtable-view-tools">
+                <button class="airtable-tool" type="button">Hide fields</button>
+                <button
+                  class="airtable-tool"
+                  data-toggle-filter-panel
+                  type="button"
+                >
+                  Filter
+                </button>
+                <button class="airtable-tool" type="button">Group</button>
+                <button class="airtable-tool" type="button">Sort</button>
+                <button class="airtable-tool" type="button">Color</button>
+                <button class="airtable-tool" type="button">Share and sync</button>
+                <button class="airtable-tool icon-only" type="button">⌕</button>
+              </div>
+
+              <div
+                class="airtable-filter-popover"
+                data-filter-panel
+                hidden
+                aria-label="Filter records"
+              >
+                <div class="airtable-filter-popover-head">
+                  <strong>Filter records</strong>
+                  <span class="subtle">Show records where...</span>
+                </div>
+                <div class="airtable-filter-rows">
+                  <div
+                    class="airtable-filter-condition"
+                    data-dual-filter-for="company"
+                    data-label="Company"
+                    data-option-limit="14"
+                    data-table-id="airtableTable"
+                  ></div>
+                  <div
+                    class="airtable-filter-condition"
+                    data-dual-filter-for="sourceId"
+                    data-label="Source id"
+                    data-option-limit="14"
+                    data-table-id="airtableTable"
+                  ></div>
+                  <div
+                    class="airtable-filter-condition"
+                    data-dual-filter-for="provider"
+                    data-label="Provider"
+                    data-option-limit="14"
+                    data-table-id="airtableTable"
+                  ></div>
+                  <div
+                    class="airtable-filter-condition"
+                    data-dual-filter-for="kind"
+                    data-label="Kind"
+                    data-option-limit="14"
+                    data-table-id="airtableTable"
+                  ></div>
+                </div>
+                <button class="airtable-add-filter" type="button">+ Add condition</button>
+              </div>
+            </div>
+
+            <div class="airtable-grid-wrap">
+              <table class="airtable-grid" id="airtableTable" data-spike-table>
+                <thead>
+                  <tr>
+                    <th class="airtable-row-select"><input type="checkbox" aria-label="Select all rows" /></th>
+                    <th class="airtable-row-number">#</th>
+                    <th><button class="sort-button" data-sort-key="company" type="button">Company</button></th>
+                    <th><button class="sort-button" data-sort-key="sourceId" type="button">Source id</button></th>
+                    <th><button class="sort-button" data-sort-key="provider" type="button">Provider</button></th>
+                    <th><button class="sort-button" data-sort-key="kind" type="button">Kind</button></th>
+                    <th><button class="sort-button" data-sort-key="state" type="button">State</button></th>
+                    <th><button class="sort-button" data-sort-key="priority" type="button">Priority</button></th>
+                    <th><button class="sort-button" data-sort-key="observed" type="button">Observed</button></th>
+                    <th><button class="sort-button" data-sort-key="failures" type="button">Failures</button></th>
+                    <th><button class="sort-button" data-sort-key="lastRun" type="button">Last run</button></th>
+                    <th class="airtable-add-field">+</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr data-company="Loading" data-failures="0" data-kind="ats api" data-last-run="" data-observed="0" data-priority="canonical" data-provider="Workday ATS" data-source-id="loading" data-state="active">
+                    <td></td>
+                    <td>1</td>
+                    <td>Loading live source registry...</td>
+                    <td>loading</td>
+                    <td>Workday ATS</td>
+                    <td><span class="mini-chip green">ats api</span></td>
+                    <td><span class="state-dot">active</span></td>
+                    <td><span class="mini-chip green">canonical</span></td>
+                    <td>0</td>
+                    <td>0</td>
+                    <td>n/a</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <footer class="airtable-footer">
+              <button type="button">+</button>
+              <button type="button">Add...</button>
+              <span data-row-count-for="airtableTable">0 shown</span>
+              <span data-source-status>Loading live sources...</span>
+            </footer>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script src="./table-spike.js"></script>
+  </body>
+</html>

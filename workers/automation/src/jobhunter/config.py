@@ -941,7 +941,7 @@ TIER_LABELS = {
 
 TIER_COMMANDS: dict[int, list[str]] = {
     1: ["init", "discover", "enrich", "run", "status"],
-    2: ["score", "tailor", "cover", "pdf"],
+    2: ["score", "tailor", "cover"],
     3: ["apply"],
 }
 

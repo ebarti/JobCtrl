@@ -225,16 +225,16 @@ def test_action_cli_prints_json(tmp_path, monkeypatch):
     init_db(db_path)
 
     def fake_pipeline(**_kwargs):
-        return {"stages": [{"stage": "pdf", "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
+        return {"stages": [{"stage": "cover", "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
 
     monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
     monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
     monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
 
     try:
-        result = CliRunner().invoke(app, ["action", "pdf", "--limit", "1"])
+        result = CliRunner().invoke(app, ["action", "cover", "--limit", "1"])
         assert result.exit_code == 0
-        assert '"stage": "pdf"' in result.stdout
+        assert '"stage": "cover"' in result.stdout
         assert '"ok": true' in result.stdout
     finally:
         close_connection(db_path)

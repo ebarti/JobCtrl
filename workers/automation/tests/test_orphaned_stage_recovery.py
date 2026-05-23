@@ -50,6 +50,7 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
     old_score_url = "https://example.com/jobs/orphaned-score"
     fresh_score_url = "https://example.com/jobs/fresh-score"
     apply_url = "https://example.com/jobs/apply-run"
+    missing_job_url = "https://example.com/jobs/missing-parent"
 
     try:
         _insert_job(conn, old_score_url)
@@ -58,6 +59,14 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
         _mark_running_at(conn, old_score_url, "score", "2026-05-21T20:00:00+00:00")
         _mark_running_at(conn, fresh_score_url, "score", "2026-05-21T20:09:00+00:00")
         _mark_running_at(conn, apply_url, "apply", "2026-05-21T20:00:00+00:00")
+        conn.execute(
+            """
+            INSERT INTO job_stage_states (job_url, stage, state, updated_at)
+            VALUES (?, 'tailor', 'running', ?)
+            """,
+            (missing_job_url, "2026-05-21T20:00:00+00:00"),
+        )
+        conn.commit()
 
         recovered = recover_orphaned_running_stages(
             conn,
@@ -92,6 +101,12 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
             (apply_url,),
         ).fetchone()
         assert apply_row["state"] == "running"
+
+        missing_job_event_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM job_events WHERE job_url = ?",
+            (missing_job_url,),
+        ).fetchone()
+        assert missing_job_event_count["count"] == 0
 
         event = conn.execute(
             """

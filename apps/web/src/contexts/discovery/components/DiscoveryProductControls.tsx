@@ -11,17 +11,14 @@ import {
   AlertTriangle,
   Ban,
   Check,
-  CheckCircle2,
-  CircleMinus,
   ExternalLink,
   Eye,
   Plus,
   ThumbsUp,
   Upload,
   X,
-  XCircle,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 
 import {
   useDiscoveryQuarantineQuery,
@@ -33,7 +30,18 @@ import {
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import {
+  FilterableDataGrid,
+  type DataGridColumn,
+  type DataGridFilterState,
+} from "../../../shared/ui/filterable-data-grid.js";
 import { StatusDot } from "../../../shared/ui/status-dot.js";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../../../shared/ui/tabs.js";
 import {
   useDiscoveryFeedbackMutation,
   useDiscoveryQuarantineDecisionMutation,
@@ -51,6 +59,8 @@ type LocatorCandidate = SourceLocatorListResponse["candidates"][number];
 type PreviewLead = DiscoveryPreviewResponse["leads"][number];
 type SourceMetricTone = "good" | "warn" | "bad" | "unknown";
 type SourceChipTone = "good" | "info" | "warn" | "bad" | "neutral";
+type DiscoveryControlsLayout = "grid" | "tabs";
+type SourceRegistryStateFilter = "all" | SourceRegistryEntrySummary["state"];
 
 const SOURCE_KINDS = [
   "ats_api",
@@ -86,6 +96,61 @@ function dotState(state: string): string {
 
 function label(value: string): string {
   return value.replaceAll("_", " ");
+}
+
+function titleCaseSourceName(value: string): string {
+  return value
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .map((part) =>
+      part.length <= 3 && part === part.toUpperCase()
+        ? part
+        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`,
+    )
+    .join(" ");
+}
+
+function sourceCompanyName(source: SourceRegistryEntrySummary): string {
+  const rawName = source.displayName.trim();
+  const rawSourceId = source.sourceId.split(":").at(1) ?? source.sourceId;
+  if (rawName && !rawName.includes(".") && !rawName.includes("-"))
+    return rawName;
+  const candidate = rawName || rawSourceId;
+  const withoutKnownHost = candidate
+    .replace(/\.wd\d+\.myworkdayjobs\.com$/i, "")
+    .replace(/\.myworkdayjobs\.com$/i, "")
+    .replace(/\.greenhouse\.io$/i, "")
+    .replace(/\.lever\.co$/i, "")
+    .replace(/\.ashbyhq\.com$/i, "")
+    .replace(/-wd\d+-myworkdayjobs-com$/i, "")
+    .replace(/-myworkdayjobs-com$/i, "")
+    .replace(/-greenhouse-io$/i, "")
+    .replace(/-lever-co$/i, "")
+    .replace(/-ashbyhq-com$/i, "");
+
+  return titleCaseSourceName(withoutKnownHost || rawName || rawSourceId);
+}
+
+function sourceTypeLabel(source: SourceRegistryEntrySummary): string {
+  const sourceId = source.sourceId.toLowerCase();
+  const policyId = source.policyId.toLowerCase();
+  if (sourceId.startsWith("workday:") || policyId.includes("workday"))
+    return "Workday ATS";
+  if (sourceId.startsWith("greenhouse:") || policyId.includes("greenhouse"))
+    return "Greenhouse ATS";
+  if (sourceId.startsWith("lever:") || policyId.includes("lever"))
+    return "Lever ATS";
+  if (sourceId.startsWith("ashby:") || policyId.includes("ashby"))
+    return "Ashby ATS";
+  if (sourceId.startsWith("jobspy:")) return "JobSpy board";
+  if (sourceId.startsWith("smart_extract:")) return "Smart extract";
+  if (source.kind === "ats_api") return "ATS API";
+  if (source.kind === "employer_careers_page") return "Employer careers page";
+  if (source.kind === "official_api") return "Official API";
+  if (source.kind === "licensed_feed") return "Licensed feed";
+  if (source.kind === "niche_board") return "Niche board";
+  if (source.kind === "broad_board") return "Broad board";
+  return "Manual capture";
 }
 
 function manualActionLabel(value: ManualCaptureItem["reason"]): string {
@@ -196,78 +261,6 @@ function sourceRecommendationTone(
   }
 }
 
-function sourceStateTagClass(
-  state: SourceRegistryEntrySummary["state"],
-): string {
-  if (state === "active") return "tag ok";
-  if (state === "experimental") return "tag warn";
-  return "tag danger";
-}
-
-function sourceActivityTone(
-  source: SourceRegistryEntrySummary,
-): SourceMetricTone {
-  if (source.observedJobs === 0) return "unknown";
-  return source.newJobs > 0 ? "good" : "warn";
-}
-
-function sourceActivityMeta(source: SourceRegistryEntrySummary): string {
-  if (source.observedJobs === 0 && source.newJobs === 0) {
-    return "No observed leads yet";
-  }
-  return `${source.observedJobs} observed leads · ${source.newJobs} new`;
-}
-
-function sourceRunTone(source: SourceRegistryEntrySummary): SourceMetricTone {
-  if (source.consecutiveFailures > 0 || source.lastErrorClass) return "bad";
-  return source.lastRunCompletedAt ? "good" : "unknown";
-}
-
-function SourceMetaChip({
-  label: chipLabel,
-  tone,
-  title,
-}: {
-  label: string;
-  tone: SourceChipTone;
-  title: string;
-}) {
-  return (
-    <span className={`source-meta-chip ${tone}`} title={title}>
-      {chipLabel}
-    </span>
-  );
-}
-
-function SourceMetadataChips({
-  source,
-}: {
-  source: SourceRegistryEntrySummary;
-}) {
-  return (
-    <div
-      className="source-meta-chips"
-      aria-label={`${source.displayName} source metadata`}
-    >
-      <SourceMetaChip
-        label={label(source.kind)}
-        title={`Source type: ${label(source.kind)}`}
-        tone={sourceKindTone(source.kind)}
-      />
-      <SourceMetaChip
-        label={`${label(source.priority)} priority`}
-        title={`Priority: ${label(source.priority)}`}
-        tone={sourcePriorityTone(source.priority)}
-      />
-      <SourceMetaChip
-        label={`${label(source.recommendedState)} recommendation`}
-        title={`Recommended state: ${label(source.recommendedState)}`}
-        tone={sourceRecommendationTone(source.recommendedState)}
-      />
-    </div>
-  );
-}
-
 function sourceMetricTone(
   value: number | null,
   direction: "higher" | "lower",
@@ -296,19 +289,6 @@ function sourceMetricStatus(tone: SourceMetricTone): string {
   }
 }
 
-function SourceMetricIcon({ tone }: { tone: SourceMetricTone }) {
-  switch (tone) {
-    case "good":
-      return <CheckCircle2 size={14} aria-hidden="true" />;
-    case "warn":
-      return <AlertTriangle size={14} aria-hidden="true" />;
-    case "bad":
-      return <XCircle size={14} aria-hidden="true" />;
-    case "unknown":
-      return <CircleMinus size={14} aria-hidden="true" />;
-  }
-}
-
 function sourceQualityMetrics(source: SourceRegistryEntrySummary) {
   return [
     {
@@ -334,45 +314,37 @@ function sourceQualityMetrics(source: SourceRegistryEntrySummary) {
   ];
 }
 
-function SourceQualityGrid({ source }: { source: SourceRegistryEntrySummary }) {
+function sourceQualityMetric(
+  source: SourceRegistryEntrySummary,
+  index: number,
+): ReturnType<typeof sourceQualityMetrics>[number] {
   return (
-    <div
-      className="source-quality-grid"
-      aria-label={`${source.displayName} quality metrics`}
-      role="list"
-    >
-      {sourceQualityMetrics(source).map((metric) => (
-        <span
-          className={`source-quality-cell ${metric.tone}`}
-          key={metric.label}
-          role="listitem"
-          aria-label={`${metric.label}: ${metric.value}, ${sourceMetricStatus(metric.tone)}`}
-          title={`${metric.label}: ${metric.value}, ${sourceMetricStatus(metric.tone)}`}
-        >
-          <span className="source-quality-icon">
-            <SourceMetricIcon tone={metric.tone} />
-          </span>
-          <span className="source-quality-copy">
-            <span className="source-quality-label">{metric.label}</span>
-            <strong>{metric.value}</strong>
-          </span>
-        </span>
-      ))}
-    </div>
+    sourceQualityMetrics(source)[index] ?? {
+      label: "Metric",
+      value: "n/a",
+      tone: "unknown",
+    }
   );
 }
 
-function sourceRunMeta(source: SourceRegistryEntrySummary): string {
-  const run = source.lastRunCompletedAt
-    ? `last run ${new Date(source.lastRunCompletedAt).toLocaleDateString()}`
-    : "no completed run";
-  const failures =
-    source.consecutiveFailures > 0
-      ? `${source.consecutiveFailures} consecutive failures`
-      : "no recent failures";
-  return source.lastErrorClass
-    ? `${run} · ${failures} · ${source.lastErrorClass}`
-    : `${run} · ${failures}`;
+function SourceMetricText({
+  label: metricLabel,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: SourceMetricTone;
+}) {
+  return (
+    <span
+      className={`source-table-metric ${tone}`}
+      aria-label={`${metricLabel}: ${value}, ${sourceMetricStatus(tone)}`}
+      title={`${metricLabel}: ${value}, ${sourceMetricStatus(tone)}`}
+    >
+      {value}
+    </span>
+  );
 }
 
 function candidateEvidence(candidate: LocatorCandidate): string {
@@ -385,7 +357,11 @@ function candidateEvidence(candidate: LocatorCandidate): string {
   ].join(" · ");
 }
 
-export function DiscoveryProductControls() {
+export function DiscoveryProductControls({
+  layout = "grid",
+}: {
+  readonly layout?: DiscoveryControlsLayout;
+} = {}) {
   const sources = useSourceRegistryQuery();
   const locatorCandidates = useSourceLocatorCandidatesQuery();
   const quarantine = useDiscoveryQuarantineQuery();
@@ -408,24 +384,60 @@ export function DiscoveryProductControls() {
         meta={`${sourceCount} sources · ${candidateCount} candidates · ${quarantineCount + manualCount} review`}
       />
       {message ? <div className="banner inline">{message}</div> : null}
-      <div className="discovery-control-grid">
-        <SourceRegistryPanel
-          sources={sources.data?.sources ?? []}
-          loading={sources.isLoading}
-        />
-        <SourceLocatorPanel
-          candidates={locatorCandidates.data?.candidates ?? []}
-          loading={locatorCandidates.isLoading}
-        />
-        <QuarantinePanel
-          entries={quarantine.data?.entries ?? []}
-          loading={quarantine.isLoading}
-        />
-        <ManualCapturePanel
-          items={manualCapture.data?.items ?? []}
-          loading={manualCapture.isLoading}
-        />
-      </div>
+      {layout === "tabs" ? (
+        <Tabs defaultValue="sources" className="discovery-tabs">
+          <TabsList aria-label="Discovery tools" className="discovery-tab-list">
+            <TabsTrigger value="sources">Source registry</TabsTrigger>
+            <TabsTrigger value="locator">Source locator</TabsTrigger>
+            <TabsTrigger value="quarantine">Quarantine review</TabsTrigger>
+            <TabsTrigger value="manual">Manual capture</TabsTrigger>
+          </TabsList>
+          <TabsContent value="sources" className="discovery-tab-panel">
+            <SourceRegistryPanel
+              defaultStateFilter="active"
+              sources={sources.data?.sources ?? []}
+              loading={sources.isLoading}
+            />
+          </TabsContent>
+          <TabsContent value="locator" className="discovery-tab-panel">
+            <SourceLocatorPanel
+              candidates={locatorCandidates.data?.candidates ?? []}
+              loading={locatorCandidates.isLoading}
+            />
+          </TabsContent>
+          <TabsContent value="quarantine" className="discovery-tab-panel">
+            <QuarantinePanel
+              entries={quarantine.data?.entries ?? []}
+              loading={quarantine.isLoading}
+            />
+          </TabsContent>
+          <TabsContent value="manual" className="discovery-tab-panel">
+            <ManualCapturePanel
+              items={manualCapture.data?.items ?? []}
+              loading={manualCapture.isLoading}
+            />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <div className="discovery-control-grid">
+          <SourceRegistryPanel
+            sources={sources.data?.sources ?? []}
+            loading={sources.isLoading}
+          />
+          <SourceLocatorPanel
+            candidates={locatorCandidates.data?.candidates ?? []}
+            loading={locatorCandidates.isLoading}
+          />
+          <QuarantinePanel
+            entries={quarantine.data?.entries ?? []}
+            loading={quarantine.isLoading}
+          />
+          <ManualCapturePanel
+            items={manualCapture.data?.items ?? []}
+            loading={manualCapture.isLoading}
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -433,9 +445,11 @@ export function DiscoveryProductControls() {
 function SourceRegistryPanel({
   sources,
   loading,
+  defaultStateFilter = "all",
 }: {
   sources: SourceRegistryEntrySummary[];
   loading: boolean;
+  defaultStateFilter?: SourceRegistryStateFilter;
 }) {
   const upsert = useUpsertDiscoverySourceMutation();
   const patchState = usePatchDiscoverySourceStateMutation();
@@ -448,6 +462,250 @@ function SourceRegistryPanel({
   );
   const [seedUrl, setSeedUrl] = useState("");
   const stats = sourceRegistryStats(sources);
+  const initialFilters = useMemo<DataGridFilterState>(
+    () =>
+      defaultStateFilter === "all"
+        ? {}
+        : {
+            state: {
+              operator: "contains",
+              text: "",
+              selectedValues: [label(defaultStateFilter)],
+            },
+          },
+    [defaultStateFilter],
+  );
+  const sourceColumns = useMemo<
+    Array<DataGridColumn<SourceRegistryEntrySummary>>
+  >(
+    () => [
+      {
+        id: "displayName",
+        label: "Company",
+        rowHeader: true,
+        render: (source) => (
+          <span className="source-company-cell">
+            <b>{sourceCompanyName(source)}</b>
+            {source.displayName !== sourceCompanyName(source) ? (
+              <span>{source.displayName}</span>
+            ) : null}
+          </span>
+        ),
+        getSortValue: (source) => sourceCompanyName(source).toLowerCase(),
+        getFilterValue: sourceCompanyName,
+        getFilterSearchValue: (source) =>
+          `${sourceCompanyName(source)} ${source.displayName}`,
+      },
+      {
+        id: "sourceId",
+        label: "Source id",
+        className: "mono",
+        render: (source) => source.sourceId,
+        getSortValue: (source) => source.sourceId.toLowerCase(),
+        getFilterValue: (source) => source.sourceId,
+      },
+      {
+        id: "type",
+        label: "Type",
+        render: (source) => (
+          <span className={`source-table-tone ${sourceKindTone(source.kind)}`}>
+            {sourceTypeLabel(source)}
+          </span>
+        ),
+        getSortValue: (source) => sourceTypeLabel(source).toLowerCase(),
+        getFilterValue: sourceTypeLabel,
+      },
+      {
+        id: "state",
+        label: "State",
+        render: (source) => (
+          <span className="source-state-cell">
+            <StatusDot state={dotState(source.state)} />
+            {label(source.state)}
+          </span>
+        ),
+        getSortValue: (source) => label(source.state),
+        getFilterValue: (source) => label(source.state),
+      },
+      {
+        id: "priority",
+        label: "Priority",
+        render: (source) => (
+          <span
+            className={`source-table-tone ${sourcePriorityTone(source.priority)}`}
+          >
+            {label(source.priority)}
+          </span>
+        ),
+        getSortValue: (source) => label(source.priority),
+        getFilterValue: (source) => label(source.priority),
+      },
+      {
+        id: "recommendedState",
+        label: "Recommendation",
+        render: (source) => (
+          <span
+            className={`source-table-tone ${sourceRecommendationTone(
+              source.recommendedState,
+            )}`}
+          >
+            {label(source.recommendedState)}
+          </span>
+        ),
+        getSortValue: (source) => label(source.recommendedState),
+        getFilterValue: (source) => label(source.recommendedState),
+      },
+      {
+        id: "observedJobs",
+        label: "Observed",
+        render: (source) => source.observedJobs,
+        getSortValue: (source) => source.observedJobs,
+      },
+      {
+        id: "newJobs",
+        label: "New",
+        render: (source) => source.newJobs,
+        getSortValue: (source) => source.newJobs,
+      },
+      {
+        id: "lastRunCompletedAt",
+        label: "Last run",
+        render: (source) =>
+          source.lastRunCompletedAt
+            ? new Date(source.lastRunCompletedAt).toLocaleDateString()
+            : "n/a",
+        getSortValue: (source) =>
+          source.lastRunCompletedAt ? Date.parse(source.lastRunCompletedAt) : 0,
+      },
+      {
+        id: "consecutiveFailures",
+        label: "Failures",
+        render: (source) => source.consecutiveFailures,
+        getSortValue: (source) => source.consecutiveFailures,
+      },
+      {
+        id: "activeVerificationRate",
+        label: "Active",
+        render: (source) => {
+          const metric = sourceQualityMetric(source, 0);
+          return (
+            <SourceMetricText
+              label={metric.label}
+              value={metric.value}
+              tone={metric.tone}
+            />
+          );
+        },
+        getSortValue: (source) => source.activeVerificationRate ?? -1,
+      },
+      {
+        id: "fullDescriptionSuccessRate",
+        label: "Full text",
+        render: (source) => {
+          const metric = sourceQualityMetric(source, 1);
+          return (
+            <SourceMetricText
+              label={metric.label}
+              value={metric.value}
+              tone={metric.tone}
+            />
+          );
+        },
+        getSortValue: (source) => source.fullDescriptionSuccessRate ?? -1,
+      },
+      {
+        id: "applyUrlSuccessRate",
+        label: "Apply URL",
+        render: (source) => {
+          const metric = sourceQualityMetric(source, 2);
+          return (
+            <SourceMetricText
+              label={metric.label}
+              value={metric.value}
+              tone={metric.tone}
+            />
+          );
+        },
+        getSortValue: (source) => source.applyUrlSuccessRate ?? -1,
+      },
+      {
+        id: "duplicateRate",
+        label: "Duplicate",
+        render: (source) => {
+          const metric = sourceQualityMetric(source, 3);
+          return (
+            <SourceMetricText
+              label={metric.label}
+              value={metric.value}
+              tone={metric.tone}
+            />
+          );
+        },
+        getSortValue: (source) => source.duplicateRate ?? -1,
+      },
+      {
+        id: "actions",
+        label: "Actions",
+        className: "source-table-action-cell",
+        render: (source) => (
+          <div className="row-actions source-table-actions">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              aria-label={`Activate ${source.displayName}`}
+              title="Activate source"
+              disabled={patchState.isPending || source.state === "active"}
+              onClick={() =>
+                patchState.mutate({
+                  sourceId: source.sourceId,
+                  body: {
+                    state: "active",
+                    reason: "User enabled source from product controls.",
+                  },
+                })
+              }
+            >
+              <Check size={14} aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              aria-label={`Quarantine ${source.displayName}`}
+              title="Quarantine source"
+              disabled={patchState.isPending || source.state === "quarantined"}
+              onClick={() =>
+                patchState.mutate({
+                  sourceId: source.sourceId,
+                  body: {
+                    state: "quarantined",
+                    reason: "User quarantined source from product controls.",
+                  },
+                })
+              }
+            >
+              <Ban size={14} aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              aria-label={`Preview ${source.displayName}`}
+              title="Preview observed leads"
+              disabled={
+                preview.isFetching && previewSourceId === source.sourceId
+              }
+              onClick={() => setPreviewSourceId(source.sourceId)}
+            >
+              <Eye size={14} aria-hidden="true" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [patchState, preview.isFetching, previewSourceId],
+  );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -487,6 +745,17 @@ function SourceRegistryPanel({
           <strong>{stats.newJobs}</strong> new leads
         </span>
       </div>
+      <FilterableDataGrid
+        title="Grid view"
+        data={sources}
+        columns={sourceColumns}
+        getRowId={(source) => source.sourceId}
+        loading={loading}
+        loadingMessage="Loading sources."
+        emptyMessage="No sources registered."
+        initialSort={{ columnId: "displayName", direction: "asc" }}
+        initialFilters={initialFilters}
+      />
       <form className="source-upsert-form" onSubmit={submit}>
         <label className="field">
           <span>Source id</span>
@@ -537,92 +806,6 @@ function SourceRegistryPanel({
           Add source
         </Button>
       </form>
-      <div className="rows compact">
-        {sources.map((source) => (
-          <div className="discovery-source-row" key={source.sourceId}>
-            <StatusDot state={dotState(source.state)} />
-            <div className="title-stack source-title-stack">
-              <b>{source.displayName}</b>
-              <SourceMetadataChips source={source} />
-              <span
-                className={`source-detail-line ${sourceActivityTone(source)}`}
-              >
-                <strong>Activity</strong> {sourceActivityMeta(source)}
-              </span>
-              <span className={`source-detail-line ${sourceRunTone(source)}`}>
-                <strong>Run</strong> {sourceRunMeta(source)}
-              </span>
-              <div className="source-controls-row">
-                <span className={sourceStateTagClass(source.state)}>
-                  {label(source.state)}
-                </span>
-                <div className="row-actions">
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`Activate ${source.displayName}`}
-                    title="Activate source"
-                    disabled={patchState.isPending || source.state === "active"}
-                    onClick={() =>
-                      patchState.mutate({
-                        sourceId: source.sourceId,
-                        body: {
-                          state: "active",
-                          reason: "User enabled source from product controls.",
-                        },
-                      })
-                    }
-                  >
-                    <Check size={14} aria-hidden="true" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`Quarantine ${source.displayName}`}
-                    title="Quarantine source"
-                    disabled={
-                      patchState.isPending || source.state === "quarantined"
-                    }
-                    onClick={() =>
-                      patchState.mutate({
-                        sourceId: source.sourceId,
-                        body: {
-                          state: "quarantined",
-                          reason:
-                            "User quarantined source from product controls.",
-                        },
-                      })
-                    }
-                  >
-                    <Ban size={14} aria-hidden="true" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`Preview ${source.displayName}`}
-                    title="Preview observed leads"
-                    disabled={
-                      preview.isFetching && previewSourceId === source.sourceId
-                    }
-                    onClick={() => setPreviewSourceId(source.sourceId)}
-                  >
-                    <Eye size={14} aria-hidden="true" />
-                  </Button>
-                </div>
-              </div>
-              <SourceQualityGrid source={source} />
-            </div>
-          </div>
-        ))}
-        {!sources.length ? (
-          <Empty
-            title={loading ? "Loading sources." : "No sources registered."}
-          />
-        ) : null}
-      </div>
       {previewSourceId ? (
         <SourcePreview
           sourceId={previewSourceId}

@@ -2,7 +2,7 @@
 starving the worker's event loop.
 
 Every non-apply activity (``discover``, ``enrich``, ``score``,
-``tailor``, ``cover``, ``pdf``, ``profile_import``) wraps a synchronous
+``tailor``, ``cover``, ``profile_import``) wraps a synchronous
 ``run_pipeline(...)`` call. Calling that synchronously from inside the
 ``async def`` activity body blocks the asyncio event loop for the
 entire stage duration, which:

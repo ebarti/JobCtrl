@@ -444,6 +444,9 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     # AND legacy column data; after it runs, those jobs look identical
     # to jobs created through the post-DDD pipeline.
     _backfill_legacy_stage_states(conn)
+    from jobhunter.state import reconcile_dependency_blockers
+
+    reconcile_dependency_blockers(conn)
     conn.commit()
     return ["job_stage_states", "job_events", "job_artifacts", "event_watermarks"]
 
@@ -714,8 +717,6 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
     * tailor    — succeeded if ``tailored_resume_path`` set, otherwise
                   pending (or blocked / exhausted by upstream + attempts)
     * cover     — succeeded if ``cover_letter_path`` set, otherwise pending
-    * pdf       — succeeded if tailor succeeded (legacy never tracked PDF
-                  separately), otherwise blocked
     * apply     — succeeded if ``applied_at`` set or ``apply_status='applied'``,
                   failed if ``apply_error`` set, otherwise pending / blocked
 
@@ -742,7 +743,7 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
         return
 
     now = datetime.now(timezone.utc).isoformat()
-    max_attempts = {"discover": 1, "enrich": 3, "score": 3, "tailor": 5, "cover": 5, "pdf": 3, "apply": 3}
+    max_attempts = {"discover": 1, "enrich": 3, "score": 3, "tailor": 5, "cover": 5, "apply": 3}
 
     def _insert(
         job_url: str,
@@ -864,12 +865,6 @@ def _backfill_legacy_stage_states(conn: sqlite3.Connection) -> None:
             )
         else:
             _insert(url, "cover", "pending", attempt_count=c_attempts)
-
-        # pdf — legacy never tracked PDF separately; pdf rides with tailor.
-        if tailor_succeeded:
-            _insert(url, "pdf", "succeeded", finished_at=now)
-        else:
-            _insert(url, "pdf", "blocked", error_code="BLOCKED", error_message="tailor has not completed.")
 
         # apply
         if applied_at or (apply_status and str(apply_status).lower() == "applied"):

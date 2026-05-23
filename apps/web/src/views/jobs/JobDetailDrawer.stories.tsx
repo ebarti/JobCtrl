@@ -69,3 +69,16 @@ export const Error: Story = {
   },
   render: () => <JobDetailDrawerHost jobId="job-1" />,
 };
+
+export const NotFound: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/jobs/:jobKey", () =>
+          HttpResponse.json({ ok: false, error: "job_not_found" }, { status: 404 }),
+        ),
+      ],
+    },
+  },
+  render: () => <JobDetailDrawerHost jobId="missing-job" />,
+};

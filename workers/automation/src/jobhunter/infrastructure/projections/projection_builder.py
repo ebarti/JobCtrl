@@ -77,7 +77,6 @@ STAGE_ORDER: tuple[str, ...] = (
     "score",
     "tailor",
     "cover",
-    "pdf",
     "apply",
 )
 
@@ -87,7 +86,6 @@ DEFAULT_MAX_ATTEMPTS: dict[str, int] = {
     "score": 3,
     "tailor": 5,
     "cover": 5,
-    "pdf": 3,
     "apply": 3,
 }
 

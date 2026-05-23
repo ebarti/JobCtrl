@@ -22,10 +22,8 @@ with workflow.unsafe.imports_passed_through():
     )
     from jobhunter.materials.activities import (
         CoverActivityInput,
-        PdfActivityInput,
         TailorActivityInput,
         cover_activity,
-        pdf_activity,
         tailor_activity,
     )
     from jobhunter.scoring.activities import (
@@ -41,7 +39,7 @@ class JobPipelineWorkflowInput:
     Drives the requested stage list in batch mode against eligible jobs in the
     local DB. Each non-apply stage runner is batch-oriented today — it walks
     the DB selectors itself — so this workflow does not currently address a
-    single ``(TenantId, JobId)`` for the discover/enrich/score/tailor/cover/pdf
+    single ``(TenantId, JobId)`` for the discover/enrich/score/tailor/cover
     stages.
 
     The apply step is delegated to ``ApplyWorkflow`` as a child workflow so
@@ -197,20 +195,6 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 min_score=payload.min_score,
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
-                dry_run=payload.dry_run,
-            ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
-            heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_DEFAULT_RETRY,
-        )
-    if stage == "pdf":
-        return await workflow.execute_activity(
-            pdf_activity,
-            PdfActivityInput(
-                tenant_id=payload.tenant_id,
-                expected_app_dir=payload.expected_app_dir,
-                expected_db_path=payload.expected_db_path,
-                limit=payload.limit,
                 dry_run=payload.dry_run,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,

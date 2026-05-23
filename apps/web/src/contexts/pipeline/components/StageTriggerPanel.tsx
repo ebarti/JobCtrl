@@ -21,7 +21,7 @@ import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-t
 type StageActivity = DashboardSummary["activity"][number];
 
 function labelForStage(stage: Stage): string {
-  return stage === "pdf" ? "PDF" : `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
+  return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
 }
 
 function labelForModel(model: string): string {
@@ -151,7 +151,6 @@ const STAGE_CONTROLS: Record<Stage, StageControlSet> = {
     retailor: true,
   },
   cover: { ...BASE_CONTROLS, limit: true, minScore: true, validationMode: true },
-  pdf: { ...BASE_CONTROLS, limit: true },
   apply: {
     ...BASE_CONTROLS,
     limit: true,

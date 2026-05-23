@@ -45,6 +45,7 @@ export const sampleJob: JobSummary = {
   title: "Staff Software Engineer",
   company: "Acme Corp",
   source: "Lever",
+  discoverySource: "lever:acme",
   strategy: "ats:lever",
   location: "Remote (US)",
   salary: "$220k-$260k",

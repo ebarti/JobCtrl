@@ -25,6 +25,7 @@ function buildRouter(initialPath = "/jobs?stage=all&state=all&deleted=active&sor
       return (
         <div>
           <span data-testid="stage-value">{search.stage}</span>
+          <span data-testid="min-score-value">{search.minFitScore ?? ""}</span>
           <JobFilterBar search={search} />
         </div>
       );
@@ -55,5 +56,17 @@ describe("<JobFilterBar>", () => {
     const stageSelect = view.container.querySelectorAll("select")[0]!;
     const options = stageSelect.querySelectorAll("option");
     expect(options.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("updates the minimum fit score URL search-param", async () => {
+    const user = userEvent.setup();
+    const router = buildRouter();
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => expect(screen.getByTestId("min-score-value")).toHaveTextContent(""));
+    await user.selectOptions(screen.getByLabelText("Minimum fit score"), "1");
+
+    await waitFor(() => expect(screen.getByTestId("min-score-value")).toHaveTextContent("1"));
+    expect(router.state.location.search).toMatchObject({ minFitScore: 1 });
   });
 });

@@ -104,6 +104,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   unhideJobs(body: Parameters<JobHunterApiClient["unhideJobs"]>[0]) {
     return this.client.unhideJobs(body);
   }
+  retryFailedJobs(body: Parameters<JobHunterApiClient["retryFailedJobs"]>[0]) {
+    return this.client.retryFailedJobs(body);
+  }
   correctScore(jobKey: string, body: Parameters<JobHunterApiClient["correctScore"]>[1]) {
     return this.client.correctScore(jobKey, body);
   }

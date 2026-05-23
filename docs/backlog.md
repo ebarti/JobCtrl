@@ -38,7 +38,7 @@ deferred until the local product is solid.
   inside that pipeline run as child `ApplyWorkflow` executions. However,
   `/v1/workflow-runs` is still backed by apply-run projections. A uniform
   workflow-run projection is still needed if the dashboard should list
-  discover/enrich/score/tailor/cover/pdf workflow lifecycle rows alongside
+  discover/enrich/score/tailor/cover workflow lifecycle rows alongside
   apply runs.
 - Add cancellation UX for queued or running non-apply local actions.
   `run_stage` now has a Temporal workflow ID, so cooperative cancellation can
@@ -135,6 +135,12 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
 
 ### UI Quality
 
+- Add saved table views for high-density operational tables, starting with
+  Discovery source registry and Jobs. A view should persist column visibility,
+  column order, sort order, filters, row density, and any active grouping or
+  color rules under a user-named view, with a quick switcher in the table
+  toolbar. Filters should include both distinct-value multi-select and text
+  predicates such as "contains" and "does not contain" for text-like fields.
 - Add configurable jobs-table columns. The default Jobs table should keep
   critical operational columns such as Source visible, but users need a
   first-class control for choosing which columns are shown and hidden, with

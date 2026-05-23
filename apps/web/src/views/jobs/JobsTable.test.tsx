@@ -10,7 +10,9 @@ function renderJobsTable() {
   const rowSelection: RowSelectionState = {};
   return render(
     <JobsTable
-      data={makeJobsPage([{ ...sampleJob, company: "Acme Corp", source: "LinkedIn" }])}
+      data={makeJobsPage([
+        { ...sampleJob, company: "Acme Corp", source: "LinkedIn", discoverySource: "jobspy:linkedin" },
+      ])}
       loading={false}
       sorting={sorting}
       onSortingChange={() => {}}
@@ -34,6 +36,7 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("Source")).toBeInTheDocument();
     expect(screen.getByText("Acme Corp")).toBeInTheDocument();
     expect(screen.getByText("LinkedIn")).toBeInTheDocument();
+    expect(screen.getByText("discovery jobspy:linkedin")).toBeInTheDocument();
     expect(screen.queryByText(/Acme Corp.*LinkedIn/)).not.toBeInTheDocument();
   });
 });

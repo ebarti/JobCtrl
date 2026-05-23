@@ -16,7 +16,6 @@ export const StageEnrich: Story = { args: { stage: "enrich" } };
 export const StageScore: Story = { args: { stage: "score" } };
 export const StageTailor: Story = { args: { stage: "tailor" } };
 export const StageCover: Story = { args: { stage: "cover" } };
-export const StagePdf: Story = { args: { stage: "pdf" } };
 export const StageApply: Story = { args: { stage: "apply" } };
 
 export const StatePending: Story = { args: { state: "pending" } };
@@ -39,7 +38,6 @@ const _stageStories: Record<Stage, Story> = {
   score: StageScore,
   tailor: StageTailor,
   cover: StageCover,
-  pdf: StagePdf,
   apply: StageApply,
 };
 const _stateStories: Record<StageState, Story> = {

@@ -1,3 +1,4 @@
+import { JobHunterApiError } from "@jobhunter/api-client";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
@@ -21,6 +22,13 @@ export interface JobDetailDrawerProps {
   jobId: string;
 }
 
+function detailErrorTitle(error: unknown): string {
+  if (error instanceof JobHunterApiError && error.status === 404) {
+    return "Job not found.";
+  }
+  return error instanceof Error ? error.message : "";
+}
+
 export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
   const navigate = useNavigate();
   const search = useSearch({ from: "/jobs" });
@@ -30,7 +38,7 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
   useEscapeKey(true, close);
 
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
-  const errorMessage = detailError instanceof Error ? detailError.message : "";
+  const errorMessage = detailErrorTitle(detailError);
 
   return (
     <div className="drawer-backdrop">

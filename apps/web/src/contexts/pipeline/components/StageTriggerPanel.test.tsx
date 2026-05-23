@@ -115,13 +115,6 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Workers")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "PDF" }));
-    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Dry run")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Workers")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
     expect(screen.getByLabelText("Workers")).toBeInTheDocument();

@@ -46,7 +46,6 @@ const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   score: 3,
   tailor: 5,
   cover: 5,
-  pdf: 3,
   apply: 3,
 };
 
@@ -107,7 +106,6 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
     score: 3,
     tailor: 5,
     cover: 5,
-    pdf: 3,
     apply: 3,
   };
   // Column-aware INSERT: ``database.py::ensure_state_tables`` is the
@@ -228,15 +226,6 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
       });
     } else {
       insertStage(row.url, "cover", "pending", { attemptCount: coverAttempts });
-    }
-
-    if (tailorSucceeded) {
-      insertStage(row.url, "pdf", "succeeded", { finishedAt: now });
-    } else {
-      insertStage(row.url, "pdf", "blocked", {
-        errorCode: "BLOCKED",
-        errorMessage: "tailor has not completed.",
-      });
     }
 
     const applyStatusLower = String(row.apply_status ?? "").toLowerCase();

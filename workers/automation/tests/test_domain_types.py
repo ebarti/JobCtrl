@@ -71,11 +71,11 @@ class TestJobId:
 
 class TestStage:
     def test_stage_count(self) -> None:
-        assert len(STAGES) == 7
+        assert len(STAGES) == 6
 
     def test_stage_names(self) -> None:
         names = [s.value for s in STAGES]
-        assert names == ["Discover", "Enrich", "Score", "Tailor", "Cover", "Pdf", "Apply"]
+        assert names == ["Discover", "Enrich", "Score", "Tailor", "Cover", "Apply"]
 
     def test_stage_completeness_against_legacy(self) -> None:
         """Domain Stage enum covers all stages in legacy STAGE_ORDER."""
@@ -85,12 +85,10 @@ class TestStage:
 
     def test_serialize_stage(self) -> None:
         assert serialize_stage(Stage.Discover) == "discover"
-        assert serialize_stage(Stage.Pdf) == "pdf"
         assert serialize_stage(Stage.Apply) == "apply"
 
     def test_deserialize_stage(self) -> None:
         assert deserialize_stage("discover") == Stage.Discover
-        assert deserialize_stage("pdf") == Stage.Pdf
         assert deserialize_stage("apply") == Stage.Apply
 
     def test_stage_roundtrip(self) -> None:

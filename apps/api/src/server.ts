@@ -108,6 +108,7 @@ import {
   permanentlyDeleteJob,
   permanentlyDeleteJobs,
   resetJobStage,
+  retryFailedJobs,
   restoreJob,
   restoreJobs,
   resetStaleScoresForRescore,
@@ -406,6 +407,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     return withWritableDb(reply, options.dbPath, (db) => unhideJobs(db, body));
+  });
+
+  app.post("/v1/jobs/bulk-retry-failed", async (request, reply) => {
+    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => retryFailedJobs(db, body));
   });
 
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) =>

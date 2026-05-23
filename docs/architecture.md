@@ -400,7 +400,7 @@ engine for the Python worker. The infrastructure split lives under
   The CLI imports both lists and passes them to `build_worker`; new
   workflows / activities are added by appending here.
 
-Each pipeline stage (discover, enrich, score, tailor, cover, pdf, apply,
+Each pipeline stage (discover, enrich, score, tailor, cover, apply,
 profile_import) ships as a Temporal **Activity** under the owning bounded
 context's package — e.g. `jobhunter/scoring/activities.py`,
 `jobhunter/materials/activities.py`. Activities are thin adapters: they

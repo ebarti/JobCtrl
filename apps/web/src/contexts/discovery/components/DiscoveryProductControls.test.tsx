@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -76,30 +76,127 @@ describe("DiscoveryProductControls", () => {
     expect(screen.getByLabelText("Source registry summary")).toHaveTextContent(
       "1 active",
     );
-    expect(screen.getByTitle("Source type: employer careers page")).toHaveClass(
-      "source-meta-chip",
-      "info",
-    );
-    expect(screen.getByTitle("Priority: preferred")).toHaveClass(
-      "source-meta-chip",
-      "good",
-    );
-    expect(screen.getByTitle("Recommended state: trusted")).toHaveClass(
-      "source-meta-chip",
-      "good",
-    );
-    expect(screen.getByText("3 observed leads · 2 new")).toBeInTheDocument();
-    const qualityGrid = screen.getByRole("list", {
-      name: "Readable Source quality metrics",
-    });
-    expect(qualityGrid).toHaveTextContent("Active");
-    expect(qualityGrid).toHaveTextContent("80%");
-    expect(qualityGrid).toHaveTextContent("Full text");
-    expect(qualityGrid).toHaveTextContent("70%");
+    const sourceTable = screen.getByRole("table");
+    expect(sourceTable).toHaveTextContent("Type");
+    expect(sourceTable).toHaveTextContent("Employer careers page");
+    expect(sourceTable).toHaveTextContent("preferred");
+    expect(sourceTable).toHaveTextContent("trusted");
+    expect(sourceTable).toHaveTextContent("3");
+    expect(sourceTable).toHaveTextContent("2");
+    expect(sourceTable).toHaveTextContent("80%");
+    expect(sourceTable).toHaveTextContent("70%");
     expect(screen.getByText(/Unconfirmed careers page/i)).toBeInTheDocument();
     expect(
       screen.getByText(/cannot confirm which careers system/i),
     ).toBeInTheDocument();
+  });
+
+  it("filters active sources by default on the discovery page table and sorts the registry", async () => {
+    renderWithProviders(<DiscoveryProductControls layout="tabs" />, {
+      ports: buildTestPorts({
+        api: {
+          discoverySources: vi.fn(async () => ({
+            ok: true as const,
+            sources: [
+              {
+                sourceId: "workday:salesforce",
+                kind: "ats_api" as const,
+                displayName: "Salesforce",
+                owner: "system" as const,
+                priority: "canonical" as const,
+                state: "active" as const,
+                policyId: "workday_api_canonical",
+                recommendedState: "normal" as const,
+                lastRunId: "run-1",
+                lastRunCompletedAt: "2026-05-15T10:00:00+00:00",
+                lastErrorClass: null,
+                consecutiveFailures: 0,
+                observedJobs: 3,
+                newJobs: 0,
+                duplicateRate: null,
+                activeVerificationRate: null,
+                fullDescriptionSuccessRate: null,
+                applyUrlSuccessRate: null,
+                qualityTrend: "unknown" as const,
+              },
+              {
+                sourceId: "jobspy:indeed",
+                kind: "broad_board" as const,
+                displayName: "Indeed",
+                owner: "system" as const,
+                priority: "fallback" as const,
+                state: "active" as const,
+                policyId: "jobspy_board",
+                recommendedState: "normal" as const,
+                lastRunId: "run-2",
+                lastRunCompletedAt: "2026-05-16T10:00:00+00:00",
+                lastErrorClass: null,
+                consecutiveFailures: 0,
+                observedJobs: 8,
+                newJobs: 1,
+                duplicateRate: null,
+                activeVerificationRate: null,
+                fullDescriptionSuccessRate: null,
+                applyUrlSuccessRate: null,
+                qualityTrend: "unknown" as const,
+              },
+              {
+                sourceId: "workday:hidden",
+                kind: "ats_api" as const,
+                displayName: "Hidden Co",
+                owner: "system" as const,
+                priority: "canonical" as const,
+                state: "disabled" as const,
+                policyId: "workday_api_canonical",
+                recommendedState: "disabled" as const,
+                lastRunId: null,
+                lastRunCompletedAt: null,
+                lastErrorClass: null,
+                consecutiveFailures: 0,
+                observedJobs: 1,
+                newJobs: 0,
+                duplicateRate: null,
+                activeVerificationRate: null,
+                fullDescriptionSuccessRate: null,
+                applyUrlSuccessRate: null,
+                qualityTrend: "unknown" as const,
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    await screen.findByRole("tab", { name: "Source registry" });
+    expect(await screen.findByText("Salesforce")).toBeInTheDocument();
+    const sourceTable = screen.getByRole("table");
+    expect(screen.getAllByText("Workday ATS").length).toBeGreaterThan(0);
+    expect(within(sourceTable).queryByText("Provider")).not.toBeInTheDocument();
+    expect(within(sourceTable).queryByText("ats api")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hidden Co")).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: /open table filters/i }),
+    );
+    await user.type(screen.getByLabelText("Company filter text"), "sales");
+    expect(within(sourceTable).getByText("Salesforce")).toBeInTheDocument();
+    expect(within(sourceTable).queryByText("Indeed")).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Company filter text"));
+
+    await user.click(screen.getByRole("button", { name: /observed/i }));
+    await user.click(screen.getByRole("button", { name: /observed/i }));
+
+    const rows = within(sourceTable).getAllByRole("row");
+    expect(within(rows[1]!).getByText("Indeed")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /open table filters/i }),
+    );
+    await user.click(screen.getByRole("checkbox", { name: "active" }));
+    await waitFor(() => {
+      expect(within(sourceTable).getByText("Hidden Co")).toBeInTheDocument();
+    });
   });
 
   it("records feedback and manual capture actions through the API port", async () => {

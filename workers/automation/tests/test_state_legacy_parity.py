@@ -81,10 +81,10 @@ def test_freshly_discovered_job(db):
     states = get_job_stage_states(db, job)
     by_stage = {s["stage"]: s for s in states}
 
-    assert len(states) == 7
+    assert len(states) == 6
     assert by_stage["discover"]["state"] == "succeeded"
     assert by_stage["discover"]["attempt_count"] == 1
-    for stage in ("enrich", "score", "tailor", "cover", "pdf", "apply"):
+    for stage in ("enrich", "score", "tailor", "cover", "apply"):
         assert by_stage[stage]["state"] == "pending"
 
 
@@ -117,11 +117,11 @@ def test_enrichment_failed(db):
     assert by_stage["score"]["state"] == "pending"
 
 
-# ── Scenario 3: Scored but below threshold — tailor/cover/pdf/apply skipped
+# ── Scenario 3: Scored but below threshold — tailor/cover/apply skipped
 
 
 def test_scored_below_threshold(db):
-    """Score below threshold: tailor/cover/pdf/apply should be set to skipped."""
+    """Score below threshold: tailor/cover/apply should be set to skipped."""
     job = _insert_job(
         db,
         full_description="Build things.",
@@ -132,7 +132,6 @@ def test_scored_below_threshold(db):
     set_stage_state(db, job["url"], "score", "succeeded", attempt_count=1, validate_transition=False)
     set_stage_state(db, job["url"], "tailor", "skipped", validate_transition=False)
     set_stage_state(db, job["url"], "cover", "skipped", validate_transition=False)
-    set_stage_state(db, job["url"], "pdf", "skipped", validate_transition=False)
     set_stage_state(db, job["url"], "apply", "skipped", validate_transition=False)
     db.commit()
 
@@ -142,7 +141,6 @@ def test_scored_below_threshold(db):
     assert by_stage["score"]["state"] == "succeeded"
     assert by_stage["tailor"]["state"] == "skipped"
     assert by_stage["cover"]["state"] == "skipped"
-    assert by_stage["pdf"]["state"] == "skipped"
     assert by_stage["apply"]["state"] == "skipped"
 
 
@@ -169,7 +167,6 @@ def test_tailored_with_cover_apply_pending(db, tmp_path):
     set_stage_state(db, job["url"], "score", "succeeded", attempt_count=1, validate_transition=False)
     set_stage_state(db, job["url"], "tailor", "succeeded", attempt_count=1, validate_transition=False)
     set_stage_state(db, job["url"], "cover", "succeeded", attempt_count=1, validate_transition=False)
-    set_stage_state(db, job["url"], "pdf", "succeeded", attempt_count=1, validate_transition=False)
     db.commit()
 
     states = get_job_stage_states(db, job)
@@ -180,7 +177,6 @@ def test_tailored_with_cover_apply_pending(db, tmp_path):
     assert by_stage["score"]["state"] == "succeeded"
     assert by_stage["tailor"]["state"] == "succeeded"
     assert by_stage["cover"]["state"] == "succeeded"
-    assert by_stage["pdf"]["state"] == "succeeded"
     assert by_stage["apply"]["state"] == "pending"
 
 
@@ -209,7 +205,6 @@ def test_applied_successfully(db, tmp_path):
     set_stage_state(db, job["url"], "score", "succeeded", attempt_count=1, validate_transition=False)
     set_stage_state(db, job["url"], "tailor", "succeeded", attempt_count=1, validate_transition=False)
     set_stage_state(db, job["url"], "cover", "succeeded", attempt_count=1, validate_transition=False)
-    set_stage_state(db, job["url"], "pdf", "succeeded", attempt_count=1, validate_transition=False)
     set_stage_state(db, job["url"], "apply", "succeeded", attempt_count=1,
                     finished_at="2026-05-01T00:10:00+00:00", validate_transition=False)
     db.commit()

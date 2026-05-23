@@ -1,5 +1,6 @@
-import { type BulkJobMutationRequest, type JobSortField } from "@jobhunter/contracts";
+import { type BulkJobMutationRequest, type JobMutationResponse, type JobSortField } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
+import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useEffect, useMemo, useState } from "react";
 
@@ -9,6 +10,7 @@ import { usePermanentlyDeleteJobsBulkMutation } from "../../contexts/discovery/h
 import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRestoreJobsBulkMutation.js";
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
+import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { JobBulkActions } from "./JobBulkActions.js";
@@ -23,6 +25,8 @@ function jobsListInput(search: JobsSearch) {
     sort: search.sort,
     dir: search.dir,
     deleted: search.deleted,
+    minFitScore: search.minFitScore,
+    maxFitScore: search.maxFitScore,
     ...(search.stage !== "all" ? { stage: search.stage } : {}),
     ...(search.state !== "all" ? { state: search.state } : {}),
   };
@@ -38,6 +42,8 @@ const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
   "current_state",
 ]);
 
+type BulkJobMutation = UseMutationResult<JobMutationResponse, Error, BulkJobMutationRequest>;
+
 function isJobSortField(value: string): value is JobSortField {
   return SORTABLE_JOB_FIELDS.has(value as JobSortField);
 }
@@ -52,6 +58,7 @@ export function JobsView() {
   const permanentlyDeleteJobs = usePermanentlyDeleteJobsBulkMutation();
   const restoreJobs = useRestoreJobsBulkMutation();
   const unhideJobs = useUnhideJobsBulkMutation();
+  const retryFailedJobs = useRetryFailedJobsMutation();
   const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -69,6 +76,8 @@ export function JobsView() {
     search.sort,
     search.stage,
     search.state,
+    search.minFitScore,
+    search.maxFitScore,
   ]);
 
   const setSearch = (next: Partial<JobsSearch>) => {
@@ -139,6 +148,8 @@ export function JobsView() {
       deleted: search.deleted,
       source: "",
       company: "",
+      minFitScore: search.minFitScore,
+      maxFitScore: search.maxFitScore,
     };
     if (search.stage !== "all") {
       filter.stage = search.stage;
@@ -157,17 +168,15 @@ export function JobsView() {
     hideJobs.isPending ||
     permanentlyDeleteJobs.isPending ||
     restoreJobs.isPending ||
-    unhideJobs.isPending;
+    unhideJobs.isPending ||
+    retryFailedJobs.isPending;
 
   const selectedPayload = (): BulkJobMutationRequest =>
     allMatchingSelected
       ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
       : { allMatching: false, jobKeys: selectedKeys };
 
-  const mutateSelected = (
-    mutation: typeof deleteJobs,
-    label: string,
-  ) => {
+  const mutateSelected = (mutation: BulkJobMutation, label: string) => {
     const count = allMatchingSelected ? (data?.pagination.total ?? 0) : selectedKeys.length;
     if (!count) {
       return;
@@ -186,6 +195,30 @@ export function JobsView() {
 
   const hideSelected = () => {
     mutateSelected(hideJobs, "Hide");
+  };
+
+  const retryFailedSelected = () => {
+    mutateSelected(retryFailedJobs, "Retry");
+  };
+
+  const retryAllFailed = () => {
+    const count = data?.pagination.total ?? 0;
+    if (!count) {
+      return;
+    }
+    if (!window.confirm(`Retry ${count} failed job${count === 1 ? "" : "s"}?`)) {
+      return;
+    }
+    retryFailedJobs.mutate(
+      {
+        allMatching: true,
+        filter: { ...currentJobFilter(), deleted: "active", state: "failed" },
+        jobKeys: [],
+      },
+      {
+        onSuccess: () => clearSelection(),
+      },
+    );
   };
 
   const permanentlyDeleteSelected = () => {
@@ -225,6 +258,8 @@ export function JobsView() {
           onPrimaryAction={mutatePrimarySelected}
           onHideSelected={hideSelected}
           onPermanentlyDeleteSelected={permanentlyDeleteSelected}
+          onRetryFailedSelected={retryFailedSelected}
+          onRetryAllFailed={retryAllFailed}
           onResetStaleSuccess={clearSelection}
         />
         <JobsTable

@@ -11,7 +11,6 @@ export function stageTone(stage: Stage): StageTone {
     case "score":
     case "tailor":
     case "cover":
-    case "pdf":
       return "info";
     case "apply":
       return "ok";

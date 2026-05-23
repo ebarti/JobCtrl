@@ -18,14 +18,13 @@ from enum import Enum
 
 
 class Stage(Enum):
-    """The seven pipeline stages in canonical order (domain PascalCase)."""
+    """The six pipeline stages in canonical order (domain PascalCase)."""
 
     Discover = "Discover"
     Enrich = "Enrich"
     Score = "Score"
     Tailor = "Tailor"
     Cover = "Cover"
-    Pdf = "Pdf"
     Apply = "Apply"
 
 

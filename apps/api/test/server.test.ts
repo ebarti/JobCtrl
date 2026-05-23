@@ -429,6 +429,31 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("does not expose dashboard activity links for events whose job no longer exists", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://example.com/jobs/missing-parent",
+      "tailor",
+      "StageFailed",
+      "error",
+      "Orphan tailor event",
+      "2026-04-29T10:20:00+00:00",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const activity = response.json().activity as Array<{ jobKey: string | null; message: string }>;
+    expect(activity.some((event) => event.message === "Orphan tailor event")).toBe(false);
+    expect(activity.some((event) => event.jobKey === "https://example.com/jobs/missing-parent")).toBe(false);
+
+    await app.close();
+  });
+
   it("returns a controlled error when the local database cannot be read", async () => {
     fs.writeFileSync(options.dbPath, "not a sqlite database");
     const app = buildApp(options);
@@ -460,7 +485,15 @@ describe("local TypeScript API", () => {
       currentStage: "score",
       currentState: "failed",
       fitScore: 8,
+      discoverySource: "test",
     });
+
+    const scoreFiltered = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?minFitScore=9&sort=fit_score&dir=desc",
+    });
+    expect(scoreFiltered.statusCode, scoreFiltered.body).toBe(200);
+    expect(scoreFiltered.json().items.map((job: { fitScore: number | null }) => job.fitScore)).toEqual([9]);
 
     await app.close();
   });
@@ -770,7 +803,6 @@ describe("local TypeScript API", () => {
       "score",
       "tailor",
       "cover",
-      "pdf",
       "apply",
     ]);
     expect(body.artifacts[0]).toMatchObject({
@@ -1383,6 +1415,43 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("resets selected failed jobs through the bulk retry action", async () => {
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: false,
+        jobKeys: ["https://example.com/jobs/failed-score", "https://example.com/jobs/ready"],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: ["https://example.com/jobs/failed-score"],
+    });
+
+    const db = new Database(options.dbPath);
+    const failed = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+      .get("https://example.com/jobs/failed-score") as { state: string };
+    const ready = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+      .get("https://example.com/jobs/ready") as { state: string };
+    const event = db
+      .prepare("SELECT message FROM job_events WHERE job_url = ? ORDER BY event_id DESC LIMIT 1")
+      .get("https://example.com/jobs/failed-score") as { message: string };
+    db.close();
+
+    expect(failed.state).toBe("pending");
+    expect(ready.state).toBe("succeeded");
+    expect(event.message).toBe("Retry reset requested for score");
+
+    await app.close();
+  });
+
   // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
   // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
   // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
@@ -1520,7 +1589,7 @@ describe("local TypeScript API", () => {
     const retryResponse = await app.inject({
       method: "POST",
       url: `/v1/jobs/${jobKey}/actions/retry-stage`,
-      payload: { stage: "pdf", runAfter: true, dryRun: true },
+      payload: { stage: "cover", runAfter: true, dryRun: true },
     });
 
     expect(generateResponse.statusCode, generateResponse.body).toBe(400);
@@ -1539,11 +1608,11 @@ describe("local TypeScript API", () => {
     expect(dispatch).not.toHaveBeenCalled();
 
     const db = new Database(options.dbPath);
-    const pdfStage = db
+    const coverStage = db
       .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?")
-      .get("https://example.com/jobs/ready", "pdf") as { state: string };
+      .get("https://example.com/jobs/ready", "cover") as { state: string };
     db.close();
-    expect(pdfStage.state).toBe("succeeded");
+    expect(coverStage.state).toBe("succeeded");
 
     await app.close();
   });
@@ -2075,7 +2144,7 @@ describe("local TypeScript API", () => {
         action: "run_stage",
         jobKey: "pipeline",
         stage: "tailor",
-        stages: ["tailor", "pdf"],
+        stages: ["tailor"],
         dryRun: false,
         limit: 0,
         minScore: 0,
@@ -2637,7 +2706,7 @@ function seedDatabase(dbPath: string): void {
     fitScore: 6,
   });
 
-  for (const stage of ["discover", "enrich", "score", "tailor", "cover", "pdf"]) {
+  for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
     insertStage(db, "https://example.com/jobs/ready", stage, "succeeded");
   }
   insertStage(db, "https://example.com/jobs/ready", "apply", "pending");

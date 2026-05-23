@@ -57,6 +57,8 @@ from jobhunter.domain.events.scoring import (
     create_job_scored,
     ScoreCorrectedPayload,
     create_score_corrected,
+    ScoreRescoreRequestedPayload,
+    create_score_rescore_requested,
 )
 from jobhunter.domain.events.materials import (
     ResumeApprovedPayload,
@@ -131,6 +133,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "ContentDuplicateCandidateDetected",
     "JobScored",
     "ScoreCorrected",
+    "ScoreRescoreRequested",
     "ResumeApproved",
     "ResumeFailed",
     "CoverLetterGenerated",
@@ -211,6 +214,8 @@ __all__ = [
     "create_job_scored",
     "ScoreCorrectedPayload",
     "create_score_corrected",
+    "ScoreRescoreRequestedPayload",
+    "create_score_rescore_requested",
     # Materials
     "ResumeApprovedPayload",
     "create_resume_approved",

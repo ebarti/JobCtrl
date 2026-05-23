@@ -25,7 +25,6 @@ from jobhunter.discovery.activities import discover_activity
 from jobhunter.enrichment.activities import enrich_activity
 from jobhunter.materials.activities import (
     cover_activity,
-    pdf_activity,
     tailor_activity,
 )
 from jobhunter.pipeline.workflow import (
@@ -49,7 +48,6 @@ def _all_activities():
         score_activity,
         tailor_activity,
         cover_activity,
-        pdf_activity,
         apply_activity,
     ]
 
