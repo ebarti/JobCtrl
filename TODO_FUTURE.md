@@ -25,6 +25,78 @@ For now, local guardrails are enough:
 - make destructive UI actions explicit and reversible where practical,
 - preserve enough logs to debug failed automation runs.
 
+## Current Status (2026-05-24)
+
+The SaaS/platform work tracked in this file is still not delivered as
+production SaaS functionality. What has landed is the core local foundation and
+key product-loop capability stack, plus the architectural seams that make a
+later hosted version possible. That is not a claim that every local validation
+or hardening item is complete; the active local-product backlog remains in
+`docs/backlog.md`. Unless a section below explicitly says otherwise, the future
+work remains deferred.
+
+Completed or promoted out of this file:
+
+- **Local Temporal orchestration** was promoted out of this file and delivered
+  through the local Temporal stack: worker bootstrap, `JobPipelineWorkflow`,
+  `ApplyWorkflow`, JSON-RPC workflow dispatch, `cancel_run`, Workflow Runs UI,
+  apply-run projection collapse, canonical stage-state writer cleanup,
+  apply-log artifact registration, and local OpenTelemetry/Langfuse wiring.
+- **DDD / hexagonal local foundations** are delivered: `TenantId` is modeled
+  in the domain, local mode uses `LOCAL_TENANT`, domain events and repositories
+  are tenant-scoped, and the local adapters are behind ports. This is hosted
+  groundwork only; it is not tenant accounts, hosted authorization, or RLS.
+- **Frontend local realtime and cloud seams** are delivered: the API exposes
+  `GET /v1/events/stream`, the web app consumes it through `EventStreamPort`,
+  query keys are tenant-first, `LocalSessionAdapter` returns `LOCAL_TENANT`,
+  and hosted adapters are named in the architecture docs. The cloud adapters
+  themselves are not implemented.
+- **Local product capability stacks** have landed for discovery production
+  wiring, scoring intelligence, calibrated scoring policy, the TypeScript API,
+  the React/TanStack web app, local artifacts, and local QA/test infrastructure.
+- **Local safety guardrails** exist in docs and runtime expectations: generated
+  user data stays under the local JobHunter app directory, profiles, secrets,
+  artifacts, and logs are not committed, and apply flows default to explicit
+  local dry-run / confirmation boundaries. These are not hosted compliance
+  controls.
+
+Not yet delivered:
+
+- **Local validation hardening:** still tracked in `docs/backlog.md` rather
+  than this SaaS-focused file: realtime cache patching beyond apply-run
+  timeline events, non-apply workflow-run projection and cancellation parity,
+  legacy `jobs.*` storage fallback cleanup, profile/materials/browser QA gaps,
+  frontend accessibility deferrals, tooling/CI enforcement gaps, and targeted
+  generate-materials backend enablement.
+- **SaaS platform:** tenant accounts, users, roles, invitations, hosted auth,
+  JWT/session enforcement, CSRF protection, service tokens, API keys,
+  role-based permissions, billing, subscriptions, quotas, entitlements, and
+  usage ledgers.
+- **Hosted runtime:** hosted frontend/API/worker deployment, Cloudflare or
+  equivalent edge setup, managed Postgres, managed object storage, managed
+  workflow service, containerized distributed workers, autoscaling, worker
+  leases, worker heartbeats, worker identity, and per-worker concurrency
+  controls.
+- **Hosted data and security:** Postgres migration, stable database-backed job
+  IDs, tenant IDs in product tables, migration tooling from local databases,
+  object-storage artifact IDs, signed URLs, artifact retention/deletion,
+  encrypted secret vaulting, key rotation, and per-tenant secret scoping.
+- **Production governance:** production log redaction and retention controls,
+  append-only audit logs, formal data retention/deletion policy, hosted admin
+  tooling, support access, and support/admin audit trails.
+- **Hosted apply automation:** hosted browser isolation, per-user/tenant/run
+  browser profile separation, remote browser cleanup policy, hosted apply
+  safety/compliance controls, apply rate limits, and site-specific hosted
+  failure policy.
+- **Production observability:** centralized metrics, error tracking, alerting,
+  uptime monitoring, worker dashboards, and production-grade OpenTelemetry and
+  Langfuse redaction, retention, and export policy.
+- **Packaging, distribution, and cloud frontend adapters:** signed desktop
+  package, auto-update, license/entitlement checks in the local app, TanStack
+  Start / RSC migration, `JwtSessionAdapter`, tenant route prefixes,
+  `OpenTelemetryWebAdapter`, CDN-cached projection reads, and any hosted
+  event-stream adapter swap.
+
 ## Deferred SaaS Platform Work
 
 ### Multi-Tenant Product Model
