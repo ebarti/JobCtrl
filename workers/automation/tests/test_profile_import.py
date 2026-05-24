@@ -1,3 +1,4 @@
+from jobhunter.discovery.target_queries import build_target_role_queries
 from jobhunter.profile_import import PdfTextResult, extract_pdf_text, profile_from_resume_text, style_from_pdf_metadata
 
 
@@ -140,6 +141,32 @@ def test_profile_import_keeps_existing_target_search_guidance():
     assert profile["experience"]["target_seniority_floor"] == "Director"
     assert profile["experience"]["target_functions"] == "Security"
     assert profile["experience"]["target_specializations"] == "Robotics"
+
+
+def test_profile_import_abbreviation_executive_title_plans_chief_level_queries():
+    text = """
+    Jordan Candidate
+
+    Experience
+    CTO, Acme Cloud
+    Jan 2021 -- Present
+    - Led technology strategy and platform engineering.
+    """
+
+    profile = profile_from_resume_text(text)
+
+    assert profile["experience"]["target_track"] == "Executive"
+    assert profile["experience"]["target_seniority_floor"] == "C-level"
+    queries = build_target_role_queries(
+        [],
+        tracks=[profile["experience"]["target_track"]],
+        seniority=[profile["experience"]["target_seniority_floor"]],
+        functions=profile["experience"]["target_functions"].split("; "),
+    )
+    query_texts = [item["query"] for item in queries]
+    assert "CTO" in query_texts
+    assert "Chief Technology Officer" in query_texts
+    assert not any("Director" in query or "Head of" in query or query.startswith("VP ") for query in query_texts)
 
 
 def test_style_from_pdf_metadata_infers_editable_style_controls():

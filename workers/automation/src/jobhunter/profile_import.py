@@ -243,7 +243,7 @@ def _setdefault_nonblank(target: dict[str, Any], key: str, value: str) -> None:
 
 def _infer_target_track(title_text: str) -> str:
     text = title_text.casefold()
-    if any(token in text for token in ("chief ", " cto", " cio", " ciso", "vp ", "vice president")):
+    if "vice president" in text or re.search(r"\b(?:chief|cto|cio|ciso|evp|svp|vp)\b", text):
         return "Executive"
     if any(token in text for token in ("manager", "director", "head of")):
         return "Management"
@@ -254,7 +254,7 @@ def _infer_target_track(title_text: str) -> str:
 
 def _infer_target_seniority(title_text: str) -> str:
     text = title_text.casefold()
-    if any(token in text for token in ("chief", "cto", "cio", "ciso")):
+    if re.search(r"\b(?:chief|cto|cio|ciso)\b", text):
         return "C-level"
     if "vice president" in text or re.search(r"\b(?:evp|svp|vp)\b", text):
         return "VP"

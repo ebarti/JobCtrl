@@ -88,6 +88,13 @@ _SENIORITY_RANKS = {
     "cto": 8,
 }
 
+_SENIORITY_ALIASES = {
+    "c level": "chief",
+    "c suite": "chief",
+    "chief level": "chief",
+    "csuite": "chief",
+}
+
 _RECALL_DOMAIN_TOKENS = {
     "engineering": {
         "cloud",
@@ -253,8 +260,18 @@ def _rank_from_tokens(tokens: set[str]) -> int:
 
 
 def _seniority_rank(value: str | None) -> int:
+    seniority_alias = _seniority_alias(value)
+    if seniority_alias:
+        return _SENIORITY_RANKS[seniority_alias]
     tokens = _expanded_tokens(_tokens(value))
     return _rank_from_tokens(tokens)
+
+
+def _seniority_alias(value: str | None) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+    if not normalized:
+        return None
+    return _SENIORITY_ALIASES.get(normalized) or _SENIORITY_ALIASES.get(normalized.replace(" ", ""))
 
 
 def _recall_domain_tokens(query_tokens: set[str]) -> set[str]:

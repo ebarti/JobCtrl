@@ -252,15 +252,17 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
 
     next_cfg = dict(search_cfg)
     if roles or tracks or seniority or functions:
-        next_cfg["queries"] = build_target_role_queries(
+        target_queries = build_target_role_queries(
             roles,
             tracks=tracks,
             seniority=seniority,
             functions=functions,
             specializations=specializations,
         )
-        next_cfg["workday_max_tier"] = 1
-        next_cfg["ats_max_tier"] = 1
+        if target_queries:
+            next_cfg["queries"] = target_queries
+            next_cfg["workday_max_tier"] = 1
+            next_cfg["ats_max_tier"] = 1
 
     if locations:
         target_locations = _build_target_location_config(locations, work_models)

@@ -9,7 +9,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     location_matches_target,
 )
 from jobhunter.infrastructure.discovery.production_wiring import _ats_query_specs, _location_values
-from jobhunter.discovery.target_queries import query_applies_to_source, title_matches_any_query
+from jobhunter.discovery.target_queries import build_target_role_queries, query_applies_to_source, title_matches_any_query
 
 
 def test_profile_target_search_overrides_discovery_queries_and_locations() -> None:
@@ -360,6 +360,39 @@ def test_structured_profile_target_search_builds_track_and_seniority_aware_queri
         {"query": "Principal Platform Engineer", "tier": 1},
         {"query": "Principal Platform Architect", "tier": 1},
     ]
+
+
+def test_partial_structured_target_search_preserves_configured_queries_when_planner_is_empty() -> None:
+    search_cfg = {"queries": [{"query": "software engineer", "tier": 1}]}
+
+    merged = config._apply_profile_target_search(
+        search_cfg,
+        {
+            "roles": [],
+            "tracks": [],
+            "seniority": ["C-level"],
+            "functions": ["Security"],
+            "specializations": [],
+            "locations": [],
+            "work_models": [],
+        },
+    )
+
+    assert merged == search_cfg
+
+
+def test_c_suite_structured_target_generates_only_chief_level_queries() -> None:
+    for seniority in ("C-level", "C suite"):
+        queries = build_target_role_queries(
+            [],
+            tracks=["Executive"],
+            seniority=[seniority],
+            functions=["Technology"],
+        )
+
+        query_texts = [item["query"] for item in queries]
+        assert query_texts == ["CTO", "Chief Technology Officer"]
+        assert not any("Director" in query or "Head of" in query or query.startswith("VP ") for query in query_texts)
 
 
 def test_source_registry_filters_america_only_sources_for_europe_target(

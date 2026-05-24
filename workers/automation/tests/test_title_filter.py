@@ -48,3 +48,27 @@ def test_recall_title_matching_respects_track_and_seniority_boundaries() -> None
         target_track="management",
         seniority_floor="director",
     )
+
+
+def test_recall_title_matching_normalizes_c_level_seniority_floor() -> None:
+    assert title_matches_query(
+        "Chief Technology Officer",
+        "CTO",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="C-level",
+    )
+    assert not title_matches_query(
+        "VP Technology",
+        "CTO",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="C-level",
+    )
+    assert not title_matches_query(
+        "Technology Director",
+        "CTO",
+        match_mode="recall",
+        target_track="executive",
+        seniority_floor="C suite",
+    )

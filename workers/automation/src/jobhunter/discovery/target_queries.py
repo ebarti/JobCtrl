@@ -70,6 +70,13 @@ _SENIORITY_RANKS = {
     "cto": 8,
 }
 
+_SENIORITY_ALIASES = {
+    "c level": "chief",
+    "c suite": "chief",
+    "chief level": "chief",
+    "csuite": "chief",
+}
+
 _SENIORITY_LABELS = {
     3: "Senior",
     4: "Lead",
@@ -448,6 +455,9 @@ def _normalize_track(value: object) -> str | None:
 
 
 def _normalize_seniority(value: object) -> str | None:
+    seniority_alias = _seniority_alias(value)
+    if seniority_alias:
+        return seniority_alias
     tokens = _expanded_tokens([str(value or "")])
     seniority = _seniority_from_tokens(tokens)
     if seniority:
@@ -484,10 +494,20 @@ def _seniority_from_tokens(tokens: set[str]) -> str | None:
 def _seniority_rank(value: str | None) -> int:
     if not value:
         return 0
+    seniority_alias = _seniority_alias(value)
+    if seniority_alias:
+        return _SENIORITY_RANKS[seniority_alias]
     tokens = _expanded_tokens([value])
     if "vice" in tokens and "president" in tokens:
         return _SENIORITY_RANKS["vp"]
     return max((_SENIORITY_RANKS.get(token, 0) for token in tokens), default=0)
+
+
+def _seniority_alias(value: object) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+    if not normalized:
+        return None
+    return _SENIORITY_ALIASES.get(normalized) or _SENIORITY_ALIASES.get(normalized.replace(" ", ""))
 
 
 def _domains_from_values(values: Iterable[object]) -> tuple[str, ...]:
