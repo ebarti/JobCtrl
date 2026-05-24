@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import quote_plus, urljoin
@@ -33,6 +34,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.discovery.target_queries import query_specs_for_source
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.llm import get_client
 
@@ -96,7 +98,7 @@ def _store_jobs_filtered(
     missing_description = 0
 
     for job in jobs:
-        if limit > 0 and new + existing >= limit:
+        if limit > 0 and new >= limit:
             break
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
@@ -174,12 +176,20 @@ def _store_jobs_filtered(
     return new, existing
 
 
-def _title_matches_target_query(title: str | None, query: str | list[str] | None) -> bool:
+def _title_matches_target_query(title: str | None, query: object) -> bool:
+    if isinstance(query, Mapping):
+        return title_matches_query(
+            title,
+            str(query.get("query") or ""),
+            match_mode=str(query.get("match_mode") or "strict"),
+            target_track=str(query.get("target_track") or "") or None,
+            seniority_floor=str(query.get("seniority_floor") or "") or None,
+        )
     if isinstance(query, list):
         if not query:
             return True
-        return any(title_matches_query(title, item) for item in query)
-    return title_matches_query(title, query)
+        return any(_title_matches_target_query(title, item) for item in query)
+    return title_matches_query(title, str(query) if query is not None else None)
 
 
 def _job_description_text(job: dict) -> str | None:
@@ -1090,8 +1100,8 @@ def build_scrape_targets(
     if search_cfg is None:
         search_cfg = config.load_search_config()
 
-    queries_cfg = search_cfg.get("queries", [])
-    queries = [q["query"] for q in queries_cfg]
+    queries_cfg = query_specs_for_source(search_cfg.get("queries", []), "smart_extract")
+    queries = [str(q["query"]) for q in queries_cfg]
     locs = search_cfg.get("locations", [])
     default_location = locs[0]["location"] if locs else ""
 
@@ -1103,7 +1113,8 @@ def build_scrape_targets(
         site_type = site.get("type", "static")
 
         if site_type == "search" and queries:
-            for query in queries:
+            for query_spec in queries_cfg:
+                query = str(query_spec["query"])
                 expanded_url = site_url
                 expanded_url = expanded_url.replace("{query_encoded}", quote_plus(query))
                 expanded_url = expanded_url.replace("{query}", quote_plus(query))
@@ -1112,8 +1123,8 @@ def build_scrape_targets(
                     {
                         "name": site_name,
                         "url": expanded_url,
-                        "query": query,
-                        "queries": [query],
+                        "query": query_spec,
+                        "queries": [query_spec],
                     }
                 )
         else:
@@ -1124,7 +1135,7 @@ def build_scrape_targets(
                     "name": site_name,
                     "url": expanded_url,
                     "query": None,
-                    "queries": queries,
+                    "queries": queries_cfg,
                 }
             )
 
@@ -1156,12 +1167,9 @@ def _run_all(
     total_new = 0
     total_existing = 0
 
-    if limit > 0:
-        targets = targets[:limit]
-
     def _process_result(r: dict, target: dict) -> None:
         nonlocal total_new, total_existing
-        remaining = max(limit - (total_new + total_existing), 0) if limit > 0 else 0
+        remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             return
         jobs = r.get("jobs", [])
@@ -1208,7 +1216,7 @@ def _run_all(
     else:
         # Sequential mode (default)
         for i, target in enumerate(targets):
-            if limit > 0 and total_new + total_existing >= limit:
+            if limit > 0 and total_new >= limit:
                 break
             label = target["name"]
             if target.get("query"):

@@ -240,15 +240,25 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
     """Overlay profile target roles and locations onto the discovery search config."""
     target_search = target if target is not None else _load_profile_target_search()
     roles = target_search.get("roles", [])
+    tracks = target_search.get("tracks", [])
+    seniority = target_search.get("seniority", [])
+    functions = target_search.get("functions", [])
+    specializations = target_search.get("specializations", [])
     locations = target_search.get("locations", [])
     work_models = target_search.get("work_models", [])
 
-    if not roles and not locations:
+    if not roles and not tracks and not seniority and not functions and not locations:
         return search_cfg
 
     next_cfg = dict(search_cfg)
-    if roles:
-        next_cfg["queries"] = build_target_role_queries(roles)
+    if roles or tracks or seniority or functions:
+        next_cfg["queries"] = build_target_role_queries(
+            roles,
+            tracks=tracks,
+            seniority=seniority,
+            functions=functions,
+            specializations=specializations,
+        )
         next_cfg["workday_max_tier"] = 1
         next_cfg["ats_max_tier"] = 1
 
@@ -406,7 +416,7 @@ def _country_location_accepts(country_key: str, fallback: str) -> list[str]:
 
 def _load_profile_target_search() -> dict[str, list[str]]:
     if not DB_PATH.exists():
-        return {"roles": [], "locations": [], "work_models": []}
+        return _empty_target_search()
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -415,30 +425,59 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'candidate_profiles'"
         ).fetchone()
         if table is None:
-            return {"roles": [], "locations": [], "work_models": []}
+            return _empty_target_search()
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
         row = conn.execute(
-            """
-            SELECT experience_target_role, experience_target_locations,
-                   experience_target_work_models, personal_city, personal_country
+            f"""
+            SELECT {_profile_target_column(columns, "experience_target_role")},
+                   {_profile_target_column(columns, "experience_target_track")},
+                   {_profile_target_column(columns, "experience_target_seniority_floor")},
+                   {_profile_target_column(columns, "experience_target_functions")},
+                   {_profile_target_column(columns, "experience_target_specializations")},
+                   {_profile_target_column(columns, "experience_target_locations")},
+                   {_profile_target_column(columns, "experience_target_work_models")},
+                   personal_city, personal_country
             FROM candidate_profiles
             WHERE tenant_id = ? AND profile_id = ?
             """,
             (str(LOCAL_TENANT), "default"),
         ).fetchone()
         if row is None:
-            return {"roles": [], "locations": [], "work_models": []}
+            return _empty_target_search()
         locations = _split_target_text(row["experience_target_locations"])
         return {
             "roles": _split_target_text(row["experience_target_role"]),
+            "tracks": _split_target_text(row["experience_target_track"]),
+            "seniority": _split_target_text(row["experience_target_seniority_floor"]),
+            "functions": _split_target_text(row["experience_target_functions"]),
+            "specializations": _split_target_text(row["experience_target_specializations"]),
             "locations": locations or _profile_home_location(row),
             "work_models": _split_target_text(row["experience_target_work_models"]),
         }
     except Exception:
         log.debug("Failed to load profile target-search preferences", exc_info=True)
-        return {"roles": [], "locations": [], "work_models": []}
+        return _empty_target_search()
     finally:
         if conn is not None:
             conn.close()
+
+
+def _empty_target_search() -> dict[str, list[str]]:
+    return {
+        "roles": [],
+        "tracks": [],
+        "seniority": [],
+        "functions": [],
+        "specializations": [],
+        "locations": [],
+        "work_models": [],
+    }
+
+
+def _profile_target_column(columns: set[str], column: str) -> str:
+    if column in columns:
+        return column
+    return f"'' AS {column}"
 
 
 def _split_target_text(value: object) -> list[str]:

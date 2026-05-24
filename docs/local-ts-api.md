@@ -158,22 +158,29 @@ field caps pending detail jobs instead of falling back to the enrichment default
 batch size.
 
 Discover honors the profile Target search saved from the Preferences tab.
-Target roles replace the active discovery query list with exact role queries
-plus deterministic recall queries. Recall queries keep the same search tier as
-exact queries because relevance is determined after discovery by scoring, not by
-query generation. JobSpy uses exact-plus-recall queries as broad-board retrieval
-probes. Direct ATS and Workday sources enumerate their known board/source and
-apply that same title intent internally, avoiding repeated board fetches for
-each role variant. Target locations replace the active location list, and the
+Target roles replace the active discovery query list with exact role queries;
+target tracks, seniority floors, functions, and specializations add structured
+intent for deterministic recall expansion. Recall queries keep the same search
+tier as exact queries because relevance is determined after discovery by
+scoring, not by query generation. Recall matching enforces both track and
+seniority: IC targets stay IC, management targets stay management, and a
+candidate who configures both tracks can receive both. JobSpy uses
+exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
+Workday sources enumerate their known board/source and apply that same title
+intent internally, avoiding repeated board fetches for each role variant. Smart
+Extract static sources are scraped once and filtered internally; search-template
+sources still expand into query URLs, then pass results through the same title
+and location filters. Target locations replace the active location list, and the
 worker falls back to profile city/country when target locations are blank. The
 API validates target locations as real places before saving profile preferences.
 Hybrid and on-site target work models search and filter only the target
 location. Remote target work models search and filter the target country, and
 European countries also add an Europe-remote search and accept pattern.
-Profile-driven discovery searches at least the last 30 days
-unless local config sets a larger window. Spain or Europe targets set JobSpy's
-Indeed country to Spain, reject America-only non-remote locations, and filter
-API-visible America-only source rows from `GET /v1/discovery/sources`.
+Profile-driven discovery searches at least the last 30 days unless local config
+sets a larger window. Spain or Europe targets set JobSpy's Indeed country to
+Spain, reject America-only non-remote locations, and filter API-visible
+America-only source rows from `GET /v1/discovery/sources`. Discover limits are
+new-job budgets: duplicate/rediscovered observations do not consume the cap.
 
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same

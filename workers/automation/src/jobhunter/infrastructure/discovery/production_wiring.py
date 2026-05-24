@@ -481,50 +481,49 @@ def run_scheduled_ats_sources(
     rejected_duplicates = 0
     sources_run: list[str] = []
     failed_sources: list[str] = []
-    remaining = limit if limit > 0 else None
+    remaining_new = limit if limit > 0 else None
     query_specs = tuple(_ats_query_specs(search_cfg))
     locations = tuple(_location_values(search_cfg))
     for adapter in adapters:
-        if remaining is not None and remaining <= 0:
+        if remaining_new is not None and remaining_new <= 0:
             break
-        postings: list[ScrapedJobPosting] = []
+        source_processed = False
         seen_postings: set[tuple[str, str, str]] = set()
         try:
             for location in locations:
-                if remaining is not None and remaining <= 0:
+                if remaining_new is not None and remaining_new <= 0:
                     break
                 for posting in adapter.scrape(
                     tenant_id=LOCAL_TENANT,
                     query="",
                     location=location,
                 ):
+                    if remaining_new is not None and remaining_new <= 0:
+                        break
                     if not title_matches_any_query(posting.metadata.title, query_specs):
                         continue
                     posting_key = _scraped_posting_key(posting)
                     if posting_key in seen_postings:
                         continue
                     seen_postings.add(posting_key)
-                    postings.append(posting)
-                    if remaining is not None:
-                        remaining -= 1
-                        if remaining <= 0:
-                            break
+                    summary = use_case.execute(
+                        tenant_id=LOCAL_TENANT,
+                        postings=[posting],
+                        run_id=run_id,
+                    )
+                    total += summary.total
+                    new_jobs += summary.new_jobs
+                    observed_jobs += summary.observed
+                    duplicate_jobs += summary.duplicates_linked
+                    rejected_duplicates += summary.duplicates_rejected
+                    source_processed = True
+                    if remaining_new is not None and summary.new_jobs > 0:
+                        remaining_new -= summary.new_jobs
         except Exception as exc:
             failed_sources.append(adapter.source_id)
             _record_ats_source_failure(conn, adapter.source_id, run_id, exc)
-        if not postings:
-            continue
-        summary = use_case.execute(
-            tenant_id=LOCAL_TENANT,
-            postings=postings,
-            run_id=run_id,
-        )
-        total += summary.total
-        new_jobs += summary.new_jobs
-        observed_jobs += summary.observed
-        duplicate_jobs += summary.duplicates_linked
-        rejected_duplicates += summary.duplicates_rejected
-        sources_run.append(adapter.source_id)
+        if source_processed:
+            sources_run.append(adapter.source_id)
     return ScheduledAtsSummary(
         total=total,
         new_jobs=new_jobs,

@@ -981,6 +981,14 @@ export function StructuredProfileEditor({
           <section className="form-section">
             <h3>Target search</h3>
             <div className="target-preferences-grid">
+              {delimitedListField("experience.target_track", "Target tracks", "add track", { compact: true })}
+              {delimitedListField("experience.target_seniority_floor", "Seniority floors", "add seniority", {
+                compact: true,
+              })}
+              {delimitedListField("experience.target_functions", "Target functions", "add function", { compact: true })}
+              {delimitedListField("experience.target_specializations", "Specializations", "add specialization", {
+                compact: true,
+              })}
               {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
               {targetLocationWorkModelField()}
             </div>

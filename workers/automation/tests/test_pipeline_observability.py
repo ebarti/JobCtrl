@@ -89,10 +89,13 @@ def test_discover_emits_source_events(monkeypatch):
 
     assert result["workday"] == "ok"
     assert result["smartextract"] == "ok"
+    assert result["ats_api"] == "ok"
     source_events = [(event_type, payload.get("source")) for _, event_type, _, payload in events]
     assert source_events == [
         ("StageStarted", "jobspy"),
         ("StageCompleted", "jobspy"),
+        ("StageStarted", "ats_api"),
+        ("StageCompleted", "ats_api"),
         ("StageStarted", "workday"),
         ("StageCompleted", "workday"),
         ("StageStarted", "smartextract"),
@@ -132,7 +135,7 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
 
     result = runner._run_discover(workers=4, limit=1)
 
-    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
     assert calls == [
         ("jobspy", 1, None),
         ("workday", 1, 4),
@@ -173,7 +176,7 @@ def test_discover_passes_remaining_limit_to_downstream_sources(monkeypatch):
 
     result = runner._run_discover(workers=4, limit=10)
 
-    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
     assert calls == [("jobspy", 10), ("workday", 4), ("smartextract", 2)]
 
 
@@ -349,7 +352,7 @@ def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate
     result = runner._run_discover(workers=4, limit=1)
 
     assert calls == ["jobspy", "workday", "smartextract"]
-    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
 
 
 def test_enrich_limit_propagates_to_runner(monkeypatch):

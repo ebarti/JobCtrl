@@ -33,12 +33,14 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
         {"query": "Head of Engineering", "tier": 1},
     ]
     assert {
-        "query": "technical director",
+        "query": "Engineering Director",
         "tier": 1,
         "match_mode": "recall",
         "generated_from": "target_roles",
+        "target_track": "management",
+        "seniority_floor": "manager",
     } in merged["queries"]
-    recall_query = next(item for item in merged["queries"] if item.get("query") == "technical director")
+    recall_query = next(item for item in merged["queries"] if item.get("query") == "Engineering Director")
     assert query_applies_to_source(recall_query, "jobspy")
     assert query_applies_to_source(recall_query, "workday")
     assert query_applies_to_source(recall_query, "ats_api")
@@ -76,17 +78,22 @@ def test_profile_target_search_strips_role_notes_from_queries() -> None:
         {"query": "CISO", "tier": 1},
     ]
     assert {
-        "query": "platform director",
+        "query": "Platform Director",
         "tier": 1,
         "match_mode": "recall",
         "generated_from": "target_roles",
+        "target_track": "management",
+        "seniority_floor": "head",
     } in merged["queries"]
     assert {
-        "query": "cybersecurity director",
+        "query": "Chief Information Security Officer",
         "tier": 1,
         "match_mode": "recall",
         "generated_from": "target_roles",
+        "target_track": "executive",
+        "seniority_floor": "ciso",
     } in merged["queries"]
+    assert not any(item.get("query") == "CTO" for item in merged["queries"])
 
 
 def test_recall_queries_expand_ats_internal_title_filters_without_query_pairs() -> None:
@@ -102,8 +109,9 @@ def test_recall_queries_expand_ats_internal_title_filters_without_query_pairs() 
     query_specs = _ats_query_specs(merged)
     assert _location_values(merged) == ("Barcelona, Spain",)
     assert any(item["query"] == "Head of Platform" for item in query_specs)
-    assert any(item["query"] == "platform director" for item in query_specs)
-    assert title_matches_any_query("Platform Engineering Manager", query_specs)
+    assert any(item["query"] == "Platform Director" for item in query_specs)
+    assert title_matches_any_query("Platform Director", query_specs)
+    assert not title_matches_any_query("Platform Engineering Manager", query_specs)
 
 
 def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
@@ -322,14 +330,36 @@ defaults:
         "VP Engineering",
     ]
     assert any(
-        item.get("query") == "engineering manager"
+        item.get("query") == "Head of Engineering"
         and item.get("tier") == 1
         and item.get("match_mode") == "recall"
+        and item.get("target_track") == "management"
+        and item.get("seniority_floor") == "director"
         and "source_scope" not in item
         for item in loaded["queries"]
     )
     assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
     assert loaded["target_region"] == "europe"
+
+
+def test_structured_profile_target_search_builds_track_and_seniority_aware_queries() -> None:
+    merged = config._apply_profile_target_search(
+        {"queries": [{"query": "software engineer", "tier": 1}]},
+        {
+            "roles": [],
+            "tracks": ["IC"],
+            "seniority": ["Principal"],
+            "functions": ["Platform"],
+            "specializations": ["SaaS"],
+            "locations": [],
+            "work_models": [],
+        },
+    )
+
+    assert merged["queries"] == [
+        {"query": "Principal Platform Engineer", "tier": 1},
+        {"query": "Principal Platform Architect", "tier": 1},
+    ]
 
 
 def test_source_registry_filters_america_only_sources_for_europe_target(

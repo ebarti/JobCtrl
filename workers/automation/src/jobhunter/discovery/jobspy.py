@@ -625,8 +625,21 @@ def _truthy_remote(value: object) -> bool:
     return text in {"1", "true", "yes", "remote"}
 
 
-def _title_ok(title: str | None, query: str | None, *, match_mode: str = "strict") -> bool:
-    return title_matches_query(title, query, match_mode=match_mode)
+def _title_ok(
+    title: str | None,
+    query: str | None,
+    *,
+    match_mode: str = "strict",
+    target_track: str | None = None,
+    seniority_floor: str | None = None,
+) -> bool:
+    return title_matches_query(
+        title,
+        query,
+        match_mode=match_mode,
+        target_track=target_track,
+        seniority_floor=seniority_floor,
+    )
 
 
 # -- Single search execution -------------------------------------------------
@@ -748,6 +761,8 @@ def _run_one_search(
                 str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
                 s["query"],
                 match_mode=str(s.get("match_mode") or "strict"),
+                target_track=str(s.get("target_track") or "") or None,
+                seniority_floor=str(s.get("seniority_floor") or "") or None,
             ),
             axis=1,
         )
@@ -879,6 +894,8 @@ def _full_crawl(
                     "remote": loc.get("remote", False),
                     "tier": q.get("tier", 0),
                     "match_mode": q.get("match_mode", "strict"),
+                    "target_track": q.get("target_track", ""),
+                    "seniority_floor": q.get("seniority_floor", ""),
                 }
             )
 

@@ -109,7 +109,7 @@ def test_limited_smart_extract_uses_requested_workers(
     finally:
         close_connection(db_path)
 
-    assert observed_max_workers == [2]
+    assert observed_max_workers == [3]
     assert result["total_new"] == 2
-    assert result["total"] == 2
+    assert result["total"] == 3
     assert stored_count == 2

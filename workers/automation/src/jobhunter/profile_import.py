@@ -198,6 +198,7 @@ def profile_from_resume_text(text: str, *, base_profile: dict[str, Any] | None =
         exp_meta["current_company"] = experiences[0].get("company", exp_meta.get("current_company", ""))
     exp_meta["years_of_experience_total"] = str(_infer_years(lines) or exp_meta.get("years_of_experience_total", ""))
     exp_meta["education_level"] = _infer_education_level(education) or exp_meta.get("education_level", "")
+    _infer_target_search_intent(exp_meta, lines=lines, experiences=experiences, skills=skills)
 
     constraints = profile.setdefault("resume_constraints", {})
     constraints["real_metrics"] = _extract_metrics(lines)
@@ -206,6 +207,93 @@ def profile_from_resume_text(text: str, *, base_profile: dict[str, Any] | None =
     profile.setdefault("compensation", {})
     profile.setdefault("eeo_voluntary", {})
     return profile
+
+
+def _infer_target_search_intent(
+    exp_meta: dict[str, Any],
+    *,
+    lines: list[str],
+    experiences: list[dict[str, Any]],
+    skills: list[dict[str, Any]],
+) -> None:
+    """Add editable target-search suggestions from resume facts.
+
+    These are suggestions, not persistence-time overrides: existing base
+    profile values win so importing a newer resume cannot silently rewrite
+    the user's intended search.
+    """
+    title_text = " ".join(str(entry.get("title") or "") for entry in experiences[:3])
+    all_text = " ".join([title_text, *lines]).casefold()
+    skill_text = " ".join(
+        str(item)
+        for category in skills
+        for item in (category.get("items", []) if isinstance(category, dict) else [])
+    ).casefold()
+
+    _setdefault_nonblank(exp_meta, "target_track", _infer_target_track(title_text))
+    _setdefault_nonblank(exp_meta, "target_seniority_floor", _infer_target_seniority(title_text))
+    _setdefault_nonblank(exp_meta, "target_functions", "; ".join(_infer_target_functions(f"{all_text} {skill_text}")))
+    _setdefault_nonblank(exp_meta, "target_specializations", "; ".join(_infer_target_specializations(all_text)))
+
+
+def _setdefault_nonblank(target: dict[str, Any], key: str, value: str) -> None:
+    if value and not str(target.get(key) or "").strip():
+        target[key] = value
+
+
+def _infer_target_track(title_text: str) -> str:
+    text = title_text.casefold()
+    if any(token in text for token in ("chief ", " cto", " cio", " ciso", "vp ", "vice president")):
+        return "Executive"
+    if any(token in text for token in ("manager", "director", "head of")):
+        return "Management"
+    if any(token in text for token in ("engineer", "architect", "staff", "principal", "lead")):
+        return "IC"
+    return ""
+
+
+def _infer_target_seniority(title_text: str) -> str:
+    text = title_text.casefold()
+    if any(token in text for token in ("chief", "cto", "cio", "ciso")):
+        return "C-level"
+    if "vice president" in text or re.search(r"\b(?:evp|svp|vp)\b", text):
+        return "VP"
+    if "director" in text or "head of" in text:
+        return "Director"
+    if "principal" in text or "architect" in text:
+        return "Principal"
+    if "staff" in text:
+        return "Staff"
+    if "manager" in text:
+        return "Manager"
+    if "lead" in text:
+        return "Lead"
+    if "senior" in text or re.search(r"\bsr\b", text):
+        return "Senior"
+    return ""
+
+
+def _infer_target_functions(text: str) -> list[str]:
+    candidates = [
+        ("Platform", ("platform", "sre", "reliability", "infrastructure", "cloud")),
+        ("Security", ("security", "cybersecurity", "ciso", "devsecops")),
+        ("Data", ("data", "analytics", "warehouse", "bi ")),
+        ("AI", ("ai", "machine learning", " ml ", "llm", "genai")),
+        ("Backend", ("backend", "api", "distributed systems", "microservice")),
+        ("Engineering", ("engineering", "engineer", "software")),
+    ]
+    return [label for label, needles in candidates if any(needle in text for needle in needles)]
+
+
+def _infer_target_specializations(text: str) -> list[str]:
+    candidates = [
+        ("SaaS", ("saas", "subscription", "b2b")),
+        ("Robotics", ("robotics", "robot", "autonomous")),
+        ("Healthcare", ("healthcare", "health care", "clinical", "patient")),
+        ("Fintech", ("fintech", "payments", "banking", "finance")),
+        ("Developer tools", ("developer tools", "devtools", "developer platform")),
+    ]
+    return [label for label, needles in candidates if any(needle in text for needle in needles)]
 
 
 def style_from_pdf_metadata(

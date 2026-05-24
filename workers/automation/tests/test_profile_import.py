@@ -97,6 +97,10 @@ def test_profile_from_resume_text_builds_structured_profile_and_preserves_applic
     ]
     assert profile["resume"]["education_entries"][0]["degree"] == "Master of Science in Computer Science"
     assert profile["resume"]["skill_categories"][0]["items"] == ["Python", "Go", "SQL"]
+    assert profile["experience"]["target_track"] == "IC"
+    assert profile["experience"]["target_seniority_floor"] == "Senior"
+    assert "Platform" in profile["experience"]["target_functions"]
+    assert "Backend" in profile["experience"]["target_functions"]
     rules = profile["resume"]["tailoring_rules"]
     assert rules["required_experience_entry_ids"] == [
         "acme_cloud_senior_platform_engineer",
@@ -108,6 +112,34 @@ def test_profile_from_resume_text_builds_structured_profile_and_preserves_applic
     assert rules["writing_style"]["tone"] == "technical"
     assert rules["custom_tailoring_prompt"] == "Keep platform impact visible."
     assert profile["resume_constraints"]["real_metrics"] == ["2M events", "35%", "20 teams"]
+
+
+def test_profile_import_keeps_existing_target_search_guidance():
+    text = """
+    Jordan Candidate
+
+    Experience
+    Senior Platform Engineer, Acme Cloud
+    Jan 2021 -- Present
+    - Built APIs for SaaS infrastructure.
+    """
+    base = {
+        "experience": {
+            "target_role": "Principal Platform Engineer",
+            "target_track": "Management",
+            "target_seniority_floor": "Director",
+            "target_functions": "Security",
+            "target_specializations": "Robotics",
+        }
+    }
+
+    profile = profile_from_resume_text(text, base_profile=base)
+
+    assert profile["experience"]["target_role"] == "Principal Platform Engineer"
+    assert profile["experience"]["target_track"] == "Management"
+    assert profile["experience"]["target_seniority_floor"] == "Director"
+    assert profile["experience"]["target_functions"] == "Security"
+    assert profile["experience"]["target_specializations"] == "Robotics"
 
 
 def test_style_from_pdf_metadata_infers_editable_style_controls():
