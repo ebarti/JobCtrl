@@ -560,12 +560,14 @@ function SourceRegistryPanel({
         label: "Observed",
         render: (source) => source.observedJobs,
         getSortValue: (source) => source.observedJobs,
+        getFilterValue: (source) => String(source.observedJobs),
       },
       {
         id: "newJobs",
         label: "New",
         render: (source) => source.newJobs,
         getSortValue: (source) => source.newJobs,
+        getFilterValue: (source) => String(source.newJobs),
       },
       {
         id: "lastRunCompletedAt",
@@ -576,12 +578,17 @@ function SourceRegistryPanel({
             : "n/a",
         getSortValue: (source) =>
           source.lastRunCompletedAt ? Date.parse(source.lastRunCompletedAt) : 0,
+        getFilterValue: (source) =>
+          source.lastRunCompletedAt
+            ? new Date(source.lastRunCompletedAt).toLocaleDateString()
+            : "n/a",
       },
       {
         id: "consecutiveFailures",
         label: "Failures",
         render: (source) => source.consecutiveFailures,
         getSortValue: (source) => source.consecutiveFailures,
+        getFilterValue: (source) => String(source.consecutiveFailures),
       },
       {
         id: "activeVerificationRate",
@@ -597,6 +604,7 @@ function SourceRegistryPanel({
           );
         },
         getSortValue: (source) => source.activeVerificationRate ?? -1,
+        getFilterValue: (source) => sourceQualityMetric(source, 0).value,
       },
       {
         id: "fullDescriptionSuccessRate",
@@ -612,6 +620,7 @@ function SourceRegistryPanel({
           );
         },
         getSortValue: (source) => source.fullDescriptionSuccessRate ?? -1,
+        getFilterValue: (source) => sourceQualityMetric(source, 1).value,
       },
       {
         id: "applyUrlSuccessRate",
@@ -627,6 +636,7 @@ function SourceRegistryPanel({
           );
         },
         getSortValue: (source) => source.applyUrlSuccessRate ?? -1,
+        getFilterValue: (source) => sourceQualityMetric(source, 2).value,
       },
       {
         id: "duplicateRate",
@@ -642,6 +652,7 @@ function SourceRegistryPanel({
           );
         },
         getSortValue: (source) => source.duplicateRate ?? -1,
+        getFilterValue: (source) => sourceQualityMetric(source, 3).value,
       },
       {
         id: "actions",
@@ -755,6 +766,8 @@ function SourceRegistryPanel({
         emptyMessage="No sources registered."
         initialSort={{ columnId: "displayName", direction: "asc" }}
         initialFilters={initialFilters}
+        paginate
+        initialPageSize={25}
       />
       <form className="source-upsert-form" onSubmit={submit}>
         <label className="field">

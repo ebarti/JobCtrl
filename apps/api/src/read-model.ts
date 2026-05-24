@@ -1450,7 +1450,7 @@ export function listWorkflowRuns(
 ): PaginatedResponse<WorkflowRunSummary> {
   refreshProjections(db, DEFAULT_TENANT);
   if (!tableExists(db, "apply_run_projections")) {
-    return paginate([], query.page, query.pageSize, "started_at", "desc", {
+    return paginate([], query.page, query.pageSize, query.sort, query.dir, {
       status: query.status,
     });
   }
@@ -1478,9 +1478,31 @@ export function listWorkflowRuns(
   const all = rows
     .map(rowToWorkflowRunSummary)
     .filter((run) => query.status === "all" || run.status === query.status);
-  return paginate(all, query.page, query.pageSize, "started_at", "desc", {
+  all.sort((left, right) => compareWorkflowRuns(left, right, query.sort, query.dir));
+  return paginate(all, query.page, query.pageSize, query.sort, query.dir, {
     status: query.status,
   });
+}
+
+function compareWorkflowRuns(
+  left: WorkflowRunSummary,
+  right: WorkflowRunSummary,
+  field: string,
+  direction: "asc" | "desc",
+): number {
+  const multiplier = direction === "asc" ? 1 : -1;
+  const values: Record<string, [unknown, unknown]> = {
+    started_at: [left.startedAt, right.startedAt],
+    finished_at: [left.finishedAt, right.finishedAt],
+    duration_ms: [left.durationMs ?? -1, right.durationMs ?? -1],
+    title: [left.title, right.title],
+    company: [left.company, right.company],
+    status: [left.status, right.status],
+    model: [left.model ?? "", right.model ?? ""],
+    dry_run: [left.dryRun ? 1 : 0, right.dryRun ? 1 : 0],
+  };
+  const [leftValue, rightValue] = values[field] ?? values.started_at!;
+  return compareValues(leftValue, rightValue) * multiplier;
 }
 
 function rowToWorkflowRunSummary(row: ApplyRunProjectionRow): WorkflowRunSummary {

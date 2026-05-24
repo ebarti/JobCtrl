@@ -5,10 +5,9 @@ import { sampleDashboardSummary } from "../../../test/fixtures/projections.js";
 import { ApplyHistory } from "./ApplyHistory.js";
 
 // ApplyHistory rows wrap a TanStack Router <Link> around badge/icon
-// content and inherit the same DataTable / FilterBar tree when embedded
-// in JobDetailDrawer. The Link surface lacks discernible text in the
-// production component (a button-name violation). Deferred — production
-// code, out of Phase 7 scope.
+// content. The Link surface lacks discernible text in the production
+// component (a button-name violation). Deferred — production code, out
+// of Phase 7 scope.
 const meta = {
   title: "Contexts/Apply/ApplyHistory",
   component: ApplyHistory,

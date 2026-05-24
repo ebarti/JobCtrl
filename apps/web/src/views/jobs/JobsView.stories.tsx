@@ -11,18 +11,21 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
-import { makeJobsPage, sampleJob, sampleSecondaryJob } from "../../test/fixtures/projections.js";
+import {
+  makeJobsPage,
+  sampleJob,
+  sampleSecondaryJob,
+} from "../../test/fixtures/projections.js";
 import { JobsView } from "./JobsView.js";
 
-// JobsView mounts JobsTable (DataTable role-row issue, see
-// data-table.stories.tsx) + JobFilterBar (bare <select> without
-// aria-label, see JobFilterBar.stories.tsx). Both production-code
-// defects from Phase 1/4 and out of Phase 7 scope.
+// JobsView still mounts JobFilterBar, whose bare <select> controls are
+// tracked in docs/backlog.md. The table itself now uses the shared native
+// data grid.
 const meta = {
   title: "Views/Jobs/JobsView",
   component: JobsView,
   parameters: {
-    // a11y deferred — DataTable + JobFilterBar select-name defects; see meta comment above.
+    // a11y deferred — JobFilterBar select-name defects; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof JobsView>;
@@ -73,7 +76,9 @@ export const Loading: Story = {
 export const Empty: Story = {
   parameters: {
     msw: {
-      handlers: [http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([])))],
+      handlers: [
+        http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage([]))),
+      ],
     },
   },
   render: () => <JobsViewStoryHost />,

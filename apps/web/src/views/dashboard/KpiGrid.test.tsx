@@ -34,6 +34,16 @@ function buildRouter() {
 }
 
 describe("kpiSearchFor", () => {
+  it("renders blocked KPI copy that describes the required operator action", async () => {
+    const router = buildRouter();
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /blocked/i })).toBeInTheDocument());
+    expect(screen.getByText("needs review")).toBeInTheDocument();
+    expect(screen.queryByText("upstream missing")).not.toBeInTheDocument();
+  });
+
   it("builds a complete failed-jobs search for the failures KPI", () => {
     expect(kpiSearchFor("failed")).toEqual({
       q: "",

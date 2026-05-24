@@ -2,19 +2,18 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useState } from "react";
 
-import { makeArtifactsPage, sampleArtifact } from "../../test/fixtures/projections.js";
+import {
+  makeArtifactsPage,
+  sampleArtifact,
+} from "../../test/fixtures/projections.js";
 import { ArtifactsTable } from "./ArtifactsTable.js";
 
-// Inherits the <DataTable> role-row / aria-sort defect (see
-// data-table.stories.tsx) — production-code issue, deferred.
 const meta = {
   title: "Views/Artifacts/ArtifactsTable",
   component: ArtifactsTable,
   parameters: {
     withRouter: true,
     initialPath: "/artifacts",
-    // a11y deferred — DataTable role="row" / aria-sort defect; see data-table.stories.tsx.
-    a11y: { test: "off" },
   },
   args: {
     data: makeArtifactsPage(),
@@ -43,7 +42,9 @@ function Stateful({
   empty: boolean;
   many: boolean;
 }) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: "created_at", desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "created_at", desc: true },
+  ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);

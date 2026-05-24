@@ -38,7 +38,7 @@ const ITEMS: ReadonlyArray<{
 }> = [
   { label: "Jobs", key: "jobs", caption: "+0 today", target: "all", tone: "" },
   { label: "Failures", key: "failures", caption: "needs retry", target: "failed", tone: "alert" },
-  { label: "Blocked", key: "blocked", caption: "upstream missing", target: "blocked", tone: "warn" },
+  { label: "Blocked", key: "blocked", caption: "needs review", target: "blocked", tone: "warn" },
   { label: "Ready", key: "ready", caption: "ready queue", target: "ready", tone: "ok" },
   { label: "Applied", key: "applied", caption: "+0 today", target: "all", tone: "" },
   { label: "Dry runs", key: "dryRuns", caption: "today excluded", target: "all", tone: "" },

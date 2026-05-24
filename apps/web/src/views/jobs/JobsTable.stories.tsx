@@ -2,20 +2,19 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useState } from "react";
 
-import { makeJobsPage, sampleJob, sampleSecondaryJob } from "../../test/fixtures/projections.js";
+import {
+  makeJobsPage,
+  sampleJob,
+  sampleSecondaryJob,
+} from "../../test/fixtures/projections.js";
 import { JobsTable } from "./JobsTable.js";
 
-// JobsTable composes <DataTable> whose role="row" / aria-sort layout
-// flunks axe (see data-table.stories.tsx). Deferred until the primitive
-// is fixed in production code.
 const meta = {
   title: "Views/Jobs/JobsTable",
   component: JobsTable,
   parameters: {
     withRouter: true,
     initialPath: "/jobs",
-    // a11y deferred — DataTable role="row" / aria-sort defect; see data-table.stories.tsx.
-    a11y: { test: "off" },
   },
   args: {
     data: makeJobsPage(),
@@ -45,7 +44,9 @@ function Stateful({
   empty: boolean;
   large: boolean;
 }) {
-  const [sorting, setSorting] = useState<SortingState>([{ id: "discovered_at", desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "discovered_at", desc: true },
+  ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);

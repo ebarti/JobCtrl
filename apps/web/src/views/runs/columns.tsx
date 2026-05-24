@@ -1,8 +1,7 @@
-import type { ColumnDef } from "@tanstack/react-table";
-
 import { RunStatusBadge } from "../../contexts/apply/components/RunStatusBadge.js";
 import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
+import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
 import { temporalWebUiWorkflowUrl } from "./temporal-web-ui.js";
@@ -14,92 +13,96 @@ function formatDurationMs(value: number | null): string {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
-  if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  if (minutes < 60)
+    return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const minRemainder = minutes % 60;
   return minRemainder ? `${hours}h ${minRemainder}m` : `${hours}h`;
 }
 
-export const workflowRunColumns: ColumnDef<WorkflowRunSummary>[] = [
+export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
   {
     id: "status",
-    header: "Status",
-    enableSorting: false,
-    accessorFn: (row) => row.status,
-    cell: ({ row }) => <RunStatusBadge status={row.original.status} />,
+    label: "Status",
+    sortable: true,
+    getFilterValue: (row) => row.status,
+    render: (row) => <RunStatusBadge status={row.status} />,
   },
   {
     id: "title",
-    header: "Job",
-    enableSorting: false,
-    accessorFn: (row) => row.title,
-    cell: ({ row }) => (
-      <TitleStack primary={row.original.title} secondary={row.original.company} />
-    ),
+    label: "Job",
+    sortable: true,
+    rowHeader: true,
+    getFilterValue: (row) => row.title,
+    getFilterSearchValue: (row) => `${row.title} ${row.company}`,
+    render: (row) => <TitleStack primary={row.title} secondary={row.company} />,
   },
   {
     id: "workflow",
-    header: "Workflow",
-    enableSorting: false,
-    accessorFn: (row) => row.workflowId,
-    cell: ({ row }) => (
-      <span className="mono" title={`Workflow id: ${row.original.workflowId}`}>
-        {row.original.workflowId}
+    label: "Workflow",
+    getFilterValue: (row) => row.workflowId,
+    render: (row) => (
+      <span className="mono" title={`Workflow id: ${row.workflowId}`}>
+        {row.workflowId}
       </span>
     ),
   },
   {
     id: "model",
-    header: "Model",
-    enableSorting: false,
-    accessorFn: (row) => row.model,
-    cell: ({ row }) => <span>{row.original.model ?? "-"}</span>,
+    label: "Model",
+    sortable: true,
+    getFilterValue: (row) => row.model ?? "-",
+    render: (row) => <span>{row.model ?? "-"}</span>,
   },
   {
     id: "dry_run",
-    header: "Mode",
-    enableSorting: false,
-    accessorFn: (row) => (row.dryRun ? "dry-run" : "live"),
-    cell: ({ row }) =>
-      row.original.dryRun ? <span className="tag info">dry-run</span> : <span>live</span>,
+    label: "Mode",
+    sortable: true,
+    getFilterValue: (row) => (row.dryRun ? "dry-run" : "live"),
+    render: (row) =>
+      row.dryRun ? (
+        <span className="tag info">dry-run</span>
+      ) : (
+        <span>live</span>
+      ),
   },
   {
     id: "started_at",
-    header: "Started",
-    enableSorting: false,
-    accessorFn: (row) => row.startedAt,
-    cell: ({ row }) => <RelativeTime value={row.original.startedAt} />,
+    label: "Started",
+    sortable: true,
+    getFilterValue: (row) => row.startedAt ?? "-",
+    render: (row) => <RelativeTime value={row.startedAt} />,
   },
   {
     id: "duration",
-    header: "Duration",
-    enableSorting: false,
-    accessorFn: (row) => row.durationMs,
-    cell: ({ row }) => <span className="mono">{formatDurationMs(row.original.durationMs)}</span>,
+    label: "Duration",
+    sortable: true,
+    getFilterValue: (row) => formatDurationMs(row.durationMs),
+    render: (row) => (
+      <span className="mono">{formatDurationMs(row.durationMs)}</span>
+    ),
   },
   {
     id: "finished_at",
-    header: "Finished",
-    enableSorting: false,
-    accessorFn: (row) => row.finishedAt,
-    cell: ({ row }) => (
-      <span className="mono" title={formatDateTime(row.original.finishedAt)}>
-        {row.original.finishedAt ? formatDateTime(row.original.finishedAt) : "-"}
+    label: "Finished",
+    sortable: true,
+    getFilterValue: (row) => row.finishedAt ?? "-",
+    render: (row) => (
+      <span className="mono" title={formatDateTime(row.finishedAt)}>
+        {row.finishedAt ? formatDateTime(row.finishedAt) : "-"}
       </span>
     ),
   },
   {
     id: "temporal_link",
-    header: "Temporal Web UI",
-    enableSorting: false,
-    accessorFn: (row) => row.workflowId,
-    cell: ({ row }) => (
+    label: "Temporal Web UI",
+    render: (row) => (
       <a
         className="btn ghost"
-        href={temporalWebUiWorkflowUrl(row.original.workflowId)}
+        href={temporalWebUiWorkflowUrl(row.workflowId)}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open workflow ${row.original.workflowId} in Temporal Web UI`}
+        aria-label={`Open workflow ${row.workflowId} in Temporal Web UI`}
         onClick={(event) => event.stopPropagation()}
       >
         Open in Temporal

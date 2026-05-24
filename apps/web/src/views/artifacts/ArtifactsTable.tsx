@@ -1,8 +1,14 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
+import { useMemo } from "react";
 
-import type { ArtifactSummary, PaginatedResponse } from "../../contexts/operations/types.js";
-import { DataTable } from "../../shared/ui/data-table.js";
-import { TablePager } from "../../shared/ui/table-pager.js";
+import type {
+  ArtifactSummary,
+  PaginatedResponse,
+} from "../../contexts/operations/types.js";
+import {
+  FilterableDataGrid,
+  type DataGridSortState,
+} from "../../shared/ui/filterable-data-grid.js";
 import { artifactColumns } from "./columns.js";
 
 export interface ArtifactsTableProps {
@@ -32,33 +38,51 @@ export function ArtifactsTable({
   onPageSizeChange,
   onOpenArtifact,
 }: ArtifactsTableProps) {
+  const columns = useMemo(
+    () =>
+      artifactColumns({
+        rowSelection,
+        onRowSelectionChange,
+      }),
+    [onRowSelectionChange, rowSelection],
+  );
+  const gridSort = useMemo<DataGridSortState>(() => {
+    const head = sorting[0];
+    return {
+      columnId: head?.id ?? "created_at",
+      direction: head?.desc ? "desc" : "asc",
+    };
+  }, [sorting]);
+  const handleSortChange = (next: DataGridSortState) => {
+    onSortingChange([{ id: next.columnId, desc: next.direction === "desc" }]);
+  };
+
   return (
-    <DataTable<ArtifactSummary>
+    <FilterableDataGrid<ArtifactSummary>
+      title="Artifacts table"
       data={data?.items ?? []}
-      columns={artifactColumns}
+      columns={columns}
       getRowId={(row) => row.artifactId}
       loading={loading}
-      loaded={data !== null}
       loadingMessage="Loading artifacts."
       emptyMessage="No artifacts match."
-      headerClassName="data-row artifact artifact-header"
-      rowClassName="data-row artifact"
-      sorting={sorting}
-      onSortingChange={onSortingChange}
-      rowSelection={rowSelection}
-      onRowSelectionChange={onRowSelectionChange}
+      initialSort={{ columnId: "created_at", direction: "desc" }}
+      sort={gridSort}
+      onSortChange={handleSortChange}
+      manualSorting
+      tableClassName="artifacts-data-grid-table"
+      rowAriaSelected={(row) => Boolean(rowSelection[row.artifactId])}
       onRowActivate={(row) => onOpenArtifact(row.artifactId)}
-      cellClassName={(columnId) => (columnId === "select" ? "row-check" : undefined)}
-      footer={
-        <TablePager
-          page={page}
-          pageSize={pageSize}
-          totalPages={data?.pagination.pages ?? 1}
-          totalRows={data?.pagination.total}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
-      }
+      pagination={{
+        page,
+        pageSize,
+        totalPages: data?.pagination.pages ?? 1,
+        ...(typeof data?.pagination.total === "number"
+          ? { totalRows: data.pagination.total }
+          : {}),
+        onPageChange,
+        onPageSizeChange,
+      }}
     />
   );
 }

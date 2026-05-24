@@ -2364,7 +2364,7 @@ apps/web/
 │   │   │   └── index.ts
 │   │   ├── jobs/
 │   │   │   ├── JobsView.tsx
-│   │   │   ├── JobsTable.tsx              # TanStack Table v8
+│   │   │   ├── JobsTable.tsx              # shared data grid
 │   │   │   ├── JobFilterBar.tsx           # binds to URL via useSearch
 │   │   │   ├── JobBulkActions.tsx
 │   │   │   ├── JobDetailDrawer.tsx
@@ -2400,7 +2400,7 @@ apps/web/
 │   │   │   ├── badge.tsx
 │   │   │   ├── card.tsx
 │   │   │   ├── form.tsx                    # TanStack Form bindings
-│   │   │   ├── table.tsx                   # primitives for TanStack Table
+│   │   │   ├── table.tsx                   # native table primitives
 │   │   │   └── copyable-command.tsx        # `<CopyableCommand command={...} />` — preserves the "copyable CLI commands" affordance per docs/decisions.md (2026-05-03)
 │   │   ├── layout/
 │   │   │   ├── AppShell.tsx
@@ -2722,8 +2722,8 @@ sees stale data for up to `staleTime` even with the
 ### R10. Bundle-size growth as features compound
 
 Per-route code splitting (§4.3) limits initial-load cost, but a single
-large route (e.g., the jobs view with the full TanStack Table machinery
-+ all column renderers from every context) can dwarf others.
+large route (e.g., the jobs view with the full data-grid machinery + all
+column renderers from every context) can dwarf others.
 
 **Mitigations:**
 - The CI step `pnpm web:build` reports bundle sizes per route; a
@@ -2831,7 +2831,7 @@ first's reconciliation.
 | **JobActions** | Frontend (Pipeline composer) | Toolbar component composing per-stage / per-action buttons (`<RetryStageButton />`, `<GenerateMaterialsButton />`, `<ApplyButton />`, `<MarkAppliedButton />`, etc.). |
 | **JobDetailDrawer** | Frontend (Jobs view) | The right-side sheet (in `views/jobs/`) that opens when a job is selected. Composes overview, score, stages, artifacts, apply history, and actions from the contexts that own each. |
 | **JobId** | Domain (shared) | The system-generated stable identifier for a job per `ddd-target.md` §3.1 / §4.1. Branded type (`string & { __brand: "JobId" }`) constructed via `createJobId(...)` from `@jobhunter/domain-types`. The frontend uses `JobId` as its domain term throughout; the API client's currently-named `jobKey: string` parameter is a transport detail mapped at the ACL boundary (§6.5). |
-| **JobsTable** | Frontend (Jobs view) | The TanStack Table v8 instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
+| **JobsTable** | Frontend (Jobs view) | The shared data-grid instance in `views/jobs/JobsTable.tsx` rendering the jobs list; receives data from `useJobsListQuery` (Operations) and column cell components from `contexts/scoring/`, `contexts/pipeline/`, etc. |
 | **KPI** | Frontend (Dashboard) | A top-line metric tile on the dashboard. |
 | **LayerSeparation** | Frontend (Modeling) | The architectural rule that every datum lives in exactly one of three layers: server (Query), URL (Router), or client (Zustand/Context). See §2.1. |
 | **Loader (Route)** | Frontend (Routing) | A function on a TanStack Router route that prefetches data via `queryClient.ensureQueryData(...)` before the component renders. |
@@ -2857,7 +2857,7 @@ first's reconciliation.
 | **TanStack Query** | Frontend (Library) | The server-state cache. All projection reads, mutations, and SSE-driven invalidations route through it. |
 | **TanStack Router** | Frontend (Library) | The routing library. File-based routes via Vite plugin; typed search params via Zod schemas; per-route loaders for prefetching. |
 | **TanStack Start** | Frontend (Evolution) | The SSR/RSC framework built on TanStack Router and Query. Named as the SSR evolution path; not built today. |
-| **TanStack Table** | Frontend (Library) | Headless table primitive used by `JobsTable` and `ArtifactsTable`. Replaces hand-rolled sort/select/pagination logic. |
+| **Shared Data Grid** | Frontend (UI Primitive) | Table primitive used by registry, jobs, artifacts, and runs tables. Provides the common sort, per-column filter, pagination, row selection, and row activation behavior. |
 | **TelemetryPort** | Frontend (Hexagonal) | Port for emitting frontend telemetry. Local adapter is no-op + console; hosted adapter is `OpenTelemetryWebAdapter`. |
 | **TenantProvider** | Frontend (Provider) | Context that exposes `useTenantId()`. Today reads from `LocalSessionAdapter`; tomorrow from JWT. |
 | **TenantPrefix** | Frontend (Query keys) | The first segment of every query key: `["tenant", tenantId, ...]`. Ensures cache isolation across tenants from day one. |

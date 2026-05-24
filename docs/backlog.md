@@ -173,8 +173,8 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
   state. Filters, sort, and page already survive live updates by virtue
   of the TanStack Router URL-state architecture; selection lives in
   `useState` in `apps/web/src/views/jobs/JobsView.tsx:51-66`, survives
-  SSE invalidations (TanStack Table preserves `rowSelection` across query
-  updates), and is cleared only on filter / sort / page change. If
+  SSE invalidations through stable row ids in the shared data grid, and is
+  cleared only on filter / sort / page change. If
   shareable selections become a requirement, promote to URL state.
 - Add side-by-side artifact comparison in the app, including AI-assisted
   comparison for resume and cover-letter variants.
@@ -283,7 +283,7 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-18 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
+15 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
 they exercise pre-existing production accessibility defects that are scoped
 out of the Phase 7 baseline. Each defect needs a follow-up production fix;
 once fixed, the deferral is removed from the corresponding story
@@ -291,13 +291,12 @@ parameters.
 
 | Production file | Defect | Stories that defer |
 | --- | --- | --- |
-| `apps/web/src/shared/ui/data-table.tsx` | Missing `role="row"` on table rows; missing `aria-sort` on sortable column headers. | `data-table.stories.tsx`, `JobsTable.stories.tsx`, `ArtifactsTable.stories.tsx` |
+| `apps/web/src/shared/ui/data-table.tsx` | Missing `role="row"` on table rows; missing `aria-sort` on sortable column headers. | `data-table.stories.tsx` |
 | `apps/web/src/shared/ui/toast.tsx` | `ToastClose` icon-only button has no accessible name (`button-name` axe rule). | `toast.stories.tsx`, `toaster.stories.tsx` |
 | `apps/web/src/views/jobs/JobFilterBar.tsx` | Bare `<select>` element with no associated label (`select-name` axe rule). | `JobFilterBar.stories.tsx` |
 | `apps/web/src/views/artifacts/ArtifactFilterBar.tsx` | Bare `<select>` element with no associated label. | `ArtifactFilterBar.stories.tsx` |
-| `apps/web/src/views/jobs/JobsView.tsx` (composes the above) | Inherits `DataTable` + `JobFilterBar` defects. | `JobsView.stories.tsx` |
-| `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `DataTable` + `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
-| `apps/web/src/views/runs/RunsView.tsx` (composes `DataTable`) | Inherits `DataTable` defects. | `RunsView.stories.tsx` |
+| `apps/web/src/views/jobs/JobsView.tsx` (composes the above) | Inherits `JobFilterBar` defects. | `JobsView.stories.tsx` |
+| `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
 | `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx` | Bare `<select>` elements with no labels; icon-only buttons missing accessible names. | `StructuredProfileEditor.stories.tsx`, `ProfileEditor.stories.tsx` (composes it) |
 | `apps/web/src/contexts/apply/components/ApplyHistory.tsx` | TanStack Router `<Link>` rendered as a button without an accessible name. | `ApplyHistory.stories.tsx` |
 | Radix `DropdownMenu` portal | `aria-hidden-focus` violation reported during the open animation (Radix transient internal state). | `dropdown-menu.stories.tsx` |
@@ -308,7 +307,7 @@ parameters.
 
 Production fixes for the in-repo files (`data-table.tsx`, `toast.tsx`,
 `JobFilterBar.tsx`, `ArtifactFilterBar.tsx`, `StructuredProfileEditor.tsx`,
-`ApplyHistory.tsx`) unblock 13 of the 18 deferrals immediately. The five
+`ApplyHistory.tsx`) unblock 10 of the 15 deferrals immediately. The five
 remaining deferrals (Radix transient internals + cmdk) need either upstream
 fixes or local wrappers with the missing ARIA plumbing.
 

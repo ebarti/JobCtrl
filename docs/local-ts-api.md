@@ -92,8 +92,8 @@ messages.
 Discovery product-control endpoints are local-first and share DTOs from
 `packages/contracts`. The web Discovery page composes these endpoints into
 source-registry, source-locator, quarantine-review, and manual-capture tabs; the
-source registry renders as a filterable/sortable table so source type and policy
-metadata are visible as columns instead of compact badges:
+source registry renders as a paginated, filterable, sortable table so source
+type and policy metadata are visible as columns instead of compact badges:
 
 - `GET /v1/discovery/sources` lists source registry entries merged with
   `source_quality_stats`.

@@ -1,9 +1,14 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
 import { useMemo } from "react";
 
-import type { JobSummary, PaginatedResponse } from "../../contexts/operations/types.js";
-import { DataTable } from "../../shared/ui/data-table.js";
-import { TablePager } from "../../shared/ui/table-pager.js";
+import type {
+  JobSummary,
+  PaginatedResponse,
+} from "../../contexts/operations/types.js";
+import {
+  FilterableDataGrid,
+  type DataGridSortState,
+} from "../../shared/ui/filterable-data-grid.js";
 import { jobColumns } from "./columns.js";
 
 export interface JobsTableProps {
@@ -45,35 +50,53 @@ export function JobsTable({
     }
     return next;
   }, [allMatchingSelected, data?.items, rowSelection]);
+  const columns = useMemo(
+    () =>
+      jobColumns({
+        rowSelection: displayedRowSelection,
+        onRowSelectionChange,
+      }),
+    [displayedRowSelection, onRowSelectionChange],
+  );
+  const gridSort = useMemo<DataGridSortState>(() => {
+    const head = sorting[0];
+    return {
+      columnId: head?.id ?? "discovered_at",
+      direction: head?.desc ? "desc" : "asc",
+    };
+  }, [sorting]);
+  const handleSortChange = (next: DataGridSortState) => {
+    onSortingChange([{ id: next.columnId, desc: next.direction === "desc" }]);
+  };
 
   return (
-    <DataTable<JobSummary>
+    <FilterableDataGrid<JobSummary>
+      title="Jobs table"
       data={data?.items ?? []}
-      columns={jobColumns}
+      columns={columns}
       getRowId={(row) => row.jobKey}
       loading={loading}
-      loaded={data !== null}
       loadingMessage="Loading jobs."
       emptyMessage="No jobs match."
-      headerClassName="data-row job job-header"
-      rowClassName="data-row job"
-      sorting={sorting}
-      onSortingChange={onSortingChange}
-      rowSelection={displayedRowSelection}
-      onRowSelectionChange={onRowSelectionChange}
-      onRowActivate={(row) => onOpenJob(row.jobKey)}
-      rowAriaSelected={(row) => allMatchingSelected || Boolean(rowSelection[row.jobKey])}
-      cellClassName={(columnId) => (columnId === "select" ? "row-check" : undefined)}
-      footer={
-        <TablePager
-          page={page}
-          pageSize={pageSize}
-          totalPages={data?.pagination.pages ?? 1}
-          totalRows={data?.pagination.total}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
+      initialSort={{ columnId: "discovered_at", direction: "desc" }}
+      sort={gridSort}
+      onSortChange={handleSortChange}
+      manualSorting
+      tableClassName="jobs-data-grid-table"
+      rowAriaSelected={(row) =>
+        allMatchingSelected || Boolean(rowSelection[row.jobKey])
       }
+      onRowActivate={(row) => onOpenJob(row.jobKey)}
+      pagination={{
+        page,
+        pageSize,
+        totalPages: data?.pagination.pages ?? 1,
+        ...(typeof data?.pagination.total === "number"
+          ? { totalRows: data.pagination.total }
+          : {}),
+        onPageChange,
+        onPageSizeChange,
+      }}
     />
   );
 }
