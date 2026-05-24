@@ -19,6 +19,8 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
     build_discovery_acceptance_report,
     import_manual_capture_item,
+    retire_invalid_canonical_ats_jobs,
+    retire_invalid_source_jobs,
     run_scheduled_ats_sources,
     seed_discovery_control_queues,
 )
@@ -112,6 +114,7 @@ def _fake_ats_http(url: str, **_kwargs: Any) -> Any:
                     ),
                     "location": {"name": "Barcelona, Spain"},
                     "company_name": "Barcelona Tech",
+                    "content": "<p>Lead engineering delivery for Barcelona teams.</p>",
                 }
             ]
         }
@@ -122,6 +125,7 @@ def _fake_ats_http(url: str, **_kwargs: Any) -> Any:
                 "text": "Head of Platform",
                 "hostedUrl": "https://jobs.lever.co/leadershipco/202",
                 "categories": {"location": "Spain"},
+                "description": "<p>Own platform strategy for Spain.</p>",
             }
         ]
     if "ashby" in url:
@@ -132,6 +136,7 @@ def _fake_ats_http(url: str, **_kwargs: Any) -> Any:
                     "title": "Engineering Manager",
                     "jobUrl": "https://jobs.ashbyhq.com/platformops/303",
                     "location": "Barcelona, Spain",
+                    "descriptionHtml": "<p>Manage engineering teams in Barcelona.</p>",
                 }
             ]
         }
@@ -394,6 +399,457 @@ def test_canonical_ats_scheduler_fetches_each_source_once_then_filters_queries(
 
     assert result["new_jobs"] == 3
     assert len(calls) == 3
+    assert "https://boards-api.greenhouse.io/v1/boards/barcelonatech/jobs?content=true" in calls
+
+
+def test_canonical_ats_scheduler_rejects_empty_descriptions(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    ats_sources = schedule.for_kinds(SourceKind.ATS_API)
+
+    def http(url: str, **_kwargs: Any) -> Any:
+        if "greenhouse" in url:
+            return {
+                "jobs": [
+                    {
+                        "id": 101,
+                        "title": "Director of Engineering",
+                        "absolute_url": "https://boards.greenhouse.io/barcelonatech/jobs/101",
+                        "location": {"name": "Barcelona, Spain"},
+                        "company_name": "Barcelona Tech",
+                    }
+                ]
+            }
+        return _fake_ats_http(url)
+
+    result = run_scheduled_ats_sources(
+        conn,
+        ats_sources,
+        search_cfg=_search_cfg(),
+        run_id="acceptance:ats",
+        http=http,
+    )
+
+    assert result["new_jobs"] == 2
+    row = conn.execute(
+        "SELECT 1 FROM jobs WHERE url = ?",
+        ("https://boards.greenhouse.io/barcelonatech/jobs/101",),
+    ).fetchone()
+    assert row is None
+
+
+def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    rows = [
+        (
+            "https://boards.greenhouse.io/acme/jobs/valid",
+            "Director of Engineering",
+            "Barcelona, Spain",
+            "Lead engineering teams in Barcelona.",
+        ),
+        (
+            "https://boards.greenhouse.io/acme/jobs/empty-description",
+            "Director of Engineering",
+            "Barcelona, Spain",
+            "",
+        ),
+        (
+            "https://boards.greenhouse.io/acme/jobs/sales",
+            "Sales Director",
+            "Work from Home - Spain",
+            "Lead enterprise sales teams.",
+        ),
+        (
+            "https://boards.greenhouse.io/acme/jobs/india",
+            "Engineering Manager",
+            "India, Remote",
+            "Lead engineering teams.",
+        ),
+    ]
+    for index, (url, title, location, description) in enumerate(rows):
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (url, title, "Acme", description, location, "Acme", "workday_api", "2026-05-20T00:00:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_canonical_identities (
+                tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("local", url, url, "greenhouse", f"gh-{index}", 1.0, "2026-05-20T00:00:00+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                observed_url, normalized_observed_url, run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "local",
+                f"obs-{index}",
+                url,
+                "greenhouse:acme",
+                f"gh-{index}",
+                url,
+                url,
+                "test",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+    conn.commit()
+
+    result = retire_invalid_canonical_ats_jobs(
+        conn,
+        search_cfg=_search_cfg(),
+        run_id="hygiene:test",
+    )
+
+    assert result["retired_jobs"] == 3
+    deleted = {
+        row["job_url"]: row["reason"]
+        for row in conn.execute("SELECT job_url, reason FROM jobhunter_deleted_jobs").fetchall()
+    }
+    assert "https://boards.greenhouse.io/acme/jobs/valid" not in deleted
+    assert "missing_description" in deleted["https://boards.greenhouse.io/acme/jobs/empty-description"]
+    assert "title_mismatch" in deleted["https://boards.greenhouse.io/acme/jobs/sales"]
+    assert "location_mismatch" in deleted["https://boards.greenhouse.io/acme/jobs/india"]
+    event_count = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE event_type = 'JobDeleted'"
+    ).fetchone()[0]
+    assert event_count == 3
+
+
+def test_discovery_hygiene_retires_invalid_jobspy_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    rows = [
+        (
+            "https://www.linkedin.com/jobs/view/valid-head-engineering",
+            "Head of Engineering",
+            "Barcelona, Spain",
+            "Lead engineering teams in Barcelona.",
+            "jobspy:linkedin",
+        ),
+        (
+            "https://www.linkedin.com/jobs/view/head-school-biomedical",
+            "Head of School - School of Biomedical Engineering",
+            "Barcelona, Spain",
+            "Lead an academic biomedical engineering school.",
+            "jobspy:linkedin",
+        ),
+        (
+            "https://www.linkedin.com/jobs/view/us-engineering-manager",
+            "Engineering Manager",
+            "United States (Remote)",
+            "Lead engineering teams.",
+            "jobspy:linkedin",
+        ),
+    ]
+    for index, (url, title, location, description, source_id) in enumerate(rows):
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                url,
+                title,
+                "LinkedInCo",
+                description,
+                location,
+                "linkedin",
+                "jobspy",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                observed_url, normalized_observed_url, run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "local",
+                f"jobspy-obs-{index}",
+                url,
+                source_id,
+                f"li-{index}",
+                url,
+                url,
+                "test",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+    conn.commit()
+
+    result = retire_invalid_source_jobs(
+        conn,
+        search_cfg={
+            "queries": [
+                {"query": "Head of Engineering", "tier": 1},
+                {
+                    "query": "engineering manager",
+                    "tier": 1,
+                    "match_mode": "recall",
+                    "generated_from": "target_roles",
+                },
+            ],
+            "locations": [{"location": "Spain"}],
+            "location_accept": ["Spain", "Barcelona, Spain"],
+            "location_reject_non_remote": ["United States", "USA", "US only"],
+        },
+        run_id="hygiene:jobspy",
+    )
+
+    assert result["retired_jobs"] == 2
+    deleted = {
+        row["job_url"]: row["reason"]
+        for row in conn.execute("SELECT job_url, reason FROM jobhunter_deleted_jobs").fetchall()
+    }
+    assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
+    assert "title_mismatch" in deleted["https://www.linkedin.com/jobs/view/head-school-biomedical"]
+    assert "location_mismatch" in deleted["https://www.linkedin.com/jobs/view/us-engineering-manager"]
+
+
+def test_discovery_hygiene_treats_serialized_null_descriptions_as_missing(
+    conn: sqlite3.Connection,
+) -> None:
+    rows = [
+        (
+            "https://www.linkedin.com/jobs/view/valid-head-engineering",
+            "Head of Engineering",
+            "Barcelona, Spain",
+            "Lead engineering teams in Barcelona.",
+        ),
+        (
+            "https://www.linkedin.com/jobs/view/none-description",
+            "Head of Engineering",
+            "Barcelona, Spain",
+            "None",
+        ),
+        (
+            "https://www.linkedin.com/jobs/view/pandas-na-description",
+            "Head of Engineering",
+            "Barcelona, Spain",
+            "<NA>",
+        ),
+        (
+            "https://www.linkedin.com/jobs/view/nan-description",
+            "Head of Engineering",
+            "Barcelona, Spain",
+            "nan",
+        ),
+        (
+            "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback",
+            "Head of Engineering",
+            "Barcelona, Spain",
+            "Lead engineering teams in Barcelona.",
+        ),
+    ]
+    for index, (url, title, location, description) in enumerate(rows):
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                url,
+                title,
+                "LinkedInCo",
+                description,
+                location,
+                "linkedin",
+                "jobspy",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                observed_url, normalized_observed_url, run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "local",
+                f"jobspy-sentinel-obs-{index}",
+                url,
+                "jobspy:linkedin",
+                f"li-sentinel-{index}",
+                url,
+                url,
+                "test",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+    conn.execute(
+        """
+        INSERT INTO job_enrichments (
+            job_url, tenant_id, current_status, full_description, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback",
+            "local",
+            "success",
+            "<NA>",
+            "2026-05-20T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+    result = retire_invalid_source_jobs(
+        conn,
+        search_cfg={
+            "queries": [{"query": "Head of Engineering", "tier": 1}],
+            "locations": [{"location": "Spain"}],
+            "location_accept": ["Spain", "Barcelona, Spain"],
+        },
+        run_id="hygiene:serialized-null",
+    )
+
+    assert result["retired_jobs"] == 3
+    deleted = {
+        row["job_url"]: row["reason"]
+        for row in conn.execute("SELECT job_url, reason FROM jobhunter_deleted_jobs").fetchall()
+    }
+    assert "https://www.linkedin.com/jobs/view/valid-head-engineering" not in deleted
+    assert (
+        "https://www.linkedin.com/jobs/view/enrichment-sentinel-with-fallback"
+        not in deleted
+    )
+    assert "missing_description" in deleted[
+        "https://www.linkedin.com/jobs/view/none-description"
+    ]
+    assert "missing_description" in deleted[
+        "https://www.linkedin.com/jobs/view/pandas-na-description"
+    ]
+    assert "missing_description" in deleted[
+        "https://www.linkedin.com/jobs/view/nan-description"
+    ]
+
+
+def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    rows = [
+        (
+            "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager",
+            "Engineering Manager",
+            "Madrid, Spain",
+            "Lead engineering teams in Spain.",
+            "Acme",
+            "workday_api",
+            "workday:acme",
+        ),
+        (
+            "https://acme.wd1.myworkdayjobs.com/jobs/customer-success",
+            "Customer Success Manager",
+            "Madrid, Spain",
+            "Lead customer success teams.",
+            "Acme",
+            "workday_api",
+            "workday:acme",
+        ),
+        (
+            "https://wellfound.com/jobs/valid-head-engineering",
+            "Head of Engineering",
+            "Spain",
+            "Lead engineering teams at a startup.",
+            "Wellfound",
+            "api_response",
+            "smart_extract:wellfound",
+        ),
+        (
+            "https://wellfound.com/jobs/us-head-engineering",
+            "Head of Engineering",
+            "United States (Remote)",
+            "Lead engineering teams at a startup.",
+            "Wellfound",
+            "smart_extract",
+            "smart_extract:wellfound",
+        ),
+        (
+            "https://wellfound.com/jobs/missing-description",
+            "Head of Engineering",
+            "Spain",
+            "",
+            "Wellfound",
+            "static",
+            "smart_extract:wellfound",
+        ),
+    ]
+    for index, (url, title, location, description, site, strategy, source_id) in enumerate(rows):
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                url,
+                title,
+                site,
+                description,
+                location,
+                site,
+                strategy,
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                observed_url, normalized_observed_url, run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "local",
+                f"source-family-obs-{index}",
+                url,
+                source_id,
+                f"native-{index}",
+                url,
+                url,
+                "test",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+    conn.commit()
+
+    result = retire_invalid_source_jobs(
+        conn,
+        search_cfg={
+            "queries": [
+                {"query": "Head of Engineering", "tier": 1},
+                {"query": "Engineering Manager", "tier": 1},
+            ],
+            "locations": [{"location": "Spain"}],
+            "location_accept": ["Spain", "Madrid, Spain"],
+            "location_reject_non_remote": ["United States", "USA", "US only"],
+        },
+        run_id="hygiene:families",
+    )
+
+    assert result["retired_jobs"] == 3
+    deleted = {
+        row["job_url"]: row["reason"]
+        for row in conn.execute("SELECT job_url, reason FROM jobhunter_deleted_jobs").fetchall()
+    }
+    assert "https://acme.wd1.myworkdayjobs.com/jobs/valid-engineering-manager" not in deleted
+    assert "https://wellfound.com/jobs/valid-head-engineering" not in deleted
+    assert "title_mismatch" in deleted["https://acme.wd1.myworkdayjobs.com/jobs/customer-success"]
+    assert "location_mismatch" in deleted["https://wellfound.com/jobs/us-head-engineering"]
+    assert "missing_description" in deleted["https://wellfound.com/jobs/missing-description"]
 
 
 def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(

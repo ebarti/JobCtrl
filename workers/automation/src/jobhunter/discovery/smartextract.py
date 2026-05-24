@@ -18,6 +18,7 @@ import re
 import sqlite3
 import sys
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import quote_plus, urljoin
@@ -32,6 +33,10 @@ from jobhunter.database import get_stats, init_db, resurface_deleted_job
 from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
+)
+from jobhunter.discovery.target_queries import (
+    query_specs_for_source,
+    title_matches_any_query,
 )
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.llm import get_client
@@ -66,6 +71,12 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
 
 # -- Site configuration from YAML --------------------------------------------
 
+_NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
+_MISSING_DESCRIPTION_SQL = (
+    "(description IS NULL OR TRIM(description) = '' "
+    "OR LOWER(TRIM(description)) IN ('<na>', 'nan', 'nat', 'none', 'null'))"
+)
+
 
 def load_sites() -> list[dict]:
     """Load scraping target sites from config/sites.yaml."""
@@ -84,7 +95,7 @@ def _store_jobs_filtered(
     strategy: str,
     accept_locs: list[str],
     reject_locs: list[str],
-    query: str | list[str] | None = None,
+    query: object | None = None,
     limit: int = 0,
     source_url: str | None = None,
 ) -> tuple[int, int]:
@@ -130,26 +141,57 @@ def _store_jobs_filtered(
             new += 1
         except sqlite3.IntegrityError:
             company = str(job.get("company") or "").strip()
+            title = str(job.get("title") or "").strip()
+            location = str(job.get("location") or "").strip()
+            salary = str(job.get("salary") or "").strip()
             update_fields: list[str] = []
             update_values: list[str] = []
+            metadata_payload: dict[str, object] = {"source": site}
+            if title:
+                update_fields.append("title = CASE WHEN title IS NULL OR title = '' OR title != ? THEN ? ELSE title END")
+                update_values.extend([title, title])
+                metadata_payload["title"] = title
             if company:
                 update_fields.append("company = CASE WHEN company IS NULL OR company = '' THEN ? ELSE company END")
                 update_values.append(company)
+                metadata_payload["company"] = company
+            if salary:
+                update_fields.append("salary = CASE WHEN salary IS NULL OR salary = '' THEN ? ELSE salary END")
+                update_values.append(salary)
+                metadata_payload["salary"] = True
             if description:
                 update_fields.append(
-                    "description = CASE WHEN description IS NULL OR description = '' THEN ? ELSE description END"
+                    f"description = CASE WHEN {_MISSING_DESCRIPTION_SQL} THEN ? ELSE description END"
                 )
                 update_values.append(description)
+                metadata_payload["description"] = True
+            if location:
+                update_fields.append(
+                    "location = CASE WHEN location IS NULL OR location = '' OR location != ? THEN ? ELSE location END"
+                )
+                update_values.extend([location, location])
+                metadata_payload["location"] = location
             if update_fields:
                 update_predicates: list[str] = []
+                if title:
+                    update_predicates.append("(title IS NULL OR title = '' OR title != ?)")
                 if company:
                     update_predicates.append("(company IS NULL OR company = '')")
+                if salary:
+                    update_predicates.append("(salary IS NULL OR salary = '')")
                 if description:
-                    update_predicates.append("(description IS NULL OR description = '')")
+                    update_predicates.append(_MISSING_DESCRIPTION_SQL)
+                if location:
+                    update_predicates.append("(location IS NULL OR location = '' OR location != ?)")
+                predicate_values: list[str] = []
+                if title:
+                    predicate_values.append(title)
+                if location:
+                    predicate_values.append(location)
                 cursor = conn.execute(
                     f"UPDATE jobs SET {', '.join(update_fields)} WHERE url = ? "
                     f"AND ({' OR '.join(update_predicates)})",
-                    (*update_values, url),
+                    (*update_values, url, *predicate_values),
                 )
                 if cursor.rowcount:
                     from jobhunter.state import record_job_event
@@ -159,8 +201,8 @@ def _store_jobs_filtered(
                         url,
                         "discover",
                         "JobMetadataUpdated",
-                        message="Job metadata backfilled from SmartExtract",
-                        payload={"company": company or None, "description": bool(description), "source": site},
+                        message="Job metadata refreshed from SmartExtract",
+                        payload=metadata_payload,
                         occurred_at=now,
                     )
             resurface_deleted_job(conn, url, resurfaced_at=now)
@@ -174,21 +216,36 @@ def _store_jobs_filtered(
     return new, existing
 
 
-def _title_matches_target_query(title: str | None, query: str | list[str] | None) -> bool:
+def _title_matches_target_query(title: str | None, query: object | None) -> bool:
+    if isinstance(query, Mapping):
+        return title_matches_any_query(title, [query])
     if isinstance(query, list):
         if not query:
             return True
-        return any(title_matches_query(title, item) for item in query)
-    return title_matches_query(title, query)
+        if all(isinstance(item, Mapping) for item in query):
+            return title_matches_any_query(title, query)
+        return any(title_matches_query(title, str(item)) for item in query)
+    if query is None:
+        return title_matches_query(title, None)
+    return title_matches_query(title, str(query))
 
 
 def _job_description_text(job: dict) -> str | None:
     """Return the best usable discovered description for a job."""
     for key in ("description", "full_description"):
-        value = str(job.get(key) or "").strip()
+        value = _usable_description_text(job.get(key))
         if value:
             return value
     return None
+
+
+def _usable_description_text(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.casefold() in _NULL_DESCRIPTION_SENTINELS:
+        return ""
+    return text
 
 
 def _normalize_job_url(url: object, source_url: str | None = None) -> str | None:
@@ -1070,15 +1127,49 @@ def _run_one_site(name: str, url: str) -> dict:
 
 # -- Target building --------------------------------------------------------
 
+_QUERY_PLACEHOLDERS = ("{query_encoded}", "{query}")
+_SEARCH_ONLY_QUERY_MODES = {"query", "search", "search_only", "fanout"}
+_SOURCE_FIRST_QUERY_MODES = {"browse", "internal_filter", "source_first", "static"}
+
+
+def _smart_extract_query_mode(site: Mapping[str, object], site_type: str, site_url: str) -> str:
+    configured = str(site.get("query_mode") or site.get("search_mode") or "").strip()
+    if configured:
+        normalized = configured.replace("-", "_").casefold()
+        if normalized in _SEARCH_ONLY_QUERY_MODES:
+            return "search_only"
+        if normalized in _SOURCE_FIRST_QUERY_MODES:
+            return "source_first"
+    if site_type == "search" and _has_query_placeholder(site_url):
+        return "search_only"
+    return "source_first"
+
+
+def _has_query_placeholder(url: str) -> bool:
+    return any(placeholder in url for placeholder in _QUERY_PLACEHOLDERS)
+
+
+def _replace_url_placeholders(url: str, *, query: str | None, location: str) -> str:
+    expanded_url = url.replace("{location_encoded}", quote_plus(location))
+    if query is not None:
+        expanded_url = expanded_url.replace("{query_encoded}", quote_plus(query))
+        expanded_url = expanded_url.replace("{query}", quote_plus(query))
+    else:
+        expanded_url = expanded_url.replace("{query_encoded}", "")
+        expanded_url = expanded_url.replace("{query}", "")
+    return expanded_url
+
 
 def build_scrape_targets(
     sites: list[dict] | None = None,
     search_cfg: dict | None = None,
 ) -> list[dict]:
-    """Build the full list of (name, url) targets from sites + search config queries.
+    """Build scrape targets from sites + search config query specs.
 
-    - "search" sites get expanded: 1 URL per query from search config
-    - "static" sites get scraped once as-is
+    - Search-only sites get one URL per query because the external page is the
+      only source enumeration mechanism.
+    - Source-first/static sites get scraped once and filtered internally against
+      the full exact-plus-recall query spec set.
 
     Placeholders in URLs:
       {query_encoded} -> URL-encoded search query
@@ -1090,41 +1181,41 @@ def build_scrape_targets(
     if search_cfg is None:
         search_cfg = config.load_search_config()
 
-    queries_cfg = search_cfg.get("queries", [])
-    queries = [q["query"] for q in queries_cfg]
+    query_specs = query_specs_for_source(search_cfg.get("queries", []), "smartextract")
     locs = search_cfg.get("locations", [])
     default_location = locs[0]["location"] if locs else ""
 
     targets: list[dict] = []
 
     for site in sites:
-        site_url = site.get("url", "")
-        site_name = site.get("name", "Unknown")
-        site_type = site.get("type", "static")
+        site_url = str(site.get("url") or "").strip()
+        site_name = str(site.get("name") or "Unknown")
+        site_type = str(site.get("type") or "static").strip().casefold()
+        query_mode = _smart_extract_query_mode(site, site_type, site_url)
 
-        if site_type == "search" and queries:
-            for query in queries:
-                expanded_url = site_url
-                expanded_url = expanded_url.replace("{query_encoded}", quote_plus(query))
-                expanded_url = expanded_url.replace("{query}", quote_plus(query))
-                expanded_url = expanded_url.replace("{location_encoded}", quote_plus(default_location))
+        if query_mode == "search_only" and query_specs:
+            for query_spec in query_specs:
+                query = str(query_spec.get("query") or "")
+                expanded_url = _replace_url_placeholders(site_url, query=query, location=default_location)
                 targets.append(
                     {
                         "name": site_name,
                         "url": expanded_url,
                         "query": query,
-                        "queries": [query],
+                        "query_spec": query_spec,
+                        "queries": [query_spec],
+                        "query_mode": query_mode,
                     }
                 )
         else:
-            expanded_url = site_url
-            expanded_url = expanded_url.replace("{location_encoded}", quote_plus(default_location))
+            expanded_url = _replace_url_placeholders(site_url, query=None, location=default_location)
             targets.append(
                 {
                     "name": site_name,
                     "url": expanded_url,
                     "query": None,
-                    "queries": queries,
+                    "queries": query_specs,
+                    "query_mode": query_mode,
                 }
             )
 
@@ -1173,7 +1264,7 @@ def _run_all(
                 r.get("strategy", "?"),
                 accept_locs,
                 reject_locs,
-                query=target.get("query") or target.get("queries"),
+                query=target.get("query_spec") or target.get("queries") or target.get("query"),
                 limit=remaining if limit > 0 else 0,
                 source_url=target.get("url"),
             )

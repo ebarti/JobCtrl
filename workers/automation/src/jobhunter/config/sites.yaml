@@ -2,6 +2,8 @@
 # Users can add their own sites following this pattern.
 # Use {location_encoded} placeholder for location (URL-encoded).
 # Use {query_encoded} placeholder for search terms (URL-encoded).
+# Optional query_mode controls Smart Extract execution: search_only fans out one
+# URL per query, source_first scrapes once and filters exact+recall roles locally.
 
 # ── Manual-Only ATS Domains ──────────────────────────────────────────────
 # These ATS platforms have unsolvable CAPTCHAs. Jobs routing through them

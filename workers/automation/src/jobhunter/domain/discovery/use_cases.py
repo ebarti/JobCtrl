@@ -391,8 +391,12 @@ class DiscoverJobsUseCase:
             confidence=identity.confidence,
         ):
             existing = self._repository.load(tenant_id, owner_id)
-            if existing is not None and existing.is_deleted:
-                self._repository.save(existing.restore())
+            if existing is not None:
+                refreshed = existing.with_metadata(posting.metadata)
+                if refreshed.is_deleted:
+                    refreshed = refreshed.restore()
+                if refreshed != existing:
+                    self._repository.save(refreshed)
             self._repository.attach_source_observation(
                 tenant_id,
                 owner_id,

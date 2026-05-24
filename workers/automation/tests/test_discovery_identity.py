@@ -63,11 +63,12 @@ def _posting(
     source_native_id: str = "123",
     source_id: str = "greenhouse:acme",
     ats_kind: AtsKind = AtsKind.GREENHOUSE,
+    metadata: JobMetadata | None = None,
 ) -> ScrapedJobPosting:
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=canonical_url),
         source=Source(board="greenhouse"),
-        metadata=JobMetadata(title="Platform Engineer", location="Remote"),
+        metadata=metadata or JobMetadata(title="Platform Engineer", location="Remote"),
         strategy=SearchStrategy.WORKDAY_API,
         source_id=source_id,
         source_native_id=source_native_id,
@@ -407,7 +408,19 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
         deleted_at="2026-05-13T00:00:00Z",
     )
 
-    summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-2")
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                metadata=JobMetadata(
+                    title="Platform Engineering Manager",
+                    description="Lead platform engineering teams in Spain.",
+                    location="Barcelona, Spain",
+                ),
+            )
+        ],
+        run_id="run-2",
+    )
 
     assert summary.total == 1
     assert summary.new_jobs == 0
@@ -415,12 +428,62 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     resurfaced = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
     assert resurfaced is not None
     assert resurfaced.is_deleted is False
+    assert resurfaced.metadata.title == "Platform Engineering Manager"
+    assert resurfaced.metadata.description == "Lead platform engineering teams in Spain."
+    assert resurfaced.metadata.location == "Barcelona, Spain"
     tombstone = conn.execute(
         "SELECT restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
         ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
     assert tombstone["restored_at"] == "2026-05-12T00:00:00Z"
+
+
+def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_blank(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                metadata=JobMetadata(
+                    title="Director of Engineering",
+                    salary="$180,000",
+                    description="Lead engineering teams.",
+                    location="Barcelona, Spain",
+                )
+            )
+        ],
+        run_id="run-1",
+    )
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                metadata=JobMetadata(
+                    title="Director of Engineering",
+                    salary="",
+                    description="Lead engineering teams in Spain.",
+                    location="Barcelona, Spain",
+                )
+            )
+        ],
+        run_id="run-2",
+    )
+
+    assert summary.observed == 1
+    rediscovered = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
+    assert rediscovered is not None
+    assert rediscovered.metadata.salary == "$180,000"
+    assert rediscovered.metadata.description == "Lead engineering teams in Spain."
 
 
 def test_discover_jobs_use_case_rejects_low_confidence_duplicate(

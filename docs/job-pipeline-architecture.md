@@ -255,7 +255,7 @@ sequenceDiagram
     ATS->>DB: create canonical jobs and source observations
     Runner->>Workday: enumerate configured employers and filter internally
     Workday->>DB: insert/update jobs and observations
-    Runner->>Smart: run_smart_extract(...)
+    Runner->>Smart: source-first scrape or search-only query fanout
     Smart->>DB: insert jobs, quarantine, manual-capture queue
 
     Runner->>DB: DiscoveryRun*, Stage*, and operational attempt metrics
@@ -335,9 +335,18 @@ classDiagram
 - Applies exact-plus-recall intent to every discovery source family, but the
   execution shape differs by source type. JobSpy is a broad-board retrieval
   provider, so exact and recall queries are sent as external search probes.
-  Direct ATS and Workday sources are known boards/employers, so they enumerate
-  the source once per location and run exact-plus-recall title matching
-  internally instead of multiplying `queries x sources`.
+  Direct ATS, Workday, and source-first Smart Extract sources are known
+  boards/employers/pages, so they enumerate the source once per location and run
+  exact-plus-recall title matching internally instead of multiplying
+  `queries x sources`. Smart Extract search-only sources still fan out by query
+  when the source has no useful browse/all-jobs page.
+- Canonical ATS adapters only emit usable postings: title, target location,
+  and a non-empty description must all be present before a posting reaches the
+  discovery write boundary. Greenhouse uses the public board API's content
+  payload so discovered rows are not created with blank descriptions.
+- Runs source hygiene before source execution: active rows from JobSpy, direct
+  ATS, Workday, and Smart Extract are rechecked against the current title,
+  location, and description contract and soft-deleted when they no longer pass.
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.

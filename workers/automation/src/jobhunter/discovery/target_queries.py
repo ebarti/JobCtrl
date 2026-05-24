@@ -120,10 +120,14 @@ def query_applies_to_source(query: Mapping[str, object], source: str) -> bool:
     scope = query.get("source_scope")
     if not scope:
         return True
+    source_aliases = _source_aliases(source)
     if isinstance(scope, str):
-        return scope == source
+        return bool(_source_aliases(scope).intersection(source_aliases))
     if isinstance(scope, Sequence):
-        return source in {str(item) for item in scope}
+        scoped_aliases: set[str] = set()
+        for item in scope:
+            scoped_aliases.update(_source_aliases(str(item)))
+        return bool(scoped_aliases.intersection(source_aliases))
     return True
 
 
@@ -246,6 +250,16 @@ def _dedupe_recall_queries(values: Iterable[str]) -> list[str]:
             result.append(normalized)
             seen.add(key)
     return result
+
+
+def _source_aliases(source: str) -> set[str]:
+    normalized = str(source or "").strip()
+    aliases = {normalized}
+    collapsed = normalized.replace("_", "")
+    aliases.add(collapsed)
+    if collapsed == "smartextract":
+        aliases.update({"smart_extract", "smartextract"})
+    return {alias for alias in aliases if alias}
 
 
 def _query_key(query: str) -> str:

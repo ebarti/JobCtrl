@@ -113,7 +113,15 @@ class Job:
 
     def with_metadata(self, metadata: JobMetadata) -> "Job":
         """Return a new Job with updated metadata (re-discovery flow)."""
-        return replace(self, metadata=metadata)
+        return replace(
+            self,
+            metadata=JobMetadata(
+                title=metadata.title or self.metadata.title,
+                salary=metadata.salary or self.metadata.salary,
+                description=metadata.description or self.metadata.description,
+                location=metadata.location or self.metadata.location,
+            ),
+        )
 
     def with_employer(self, employer: Employer) -> "Job":
         """Return a new Job whose employer was upgraded from ``Unknown``.
