@@ -38,22 +38,22 @@ def test_llm_generation_span_sets_langfuse_attributes(in_memory_exporter):
     messages = [{"role": "user", "content": "hi"}]
     params = {"temperature": 0.0, "max_tokens": 100}
 
-    with llm_generation_span(model="gemini-3.5-flash", messages=messages, params=params) as record:
+    with llm_generation_span(model="gemini-3-flash-preview", messages=messages, params=params) as record:
         record("hello world", input_tokens=5, output_tokens=2)
 
     spans = in_memory_exporter.get_finished_spans()
     assert len(spans) == 1
     attrs = _attrs(spans[0])
     assert attrs["langfuse.observation.type"] == "generation"
-    assert attrs["langfuse.observation.model.name"] == "gemini-3.5-flash"
+    assert attrs["langfuse.observation.model.name"] == "gemini-3-flash-preview"
     assert json.loads(attrs["langfuse.observation.model.parameters"]) == params
     assert json.loads(attrs["langfuse.observation.input"]) == messages
     assert attrs["langfuse.observation.output"] == "hello world"
     usage = json.loads(attrs["langfuse.observation.usage_details"])
     assert usage == {"input_tokens": 5, "output_tokens": 2, "total_tokens": 7}
     # Mirror into GenAI semconv so Langfuse + OTel-native dashboards both work.
-    assert attrs["gen_ai.request.model"] == "gemini-3.5-flash"
-    assert attrs["gen_ai.response.model"] == "gemini-3.5-flash"
+    assert attrs["gen_ai.request.model"] == "gemini-3-flash-preview"
+    assert attrs["gen_ai.response.model"] == "gemini-3-flash-preview"
     assert attrs["gen_ai.usage.input_tokens"] == 5
     assert attrs["gen_ai.usage.output_tokens"] == 2
 

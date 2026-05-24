@@ -2,7 +2,7 @@
 Unified LLM client for JobHunter.
 
 Auto-detects provider from environment:
-  GEMINI_API_KEY  -> Google Gemini (default: gemini-3.5-flash)
+  GEMINI_API_KEY  -> Google Gemini (default: gemini-3-flash-preview)
   OPENAI_API_KEY  -> OpenAI (default: gpt-4o-mini)
   LLM_URL         -> Local llama.cpp / Ollama compatible endpoint
 
@@ -21,7 +21,7 @@ from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 log = logging.getLogger(__name__)
 
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 
 # ---------------------------------------------------------------------------

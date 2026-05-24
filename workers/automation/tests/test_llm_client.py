@@ -8,7 +8,7 @@ from jobhunter import llm
 from jobhunter.llm import LLMClient
 
 
-def test_gemini_provider_defaults_to_gemini_35_flash(monkeypatch) -> None:
+def test_gemini_provider_defaults_to_gemini_3_flash_preview(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("LLM_URL", raising=False)
@@ -16,7 +16,7 @@ def test_gemini_provider_defaults_to_gemini_35_flash(monkeypatch) -> None:
 
     _base_url, model, _api_key = llm._detect_provider()
 
-    assert model == "gemini-3.5-flash"
+    assert model == "gemini-3-flash-preview"
 
 
 def test_native_gemini_3_minimal_thinking_uses_thinking_level() -> None:
@@ -34,7 +34,7 @@ def test_native_gemini_3_minimal_thinking_uses_thinking_level() -> None:
 
     client = LLMClient(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        model="gemini-3.5-flash",
+        model="gemini-3-flash-preview",
         api_key="test-key",
     )
     client._client.close()
@@ -64,7 +64,7 @@ def test_compat_gemini_3_minimal_thinking_uses_thinking_level() -> None:
 
     client = LLMClient(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        model="gemini-3.5-flash",
+        model="gemini-3-flash-preview",
         api_key="test-key",
     )
     client._client.close()

@@ -80,7 +80,7 @@ Core pipeline:
 - Python 3.11 or newer.
 - A local LLM provider configuration for scoring, tailoring, and cover letters.
   Gemini, OpenAI, and local HTTP-backed providers are supported through
-  environment variables. Gemini keys default to `gemini-3.5-flash` unless
+  environment variables. Gemini keys default to `gemini-3-flash-preview` unless
   `LLM_MODEL` overrides the model.
 - A TeX distribution with `pdflatex` for PDF output.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
