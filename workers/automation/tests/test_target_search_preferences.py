@@ -26,10 +26,18 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
         },
     )
 
-    assert merged["queries"] == [
+    assert merged["queries"][:2] == [
         {"query": "Engineering Manager", "tier": 1},
         {"query": "Head of Engineering", "tier": 1},
     ]
+    assert {
+        "query": "technical director",
+        "tier": 2,
+        "match_mode": "recall",
+        "generated_from": "target_roles",
+    } in merged["queries"]
+    assert merged["workday_max_tier"] == 1
+    assert merged["ats_max_tier"] == 1
     assert merged["locations"] == [
         {"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False},
         {"label": "spain", "location": "Spain", "remote": True},
@@ -57,10 +65,22 @@ def test_profile_target_search_strips_role_notes_from_queries() -> None:
         },
     )
 
-    assert merged["queries"] == [
+    assert merged["queries"][:2] == [
         {"query": "Head of Platform", "tier": 1},
         {"query": "CISO", "tier": 1},
     ]
+    assert {
+        "query": "platform director",
+        "tier": 2,
+        "match_mode": "recall",
+        "generated_from": "target_roles",
+    } in merged["queries"]
+    assert {
+        "query": "cybersecurity director",
+        "tier": 2,
+        "match_mode": "recall",
+        "generated_from": "target_roles",
+    } in merged["queries"]
 
 
 def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
@@ -274,10 +294,14 @@ defaults:
 
     loaded = config.load_search_config()
 
-    assert [item["query"] for item in loaded["queries"]] == [
+    assert [item["query"] for item in loaded["queries"][:2]] == [
         "Director of Engineering",
         "VP Engineering",
     ]
+    assert any(
+        item.get("query") == "engineering manager" and item.get("match_mode") == "recall"
+        for item in loaded["queries"]
+    )
     assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
     assert loaded["target_region"] == "europe"
 

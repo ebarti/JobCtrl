@@ -95,6 +95,67 @@ def test_jobspy_filters_results_by_target_title(monkeypatch):
     assert result["filtered"] == 1
 
 
+def test_jobspy_recall_title_filter_accepts_leadership_variants(monkeypatch):
+    stored_titles: list[str] = []
+
+    def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
+        return pd.DataFrame(
+            [
+                {
+                    "job_url": "https://example.test/head-technology",
+                    "title": "Head of Technology",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+                {
+                    "job_url": "https://example.test/software-engineer",
+                    "title": "Software Engineer",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+                {
+                    "job_url": "https://example.test/product-marketing-director",
+                    "title": "Product Marketing Director",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+            ]
+        )
+
+    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
+        assert run_id == "jobspy"
+        stored_titles.extend(df["title"].tolist())
+        return len(df), 0
+
+    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
+    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
+    monkeypatch.setattr(jobspy, "store_jobspy_results", fake_store)
+
+    result = jobspy._run_one_search(
+        {
+            "query": "technology director",
+            "location": "Barcelona, Spain",
+            "remote": False,
+            "match_mode": "recall",
+        },
+        ["indeed"],
+        10,
+        72,
+        None,
+        {"country_indeed": "spain"},
+        0,
+        ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+        ["United States", "Canada"],
+        ["Barcelona, Spain"],
+        {},
+        limit=10,
+    )
+
+    assert stored_titles == ["Head of Technology"]
+    assert result["new"] == 1
+    assert result["filtered"] == 2
+
+
 def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypatch):
     stored_locations: list[str] = []
 

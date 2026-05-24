@@ -314,8 +314,10 @@ classDiagram
 - Reads source registry data from packaged YAML plus local
   `source_registry_entries`.
 - Reads source-quality snapshots to schedule and budget sources.
-- Reads target search from `candidate_profiles` and overlays it onto
-  discovery search config.
+- Reads target search from `candidate_profiles` and overlays it onto discovery
+  search config as exact tier-1 role queries plus deterministic lower-tier
+  JobSpy recall queries. Workday and ATS discovery remain exact-tier by
+  default.
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.

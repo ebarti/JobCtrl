@@ -625,8 +625,8 @@ def _truthy_remote(value: object) -> bool:
     return text in {"1", "true", "yes", "remote"}
 
 
-def _title_ok(title: str | None, query: str | None) -> bool:
-    return title_matches_query(title, query)
+def _title_ok(title: str | None, query: str | None, *, match_mode: str = "strict") -> bool:
+    return title_matches_query(title, query, match_mode=match_mode)
 
 
 # -- Single search execution -------------------------------------------------
@@ -747,6 +747,7 @@ def _run_one_search(
             lambda row: _title_ok(
                 str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
                 s["query"],
+                match_mode=str(s.get("match_mode") or "strict"),
             ),
             axis=1,
         )
@@ -877,6 +878,7 @@ def _full_crawl(
                     "location": loc["location"],
                     "remote": loc.get("remote", False),
                     "tier": q.get("tier", 0),
+                    "match_mode": q.get("match_mode", "strict"),
                 }
             )
 
