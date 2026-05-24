@@ -55,6 +55,7 @@ from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
+from jobhunter.discovery.target_queries import query_applies_to_source
 from jobhunter.infrastructure.discovery.ats_adapters import (
     AshbyBoardAdapter,
     GreenhouseBoardAdapter,
@@ -1384,11 +1385,19 @@ def _query_location_pairs(search_cfg: Mapping[str, Any]) -> Iterable[tuple[str, 
     queries = [
         str(item.get("query") or "").strip()
         for item in queries_cfg
-        if isinstance(item, Mapping) and int(item.get("tier") or 99) <= int(search_cfg.get("ats_max_tier") or 2)
+        if isinstance(item, Mapping)
+        and int(item.get("tier") or 99) <= int(search_cfg.get("ats_max_tier") or 2)
+        and query_applies_to_source(item, "ats_api")
     ]
     if not queries:
-        queries = [str(item.get("query") or "").strip() for item in queries_cfg if isinstance(item, Mapping)]
-    queries = [query for query in queries if query] or [""]
+        queries = [
+            str(item.get("query") or "").strip()
+            for item in queries_cfg
+            if isinstance(item, Mapping) and query_applies_to_source(item, "ats_api")
+        ]
+    queries = [query for query in queries if query]
+    if not queries and not queries_cfg:
+        queries = [""]
     locations_cfg = search_cfg.get("locations", [])
     locations = [
         str(item.get("location") or item.get("label") or "").strip()

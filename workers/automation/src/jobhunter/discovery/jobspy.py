@@ -162,7 +162,7 @@ def store_jobspy_results(
     existing = 0
 
     for _, row in df.iterrows():
-        if limit > 0 and new + existing >= limit:
+        if limit > 0 and new >= limit:
             break
         url = str(row.get("job_url", ""))
         if not url or url == "nan":
@@ -898,13 +898,13 @@ def _full_crawl(
     completed = 0
 
     for s in searches:
-        remaining = max(limit - (total_new + total_existing), 0) if limit > 0 else 0
+        remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             break
         result = _run_one_search(
             s,
             sites,
-            min(results_per_site, remaining) if limit > 0 else results_per_site,
+            results_per_site,
             hours_old,
             proxy_config,
             defaults,

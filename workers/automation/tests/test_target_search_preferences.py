@@ -8,6 +8,8 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.infrastructure.discovery.production_wiring import _query_location_pairs
+from jobhunter.discovery.target_queries import query_applies_to_source
 
 
 def test_profile_target_search_overrides_discovery_queries_and_locations() -> None:
@@ -32,10 +34,15 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
     ]
     assert {
         "query": "technical director",
-        "tier": 2,
+        "tier": 1,
         "match_mode": "recall",
         "generated_from": "target_roles",
+        "source_scope": ["jobspy"],
     } in merged["queries"]
+    recall_query = next(item for item in merged["queries"] if item.get("query") == "technical director")
+    assert query_applies_to_source(recall_query, "jobspy")
+    assert not query_applies_to_source(recall_query, "workday")
+    assert not query_applies_to_source(recall_query, "ats_api")
     assert merged["workday_max_tier"] == 1
     assert merged["ats_max_tier"] == 1
     assert merged["locations"] == [
@@ -71,16 +78,33 @@ def test_profile_target_search_strips_role_notes_from_queries() -> None:
     ]
     assert {
         "query": "platform director",
-        "tier": 2,
+        "tier": 1,
         "match_mode": "recall",
         "generated_from": "target_roles",
+        "source_scope": ["jobspy"],
     } in merged["queries"]
     assert {
         "query": "cybersecurity director",
-        "tier": 2,
+        "tier": 1,
         "match_mode": "recall",
         "generated_from": "target_roles",
+        "source_scope": ["jobspy"],
     } in merged["queries"]
+
+
+def test_recall_queries_do_not_expand_ats_query_pairs() -> None:
+    merged = config._apply_profile_target_search(
+        {"queries": [{"query": "software engineer", "tier": 1}]},
+        {
+            "roles": ["Head of Platform"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Hybrid"],
+        },
+    )
+
+    pairs = list(_query_location_pairs(merged))
+    assert ("Head of Platform", "Barcelona, Spain") in pairs
+    assert ("platform director", "Barcelona, Spain") not in pairs
 
 
 def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
@@ -299,7 +323,10 @@ defaults:
         "VP Engineering",
     ]
     assert any(
-        item.get("query") == "engineering manager" and item.get("match_mode") == "recall"
+        item.get("query") == "engineering manager"
+        and item.get("tier") == 1
+        and item.get("match_mode") == "recall"
+        and item.get("source_scope") == ["jobspy"]
         for item in loaded["queries"]
     )
     assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]

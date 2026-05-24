@@ -30,6 +30,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.discovery.target_queries import query_applies_to_source
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.state import record_job_event
@@ -704,11 +705,15 @@ def run_workday_discovery(
 
     # Default to tier 1-2 queries for workday scraping
     max_tier = search_cfg.get("workday_max_tier", 2)
-    queries = [q["query"] for q in queries_cfg if q.get("tier", 99) <= max_tier]
+    queries = [
+        q["query"]
+        for q in queries_cfg
+        if q.get("tier", 99) <= max_tier and query_applies_to_source(q, "workday")
+    ]
 
     if not queries:
         # Fallback: use all queries
-        queries = [q["query"] for q in queries_cfg]
+        queries = [q["query"] for q in queries_cfg if query_applies_to_source(q, "workday")]
 
     if not queries:
         log.warning("No search queries configured in searches.yaml.")

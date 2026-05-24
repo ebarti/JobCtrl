@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 from jobhunter.discovery.title_filter import normalize_query
 
 
 RECALL_MATCH_MODE = "recall"
+JOBSPY_SOURCE_SCOPE = "jobspy"
 
 _RECALL_QUERY_LIMIT = 14
 
@@ -100,9 +101,10 @@ def build_target_role_queries(roles: Iterable[str]) -> list[dict[str, object]]:
         queries.append(
             {
                 "query": query,
-                "tier": 2,
+                "tier": 1,
                 "match_mode": RECALL_MATCH_MODE,
                 "generated_from": "target_roles",
+                "source_scope": [JOBSPY_SOURCE_SCOPE],
             }
         )
         exact_keys.add(key)
@@ -111,6 +113,19 @@ def build_target_role_queries(roles: Iterable[str]) -> list[dict[str, object]]:
             break
 
     return queries
+
+
+def query_applies_to_source(query: Mapping[str, object], source: str) -> bool:
+    """Return whether a query should run for the given discovery source."""
+
+    scope = query.get("source_scope")
+    if not scope:
+        return True
+    if isinstance(scope, str):
+        return scope == source
+    if isinstance(scope, Sequence):
+        return source in {str(item) for item in scope}
+    return True
 
 
 def _recall_queries_for_roles(exact_queries: list[str]) -> list[str]:

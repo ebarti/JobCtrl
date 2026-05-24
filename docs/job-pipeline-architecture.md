@@ -315,9 +315,9 @@ classDiagram
   `source_registry_entries`.
 - Reads source-quality snapshots to schedule and budget sources.
 - Reads target search from `candidate_profiles` and overlays it onto discovery
-  search config as exact tier-1 role queries plus deterministic lower-tier
-  JobSpy recall queries. Workday and ATS discovery remain exact-tier by
-  default.
+  search config as exact role queries plus deterministic JobSpy-only recall
+  queries. Recall queries keep the same search tier as exact queries because
+  scoring, not query generation, determines relevance.
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.

@@ -4,7 +4,7 @@
 
 **Goal:** Expand profile-driven discovery searches so strong non-verbatim matches are found without changing saved profile preferences or weakening location controls.
 
-**Architecture:** Keep exact target-role queries as tier 1. Add deterministic lower-tier recall queries derived from the same target-role intent, and mark those queries with a recall title-match mode so broad-board candidates can pass when they match the domain plus seniority/leadership intent. Keep Workday and ATS searches on tier 1 for now, so the larger recall net applies first to JobSpy broad-board lead generation.
+**Architecture:** Keep exact target-role queries as tier 1. Add deterministic JobSpy-only recall queries derived from the same target-role intent, keep them in the same tier, and mark them with a recall title-match mode so broad-board candidates can pass when they match the domain plus seniority/leadership intent. Relevance remains a scoring concern after discovery; query generation should not downrank candidates before they are seen.
 
 **Tech Stack:** Python worker discovery config, JobSpy adapter, shared title filtering helpers, pytest.
 
@@ -19,15 +19,15 @@
 
 - [x] **Step 1: Define deterministic exact-plus-recall query planning**
 
-Add a helper that turns target roles into ordered query dictionaries. Exact profile roles stay tier 1 with strict matching. Recall queries are tier 2, deduped against exact roles, and carry `match_mode: "recall"` plus `generated_from: "target_roles"`.
+Add a helper that turns target roles into ordered query dictionaries. Exact profile roles stay tier 1 with strict matching. Recall queries also stay tier 1, are deduped against exact roles, and carry `match_mode: "recall"`, `generated_from: "target_roles"`, and `source_scope: ["jobspy"]`.
 
 - [x] **Step 2: Wire profile target roles through the planner**
 
-Replace the direct `next_cfg["queries"] = [{"query": role, "tier": 1} ...]` assignment with the planner output. Preserve `workday_max_tier = 1` and `ats_max_tier = 1` so direct ATS crawlers do not broaden until source-level evidence supports it.
+Replace the direct `next_cfg["queries"] = [{"query": role, "tier": 1} ...]` assignment with the planner output. Preserve `workday_max_tier = 1` and `ats_max_tier = 1`, and have Workday/ATS query selection respect query `source_scope` so recall expansion does not accidentally multiply direct ATS crawls.
 
 - [x] **Step 3: Update target-search tests**
 
-Assert that exact roles remain first and tier 1, recall queries are present as tier 2, profile notes are still stripped, and Workday/ATS tier caps remain exact-only.
+Assert that exact roles remain first and tier 1, recall queries are present as tier 1 with JobSpy-only source scope, profile notes are still stripped, and Workday/ATS query selection can skip JobSpy-only recall queries.
 
 ### Task 2: Add Recall-Safe Title Matching
 
@@ -62,7 +62,21 @@ Cover strict-vs-recall differences in the title filter and a JobSpy adapter test
 
 - [x] **Step 1: Document search behavior**
 
-Update the target-search sections to state that profile roles generate exact tier-1 queries plus deterministic lower-tier broad-board recall queries, while Workday/ATS remain exact-tier by default.
+Update the target-search sections to state that profile roles generate exact queries plus same-tier JobSpy-only recall queries, and that scoring determines relevance after discovery.
+
+### Task 4: Prevent Existing Jobs From Consuming Bounded Discovery
+
+**Files:**
+- Modify: `workers/automation/src/jobhunter/discovery/jobspy.py`
+- Test: `workers/automation/tests/test_discovery_limits.py`
+
+- [x] **Step 1: Count only new jobs against JobSpy's bounded crawl limit**
+
+Update `_full_crawl()` and `store_jobspy_results()` so existing rediscoveries do not reduce the remaining new-job limit. Keep using the configured fetch size per query so an existing first result does not hide later new candidates in the same query response.
+
+- [x] **Step 2: Add regression coverage**
+
+Add tests proving an existing exact-query hit does not prevent a later recall query from running, and an existing row inside one JobSpy result set does not consume the one-new-job storage limit.
 
 - [x] **Step 2: Verify targeted Python behavior**
 
