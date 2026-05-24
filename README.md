@@ -416,9 +416,17 @@ replace the active discovery query list with exact role queries plus
 deterministic recall queries. Recall queries keep the same search tier as exact
 queries because relevance is determined after discovery by scoring, not by query
 generation. Broad-board providers such as JobSpy use those queries as retrieval
-probes. Direct ATS and Workday sources enumerate their known board/source and
-apply the same exact-plus-recall title intent internally, avoiding repeated
-board fetches for each role variant. Target locations replace the active
+probes. Direct ATS, Workday, and source-first Smart Extract sources enumerate
+their known board/source and apply the same exact-plus-recall title intent
+internally, avoiding repeated board fetches for each role variant. Smart
+Extract search-only sources still fan out by query when the source has no
+useful browse/all-jobs page. Canonical ATS rows must include a usable
+description before insertion; Greenhouse reads the public board content payload
+instead of creating blank-description rows. Each discovery run also performs a
+source hygiene pass across JobSpy, direct ATS, Workday, and Smart Extract rows
+so active jobs that no longer satisfy the current title, location, or
+description contract are soft-deleted instead of remaining visible. Target
+locations replace the active
 location list, and if target locations are blank the worker falls back to the
 profile city/country. Target locations are validated as real places before they
 can be saved. Hybrid and on-site target work models search and filter only the

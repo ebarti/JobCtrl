@@ -9,6 +9,13 @@ from jobhunter.database import close_connection, init_db
 from jobhunter.discovery import jobspy
 
 
+_JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
+
+
+def _jobspy_frame(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame([{"description": _JOBSPY_DESCRIPTION, **row} for row in rows])
+
+
 def test_jobspy_limit_stops_after_one_new_job(monkeypatch):
     calls: list[tuple[str, str, list[str], int, int]] = []
 
@@ -89,7 +96,7 @@ def test_jobspy_filters_results_by_target_title(monkeypatch):
     stored_titles: list[str] = []
 
     def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        return pd.DataFrame(
+        return _jobspy_frame(
             [
                 {
                     "job_url": "https://example.test/marketing",
@@ -139,7 +146,7 @@ def test_jobspy_recall_title_filter_accepts_leadership_variants(monkeypatch):
     stored_titles: list[str] = []
 
     def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        return pd.DataFrame(
+        return _jobspy_frame(
             [
                 {
                     "job_url": "https://example.test/head-technology",
@@ -200,7 +207,7 @@ def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypat
     stored_locations: list[str] = []
 
     def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        return pd.DataFrame(
+        return _jobspy_frame(
             [
                 {
                     "job_url": "https://example.test/la-rinconada",
@@ -279,7 +286,7 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        first = pd.DataFrame(
+        first = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/1",
@@ -298,7 +305,7 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
 
         conn.execute("UPDATE jobs SET company = '' WHERE url = ?", ("https://www.linkedin.com/jobs/view/1",))
         conn.commit()
-        duplicate = pd.DataFrame(
+        duplicate = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/1",
@@ -324,11 +331,147 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
         close_connection(db_path)
 
 
+def test_jobspy_store_filters_rows_without_descriptions_before_limit(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        results = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/no-description",
+                    "title": "Head of Engineering",
+                    "company": "Missing Description Co",
+                    "description": "",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/with-description",
+                    "title": "Head of Engineering",
+                    "company": "With Description Co",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, results, "Head of Engineering", limit=1) == (1, 0)
+        urls = {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()}
+        assert urls == {"https://www.linkedin.com/jobs/view/with-description"}
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_store_filters_null_description_sentinels(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        results = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/none-description",
+                    "title": "Head of Engineering",
+                    "company": "None Description Co",
+                    "description": None,
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/na-description",
+                    "title": "Head of Engineering",
+                    "company": "NA Description Co",
+                    "description": pd.NA,
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/string-none-description",
+                    "title": "Head of Engineering",
+                    "company": "String None Description Co",
+                    "description": "None",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, results, "Head of Engineering", limit=10) == (0, 0)
+        assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_existing_row_refreshes_metadata_before_restore(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/stale"
+    try:
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                url,
+                "Stale Support Role",
+                "",
+                "",
+                "United States (Remote)",
+                "linkedin",
+                "jobspy",
+                "2026-05-20T00:00:00+00:00",
+            ),
+        )
+        jobspy._ensure_deleted_jobs_table(conn)
+        conn.execute(
+            """
+            INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            VALUES (?, ?, ?, NULL)
+            """,
+            (url, "2026-05-21T00:00:00+00:00", "stale invalid row"),
+        )
+        conn.commit()
+
+        description = ("Lead engineering teams in Spain. " * 12).strip()
+        rediscovered = _jobspy_frame(
+            [
+                {
+                    "job_url": url,
+                    "title": "Head of Engineering",
+                    "company": "Keyrock",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                    "description": description,
+                }
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, rediscovered, "Head of Engineering", limit=1) == (0, 1)
+        row = conn.execute(
+            "SELECT title, company, description, full_description, location FROM jobs WHERE url = ?",
+            (url,),
+        ).fetchone()
+        assert dict(row) == {
+            "title": "Head of Engineering",
+            "company": "Keyrock",
+            "description": description,
+            "full_description": description,
+            "location": "Barcelona, Spain",
+        }
+        tombstone = conn.execute(
+            "SELECT restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
+            (url,),
+        ).fetchone()
+        assert tombstone["restored_at"] is not None
+    finally:
+        close_connection(db_path)
+
+
 def test_jobspy_store_limit_counts_new_jobs_not_existing_observations(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        existing = pd.DataFrame(
+        existing = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/existing",
@@ -341,7 +484,7 @@ def test_jobspy_store_limit_counts_new_jobs_not_existing_observations(tmp_path):
         )
         assert jobspy.store_jobspy_results(conn, existing, "Head of Engineering", limit=1) == (1, 0)
 
-        mixed = pd.DataFrame(
+        mixed = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/existing",
@@ -386,7 +529,7 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
     conn = init_db(db_path)
     try:
         direct_url = "https://boards.greenhouse.io/acme/jobs/123456"
-        frame = pd.DataFrame(
+        frame = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/4416248661",
@@ -459,7 +602,7 @@ def test_jobspy_deduplicates_learned_sources_for_same_owner(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        frame = pd.DataFrame(
+        frame = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/1",
@@ -499,7 +642,7 @@ def test_jobspy_surfaces_ambiguous_direct_urls_for_source_review(tmp_path):
     conn = init_db(db_path)
     try:
         direct_url = "https://careers.example.com/platform-engineer"
-        frame = pd.DataFrame(
+        frame = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/9",
@@ -545,7 +688,7 @@ def test_jobspy_keeps_learned_workday_sources_in_review_until_runnable(tmp_path)
     conn = init_db(db_path)
     try:
         direct_url = "https://acme.wd1.myworkdayjobs.com/en-US/acme/job/Platform-Engineer_JR-123"
-        frame = pd.DataFrame(
+        frame = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/12",
@@ -609,7 +752,7 @@ def test_jobspy_ignores_missing_direct_url_for_source_learning(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        frame = pd.DataFrame(
+        frame = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/10",
@@ -641,7 +784,7 @@ def test_jobspy_rejects_same_content_location_variants(tmp_path):
     conn = init_db(db_path)
     description = "Lead security engineering, compliance, identity, and platform risk. " * 8
     try:
-        first = pd.DataFrame(
+        first = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/4416248661",
@@ -655,7 +798,7 @@ def test_jobspy_rejects_same_content_location_variants(tmp_path):
         )
         assert jobspy.store_jobspy_results(conn, first, "Security Engineering", limit=10) == (1, 0)
 
-        duplicate = pd.DataFrame(
+        duplicate = _jobspy_frame(
             [
                 {
                     "job_url": "https://www.linkedin.com/jobs/view/4416235850",
@@ -695,7 +838,7 @@ def test_jobspy_content_dedupe_normalizes_typographic_punctuation(tmp_path):
     curly_description = "Own Vonage\u2019s platform services and partner APIs. " * 8
     straight_description = "Own Vonage's platform services and partner APIs. " * 8
     try:
-        first = pd.DataFrame(
+        first = _jobspy_frame(
             [
                 {
                     "job_url": "https://es.indeed.com/viewjob?jk=curly",
@@ -709,7 +852,7 @@ def test_jobspy_content_dedupe_normalizes_typographic_punctuation(tmp_path):
         )
         assert jobspy.store_jobspy_results(conn, first, "Product", limit=10) == (1, 0)
 
-        duplicate = pd.DataFrame(
+        duplicate = _jobspy_frame(
             [
                 {
                     "job_url": "https://es.indeed.com/viewjob?jk=straight",
@@ -734,7 +877,7 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
     survivor_url = "https://es.indeed.com/viewjob?jk=canonical"
     duplicate_url = "https://es.indeed.com/viewjob?jk=duplicate"
     try:
-        first = pd.DataFrame(
+        first = _jobspy_frame(
             [
                 {
                     "job_url": survivor_url,
@@ -776,7 +919,7 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         )
         conn.commit()
 
-        rediscovered = pd.DataFrame(
+        rediscovered = _jobspy_frame(
             [
                 {
                     "job_url": duplicate_url,
@@ -808,7 +951,7 @@ def test_jobspy_normalizes_source_locations_before_storage(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        results = pd.DataFrame(
+        results = _jobspy_frame(
             [
                 {
                     "job_url": "https://es.indeed.com/viewjob?jk=remote-spain",

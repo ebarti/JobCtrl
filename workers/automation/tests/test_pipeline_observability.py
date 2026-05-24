@@ -93,6 +93,8 @@ def test_discover_emits_source_events(monkeypatch):
     assert source_events == [
         ("StageStarted", "jobspy"),
         ("StageCompleted", "jobspy"),
+        ("StageStarted", "ats_api"),
+        ("StageCompleted", "ats_api"),
         ("StageStarted", "workday"),
         ("StageCompleted", "workday"),
         ("StageStarted", "smartextract"),
@@ -132,7 +134,7 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
 
     result = runner._run_discover(workers=4, limit=1)
 
-    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
     assert calls == [
         ("jobspy", 1, None),
         ("workday", 1, 4),
@@ -173,7 +175,7 @@ def test_discover_passes_remaining_limit_to_downstream_sources(monkeypatch):
 
     result = runner._run_discover(workers=4, limit=10)
 
-    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
     assert calls == [("jobspy", 10), ("workday", 4), ("smartextract", 2)]
 
 
@@ -287,8 +289,31 @@ def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:
             "name": "WelcomeToTheJungle",
             "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
             "type": "search",
+            "query_mode": "search_only",
         }
     ]
+
+
+def test_smart_extract_sites_preserve_configured_query_mode() -> None:
+    source = runner.ScheduledSource(
+        source_id="smart_extract:wellfound",
+        display_name="Wellfound",
+        source_kind=SourceKind.SMART_EXTRACT,
+        priority=SourcePriority.FALLBACK,
+        configured_state=SourceState.EXPERIMENTAL,
+        crawl_budget=1,
+        decision="run",
+        reason="test",
+        recommended_state="normal",
+        adapter_config={
+            "name": "Wellfound",
+            "url": "https://wellfound.com/location/spain",
+            "type": "search",
+            "query_mode": "source_first",
+        },
+    )
+
+    assert runner._smart_extract_sites((source,))[0]["query_mode"] == "source_first"
 
 
 def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
@@ -349,7 +374,7 @@ def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate
     result = runner._run_discover(workers=4, limit=1)
 
     assert calls == ["jobspy", "workday", "smartextract"]
-    assert result == {"jobspy": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
 
 
 def test_enrich_limit_propagates_to_runner(monkeypatch):

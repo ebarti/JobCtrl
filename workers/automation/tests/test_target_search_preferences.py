@@ -42,6 +42,8 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
     assert query_applies_to_source(recall_query, "jobspy")
     assert query_applies_to_source(recall_query, "workday")
     assert query_applies_to_source(recall_query, "ats_api")
+    assert query_applies_to_source({"query": "Engineering", "source_scope": "smart_extract"}, "smartextract")
+    assert query_applies_to_source({"query": "Engineering", "source_scope": "smartextract"}, "smart_extract")
     assert merged["workday_max_tier"] == 1
     assert merged["ats_max_tier"] == 1
     assert merged["locations"] == [
@@ -428,6 +430,7 @@ def test_local_source_registry_row_preserves_search_site_type(tmp_path, monkeypa
                     "name": "WelcomeToTheJungle",
                     "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
                     "type": "search",
+                    "query_mode": "source_first",
                 }
             ]
         },
@@ -436,3 +439,4 @@ def test_local_source_registry_row_preserves_search_site_type(tmp_path, monkeypa
 
     by_id = {entry.source_id: entry for entry in registry}
     assert by_id["smart_extract:welcometothejungle"].adapter_config["type"] == "search"
+    assert by_id["smart_extract:welcometothejungle"].adapter_config["query_mode"] == "source_first"

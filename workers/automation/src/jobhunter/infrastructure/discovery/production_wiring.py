@@ -62,7 +62,10 @@ from jobhunter.infrastructure.discovery.ats_adapters import (
     HttpFetcher,
     LeverBoardAdapter,
 )
-from jobhunter.infrastructure.discovery.location_filter import configured_location_filters
+from jobhunter.infrastructure.discovery.location_filter import (
+    configured_location_filters,
+    location_matches_target,
+)
 from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.infrastructure.enrichment import (
     SqliteEnrichmentRepository,
@@ -500,6 +503,8 @@ def run_scheduled_ats_sources(
                 ):
                     if not title_matches_any_query(posting.metadata.title, query_specs):
                         continue
+                    if not str(posting.metadata.description or "").strip():
+                        continue
                     posting_key = _scraped_posting_key(posting)
                     if posting_key in seen_postings:
                         continue
@@ -534,6 +539,221 @@ def run_scheduled_ats_sources(
         sources_run=tuple(sources_run),
         failed_sources=tuple(failed_sources),
     ).to_result_dict()
+
+
+def retire_invalid_source_jobs(
+    conn: sqlite3.Connection,
+    *,
+    search_cfg: Mapping[str, Any],
+    run_id: str = "discovery:hygiene",
+) -> dict[str, Any]:
+    """Soft-delete active discovered jobs that fail today's discovery contract."""
+
+    ensure_source_observation_tables(conn)
+    ensure_enrichment_tables(conn)
+    _ensure_deleted_jobs_table(conn)
+    query_specs_by_family = {
+        "ats_api": tuple(_ats_query_specs(search_cfg)),
+        "jobspy": tuple(query_specs_for_source(search_cfg.get("queries", []), "jobspy")),
+        "smartextract": tuple(
+            query_specs_for_source(search_cfg.get("queries", []), "smartextract")
+        ),
+        "workday": tuple(
+            query_specs_for_source(
+                search_cfg.get("queries", []),
+                "workday",
+                max_tier=int(search_cfg.get("workday_max_tier") or 2),
+            )
+        ),
+    }
+    if not query_specs_by_family["workday"]:
+        query_specs_by_family["workday"] = tuple(
+            query_specs_for_source(search_cfg.get("queries", []), "workday")
+        )
+    accept_locs, reject_locs = configured_location_filters(search_cfg)
+    locations = tuple(_location_values(search_cfg))
+    now = utc_now()
+    retired: list[dict[str, str]] = []
+
+    rows = conn.execute(
+        """
+        SELECT
+            j.url,
+            COALESCE(j.title, '') AS title,
+            COALESCE(j.location, '') AS location,
+            COALESCE(e.full_description, '') AS enrichment_description,
+            COALESCE(j.full_description, '') AS job_full_description,
+            COALESCE(j.description, '') AS job_description,
+            COALESCE(j.strategy, '') AS strategy,
+            COALESCE(c.ats_kind, '') AS ats_kind,
+            COALESCE(MIN(o.source_id), '') AS source_id
+        FROM jobs j
+        LEFT JOIN job_enrichments e
+          ON e.tenant_id = ? AND e.job_url = j.url
+        LEFT JOIN job_canonical_identities c
+          ON c.tenant_id = ? AND c.job_url = j.url
+        LEFT JOIN job_source_observations o
+          ON o.tenant_id = ? AND o.job_url = j.url
+        LEFT JOIN jobhunter_deleted_jobs d
+          ON d.job_url = j.url AND d.restored_at IS NULL
+        WHERE d.job_url IS NULL
+        GROUP BY j.url
+        """,
+        (str(LOCAL_TENANT), str(LOCAL_TENANT), str(LOCAL_TENANT)),
+    ).fetchall()
+
+    for row in rows:
+        family = _source_family(
+            source_id=str(row["source_id"] or ""),
+            strategy=str(row["strategy"] or ""),
+            ats_kind=str(row["ats_kind"] or ""),
+        )
+        if family is None:
+            continue
+        reasons = _source_rejection_reasons(
+            title=str(row["title"] or ""),
+            location=str(row["location"] or ""),
+            description=_first_usable_description(
+                row["enrichment_description"],
+                row["job_full_description"],
+                row["job_description"],
+            ),
+            query_specs=query_specs_by_family.get(family, ()),
+            accept_locs=accept_locs,
+            reject_locs=reject_locs,
+            locations=locations,
+        )
+        if not reasons:
+            continue
+        source_id = str(row["source_id"] or row["ats_kind"] or family)
+        reason = f"discovery hygiene rejected {source_id}: {', '.join(reasons)}"
+        job_url = str(row["url"])
+        conn.execute(
+            """
+            INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at)
+            VALUES (?, ?, ?, NULL)
+            ON CONFLICT(job_url) DO UPDATE SET
+                deleted_at = excluded.deleted_at,
+                reason = excluded.reason,
+                restored_at = NULL
+            """,
+            (job_url, now, reason),
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "discover",
+            "JobDeleted",
+            message=reason,
+            payload={
+                "job_id": job_url,
+                "reason": reason,
+                "deleted_at": now,
+                "run_id": run_id,
+                "source_id": source_id,
+                "rejection_reasons": reasons,
+            },
+            occurred_at=now,
+        )
+        retired.append({"job_url": job_url, "reason": reason})
+
+    if retired:
+        conn.commit()
+    return {"retired_jobs": len(retired), "jobs": retired}
+
+
+def retire_invalid_canonical_ats_jobs(
+    conn: sqlite3.Connection,
+    *,
+    search_cfg: Mapping[str, Any],
+    run_id: str = "discovery:hygiene",
+) -> dict[str, Any]:
+    """Backward-compatible wrapper for the broader source hygiene pass."""
+
+    return retire_invalid_source_jobs(conn, search_cfg=search_cfg, run_id=run_id)
+
+
+def _source_family(*, source_id: str, strategy: str, ats_kind: str) -> str | None:
+    if ats_kind in {"greenhouse", "lever", "ashby"} or source_id.startswith(
+        ("greenhouse:", "lever:", "ashby:")
+    ):
+        return "ats_api"
+    if ats_kind == "workday" or source_id.startswith("workday:") or strategy == "workday_api":
+        return "workday"
+    if source_id.startswith("jobspy:") or strategy == "jobspy":
+        return "jobspy"
+    if source_id.startswith("smart_extract:") or strategy in {
+        "api_response",
+        "css_selectors",
+        "json_ld",
+        "smart_extract",
+        "static",
+    }:
+        return "smartextract"
+    return None
+
+
+_NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
+
+
+def _first_usable_description(*values: object) -> str:
+    for value in values:
+        text = _usable_description_text(value)
+        if text:
+            return text
+    return ""
+
+
+def _usable_description_text(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.casefold() in _NULL_DESCRIPTION_SENTINELS:
+        return ""
+    return text
+
+
+def _source_rejection_reasons(
+    *,
+    title: str,
+    location: str,
+    description: str,
+    query_specs: tuple[dict[str, object], ...],
+    accept_locs: list[str],
+    reject_locs: list[str],
+    locations: tuple[str, ...],
+) -> list[str]:
+    reasons: list[str] = []
+    effective_accept_locs = accept_locs or [location for location in locations if location]
+    if not _usable_description_text(description):
+        reasons.append("missing_description")
+    if query_specs and not title_matches_any_query(title, query_specs):
+        reasons.append("title_mismatch")
+    if not any(
+        location_matches_target(
+            location,
+            accept=effective_accept_locs,
+            reject=reject_locs,
+            search_location=target_location,
+        )
+        for target_location in locations
+    ):
+        reasons.append("location_mismatch")
+    return reasons
+
+
+def _ensure_deleted_jobs_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            job_url TEXT PRIMARY KEY,
+            deleted_at TEXT NOT NULL,
+            reason TEXT,
+            restored_at TEXT,
+            FOREIGN KEY(job_url) REFERENCES jobs(url)
+        )
+        """
+    )
 
 
 def _scraped_posting_key(posting: ScrapedJobPosting) -> tuple[str, str, str]:

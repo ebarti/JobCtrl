@@ -72,6 +72,112 @@ def test_workday_store_results_publishes_discovery_events(
     assert json.loads(observed["payload_json"])["source_id"] == "workday:acme"
 
 
+def test_workday_store_results_rejects_blank_descriptions_before_limit(
+    conn: sqlite3.Connection,
+) -> None:
+    jobs = [
+        {
+            "title": "Director of Engineering",
+            "location": "Barcelona, Spain",
+            "external_path": "/External/job/Barcelona/Director-of-Engineering_JR-blank",
+            "apply_url": "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-blank",
+            "job_req_id": "JR-blank",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": "",
+        },
+        {
+            "title": "Director of Engineering",
+            "location": "Barcelona, Spain",
+            "external_path": "/External/job/Barcelona/Director-of-Engineering_JR-valid",
+            "apply_url": "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-valid",
+            "job_req_id": "JR-valid",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": "Lead engineering teams building local-first products.",
+        },
+    ]
+    employers = {
+        "acme": {
+            "name": "Acme",
+            "base_url": "https://acme.wd1.myworkdayjobs.com",
+            "site_id": "External",
+            "_source_id": "workday:acme",
+        }
+    }
+
+    new, existing = store_results(
+        conn,
+        jobs,
+        employers,
+        limit=1,
+        run_id="discovery:workday:test",
+    )
+
+    assert (new, existing) == (1, 0)
+    rows = conn.execute("SELECT url, description FROM jobs").fetchall()
+    assert [(row["url"], row["description"]) for row in rows] == [
+        (
+            "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-valid",
+            "Lead engineering teams building local-first products."[:500],
+        )
+    ]
+
+
+@pytest.mark.parametrize("description", ["None", "nan", "<NA>"])
+def test_workday_store_results_rejects_serialized_null_descriptions_before_limit(
+    conn: sqlite3.Connection,
+    description: str,
+) -> None:
+    jobs = [
+        {
+            "title": "Director of Engineering",
+            "location": "Barcelona, Spain",
+            "external_path": "/External/job/Barcelona/Director-of-Engineering_JR-sentinel",
+            "apply_url": "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-sentinel",
+            "job_req_id": "JR-sentinel",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": description,
+        },
+        {
+            "title": "Director of Engineering",
+            "location": "Barcelona, Spain",
+            "external_path": "/External/job/Barcelona/Director-of-Engineering_JR-valid",
+            "apply_url": "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-valid",
+            "job_req_id": "JR-valid",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": "Lead engineering teams building local-first products.",
+        },
+    ]
+    employers = {
+        "acme": {
+            "name": "Acme",
+            "base_url": "https://acme.wd1.myworkdayjobs.com",
+            "site_id": "External",
+            "_source_id": "workday:acme",
+        }
+    }
+
+    new, existing = store_results(
+        conn,
+        jobs,
+        employers,
+        limit=1,
+        run_id="discovery:workday:test",
+    )
+
+    assert (new, existing) == (1, 0)
+    rows = conn.execute("SELECT url, description FROM jobs").fetchall()
+    assert [(row["url"], row["description"]) for row in rows] == [
+        (
+            "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-valid",
+            "Lead engineering teams building local-first products."[:500],
+        )
+    ]
+
+
 def test_workday_search_rejects_loose_title_matches(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_search(_employer: dict, _search_text: str, *, limit: int, offset: int) -> dict:
         assert limit == 20

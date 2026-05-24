@@ -28,10 +28,13 @@ from __future__ import annotations
 
 import json
 import logging
+import html
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Iterator
+
+from bs4 import BeautifulSoup
 
 from jobhunter.domain.discovery.identity import AtsKind
 from jobhunter.domain.discovery.value_objects import (
@@ -47,6 +50,8 @@ from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.observability.adapter_spans import adapter_fetch_span
 
 log = logging.getLogger(__name__)
+
+_NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +304,7 @@ class GreenhouseBoardAdapter:
 
     @property
     def url(self) -> str:
-        return f"https://boards-api.greenhouse.io/v1/boards/{self._board_token}/jobs"
+        return f"https://boards-api.greenhouse.io/v1/boards/{self._board_token}/jobs?content=true"
 
     def scrape(
         self,
@@ -357,6 +362,9 @@ class GreenhouseBoardAdapter:
             search_location=location,
         ):
             return None
+        description = _html_to_text(raw.get("content"))
+        if not description:
+            return None
         company = str(raw.get("company_name") or self._company or "").strip()
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=canonical_url),
@@ -364,7 +372,7 @@ class GreenhouseBoardAdapter:
             metadata=JobMetadata(
                 title=title,
                 salary="",
-                description="",
+                description=description,
                 location=loc,
             ),
             strategy=SearchStrategy.WORKDAY_API,  # ATS family marker
@@ -461,6 +469,9 @@ class LeverBoardAdapter:
             search_location=location,
         ):
             return None
+        description = _lever_description(raw)
+        if not description:
+            return None
         company = self._company or f"lever:{self._site}"
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=hosted_url),
@@ -468,7 +479,7 @@ class LeverBoardAdapter:
             metadata=JobMetadata(
                 title=text,
                 salary="",
-                description="",
+                description=description,
                 location=loc,
             ),
             strategy=SearchStrategy.WORKDAY_API,
@@ -563,6 +574,9 @@ class AshbyBoardAdapter:
             search_location=location,
         ):
             return None
+        description = _ashby_description(raw)
+        if not description:
+            return None
         company = self._company or f"ashby:{self._board_name}"
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=job_url),
@@ -570,7 +584,7 @@ class AshbyBoardAdapter:
             metadata=JobMetadata(
                 title=title,
                 salary="",
-                description="",
+                description=description,
                 location=loc,
             ),
             strategy=SearchStrategy.WORKDAY_API,
@@ -579,6 +593,43 @@ class AshbyBoardAdapter:
             canonical_url=job_url,
             ats_kind=AtsKind.ASHBY,
         )
+
+
+def _lever_description(raw: dict[str, Any]) -> str:
+    parts = [
+        _html_to_text(raw.get("descriptionPlain") or raw.get("description")),
+        _html_to_text(raw.get("additionalPlain") or raw.get("additional")),
+    ]
+    lists = raw.get("lists") or []
+    if isinstance(lists, list):
+        for item in lists:
+            if isinstance(item, dict):
+                parts.append(_html_to_text(item.get("content")))
+    return _collapse_text("\n\n".join(part for part in parts if part))
+
+
+def _ashby_description(raw: dict[str, Any]) -> str:
+    return _html_to_text(
+        raw.get("descriptionPlain")
+        or raw.get("descriptionHtml")
+        or raw.get("description")
+        or raw.get("jobDescription")
+    )
+
+
+def _html_to_text(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw or raw.casefold() in _NULL_DESCRIPTION_SENTINELS:
+        return ""
+    unescaped = html.unescape(raw)
+    text = BeautifulSoup(unescaped, "html.parser").get_text(" ")
+    if text.strip().casefold() in _NULL_DESCRIPTION_SENTINELS:
+        return ""
+    return _collapse_text(text)
+
+
+def _collapse_text(value: str) -> str:
+    return " ".join(str(value or "").split())
 
 
 __all__ = [
