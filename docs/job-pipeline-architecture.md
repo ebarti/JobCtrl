@@ -245,15 +245,15 @@ sequenceDiagram
     Runner->>DB: init_db
     Runner->>DB: refresh source-control rows idempotently
     Runner->>QueryPlanner: compile profile target roles and locations
-    QueryPlanner-->>Runner: exact queries plus scoped recall queries
+    QueryPlanner-->>Runner: exact queries plus recall query filters
     Runner->>Scheduler: plan(registry, source quality, global limit)
     Scheduler-->>Runner: DiscoverySchedule
 
     Runner->>JobSpy: run_discovery(cfg with exact plus recall queries)
     JobSpy->>DB: insert jobs, broad-board observations, learned source candidates
-    Runner->>ATS: run scheduled canonical sources with in-scope queries
+    Runner->>ATS: enumerate scheduled canonical sources and filter internally
     ATS->>DB: create canonical jobs and source observations
-    Runner->>Workday: run configured employers with in-scope queries
+    Runner->>Workday: enumerate configured employers and filter internally
     Workday->>DB: insert/update jobs and observations
     Runner->>Smart: run_smart_extract(...)
     Smart->>DB: insert jobs, quarantine, manual-capture queue
@@ -278,6 +278,7 @@ classDiagram
     class TargetQueryPlanner {
       +build_target_role_queries(roles)
       +query_applies_to_source(query, source)
+      +title_matches_any_query(title, queries)
     }
     class DiscoverySchedule {
       +for_prefix(prefix)
@@ -324,23 +325,19 @@ classDiagram
   `source_registry_entries`.
 - Reads source-quality snapshots to schedule and budget sources.
 - Reads target search from `candidate_profiles` and overlays it onto discovery
-  search config as exact role queries plus deterministic JobSpy-only recall
-  queries. Recall queries keep the same search tier as exact queries because
-  scoring, not query generation, determines relevance.
+  search config as exact role queries plus deterministic recall queries. Recall
+  queries keep the same search tier as exact queries because scoring, not query
+  generation, determines relevance.
 - Compiles target roles into two query kinds:
   - exact queries, copied from the saved profile role text after note stripping;
   - recall queries, generated from the same target-role intent and marked with
-    `match_mode=recall`, `generated_from=target_roles`, and
-    `source_scope=["jobspy"]`.
-- Treats `source_scope` as an execution guard, not a relevance score. JobSpy is
-  the breadth layer: one query fans out across broad boards and many employers,
-  so recall expansion increases candidate coverage before scoring. Workday and
-  canonical ATS adapters are the source-verification layer: they run against
-  known employer/ATS sources, so applying the same recall expansion there would
-  multiply `queries x sources` before source-specific evidence says that source
-  is worth a broader crawl. Direct sources still run exact profile queries and
-  can become broader later through explicit source configuration, learned
-  runnable-source promotion, or manual/source-locator review.
+    `match_mode=recall` and `generated_from=target_roles`.
+- Applies exact-plus-recall intent to every discovery source family, but the
+  execution shape differs by source type. JobSpy is a broad-board retrieval
+  provider, so exact and recall queries are sent as external search probes.
+  Direct ATS and Workday sources are known boards/employers, so they enumerate
+  the source once per location and run exact-plus-recall title matching
+  internally instead of multiplying `queries x sources`.
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.

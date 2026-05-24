@@ -360,6 +360,42 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
     assert ats_kinds == {"greenhouse", "lever", "ashby"}
 
 
+def test_canonical_ats_scheduler_fetches_each_source_once_then_filters_queries(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    ats_sources = schedule.for_kinds(SourceKind.ATS_API)
+    calls: list[str] = []
+
+    def http(url: str, **kwargs: Any) -> Any:
+        calls.append(url)
+        return _fake_ats_http(url, **kwargs)
+
+    result = run_scheduled_ats_sources(
+        conn,
+        ats_sources,
+        search_cfg={
+            "queries": [
+                {"query": "Engineering", "tier": 1},
+                {
+                    "query": "platform director",
+                    "tier": 1,
+                    "match_mode": "recall",
+                    "generated_from": "target_roles",
+                },
+            ],
+            "locations": [{"location": "Spain"}],
+            "ats_max_tier": 1,
+        },
+        run_id="acceptance:ats",
+        http=http,
+    )
+
+    assert result["new_jobs"] == 3
+    assert len(calls) == 3
+
+
 def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
     conn: sqlite3.Connection,
 ) -> None:

@@ -159,7 +159,6 @@ _AMERICA_ONLY_SOURCE_MARKERS = (
     "eluta.ca",
     "smart_extract:dice",
     "dice.com",
-    "smart_extract:wellfound",
     "wellfound.com/role/l/software-engineer/canada",
 )
 
@@ -775,6 +774,12 @@ def _url_has_search_placeholder(url: str) -> bool:
     return "{query_encoded}" in url or "{query}" in url
 
 
+def _row_overrides_adapter_config(row: sqlite3.Row, existing: SourceRegistryEntry | None) -> bool:
+    if existing is None:
+        return True
+    return str(row["owner"] or "").strip().lower() != "system"
+
+
 def _merge_local_source_registry(
     base_registry: list[SourceRegistryEntry],
 ) -> list[SourceRegistryEntry]:
@@ -801,7 +806,8 @@ def _merge_local_source_registry(
             existing.state if existing else SourceState.EXPERIMENTAL,
         )
         adapter_config = dict(existing.adapter_config) if existing else {}
-        adapter_config.update(_adapter_config_from_row(row))
+        if _row_overrides_adapter_config(row, existing):
+            adapter_config.update(_adapter_config_from_row(row))
         display_name = str(row["display_name"] or (existing.display_name if existing else source_id))
         owner = str(row["owner"] or (existing.owner if existing else "user"))
         merged[source_id] = _validated_source(

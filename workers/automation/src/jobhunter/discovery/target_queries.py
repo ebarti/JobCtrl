@@ -6,10 +6,10 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 
 from jobhunter.discovery.title_filter import normalize_query
+from jobhunter.discovery.title_filter import title_matches_query
 
 
 RECALL_MATCH_MODE = "recall"
-JOBSPY_SOURCE_SCOPE = "jobspy"
 
 _RECALL_QUERY_LIMIT = 14
 
@@ -104,7 +104,6 @@ def build_target_role_queries(roles: Iterable[str]) -> list[dict[str, object]]:
                 "tier": 1,
                 "match_mode": RECALL_MATCH_MODE,
                 "generated_from": "target_roles",
-                "source_scope": [JOBSPY_SOURCE_SCOPE],
             }
         )
         exact_keys.add(key)
@@ -126,6 +125,49 @@ def query_applies_to_source(query: Mapping[str, object], source: str) -> bool:
     if isinstance(scope, Sequence):
         return source in {str(item) for item in scope}
     return True
+
+
+def query_specs_for_source(
+    queries: Iterable[Mapping[str, object]],
+    source: str,
+    *,
+    max_tier: int | None = None,
+) -> list[dict[str, object]]:
+    """Return target query specs that should run or match for a source."""
+
+    result: list[dict[str, object]] = []
+    for item in queries:
+        if not isinstance(item, Mapping) or not query_applies_to_source(item, source):
+            continue
+        if max_tier is not None and int(item.get("tier") or 99) > max_tier:
+            continue
+        query = str(item.get("query") or "").strip()
+        if not query:
+            continue
+        result.append(
+            {
+                "query": query,
+                "match_mode": str(item.get("match_mode") or "strict"),
+                "tier": int(item.get("tier") or 99),
+            }
+        )
+    return result
+
+
+def title_matches_any_query(title: str | None, queries: Iterable[Mapping[str, object]]) -> bool:
+    """Return whether a title matches at least one exact or recall query spec."""
+
+    materialized = list(queries)
+    if not materialized:
+        return True
+    return any(
+        title_matches_query(
+            title,
+            str(item.get("query") or ""),
+            match_mode=str(item.get("match_mode") or "strict"),
+        )
+        for item in materialized
+    )
 
 
 def _recall_queries_for_roles(exact_queries: list[str]) -> list[str]:

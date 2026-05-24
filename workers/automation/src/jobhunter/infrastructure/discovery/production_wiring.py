@@ -55,7 +55,7 @@ from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
-from jobhunter.discovery.target_queries import query_applies_to_source
+from jobhunter.discovery.target_queries import query_specs_for_source, title_matches_any_query
 from jobhunter.infrastructure.discovery.ats_adapters import (
     AshbyBoardAdapter,
     GreenhouseBoardAdapter,
@@ -482,20 +482,28 @@ def run_scheduled_ats_sources(
     sources_run: list[str] = []
     failed_sources: list[str] = []
     remaining = limit if limit > 0 else None
-    pairs = tuple(_query_location_pairs(search_cfg))
+    query_specs = tuple(_ats_query_specs(search_cfg))
+    locations = tuple(_location_values(search_cfg))
     for adapter in adapters:
         if remaining is not None and remaining <= 0:
             break
         postings: list[ScrapedJobPosting] = []
+        seen_postings: set[tuple[str, str, str]] = set()
         try:
-            for query, location in pairs:
+            for location in locations:
                 if remaining is not None and remaining <= 0:
                     break
                 for posting in adapter.scrape(
                     tenant_id=LOCAL_TENANT,
-                    query=query,
+                    query="",
                     location=location,
                 ):
+                    if not title_matches_any_query(posting.metadata.title, query_specs):
+                        continue
+                    posting_key = _scraped_posting_key(posting)
+                    if posting_key in seen_postings:
+                        continue
+                    seen_postings.add(posting_key)
                     postings.append(posting)
                     if remaining is not None:
                         remaining -= 1
@@ -526,6 +534,14 @@ def run_scheduled_ats_sources(
         sources_run=tuple(sources_run),
         failed_sources=tuple(failed_sources),
     ).to_result_dict()
+
+
+def _scraped_posting_key(posting: ScrapedJobPosting) -> tuple[str, str, str]:
+    return (
+        str(posting.source_id or ""),
+        str(posting.source_native_id or ""),
+        str(posting.canonical_url or posting.posting_url.value),
+    )
 
 
 def import_manual_capture_item(
@@ -1380,24 +1396,22 @@ def _adapter_for_source(
     return None
 
 
-def _query_location_pairs(search_cfg: Mapping[str, Any]) -> Iterable[tuple[str, str]]:
+def _ats_query_specs(search_cfg: Mapping[str, Any]) -> tuple[dict[str, object], ...]:
     queries_cfg = search_cfg.get("queries", [])
-    queries = [
-        str(item.get("query") or "").strip()
-        for item in queries_cfg
-        if isinstance(item, Mapping)
-        and int(item.get("tier") or 99) <= int(search_cfg.get("ats_max_tier") or 2)
-        and query_applies_to_source(item, "ats_api")
-    ]
+    queries = query_specs_for_source(
+        (item for item in queries_cfg if isinstance(item, Mapping)),
+        "ats_api",
+        max_tier=int(search_cfg.get("ats_max_tier") or 2),
+    )
     if not queries:
-        queries = [
-            str(item.get("query") or "").strip()
-            for item in queries_cfg
-            if isinstance(item, Mapping) and query_applies_to_source(item, "ats_api")
-        ]
-    queries = [query for query in queries if query]
-    if not queries and not queries_cfg:
-        queries = [""]
+        queries = query_specs_for_source(
+            (item for item in queries_cfg if isinstance(item, Mapping)),
+            "ats_api",
+        )
+    return tuple(queries)
+
+
+def _location_values(search_cfg: Mapping[str, Any]) -> tuple[str, ...]:
     locations_cfg = search_cfg.get("locations", [])
     locations = [
         str(item.get("location") or item.get("label") or "").strip()
@@ -1405,9 +1419,7 @@ def _query_location_pairs(search_cfg: Mapping[str, Any]) -> Iterable[tuple[str, 
         if isinstance(item, Mapping)
     ]
     locations = [location for location in locations if location] or [""]
-    for query in queries:
-        for location in locations:
-            yield query, location
+    return tuple(locations)
 
 
 def _manual_capture_snapshot_use_case(

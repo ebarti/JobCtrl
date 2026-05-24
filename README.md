@@ -413,14 +413,17 @@ working while sources are promoted or rejected.
 
 The Preferences tab's Target search fields are discovery inputs. Target roles
 replace the active discovery query list with exact role queries plus
-deterministic JobSpy-only recall queries. Recall queries keep the same search
-tier as exact queries because relevance is determined after discovery by
-scoring, not by query generation. Target locations replace the active location
-list, and if target locations are blank the worker falls back to the profile
-city/country. Target locations are validated as real places before they can be
-saved. Hybrid and on-site target work models search and filter only the target
-location. Remote target work models search and filter the target country, and
-European countries also add an Europe-remote search and accept pattern.
+deterministic recall queries. Recall queries keep the same search tier as exact
+queries because relevance is determined after discovery by scoring, not by query
+generation. Broad-board providers such as JobSpy use those queries as retrieval
+probes. Direct ATS and Workday sources enumerate their known board/source and
+apply the same exact-plus-recall title intent internally, avoiding repeated
+board fetches for each role variant. Target locations replace the active
+location list, and if target locations are blank the worker falls back to the
+profile city/country. Target locations are validated as real places before they
+can be saved. Hybrid and on-site target work models search and filter only the
+target location. Remote target work models search and filter the target country,
+and European countries also add an Europe-remote search and accept pattern.
 Profile-driven discovery searches at least the last 30 days unless local config
 sets a larger window. A Spain or Europe target sets JobSpy's Indeed country to
 Spain, rejects America-only non-remote locations, and hides packaged

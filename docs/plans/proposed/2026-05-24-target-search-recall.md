@@ -4,7 +4,7 @@
 
 **Goal:** Expand profile-driven discovery searches so strong non-verbatim matches are found without changing saved profile preferences or weakening location controls.
 
-**Architecture:** Keep exact target-role queries as tier 1. Add deterministic JobSpy-only recall queries derived from the same target-role intent, keep them in the same tier, and mark them with a recall title-match mode so broad-board candidates can pass when they match the domain plus seniority/leadership intent. Relevance remains a scoring concern after discovery; query generation should not downrank candidates before they are seen.
+**Architecture:** Keep exact target-role queries as tier 1. Add deterministic recall queries derived from the same target-role intent, keep them in the same tier, and mark them with a recall title-match mode so candidates can pass when they match the domain plus seniority/leadership intent. Broad-board providers use recall queries as retrieval probes; direct ATS and Workday sources enumerate known boards/employers and apply the same exact-plus-recall intent internally. Relevance remains a scoring concern after discovery; query generation should not downrank candidates before they are seen.
 
 **Tech Stack:** Python worker discovery config, JobSpy adapter, shared title filtering helpers, pytest.
 
@@ -19,15 +19,15 @@
 
 - [x] **Step 1: Define deterministic exact-plus-recall query planning**
 
-Add a helper that turns target roles into ordered query dictionaries. Exact profile roles stay tier 1 with strict matching. Recall queries also stay tier 1, are deduped against exact roles, and carry `match_mode: "recall"`, `generated_from: "target_roles"`, and `source_scope: ["jobspy"]`.
+Add a helper that turns target roles into ordered query dictionaries. Exact profile roles stay tier 1 with strict matching. Recall queries also stay tier 1, are deduped against exact roles, and carry `match_mode: "recall"` and `generated_from: "target_roles"`.
 
 - [x] **Step 2: Wire profile target roles through the planner**
 
-Replace the direct `next_cfg["queries"] = [{"query": role, "tier": 1} ...]` assignment with the planner output. Preserve `workday_max_tier = 1` and `ats_max_tier = 1`, and have Workday/ATS query selection respect query `source_scope` so recall expansion does not accidentally multiply direct ATS crawls.
+Replace the direct `next_cfg["queries"] = [{"query": role, "tier": 1} ...]` assignment with the planner output. Preserve `workday_max_tier = 1` and `ats_max_tier = 1`. For direct ATS and Workday, use the planner output as local title filters after source enumeration rather than multiplying board fetches by every role variant.
 
 - [x] **Step 3: Update target-search tests**
 
-Assert that exact roles remain first and tier 1, recall queries are present as tier 1 with JobSpy-only source scope, profile notes are still stripped, and Workday/ATS query selection can skip JobSpy-only recall queries.
+Assert that exact roles remain first and tier 1, recall queries are present as tier 1 without source-only scoping, profile notes are still stripped, and direct ATS query handling uses the recall set as internal filters.
 
 ### Task 2: Add Recall-Safe Title Matching
 
@@ -39,7 +39,7 @@ Assert that exact roles remain first and tier 1, recall queries are present as t
 
 - [x] **Step 1: Preserve strict matching for exact queries**
 
-Keep `title_matches_query(title, query)` behavior unchanged by default so existing exact target roles and direct ATS paths keep their current precision.
+Keep `title_matches_query(title, query)` behavior unchanged by default so exact target roles keep their current precision.
 
 - [x] **Step 2: Add recall match mode**
 
@@ -62,7 +62,7 @@ Cover strict-vs-recall differences in the title filter and a JobSpy adapter test
 
 - [x] **Step 1: Document search behavior**
 
-Update the target-search sections to state that profile roles generate exact queries plus same-tier JobSpy-only recall queries, and that scoring determines relevance after discovery.
+Update the target-search sections to state that profile roles generate exact queries plus same-tier recall queries, JobSpy uses them as broad-board retrieval probes, direct ATS/Workday use them as internal title filters after source enumeration, and scoring determines relevance after discovery.
 
 ### Task 4: Prevent Existing Jobs From Consuming Bounded Discovery
 

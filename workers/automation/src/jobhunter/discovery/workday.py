@@ -30,7 +30,7 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
-from jobhunter.discovery.target_queries import query_applies_to_source
+from jobhunter.discovery.target_queries import query_specs_for_source, title_matches_any_query
 from jobhunter.discovery.title_filter import title_matches_query
 from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.state import record_job_event
@@ -197,6 +197,7 @@ def search_employer(
     max_pages: int = 25,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
+    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
 ) -> list[dict]:
     """Search an employer, paginate through all results, optionally filter by location."""
     log.info('%s: searching "%s"...', employer["name"], search_text)
@@ -224,7 +225,10 @@ def search_employer(
 
         for j in postings:
             title = j.get("title", "")
-            if not title_matches_query(title, search_text):
+            if query_specs is not None:
+                if not title_matches_any_query(title, query_specs):
+                    continue
+            elif not title_matches_query(title, search_text):
                 continue
             loc = j.get("locationsText", "")
             if location_filter and accept_locs is not None and reject_locs is not None:
@@ -448,6 +452,7 @@ def _process_one(
     limit: int = 0,
     max_pages_per_employer: int = 25,
     run_id: str | None = None,
+    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     result = _search_and_fetch_one(
@@ -459,6 +464,7 @@ def _process_one(
         reject_locs,
         limit=limit,
         max_pages_per_employer=max_pages_per_employer,
+        query_specs=query_specs,
     )
     jobs = result.pop("jobs", [])
     if not jobs:
@@ -480,6 +486,7 @@ def _search_and_fetch_one(
     reject_locs: list[str],
     limit: int = 0,
     max_pages_per_employer: int = 25,
+    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
 ) -> dict:
     """Search one employer and fetch details without writing to storage."""
     emp = employers[employer_key]
@@ -494,6 +501,7 @@ def _search_and_fetch_one(
             max_pages=max_pages_per_employer,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
+            query_specs=query_specs,
         )
     except Exception as e:
         log.error("%s: ERROR searching '%s': %s", emp["name"], search_text, e)
@@ -525,6 +533,7 @@ def scrape_employers(
     limit: int = 0,
     max_pages_per_employer: int = 25,
     run_id: str | None = None,
+    query_specs: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -549,6 +558,7 @@ def scrape_employers(
     t0 = time.time()
 
     valid_keys = [k for k in employer_keys if k in employers]
+    query_kwargs = {"query_specs": query_specs} if query_specs is not None else {}
 
     if workers > 1 and len(valid_keys) > 1:
         # Parallel mode
@@ -566,6 +576,7 @@ def scrape_employers(
                         reject_locs,
                         limit,
                         max_pages_per_employer,
+                        **query_kwargs,
                     ): key
                     for key in valid_keys
                 }
@@ -582,6 +593,7 @@ def scrape_employers(
                         0,
                         max_pages_per_employer,
                         run_id,
+                        **query_kwargs,
                     ): key
                     for key in valid_keys
                 }
@@ -641,6 +653,7 @@ def scrape_employers(
                 remaining if limit > 0 else 0,
                 max_pages_per_employer,
                 run_id,
+                **query_kwargs,
             )
             completed += 1
             total_new += result["new"]
@@ -703,19 +716,15 @@ def run_workday_discovery(
     queries_cfg = search_cfg.get("queries", [])
     accept_locs, reject_locs = _load_location_filter(search_cfg)
 
-    # Default to tier 1-2 queries for workday scraping
+    # Default to tier 1-2 queries for Workday title matching.
     max_tier = search_cfg.get("workday_max_tier", 2)
-    queries = [
-        q["query"]
-        for q in queries_cfg
-        if q.get("tier", 99) <= max_tier and query_applies_to_source(q, "workday")
-    ]
+    query_specs = query_specs_for_source(queries_cfg, "workday", max_tier=max_tier)
 
-    if not queries:
-        # Fallback: use all queries
-        queries = [q["query"] for q in queries_cfg if query_applies_to_source(q, "workday")]
+    if not query_specs:
+        # Fallback: use all source-eligible queries.
+        query_specs = query_specs_for_source(queries_cfg, "workday")
 
-    if not queries:
+    if not query_specs and queries_cfg:
         log.warning("No search queries configured in searches.yaml.")
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
 
@@ -726,38 +735,39 @@ def run_workday_discovery(
     location_filter = search_cfg.get("workday_location_filter", True)
     max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)
 
-    log.info("Workday crawl: %d queries x %d employers (workers=%d)", len(queries), len(employers), workers)
+    log.info(
+        "Workday crawl: source-first enumeration across %d employers using %d target query filters (workers=%d)",
+        len(employers),
+        len(query_specs),
+        workers,
+    )
 
     grand_new = 0
     grand_existing = 0
     grand_found = 0
 
-    for i, query in enumerate(queries, 1):
-        remaining = max(limit - grand_found, 0) if limit > 0 else 0
-        if limit > 0 and remaining <= 0:
-            break
-        log.info('Query %d/%d: "%s"', i, len(queries), query)
-        result = scrape_employers(
-            search_text=query,
-            employers=employers,
-            location_filter=location_filter,
-            accept_locs=accept_locs,
-            reject_locs=reject_locs,
-            workers=workers,
-            limit=remaining if limit > 0 else 0,
-            max_pages_per_employer=max_pages_per_employer,
-            run_id=run_id,
-        )
-        grand_new += result["new"]
-        grand_existing += result["existing"]
-        grand_found += result["found"]
+    result = scrape_employers(
+        search_text="",
+        employers=employers,
+        location_filter=location_filter,
+        accept_locs=accept_locs,
+        reject_locs=reject_locs,
+        workers=workers,
+        limit=limit,
+        max_pages_per_employer=max_pages_per_employer,
+        run_id=run_id,
+        query_specs=query_specs,
+    )
+    grand_new += result["new"]
+    grand_existing += result["existing"]
+    grand_found += result["found"]
 
     log.info(
-        "Workday crawl done: %d found, %d new, %d existing across %d queries x %d employers",
+        "Workday crawl done: %d found, %d new, %d existing across %d query filters x %d employers",
         grand_found,
         grand_new,
         grand_existing,
-        len(queries),
+        len(query_specs),
         len(employers),
     )
 
@@ -765,7 +775,8 @@ def run_workday_discovery(
         "found": grand_found,
         "new": grand_new,
         "existing": grand_existing,
-        "queries": len(queries),
+        "queries": 1,
+        "query_filters": len(query_specs),
     }
 
 
