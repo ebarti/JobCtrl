@@ -115,6 +115,56 @@ def test_workday_search_rejects_loose_title_matches(monkeypatch: pytest.MonkeyPa
     assert [job["title"] for job in jobs] == ["Director of Engineering"]
 
 
+def test_workday_source_first_search_filters_against_expanded_query_specs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_search(_employer: dict, search_text: str, *, limit: int, offset: int) -> dict:
+        assert search_text == ""
+        assert limit == 20
+        assert offset == 0
+        return {
+            "total": 3,
+            "jobPostings": [
+                {
+                    "title": "Software Engineer",
+                    "locationsText": "Remote EMEA",
+                    "externalPath": "/job/EMEA/Software-Engineer_R-1",
+                },
+                {
+                    "title": "Platform Engineering Manager",
+                    "locationsText": "Remote EMEA",
+                    "externalPath": "/job/EMEA/Platform-Engineering-Manager_R-2",
+                },
+                {
+                    "title": "Account Executive",
+                    "locationsText": "Barcelona, Spain",
+                    "externalPath": "/job/Spain/Account-Executive_R-3",
+                },
+            ],
+        }
+
+    monkeypatch.setattr(workday, "workday_search", fake_search)
+
+    jobs = workday.search_employer(
+        "acme",
+        {
+            "name": "Acme",
+            "base_url": "https://acme.wd1.myworkdayjobs.com",
+            "tenant": "acme",
+            "site_id": "External",
+        },
+        "",
+        accept_locs=["Spain", "Europe", "EMEA"],
+        reject_locs=["United States", "Canada"],
+        query_specs=[
+            {"query": "Head of Platform", "match_mode": "strict"},
+            {"query": "platform director", "match_mode": "recall"},
+        ],
+    )
+
+    assert [job["title"] for job in jobs] == ["Platform Engineering Manager"]
+
+
 def test_limited_workday_search_respects_page_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     offsets: list[int] = []
 

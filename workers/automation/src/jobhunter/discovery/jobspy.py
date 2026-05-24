@@ -162,7 +162,7 @@ def store_jobspy_results(
     existing = 0
 
     for _, row in df.iterrows():
-        if limit > 0 and new + existing >= limit:
+        if limit > 0 and new >= limit:
             break
         url = str(row.get("job_url", ""))
         if not url or url == "nan":
@@ -625,8 +625,8 @@ def _truthy_remote(value: object) -> bool:
     return text in {"1", "true", "yes", "remote"}
 
 
-def _title_ok(title: str | None, query: str | None) -> bool:
-    return title_matches_query(title, query)
+def _title_ok(title: str | None, query: str | None, *, match_mode: str = "strict") -> bool:
+    return title_matches_query(title, query, match_mode=match_mode)
 
 
 # -- Single search execution -------------------------------------------------
@@ -747,6 +747,7 @@ def _run_one_search(
             lambda row: _title_ok(
                 str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
                 s["query"],
+                match_mode=str(s.get("match_mode") or "strict"),
             ),
             axis=1,
         )
@@ -877,6 +878,7 @@ def _full_crawl(
                     "location": loc["location"],
                     "remote": loc.get("remote", False),
                     "tier": q.get("tier", 0),
+                    "match_mode": q.get("match_mode", "strict"),
                 }
             )
 
@@ -896,13 +898,13 @@ def _full_crawl(
     completed = 0
 
     for s in searches:
-        remaining = max(limit - (total_new + total_existing), 0) if limit > 0 else 0
+        remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             break
         result = _run_one_search(
             s,
             sites,
-            min(results_per_site, remaining) if limit > 0 else results_per_site,
+            results_per_site,
             hours_old,
             proxy_config,
             defaults,

@@ -230,6 +230,7 @@ sequenceDiagram
     participant Rpc as JSON-RPC run_stage
     participant Action as run_local_action
     participant Runner as _run_discover
+    participant QueryPlanner as Target query planner
     participant Scheduler as DiscoveryScheduler
     participant JobSpy
     participant ATS as Canonical ATS APIs
@@ -241,15 +242,18 @@ sequenceDiagram
     Api->>Rpc: run_stage(stage="discover", limit, workers)
     Rpc->>Action: LocalActionRequest(stage="discover")
     Action->>Runner: run_pipeline(stages=["discover"])
-    Runner->>DB: init_db(); refresh source-control rows idempotently
+    Runner->>DB: init_db
+    Runner->>DB: refresh source-control rows idempotently
+    Runner->>QueryPlanner: compile profile target roles and locations
+    QueryPlanner-->>Runner: exact queries plus recall query filters
     Runner->>Scheduler: plan(registry, source quality, global limit)
     Scheduler-->>Runner: DiscoverySchedule
 
-    Runner->>JobSpy: run_discovery(cfg, scheduled boards, limit, run_id)
+    Runner->>JobSpy: run_discovery(cfg with exact plus recall queries)
     JobSpy->>DB: insert jobs, broad-board observations, learned source candidates
-    Runner->>ATS: run_scheduled_ats_sources(...)
+    Runner->>ATS: enumerate scheduled canonical sources and filter internally
     ATS->>DB: create canonical jobs and source observations
-    Runner->>Workday: run_workday_discovery(...)
+    Runner->>Workday: enumerate configured employers and filter internally
     Workday->>DB: insert/update jobs and observations
     Runner->>Smart: run_smart_extract(...)
     Smart->>DB: insert jobs, quarantine, manual-capture queue
@@ -270,6 +274,11 @@ classDiagram
     }
     class DiscoveryScheduler {
       +plan(registry, quality, global_limit)
+    }
+    class TargetQueryPlanner {
+      +build_target_role_queries(roles)
+      +query_applies_to_source(query, source)
+      +title_matches_any_query(title, queries)
     }
     class DiscoverySchedule {
       +for_prefix(prefix)
@@ -300,6 +309,7 @@ classDiagram
     }
 
     RunDiscover --> DiscoveryScheduler
+    RunDiscover --> TargetQueryPlanner
     DiscoveryScheduler --> DiscoverySchedule
     DiscoverySchedule --> SourceRegistryEntry
     RunDiscover --> JobSpyAdapter
@@ -314,8 +324,20 @@ classDiagram
 - Reads source registry data from packaged YAML plus local
   `source_registry_entries`.
 - Reads source-quality snapshots to schedule and budget sources.
-- Reads target search from `candidate_profiles` and overlays it onto
-  discovery search config.
+- Reads target search from `candidate_profiles` and overlays it onto discovery
+  search config as exact role queries plus deterministic recall queries. Recall
+  queries keep the same search tier as exact queries because scoring, not query
+  generation, determines relevance.
+- Compiles target roles into two query kinds:
+  - exact queries, copied from the saved profile role text after note stripping;
+  - recall queries, generated from the same target-role intent and marked with
+    `match_mode=recall` and `generated_from=target_roles`.
+- Applies exact-plus-recall intent to every discovery source family, but the
+  execution shape differs by source type. JobSpy is a broad-board retrieval
+  provider, so exact and recall queries are sent as external search probes.
+  Direct ATS and Workday sources are known boards/employers, so they enumerate
+  the source once per location and run exact-plus-recall title matching
+  internally instead of multiplying `queries x sources`.
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.
@@ -337,7 +359,10 @@ classDiagram
 Each source family is isolated. A failed JobSpy, ATS, Workday, or Smart Extract
 step records failure information and lets the caller see a partial source
 result. With `limit > 0`, the stage uses sequential source execution and skips
-remaining source families once the observed-job cap is consumed.
+remaining source families once the new-job cap is consumed. JobSpy also applies
+that cap inside its query loop: existing rediscoveries record observations but
+do not consume the remaining new-job budget, so exact-query duplicates do not
+prevent later recall queries from running.
 
 ## Phase 2: Enrich
 

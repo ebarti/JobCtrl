@@ -8,6 +8,8 @@ from jobhunter.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
 )
+from jobhunter.infrastructure.discovery.production_wiring import _ats_query_specs, _location_values
+from jobhunter.discovery.target_queries import query_applies_to_source, title_matches_any_query
 
 
 def test_profile_target_search_overrides_discovery_queries_and_locations() -> None:
@@ -26,10 +28,22 @@ def test_profile_target_search_overrides_discovery_queries_and_locations() -> No
         },
     )
 
-    assert merged["queries"] == [
+    assert merged["queries"][:2] == [
         {"query": "Engineering Manager", "tier": 1},
         {"query": "Head of Engineering", "tier": 1},
     ]
+    assert {
+        "query": "technical director",
+        "tier": 1,
+        "match_mode": "recall",
+        "generated_from": "target_roles",
+    } in merged["queries"]
+    recall_query = next(item for item in merged["queries"] if item.get("query") == "technical director")
+    assert query_applies_to_source(recall_query, "jobspy")
+    assert query_applies_to_source(recall_query, "workday")
+    assert query_applies_to_source(recall_query, "ats_api")
+    assert merged["workday_max_tier"] == 1
+    assert merged["ats_max_tier"] == 1
     assert merged["locations"] == [
         {"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False},
         {"label": "spain", "location": "Spain", "remote": True},
@@ -57,10 +71,39 @@ def test_profile_target_search_strips_role_notes_from_queries() -> None:
         },
     )
 
-    assert merged["queries"] == [
+    assert merged["queries"][:2] == [
         {"query": "Head of Platform", "tier": 1},
         {"query": "CISO", "tier": 1},
     ]
+    assert {
+        "query": "platform director",
+        "tier": 1,
+        "match_mode": "recall",
+        "generated_from": "target_roles",
+    } in merged["queries"]
+    assert {
+        "query": "cybersecurity director",
+        "tier": 1,
+        "match_mode": "recall",
+        "generated_from": "target_roles",
+    } in merged["queries"]
+
+
+def test_recall_queries_expand_ats_internal_title_filters_without_query_pairs() -> None:
+    merged = config._apply_profile_target_search(
+        {"queries": [{"query": "software engineer", "tier": 1}]},
+        {
+            "roles": ["Head of Platform"],
+            "locations": ["Barcelona, Spain"],
+            "work_models": ["Hybrid"],
+        },
+    )
+
+    query_specs = _ats_query_specs(merged)
+    assert _location_values(merged) == ("Barcelona, Spain",)
+    assert any(item["query"] == "Head of Platform" for item in query_specs)
+    assert any(item["query"] == "platform director" for item in query_specs)
+    assert title_matches_any_query("Platform Engineering Manager", query_specs)
 
 
 def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
@@ -274,15 +317,27 @@ defaults:
 
     loaded = config.load_search_config()
 
-    assert [item["query"] for item in loaded["queries"]] == [
+    assert [item["query"] for item in loaded["queries"][:2]] == [
         "Director of Engineering",
         "VP Engineering",
     ]
+    assert any(
+        item.get("query") == "engineering manager"
+        and item.get("tier") == 1
+        and item.get("match_mode") == "recall"
+        and "source_scope" not in item
+        for item in loaded["queries"]
+    )
     assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
     assert loaded["target_region"] == "europe"
 
 
-def test_source_registry_filters_america_only_sources_for_europe_target() -> None:
+def test_source_registry_filters_america_only_sources_for_europe_target(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobhunter.db")
+
     registry = config.load_source_registry(
         search_cfg={"target_region": "europe", "boards": ["linkedin"]},
         sites_cfg={
@@ -291,6 +346,16 @@ def test_source_registry_filters_america_only_sources_for_europe_target() -> Non
                     "name": "Job Bank Canada",
                     "url": "https://www.jobbank.gc.ca/jobsearch/jobsearch?searchstring={query_encoded}",
                     "type": "search",
+                },
+                {
+                    "name": "Wellfound",
+                    "url": "https://wellfound.com/location/spain",
+                    "type": "static",
+                },
+                {
+                    "name": "Wellfound Canada",
+                    "url": "https://wellfound.com/role/l/software-engineer/canada",
+                    "type": "static",
                 },
                 {
                     "name": "WelcomeToTheJungle",
@@ -304,6 +369,8 @@ def test_source_registry_filters_america_only_sources_for_europe_target() -> Non
 
     by_id = {entry.source_id for entry in registry}
     assert "smart_extract:job-bank-canada" not in by_id
+    assert "smart_extract:wellfound" in by_id
+    assert "smart_extract:wellfound-canada" not in by_id
     assert "smart_extract:welcometothejungle" in by_id
 
 

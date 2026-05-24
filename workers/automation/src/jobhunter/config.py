@@ -20,7 +20,7 @@ from jobhunter.domain.discovery.source_registry import (
     SourceRegistryEntry,
     SourceState,
 )
-from jobhunter.discovery.title_filter import normalize_query
+from jobhunter.discovery.target_queries import build_target_role_queries
 from jobhunter.infrastructure.observability import source_validation_span
 
 log = logging.getLogger(__name__)
@@ -159,7 +159,6 @@ _AMERICA_ONLY_SOURCE_MARKERS = (
     "eluta.ca",
     "smart_extract:dice",
     "dice.com",
-    "smart_extract:wellfound",
     "wellfound.com/role/l/software-engineer/canada",
 )
 
@@ -249,8 +248,7 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
 
     next_cfg = dict(search_cfg)
     if roles:
-        role_queries = _dedupe_strings(normalize_query(role) for role in roles)
-        next_cfg["queries"] = [{"query": role, "tier": 1} for role in role_queries]
+        next_cfg["queries"] = build_target_role_queries(roles)
         next_cfg["workday_max_tier"] = 1
         next_cfg["ats_max_tier"] = 1
 
@@ -776,6 +774,12 @@ def _url_has_search_placeholder(url: str) -> bool:
     return "{query_encoded}" in url or "{query}" in url
 
 
+def _row_overrides_adapter_config(row: sqlite3.Row, existing: SourceRegistryEntry | None) -> bool:
+    if existing is None:
+        return True
+    return str(row["owner"] or "").strip().lower() != "system"
+
+
 def _merge_local_source_registry(
     base_registry: list[SourceRegistryEntry],
 ) -> list[SourceRegistryEntry]:
@@ -802,7 +806,8 @@ def _merge_local_source_registry(
             existing.state if existing else SourceState.EXPERIMENTAL,
         )
         adapter_config = dict(existing.adapter_config) if existing else {}
-        adapter_config.update(_adapter_config_from_row(row))
+        if _row_overrides_adapter_config(row, existing):
+            adapter_config.update(_adapter_config_from_row(row))
         display_name = str(row["display_name"] or (existing.display_name if existing else source_id))
         owner = str(row["owner"] or (existing.owner if existing else "user"))
         merged[source_id] = _validated_source(

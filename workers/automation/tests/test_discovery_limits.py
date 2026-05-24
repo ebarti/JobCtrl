@@ -9,7 +9,7 @@ from jobhunter.database import close_connection, init_db
 from jobhunter.discovery import jobspy
 
 
-def test_jobspy_limit_runs_one_query_against_scheduled_boards(monkeypatch):
+def test_jobspy_limit_stops_after_one_new_job(monkeypatch):
     calls: list[tuple[str, str, list[str], int, int]] = []
 
     def fake_run_one_search(
@@ -41,8 +41,48 @@ def test_jobspy_limit_runs_one_query_against_scheduled_boards(monkeypatch):
         limit=1,
     )
 
-    assert calls == [("platform engineer", "Remote", ["indeed", "linkedin"], 1, 1)]
+    assert calls == [("platform engineer", "Remote", ["indeed", "linkedin"], 100, 1)]
     assert result["queries"] == 1
+
+
+def test_jobspy_limit_does_not_let_existing_jobs_starve_later_queries(monkeypatch):
+    calls: list[tuple[str, int, int]] = []
+
+    def fake_run_one_search(
+        search: dict,
+        _sites: list[str],
+        results_per_site: int,
+        *_args,
+        limit: int = 0,
+        **_kwargs,
+    ) -> dict:
+        calls.append((search["query"], results_per_site, limit))
+        if search["query"] == "exact role":
+            return {"new": 0, "existing": 1, "errors": 0, "filtered": 0, "total": 1}
+        return {"new": 1, "existing": 0, "errors": 0, "filtered": 0, "total": 1}
+
+    monkeypatch.setattr(jobspy, "init_db", lambda: None)
+    monkeypatch.setattr(
+        jobspy,
+        "get_connection",
+        lambda: SimpleNamespace(execute=lambda *_args, **_kwargs: SimpleNamespace(fetchone=lambda: [2])),
+    )
+    monkeypatch.setattr(jobspy, "_run_one_search", fake_run_one_search)
+
+    result = jobspy._full_crawl(
+        {
+            "queries": [{"query": "exact role"}, {"query": "recall role", "match_mode": "recall"}],
+            "locations": [{"label": "remote", "location": "Remote"}],
+            "defaults": {"results_per_site": 100},
+        },
+        sites=["linkedin"],
+        limit=1,
+    )
+
+    assert calls == [("exact role", 100, 1), ("recall role", 100, 1)]
+    assert result["new"] == 1
+    assert result["existing"] == 1
+    assert result["queries"] == 2
 
 
 def test_jobspy_filters_results_by_target_title(monkeypatch):
@@ -93,6 +133,67 @@ def test_jobspy_filters_results_by_target_title(monkeypatch):
     assert stored_titles == ["Director of Engineering"]
     assert result["new"] == 1
     assert result["filtered"] == 1
+
+
+def test_jobspy_recall_title_filter_accepts_leadership_variants(monkeypatch):
+    stored_titles: list[str] = []
+
+    def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
+        return pd.DataFrame(
+            [
+                {
+                    "job_url": "https://example.test/head-technology",
+                    "title": "Head of Technology",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+                {
+                    "job_url": "https://example.test/software-engineer",
+                    "title": "Software Engineer",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+                {
+                    "job_url": "https://example.test/product-marketing-director",
+                    "title": "Product Marketing Director",
+                    "location": "Barcelona, Spain",
+                    "site": "indeed",
+                },
+            ]
+        )
+
+    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
+        assert run_id == "jobspy"
+        stored_titles.extend(df["title"].tolist())
+        return len(df), 0
+
+    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
+    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
+    monkeypatch.setattr(jobspy, "store_jobspy_results", fake_store)
+
+    result = jobspy._run_one_search(
+        {
+            "query": "technology director",
+            "location": "Barcelona, Spain",
+            "remote": False,
+            "match_mode": "recall",
+        },
+        ["indeed"],
+        10,
+        72,
+        None,
+        {"country_indeed": "spain"},
+        0,
+        ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
+        ["United States", "Canada"],
+        ["Barcelona, Spain"],
+        {},
+        limit=10,
+    )
+
+    assert stored_titles == ["Head of Technology"]
+    assert result["new"] == 1
+    assert result["filtered"] == 2
 
 
 def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypatch):
@@ -219,6 +320,63 @@ def test_jobspy_stores_company_and_backfills_existing_job(tmp_path):
             ("https://www.linkedin.com/jobs/view/1",),
         ).fetchone()
         assert event["event_type"] == "JobMetadataUpdated"
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_store_limit_counts_new_jobs_not_existing_observations(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        existing = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/existing",
+                    "title": "Head of Engineering",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, existing, "Head of Engineering", limit=1) == (1, 0)
+
+        mixed = pd.DataFrame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/existing",
+                    "title": "Head of Engineering",
+                    "company": "Acme",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/new",
+                    "title": "Head of Technology",
+                    "company": "AstraZeneca",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/second-new",
+                    "title": "Technology Director",
+                    "company": "AstraZeneca",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                },
+            ]
+        )
+
+        assert jobspy.store_jobspy_results(conn, mixed, "technology director", limit=1) == (1, 1)
+        urls = {
+            row["url"]
+            for row in conn.execute(
+                "SELECT url FROM jobs WHERE url LIKE 'https://www.linkedin.com/jobs/view/%'"
+            ).fetchall()
+        }
+        assert "https://www.linkedin.com/jobs/view/existing" in urls
+        assert "https://www.linkedin.com/jobs/view/new" in urls
+        assert "https://www.linkedin.com/jobs/view/second-new" not in urls
     finally:
         close_connection(db_path)
 
