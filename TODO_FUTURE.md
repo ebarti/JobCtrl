@@ -28,9 +28,12 @@ For now, local guardrails are enough:
 ## Current Status (2026-05-24)
 
 The SaaS/platform work tracked in this file is still not delivered as
-production SaaS functionality. What has landed is the local product loop plus
-the architectural seams that make a later hosted version possible. Unless a
-section below explicitly says otherwise, the future work remains deferred.
+production SaaS functionality. What has landed is the core local foundation and
+key product-loop capability stack, plus the architectural seams that make a
+later hosted version possible. That is not a claim that every local validation
+or hardening item is complete; the active local-product backlog remains in
+`docs/backlog.md`. Unless a section below explicitly says otherwise, the future
+work remains deferred.
 
 Completed or promoted out of this file:
 
@@ -59,6 +62,12 @@ Completed or promoted out of this file:
 
 Not yet delivered:
 
+- **Local validation hardening:** still tracked in `docs/backlog.md` rather
+  than this SaaS-focused file: realtime cache patching beyond apply-run
+  timeline events, non-apply workflow-run projection and cancellation parity,
+  legacy `jobs.*` storage fallback cleanup, profile/materials/browser QA gaps,
+  frontend accessibility deferrals, tooling/CI enforcement gaps, and targeted
+  generate-materials backend enablement.
 - **SaaS platform:** tenant accounts, users, roles, invitations, hosted auth,
   JWT/session enforcement, CSRF protection, service tokens, API keys,
   role-based permissions, billing, subscriptions, quotas, entitlements, and
