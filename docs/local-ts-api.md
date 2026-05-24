@@ -166,11 +166,16 @@ scoring, not by query generation. Recall matching enforces both track and
 seniority: IC targets stay IC, management targets stay management, and a
 candidate who configures both tracks can receive both. JobSpy uses
 exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
-Workday sources enumerate their known board/source and apply that same title
-intent internally, avoiding repeated board fetches for each role variant. Smart
-Extract static sources are scraped once and filtered internally; search-template
-sources still expand into query URLs, then pass results through the same title
-and location filters. Target locations replace the active location list, and the
+Workday, and source-first Smart Extract sources enumerate
+their known board/source and apply that same title intent internally, avoiding
+repeated board fetches for each role variant. Smart Extract search-only sources
+still fan out by query when the source has no useful browse/all-jobs page.
+Canonical ATS rows must also include a usable description before they are
+inserted; Greenhouse reads the public board content payload for that text. Each
+discover run also applies the current title, location, and description contract
+to active JobSpy, direct ATS, Workday, and Smart Extract rows and soft-deletes
+rows that no longer pass those source-family filters.
+Target locations replace the active location list, and the
 worker falls back to profile city/country when target locations are blank. The
 API validates target locations as real places before saving profile preferences.
 Hybrid and on-site target work models search and filter only the target

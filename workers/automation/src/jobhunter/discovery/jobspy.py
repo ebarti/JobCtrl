@@ -186,7 +186,9 @@ def store_jobspy_results(
             if interval:
                 salary += f"/{interval}"
 
-        description = str(row.get("description", "")) if str(row.get("description", "")) != "nan" else None
+        description = _nullable_str(row.get("description"))
+        if not (description or "").strip():
+            continue
         site_name = str(row.get("site", source_label))
         is_remote = _truthy_remote(row.get("is_remote", False))
         location_str = normalize_location_display(location_str, is_remote=is_remote)
@@ -237,6 +239,21 @@ def store_jobspy_results(
                 posting_url=apply_url,
                 discovered_via_source_id=source_id,
                 observed_at=now,
+            )
+            _refresh_existing_jobspy_job(
+                conn,
+                job_url=duplicate_url,
+                title=title,
+                company=company,
+                salary=salary,
+                description=description,
+                location=location_str,
+                site=site_label,
+                strategy=strategy,
+                full_description=full_description,
+                application_url=apply_url,
+                detail_scraped_at=detail_scraped_at,
+                updated_at=now,
             )
             resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
             existing += 1
@@ -303,26 +320,39 @@ def store_jobspy_results(
                     discovered_via_source_id=source_id,
                     observed_at=now,
                 )
+                _refresh_existing_jobspy_job(
+                    conn,
+                    job_url=duplicate_url,
+                    title=title,
+                    company=company,
+                    salary=salary,
+                    description=description,
+                    location=location_str,
+                    site=site_label,
+                    strategy=strategy,
+                    full_description=full_description,
+                    application_url=apply_url,
+                    detail_scraped_at=detail_scraped_at,
+                    updated_at=now,
+                )
                 resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
                 existing += 1
                 continue
-            if company:
-                cursor = conn.execute(
-                    "UPDATE jobs SET company = ? WHERE url = ? AND (company IS NULL OR company = '')",
-                    (company, url),
-                )
-                if cursor.rowcount:
-                    from jobhunter.state import record_job_event
-
-                    record_job_event(
-                        conn,
-                        url,
-                        "discover",
-                        "JobMetadataUpdated",
-                        message="Job company backfilled from JobSpy",
-                        payload={"company": company, "source": site_label},
-                        occurred_at=now,
-                    )
+            _refresh_existing_jobspy_job(
+                conn,
+                job_url=url,
+                title=title,
+                company=company,
+                salary=salary,
+                description=description,
+                location=location_str,
+                site=site_label,
+                strategy=strategy,
+                full_description=full_description,
+                application_url=apply_url,
+                detail_scraped_at=detail_scraped_at,
+                updated_at=now,
+            )
             _record_jobspy_source_observation(
                 conn,
                 job_url=url,
@@ -343,6 +373,73 @@ def store_jobspy_results(
 
     conn.commit()
     return new, existing
+
+
+def _refresh_existing_jobspy_job(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    title: str | None,
+    company: str | None,
+    salary: str | None,
+    description: str | None,
+    location: str | None,
+    site: str,
+    strategy: str,
+    full_description: str | None,
+    application_url: str | None,
+    detail_scraped_at: str | None,
+    updated_at: str,
+) -> None:
+    cursor = conn.execute(
+        """
+        UPDATE jobs SET
+            title = COALESCE(NULLIF(?, ''), title),
+            company = CASE
+                WHEN COALESCE(company, '') = '' THEN COALESCE(NULLIF(?, ''), company)
+                ELSE company
+            END,
+            salary = COALESCE(NULLIF(?, ''), salary),
+            description = COALESCE(NULLIF(?, ''), description),
+            location = COALESCE(NULLIF(?, ''), location),
+            site = COALESCE(NULLIF(?, ''), site),
+            strategy = COALESCE(NULLIF(?, ''), strategy),
+            full_description = COALESCE(NULLIF(?, ''), full_description),
+            application_url = COALESCE(NULLIF(?, ''), application_url),
+            detail_scraped_at = COALESCE(?, detail_scraped_at)
+        WHERE url = ?
+        """,
+        (
+            title,
+            company,
+            salary,
+            description,
+            location,
+            site,
+            strategy,
+            full_description,
+            application_url,
+            detail_scraped_at,
+            job_url,
+        ),
+    )
+    if cursor.rowcount:
+        from jobhunter.state import record_job_event
+
+        record_job_event(
+            conn,
+            job_url,
+            "discover",
+            "JobMetadataUpdated",
+            message="Job metadata refreshed from JobSpy",
+            payload={
+                "company": company,
+                "description": bool((description or "").strip()),
+                "location": location,
+                "source": site,
+            },
+            occurred_at=updated_at,
+        )
 
 
 def _nullable_str(value: object) -> str | None:

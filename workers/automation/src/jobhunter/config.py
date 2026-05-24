@@ -617,6 +617,15 @@ def _smart_extract_sources(sites_cfg: dict) -> list[SourceRegistryEntry]:
         url = str(item.get("url", "")).strip()
         if not name or not url:
             continue
+        adapter_config = {
+            "name": name,
+            "url": url,
+            "type": item.get("type", "static"),
+            "base_url": base_urls.get(name),
+        }
+        for optional_key in ("query_mode", "search_mode"):
+            if item.get(optional_key):
+                adapter_config[optional_key] = item[optional_key]
         entries.append(
             _validated_source(
                 SourceRegistryEntry(
@@ -628,12 +637,7 @@ def _smart_extract_sources(sites_cfg: dict) -> list[SourceRegistryEntry]:
                     priority=SourcePriority.FALLBACK,
                     state=SourceState.EXPERIMENTAL,
                     policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
-                    adapter_config={
-                        "name": name,
-                        "url": url,
-                        "type": item.get("type", "static"),
-                        "base_url": base_urls.get(name),
-                    },
+                    adapter_config=adapter_config,
                 )
             )
         )

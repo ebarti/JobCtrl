@@ -290,8 +290,31 @@ def test_smart_extract_sites_infer_search_type_from_query_placeholder() -> None:
             "name": "WelcomeToTheJungle",
             "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
             "type": "search",
+            "query_mode": "search_only",
         }
     ]
+
+
+def test_smart_extract_sites_preserve_configured_query_mode() -> None:
+    source = runner.ScheduledSource(
+        source_id="smart_extract:wellfound",
+        display_name="Wellfound",
+        source_kind=SourceKind.SMART_EXTRACT,
+        priority=SourcePriority.FALLBACK,
+        configured_state=SourceState.EXPERIMENTAL,
+        crawl_budget=1,
+        decision="run",
+        reason="test",
+        recommended_state="normal",
+        adapter_config={
+            "name": "Wellfound",
+            "url": "https://wellfound.com/location/spain",
+            "type": "search",
+            "query_mode": "source_first",
+        },
+    )
+
+    assert runner._smart_extract_sites((source,))[0]["query_mode"] == "source_first"
 
 
 def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):

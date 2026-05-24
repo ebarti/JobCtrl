@@ -46,6 +46,7 @@ from jobhunter.infrastructure.discovery.sqlite_run_repository import (
 )
 from jobhunter.infrastructure.discovery.production_wiring import (
     enqueue_manual_action_for_sources,
+    retire_invalid_source_jobs,
     run_scheduled_ats_sources,
     seed_discovery_control_queues,
 )
@@ -1043,6 +1044,7 @@ def _smart_extract_sites(sources: tuple[ScheduledSource, ...]) -> list[dict]:
                 "name": str(source.adapter_config.get("name") or source.display_name),
                 "url": url,
                 "type": _smart_extract_site_type(source.adapter_config, url),
+                "query_mode": _smart_extract_query_mode(source.adapter_config, url),
             }
         )
     return sites
@@ -1055,6 +1057,15 @@ def _smart_extract_site_type(adapter_config: dict[str, object], url: str) -> str
     if "{query_encoded}" in url or "{query}" in url:
         return "search"
     return "static"
+
+
+def _smart_extract_query_mode(adapter_config: dict[str, object], url: str) -> str:
+    configured_mode = str(adapter_config.get("query_mode") or adapter_config.get("search_mode") or "").strip()
+    if configured_mode:
+        return configured_mode
+    if "{query_encoded}" in url or "{query}" in url:
+        return "search_only"
+    return "source_first"
 
 
 def _optional_float(value: object) -> float | None:
@@ -1091,6 +1102,13 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
+    try:
+        hygiene = retire_invalid_source_jobs(conn, search_cfg=search_cfg)
+        retired = int(hygiene.get("retired_jobs") or 0)
+        if retired:
+            console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
+    except Exception:
+        log.warning("Discovery hygiene failed", exc_info=True)
     jobspy_sources = schedule.for_prefix("jobspy")
 
     def run_jobspy(run_id: str | None = None) -> dict:

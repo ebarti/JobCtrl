@@ -37,6 +37,8 @@ from jobhunter.state import record_job_event
 
 log = logging.getLogger(__name__)
 
+_NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
+
 
 # -- Employer registry from YAML --------------------------------------------
 
@@ -362,7 +364,9 @@ def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
     url = _job_url(job, employers)
     if not url:
         return None
-    description = str(job.get("full_description") or "")
+    description = _usable_description_text(job.get("full_description"))
+    if not description:
+        return None
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=url),
         source=Source(board=str(job.get("employer_name") or "Workday")),
@@ -381,7 +385,7 @@ def _posting_from_job(job: dict, employers: dict) -> ScrapedJobPosting | None:
 
 
 def _update_detail_columns(conn: sqlite3.Connection, job: dict, url: str, now: str) -> None:
-    description = str(job.get("full_description") or "")
+    description = _usable_description_text(job.get("full_description"))
     full_description = description if len(description) > 200 else None
     conn.execute(
         """
@@ -400,6 +404,15 @@ def _update_detail_columns(conn: sqlite3.Connection, job: dict, url: str, now: s
             url,
         ),
     )
+
+
+def _usable_description_text(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.casefold() in _NULL_DESCRIPTION_SENTINELS:
+        return ""
+    return text
 
 
 def store_results(
