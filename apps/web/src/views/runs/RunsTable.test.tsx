@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,11 +10,15 @@ import {
 import { RunsTable } from "./RunsTable.js";
 
 describe("<RunsTable>", () => {
-  function renderTable(overrides: Partial<React.ComponentProps<typeof RunsTable>> = {}) {
+  function renderTable(
+    overrides: Partial<React.ComponentProps<typeof RunsTable>> = {},
+  ) {
     return render(
       <RunsTable
         data={makeWorkflowRunsPage()}
         loading={false}
+        sorting={[{ id: "started_at", desc: true }]}
+        onSortingChange={() => undefined}
         page={1}
         pageSize={50}
         onPageChange={() => undefined}
@@ -28,9 +33,13 @@ describe("<RunsTable>", () => {
     renderTable();
 
     expect(screen.getByText(sampleWorkflowRun.title)).toBeInTheDocument();
-    expect(screen.getByText(sampleWorkflowRunCompleted.title)).toBeInTheDocument();
+    expect(
+      screen.getByText(sampleWorkflowRunCompleted.title),
+    ).toBeInTheDocument();
 
-    const links = screen.getAllByRole("link", { name: /Open workflow .* in Temporal Web UI/i });
+    const links = screen.getAllByRole("link", {
+      name: /Open workflow .* in Temporal Web UI/i,
+    });
     expect(links).toHaveLength(2);
     expect(links[0]?.getAttribute("href")).toBe(
       `http://127.0.0.1:8233/namespaces/default/workflows/${encodeURIComponent(
@@ -45,17 +54,24 @@ describe("<RunsTable>", () => {
     const onOpenRun = vi.fn();
     renderTable({ onOpenRun });
 
-    // Activate the row by clicking the title cell (the link cell stops
-    // propagation so it only opens the deep-link, not the row).
     const titleCell = screen.getByText(sampleWorkflowRun.title);
-    titleCell.click();
-    // DataTable wires `onRowActivate` to the row container, so simulate
-    // the row click via the closest row element.
-    const row = titleCell.closest("tr") ?? titleCell.closest(".data-row");
+    const row = titleCell.closest("tr");
     if (row) {
       (row as HTMLElement).click();
     }
     expect(onOpenRun).toHaveBeenCalledWith(sampleWorkflowRun.workflowId);
+  });
+
+  it("reports sortable column changes", async () => {
+    const user = userEvent.setup();
+    const onSortingChange = vi.fn();
+    renderTable({ onSortingChange });
+
+    await user.click(screen.getByRole("button", { name: "Sort by Job" }));
+
+    expect(onSortingChange).toHaveBeenCalledWith([
+      { id: "title", desc: false },
+    ]);
   });
 
   it("renders the loading state when no data has been fetched yet", () => {

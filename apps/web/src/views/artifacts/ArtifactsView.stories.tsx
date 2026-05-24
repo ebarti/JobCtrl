@@ -11,18 +11,20 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { artifactsSearchSchema } from "../../routes/-artifacts.search.js";
-import { makeArtifactsPage, sampleArtifact } from "../../test/fixtures/projections.js";
+import {
+  makeArtifactsPage,
+  sampleArtifact,
+} from "../../test/fixtures/projections.js";
 import { ArtifactsView } from "./ArtifactsView.js";
 
-// ArtifactsView mounts ArtifactsTable (DataTable role-row, see
-// data-table.stories.tsx) + ArtifactFilterBar (bare <select>, see
-// ArtifactFilterBar.stories.tsx). Both production-code defects from
-// Phase 1/4 and out of Phase 7 scope.
+// ArtifactsView still mounts ArtifactFilterBar, whose bare <select> is
+// tracked in docs/backlog.md. The table itself now uses the shared native
+// data grid.
 const meta = {
   title: "Views/Artifacts/ArtifactsView",
   component: ArtifactsView,
   parameters: {
-    // a11y deferred — DataTable + ArtifactFilterBar select-name defects; see meta comment above.
+    // a11y deferred — ArtifactFilterBar select-name defect; see meta comment above.
     a11y: { test: "off" },
   },
 } satisfies Meta<typeof ArtifactsView>;
@@ -73,7 +75,11 @@ export const Loading: Story = {
 export const Empty: Story = {
   parameters: {
     msw: {
-      handlers: [http.get("*/v1/artifacts", () => HttpResponse.json(makeArtifactsPage([])))],
+      handlers: [
+        http.get("*/v1/artifacts", () =>
+          HttpResponse.json(makeArtifactsPage([])),
+        ),
+      ],
     },
   },
   render: () => <ArtifactsViewHost />,

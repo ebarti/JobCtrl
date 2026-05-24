@@ -1268,6 +1268,21 @@ describe("local TypeScript API", () => {
       });
       expect(body.pagination).toMatchObject({ page: 1, total: 1, pages: 1 });
       expect(body.filter).toMatchObject({ status: "all" });
+      expect(body.sort).toMatchObject({ field: "started_at", dir: "desc" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts workflow run sort fields", async () => {
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/workflow-runs?sort=title&dir=asc",
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().sort).toMatchObject({ field: "title", dir: "asc" });
     } finally {
       await app.close();
     }

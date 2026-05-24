@@ -454,17 +454,33 @@ export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
 export const WORKFLOW_RUN_STATUS_FILTERS = ["all", ...WORKFLOW_RUN_STATUSES] as const;
 export type WorkflowRunStatusFilter = (typeof WORKFLOW_RUN_STATUS_FILTERS)[number];
 
+export const WORKFLOW_RUN_SORT_FIELDS = [
+  "started_at",
+  "finished_at",
+  "duration_ms",
+  "title",
+  "company",
+  "status",
+  "model",
+  "dry_run",
+] as const;
+export type WorkflowRunSortField = (typeof WORKFLOW_RUN_SORT_FIELDS)[number];
+
 export const WorkflowRunsListQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).default(1).catch(1),
     pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     page_size: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     status: z.enum(WORKFLOW_RUN_STATUS_FILTERS).default("all").catch("all"),
+    sort: z.enum(WORKFLOW_RUN_SORT_FIELDS).default("started_at").catch("started_at"),
+    dir: SortDirectionSchema,
   })
   .transform((value) => ({
     page: value.page,
     pageSize: value.pageSize ?? value.page_size ?? 50,
     status: value.status,
+    sort: value.sort,
+    dir: value.dir,
   }));
 export type WorkflowRunsListQuery = z.infer<typeof WorkflowRunsListQuerySchema>;
 

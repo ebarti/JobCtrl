@@ -919,9 +919,92 @@ textarea {
   font-weight: 500;
 }
 
+.data-grid-column-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.data-grid-column-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-grid-column-filter-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+}
+
+.data-grid-column-filter-button:hover,
+.data-grid-column-filter-button:focus-visible,
+.data-grid-column-filter-button.active {
+  border-color: var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.data-grid-column-filter-button.active {
+  color: var(--info);
+}
+
+.data-grid-column-filter-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-width: min(520px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 80px));
+  overflow: auto;
+}
+
+.filterable-data-grid-table tbody tr[tabindex] {
+  cursor: pointer;
+}
+
+.filterable-data-grid-table tbody tr[tabindex]:hover,
+.filterable-data-grid-table tbody tr[tabindex]:focus-visible {
+  background: var(--soft);
+}
+
+.filterable-data-grid-table tbody tr[aria-selected="true"] {
+  background: var(--paper-2);
+}
+
+.filterable-data-grid-table .row-check {
+  width: 36px;
+  min-width: 36px;
+  text-align: center;
+}
+
+.filterable-data-grid-table .row-check input {
+  width: 16px;
+  height: 16px;
+}
+
+.jobs-data-grid-table {
+  min-width: 1320px;
+}
+
+.artifacts-data-grid-table {
+  min-width: 1120px;
+}
+
+.runs-data-grid-table {
+  min-width: 1280px;
+}
+
 .data-grid-sort-button {
   display: inline-flex;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 6px;

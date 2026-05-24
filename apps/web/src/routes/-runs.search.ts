@@ -1,8 +1,13 @@
-import { WORKFLOW_RUN_STATUS_FILTERS } from "@jobhunter/contracts";
+import {
+  WORKFLOW_RUN_SORT_FIELDS,
+  WORKFLOW_RUN_STATUS_FILTERS,
+} from "@jobhunter/contracts";
 import { z } from "zod";
 
 export const runsSearchSchema = z.object({
   status: z.enum(WORKFLOW_RUN_STATUS_FILTERS).default("all"),
+  sort: z.enum(WORKFLOW_RUN_SORT_FIELDS).default("started_at"),
+  dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),
   pageSize: z.number().int().min(1).max(200).default(50),
 });

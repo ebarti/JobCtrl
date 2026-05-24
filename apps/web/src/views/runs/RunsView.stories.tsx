@@ -18,17 +18,9 @@ import {
 } from "../../test/fixtures/projections.js";
 import { RunsView } from "./RunsView.js";
 
-// RunsView mounts RunsTable (DataTable role-row issue, see
-// data-table.stories.tsx) + RunsFilterBar (bare <select> wrapped in a
-// <label> — the label provides the accessible name, but DataTable's
-// shared a11y defects still trip the addon when the table renders).
-// Both production-code defects predate Phase 7 and are out of scope.
 const meta = {
   title: "Views/Runs/RunsView",
   component: RunsView,
-  parameters: {
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof RunsView>;
 
 export default meta;
@@ -77,7 +69,11 @@ export const Loading: Story = {
 export const Empty: Story = {
   parameters: {
     msw: {
-      handlers: [http.get("*/v1/workflow-runs", () => HttpResponse.json(makeWorkflowRunsPage([])))],
+      handlers: [
+        http.get("*/v1/workflow-runs", () =>
+          HttpResponse.json(makeWorkflowRunsPage([])),
+        ),
+      ],
     },
   },
   render: () => <RunsViewStoryHost />,
@@ -105,7 +101,11 @@ export const ManyResults: Story = {
             makeWorkflowRunsPage(
               Array.from({ length: 18 }, (_, index) =>
                 index % 2 === 0
-                  ? { ...sampleWorkflowRun, workflowId: `wf-${index + 10}`, runId: `wf-${index + 10}` }
+                  ? {
+                      ...sampleWorkflowRun,
+                      workflowId: `wf-${index + 10}`,
+                      runId: `wf-${index + 10}`,
+                    }
                   : {
                       ...sampleWorkflowRunCompleted,
                       workflowId: `wf-${index + 10}`,

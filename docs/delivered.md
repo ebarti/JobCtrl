@@ -116,9 +116,10 @@ Delivered (Phases 1–8):
 - **Phase 4 — Forms + Tables + Drawers (PR #27):** TanStack Form + Zod
   `safeParse` for the profile editor, settings form, credential form,
   and the resume-import wizard (nested routes with a Zustand+persist
-  draft store). TanStack Table v8 powers `JobsTable` and `ArtifactsTable`
-  with column models in `views/<view>/columns.tsx` and cell renderers
-  composed from context-owned components.
+  draft store). Shared table/data-grid models power `JobsTable`,
+  `ArtifactsTable`, and `RunsTable` with column models in
+  `views/<view>/columns.tsx` and cell renderers composed from
+  context-owned components.
 - **Phase 5 — SSE Endpoint + Real EventStream Adapter + Populated Router
   (PR #28):** `GET /v1/events/stream` ships on `apps/api/` with the
   COALESCE tenant filter, `Last-Event-ID` resume, `retry: 5000`,

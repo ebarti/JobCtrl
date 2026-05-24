@@ -177,21 +177,24 @@ describe("DiscoveryProductControls", () => {
 
     const user = userEvent.setup();
     await user.click(
-      screen.getByRole("button", { name: /open table filters/i }),
+      screen.getByRole("button", { name: /filter company column/i }),
     );
     await user.type(screen.getByLabelText("Company filter text"), "sales");
     expect(within(sourceTable).getByText("Salesforce")).toBeInTheDocument();
     expect(within(sourceTable).queryByText("Indeed")).not.toBeInTheDocument();
     await user.clear(screen.getByLabelText("Company filter text"));
+    await user.click(screen.getByRole("button", { name: /close/i }));
 
-    await user.click(screen.getByRole("button", { name: /observed/i }));
-    await user.click(screen.getByRole("button", { name: /observed/i }));
+    await user.click(screen.getByRole("button", { name: /sort by observed/i }));
+    await user.click(
+      screen.getByRole("button", { name: /sort by observed \(ascending\)/i }),
+    );
 
     const rows = within(sourceTable).getAllByRole("row");
     expect(within(rows[1]!).getByText("Indeed")).toBeInTheDocument();
 
     await user.click(
-      screen.getByRole("button", { name: /open table filters/i }),
+      screen.getByRole("button", { name: /filter state column/i }),
     );
     await user.click(screen.getByRole("checkbox", { name: "active" }));
     await waitFor(() => {

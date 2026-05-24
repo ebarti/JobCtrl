@@ -22,9 +22,13 @@ describe("DiscoveryView", () => {
     await screen.findByRole("table");
     const user = userEvent.setup();
     await user.click(
-      screen.getByRole("button", { name: /open table filters/i }),
+      screen.getByRole("button", { name: /filter company column/i }),
     );
     expect(screen.getByLabelText("Company filter text")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close/i }));
+    await user.click(
+      screen.getByRole("button", { name: /filter state column/i }),
+    );
     expect(screen.getByLabelText("State filter text")).toBeInTheDocument();
   });
 });

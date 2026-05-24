@@ -60,16 +60,46 @@ function renderGrid() {
 }
 
 describe("FilterableDataGrid", () => {
+  it("paginates local rows after filtering and sorting", async () => {
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={columns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+        paginate
+        initialPageSize={2}
+        pageSizeOptions={[2, 3]}
+      />,
+    );
+    const user = userEvent.setup();
+
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+    expect(screen.getByText("BoardCo")).toBeInTheDocument();
+    expect(screen.queryByText("Salesforce")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "next" }));
+    expect(screen.queryByText("Acme")).not.toBeInTheDocument();
+    expect(screen.getByText("Salesforce")).toBeInTheDocument();
+  });
+
   it("combines text predicates, multi-select values, and sortable columns", async () => {
     renderGrid();
     const user = userEvent.setup();
+    const table = screen.getByRole("table");
 
     await user.click(
-      screen.getByRole("button", { name: /open table filters/i }),
+      screen.getByRole("button", { name: /filter company column/i }),
     );
     await user.type(screen.getByLabelText("Company filter text"), "ac");
+    expect(
+      document.querySelector('[aria-label="Filter Company column (active)"]'),
+    ).not.toBeNull();
 
-    const table = screen.getByRole("table");
     expect(within(table).getByText("Acme")).toBeInTheDocument();
     expect(within(table).queryByText("BoardCo")).not.toBeInTheDocument();
 
@@ -85,6 +115,7 @@ describe("FilterableDataGrid", () => {
     expect(within(table).queryByText("Acme")).not.toBeInTheDocument();
     expect(within(table).getByText("BoardCo")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /close/i }));
     await user.click(
       within(screen.getByLabelText("Active table filters")).getByRole(
         "button",
@@ -92,7 +123,7 @@ describe("FilterableDataGrid", () => {
       ),
     );
     await user.click(
-      screen.getByRole("button", { name: /open table filters/i }),
+      screen.getByRole("button", { name: /filter provider column/i }),
     );
     await user.click(screen.getByRole("checkbox", { name: "Workday ATS" }));
 
@@ -100,14 +131,17 @@ describe("FilterableDataGrid", () => {
     expect(within(table).getByText("Salesforce")).toBeInTheDocument();
     expect(within(table).queryByText("BoardCo")).not.toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: /close/i }));
     await user.click(
       within(screen.getByLabelText("Active table filters")).getByRole(
         "button",
         { name: /Provider/i },
       ),
     );
-    await user.click(screen.getByRole("button", { name: /Observed/i }));
-    await user.click(screen.getByRole("button", { name: /Observed/i }));
+    await user.click(screen.getByRole("button", { name: /sort by observed/i }));
+    await user.click(
+      screen.getByRole("button", { name: /sort by observed \(ascending\)/i }),
+    );
 
     const tableRows = screen.getAllByRole("row");
     expect(within(tableRows[1]!).getByText("BoardCo")).toBeInTheDocument();
