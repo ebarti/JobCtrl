@@ -133,6 +133,35 @@ def _build_pdf_renderer() -> PdfRendererPort:
     return LatexPdfAdapter()
 
 
+def _selected_candidate_payload(report: dict) -> dict | None:
+    """Return the selected tailored JSON payload from a quality-gated report."""
+    selected_candidate_id = str(report.get("selected_candidate") or "")
+    attempts = report.get("attempt_history") or []
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        candidates = attempt.get("candidates") or []
+        if not isinstance(candidates, list):
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("candidate_id") != selected_candidate_id:
+                continue
+            payload = candidate.get("parsed_json")
+            if isinstance(payload, dict):
+                return payload
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            if candidate.get("status") != "approved":
+                continue
+            payload = candidate.get("parsed_json")
+            if isinstance(payload, dict):
+                return payload
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Prompt builder (kept for backward compatibility — re-exports the use case helper)
 # ---------------------------------------------------------------------------
@@ -187,8 +216,7 @@ def _tailor_one_job(
         # ``pdf_path`` (downstream callers and the apply launcher
         # immediately pick it up via the joined ``jm_resume_pdf_path`` /
         # legacy fallback).
-        last_attempt = (outcome.report.get("attempt_history") or [{}])[-1]
-        parsed_payload = last_attempt.get("parsed_json") if isinstance(last_attempt, dict) else None
+        parsed_payload = _selected_candidate_payload(outcome.report)
         if parsed_payload and outcome.materials.tailored_resume is not None:
             try:
                 text_path = Path(outcome.materials.tailored_resume.path)
