@@ -24,6 +24,25 @@ def test_ready_job_is_eligible(checker):
     assert checker.check(job=_ready_job()).is_eligible
 
 
+def test_missing_resume_pdf_blocks_canonical_materials(checker):
+    job = _ready_job()
+    job["materials_generation"] = 1
+    job["resume_pdf_path"] = None
+
+    result = checker.check(job=job)
+
+    assert not result.ok
+    assert result.reason == "missing_resume_pdf"
+
+
+def test_canonical_materials_with_resume_pdf_is_eligible(checker):
+    job = _ready_job()
+    job["materials_generation"] = 1
+    job["resume_pdf_path"] = "/tmp/resume.pdf"
+
+    assert checker.check(job=job).is_eligible
+
+
 def test_missing_apply_target_url_blocks(checker):
     job = _ready_job()
     job["application_url"] = ""

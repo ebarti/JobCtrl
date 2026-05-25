@@ -575,6 +575,31 @@ Tailor creates job-specific resume materials for high-fit jobs. It owns resume
 generation, validation mode, retry/retailor decisions, and resume artifact
 registration. It does not submit applications.
 
+### Weaknesses Addressed
+
+The previous tailoring path could pass local validation while still producing a
+resume that was not good enough to send. The important gaps were:
+
+- One generator call owned both drafting and self-approval, so there was no
+  independent quality gate.
+- `approved_with_judge_warning` counted as stage success, which hid weak
+  tailored resumes behind a green pipeline status.
+- The JSON validator checked fields before rendering, but rendered text could
+  still carry banned phrases, unsupported claims, or missing required evidence.
+- Model routing rejected per-call model choices, so CLI/UI/API controls could
+  not safely fan out across providers or run a separate judge.
+- The job blob used the source board as company fallback, which could leak
+  source names into generated materials.
+- Artifact/report metadata did not identify the selected generator, judge
+  result, prompt version, or schema version, making audit and retry decisions
+  weak.
+
+Tailoring now treats generation and judgment as separate steps: multiple
+provider/model specs can draft candidates, validation runs per candidate, and a
+structured judge must return `PASS` above the configured threshold before the
+resume is approved. `lenient` mode remains available for local low-cost runs,
+but normal and strict modes are quality-gated.
+
 ### Sequence
 
 ```mermaid
@@ -591,14 +616,17 @@ sequenceDiagram
     participant Files as Local files
     participant DB as SQLite
 
-    Api->>Rpc: run_stage(stage="tailor", minScore, limit, validationMode, workers, retailor)
+    Api->>Rpc: run_stage(stage="tailor", minScore, limit, validationMode, workers, retailor, tailorModels, tailorJudgeModel)
     Rpc->>Runner: run_pipeline(stages=["tailor"])
     Runner->>Tailor: run_tailoring(...)
     Tailor->>DB: select scored jobs meeting minScore
     Tailor->>Profile: load resume baseline and tailoring rules
     Tailor->>Scores: load score context/reasoning
-    Tailor->>LLM: generate tailored resume content
-    LLM-->>Tailor: structured resume material
+    Tailor->>LLM: generate structured candidates across configured generators
+    LLM-->>Tailor: structured resume candidate JSON
+    Tailor->>Tailor: validate each candidate independently
+    Tailor->>LLM: structured judge scores valid candidates
+    LLM-->>Tailor: verdict, score, criterion scores, issues
     Tailor->>Materials: save MaterialsSet / TailoredResume
     Tailor->>Files: write resume artifacts
     Tailor->>DB: stage/material events
@@ -647,6 +675,10 @@ classDiagram
 - Reads profile resume baseline, skills, writing style, and tailoring rules.
 - Writes tailored resume records and local artifacts under the JobHunter app
   directory.
+- Persists safe quality metadata with the artifact/report: selected generator,
+  candidate summaries, judge model, judge score/verdict/issues, and
+  prompt/schema versions. Provider URLs, API keys, and raw credential config
+  are never stored.
 - Emits material-generation events and pipeline lifecycle events.
 - Updates artifact and job detail projections.
 
@@ -654,7 +686,12 @@ classDiagram
 
 `validationMode` controls strictness of generated-material validation.
 `retailor=true` allows existing tailored materials to be regenerated. `workers`
-controls parallel tailoring work. Failures are tracked per job/material so the
+controls parallel tailoring work. `tailorModels` can fan out candidate
+generation across provider/model specs, and `tailorJudgeModel` selects the
+structured judge independently from apply's browser-action model. By default,
+validator-passing resumes still fail the tailor stage unless the structured
+judge returns `PASS` above the configured score threshold; `lenient` mode skips
+the judge for local low-cost runs. Failures are tracked per job/material so the
 stage can be retried without losing successful materials.
 
 ## Phase 5: Cover

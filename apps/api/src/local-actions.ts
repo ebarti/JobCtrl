@@ -352,6 +352,15 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     model: command.model ?? "default",
     continuous: Boolean(command.continuous),
   };
+  if (command.tailorModels && command.tailorModels.length > 0) {
+    params.tailorModels = command.tailorModels;
+  }
+  if (command.tailorJudgeModel) {
+    params.tailorJudgeModel = command.tailorJudgeModel;
+  }
+  if (command.tailorJudgeMinScore !== undefined) {
+    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
+  }
   if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
     params.jobUrl = command.jobKey;
   }

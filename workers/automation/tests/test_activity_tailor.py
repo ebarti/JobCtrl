@@ -58,6 +58,9 @@ async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
                         limit=3,
                         workers=2,
                         retailor=True,
+                        tailor_models=("local:draft-a", "openai:draft-b"),
+                        tailor_judge_model="gemini:judge-c",
+                        tailor_judge_min_score=0.9,
                     ),
                     id=f"tailor-wf-{uuid.uuid4()}",
                     task_queue=queue,
@@ -69,5 +72,40 @@ async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
     assert kwargs["min_score"] == 8
     assert kwargs["limit"] == 3
     assert kwargs["retailor"] is True
+    assert kwargs["tailor_models"] == ("local:draft-a", "openai:draft-b")
+    assert kwargs["tailor_judge_model"] == "gemini:judge-c"
+    assert kwargs["tailor_judge_min_score"] == 0.9
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_tailor_activity_preserves_pipeline_failure_status():
+    fake_pipeline_result = {
+        "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.4}],
+        "errors": {"tailor": "failed"},
+        "elapsed": 0.4,
+    }
+    queue = f"tailor-{uuid.uuid4()}"
+
+    with patch(
+        "jobhunter.pipeline.run_pipeline",
+        return_value=fake_pipeline_result,
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[_TailorHarness],
+                activities=[tailor_activity],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                output: TailorActivityOutput = await env.client.execute_workflow(
+                    _TailorHarness.run,
+                    TailorActivityInput(tenant_id="local"),
+                    id=f"tailor-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert output.status == "failed"
+    assert output.errors == {"tailor": "failed"}

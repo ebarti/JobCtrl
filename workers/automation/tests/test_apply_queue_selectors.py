@@ -19,7 +19,17 @@ from jobhunter.database import (
     get_stats,
     init_db,
 )
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials import (
+    Artifact,
+    ArtifactType,
+    JudgeVerdict,
+    MaterialsSetFactory,
+    RenderFormat,
+    ValidationResult,
+)
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.materials import SqliteMaterialsRepository
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
@@ -55,6 +65,66 @@ def _insert_apply_ready_job(
             "/tmp/resume.txt",
         ),
     )
+    conn.commit()
+
+
+def _make_resume_artifact(path: str = "/tmp/resume.txt") -> Artifact:
+    return Artifact.create(
+        type=ArtifactType.TAILORED_RESUME,
+        path=path,
+        created_at="2024-01-02T00:00:00+00:00",
+        render_format=RenderFormat.TEXT,
+    )
+
+
+def _make_resume_pdf_artifact(path: str = "/tmp/resume.pdf") -> Artifact:
+    return Artifact.create(
+        type=ArtifactType.RESUME_PDF,
+        path=path,
+        created_at="2024-01-02T01:00:00+00:00",
+        render_format=RenderFormat.LATEX_PDF,
+    )
+
+
+def _insert_canonical_apply_job(
+    conn,
+    *,
+    url: str = "https://example.com/canonical-job",
+    application_url: str | None = "https://example.com/apply",
+    with_pdf: bool,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, site, full_description, application_url,
+            fit_score
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            url,
+            "Eng",
+            "ExampleCo",
+            "Build distributed systems.",
+            application_url,
+            9,
+        ),
+    )
+    materials = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        _make_resume_artifact(),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    if with_pdf:
+        materials = materials.with_resume_pdf(
+            _make_resume_pdf_artifact(),
+            updated_at="2024-01-02T01:00:00+00:00",
+        )
+    SqliteMaterialsRepository(conn).save(materials)
     conn.commit()
 
 
@@ -187,6 +257,32 @@ def test_pending_apply_can_start_from_posting_url_when_direct_apply_url_missing(
         )
         == 1
     )
+
+
+def test_pending_apply_excludes_canonical_text_only_resume(conn):
+    url = "https://example.com/canonical-text-only"
+    _insert_canonical_apply_job(conn, url=url, with_pdf=False)
+
+    rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+
+    assert {row["url"] for row in rows} == set()
+    assert count_ready_to_apply(conn, min_score=7) == 0
+    assert count_ready_to_apply(conn, min_score=7, target_url=url) == 0
+    assert get_stats(conn)["ready_to_apply"] == 0
+
+
+def test_pending_apply_includes_canonical_resume_with_pdf(conn):
+    url = "https://example.com/canonical-with-pdf"
+    _insert_canonical_apply_job(conn, url=url, with_pdf=True)
+
+    rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+
+    assert [row["url"] for row in rows] == [url]
+    assert rows[0]["tailored_resume_path"] == "/tmp/resume.txt"
+    assert rows[0]["jm_resume_pdf_path"] == "/tmp/resume.pdf"
+    assert count_ready_to_apply(conn, min_score=7) == 1
+    assert count_ready_to_apply(conn, min_score=7, target_url=url) == 1
+    assert get_stats(conn)["ready_to_apply"] == 1
 
 
 def test_pending_apply_excludes_high_score_blocked_jobs(conn):

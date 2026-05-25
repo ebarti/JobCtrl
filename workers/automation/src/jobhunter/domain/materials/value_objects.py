@@ -16,13 +16,16 @@ Invariants:
                          pure :class:`ContentValidator` domain service.
                          ``passed`` is recomputed from ``errors`` so the
                          flag and the list cannot disagree.
-  ``JudgeVerdict``     — LLM judge output; ``approved`` reflects PASS/FAIL,
-                         ``score`` is a 0..1 quality estimate, ``notes`` is
-                         the judge's prose.
+  ``JudgeVerdict``     — structured LLM judge output; ``approved`` reflects
+                         PASS/FAIL, ``score`` is a 0..1 quality estimate,
+                         criterion scores and issues carry the audit trail.
+  ``LlmModelSpec``     — safe provider/model selector that cannot carry raw
+                         URLs or credentials.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -153,12 +156,16 @@ class JudgeVerdict:
 
     ``approved`` is the binary PASS/FAIL signal use cases gate on.
     ``score`` is a 0..1 estimate the judge supplies for diagnostics.
-    ``notes`` carries the judge's prose explanation (verbatim).
+    ``criterion_scores`` carries the structured rubric breakdown, and
+    ``issues`` captures blocking judge findings as structured prose.
     """
 
     approved: bool
     score: float = 0.0
     notes: str = ""
+    criterion_scores: dict[str, float] = field(default_factory=dict)
+    issues: tuple[str, ...] = ()
+    selected_candidate_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.approved, bool):
@@ -171,37 +178,227 @@ class JudgeVerdict:
             )
         if not isinstance(self.notes, str):
             raise TypeError("JudgeVerdict.notes must be a str")
+        if not isinstance(self.criterion_scores, dict):
+            raise TypeError("JudgeVerdict.criterion_scores must be a dict")
+        cleaned_scores: dict[str, float] = {}
+        for key, value in self.criterion_scores.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("JudgeVerdict.criterion_scores keys must be non-empty strings")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise TypeError("JudgeVerdict.criterion_scores values must be numbers")
+            score = float(value)
+            if score < 0.0 or score > 1.0:
+                raise ValueError(
+                    f"JudgeVerdict.criterion_scores[{key!r}] must be in [0.0, 1.0], got {score}"
+                )
+            cleaned_scores[key] = score
+        object.__setattr__(self, "criterion_scores", cleaned_scores)
+        if not isinstance(self.issues, tuple):
+            raise TypeError("JudgeVerdict.issues must be a tuple")
+        for issue in self.issues:
+            if not isinstance(issue, str):
+                raise TypeError("JudgeVerdict.issues entries must be str")
+        if self.selected_candidate_id is not None and not isinstance(self.selected_candidate_id, str):
+            raise TypeError("JudgeVerdict.selected_candidate_id must be a str or None")
 
     @classmethod
-    def passed(cls, *, score: float = 1.0, notes: str = "") -> "JudgeVerdict":
-        return cls(approved=True, score=score, notes=notes)
+    def passed(
+        cls,
+        *,
+        score: float = 1.0,
+        notes: str = "",
+        criterion_scores: dict[str, float] | None = None,
+        issues: tuple[str, ...] = (),
+        selected_candidate_id: str | None = None,
+    ) -> "JudgeVerdict":
+        return cls(
+            approved=True,
+            score=score,
+            notes=notes,
+            criterion_scores=criterion_scores or {},
+            issues=issues,
+            selected_candidate_id=selected_candidate_id,
+        )
 
     @classmethod
-    def failed(cls, *, score: float = 0.0, notes: str = "") -> "JudgeVerdict":
-        return cls(approved=False, score=score, notes=notes)
+    def failed(
+        cls,
+        *,
+        score: float = 0.0,
+        notes: str = "",
+        criterion_scores: dict[str, float] | None = None,
+        issues: tuple[str, ...] = (),
+        selected_candidate_id: str | None = None,
+    ) -> "JudgeVerdict":
+        return cls(
+            approved=False,
+            score=score,
+            notes=notes,
+            criterion_scores=criterion_scores or {},
+            issues=issues,
+            selected_candidate_id=selected_candidate_id,
+        )
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "JudgeVerdict | None":
         if not data:
             return None
+        raw_issues = data.get("issues") or ()
+        if isinstance(raw_issues, str):
+            issues = (raw_issues,) if raw_issues and raw_issues != "none" else ()
+        else:
+            issues = tuple(str(issue) for issue in raw_issues)
+        approved = bool(data.get("approved", False))
+        verdict = str(data.get("verdict") or "").upper()
+        if verdict in {"PASS", "APPROVED"}:
+            approved = True
+        elif verdict in {"FAIL", "REJECTED"}:
+            approved = False
         return cls(
-            approved=bool(data.get("approved", False)),
+            approved=approved,
             score=float(data.get("score", 0.0) or 0.0),
             notes=str(data.get("notes") or ""),
+            criterion_scores={
+                str(key): float(value)
+                for key, value in dict(data.get("criterion_scores") or {}).items()
+            },
+            issues=issues,
+            selected_candidate_id=(
+                str(data["selected_candidate_id"])
+                if data.get("selected_candidate_id")
+                else None
+            ),
+        )
+
+    @classmethod
+    def from_structured_judge(cls, data: dict) -> "JudgeVerdict":
+        if not isinstance(data, dict):
+            raise TypeError("structured judge response must be a dict")
+        verdict = str(data.get("verdict") or "").strip().upper()
+        if verdict not in {"PASS", "FAIL"}:
+            raise ValueError("structured judge verdict must be PASS or FAIL")
+        score = float(data["score"])
+        raw_scores = data.get("criterion_scores")
+        if not isinstance(raw_scores, dict) or not raw_scores:
+            raise ValueError("structured judge response requires criterion_scores")
+        raw_issues = data.get("issues")
+        if not isinstance(raw_issues, list):
+            raise ValueError("structured judge response requires issues as a list")
+        issues: list[str] = []
+        for issue in raw_issues:
+            if isinstance(issue, dict):
+                message = str(issue.get("message") or "").strip()
+                criterion = str(issue.get("criterion") or "").strip()
+                severity = str(issue.get("severity") or "").strip()
+                parts = [part for part in (severity, criterion, message) if part]
+                if parts:
+                    issues.append(": ".join(parts))
+            elif str(issue).strip():
+                issues.append(str(issue).strip())
+        notes = str(data.get("notes") or "; ".join(issues) or "none")
+        return cls(
+            approved=verdict == "PASS",
+            score=score,
+            notes=notes,
+            criterion_scores={str(key): float(value) for key, value in raw_scores.items()},
+            issues=tuple(issues),
+            selected_candidate_id=(
+                str(data["selected_candidate_id"])
+                if data.get("selected_candidate_id")
+                else None
+            ),
         )
 
     def to_dict(self) -> dict:
         return {
             "approved": self.approved,
+            "verdict": "PASS" if self.approved else "FAIL",
             "score": self.score,
             "notes": self.notes,
+            "criterion_scores": dict(self.criterion_scores),
+            "issues": list(self.issues),
+            "selected_candidate_id": self.selected_candidate_id,
         }
+
+
+_MODEL_SPEC_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_MODEL_SPEC_SENTINELS = {"", "default", "local-default"}
+_PROVIDER_PREFIXES = {"gemini", "openai", "local"}
+
+
+@dataclass(frozen=True)
+class LlmModelSpec:
+    """Safe model selector for tailoring LLM calls.
+
+    A spec is either a bare model name, which uses the currently configured
+    provider, or ``provider:model`` where provider is one of
+    ``gemini``, ``openai``, or ``local``. It deliberately carries no URL,
+    API key, or provider configuration.
+    """
+
+    provider: str | None = None
+    model: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.provider is not None:
+            provider = self.provider.strip().lower()
+            if provider not in _PROVIDER_PREFIXES:
+                raise ValueError(
+                    f"LlmModelSpec.provider must be one of {sorted(_PROVIDER_PREFIXES)}, got {self.provider!r}"
+                )
+            object.__setattr__(self, "provider", provider)
+        if self.model is not None:
+            model = self.model.strip()
+            if not model or model.lower() in _MODEL_SPEC_SENTINELS:
+                object.__setattr__(self, "model", None)
+                return
+            if "://" in model or not _MODEL_SPEC_RE.fullmatch(model):
+                raise ValueError(
+                    "LlmModelSpec.model must be a model id, not a URL, secret, or provider config"
+                )
+            object.__setattr__(self, "model", model)
+
+    @classmethod
+    def default(cls) -> "LlmModelSpec":
+        return cls()
+
+    @classmethod
+    def parse(cls, value: str | None) -> "LlmModelSpec":
+        raw = (value or "").strip()
+        if raw.lower() in _MODEL_SPEC_SENTINELS:
+            return cls.default()
+        if "://" in raw:
+            raise ValueError("Model specs must not include URLs or raw provider config")
+        if ":" in raw:
+            provider, model = raw.split(":", 1)
+            return cls(provider=provider, model=model)
+        return cls(model=raw)
+
+    @property
+    def model_arg(self) -> str | None:
+        if self.provider and self.model:
+            return f"{self.provider}:{self.model}"
+        if self.provider:
+            return f"{self.provider}:default"
+        return self.model
+
+    @property
+    def safe_label(self) -> str:
+        if self.provider and self.model:
+            return f"{self.provider}:{self.model}"
+        if self.provider:
+            return f"{self.provider}:default"
+        return self.model or "default"
+
+    def to_dict(self) -> dict:
+        return {"provider": self.provider, "model": self.model, "label": self.safe_label}
 
 
 __all__ = [
     "ArtifactStatus",
     "ArtifactType",
     "JudgeVerdict",
+    "LlmModelSpec",
     "RenderFormat",
     "ValidationResult",
 ]

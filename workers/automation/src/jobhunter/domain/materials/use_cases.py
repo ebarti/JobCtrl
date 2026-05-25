@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +66,7 @@ from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
     JudgeVerdict,
+    LlmModelSpec,
     RenderFormat,
     ValidationResult,
 )
@@ -90,6 +93,177 @@ from jobhunter.resume_profile import (
 
 log = logging.getLogger(__name__)
 
+TAILORING_PROMPT_VERSION = "tailor.v2.quality-gated"
+TAILORING_SCHEMA_VERSION = "tailored-resume.v1"
+TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
+TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
+    "relevance_to_job",
+    "evidence_support",
+    "fabrication_safety",
+    "required_content_preserved",
+    "ats_readability",
+    "specificity_and_metrics",
+)
+
+
+def _score_schema() -> dict[str, Any]:
+    return {"type": "number", "minimum": 0, "maximum": 1}
+
+
+def _criterion_scores_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(TAILORING_JUDGE_CRITERIA),
+        "properties": {criterion: _score_schema() for criterion in TAILORING_JUDGE_CRITERIA},
+    }
+
+TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
+    "title": "TailoredResumePayload",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["executive_profile", "experience_updates", "skill_category_updates"],
+    "properties": {
+        "executive_profile": {"type": "string"},
+        "experience_updates": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["id", "title", "bullets"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "bullets": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+        "skill_category_updates": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["id", "items"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+}
+
+TAILORING_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
+    "title": "TailoringJudgeResult",
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "verdict",
+        "score",
+        "criterion_scores",
+        "issues",
+        "unsupported_claims",
+        "fabrications",
+        "missing_required_evidence",
+        "repair_instructions",
+    ],
+    "properties": {
+        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "score": {"type": "number", "minimum": 0, "maximum": 1},
+        "criterion_scores": _criterion_scores_schema(),
+        "issues": {"type": "array", "items": {"type": "string"}},
+        "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+        "fabrications": {"type": "array", "items": {"type": "string"}},
+        "missing_required_evidence": {"type": "array", "items": {"type": "string"}},
+        "repair_instructions": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+@dataclass(frozen=True)
+class TailoringLlmPolicy:
+    """Model and quality policy for one tailor invocation."""
+
+    candidate_models: tuple[str, ...] = ()
+    judge_model: str | None = None
+    judge_min_score: float = 0.82
+    candidate_temperature: float = 0.35
+    judge_temperature: float = 0.0
+    candidate_max_tokens: int = 65536
+    judge_max_tokens: int = 8192
+    thinking_budget: int | None = 0
+
+    def __post_init__(self) -> None:
+        normalized = tuple(_safe_model_arg(model) for model in self.candidate_models)
+        normalized = tuple(model for model in normalized if model)
+        object.__setattr__(self, "candidate_models", normalized)
+        if self.judge_model is not None:
+            object.__setattr__(self, "judge_model", _safe_model_arg(self.judge_model))
+        score = float(self.judge_min_score)
+        if score < 0.0 or score > 1.0:
+            raise ValueError("judge_min_score must be in [0.0, 1.0]")
+        object.__setattr__(self, "judge_min_score", score)
+
+    @classmethod
+    def from_env(cls) -> "TailoringLlmPolicy":
+        return cls(
+            candidate_models=_split_model_specs(
+                os.environ.get("TAILORING_GENERATOR_MODELS")
+                or os.environ.get("TAILORING_GENERATOR_MODEL")
+            ),
+            judge_model=os.environ.get("TAILORING_JUDGE_MODEL"),
+            judge_min_score=float(os.environ.get("TAILORING_JUDGE_MIN_SCORE", "0.82")),
+        )
+
+    @property
+    def effective_candidate_models(self) -> tuple[str, ...]:
+        return self.candidate_models or ("default",)
+
+    @property
+    def effective_judge_model(self) -> str:
+        return self.judge_model or self.effective_candidate_models[0]
+
+
+def _split_model_specs(value: str | tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        items = value.split(",")
+    else:
+        items = []
+        for item in value:
+            items.extend(str(item).split(","))
+    return tuple(item.strip() for item in items if item and item.strip())
+
+
+def _safe_model_arg(value: str | None) -> str:
+    spec = LlmModelSpec.parse(value)
+    return spec.model_arg or "default"
+
+
+@dataclass(frozen=True)
+class _TailorCandidate:
+    payload: dict
+    validation: ValidationResult
+    verdict: JudgeVerdict | None
+    tailored_text: str
+    model: str
+    record: dict[str, Any]
+
+    @property
+    def judge_score(self) -> float:
+        return self.verdict.score if self.verdict is not None else 1.0
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -102,14 +276,20 @@ def _utc_now() -> str:
 
 def _safe_filename_prefix(job: dict) -> str:
     safe_title = re.sub(r"[^\w\s-]", "", job.get("title", ""))[:50].strip().replace(" ", "_")
-    safe_site = re.sub(r"[^\w\s-]", "", job.get("site", ""))[:20].strip().replace(" ", "_")
-    return f"{safe_site}_{safe_title}"
+    safe_site = re.sub(r"[^\w\s-]", "", _job_company(job))[:20].strip().replace(" ", "_")
+    digest = sha1(str(job.get("url", "")).encode("utf-8")).hexdigest()[:10]
+    return f"{safe_site}_{safe_title}_{digest}"
+
+
+def _job_company(job: dict) -> str:
+    return str(job.get("company") or job.get("employer") or job.get("site") or "").strip()
 
 
 def _build_job_blob(job: dict) -> str:
     return (
         f"TITLE: {job.get('title', '')}\n"
-        f"COMPANY: {job.get('site', '')}\n"
+        f"COMPANY: {_job_company(job)}\n"
+        f"SOURCE: {job.get('site', '')}\n"
         f"LOCATION: {job.get('location') or 'N/A'}\n\n"
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
@@ -147,6 +327,37 @@ def _extract_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
     raise ValueError("No valid JSON found in LLM response")
+
+
+def _candidate_payload_summary(payload: dict) -> dict[str, Any]:
+    executive_profile = str(payload.get("executive_profile") or "")
+    experience_updates = payload.get("experience_updates") or []
+    skill_updates = payload.get("skill_category_updates") or []
+    return {
+        "executive_profile_chars": len(executive_profile),
+        "experience_updates": len(experience_updates) if isinstance(experience_updates, list) else 0,
+        "skill_category_updates": len(skill_updates) if isinstance(skill_updates, list) else 0,
+    }
+
+
+def _as_string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
+    payload = record.get("parsed_json") if isinstance(record.get("parsed_json"), dict) else {}
+    return {
+        "candidate_id": record.get("candidate_id"),
+        "generator": record.get("model"),
+        "status": record.get("status"),
+        "schema_version": record.get("schema_version"),
+        "validation": record.get("validator"),
+        "judge": record.get("judge"),
+        "parse_error": record.get("parse_error"),
+        "summary": _candidate_payload_summary(payload),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +459,7 @@ The code will inject all fixed structure from the master resume:
 
 HARD RULES:
 - Return EVERY required experience entry id exactly once
+- Return a title field for EVERY experience update; set it to "" unless policy allows and needs a rewritten title
 - Return EVERY required skill category id exactly once
 - Preserve every required bullet listed below in the matching experience entry
 - Do NOT add or remove experience entries
@@ -290,7 +502,7 @@ OUTPUT ONLY VALID JSON:
 {{
   "executive_profile": "2-4 sentences tailored to the target role.",
   "experience_updates": [
-    {{"id": "{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}", "title": "optional rewritten title only when policy allows", "bullets": ["bullet 1", "bullet 2"]}}
+    {{"id": "{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}", "title": "", "bullets": ["bullet 1", "bullet 2"]}}
   ],
   "skill_category_updates": [
     {{"id": "{required_skill_ids[0] if required_skill_ids else 'skill_category_id'}", "items": ["item 1", "item 2"]}}
@@ -303,54 +515,68 @@ def build_judge_prompt(snapshot: ProfileSnapshot) -> str:
     profile = snapshot.as_dict()
     boundary = profile.get("skills_boundary", {})
     resume_facts = profile.get("resume_facts", {})
+    resume = get_resume_master(profile)
+    experience_entries = get_experience_entries(profile)
+    skill_categories = get_skill_categories(profile)
+    required_bullets = get_required_bullets_by_experience_id(profile)
 
     all_skills: list[str] = []
     for items in boundary.values():
         all_skills.extend(normalize_profile_list(items))
+    for category in skill_categories:
+        all_skills.extend(normalize_profile_list(category.get("items", [])))
+    all_skills = sorted(set(all_skills), key=str.lower)
     skills_str = ", ".join(all_skills) if all_skills else "N/A"
 
     real_metrics = normalize_profile_list(resume_facts.get("real_metrics", []))
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
 
-    return f"""You are a resume quality judge. A tailoring engine rewrote a resume to target a specific job. Your job is to catch LIES, not style changes.
+    return f"""You are the final resume quality judge for JobHunter.
 
-You must answer with EXACTLY this format:
-VERDICT: PASS or FAIL
-ISSUES: (list any problems, or "none")
+Return ONLY JSON matching the provided schema. Do not include markdown.
 
-## CONTEXT -- what the tailoring engine was instructed to do (all of this is ALLOWED):
-- Change the title to match the target role
-- Rewrite the summary from scratch for the target job
-- Reorder bullets and projects to put the most relevant first
-- Reframe bullets to use the job's language
-- Drop low-relevance bullets and replace with more relevant ones from other sections
-- Reorder the skills section to put job-relevant skills first
-- Change tone and wording extensively
+Your job is to decide whether the tailored resume is safe to show the user as
+the final resume for this job. Be evidence-grounded and strict about facts.
 
-## WHAT IS FABRICATION (FAIL for these):
-1. Adding tools, languages, or frameworks to TECHNICAL SKILLS that aren't in the original. The allowed skills are ONLY: {skills_str}
-2. Inventing NEW metrics or numbers not in the original. The real metrics are: {metrics_str}
-3. Inventing work that has no basis in any original bullet (completely new achievements).
-4. Adding companies, roles, or degrees that don't exist.
-5. Changing real numbers (inflating 80% to 95%, 500 nodes to 1000 nodes).
+PASS only when all of these are true:
+- The tailored resume is relevant to the target job.
+- Every company, role, degree, metric, tool, and achievement is supported by
+  the canonical resume evidence below.
+- Required experience, skill, education, and required bullets are preserved.
+- The resume does not add unsupported skills, certifications, employers,
+  locations, degrees, seniority, or inflated metrics.
+- The resume is concise, readable, and ATS-friendly.
 
-## WHAT IS NOT FABRICATION (do NOT fail for these):
-- Rewording any bullet, even heavily, as long as the underlying work is real
-- Combining two original bullets into one
-- Splitting one original bullet into two
-- Describing the same work with different emphasis
-- Dropping bullets entirely
-- Reordering anything
-- Changing the title or summary completely
+FAIL for any unsupported claim, fabricated skill, changed metric, dropped
+required evidence, or material relevance problem. Do not give a pass because a
+skill is learnable or adjacent. Repair instructions should tell the generator
+what to fix in the next attempt.
 
-## TOLERANCE RULE:
-The goal is to get interviews, not to be a perfect fact-checker. Allow up to 3 minor stretches per resume:
-- Adding a closely related tool the candidate could realistically know is a MINOR STRETCH, not fabrication.
-- Reframing a metric with slightly different wording is a MINOR STRETCH.
-- Adding any LEARNABLE skill given their existing stack is a MINOR STRETCH.
-- Only FAIL if there are MAJOR lies: completely invented projects, fake companies, fake degrees, wildly inflated numbers, or skills from a completely different domain.
+CANONICAL EXECUTIVE PROFILE:
+{resume.get("executive_profile", {}).get("baseline_text", "")}
 
-Be strict about major lies. Be lenient about minor stretches and learnable skills. Do not fail for style, tone, or restructuring."""
+CANONICAL EXPERIENCE ENTRIES:
+{json.dumps(experience_entries, indent=2, ensure_ascii=False)}
+
+CANONICAL SKILL CATEGORIES:
+{json.dumps(skill_categories, indent=2, ensure_ascii=False)}
+
+ALLOWED SKILLS:
+{skills_str}
+
+REAL METRICS:
+{metrics_str}
+
+REQUIRED BULLETS BY EXPERIENCE ID:
+{json.dumps(required_bullets, indent=2, ensure_ascii=False)}
+
+Judge dimensions for criterion_scores:
+- relevance_to_job
+- evidence_support
+- fabrication_safety
+- required_content_preserved
+- ats_readability
+- specificity_and_metrics"""
 
 
 def build_cover_letter_prompt(snapshot: ProfileSnapshot) -> str:
@@ -428,8 +654,8 @@ class TailorOutcome:
     that rely on it for telemetry don't need to be touched:
 
       * ``approved``                    — validator + judge passed.
-      * ``approved_with_judge_warning`` — validator passed; judge failed
-                                          on the last attempt.
+      * ``failed_judge``                — validator passed but the structured
+                                          judge did not approve a candidate.
       * ``failed_validation``           — validator never passed.
       * ``exhausted_retries``           — no parseable JSON in any attempt.
       * ``error``                       — unhandled exception during the
@@ -462,6 +688,7 @@ class TailorResumeUseCase:
         assembler: ResumeAssembler,
         publisher: EventPublisher | None = None,
         max_retries: int = 3,
+        llm_policy: TailoringLlmPolicy | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -469,6 +696,7 @@ class TailorResumeUseCase:
         self._assembler = assembler
         self._publisher = publisher
         self._max_retries = max_retries
+        self._llm_policy = llm_policy or TailoringLlmPolicy.from_env()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -535,7 +763,7 @@ class TailorResumeUseCase:
 
         # Assemble the rendered resume text from the last successful payload.
         tailored_text = self._assembler.assemble_resume_text(parsed_payload, profile_snapshot)
-        prefix = _safe_filename_prefix(job)
+        prefix = f"{_safe_filename_prefix(job)}_g{materials.generation}"
         tailored_dir.mkdir(parents=True, exist_ok=True)
         text_path = tailored_dir / f"{prefix}.txt"
 
@@ -549,16 +777,29 @@ class TailorResumeUseCase:
         except OSError:
             size_bytes = None
 
+        judge_record = self._judge_record(verdict)
+        tailoring_metadata = {
+            "validation_mode": validation_mode,
+            "attempts": attempts,
+            "prompt_version": report.get("prompt_version"),
+            "schema_version": report.get("schema_version"),
+            "candidate_models": report.get("candidate_models") or [],
+            "selected_model": report.get("selected_model"),
+            "selected_candidate": report.get("selected_candidate"),
+            "judge_model": report.get("judge_model"),
+            "judge_min_score": report.get("judge_min_score"),
+            "candidate_summaries": report.get("candidate_summaries") or [],
+            "judge": judge_record,
+        }
+        report["tailoring_quality"] = tailoring_metadata
+
         artifact = Artifact.create(
             type=ArtifactType.TAILORED_RESUME,
             path=str(text_path),
             created_at=_utc_now(),
             render_format=RenderFormat.TEXT,
             size_bytes=size_bytes,
-            metadata={
-                "validation_mode": validation_mode,
-                "attempts": attempts,
-            },
+            metadata=tailoring_metadata,
         )
         materials = materials.with_resume_attempt(
             artifact,
@@ -586,7 +827,8 @@ class TailorResumeUseCase:
                 "\n".join(
                     [
                         f"Title: {job.get('title', '')}",
-                        f"Company: {job.get('site', '')}",
+                        f"Company: {_job_company(job)}",
+                        f"Source: {job.get('site', '')}",
                         f"Location: {job.get('location', 'N/A')}",
                         f"Score: {job.get('fit_score', 'N/A')}",
                         f"URL: {job.get('url', '')}",
@@ -629,20 +871,29 @@ class TailorResumeUseCase:
         :class:`ValidationResult` and :class:`JudgeVerdict`.
         """
         tailor_prompt_base = build_master_tailor_prompt(profile_snapshot)
+        model_policy = self._llm_policy
         report: dict = {
             "attempts": 0,
             "validator": None,
             "judge": None,
             "status": "pending",
             "validation_mode": validation_mode,
+            "prompt_version": TAILORING_PROMPT_VERSION,
+            "schema_version": TAILORING_SCHEMA_VERSION,
+            "judge_schema_version": TAILORING_JUDGE_SCHEMA_VERSION,
+            "candidate_models": list(model_policy.effective_candidate_models),
+            "judge_model": model_policy.effective_judge_model,
+            "judge_min_score": model_policy.judge_min_score,
             "system_prompt": tailor_prompt_base,
             "job_text": _build_job_blob(job),
             "attempt_history": [],
+            "candidate_summaries": [],
         }
         avoid_notes: list[str] = []
         last_payload: dict | None = None
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         last_verdict: JudgeVerdict | None = None
+        best_rejected: _TailorCandidate | None = None
 
         for attempt in range(self._max_retries + 1):
             report["attempts"] = attempt + 1
@@ -656,6 +907,7 @@ class TailorResumeUseCase:
                 "attempt": attempt + 1,
                 "avoid_notes": list(avoid_notes[-5:]),
                 "system_prompt": prompt,
+                "candidates": [],
             }
 
             messages = [
@@ -671,85 +923,193 @@ class TailorResumeUseCase:
                     ),
                 ),
             ]
-            raw = self._llm.chat(messages, max_tokens=150000, temperature=0.4)
-            attempt_record["raw_response"] = raw
 
-            try:
-                payload = _extract_json(raw)
-            except ValueError:
-                attempt_record["parse_error"] = "Output was not valid JSON. Return ONLY a JSON object, nothing else."
-                attempt_record["status"] = "parse_error"
-                report["attempt_history"].append(attempt_record)
-                avoid_notes.append("Output was not valid JSON. Return ONLY a JSON object, nothing else.")
-                continue
-            attempt_record["parsed_json"] = payload
+            approved_candidates: list[_TailorCandidate] = []
+            for model in model_policy.effective_candidate_models:
+                candidate = self._run_candidate(
+                    messages=messages,
+                    model=model,
+                    profile_snapshot=profile_snapshot,
+                    validation_mode=validation_mode,
+                    job=job,
+                )
+                attempt_record["candidates"].append(candidate.record)
+                report["candidate_summaries"].append(_safe_candidate_summary(candidate.record))
+                last_payload = candidate.payload or last_payload
+                last_validation = candidate.validation
+                last_verdict = candidate.verdict
 
-            validation = self._validator.validate_json_fields(
-                payload, profile_snapshot, mode=validation_mode
-            )
-            report["validator"] = validation.to_dict()
-            attempt_record["validator"] = validation.to_dict()
-            last_validation = validation
-            last_payload = payload
+                if candidate.validation.passed and (
+                    candidate.verdict is None or candidate.verdict.approved
+                ):
+                    approved_candidates.append(candidate)
+                elif candidate.validation.passed and candidate.verdict is not None:
+                    if best_rejected is None or candidate.judge_score > best_rejected.judge_score:
+                        best_rejected = candidate
 
-            if not validation.passed:
-                avoid_notes.extend(validation.errors)
-                attempt_record["status"] = "failed_validation"
-                if attempt < self._max_retries:
-                    report["attempt_history"].append(attempt_record)
-                    continue
-                report["status"] = "failed_validation"
-                report["attempt_history"].append(attempt_record)
-                return report, last_payload, last_validation, last_verdict
-
-            if validation_mode == "lenient":
-                last_verdict = JudgeVerdict.passed(score=1.0, notes="judge skipped (lenient)")
-                report["judge"] = {"verdict": "SKIPPED", "passed": True, "issues": "none"}
+            if approved_candidates:
+                selected = max(approved_candidates, key=lambda item: item.judge_score)
                 report["status"] = "approved"
-                attempt_record["judge"] = report["judge"]
+                report["validator"] = selected.validation.to_dict()
+                report["judge"] = selected.record.get("judge")
+                report["selected_candidate"] = selected.record.get("candidate_id")
+                report["selected_model"] = selected.model
                 attempt_record["status"] = "approved"
+                attempt_record["selected_candidate"] = selected.record.get("candidate_id")
                 report["attempt_history"].append(attempt_record)
-                return report, last_payload, last_validation, last_verdict
+                return report, selected.payload, selected.validation, selected.verdict
 
-            tailored_text = self._assembler.assemble_resume_text(payload, profile_snapshot)
-            verdict = self._judge_resume(
-                profile_snapshot=profile_snapshot,
-                tailored_text=tailored_text,
-                job_title=job.get("title", ""),
-            )
-            last_verdict = verdict
-            report["judge"] = {
-                "passed": verdict.approved,
-                "verdict": "PASS" if verdict.approved else "FAIL",
-                "issues": verdict.notes or "none",
-                "score": verdict.score,
-            }
-            attempt_record["judge"] = report["judge"]
+            for candidate_record in attempt_record["candidates"]:
+                status = str(candidate_record.get("status", ""))
+                if status == "parse_error":
+                    avoid_notes.append("Output was not valid JSON. Return ONLY a JSON object.")
+                elif status == "failed_validation":
+                    validator = candidate_record.get("validator") or {}
+                    avoid_notes.extend(str(error) for error in validator.get("errors", []))
+                elif status == "judge_rejected":
+                    judge = candidate_record.get("judge") or {}
+                    avoid_notes.append(f"Judge rejected: {judge.get('issues') or 'quality gate failed'}")
 
-            if not verdict.approved:
-                avoid_notes.append(f"Judge rejected: {verdict.notes}")
-                attempt_record["status"] = "judge_rejected"
-                if attempt < self._max_retries:
-                    report["attempt_history"].append(attempt_record)
-                    continue
-                report["status"] = "approved_with_judge_warning"
-                report["attempt_history"].append(attempt_record)
-                return report, last_payload, last_validation, last_verdict
-
-            report["status"] = "approved"
-            attempt_record["status"] = "approved"
+            attempt_record["status"] = "failed_quality_gate"
             report["attempt_history"].append(attempt_record)
-            return report, last_payload, last_validation, last_verdict
 
         report["status"] = "exhausted_retries"
+        if best_rejected is not None:
+            report["status"] = "failed_judge"
+            report["validator"] = best_rejected.validation.to_dict()
+            report["judge"] = best_rejected.record.get("judge")
+            report["selected_candidate"] = best_rejected.record.get("candidate_id")
+            report["selected_model"] = best_rejected.model
+            return report, best_rejected.payload, best_rejected.validation, best_rejected.verdict
+        if last_payload is not None and not last_validation.passed:
+            report["status"] = "failed_validation"
         return report, last_payload, last_validation, last_verdict
+
+    def _run_candidate(
+        self,
+        *,
+        messages: list[LlmMessage],
+        model: str,
+        profile_snapshot: ProfileSnapshot,
+        validation_mode: str,
+        job: dict,
+    ) -> _TailorCandidate:
+        candidate_id = f"candidate-{abs(hash((model, len(messages), messages[-1].content[:80]))) % 10_000_000}"
+        record: dict[str, Any] = {
+            "candidate_id": candidate_id,
+            "model": model,
+            "schema_version": TAILORING_SCHEMA_VERSION,
+        }
+        empty_validation = ValidationResult.failure(("no candidate generated",))
+        try:
+            payload = self._chat_json_payload(
+                messages,
+                schema=TAILORED_RESUME_RESPONSE_SCHEMA,
+                model=model,
+                temperature=self._llm_policy.candidate_temperature,
+                max_tokens=self._llm_policy.candidate_max_tokens,
+                thinking_budget=self._llm_policy.thinking_budget,
+            )
+        except Exception as exc:  # noqa: BLE001
+            record["status"] = "parse_error"
+            record["parse_error"] = str(exc)
+            return _TailorCandidate(
+                payload={},
+                validation=empty_validation,
+                verdict=None,
+                tailored_text="",
+                model=model,
+                record=record,
+            )
+
+        record["parsed_json"] = payload
+        validation = self._validator.validate_json_fields(
+            payload, profile_snapshot, mode=validation_mode
+        )
+        tailored_text = ""
+        if validation.passed:
+            tailored_text = self._assembler.assemble_resume_text(payload, profile_snapshot)
+            rendered_validation = self._validator.validate_tailored_resume(
+                tailored_text, profile_snapshot
+            )
+            if not rendered_validation.passed:
+                validation = ValidationResult.failure(
+                    tuple(validation.errors) + tuple(rendered_validation.errors),
+                    warnings=tuple(validation.warnings) + tuple(rendered_validation.warnings),
+                )
+            elif rendered_validation.warnings:
+                validation = ValidationResult.success(
+                    warnings=tuple(validation.warnings) + tuple(rendered_validation.warnings)
+                )
+        record["validator"] = validation.to_dict()
+
+        if not validation.passed:
+            record["status"] = "failed_validation"
+            return _TailorCandidate(
+                payload=payload,
+                validation=validation,
+                verdict=None,
+                tailored_text=tailored_text,
+                model=model,
+                record=record,
+            )
+
+        if validation_mode == "lenient":
+            verdict = JudgeVerdict.passed(score=1.0, notes="judge skipped (lenient)")
+            record["judge"] = {"verdict": "SKIPPED", "passed": True, "issues": [], "score": 1.0}
+            record["status"] = "approved"
+            return _TailorCandidate(payload, validation, verdict, tailored_text, model, record)
+
+        verdict = self._judge_resume(
+            profile_snapshot=profile_snapshot,
+            tailored_payload=payload,
+            tailored_text=tailored_text,
+            job=job,
+        )
+        record["judge"] = self._judge_record(verdict)
+        if verdict.approved:
+            record["status"] = "approved"
+        else:
+            record["status"] = "judge_rejected"
+        return _TailorCandidate(payload, validation, verdict, tailored_text, model, record)
+
+    def _chat_json_payload(
+        self,
+        messages: list[LlmMessage],
+        *,
+        schema: dict[str, Any],
+        model: str | None,
+        temperature: float,
+        max_tokens: int,
+        thinking_budget: int | None,
+    ) -> dict:
+        try:
+            return self._llm.chat_json(
+                messages,
+                response_schema=schema,
+                model=None if model in {"", "default"} else model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                thinking_budget=thinking_budget,
+            )
+        except AttributeError:
+            raw = self._llm.chat(
+                messages,
+                model=None if model in {"", "default"} else model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_schema=schema,
+                thinking_budget=thinking_budget,
+            )
+            return _extract_json(raw)
 
     def _judge_resume(
         self,
         *,
         profile_snapshot: ProfileSnapshot,
+        tailored_payload: dict,
         tailored_text: str,
-        job_title: str,
+        job: dict,
     ) -> JudgeVerdict:
         judge_prompt = build_judge_prompt(profile_snapshot)
         messages = [
@@ -757,24 +1117,92 @@ class TailorResumeUseCase:
             LlmMessage(
                 role="user",
                 content=(
-                    f"JOB TITLE: {job_title}\n\n"
+                    f"TARGET JOB:\n{_build_job_blob(job)}\n\n"
+                    f"TAILORED JSON:\n{json.dumps(tailored_payload, indent=2, ensure_ascii=False)}\n\n"
                     f"TAILORED RESUME:\n{tailored_text}\n\n"
-                    "Judge this tailored resume:"
+                    "Judge this tailored resume and return the JSON:"
                 ),
             ),
         ]
         try:
-            response = self._llm.chat(messages, max_tokens=150000, temperature=0.1)
+            response = self._chat_json_payload(
+                messages,
+                schema=TAILORING_JUDGE_RESPONSE_SCHEMA,
+                model=self._llm_policy.effective_judge_model,
+                temperature=self._llm_policy.judge_temperature,
+                max_tokens=self._llm_policy.judge_max_tokens,
+                thinking_budget=self._llm_policy.thinking_budget,
+            )
         except Exception as exc:  # noqa: BLE001
             log.error("Judge LLM error: %s", exc)
             return JudgeVerdict.failed(notes=f"judge error: {exc}")
 
-        passed = "VERDICT: PASS" in response.upper()
-        issues = "none"
-        if "ISSUES:" in response.upper():
-            issues_idx = response.upper().index("ISSUES:")
-            issues = response[issues_idx + 7:].strip()
-        return JudgeVerdict(approved=passed, score=1.0 if passed else 0.0, notes=issues)
+        verdict = str(response.get("verdict") or "FAIL").upper()
+        try:
+            score = float(response.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        score = max(0.0, min(1.0, score))
+        issues = _as_string_list(response.get("issues"))
+        unsupported = _as_string_list(response.get("unsupported_claims"))
+        fabrications = _as_string_list(response.get("fabrications"))
+        missing = _as_string_list(response.get("missing_required_evidence"))
+        repairs = _as_string_list(response.get("repair_instructions"))
+        blockers = unsupported + fabrications + missing
+        try:
+            criterion_scores = {
+                str(key): float(value)
+                for key, value in dict(response.get("criterion_scores") or {}).items()
+            }
+        except (TypeError, ValueError):
+            return JudgeVerdict.failed(notes="judge error: invalid criterion_scores")
+        if not criterion_scores:
+            return JudgeVerdict.failed(notes="judge error: missing criterion_scores")
+        approved = (
+            verdict == "PASS"
+            and score >= self._llm_policy.judge_min_score
+            and not blockers
+        )
+        notes_payload = {
+            "verdict": verdict,
+            "score": score,
+            "issues": issues,
+            "unsupported_claims": unsupported,
+            "fabrications": fabrications,
+            "missing_required_evidence": missing,
+            "repair_instructions": repairs,
+            "criterion_scores": criterion_scores,
+            "judge_model": self._llm_policy.effective_judge_model,
+            "judge_schema_version": TAILORING_JUDGE_SCHEMA_VERSION,
+        }
+        return JudgeVerdict(
+            approved=approved,
+            score=score,
+            notes=json.dumps(notes_payload, ensure_ascii=False, sort_keys=True),
+            criterion_scores=criterion_scores,
+            issues=tuple(issues + blockers),
+        )
+
+    def _judge_record(self, verdict: JudgeVerdict | None) -> dict[str, Any] | None:
+        if verdict is None:
+            return None
+        try:
+            notes = json.loads(verdict.notes) if verdict.notes else {}
+        except json.JSONDecodeError:
+            notes = {"issues": [verdict.notes] if verdict.notes else []}
+        return {
+            "passed": verdict.approved,
+            "verdict": "PASS" if verdict.approved else "FAIL",
+            "score": verdict.score,
+            "issues": list(verdict.issues) or notes.get("issues") or [],
+            "unsupported_claims": notes.get("unsupported_claims") or [],
+            "fabrications": notes.get("fabrications") or [],
+            "missing_required_evidence": notes.get("missing_required_evidence") or [],
+            "repair_instructions": notes.get("repair_instructions") or [],
+            "criterion_scores": dict(verdict.criterion_scores) or notes.get("criterion_scores") or {},
+            "judge_model": notes.get("judge_model") or self._llm_policy.effective_judge_model,
+            "judge_schema_version": TAILORING_JUDGE_SCHEMA_VERSION,
+        }
 
     def _derive_status(
         self,
@@ -783,11 +1211,11 @@ class TailorResumeUseCase:
         verdict: JudgeVerdict | None,
     ) -> str:
         status = report.get("status", "pending")
-        if status in {"approved", "approved_with_judge_warning"}:
+        if status == "approved":
             return status
-        if validation.passed:
-            if verdict is not None and not verdict.approved:
-                return "approved_with_judge_warning"
+        if validation.passed and verdict is not None and not verdict.approved:
+            return "failed_judge"
+        if validation.passed and verdict is None and status == "approved":
             return "approved"
         return status
 
@@ -890,6 +1318,12 @@ class GenerateCoverLetterUseCase:
                 materials=materials,
                 status="error",
                 error="Cover letter requires an approved tailored resume",
+            )
+        if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
+            return CoverLetterOutcome(
+                materials=materials,
+                status="error",
+                error="Cover letter requires an approved tailored resume PDF",
             )
 
         # Read the resume text (the cover-letter prompt benefits from
