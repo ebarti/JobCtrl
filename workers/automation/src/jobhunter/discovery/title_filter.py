@@ -5,6 +5,20 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from itertools import product
+from typing import Protocol, cast
+
+
+class RoleTitleMatchAdjudicator(Protocol):
+    def matches(
+        self,
+        *,
+        title: str,
+        query: str,
+        match_mode: str,
+        target_track: str | None = None,
+        seniority_floor: str | None = None,
+    ) -> bool:
+        ...
 
 
 _STOPWORDS = {
@@ -191,6 +205,8 @@ _RECALL_TOKEN_EXPANSIONS = {
     "vp": ("vice", "president"),
 }
 
+_AUTO_ROLE_MATCHER = object()
+
 
 def title_matches_query(
     title: str | None,
@@ -199,6 +215,7 @@ def title_matches_query(
     match_mode: str = "strict",
     target_track: str | None = None,
     seniority_floor: str | None = None,
+    role_matcher: RoleTitleMatchAdjudicator | None | object = _AUTO_ROLE_MATCHER,
 ) -> bool:
     """Return whether a posting title satisfies a target search query."""
     normalized_query = normalize_query(query)
@@ -216,15 +233,40 @@ def title_matches_query(
     if _has_excluded_engineering_specialty(title_sequence, query_tokens):
         return False
     if match_mode == _RECALL_MATCH_MODE:
-        return _recall_title_matches_query(
+        matched = _recall_title_matches_query(
             title_sequence,
             query_tokens,
             target_track=target_track,
             seniority_floor=seniority_floor,
         )
-    return _query_tokens_match_compactly(query_tokens, title_sequence) or _query_alias_matches(
-        query_tokens,
-        title_sequence,
+        if not matched:
+            return False
+        return _adjudicate_loose_match(
+            title=title,
+            query=normalized_query,
+            match_mode=match_mode,
+            target_track=target_track,
+            seniority_floor=seniority_floor,
+            role_matcher=role_matcher,
+            verbatim=_query_tokens_match_verbatim(query_tokens, title_sequence)
+            or _query_alias_matches(query_tokens, title_sequence),
+        )
+    verbatim_match = _query_tokens_match_verbatim(query_tokens, title_sequence)
+    alias_match = _query_alias_matches(query_tokens, title_sequence)
+    if not (
+        verbatim_match
+        or alias_match
+        or _query_tokens_match_compactly(query_tokens, title_sequence)
+    ):
+        return False
+    return _adjudicate_loose_match(
+        title=title,
+        query=normalized_query,
+        match_mode=match_mode,
+        target_track=target_track,
+        seniority_floor=seniority_floor,
+        role_matcher=role_matcher,
+        verbatim=verbatim_match or alias_match,
     )
 
 
@@ -282,6 +324,23 @@ def _has_business_function_false_positive(
 
 
 def _query_tokens_match_compactly(query_tokens: Sequence[str], title_sequence: Sequence[str]) -> bool:
+    return _query_tokens_match_with_extra(
+        query_tokens,
+        title_sequence,
+        max_extra_tokens=_MAX_MATCH_EXTRA_TOKENS,
+    )
+
+
+def _query_tokens_match_verbatim(query_tokens: Sequence[str], title_sequence: Sequence[str]) -> bool:
+    return _query_tokens_match_with_extra(query_tokens, title_sequence, max_extra_tokens=0)
+
+
+def _query_tokens_match_with_extra(
+    query_tokens: Sequence[str],
+    title_sequence: Sequence[str],
+    *,
+    max_extra_tokens: int,
+) -> bool:
     token_spans = [_token_spans(token, title_sequence) for token in query_tokens]
     if any(not spans for spans in token_spans):
         return False
@@ -290,9 +349,45 @@ def _query_tokens_match_compactly(query_tokens: Sequence[str], title_sequence: S
         total_span_tokens = sum(end - start for start, end in candidate)
         window_start = min(start for start, _ in candidate)
         window_end = max(end for _, end in candidate)
-        if window_end - window_start <= total_span_tokens + _MAX_MATCH_EXTRA_TOKENS:
+        if window_end - window_start <= total_span_tokens + max_extra_tokens:
             return True
     return False
+
+
+def _adjudicate_loose_match(
+    *,
+    title: str | None,
+    query: str,
+    match_mode: str,
+    target_track: str | None,
+    seniority_floor: str | None,
+    role_matcher: RoleTitleMatchAdjudicator | None | object,
+    verbatim: bool,
+) -> bool:
+    if verbatim:
+        return True
+    matcher = _resolve_role_matcher(role_matcher)
+    if matcher is None:
+        return True
+    return matcher.matches(
+        title=str(title or ""),
+        query=query,
+        match_mode=match_mode,
+        target_track=target_track,
+        seniority_floor=seniority_floor,
+    )
+
+
+def _resolve_role_matcher(
+    role_matcher: RoleTitleMatchAdjudicator | None | object,
+) -> RoleTitleMatchAdjudicator | None:
+    if role_matcher is None:
+        return None
+    if role_matcher is not _AUTO_ROLE_MATCHER:
+        return cast(RoleTitleMatchAdjudicator, role_matcher)
+    from jobhunter.discovery.role_title_matcher import default_role_title_matcher
+
+    return default_role_title_matcher()
 
 
 def _token_spans(token: str, title_sequence: Sequence[str]) -> tuple[tuple[int, int], ...]:

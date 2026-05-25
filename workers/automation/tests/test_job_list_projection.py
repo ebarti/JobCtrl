@@ -357,6 +357,36 @@ def test_soft_deleted_job_carries_deleted_at(conn: sqlite3.Connection) -> None:
     assert _row_value(row, "deleted_at") == deleted_at
 
 
+def test_stale_restore_before_delete_still_carries_deleted_at(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/jobs/stale-restore"
+    _seed_job(conn, url)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+            job_url     TEXT PRIMARY KEY,
+            deleted_at  TEXT NOT NULL,
+            reason      TEXT,
+            restored_at TEXT
+        )
+        """
+    )
+    deleted_at = "2026-05-25T23:10:33.870522+00:00"
+    conn.execute(
+        "INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at) "
+        "VALUES (?, ?, ?, ?)",
+        (url, deleted_at, "discovery hygiene rejected source", "2026-05-25T21:35:55.879345+00:00"),
+    )
+    record_job_event(conn, url, "discover", "JobDeleted")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT deleted_at FROM job_list_projections WHERE job_id = ?", (url,)
+    ).fetchone()
+    assert _row_value(row, "deleted_at") == deleted_at
+
+
 def test_initial_backfill_picks_up_pre_event_history(conn: sqlite3.Connection) -> None:
     """Even when no events exist yet, jobs in the table get projected.
 

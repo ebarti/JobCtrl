@@ -8,6 +8,7 @@ import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtif
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
 import { Section } from "../../shared/ui/section.js";
@@ -41,8 +42,13 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
       : openArtifact.error?.message ?? "";
 
   return (
-    <div className="drawer-backdrop">
-      <aside className="drawer detail-drawer artifact-detail-drawer">
+    <DetailDrawerBackdrop onDismiss={close}>
+      <div
+        className="drawer detail-drawer artifact-detail-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Artifact details"
+      >
         <button
           aria-label="Close artifact details"
           className="drawer-close"
@@ -141,7 +147,7 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
             {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
           </>
         ) : null}
-      </aside>
-    </div>
+      </div>
+    </DetailDrawerBackdrop>
   );
 }

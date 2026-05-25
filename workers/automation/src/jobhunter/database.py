@@ -2330,7 +2330,12 @@ def resurface_deleted_job(conn: sqlite3.Connection, job_url: str, *, resurfaced_
         """
     )
     cursor = conn.execute(
-        "UPDATE jobhunter_deleted_jobs SET restored_at = ? WHERE job_url = ? AND restored_at IS NULL",
+        """
+        UPDATE jobhunter_deleted_jobs
+        SET restored_at = ?
+        WHERE job_url = ?
+          AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))
+        """,
         (resurfaced_at, job_url),
     )
     if cursor.rowcount:

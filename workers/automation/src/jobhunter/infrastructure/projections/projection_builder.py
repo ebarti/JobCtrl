@@ -282,6 +282,7 @@ class ProjectionBuilder:
                 # ``jobs`` table not yet created (very-fresh DB) — nothing
                 # to backfill.
                 pass
+        dirty_jobs.update(self._stale_deleted_projection_jobs())
 
         # L5 (round-1 review): if there's nothing dirty AND we've already
         # synced past the latest event, skip the O(jobs × stages)
@@ -701,7 +702,8 @@ class ProjectionBuilder:
             row = self._conn.execute(
                 """
                 SELECT deleted_at FROM jobhunter_deleted_jobs
-                WHERE job_url = ? AND restored_at IS NULL
+                WHERE job_url = ?
+                  AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))
                 """,
                 (job_url,),
             ).fetchone()
@@ -710,6 +712,28 @@ class ProjectionBuilder:
         if row is None:
             return None
         return _row_nullable_str(row, "deleted_at")
+
+    def _stale_deleted_projection_jobs(self) -> set[str]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT p.job_id
+                FROM job_list_projections p
+                JOIN jobhunter_deleted_jobs d
+                  ON d.job_url = p.job_id
+                WHERE p.tenant_id = ?
+                  AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+                  AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
+        }
 
     def _load_artifacts(self, job_url: str) -> list[dict]:
         artifacts: list[dict] = []
@@ -819,7 +843,8 @@ class ProjectionBuilder:
                     SELECT COUNT(*)
                     FROM apply_run_projections arp
                     LEFT JOIN jobhunter_deleted_jobs d
-                        ON d.job_url = arp.job_id AND d.restored_at IS NULL
+                        ON d.job_url = arp.job_id
+                       AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
                     WHERE arp.dry_run = 1 AND d.job_url IS NULL
                     """
                 ).fetchone()[0]

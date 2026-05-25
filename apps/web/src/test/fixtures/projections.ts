@@ -226,10 +226,12 @@ export const sampleDashboardSummary: DashboardSummary = {
   generatedAt: "2026-05-06T08:00:00Z",
   totals: {
     jobs: 12,
+    jobsToday: 2,
     failures: 1,
     blocked: 0,
     ready: 5,
     applied: 3,
+    appliedToday: 1,
     dryRuns: 2,
   },
   funnel: [

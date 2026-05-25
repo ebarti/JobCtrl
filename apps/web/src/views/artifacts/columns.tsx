@@ -47,25 +47,40 @@ function selectHeader(
     Boolean(rowSelection[row.artifactId]),
   );
   return (
-    <input
-      type="checkbox"
-      aria-label="Select all rows on this page"
-      checked={allSelected}
-      ref={(node) => {
-        if (node) {
-          node.indeterminate = someSelected && !allSelected;
+    <span
+      className="row-check-hitbox"
+      onClick={(event: MouseEvent<HTMLSpanElement>) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) {
+          updateSelectedRows(
+            rowSelection,
+            onRowSelectionChange,
+            pageRows,
+            !allSelected,
+          );
         }
       }}
-      onChange={(event: ChangeEvent<HTMLInputElement>) =>
-        updateSelectedRows(
-          rowSelection,
-          onRowSelectionChange,
-          pageRows,
-          event.target.checked,
-        )
-      }
-      onClick={(event: MouseEvent) => event.stopPropagation()}
-    />
+    >
+      <input
+        type="checkbox"
+        aria-label="Select all rows on this page"
+        checked={allSelected}
+        ref={(node) => {
+          if (node) {
+            node.indeterminate = someSelected && !allSelected;
+          }
+        }}
+        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+          updateSelectedRows(
+            rowSelection,
+            onRowSelectionChange,
+            pageRows,
+            event.target.checked,
+          )
+        }
+        onClick={(event: MouseEvent) => event.stopPropagation()}
+      />
+    </span>
   );
 }
 
@@ -89,20 +104,35 @@ export function artifactColumns(
       className: "row-check",
       headerClassName: "row-check",
       render: (row) => (
-        <input
-          type="checkbox"
-          aria-label={`Select ${row.title || row.type}`}
-          checked={Boolean(options.rowSelection[row.artifactId])}
-          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-            updateSelectedRow(
-              options.rowSelection,
-              options.onRowSelectionChange,
-              row,
-              event.target.checked,
-            )
-          }
-          onClick={(event: MouseEvent) => event.stopPropagation()}
-        />
+        <span
+          className="row-check-hitbox"
+          onClick={(event: MouseEvent<HTMLSpanElement>) => {
+            event.stopPropagation();
+            if (event.target === event.currentTarget) {
+              updateSelectedRow(
+                options.rowSelection,
+                options.onRowSelectionChange,
+                row,
+                !Boolean(options.rowSelection[row.artifactId]),
+              );
+            }
+          }}
+        >
+          <input
+            type="checkbox"
+            aria-label={`Select ${row.title || row.type}`}
+            checked={Boolean(options.rowSelection[row.artifactId])}
+            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+              updateSelectedRow(
+                options.rowSelection,
+                options.onRowSelectionChange,
+                row,
+                event.target.checked,
+              )
+            }
+            onClick={(event: MouseEvent) => event.stopPropagation()}
+          />
+        </span>
       ),
     },
     {

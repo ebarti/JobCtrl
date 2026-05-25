@@ -394,7 +394,13 @@ class DiscoverJobsUseCase:
             if existing is not None:
                 refreshed = existing.with_metadata(posting.metadata)
                 if refreshed.is_deleted:
-                    refreshed = refreshed.restore()
+                    restored = self._repository.restore(
+                        tenant_id,
+                        owner_id,
+                        restored_at=observed_at,
+                    )
+                    if restored is not None:
+                        refreshed = restored.with_metadata(posting.metadata)
                 if refreshed != existing:
                     self._repository.save(refreshed)
             self._repository.attach_source_observation(

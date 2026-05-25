@@ -527,6 +527,93 @@ def test_discovery_hygiene_retires_existing_invalid_canonical_ats_rows(
     assert event_count == 3
 
 
+def test_discovery_hygiene_retires_ashby_business_travel_portugal_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    bad_url = "https://jobs.ashbyhq.com/Perk/ad419744-c6e3-4cb6-94bf-8c6eb5e645c0"
+    good_url = "https://jobs.ashbyhq.com/PlatformOps/engineering-manager"
+    rows = [
+        (
+            bad_url,
+            "Senior Business Travel Consultant - Spanish speaking - Remote",
+            "Portugal (Remote)",
+            "Deliver VIP business travel service for executives.",
+            "perk-travel",
+        ),
+        (
+            good_url,
+            "Engineering Manager",
+            "Barcelona, Spain (Remote)",
+            "Lead engineering teams in Barcelona.",
+            "platform-eng",
+        ),
+    ]
+    for url, title, location, description, native_id in rows:
+        conn.execute(
+            """
+            INSERT INTO jobs (url, title, company, description, location, site, strategy, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (url, title, "Perk", description, location, "jobs.ashbyhq.com", "workday_api", "2026-05-25T21:35:55+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_canonical_identities (
+                tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("local", url, url, "ashby", native_id, 0.9, "2026-05-25T21:35:55+00:00"),
+        )
+        conn.execute(
+            """
+            INSERT INTO job_source_observations (
+                tenant_id, source_observation_id, job_url, source_id, source_native_id,
+                observed_url, normalized_observed_url, run_id, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "local",
+                f"obs-{native_id}",
+                url,
+                "ashby:perk",
+                native_id,
+                url,
+                url,
+                "test",
+                "2026-05-25T21:35:55+00:00",
+            ),
+        )
+    conn.commit()
+
+    result = retire_invalid_source_jobs(
+        conn,
+        search_cfg={
+            "queries": [
+                {
+                    "query": "Engineering Manager",
+                    "tier": 1,
+                    "match_mode": "recall",
+                    "generated_from": "target_roles",
+                }
+            ],
+            "locations": [{"location": "Spain"}, {"location": "European Union"}],
+            "location_accept": ["Spain", "European Union", "EU", "EMEA"],
+            "location_reject_non_remote": ["United States", "USA", "US only"],
+            "ats_max_tier": 1,
+        },
+        run_id="hygiene:ashby-perk",
+    )
+
+    assert result["retired_jobs"] == 1
+    deleted = {
+        row["job_url"]: row["reason"]
+        for row in conn.execute("SELECT job_url, reason FROM jobhunter_deleted_jobs").fetchall()
+    }
+    assert good_url not in deleted
+    assert "title_mismatch" in deleted[bad_url]
+    assert "location_mismatch" in deleted[bad_url]
+
+
 def test_discovery_hygiene_retires_invalid_jobspy_rows(
     conn: sqlite3.Connection,
 ) -> None:

@@ -1107,11 +1107,19 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
-    try:
-        hygiene = retire_invalid_source_jobs(conn, search_cfg=search_cfg)
+    def run_hygiene(label: str) -> int:
+        hygiene = retire_invalid_source_jobs(
+            conn,
+            search_cfg=search_cfg,
+            run_id=f"discovery:hygiene:{label}",
+        )
         retired = int(hygiene.get("retired_jobs") or 0)
         if retired:
             console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
+        return retired
+
+    try:
+        run_hygiene("before")
     except Exception:
         log.warning("Discovery hygiene failed", exc_info=True)
     enrichment_done, enrichment_result, enrichment_thread = _start_discovery_enrichment_worker(
@@ -1126,6 +1134,10 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             enrichment_result,
         )
         stats["enrichment"] = str(enrichment_stats.get("status", "ok"))
+        try:
+            run_hygiene("after")
+        except Exception:
+            log.warning("Post-discovery hygiene failed", exc_info=True)
         return stats
 
     jobspy_sources = schedule.for_prefix("jobspy")

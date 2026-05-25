@@ -15,11 +15,11 @@ describe("StageTriggerPanel", () => {
     useStageTriggerStore.getState().reset();
   });
 
-  it("defaults to the Discover tab with dry-run enabled", () => {
+  it("defaults to the Discover tab with dry-run enabled", async () => {
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByLabelText("Dry run")).toBeChecked();
-    expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
   });
 
   it("blocks stage runs when the Temporal worker heartbeat is missing", async () => {
@@ -47,6 +47,42 @@ describe("StageTriggerPanel", () => {
       "No Temporal worker heartbeat has been written to the API database.",
     );
     await user.click(screen.getByRole("button", { name: "Worker unavailable" }));
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
+
+  it("rechecks worker runtime health immediately before dispatching a stage run", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    const health = vi
+      .fn()
+      .mockResolvedValueOnce(sampleHealthResponse)
+      .mockResolvedValueOnce({
+        ...sampleHealthResponse,
+        worker: {
+          ...sampleHealthResponse.worker,
+          status: "mismatched" as const,
+          message:
+            "Temporal worker runtime does not match the API runtime: worker DB /tmp/old.db, API DB /tmp/new.db.",
+        },
+      });
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          health,
+          runPipelineStages,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+
+    await waitFor(() => expect(health).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Temporal worker runtime does not match the API runtime",
+    );
     expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
@@ -178,7 +214,7 @@ describe("StageTriggerPanel", () => {
     await user.clear(limitInput);
     await user.type(limitInput, "1000");
     await user.click(screen.getByLabelText("Dry run"));
-    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
     const request = runPipelineStages.mock.calls[0]?.[0];
@@ -407,7 +443,7 @@ describe("StageTriggerPanel", () => {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Starting Discover... waiting for local worker response.",
@@ -441,7 +477,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Discover in progress: Discovery source workday started (#538).",

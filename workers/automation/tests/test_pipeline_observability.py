@@ -168,6 +168,33 @@ def test_discover_emits_source_events(monkeypatch):
     ]
 
 
+def test_discover_runs_hygiene_before_and_after_sources(monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setattr(runner.config, "load_search_config", lambda: {"disable_jobspy": True})
+    monkeypatch.setattr(
+        runner,
+        "retire_invalid_source_jobs",
+        lambda _conn, *, search_cfg, run_id="discovery:hygiene": calls.append(run_id)
+        or {"retired_jobs": 0, "jobs": []},
+    )
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
+    )
+
+    runner._run_discover(workers=2)
+
+    assert calls == ["discovery:hygiene:before", "discovery:hygiene:after"]
+
+
 def test_discover_limit_propagates_to_sources(monkeypatch):
     calls: list[tuple[str, int, int | None]] = []
 

@@ -243,6 +243,42 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("blocks stage dispatch when the worker runtime does not match the API runtime", async () => {
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-ignored" }));
+    insertWorkerHeartbeat(options.dbPath, {
+      workerId: "worker-wrong-db",
+      appDir: path.join(tempDir, "other-app"),
+      dbPath: path.join(tempDir, "other-app", "jobhunter.db"),
+      lastSeenAt: new Date().toISOString(),
+    });
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      requireHealthyWorkerForActions: true,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["tailor"], dryRun: true, limit: 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "worker_runtime_unavailable",
+      worker: {
+        status: "mismatched",
+        expectedDbPath: options.dbPath,
+        expectedAppDir: tempDir,
+      },
+    });
+    expect(response.json().message).toContain("does not match");
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it("does not allow cross-site browser reads from non-local origins", async () => {
     const app = buildApp(options);
     const response = await app.inject({
@@ -411,10 +447,12 @@ describe("local TypeScript API", () => {
     const body = response.json();
     expect(body.totals).toMatchObject({
       jobs: 3,
+      jobsToday: 0,
       failures: 1,
       blocked: 1,
       ready: 1,
       applied: 0,
+      appliedToday: 0,
       dryRuns: 1,
     });
     expect(body.funnel.find((stage: { stage: string }) => stage.stage === "score")).toMatchObject({
@@ -432,6 +470,61 @@ describe("local TypeScript API", () => {
       level: "error",
     });
     expect(body.applyRuns[0]).toMatchObject({ runId: "run-1", dryRun: true });
+
+    await app.close();
+  });
+
+  it("returns local-day dashboard deltas for active jobs and applications", async () => {
+    const now = new Date().toISOString();
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "UPDATE jobs SET discovered_at = ?, apply_status = 'applied', applied_at = ? WHERE url = ?",
+      ).run(now, now, "https://example.com/jobs/ready");
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().totals).toMatchObject({
+      jobsToday: 1,
+      appliedToday: 1,
+    });
+
+    await app.close();
+  });
+
+  it("returns all matching dashboard activity events", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      const insertActivity = db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      for (let index = 0; index < 25; index += 1) {
+        const suffix = String(index + 1).padStart(2, "0");
+        insertActivity.run(
+          "https://example.com/jobs/ready",
+          "score",
+          "JobScored",
+          "info",
+          `Uncapped dashboard activity ${suffix}`,
+          `2026-04-29T10:${String(index + 20).padStart(2, "0")}:00+00:00`,
+        );
+      }
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const activity = response.json().activity as Array<{ message: string }>;
+    expect(activity).toHaveLength(26);
+    expect(activity.filter((event) => event.message.startsWith("Uncapped dashboard activity"))).toHaveLength(25);
 
     await app.close();
   });
@@ -563,6 +656,42 @@ describe("local TypeScript API", () => {
     expect(restored.json().pagination.total).toBe(3);
     const emptyDeleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
     expect(emptyDeleted.json().pagination.total).toBe(0);
+
+    await app.close();
+  });
+
+  it("treats stale restores before later deletes as deleted", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS jobhunter_deleted_jobs (
+        job_url TEXT PRIMARY KEY,
+        deleted_at TEXT NOT NULL,
+        reason TEXT,
+        restored_at TEXT
+      );
+    `);
+    db.prepare(
+      "INSERT INTO jobhunter_deleted_jobs (job_url, deleted_at, reason, restored_at) VALUES (?, ?, ?, ?)",
+    ).run(
+      "https://example.com/jobs/ready",
+      "2026-05-25T23:10:33.870522+00:00",
+      "discovery hygiene rejected source",
+      "2026-05-25T21:35:55.879345+00:00",
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const active = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active&q=Platform" });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(active.json().pagination.total).toBe(0);
+
+    const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted&q=Platform" });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(deleted.json().pagination.total).toBe(1);
+    expect(deleted.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      deletedAt: "2026-05-25T23:10:33.870522+00:00",
+    });
 
     await app.close();
   });

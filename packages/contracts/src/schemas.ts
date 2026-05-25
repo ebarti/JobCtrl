@@ -662,10 +662,12 @@ export interface DashboardSummary {
   generatedAt: string;
   totals: {
     jobs: number;
+    jobsToday: number;
     failures: number;
     blocked: number;
     ready: number;
     applied: number;
+    appliedToday: number;
     dryRuns: number;
   };
   funnel: Array<{

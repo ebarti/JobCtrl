@@ -594,7 +594,8 @@ def retire_invalid_source_jobs(
         LEFT JOIN job_source_observations o
           ON o.tenant_id = ? AND o.job_url = j.url
         LEFT JOIN jobhunter_deleted_jobs d
-          ON d.job_url = j.url AND d.restored_at IS NULL
+          ON d.job_url = j.url
+         AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
         WHERE d.job_url IS NULL
         GROUP BY j.url
         """,

@@ -979,14 +979,35 @@ textarea {
 }
 
 .filterable-data-grid-table .row-check {
-  width: 36px;
-  min-width: 36px;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
   text-align: center;
+  vertical-align: middle;
+}
+
+.filterable-data-grid-table .row-check + th,
+.filterable-data-grid-table .row-check + td {
+  padding-left: 6px;
+}
+
+.filterable-data-grid-table .row-check .data-grid-column-head,
+.filterable-data-grid-table .row-check .data-grid-column-title {
+  width: 100%;
 }
 
 .filterable-data-grid-table .row-check input {
   width: 16px;
   height: 16px;
+}
+
+.row-check-hitbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 36px;
+  cursor: pointer;
 }
 
 .jobs-data-grid-table {
@@ -999,6 +1020,14 @@ textarea {
 
 .runs-data-grid-table {
   min-width: 1280px;
+}
+
+.activity-data-grid-table {
+  min-width: 980px;
+}
+
+.activity-data-grid-table .activity-time-cell {
+  width: 170px;
 }
 
 .data-grid-sort-button {
@@ -1495,17 +1524,6 @@ textarea {
   display: inline-flex;
   justify-content: flex-end;
   gap: 6px;
-}
-
-.row-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.row-check input {
-  width: 16px;
-  height: 16px;
 }
 
 .artifact-variants {

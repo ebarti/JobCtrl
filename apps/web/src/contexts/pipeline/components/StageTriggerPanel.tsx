@@ -210,16 +210,22 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const visibleStageActivity = relevantPendingActivity ?? (!runStages.isPending ? stageActivity : null);
   const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
   const activeStagePanel = stagePanels[activeStage] ?? null;
-  const workerUnhealthy = Boolean(health.data && health.data.worker.status !== "healthy");
-  const workerHealthMessage = health.data?.worker.message ?? "Temporal worker health is unavailable.";
+  const workerUnhealthy =
+    health.isPending || health.isError || health.data?.worker.status !== "healthy";
+  const workerHealthMessage = health.isPending
+    ? "Checking Temporal worker runtime..."
+    : health.isError
+      ? `Temporal worker health check failed: ${health.error.message}`
+      : (health.data?.worker.message ?? "Temporal worker health is unavailable.");
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (workerUnhealthy) return;
+    const workerSnapshot = await health.refetch();
+    if (workerSnapshot.data?.worker.status !== "healthy") return;
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
     const tailorJudgeMinScore =
@@ -404,7 +410,9 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
         <Button disabled={runStages.isPending || workerUnhealthy} type="submit">
           <Play aria-hidden="true" size={16} />
           {workerUnhealthy
-            ? "Worker unavailable"
+            ? health.isPending
+              ? "Checking worker"
+              : "Worker unavailable"
             : runStages.isPending
               ? `Starting ${labelForStage(statusStage)}`
               : `Run ${labelForStage(activeStage)}`}

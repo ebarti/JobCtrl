@@ -12,13 +12,13 @@ describe("PipelinesView", () => {
     useStageTriggerStore.getState().reset();
   });
 
-  it("hosts the pipeline action controls", () => {
+  it("hosts the pipeline action controls", async () => {
     renderWithProviders(<PipelinesView />);
 
     expect(
       screen.getByRole("heading", { name: "Pipeline actions" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
   });
 
   it("shows the discovery page link only while the Discover pipeline stage is active", async () => {
@@ -37,7 +37,7 @@ describe("PipelinesView", () => {
 
     await user.click(screen.getByRole("tab", { name: "Score" }));
 
-    expect(screen.getByRole("button", { name: "Run Score" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Run Score" })).toBeEnabled();
     expect(
       screen.queryByRole("link", { name: "Open Discovery" }),
     ).not.toBeInTheDocument();

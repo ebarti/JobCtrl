@@ -3,6 +3,16 @@ from __future__ import annotations
 from jobhunter.discovery.title_filter import title_matches_query
 
 
+class _FakeRoleMatcher:
+    def __init__(self, result: bool) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    def matches(self, **kwargs: object) -> bool:
+        self.calls.append(kwargs)
+        return self.result
+
+
 def test_strict_title_matching_preserves_exact_query_precision() -> None:
     assert title_matches_query("Director of Engineering", "Director of Engineering")
     assert title_matches_query("Head of Platform Engineering", "Head of Engineering")
@@ -27,6 +37,34 @@ def test_strict_title_matching_preserves_exact_query_precision() -> None:
         "Director of Customer Success for Engineering Platforms",
         "Director of Engineering",
     )
+
+
+def test_loose_strict_title_matching_uses_role_adjudicator() -> None:
+    matcher = _FakeRoleMatcher(False)
+
+    assert not title_matches_query(
+        "Finance & Vendor Manager for Product and Engineering - Remote-First",
+        "Engineering Manager",
+        role_matcher=matcher,
+    )
+
+    assert matcher.calls == [
+        {
+            "title": "Finance & Vendor Manager for Product and Engineering - Remote-First",
+            "query": "Engineering Manager",
+            "match_mode": "strict",
+            "target_track": None,
+            "seniority_floor": None,
+        }
+    ]
+
+
+def test_verbatim_title_matching_does_not_call_role_adjudicator() -> None:
+    matcher = _FakeRoleMatcher(False)
+
+    assert title_matches_query("Engineering Manager", "Engineering Manager", role_matcher=matcher)
+
+    assert matcher.calls == []
 
 
 def test_recall_title_matching_accepts_leadership_domain_variants() -> None:
@@ -111,3 +149,16 @@ def test_recall_title_matching_normalizes_c_level_seniority_floor() -> None:
         target_track="executive",
         seniority_floor="C suite",
     )
+
+
+def test_loose_recall_title_matching_uses_role_adjudicator() -> None:
+    matcher = _FakeRoleMatcher(False)
+
+    assert not title_matches_query(
+        "Project & Construction Manager - Engineer/Architect",
+        "Engineering Manager",
+        match_mode="recall",
+        role_matcher=matcher,
+    )
+
+    assert len(matcher.calls) == 1

@@ -460,6 +460,13 @@ Europe target sets JobSpy's Indeed country to Spain, rejects America-only
 non-remote locations, and hides packaged America-only source rows from discovery
 controls. Discovery `limit` is a new-job budget: already-seen jobs record
 observations but do not consume the cap.
+Title matching uses deterministic exact/alias checks first. When a posting only
+matches a target role loosely and an LLM provider is configured, discovery asks
+the LLM to adjudicate the role family, primary function, seniority, and track
+before keeping the row. This prevents broad-board keyword overlap such as
+finance, vendor, construction, project, product, or sales manager titles from
+entering engineering, platform, security, IT, or technology leadership queues
+just because they contain one target keyword.
 
 Common environment variables:
 
@@ -467,6 +474,11 @@ Common environment variables:
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
 - `LLM_MODEL`: choose the model for the configured provider. Gemini defaults to
   `gemini-3.5-flash`.
+- `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER`: controls LLM adjudication for loose
+  discovery title matches. Defaults to `auto`, which enables the check when an
+  LLM provider is configured. Set `0` to force deterministic title matching.
+- `JOBHUNTER_DISCOVERY_ROLE_FILTER_MODEL`: optional model spec for discovery
+  role adjudication; defaults to the configured LLM model.
 - `TAILORING_GENERATOR_MODELS`: optional comma-separated generator model specs
   for resume tailoring.
 - `TAILORING_JUDGE_MODEL`: optional separate judge model spec for resume

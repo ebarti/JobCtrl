@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
 import { render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
@@ -22,15 +23,25 @@ function renderJobDetailDrawer(jobId: string) {
     getParentRoute: () => rootRoute,
     path: "/jobs",
     validateSearch: jobsSearchSchema,
+    component: () => <Outlet />,
+  });
+  const detailRoute = createRoute({
+    getParentRoute: () => jobsRoute,
+    path: "/$jobId",
     component: () => <JobDetailDrawer jobId={jobId} />,
   });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([jobsRoute]),
+    routeTree: rootRoute.addChildren([jobsRoute.addChildren([detailRoute])]),
     history: createMemoryHistory({
-      initialEntries: ["/jobs?stage=all&state=all&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50"],
+      initialEntries: [
+        `/jobs/${encodeURIComponent(jobId)}?stage=all&state=all&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50`,
+      ],
     }),
   });
-  return render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+  return {
+    router,
+    ...render(<RouterProvider router={router} />, { wrapper: harness.Wrapper }),
+  };
 }
 
 describe("<JobDetailDrawer>", () => {
@@ -45,5 +56,21 @@ describe("<JobDetailDrawer>", () => {
 
     await waitFor(() => expect(screen.getByText("Job not found.")).toBeInTheDocument());
     expect(screen.queryByText(/JobHunter API request failed: 404/i)).not.toBeInTheDocument();
+  });
+
+  it("closes when clicking the backdrop without treating drawer content as backdrop", async () => {
+    const user = userEvent.setup();
+    const { container, router } = renderJobDetailDrawer("job-1");
+
+    await waitFor(() => expect(screen.getByLabelText("Job details")).toBeInTheDocument());
+
+    await user.click(screen.getByLabelText("Job details"));
+    expect(router.state.location.pathname).toBe("/jobs/job-1");
+
+    const backdrop = container.querySelector(".drawer-backdrop");
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop as HTMLElement);
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
   });
 });

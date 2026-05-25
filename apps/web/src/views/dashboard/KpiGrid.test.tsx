@@ -14,12 +14,12 @@ import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { KpiGrid, kpiSearchFor } from "./KpiGrid.js";
 
-function buildRouter() {
+function buildRouter(summary = sampleDashboardSummary) {
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const dashboardRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/dashboard",
-    component: () => <KpiGrid summary={sampleDashboardSummary} />,
+    component: () => <KpiGrid summary={summary} />,
   });
   const jobsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -42,6 +42,23 @@ describe("kpiSearchFor", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /blocked/i })).toBeInTheDocument());
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.queryByText("upstream missing")).not.toBeInTheDocument();
+  });
+
+  it("renders live dashboard today counts instead of static KPI copy", async () => {
+    const router = buildRouter({
+      ...sampleDashboardSummary,
+      totals: {
+        ...sampleDashboardSummary.totals,
+        jobsToday: 4,
+        appliedToday: 2,
+      },
+    });
+
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => expect(screen.getByText("+4 today")).toBeInTheDocument());
+    expect(screen.getByText("+2 today")).toBeInTheDocument();
+    expect(screen.queryByText("+0 today")).not.toBeInTheDocument();
   });
 
   it("builds a complete failed-jobs search for the failures KPI", () => {
