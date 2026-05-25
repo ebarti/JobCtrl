@@ -5,7 +5,7 @@ Runs pipeline stages in sequence or concurrently (streaming mode).
 Usage (via CLI):
     jobhunter run                        # all stages, sequential
     jobhunter run --stream               # all stages, concurrent
-    jobhunter run discover enrich        # specific stages
+    jobhunter run discover score         # specific stages
     jobhunter run score tailor cover     # LLM-only stages
     jobhunter run --dry-run              # preview without executing
 """
@@ -64,10 +64,11 @@ _PIPELINE_JOB_ID = "pipeline"
 # Stage definitions
 # ---------------------------------------------------------------------------
 
-STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover")
+STAGE_ORDER = ("discover", "score", "tailor", "cover")
+INTERNAL_STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover")
 
 STAGE_META: dict[str, dict] = {
-    "discover": {"desc": "Job discovery (JobSpy + Workday + smart extract)"},
+    "discover": {"desc": "Job discovery + detail enrichment"},
     "enrich":   {"desc": "Detail enrichment (full descriptions + apply URLs)"},
     "score":    {"desc": "LLM scoring (fit 1-10)"},
     "tailor":   {"desc": "Resume tailoring (LLM + validation + resume PDF)"},
@@ -79,7 +80,7 @@ STAGE_META: dict[str, dict] = {
 _UPSTREAMS: dict[str, tuple[str, ...]] = {
     "discover": (),
     "enrich":   ("discover",),
-    "score":    ("enrich",),
+    "score":    ("discover",),
     "tailor":   ("score",),
     "cover":    ("tailor",),
 }
@@ -238,7 +239,7 @@ def _stage_status(stage: str, result: dict[str, Any] | None) -> str:
         if stage == "discover":
             sub_errors = [
                 f"{k}: {v}" for k, v in result.items()
-                if isinstance(v, str) and v.startswith("error")
+                if isinstance(v, str) and v.startswith(("error", "stuck"))
             ]
             if sub_errors:
                 status = "partial"
@@ -1109,6 +1110,20 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
     except Exception:
         log.warning("Discovery hygiene failed", exc_info=True)
+    enrichment_done, enrichment_result, enrichment_thread = _start_discovery_enrichment_worker(
+        workers=bounded_workers,
+        limit=limit,
+    )
+
+    def finish_discovery() -> dict:
+        enrichment_stats = _finish_discovery_enrichment_worker(
+            enrichment_done,
+            enrichment_thread,
+            enrichment_result,
+        )
+        stats["enrichment"] = str(enrichment_stats.get("status", "ok"))
+        return stats
+
     jobspy_sources = schedule.for_prefix("jobspy")
 
     def run_jobspy(run_id: str | None = None) -> dict:
@@ -1165,7 +1180,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
         stats["workday"] = _skip_discovery_source("workday", "Workday scraper", "limit reached")
         stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
-        return stats
+        return finish_discovery()
 
     ats_sources = tuple(
         source
@@ -1195,7 +1210,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         if _discover_limit_consumed(start_count, limit, source_results.get("ats_api")):
             stats["workday"] = _skip_discovery_source("workday", "Workday scraper", "limit reached")
             stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
-            return stats
+            return finish_discovery()
 
     # Workday corporate scraper
     workday_sources = schedule.for_prefix("workday")
@@ -1221,7 +1236,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
         console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
     if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
         stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
-        return stats
+        return finish_discovery()
 
     # Smart extract
     smart_extract_sources = _smart_extract_sources(schedule)
@@ -1249,7 +1264,7 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
     if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):
         console.print(f"  [red]Smart extract error:[/red] {stats['smartextract'][7:]}")
 
-    return stats
+    return finish_discovery()
 
 
 def _run_enrich(workers: int = 1, limit: int = 0) -> dict:
@@ -1372,14 +1387,14 @@ def _resolve_stages(stage_names: list[str]) -> list[str]:
         if name not in STAGE_META:
             console.print(
                 f"[red]Unknown stage:[/red] '{name}'. "
-                f"Available: {', '.join(STAGE_ORDER)}, all"
+                f"Available: {', '.join((*STAGE_ORDER, 'enrich'))}, all"
             )
             raise SystemExit(1)
         if name not in resolved:
             resolved.append(name)
 
     # Maintain canonical order
-    return [s for s in STAGE_ORDER if s in resolved]
+    return [s for s in INTERNAL_STAGE_ORDER if s in resolved]
 
 
 # ---------------------------------------------------------------------------
@@ -1391,7 +1406,7 @@ class _StageTracker:
 
     def __init__(self):
         self._events: dict[str, threading.Event] = {
-            stage: threading.Event() for stage in STAGE_ORDER
+            stage: threading.Event() for stage in INTERNAL_STAGE_ORDER
         }
         self._results: dict[str, dict] = {}
         self._lock = threading.Lock()
@@ -1473,6 +1488,8 @@ _PENDING_SQL: dict[str, str] = {
 
 # How long to sleep between polling loops in streaming mode (seconds)
 _STREAM_POLL_INTERVAL = 10
+_DISCOVERY_ENRICH_POLL_INTERVAL = 2
+_DISCOVERY_ENRICH_NO_PROGRESS_LIMIT = 3
 
 
 def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> int:
@@ -1513,6 +1530,96 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
     if "?" in sql:
         return conn.execute(sql, (min_score,)).fetchone()[0]
     return conn.execute(sql).fetchone()[0]
+
+
+def _run_discovery_enrichment_until_idle(
+    discovery_done: threading.Event,
+    result: dict[str, Any],
+    *,
+    workers: int,
+    limit: int,
+) -> None:
+    """Drain the detail-enrichment queue while discovery is still producing jobs."""
+    passes = 0
+    no_progress_passes = 0
+
+    try:
+        while True:
+            pending = _count_pending("enrich")
+            if pending <= 0:
+                if discovery_done.is_set():
+                    result.update({"status": "ok", "passes": passes, "pending": 0})
+                    return
+                discovery_done.wait(timeout=_DISCOVERY_ENRICH_POLL_INTERVAL)
+                continue
+
+            enrichment_result = _run_enrich(workers=workers, limit=limit)
+            passes += 1
+            after = _count_pending("enrich")
+            status = str(enrichment_result.get("status", "ok"))
+
+            if status != "ok":
+                result.update({"status": status, "passes": passes, "pending": after})
+                if discovery_done.is_set():
+                    return
+
+            if after >= pending:
+                no_progress_passes += 1
+                if discovery_done.is_set() and no_progress_passes >= _DISCOVERY_ENRICH_NO_PROGRESS_LIMIT:
+                    result.update(
+                        {
+                            "status": f"stuck: {after} pending detail jobs after {passes} passes",
+                            "passes": passes,
+                            "pending": after,
+                        }
+                    )
+                    return
+            else:
+                no_progress_passes = 0
+    except Exception as exc:
+        log.exception("Discovery detail enrichment worker crashed")
+        result.update(
+            {
+                "status": f"error: {exc}",
+                "error_class": type(exc).__name__,
+                "error_message": str(exc),
+                "passes": passes,
+            }
+        )
+
+
+def _start_discovery_enrichment_worker(
+    *,
+    workers: int,
+    limit: int,
+) -> tuple[threading.Event, dict[str, Any], threading.Thread]:
+    """Start Discovery's internal detail-enrichment queue worker."""
+    discovery_done = threading.Event()
+    result: dict[str, Any] = {}
+    thread = threading.Thread(
+        target=_run_discovery_enrichment_until_idle,
+        kwargs={
+            "discovery_done": discovery_done,
+            "result": result,
+            "workers": workers,
+            "limit": limit,
+        },
+        name="discover-detail-enrichment",
+        daemon=True,
+    )
+    thread.start()
+    return discovery_done, result, thread
+
+
+def _finish_discovery_enrichment_worker(
+    discovery_done: threading.Event,
+    thread: threading.Thread,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Signal Discovery's internal detail-enrichment queue worker and wait for it."""
+    discovery_done.set()
+    thread.join()
+    return result or {"status": "ok", "passes": 0, "pending": 0}
 
 
 def _run_stage_streaming(
@@ -1679,7 +1786,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
     console.print(f"  Poll interval: {_STREAM_POLL_INTERVAL}s\n")
 
     # Mark stages NOT in `ordered` as done so downstream doesn't wait for them
-    for stage in STAGE_ORDER:
+    for stage in INTERNAL_STAGE_ORDER:
         if stage not in ordered:
             tracker.mark_done(stage, {"status": "skipped"})
 

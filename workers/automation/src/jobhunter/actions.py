@@ -22,7 +22,8 @@ from jobhunter.operational_metrics import record_operational_attempt_metric
 from jobhunter.pipeline import STAGE_ORDER, run_pipeline
 from jobhunter.state import record_job_event, utc_now
 
-ACTION_STAGES: tuple[str, ...] = (*STAGE_ORDER, "apply", "profile_import")
+INTERNAL_PIPELINE_ACTION_STAGES: tuple[str, ...] = (*STAGE_ORDER, "enrich")
+ACTION_STAGES: tuple[str, ...] = (*INTERNAL_PIPELINE_ACTION_STAGES, "apply", "profile_import")
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,7 @@ def _bootstrap_runtime() -> None:
 
 
 def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
-    if request.stage in STAGE_ORDER:
+    if request.stage in INTERNAL_PIPELINE_ACTION_STAGES:
         return run_pipeline(
             stages=[request.stage],
             min_score=request.min_score,

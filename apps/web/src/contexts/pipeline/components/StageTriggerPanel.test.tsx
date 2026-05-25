@@ -1,4 +1,4 @@
-import { STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
+import { PIPELINE_RUN_STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -53,7 +53,8 @@ describe("StageTriggerPanel", () => {
   it("renders a matching tabpanel for every stage trigger", () => {
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(STAGES.length);
+    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(PIPELINE_RUN_STAGES.length);
+    expect(screen.queryByRole("tab", { name: "Enrich" })).not.toBeInTheDocument();
 
     for (const tab of screen.getAllByRole("tab")) {
       const panelId = tab.getAttribute("aria-controls");
@@ -80,14 +81,6 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Enrich" }));
-    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Score" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();

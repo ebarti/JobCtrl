@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
+export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
+export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 
 export const MATERIAL_STAGES = ["tailor", "cover"] as const;
@@ -97,7 +99,7 @@ export type ApplyJobRequest = z.infer<typeof ApplyJobRequestSchema>;
 
 export const RunPipelineStagesRequestSchema = z
   .object({
-    stages: z.array(z.enum(STAGES)).min(1).max(STAGES.length),
+    stages: z.array(z.enum(PIPELINE_RUN_STAGES)).min(1).max(PIPELINE_RUN_STAGES.length),
     limit: z.coerce.number().int().min(1).max(1000).default(25),
     workers: z.coerce.number().int().min(1).max(16).default(1),
     minScore: z.coerce.number().int().min(0).max(10).default(7),

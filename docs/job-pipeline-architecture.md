@@ -20,14 +20,20 @@ is intentionally function-based.
 The user-facing stage order is:
 
 ```text
-discover -> enrich -> score -> tailor -> cover -> apply
+discover -> score -> tailor -> cover -> apply
 ```
 
 The Python batch runner's `STAGE_ORDER` covers the non-apply stages:
 
 ```text
-discover -> enrich -> score -> tailor -> cover
+discover -> score -> tailor -> cover
 ```
+
+Detail enrichment is an internal Discovery subphase: discovered jobs that pass
+the light title/location filter are placed on the enrichment queue, and
+Discovery drains that queue with the same worker count before it completes.
+The `enrich` state, aggregate, and retry path remain in the domain model for
+diagnostics and per-job retry.
 
 `apply` is deliberately separate. Non-apply stages currently run through the
 JSON-RPC `run_stage` method and the synchronous `pipeline.runner` stage
@@ -186,8 +192,8 @@ instead of submitting applications.
 
 - Discover: global cap for observed jobs across scheduled sources. When set,
   Discover runs sources sequentially and skips remaining sources once the cap is
-  consumed.
-- Enrich: cap for pending detail-enrichment jobs.
+  consumed; the same value is also used by the internal detail-enrichment queue
+  drain.
 - Score: cap for jobs selected for scoring after retrieval preselection.
 - Tailor: cap for eligible high-fit jobs to tailor.
 - Cover: cap for eligible jobs needing cover letters.
@@ -218,8 +224,9 @@ the ordered pipeline list.
 Discover finds postings from configured sources and creates canonical job
 records plus source observations. It owns source scheduling, source-quality
 feedback, canonical identity, idempotent source-control refresh, manual-capture
-queue entries for protected sources, and dedupe against existing jobs. It does
-not score jobs or fetch every full job description.
+queue entries for protected sources, dedupe against existing jobs, and the
+detail-enrichment queue drain for jobs that pass the initial title/location
+filter. It does not score jobs or generate materials.
 
 ### Sequence
 
@@ -236,6 +243,7 @@ sequenceDiagram
     participant ATS as Canonical ATS APIs
     participant Workday
     participant Smart as Smart Extract
+    participant Detail as Detail enrichment queue
     participant DB as SQLite
     participant Ops as Operations projections
 
@@ -257,6 +265,8 @@ sequenceDiagram
     Workday->>DB: insert/update jobs and observations
     Runner->>Smart: source-first scrape or search-only query fanout
     Smart->>DB: insert jobs, quarantine, manual-capture queue
+    Runner->>Detail: run_enrichment(limit, workers)
+    Detail->>DB: persist full descriptions, apply URLs, attempts/errors
 
     Runner->>DB: DiscoveryRun*, Stage*, and operational attempt metrics
     DB->>Ops: source-quality and dashboard projections refresh
@@ -373,36 +383,35 @@ that cap inside its query loop: existing rediscoveries record observations but
 do not consume the remaining new-job budget, so exact-query duplicates do not
 prevent later recall queries from running.
 
-## Phase 2: Enrich
+## Internal Discovery Subphase: Detail Enrichment
 
 ### Purpose And Boundary
 
-Enrich turns discovered jobs into usable job records by fetching full
-descriptions, application URLs, and detail-page metadata. It owns detail-page
-fetching and extraction. It does not score fit or generate materials.
+Detail enrichment turns discovered jobs into usable job records by fetching
+full descriptions, application URLs, and detail-page metadata. It owns
+detail-page fetching and extraction. It is not a top-level user-run pipeline
+stage; Discovery starts the queue drain and passes the same `workers` value to
+the enrichment runner. It does not score fit or generate materials.
 
 ### Sequence
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Api as TS API
-    participant Rpc as JSON-RPC run_stage
-    participant Runner as _run_enrich
+    participant Runner as _run_discover
     participant Detail as run_enrichment
     participant Fetcher as Detail fetchers
     participant Extractor as JSON-LD/CSS/LLM extraction
     participant DB as SQLite
     participant Ops as Operations projections
 
-    Api->>Rpc: run_stage(stage="enrich", limit, workers)
-    Rpc->>Runner: run_pipeline(stages=["enrich"])
+    Runner->>DB: discovery sources insert pending JobEnrichment rows
     Runner->>Detail: run_enrichment(limit, workers)
     Detail->>DB: select pending discovered jobs
     Detail->>Fetcher: fetch posting detail pages
     Fetcher-->>Extractor: raw HTML / page content
     Extractor->>DB: persist full description, apply URL, attempts/errors
-    Runner->>DB: StageCompleted or StageFailed
+    Runner->>DB: enrich stage/job events for retry visibility
     DB->>Ops: job detail/list projections refresh
 ```
 
@@ -410,8 +419,9 @@ sequenceDiagram
 
 ```mermaid
 classDiagram
-    class RunEnrich {
-      +_run_enrich(workers, limit)
+    class RunDiscover {
+      +_run_discover(workers, limit)
+      +internal enrichment worker
     }
     class EnrichmentRunner {
       +run_enrichment(limit, workers)
@@ -431,7 +441,7 @@ classDiagram
       +save(enrichment)
     }
 
-    RunEnrich --> EnrichmentRunner
+    RunDiscover --> EnrichmentRunner
     EnrichmentRunner --> DetailPageFetcherPort
     EnrichmentRunner --> LlmPort
     EnrichmentRunner --> JobEnrichment
@@ -444,7 +454,8 @@ classDiagram
 - Writes enriched description/application fields and canonical enrichment rows
   where available.
 - Records detail scrape timestamps and errors for retry/debug visibility.
-- Emits pipeline stage lifecycle events.
+- Records enrich job/stage events for retry/debug visibility without exposing
+  Enrich as a top-level pipeline action.
 - Updates job list/detail projections so the UI can show richer job content.
 
 ### Failure And Limits
@@ -453,7 +464,7 @@ classDiagram
 Individual detail failures are recorded on the job so later runs can retry or
 surface the error without crashing unrelated jobs.
 
-## Phase 3: Score
+## Phase 2: Score
 
 ### Purpose And Boundary
 
@@ -561,7 +572,7 @@ local scoring eval gate documented in `docs/local-reliability-qa.md`; the gate
 checks deterministic policy resolution separately from the raw LLM score and
 pins stale-score exclusion until explicit reset/rescore.
 
-## Phase 4: Tailor
+## Phase 3: Tailor
 
 ### Purpose And Boundary
 
@@ -651,7 +662,7 @@ classDiagram
 controls parallel tailoring work. Failures are tracked per job/material so the
 stage can be retried without losing successful materials.
 
-## Phase 5: Cover
+## Phase 4: Cover
 
 ### Purpose And Boundary
 
@@ -738,7 +749,7 @@ classDiagram
 Failures are local to individual jobs so a retry can continue from the remaining
 pending cover letters.
 
-## Phase 6: Apply
+## Phase 5: Apply
 
 ### Purpose And Boundary
 

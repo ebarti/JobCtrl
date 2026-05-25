@@ -5,7 +5,7 @@ job database, generated materials, browser state, and logs on your machine while
 helping you move jobs through a staged pipeline:
 
 ```text
-discover -> enrich -> score -> tailor -> cover -> apply
+discover -> score -> tailor -> cover -> apply
 ```
 
 The automation engine is Python. The newer product surface is a local
@@ -18,8 +18,8 @@ validates reliability before any hosted/SaaS hardening.
 
 JobHunter can:
 
-- find jobs from configured searches and supported source registries;
-- enrich job rows with full descriptions and application URLs;
+- find jobs from configured searches and supported source registries, then
+  enrich matching jobs with full descriptions and application URLs;
 - score jobs against your candidate profile with an LLM;
 - tailor resumes from your structured resume baseline;
 - generate cover letters;
@@ -171,7 +171,6 @@ Run specific stages:
 
 ```bash
 uv --project workers/automation run jobhunter discover
-uv --project workers/automation run jobhunter enrich
 uv --project workers/automation run jobhunter score --workers 4
 uv --project workers/automation run jobhunter tailor --workers 4 --min-score 7
 uv --project workers/automation run jobhunter cover --min-score 7
@@ -180,10 +179,13 @@ uv --project workers/automation run jobhunter cover --min-score 7
 Run stages by name through the orchestrator:
 
 ```bash
-uv --project workers/automation run jobhunter run discover enrich score
+uv --project workers/automation run jobhunter run discover score
 uv --project workers/automation run jobhunter run tailor cover --validation normal
 uv --project workers/automation run jobhunter run --stream
 ```
+
+`jobhunter enrich` remains available as a diagnostic queue-drain command, but
+normal discovery runs own detail enrichment.
 
 Useful options:
 

@@ -1,7 +1,8 @@
 import {
+  PIPELINE_RUN_STAGES,
   PIPELINE_VALIDATION_MODES,
-  STAGES,
   type ActionRunResponse,
+  type PipelineRunStage,
   type PipelineStageRunResponse,
   type PipelineValidationMode,
   type Stage,
@@ -141,9 +142,8 @@ const BASE_CONTROLS: StageControlSet = {
   continuous: false,
 };
 
-const STAGE_CONTROLS: Record<Stage, StageControlSet> = {
+const STAGE_CONTROLS: Record<PipelineRunStage, StageControlSet> = {
   discover: { ...BASE_CONTROLS, limit: true, workers: true },
-  enrich: { ...BASE_CONTROLS, limit: true, workers: true },
   score: { ...BASE_CONTROLS, limit: true, workers: true, rescore: true },
   tailor: {
     ...BASE_CONTROLS,
@@ -173,7 +173,7 @@ function applyModelValue(model: string): (typeof APPLY_MODEL_OPTIONS)[number] {
 }
 
 export interface StageTriggerPanelProps {
-  readonly stagePanels?: Partial<Record<Stage, ReactNode>>;
+  readonly stagePanels?: Partial<Record<PipelineRunStage, ReactNode>>;
 }
 
 export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps = {}) {
@@ -390,19 +390,19 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
           className="stage-trigger-tabs"
           value={activeStage}
           onValueChange={(value) => {
-            if (STAGES.includes(value as Stage)) {
-              setActiveStage(value as Stage);
+            if (PIPELINE_RUN_STAGES.includes(value as PipelineRunStage)) {
+              setActiveStage(value as PipelineRunStage);
             }
           }}
         >
           <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
-            {STAGES.map((stage) => (
+            {PIPELINE_RUN_STAGES.map((stage) => (
               <TabsTrigger key={stage} value={stage}>
                 {labelForStage(stage)}
               </TabsTrigger>
             ))}
           </TabsList>
-          {STAGES.map((stage) => (
+          {PIPELINE_RUN_STAGES.map((stage) => (
             <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
               {stage === activeStage ? stageForm : null}
             </TabsContent>

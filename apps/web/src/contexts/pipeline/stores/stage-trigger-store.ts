@@ -1,8 +1,8 @@
 import {
   PIPELINE_VALIDATION_MODES,
-  STAGES,
+  PIPELINE_RUN_STAGES,
+  type PipelineRunStage,
   type PipelineValidationMode,
-  type Stage,
 } from "@jobhunter/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -20,13 +20,13 @@ export interface StageTriggerConfig {
   continuous: boolean;
 }
 
-type StageTriggerConfigs = Record<Stage, StageTriggerConfig>;
+type StageTriggerConfigs = Record<PipelineRunStage, StageTriggerConfig>;
 
 interface StageTriggerState {
-  activeStage: Stage;
+  activeStage: PipelineRunStage;
   configs: StageTriggerConfigs;
-  setActiveStage: (stage: Stage) => void;
-  patchStageConfig: (stage: Stage, patch: Partial<StageTriggerConfig>) => void;
+  setActiveStage: (stage: PipelineRunStage) => void;
+  patchStageConfig: (stage: PipelineRunStage, patch: Partial<StageTriggerConfig>) => void;
   reset: () => void;
 }
 
@@ -44,7 +44,7 @@ const defaultConfig: StageTriggerConfig = {
 };
 
 function createDefaultConfigs(): StageTriggerConfigs {
-  return Object.fromEntries(STAGES.map((stage) => [stage, { ...defaultConfig }])) as StageTriggerConfigs;
+  return Object.fromEntries(PIPELINE_RUN_STAGES.map((stage) => [stage, { ...defaultConfig }])) as StageTriggerConfigs;
 }
 
 function createMemoryStorage(): StateStorage {
@@ -78,8 +78,8 @@ function getStorage(): StateStorage {
   return fallbackStorage;
 }
 
-function isStage(value: unknown): value is Stage {
-  return typeof value === "string" && STAGES.includes(value as Stage);
+function isStage(value: unknown): value is PipelineRunStage {
+  return typeof value === "string" && PIPELINE_RUN_STAGES.includes(value as PipelineRunStage);
 }
 
 function isValidationMode(value: unknown): value is PipelineValidationMode {
@@ -96,12 +96,13 @@ function mergeConfig(value: unknown): StageTriggerConfig {
 }
 
 function mergeConfigs(value: unknown): StageTriggerConfigs {
-  const source = typeof value === "object" && value !== null ? (value as Partial<Record<Stage, unknown>>) : {};
-  return Object.fromEntries(STAGES.map((stage) => [stage, mergeConfig(source[stage])])) as StageTriggerConfigs;
+  const source =
+    typeof value === "object" && value !== null ? (value as Partial<Record<PipelineRunStage, unknown>>) : {};
+  return Object.fromEntries(PIPELINE_RUN_STAGES.map((stage) => [stage, mergeConfig(source[stage])])) as StageTriggerConfigs;
 }
 
 const initialState = {
-  activeStage: STAGES[0],
+  activeStage: PIPELINE_RUN_STAGES[0],
   configs: createDefaultConfigs(),
 };
 
