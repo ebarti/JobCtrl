@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+import jobhunter.infrastructure.llm.llm_client as adapter_module
 from jobhunter.domain.ports.llm import LlmMessage, LlmPort
 from jobhunter.infrastructure.llm.llm_client import LlmAdapter
 
@@ -33,6 +36,10 @@ class _FakeClient:
     def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> str:
         self.calls.append({"messages": messages, "kwargs": kwargs})
         return self.response
+
+    def chat_json(self, messages: list[dict[str, Any]], **kwargs: Any) -> dict:
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        return {"ok": True}
 
 
 def test_llm_adapter_satisfies_port_protocol() -> None:
@@ -77,15 +84,38 @@ def test_llm_adapter_forwards_set_kwargs() -> None:
     assert fake.calls[0]["kwargs"] == {"temperature": 0.5, "max_tokens": 128}
 
 
-def test_llm_adapter_rejects_mismatched_model() -> None:
+def test_llm_adapter_routes_default_model_without_mismatch_error() -> None:
     fake = _FakeClient(model="real-model")
     adapter = LlmAdapter(client=fake)  # type: ignore[arg-type]
-    try:
-        adapter.chat([LlmMessage(role="user", content="hi")], model="other")
-    except ValueError as exc:
-        assert "real-model" in str(exc)
-    else:  # pragma: no cover
-        raise AssertionError("Expected ValueError on model mismatch")
+    response = adapter.chat([LlmMessage(role="user", content="hi")], model="default")
+    assert response == "ok"
+
+
+def test_llm_adapter_routes_explicit_provider_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    default = _FakeClient(model="default-model")
+    routed = _FakeClient(response="routed", model="judge-model")
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_create_client(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        return routed
+
+    monkeypatch.setattr(adapter_module, "create_client", fake_create_client)
+    adapter = LlmAdapter(client=default)  # type: ignore[arg-type]
+
+    response = adapter.chat([LlmMessage(role="user", content="hi")], model="gemini:judge-model")
+
+    assert response == "routed"
+    assert created == [("gemini", "judge-model")]
+    assert len(default.calls) == 0
+    assert len(routed.calls) == 1
+
+
+def test_llm_adapter_rejects_raw_provider_config_in_model_spec() -> None:
+    adapter = LlmAdapter(client=_FakeClient())  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="URLs"):
+        adapter.chat([LlmMessage(role="user", content="hi")], model="local:http://127.0.0.1:11434")
 
 
 def test_llm_adapter_ask_collapses_to_single_message_chat() -> None:

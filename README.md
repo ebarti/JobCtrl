@@ -80,7 +80,8 @@ Core pipeline:
 - Python 3.11 or newer.
 - A local LLM provider configuration for scoring, tailoring, and cover letters.
   Gemini, OpenAI, and local HTTP-backed providers are supported through
-  environment variables.
+  environment variables. Gemini defaults to `gemini-3-flash-preview` when
+  `GEMINI_API_KEY` is set and `LLM_MODEL` is not.
 - A TeX distribution with `pdflatex` for PDF output.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
   workflow engine the Python worker runs against. The local dev launcher starts
@@ -193,6 +194,21 @@ Useful options:
 - `--min-score`: control which scored jobs proceed to materials or apply.
 - `--validation strict|normal|lenient`: tune tailoring and cover-letter checks.
 - `--retailor`: regenerate tailored resumes for jobs that already have one.
+- `--tailor-models`: comma-separated tailoring generator model specs such as
+  `local:draft-a,gemini:gemini-3-flash-preview`; omit it to use the existing
+  `LLM_MODEL`/provider default.
+- `--tailor-judge-model`: optional separate model spec for the structured
+  tailoring judge. This is independent of the apply `--model` option.
+- `--tailor-judge-min-score`: minimum structured judge score for approval
+  (`0.82` by default). `--validation lenient` skips the judge.
+
+The same tailoring controls can be provided through
+`TAILORING_GENERATOR_MODELS`, `TAILORING_JUDGE_MODEL`, and
+`TAILORING_JUDGE_MIN_SCORE`. The shorter aliases `TAILOR_LLM_MODELS`,
+`TAILOR_JUDGE_MODEL`, and `TAILOR_JUDGE_MIN_SCORE` are also accepted. Model
+specs name only a provider/model (`gemini:...`, `openai:...`, or `local:...`);
+credentials and local endpoint URLs still come only from environment variables
+and are not written to artifact metadata.
 
 ## Single-Job And Retry Commands
 
@@ -442,6 +458,11 @@ Common environment variables:
 - `JOBHUNTER_DIR`: override the local app directory.
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
 - `LLM_MODEL`: choose the model for the configured provider.
+- `TAILORING_GENERATOR_MODELS`: optional comma-separated generator model specs
+  for resume tailoring.
+- `TAILORING_JUDGE_MODEL`: optional separate judge model spec for resume
+  tailoring.
+- `TAILORING_JUDGE_MIN_SCORE`: optional quality threshold for judge approval.
 - `CHROME_PATH`: override Chrome/Chromium detection.
 - `PDFLATEX_PATH`: override LaTeX detection.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.

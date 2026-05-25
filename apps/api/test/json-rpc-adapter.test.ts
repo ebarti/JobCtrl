@@ -174,6 +174,35 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]?.method).toBe("run_stage");
   });
 
+  it("passes tailoring model controls through run-stage RPC without reusing apply model", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        stage: "tailor",
+        stages: ["tailor"],
+        tailorModels: ["local:draft-a", "openai:draft-b"],
+        tailorJudgeModel: "gemini:judge-c",
+        tailorJudgeMinScore: 0.9,
+        model: "sonnet",
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls[0]?.method).toBe("run_stage");
+    expect(fake.calls[0]?.params).toMatchObject({
+      stage: "tailor",
+      stages: ["tailor"],
+      model: "sonnet",
+      tailorModels: ["local:draft-a", "openai:draft-b"],
+      tailorJudgeModel: "gemini:judge-c",
+      tailorJudgeMinScore: 0.9,
+    });
+  });
+
   it("maps a failed global run-stage LocalActionResult error into the action message", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({

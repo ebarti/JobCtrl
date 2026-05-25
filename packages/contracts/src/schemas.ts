@@ -107,6 +107,9 @@ export const RunPipelineStagesRequestSchema = z
     retailor: z.boolean().default(false),
     headless: z.boolean().default(false),
     model: z.string().trim().min(1).max(80).default("default"),
+    tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
+    tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
+    tailorJudgeMinScore: z.coerce.number().min(0).max(1).default(0.82),
     continuous: z.boolean().default(false),
   })
   .strict()
@@ -812,6 +815,9 @@ export interface ActionCommandPayload {
   rescore?: boolean;
   retailor?: boolean;
   model?: string;
+  tailorModels?: string[];
+  tailorJudgeModel?: string;
+  tailorJudgeMinScore?: number;
   headless?: boolean;
   continuous?: boolean;
   runId?: string;

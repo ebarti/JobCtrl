@@ -261,6 +261,9 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "dryRun": True,
                 "rescore": True,
                 "retailor": True,
+                "tailorModels": ["local:draft-a", "openai:draft-b"],
+                "tailorJudgeModel": "gemini:judge-c",
+                "tailorJudgeMinScore": 0.9,
             },
             id=1,
         )
@@ -288,6 +291,9 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         dry_run=True,
         rescore=True,
         retailor=True,
+        tailor_models=("local:draft-a", "openai:draft-b"),
+        tailor_judge_model="gemini:judge-c",
+        tailor_judge_min_score=0.9,
     )
 
 

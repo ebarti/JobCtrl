@@ -35,6 +35,7 @@ from jobhunter.domain.materials.services import ContentValidator, ResumeAssemble
 from jobhunter.domain.materials.use_cases import (
     GenerateCoverLetterUseCase,
     RenderPdfUseCase,
+    TailoringLlmPolicy,
     TailorResumeUseCase,
 )
 from jobhunter.domain.ports.events import EventPublisher
@@ -142,12 +143,17 @@ class _ScriptedLlm:
     def __init__(self, responses: Iterable[str]) -> None:
         self._responses = list(responses)
         self.calls: list[list[LlmMessage]] = []
+        self.kwargs: list[dict] = []
 
     def chat(self, messages: list[LlmMessage], **kwargs) -> str:
         self.calls.append(messages)
+        self.kwargs.append(dict(kwargs))
         if not self._responses:
             raise RuntimeError("no scripted response left")
         return self._responses.pop(0)
+
+    def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:
+        return json.loads(self.chat(messages, **kwargs))
 
     def ask(self, prompt: str, **kwargs) -> str:
         return self.chat([LlmMessage(role="user", content=prompt)], **kwargs)
@@ -176,11 +182,69 @@ def _good_json_payload() -> str:
 
 
 def _judge_pass() -> str:
-    return "VERDICT: PASS\nISSUES: none"
+    return json.dumps(
+        {
+            "verdict": "PASS",
+            "score": 0.94,
+            "criterion_scores": {
+                "relevance_to_job": 0.95,
+                "evidence_support": 0.95,
+                "fabrication_safety": 1.0,
+                "required_content_preserved": 1.0,
+                "ats_readability": 0.9,
+                "specificity_and_metrics": 0.85,
+            },
+            "issues": [],
+            "unsupported_claims": [],
+            "fabrications": [],
+            "missing_required_evidence": [],
+            "repair_instructions": [],
+        }
+    )
 
 
 def _judge_fail() -> str:
-    return "VERDICT: FAIL\nISSUES: invented metric"
+    return json.dumps(
+        {
+            "verdict": "FAIL",
+            "score": 0.4,
+            "criterion_scores": {
+                "relevance_to_job": 0.8,
+                "evidence_support": 0.2,
+                "fabrication_safety": 0.1,
+                "required_content_preserved": 0.9,
+                "ats_readability": 0.8,
+                "specificity_and_metrics": 0.2,
+            },
+            "issues": ["invented metric"],
+            "unsupported_claims": ["Cut latency 40%"],
+            "fabrications": [],
+            "missing_required_evidence": [],
+            "repair_instructions": ["Remove unsupported metric."],
+        }
+    )
+
+
+def _judge_with_score(score: float, verdict: str = "PASS") -> str:
+    return json.dumps(
+        {
+            "verdict": verdict,
+            "score": score,
+            "criterion_scores": {
+                "relevance_to_job": score,
+                "evidence_support": score,
+                "fabrication_safety": score,
+                "required_content_preserved": score,
+                "ats_readability": score,
+                "specificity_and_metrics": score,
+            },
+            "issues": [] if verdict == "PASS" else ["quality gate failed"],
+            "unsupported_claims": [],
+            "fabrications": [],
+            "missing_required_evidence": [],
+            "repair_instructions": [],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -208,15 +272,17 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
     assert outcome.materials is not None
     assert outcome.materials.is_resume_approved
     assert outcome.materials.status == MaterialsLifecycle.RESUME_APPROVED
+    assert outcome.materials.last_verdict is not None
+    assert outcome.materials.last_verdict.criterion_scores["fabrication_safety"] == 1.0
     assert outcome.text_path is not None and Path(outcome.text_path).exists()
     assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
 
 
-def test_tailor_use_case_judge_rejected_finishes_with_warning(
+def test_tailor_use_case_judge_rejected_fails_quality_gate(
     tmp_path: Path, snapshot: ProfileSnapshot, job: dict
 ) -> None:
     repo = _FakeRepository()
-    # Judge fails on every retry → status is approved_with_judge_warning.
+    # Judge fails on every retry -> no tailored resume is approved.
     responses = []
     for _ in range(4):
         responses.append(_good_json_payload())
@@ -231,10 +297,71 @@ def test_tailor_use_case_judge_rejected_finishes_with_warning(
     outcome = use_case.execute(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
     )
-    assert outcome.status == "approved_with_judge_warning"
+    assert outcome.status == "failed_judge"
     assert outcome.materials is not None
     # Aggregate stays in RESUME_IN_PROGRESS because the judge rejected the artifact.
     assert outcome.materials.status == MaterialsLifecycle.RESUME_IN_PROGRESS
+    assert outcome.materials.last_verdict is not None
+    assert "Cut latency 40%" in outcome.materials.last_verdict.issues
+
+
+def test_tailor_use_case_routes_multiple_candidate_models_and_persists_safe_metadata(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    bad = json.dumps({"executive_profile": "", "experience_updates": [], "skill_category_updates": []})
+    llm = _ScriptedLlm([bad, _good_json_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        llm_policy=TailoringLlmPolicy(
+            candidate_models=("local:draft-a", "openai:draft-b"),
+            judge_model="gemini:judge-c",
+        ),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert [kwargs.get("model") for kwargs in llm.kwargs] == [
+        "local:draft-a",
+        "openai:draft-b",
+        "gemini:judge-c",
+    ]
+    assert outcome.report["selected_model"] == "openai:draft-b"
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    metadata = outcome.materials.tailored_resume.metadata
+    assert metadata["selected_model"] == "openai:draft-b"
+    assert metadata["judge_model"] == "gemini:judge-c"
+    assert metadata["candidate_summaries"][0]["generator"] == "local:draft-a"
+    assert "api_key" not in json.dumps(metadata).lower()
+
+
+def test_tailor_use_case_lenient_skips_judge(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_good_json_payload()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        validation_mode="lenient",
+    )
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 1
+    assert outcome.report["judge"]["verdict"] == "SKIPPED"
 
 
 def test_tailor_use_case_failed_validation_persists_rejected_artifact(
@@ -253,6 +380,86 @@ def test_tailor_use_case_failed_validation_persists_rejected_artifact(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
     )
     assert outcome.status == "failed_validation"
+
+
+def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm(["not json", _good_json_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        llm_policy=TailoringLlmPolicy(
+            candidate_models=("local:bad-candidate", "local:good-candidate"),
+            judge_model="local:judge",
+        ),
+    )
+
+    outcome = use_case.execute(
+        job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
+    )
+
+    assert outcome.status == "approved"
+    assert [kwargs.get("model") for kwargs in llm.kwargs] == [
+        "local:bad-candidate",
+        "local:good-candidate",
+        "local:judge",
+    ]
+    assert outcome.report["selected_model"] == "local:good-candidate"
+    assert outcome.materials is not None
+    metadata = outcome.materials.tailored_resume.metadata if outcome.materials.tailored_resume else {}
+    assert metadata["selected_model"] == "local:good-candidate"
+    assert metadata["judge"]["judge_model"] == "local:judge"
+
+
+def test_tailor_use_case_pass_verdict_below_threshold_fails_judge(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_good_json_payload(), _judge_with_score(0.6)])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        llm_policy=TailoringLlmPolicy(judge_min_score=0.9),
+    )
+
+    outcome = use_case.execute(
+        job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
+    )
+
+    assert outcome.status == "failed_judge"
+    assert outcome.materials is not None
+    assert not outcome.materials.is_resume_approved
+
+
+def test_tailor_use_case_lenient_skips_structured_judge(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_good_json_payload()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        llm_policy=TailoringLlmPolicy(judge_model="local:judge"),
+    )
+
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        validation_mode="lenient",
+    )
+
+    assert outcome.status == "approved"
+    assert len(llm.kwargs) == 1
+    assert outcome.report["judge"]["verdict"] == "SKIPPED"
 
 
 def test_tailor_use_case_exhausted_when_no_parseable_json(

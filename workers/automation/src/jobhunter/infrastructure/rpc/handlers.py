@@ -182,6 +182,13 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
         dry_run=bool(params.get("dryRun", False)),
         rescore=bool(params.get("rescore", False)),
         retailor=bool(params.get("retailor", False)),
+        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
+        tailor_judge_model=(
+            str(params["tailorJudgeModel"])
+            if params.get("tailorJudgeModel")
+            else None
+        ),
+        tailor_judge_min_score=float(params.get("tailorJudgeMinScore", 0.82)),
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),

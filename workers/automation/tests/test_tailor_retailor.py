@@ -108,6 +108,36 @@ def test_tailor_cli_passes_retailor_flag(monkeypatch):
     assert captured["kwargs"]["retailor"] is True
 
 
+def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
+    runner = CliRunner()
+    captured = {}
+
+    def fake_run_stage_command(stage: str, **kwargs):
+        captured["stage"] = stage
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("jobhunter.cli._run_stage_command", fake_run_stage_command)
+
+    result = runner.invoke(
+        app,
+        [
+            "tailor",
+            "--tailor-models",
+            "local:draft-a,gemini:draft-b",
+            "--tailor-judge-model",
+            "openai:judge-c",
+            "--tailor-judge-min-score",
+            "0.9",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["stage"] == "tailor"
+    assert captured["kwargs"]["tailor_models"] == ("local:draft-a", "gemini:draft-b")
+    assert captured["kwargs"]["tailor_judge_model"] == "openai:judge-c"
+    assert captured["kwargs"]["tailor_judge_min_score"] == 0.9
+
+
 def test_tailor_prompt_includes_writing_style_and_custom_guidance():
     profile = {
         "personal": {"full_name": "Jordan Candidate", "email": "jordan@example.com"},

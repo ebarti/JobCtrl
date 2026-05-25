@@ -138,14 +138,16 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
 `validationMode`, `dryRun`, score/tailor flags (`rescore`, `retailor`), and
-apply flags (`headless`, `model`, `continuous`). The route dispatches the
-ordered stage list to JSON-RPC `run_stage`, which starts `JobPipelineWorkflow`;
-if the list includes `apply`, that workflow delegates the apply step to
-`ApplyWorkflow` as a child workflow after preceding stages complete. The route
-uses the command key `pipeline` only as the local action response handle, not
-as a fake job URL. Successful workflow starts return `202` with the queued
-workflow ID. Workflow-start failures return `200` with the dispatcher-derived
-failed action.
+tailoring LLM controls (`tailorModels`, `tailorJudgeModel`,
+`tailorJudgeMinScore`), and apply flags (`headless`, `model`, `continuous`).
+`model` remains apply-only; the tailoring generator and judge specs are
+separate fields. The route dispatches the ordered stage list to JSON-RPC
+`run_stage`, which starts `JobPipelineWorkflow`; if the list includes `apply`,
+that workflow delegates the apply step to `ApplyWorkflow` as a child workflow
+after preceding stages complete. The route uses the command key `pipeline` only
+as the local action response handle, not as a fake job URL. Successful workflow
+starts return `202` with the queued workflow ID. Workflow-start failures return
+`200` with the dispatcher-derived failed action.
 `dryRun` defaults to `true`, preserving apply safety. The apply model defaults
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.

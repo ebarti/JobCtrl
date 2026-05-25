@@ -58,6 +58,9 @@ async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
                         limit=3,
                         workers=2,
                         retailor=True,
+                        tailor_models=("local:draft-a", "openai:draft-b"),
+                        tailor_judge_model="gemini:judge-c",
+                        tailor_judge_min_score=0.9,
                     ),
                     id=f"tailor-wf-{uuid.uuid4()}",
                     task_queue=queue,
@@ -69,5 +72,8 @@ async def test_tailor_activity_invokes_run_pipeline_with_tailor_stage():
     assert kwargs["min_score"] == 8
     assert kwargs["limit"] == 3
     assert kwargs["retailor"] is True
+    assert kwargs["tailor_models"] == ("local:draft-a", "openai:draft-b")
+    assert kwargs["tailor_judge_model"] == "gemini:judge-c"
+    assert kwargs["tailor_judge_min_score"] == 0.9
     assert output.status == "ok"
     assert output.elapsed == pytest.approx(0.4)

@@ -15,6 +15,9 @@ export interface StageTriggerConfig {
   dryRun: boolean;
   rescore: boolean;
   retailor: boolean;
+  tailorModels: string;
+  tailorJudgeModel: string;
+  tailorJudgeMinScore: string;
   headless: boolean;
   model: string;
   continuous: boolean;
@@ -38,6 +41,9 @@ const defaultConfig: StageTriggerConfig = {
   dryRun: true,
   rescore: false,
   retailor: false,
+  tailorModels: "",
+  tailorJudgeModel: "",
+  tailorJudgeMinScore: "0.82",
   headless: false,
   model: "default",
   continuous: false,

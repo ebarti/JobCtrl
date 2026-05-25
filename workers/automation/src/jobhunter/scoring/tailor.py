@@ -24,6 +24,7 @@ to work; their internals now run on top of the new use case.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -34,6 +35,7 @@ from jobhunter.database import get_connection, get_jobs_by_stage
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
     TailorOutcome,
+    TailoringLlmPolicy,
     TailorResumeUseCase,
     build_master_tailor_prompt,
 )
@@ -59,6 +61,39 @@ log = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5  # max cross-run retries before giving up
 
 
+def _split_model_specs(value: str | None) -> tuple[str, ...]:
+    return tuple(part.strip() for part in (value or "").split(",") if part.strip())
+
+
+def _build_llm_policy(
+    *,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
+) -> TailoringLlmPolicy:
+    env_models = _split_model_specs(
+        os.environ.get("TAILORING_GENERATOR_MODELS")
+        or os.environ.get("TAILORING_GENERATOR_MODEL")
+        or os.environ.get("TAILOR_LLM_MODELS")
+    )
+    env_judge_model = (
+        os.environ.get("TAILORING_JUDGE_MODEL")
+        or os.environ.get("TAILOR_JUDGE_MODEL")
+        or ""
+    ).strip() or None
+    env_min_score = os.environ.get("TAILORING_JUDGE_MIN_SCORE") or os.environ.get("TAILOR_JUDGE_MIN_SCORE")
+    if env_min_score:
+        try:
+            tailor_judge_min_score = float(env_min_score)
+        except ValueError:
+            log.warning("Invalid tailoring judge min score %r; using %.2f", env_min_score, tailor_judge_min_score)
+    return TailoringLlmPolicy(
+        candidate_models=tailor_models or env_models,
+        judge_model=tailor_judge_model or env_judge_model,
+        judge_min_score=tailor_judge_min_score,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Use-case construction (DI seam)
 # ---------------------------------------------------------------------------
@@ -71,6 +106,7 @@ def _build_use_case(
     publisher: EventPublisher | None = None,
     validator: ContentValidator | None = None,
     assembler: ResumeAssembler | None = None,
+    llm_policy: TailoringLlmPolicy | None = None,
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
     if repository is None:
@@ -81,12 +117,15 @@ def _build_use_case(
         validator = ContentValidator()
     if assembler is None:
         assembler = ResumeAssembler()
+    if llm_policy is None:
+        llm_policy = _build_llm_policy()
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
         validator=validator,
         assembler=assembler,
         publisher=publisher,
+        llm_policy=llm_policy,
     )
 
 
@@ -119,6 +158,7 @@ def _tailor_one_job(
     pdf_renderer: PdfRendererPort | None = None,
     retailor: bool = False,
     tenant_id: TenantId = LOCAL_TENANT,
+    llm_policy: TailoringLlmPolicy | None = None,
 ) -> dict:
     """Tailor one job and return the legacy-shaped result dict.
 
@@ -128,7 +168,7 @@ def _tailor_one_job(
     """
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
-        use_case = _build_use_case()
+        use_case = _build_use_case(llm_policy=llm_policy)
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
 
@@ -237,6 +277,9 @@ def run_tailoring(
     publisher: EventPublisher | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
 ) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
@@ -292,6 +335,11 @@ def run_tailoring(
     # ignored by the workers (sqlite connections are thread-bound).
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
+    llm_policy = _build_llm_policy(
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+    )
 
     started_ats: dict[str, str] = {}
     for job in jobs:
@@ -330,6 +378,7 @@ def run_tailoring(
                 pdf_renderer=pdf_renderer,
                 retailor=retailor,
                 tenant_id=tenant_id,
+                llm_policy=llm_policy,
             )
             future_to_job[future] = job
 
@@ -365,7 +414,7 @@ def run_tailoring(
     # tailor_attempts`` writes are GONE per the no-strangler directive —
     # those columns are read-only fallbacks now.
     finished_at = utc_now()
-    _success_statuses = {"approved", "approved_with_judge_warning"}
+    _success_statuses = {"approved"}
     for r in results:
         url = r["url"]
         attempts = r.get("attempts") or 1

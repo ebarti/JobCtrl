@@ -76,6 +76,7 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
@@ -104,6 +105,9 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
     expect(screen.getByLabelText("Retailor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tailor models")).toBeInTheDocument();
+    expect(screen.getByLabelText("Judge model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Judge score")).toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
@@ -167,6 +171,8 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        tailorModels: [],
+        tailorJudgeMinScore: 0.82,
         continuous: false,
       },
       actions: [],
@@ -192,6 +198,9 @@ describe("StageTriggerPanel", () => {
       dryRun: false,
       rescore: false,
       retailor: false,
+      tailorModels: [],
+      tailorJudgeModel: undefined,
+      tailorJudgeMinScore: 0.82,
       headless: false,
       model: "default",
       continuous: false,
@@ -217,6 +226,8 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: true,
         model: "sonnet",
+        tailorModels: [],
+        tailorJudgeMinScore: 0.82,
         continuous: true,
       },
       actions: [
@@ -268,11 +279,78 @@ describe("StageTriggerPanel", () => {
       dryRun: true,
       rescore: false,
       retailor: false,
+      tailorModels: [],
+      tailorJudgeModel: undefined,
+      tailorJudgeMinScore: 0.82,
       headless: true,
       model: "sonnet",
       continuous: true,
     });
     expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
+  });
+
+  it("submits tailor model and judge settings for the Tailor stage", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "queued",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["tailor"],
+        limit: 4,
+        workers: 2,
+        minScore: 9,
+        validationMode: "strict" as const,
+        dryRun: true,
+        rescore: false,
+        retailor: true,
+        headless: false,
+        model: "default",
+        tailorModels: ["local:fast", "gemini:gemini-3-flash-preview"],
+        tailorJudgeModel: "local:judge",
+        tailorJudgeMinScore: 0.9,
+        continuous: false,
+      },
+      actions: [],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.clear(screen.getByLabelText("Limit"));
+    await user.type(screen.getByLabelText("Limit"), "4");
+    await user.clear(screen.getByLabelText("Workers"));
+    await user.type(screen.getByLabelText("Workers"), "2");
+    await user.clear(screen.getByLabelText("Minimum score"));
+    await user.type(screen.getByLabelText("Minimum score"), "9");
+    await user.selectOptions(screen.getByLabelText("Validation mode"), "strict");
+    await user.click(screen.getByLabelText("Retailor"));
+    await user.type(screen.getByLabelText("Tailor models"), "local:fast, gemini:gemini-3-flash-preview");
+    await user.type(screen.getByLabelText("Judge model"), "local:judge");
+    await user.clear(screen.getByLabelText("Judge score"));
+    await user.type(screen.getByLabelText("Judge score"), "0.9");
+    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
+
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
+    expect(runPipelineStages).toHaveBeenCalledWith({
+      stages: ["tailor"],
+      limit: 4,
+      workers: 2,
+      minScore: 9,
+      validationMode: "strict",
+      dryRun: true,
+      rescore: false,
+      retailor: true,
+      tailorModels: ["local:fast", "gemini:gemini-3-flash-preview"],
+      tailorJudgeModel: "local:judge",
+      tailorJudgeMinScore: 0.9,
+      headless: false,
+      model: "default",
+      continuous: false,
+    });
   });
 
   it("shows a live starting status while the worker request is pending", async () => {
@@ -371,6 +449,8 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        tailorModels: [],
+        tailorJudgeMinScore: 0.82,
         continuous: false,
       },
       actions: [

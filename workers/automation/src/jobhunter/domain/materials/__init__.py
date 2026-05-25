@@ -22,6 +22,7 @@ from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
     JudgeVerdict,
+    LlmModelSpec,
     RenderFormat,
     ValidationResult,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "ArtifactStatus",
     "ArtifactType",
     "JudgeVerdict",
+    "LlmModelSpec",
     "MaterialsSet",
     "MaterialsSetFactory",
     "RenderFormat",

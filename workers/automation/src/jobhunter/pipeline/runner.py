@@ -1280,6 +1280,9 @@ def _run_tailor(
     validation_mode: str = "normal",
     workers: int = 1,
     retailor: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     try:
@@ -1290,6 +1293,9 @@ def _run_tailor(
             validation_mode=validation_mode,
             workers=workers,
             retailor=retailor,
+            tailor_models=tailor_models,
+            tailor_judge_model=tailor_judge_model,
+            tailor_judge_min_score=tailor_judge_min_score,
         )
         return {"status": "ok"}
     except Exception as e:
@@ -1337,6 +1343,9 @@ def _build_stage_kwargs(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
 ) -> dict:
     """Build the keyword arguments for a stage runner."""
     kwargs: dict = {}
@@ -1354,6 +1363,9 @@ def _build_stage_kwargs(
         if stage == "tailor":
             kwargs["workers"] = workers
             kwargs["retailor"] = retailor
+            kwargs["tailor_models"] = tailor_models
+            kwargs["tailor_judge_model"] = tailor_judge_model
+            kwargs["tailor_judge_min_score"] = tailor_judge_min_score
 
     return kwargs
 
@@ -1525,6 +1537,9 @@ def _run_stage_streaming(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -1541,6 +1556,9 @@ def _run_stage_streaming(
         limit=limit,
         rescore=rescore,
         retailor=retailor,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
     )
     upstreams = _UPSTREAMS[stage]
 
@@ -1617,7 +1635,10 @@ def _run_stage_streaming(
 
 def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     validation_mode: str = "normal", limit: int = 0,
-                    rescore: bool = False, retailor: bool = False) -> dict:
+                    rescore: bool = False, retailor: bool = False,
+                    tailor_models: tuple[str, ...] = (),
+                    tailor_judge_model: str | None = None,
+                    tailor_judge_min_score: float = 0.82) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -1642,6 +1663,9 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                 limit=limit,
                 rescore=rescore,
                 retailor=retailor,
+                tailor_models=tailor_models,
+                tailor_judge_model=tailor_judge_model,
+                tailor_judge_min_score=tailor_judge_min_score,
             )
             result, elapsed, status = _run_stage_observed(
                 name,
@@ -1669,7 +1693,10 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
 
 def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    validation_mode: str = "normal", limit: int = 0,
-                   rescore: bool = False, retailor: bool = False) -> dict:
+                   rescore: bool = False, retailor: bool = False,
+                   tailor_models: tuple[str, ...] = (),
+                   tailor_judge_model: str | None = None,
+                   tailor_judge_min_score: float = 0.82) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
     stop_event = threading.Event()
@@ -1692,7 +1719,8 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
         t = threading.Thread(
             target=_run_stage_streaming,
             args=(name, tracker, stop_event, min_score, workers,
-                  validation_mode, limit, rescore, retailor),
+                  validation_mode, limit, rescore, retailor,
+                  tailor_models, tailor_judge_model, tailor_judge_min_score),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -1743,6 +1771,9 @@ def run_pipeline(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
 ) -> dict:
     """Run pipeline stages.
 
@@ -1757,6 +1788,9 @@ def run_pipeline(
         limit: Optional per-stage batch limit. 0 means no limit.
         rescore: Re-score already scored jobs when running the score stage.
         retailor: Re-tailor already tailored jobs when running the tailor stage.
+        tailor_models: Optional model specs for candidate generation.
+        tailor_judge_model: Optional model spec for the structured judge.
+        tailor_judge_min_score: Minimum judge score required for approval.
 
     Returns:
         Dict with keys: stages (list of result dicts), errors (dict), elapsed (float).
@@ -1790,6 +1824,10 @@ def run_pipeline(
         console.print("  Rescore:    enabled")
     if retailor:
         console.print("  Retailor:   enabled")
+    if tailor_models:
+        console.print(f"  Tailor LLM: {', '.join(tailor_models)}")
+    if tailor_judge_model:
+        console.print(f"  Tailor judge: {tailor_judge_model} (min {tailor_judge_min_score:.2f})")
     console.print(f"  Stages:     {' -> '.join(ordered)}")
 
     # Pre-run stats
@@ -1820,6 +1858,9 @@ def run_pipeline(
             limit=limit,
             rescore=rescore,
             retailor=retailor,
+            tailor_models=tailor_models,
+            tailor_judge_model=tailor_judge_model,
+            tailor_judge_min_score=tailor_judge_min_score,
         )
     else:
         result = _run_sequential(
@@ -1830,6 +1871,9 @@ def run_pipeline(
             limit=limit,
             rescore=rescore,
             retailor=retailor,
+            tailor_models=tailor_models,
+            tailor_judge_model=tailor_judge_model,
+            tailor_judge_min_score=tailor_judge_min_score,
         )
 
     # Summary table
@@ -2085,7 +2129,7 @@ def run_single_job(
             TAILORED_DIR.mkdir(parents=True, exist_ok=True)
             tailor_result = _tailor_one_job(job, resume_text, snapshot, validation_mode)
 
-            _success = {"approved", "approved_with_judge_warning"}
+            _success = {"approved"}
             if tailor_result["status"] in _success and tailor_result.get("path"):
                 # Surface the materials path into the legacy job dict slot
                 # so the cover-letter step (still file-driven) can read it.

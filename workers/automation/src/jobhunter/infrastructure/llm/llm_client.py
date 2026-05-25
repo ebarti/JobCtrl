@@ -23,28 +23,73 @@ import threading
 from typing import Any
 
 from jobhunter.domain.ports.llm import LlmMessage
-from jobhunter.llm import LLMClient, get_client
+from jobhunter.llm import LLMClient, create_client, get_client
+
+
+_DEFAULT_MODEL_SENTINELS = {"", "default", "local-default"}
+
+
+def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
+    """Parse an opaque model spec into provider/model plus safe display label."""
+    if model is None:
+        return None, None, "default"
+    stripped = model.strip()
+    if stripped.lower() in _DEFAULT_MODEL_SENTINELS:
+        return None, None, "default"
+    if "://" in stripped:
+        raise ValueError("LLM model specs must not include URLs or raw provider config")
+    if ":" in stripped:
+        provider, selected_model = stripped.split(":", 1)
+        provider = provider.strip().lower()
+        selected_model = selected_model.strip()
+        if selected_model.lower() in _DEFAULT_MODEL_SENTINELS:
+            selected_model = ""
+        if provider in {"gemini", "openai", "local"} and selected_model:
+            return provider, selected_model, f"{provider}:{selected_model}"
+        if provider in {"gemini", "openai", "local"}:
+            return provider, None, f"{provider}:default"
+    return None, stripped, stripped
 
 
 class LlmAdapter:
     """Local-mode adapter implementing :class:`LlmPort`.
 
-    Wraps a single :class:`jobhunter.llm.LLMClient` instance. The ``model``
-    keyword on :meth:`chat` is currently advisory — the underlying client
-    binds the model at construction time (one model per process). When a
-    ``model`` argument is supplied that does not match the bound model we
-    raise ``ValueError`` so callers cannot silently get the wrong
-    deployment; this becomes a real selector when the cloud LLM gateway
-    lands.
+    Wraps :class:`jobhunter.llm.LLMClient` instances. The ``model`` keyword on
+    :meth:`chat` is an opaque local model spec:
+
+    * ``None`` / ``default`` uses the process default provider and model.
+    * ``some-model`` uses the default provider with that model name.
+    * ``gemini:...``, ``openai:...`` and ``local:...`` select a provider
+      explicitly while resolving credentials from environment variables.
+
+    Clients are cached per safe provider/model label. Secrets never appear in
+    the label or in caller-visible metadata.
     """
 
     def __init__(self, client: LLMClient | None = None) -> None:
         self._client = client or get_client()
+        self._clients: dict[str, LLMClient] = {"default": self._client}
 
     @property
     def client(self) -> LLMClient:
         """Underlying unified client — exposed for diagnostics, not for use."""
         return self._client
+
+    @property
+    def model(self) -> str:
+        """Default model name for diagnostics."""
+        return self._client.model
+
+    def _client_for_model(self, model: str | None) -> LLMClient:
+        provider, selected_model, label = _parse_model_spec(model)
+        if label == "default":
+            return self._client
+        cached = self._clients.get(label)
+        if cached is not None:
+            return cached
+        client = create_client(provider, selected_model)
+        self._clients[label] = client
+        return client
 
     def chat(
         self,
@@ -56,14 +101,7 @@ class LlmAdapter:
         response_schema: dict | None = None,
         thinking_budget: int | None = None,
     ) -> str:
-        if model is not None and model != self._client.model:
-            raise ValueError(
-                f"LlmAdapter is bound to model={self._client.model!r}; "
-                f"cannot satisfy request for model={model!r}. "
-                "Construct a new adapter with the desired model or wait for "
-                "the cloud LLM gateway (see ddd-target.md §5.4)."
-            )
-
+        client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
 
         kwargs: dict[str, Any] = {}
@@ -75,7 +113,7 @@ class LlmAdapter:
             kwargs["response_schema"] = response_schema
         if thinking_budget is not None:
             kwargs["thinking_budget"] = thinking_budget
-        return self._client.chat(payload, **kwargs)
+        return client.chat(payload, **kwargs)
 
     def chat_json(
         self,
@@ -87,11 +125,7 @@ class LlmAdapter:
         max_tokens: int | None = None,
         thinking_budget: int | None = None,
     ) -> dict:
-        if model is not None and model != self._client.model:
-            raise ValueError(
-                f"LlmAdapter is bound to model={self._client.model!r}; "
-                f"cannot satisfy request for model={model!r}."
-            )
+        client = self._client_for_model(model)
         payload = [{"role": message.role, "content": message.content} for message in messages]
         kwargs: dict[str, Any] = {"response_schema": response_schema}
         if temperature is not None:
@@ -100,7 +134,7 @@ class LlmAdapter:
             kwargs["max_tokens"] = max_tokens
         if thinking_budget is not None:
             kwargs["thinking_budget"] = thinking_budget
-        return self._client.chat_json(payload, **kwargs)
+        return client.chat_json(payload, **kwargs)
 
     def ask(self, prompt: str, **kwargs: Any) -> str:
         message = LlmMessage(role="user", content=prompt)

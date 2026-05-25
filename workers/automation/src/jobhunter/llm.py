@@ -2,7 +2,7 @@
 Unified LLM client for JobHunter.
 
 Auto-detects provider from environment:
-  GEMINI_API_KEY  -> Google Gemini (default: gemini-2.0-flash)
+  GEMINI_API_KEY  -> Google Gemini (default: gemini-3-flash-preview)
   OPENAI_API_KEY  -> OpenAI (default: gpt-4o-mini)
   LLM_URL         -> Local llama.cpp / Ollama compatible endpoint
 
@@ -20,12 +20,17 @@ from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 log = logging.getLogger(__name__)
 
+DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_LOCAL_MODEL = "local-model"
+
+
 # ---------------------------------------------------------------------------
 # Provider detection
 # ---------------------------------------------------------------------------
 
-def _detect_provider() -> tuple[str, str, str]:
-    """Return (base_url, model, api_key) based on environment variables.
+def _provider_config(provider: str | None, model_override: str | None = None) -> tuple[str, str, str]:
+    """Return (base_url, model, api_key) for a provider/model selection.
 
     Reads env at call time (not module import time) so that load_env() called
     in _bootstrap() is always visible here.
@@ -33,26 +38,58 @@ def _detect_provider() -> tuple[str, str, str]:
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     local_url = os.environ.get("LLM_URL", "")
-    model_override = os.environ.get("LLM_MODEL", "")
+    env_model = os.environ.get("LLM_MODEL", "")
+    selected_model = (model_override or "").strip()
+    provider = (provider or "").strip().lower() or None
+
+    if provider in {"default", "auto"}:
+        provider = None
+
+    if provider == "gemini":
+        if not gemini_key:
+            raise RuntimeError("Gemini model requested but GEMINI_API_KEY is not set.")
+        return (
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            selected_model or env_model or DEFAULT_GEMINI_MODEL,
+            gemini_key,
+        )
+
+    if provider == "openai":
+        if not openai_key:
+            raise RuntimeError("OpenAI model requested but OPENAI_API_KEY is not set.")
+        return (
+            "https://api.openai.com/v1",
+            selected_model or env_model or DEFAULT_OPENAI_MODEL,
+            openai_key,
+        )
+
+    if provider == "local":
+        if not local_url:
+            raise RuntimeError("Local model requested but LLM_URL is not set.")
+        return (
+            local_url.rstrip("/"),
+            selected_model or env_model or DEFAULT_LOCAL_MODEL,
+            os.environ.get("LLM_API_KEY", ""),
+        )
 
     if gemini_key and not local_url:
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            model_override or "gemini-2.0-flash",
+            selected_model or env_model or DEFAULT_GEMINI_MODEL,
             gemini_key,
         )
 
     if openai_key and not local_url:
         return (
             "https://api.openai.com/v1",
-            model_override or "gpt-4o-mini",
+            selected_model or env_model or DEFAULT_OPENAI_MODEL,
             openai_key,
         )
 
     if local_url:
         return (
             local_url.rstrip("/"),
-            model_override or "local-model",
+            selected_model or env_model or DEFAULT_LOCAL_MODEL,
             os.environ.get("LLM_API_KEY", ""),
         )
 
@@ -60,6 +97,18 @@ def _detect_provider() -> tuple[str, str, str]:
         "No LLM provider configured. "
         "Set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL in your environment."
     )
+
+
+def _detect_provider() -> tuple[str, str, str]:
+    """Return the default provider configuration from environment variables."""
+    return _provider_config(None)
+
+
+def create_client(provider: str | None = None, model: str | None = None) -> "LLMClient":
+    """Create an uncached client for a specific provider/model selection."""
+    base_url, resolved_model, api_key = _provider_config(provider, model)
+    log.info("LLM provider: %s  model: %s", base_url, resolved_model)
+    return LLMClient(base_url, resolved_model, api_key)
 
 
 # ---------------------------------------------------------------------------

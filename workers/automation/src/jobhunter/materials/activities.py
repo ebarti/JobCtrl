@@ -26,6 +26,9 @@ class TailorActivityInput:
     validation_mode: str = "normal"
     dry_run: bool = False
     retailor: bool = False
+    tailor_models: tuple[str, ...] = ()
+    tailor_judge_model: str | None = None
+    tailor_judge_min_score: float = 0.82
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,9 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
             limit=payload.limit,
             dry_run=payload.dry_run,
             retailor=payload.retailor,
+            tailor_models=payload.tailor_models,
+            tailor_judge_model=payload.tailor_judge_model,
+            tailor_judge_min_score=payload.tailor_judge_min_score,
         )
 
     result = await run_blocking_with_heartbeat(

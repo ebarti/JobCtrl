@@ -108,6 +108,11 @@ def _validate_validation_mode(validation: str) -> str:
     return validation
 
 
+def _parse_tailor_models(value: str) -> tuple[str, ...]:
+    """Parse comma-separated LLM model specs for tailoring candidates."""
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def _load_telemetry_module():
     """Load the apply telemetry module if it exists."""
     try:
@@ -457,6 +462,9 @@ def _run_stage_command(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float = 0.82,
 ) -> None:
     """Run a single pipeline stage through the shared orchestrator."""
     _bootstrap()
@@ -482,6 +490,9 @@ def _run_stage_command(
         limit=limit,
         rescore=rescore,
         retailor=retailor,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
     )
 
     if result.get("errors"):
@@ -515,6 +526,9 @@ def action(
     dry_run: bool = typer.Option(False, "--dry-run", help="Return the planned action without executing."),
     pdf_path: Optional[str] = typer.Option(None, "--pdf", help="Resume PDF path for profile_import."),
     model: str = typer.Option("default", "--model", "-m", help="Apply action model. 'default' uses the local Claude Code default."),
+    tailor_models: str = typer.Option("", "--tailor-models", help="Comma-separated LLM specs for tailor candidate generation."),
+    tailor_judge_model: str = typer.Option("", "--tailor-judge-model", help="Optional LLM spec for the structured tailoring judge."),
+    tailor_judge_min_score: float = typer.Option(0.82, "--tailor-judge-min-score", help="Minimum structured judge score required for tailor approval."),
     headless: bool = typer.Option(False, "--headless", help="Run apply browser action headless."),
 ) -> None:
     """Run a structured local action and print its JSON result."""
@@ -533,6 +547,9 @@ def action(
                 dry_run=dry_run,
                 pdf_path=pdf_path,
                 model=model,
+                tailor_models=_parse_tailor_models(tailor_models),
+                tailor_judge_model=tailor_judge_model.strip() or None,
+                tailor_judge_min_score=tailor_judge_min_score,
                 headless=headless,
             )
         )
@@ -587,6 +604,26 @@ def run(
         "--retailor",
         help="When running tailor, include jobs that already have a tailored resume.",
     ),
+    tailor_models: str = typer.Option(
+        "",
+        "--tailor-models",
+        help=(
+            "Comma-separated LLM specs for tailor candidate generation "
+            "(examples: gemini:gemini-3-flash-preview, openai:gpt-4o-mini, local:resume-a)."
+        ),
+    ),
+    tailor_judge_model: str = typer.Option(
+        "",
+        "--tailor-judge-model",
+        help="Optional LLM spec for the structured tailoring judge.",
+    ),
+    tailor_judge_min_score: float = typer.Option(
+        0.82,
+        "--tailor-judge-min-score",
+        min=0.0,
+        max=1.0,
+        help="Minimum structured judge score required to approve a tailored resume.",
+    ),
 ) -> None:
     """Run one or more pipeline stages in order."""
     _bootstrap()
@@ -627,6 +664,9 @@ def run(
         validation_mode=validation,
         limit=limit,
         retailor=retailor,
+        tailor_models=_parse_tailor_models(tailor_models),
+        tailor_judge_model=tailor_judge_model.strip() or None,
+        tailor_judge_min_score=tailor_judge_min_score,
     )
 
     if result.get("errors"):
@@ -679,6 +719,23 @@ def tailor(
             "lenient: banned words ignored, LLM judge skipped."
         ),
     ),
+    tailor_models: str = typer.Option(
+        "",
+        "--tailor-models",
+        help="Comma-separated LLM specs for tailor candidate generation.",
+    ),
+    tailor_judge_model: str = typer.Option(
+        "",
+        "--tailor-judge-model",
+        help="Optional LLM spec for the structured tailoring judge.",
+    ),
+    tailor_judge_min_score: float = typer.Option(
+        0.82,
+        "--tailor-judge-min-score",
+        min=0.0,
+        max=1.0,
+        help="Minimum structured judge score required to approve a tailored resume.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
     """Run only the resume tailoring stage."""
@@ -690,6 +747,9 @@ def tailor(
         validation=validation,
         limit=limit,
         retailor=retailor,
+        tailor_models=_parse_tailor_models(tailor_models),
+        tailor_judge_model=tailor_judge_model.strip() or None,
+        tailor_judge_min_score=tailor_judge_min_score,
     )
 
 
@@ -1323,7 +1383,7 @@ def doctor() -> None:
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
     if has_gemini:
-        model = os.environ.get("LLM_MODEL", "gemini-2.0-flash")
+        model = os.environ.get("LLM_MODEL", "gemini-3-flash-preview")
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
         model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
