@@ -28,7 +28,7 @@ class TailorActivityInput:
     retailor: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float = 0.82
+    tailor_judge_min_score: float | None = None
 
 
 @dataclass(frozen=True)

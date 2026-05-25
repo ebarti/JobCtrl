@@ -464,7 +464,7 @@ def _run_stage_command(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float = 0.82,
+    tailor_judge_min_score: float | None = None,
 ) -> None:
     """Run a single pipeline stage through the shared orchestrator."""
     _bootstrap()
@@ -528,7 +528,13 @@ def action(
     model: str = typer.Option("default", "--model", "-m", help="Apply action model. 'default' uses the local Claude Code default."),
     tailor_models: str = typer.Option("", "--tailor-models", help="Comma-separated LLM specs for tailor candidate generation."),
     tailor_judge_model: str = typer.Option("", "--tailor-judge-model", help="Optional LLM spec for the structured tailoring judge."),
-    tailor_judge_min_score: float = typer.Option(0.82, "--tailor-judge-min-score", help="Minimum structured judge score required for tailor approval."),
+    tailor_judge_min_score: float | None = typer.Option(
+        None,
+        "--tailor-judge-min-score",
+        min=0.0,
+        max=1.0,
+        help="Minimum structured judge score required for tailor approval.",
+    ),
     headless: bool = typer.Option(False, "--headless", help="Run apply browser action headless."),
 ) -> None:
     """Run a structured local action and print its JSON result."""
@@ -617,8 +623,8 @@ def run(
         "--tailor-judge-model",
         help="Optional LLM spec for the structured tailoring judge.",
     ),
-    tailor_judge_min_score: float = typer.Option(
-        0.82,
+    tailor_judge_min_score: float | None = typer.Option(
+        None,
         "--tailor-judge-min-score",
         min=0.0,
         max=1.0,
@@ -729,8 +735,8 @@ def tailor(
         "--tailor-judge-model",
         help="Optional LLM spec for the structured tailoring judge.",
     ),
-    tailor_judge_min_score: float = typer.Option(
-        0.82,
+    tailor_judge_min_score: float | None = typer.Option(
+        None,
         "--tailor-judge-min-score",
         min=0.0,
         max=1.0,

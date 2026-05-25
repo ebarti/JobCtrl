@@ -291,7 +291,9 @@ describe("local TypeScript API", () => {
   });
 
   it("rejects non-loopback browser mutation sources before handlers run", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const dispatch = vi.fn(
+      async (_command: ActionCommandPayload): Promise<ActionDispatchResult> => ({ status: "queued" }),
+    );
     const opener = vi.fn(async () => undefined);
     const importer = vi.fn(async () => ({ profile: {} }));
     const app = buildApp({ ...options, actionDispatcher: dispatch, artifactOpener: opener, profileImporter: importer });
@@ -1734,7 +1736,8 @@ describe("local TypeScript API", () => {
     });
 
     expect(response.statusCode, response.body).toBe(202);
-    expect(response.json()).toMatchObject({
+    const body = response.json();
+    expect(body).toMatchObject({
       ok: true,
       action: "run_stage",
       status: "queued",
@@ -1764,7 +1767,10 @@ describe("local TypeScript API", () => {
         },
       ],
     });
+    expect(body.command).not.toHaveProperty("tailorJudgeMinScore");
     await waitForExpectation(() => expect(dispatch).toHaveBeenCalledTimes(1));
+    const dispatchedCommand = (dispatch.mock.calls as unknown as Array<[ActionCommandPayload, unknown]>)[0]?.[0];
+    expect(dispatchedCommand).not.toHaveProperty("tailorJudgeMinScore");
     expect(dispatch).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({

@@ -154,7 +154,7 @@ describe("StageTriggerPanel", () => {
 
   it("submits a bounded Discover run from the stage tab", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
       status: "succeeded",
@@ -172,7 +172,6 @@ describe("StageTriggerPanel", () => {
         headless: false,
         model: "default",
         tailorModels: [],
-        tailorJudgeMinScore: 0.82,
         continuous: false,
       },
       actions: [],
@@ -189,7 +188,8 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("button", { name: "Run Discover" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
-    expect(runPipelineStages).toHaveBeenCalledWith({
+    const request = runPipelineStages.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
       stages: ["discover"],
       limit: 1000,
       workers: 1,
@@ -200,16 +200,16 @@ describe("StageTriggerPanel", () => {
       retailor: false,
       tailorModels: [],
       tailorJudgeModel: undefined,
-      tailorJudgeMinScore: 0.82,
       headless: false,
       model: "default",
       continuous: false,
     });
+    expect(request).not.toHaveProperty("tailorJudgeMinScore");
   });
 
   it("submits the active stage and its persisted options through the pipeline mutation", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
       status: "queued",
@@ -227,7 +227,6 @@ describe("StageTriggerPanel", () => {
         headless: true,
         model: "sonnet",
         tailorModels: [],
-        tailorJudgeMinScore: 0.82,
         continuous: true,
       },
       actions: [
@@ -270,7 +269,8 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("button", { name: "Run Apply" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
-    expect(runPipelineStages).toHaveBeenCalledWith({
+    const request = runPipelineStages.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
       stages: ["apply"],
       limit: 12,
       workers: 3,
@@ -281,17 +281,17 @@ describe("StageTriggerPanel", () => {
       retailor: false,
       tailorModels: [],
       tailorJudgeModel: undefined,
-      tailorJudgeMinScore: 0.82,
       headless: true,
       model: "sonnet",
       continuous: true,
     });
+    expect(request).not.toHaveProperty("tailorJudgeMinScore");
     expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
   });
 
   it("submits tailor model and judge settings for the Tailor stage", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
       status: "queued",
@@ -351,6 +351,60 @@ describe("StageTriggerPanel", () => {
       model: "default",
       continuous: false,
     });
+  });
+
+  it("lets the Tailor stage use the environment/default judge threshold when the input is blank", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "queued",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["tailor"],
+        limit: 25,
+        workers: 1,
+        minScore: 7,
+        validationMode: "normal" as const,
+        dryRun: true,
+        rescore: false,
+        retailor: false,
+        headless: false,
+        model: "default",
+        tailorModels: ["local:fast"],
+        tailorJudgeModel: "local:judge",
+        continuous: false,
+      },
+      actions: [],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.type(screen.getByLabelText("Tailor models"), "local:fast");
+    await user.type(screen.getByLabelText("Judge model"), "local:judge");
+    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
+
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
+    const request = runPipelineStages.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
+      stages: ["tailor"],
+      limit: 25,
+      workers: 1,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: true,
+      rescore: false,
+      retailor: false,
+      tailorModels: ["local:fast"],
+      tailorJudgeModel: "local:judge",
+      headless: false,
+      model: "default",
+      continuous: false,
+    });
+    expect(request).not.toHaveProperty("tailorJudgeMinScore");
   });
 
   it("shows a live starting status while the worker request is pending", async () => {
@@ -450,7 +504,6 @@ describe("StageTriggerPanel", () => {
         headless: false,
         model: "default",
         tailorModels: [],
-        tailorJudgeMinScore: 0.82,
         continuous: false,
       },
       actions: [

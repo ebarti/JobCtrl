@@ -152,6 +152,35 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
     assert captured["kwargs"]["tailor_judge_min_score"] == 0.9
 
 
+def test_tailor_cli_preserves_omitted_judge_min_score_for_env_default(monkeypatch):
+    runner = CliRunner()
+    captured = {}
+
+    def fake_run_stage_command(stage: str, **kwargs):
+        captured["stage"] = stage
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.77")
+    monkeypatch.setattr("jobhunter.cli._run_stage_command", fake_run_stage_command)
+
+    result = runner.invoke(
+        app,
+        [
+            "tailor",
+            "--tailor-models",
+            "local:draft-a",
+            "--tailor-judge-model",
+            "openai:judge-c",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["stage"] == "tailor"
+    assert captured["kwargs"]["tailor_models"] == ("local:draft-a",)
+    assert captured["kwargs"]["tailor_judge_model"] == "openai:judge-c"
+    assert captured["kwargs"]["tailor_judge_min_score"] is None
+
+
 def test_tailor_policy_prefers_explicit_judge_min_score_over_env(monkeypatch):
     monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.3")
 

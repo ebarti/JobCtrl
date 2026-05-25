@@ -43,7 +43,7 @@ const defaultConfig: StageTriggerConfig = {
   retailor: false,
   tailorModels: "",
   tailorJudgeModel: "",
-  tailorJudgeMinScore: "0.82",
+  tailorJudgeMinScore: "",
   headless: false,
   model: "default",
   continuous: false,

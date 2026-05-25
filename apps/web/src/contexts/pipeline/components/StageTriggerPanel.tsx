@@ -222,6 +222,10 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
     if (workerUnhealthy) return;
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
+    const tailorJudgeMinScore =
+      controls.tailorModels && config.tailorJudgeMinScore.trim()
+        ? decimalValue(config.tailorJudgeMinScore, 0.82)
+        : undefined;
     runStages.mutate({
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
@@ -233,7 +237,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       retailor: controls.retailor ? config.retailor : false,
       tailorModels: controls.tailorModels ? modelSpecList(config.tailorModels) : [],
       tailorJudgeModel: controls.tailorModels ? config.tailorJudgeModel.trim() || undefined : undefined,
-      tailorJudgeMinScore: controls.tailorModels ? decimalValue(config.tailorJudgeMinScore, 0.82) : 0.82,
+      ...(tailorJudgeMinScore === undefined ? {} : { tailorJudgeMinScore }),
       headless: controls.headless ? config.headless : false,
       model: controls.applyModel ? selectedApplyModel : "default",
       continuous: controls.continuous ? config.continuous : false,
@@ -336,6 +340,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
                 max={1}
                 step={0.01}
                 type="number"
+                placeholder="env/default"
                 value={config.tailorJudgeMinScore}
                 onChange={(event) => patchConfig({ tailorJudgeMinScore: event.target.value })}
               />

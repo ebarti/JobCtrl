@@ -1282,7 +1282,7 @@ def _run_tailor(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float = 0.82,
+    tailor_judge_min_score: float | None = None,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     try:
@@ -1361,7 +1361,7 @@ def _build_stage_kwargs(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float = 0.82,
+    tailor_judge_min_score: float | None = None,
 ) -> dict:
     """Build the keyword arguments for a stage runner."""
     kwargs: dict = {}
@@ -1555,7 +1555,7 @@ def _run_stage_streaming(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float = 0.82,
+    tailor_judge_min_score: float | None = None,
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -1657,7 +1657,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     rescore: bool = False, retailor: bool = False,
                     tailor_models: tuple[str, ...] = (),
                     tailor_judge_model: str | None = None,
-                    tailor_judge_min_score: float = 0.82) -> dict:
+                    tailor_judge_min_score: float | None = None) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -1715,7 +1715,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    rescore: bool = False, retailor: bool = False,
                    tailor_models: tuple[str, ...] = (),
                    tailor_judge_model: str | None = None,
-                   tailor_judge_min_score: float = 0.82) -> dict:
+                   tailor_judge_min_score: float | None = None) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
     stop_event = threading.Event()
@@ -1792,7 +1792,7 @@ def run_pipeline(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float = 0.82,
+    tailor_judge_min_score: float | None = None,
 ) -> dict:
     """Run pipeline stages.
 
@@ -1809,7 +1809,7 @@ def run_pipeline(
         retailor: Re-tailor already tailored jobs when running the tailor stage.
         tailor_models: Optional model specs for candidate generation.
         tailor_judge_model: Optional model spec for the structured judge.
-        tailor_judge_min_score: Minimum judge score required for approval.
+        tailor_judge_min_score: Optional minimum judge score required for approval.
 
     Returns:
         Dict with keys: stages (list of result dicts), errors (dict), elapsed (float).
@@ -1846,7 +1846,12 @@ def run_pipeline(
     if tailor_models:
         console.print(f"  Tailor LLM: {', '.join(tailor_models)}")
     if tailor_judge_model:
-        console.print(f"  Tailor judge: {tailor_judge_model} (min {tailor_judge_min_score:.2f})")
+        score_label = (
+            f"{tailor_judge_min_score:.2f}"
+            if tailor_judge_min_score is not None
+            else "env/default"
+        )
+        console.print(f"  Tailor judge: {tailor_judge_model} (min {score_label})")
     console.print(f"  Stages:     {' -> '.join(ordered)}")
 
     # Pre-run stats

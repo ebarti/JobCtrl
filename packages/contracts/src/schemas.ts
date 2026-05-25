@@ -109,7 +109,7 @@ export const RunPipelineStagesRequestSchema = z
     model: z.string().trim().min(1).max(80).default("default"),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).default(0.82),
+    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
   })
   .strict()
