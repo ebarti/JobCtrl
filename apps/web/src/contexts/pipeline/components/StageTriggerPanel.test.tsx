@@ -78,7 +78,7 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
 
@@ -104,10 +104,10 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Workers")).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
-    expect(screen.getByLabelText("Retailor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Re-tailor")).toBeInTheDocument();
     expect(screen.getByLabelText("Tailor models")).toBeInTheDocument();
     expect(screen.getByLabelText("Judge model")).toBeInTheDocument();
-    expect(screen.getByLabelText("Judge score")).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum judge score")).toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
@@ -117,7 +117,7 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
     expect(screen.queryByLabelText("Workers")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Continuous")).toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
   });
 
   it("renders supplemental content only for the active stage", async () => {
@@ -327,11 +327,11 @@ describe("StageTriggerPanel", () => {
     await user.clear(screen.getByLabelText("Minimum score"));
     await user.type(screen.getByLabelText("Minimum score"), "9");
     await user.selectOptions(screen.getByLabelText("Validation mode"), "strict");
-    await user.click(screen.getByLabelText("Retailor"));
+    await user.click(screen.getByLabelText("Re-tailor"));
     await user.type(screen.getByLabelText("Tailor models"), "local:fast, gemini:gemini-3-flash-preview");
     await user.type(screen.getByLabelText("Judge model"), "local:judge");
-    await user.clear(screen.getByLabelText("Judge score"));
-    await user.type(screen.getByLabelText("Judge score"), "0.9");
+    await user.clear(screen.getByLabelText("Minimum judge score"));
+    await user.type(screen.getByLabelText("Minimum judge score"), "0.9");
     await user.click(screen.getByRole("button", { name: "Run Tailor" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
@@ -498,11 +498,11 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("tab", { name: "Tailor" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "13");
-    await user.click(screen.getByLabelText("Retailor"));
+    await user.click(screen.getByLabelText("Re-tailor"));
 
     await user.click(screen.getByRole("tab", { name: "Discover" }));
     expect(screen.getByLabelText("Workers")).toHaveValue(5);
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
 
     unmount();
     renderWithProviders(<StageTriggerPanel />);
@@ -512,6 +512,6 @@ describe("StageTriggerPanel", () => {
 
     await user.click(screen.getByRole("tab", { name: "Tailor" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);
-    expect(screen.getByLabelText("Retailor")).toBeChecked();
+    expect(screen.getByLabelText("Re-tailor")).toBeChecked();
   });
 });

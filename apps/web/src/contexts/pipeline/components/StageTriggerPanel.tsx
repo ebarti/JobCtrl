@@ -330,7 +330,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
               />
             </label>
             <label className="field">
-              <span>Judge score</span>
+              <span>Minimum judge score</span>
               <input
                 min={0}
                 max={1}
@@ -370,7 +370,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
               checked={config.retailor}
               onChange={(event) => patchConfig({ retailor: event.currentTarget.checked })}
             />
-            <span>Retailor</span>
+            <span>Re-tailor</span>
           </label>
         ) : null}
         {controls.headless ? (
