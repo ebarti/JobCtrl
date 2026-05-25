@@ -1287,7 +1287,7 @@ def _run_tailor(
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     try:
         from jobhunter.scoring.tailor import run_tailoring
-        run_tailoring(
+        result = run_tailoring(
             min_score=min_score,
             limit=limit,
             validation_mode=validation_mode,
@@ -1297,7 +1297,23 @@ def _run_tailor(
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
         )
-        return {"status": "ok"}
+        failed = int(result.get("failed") or 0)
+        errors = int(result.get("errors") or 0)
+        if errors:
+            return {
+                **result,
+                "status": "error: tailor errors",
+                "error_class": "TailorStageErrors",
+                "error_message": f"{errors} tailoring error(s), {failed} failed quality gate(s)",
+            }
+        if failed:
+            return {
+                **result,
+                "status": "failed",
+                "error_class": "TailorQualityGateFailed",
+                "error_message": f"{failed} tailored resume(s) failed validation or judge approval",
+            }
+        return {**result, "status": "ok"}
     except Exception as e:
         log.error("Tailoring failed: %s", e)
         return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
@@ -1595,6 +1611,9 @@ def _run_stage_streaming(
                     pass_number=passes + 1,
                 )
                 passes += 1
+                if upstream_done and _status not in ("ok", "partial", "skipped"):
+                    tracker.mark_done(stage, _result)
+                    return
                 after = _count_pending(stage, min_score, retailor=retailor)
                 if upstream_done and after >= pending:
                     no_progress_passes += 1
