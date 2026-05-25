@@ -32,6 +32,7 @@ from pathlib import Path
 from jobhunter import config
 from jobhunter.config import TAILORED_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.domain.materials import ValidationResult
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
     TailorOutcome,
@@ -242,8 +243,27 @@ def _tailor_one_job(
                 # Re-save through the same repository the use case used.
                 use_case._repository.save(outcome_materials)  # noqa: SLF001 — DI seam
                 pdf_path = str(pdf_out)
-            except Exception:
+            except Exception as exc:
                 log.error("LaTeX PDF generation failed for %s", outcome.text_path, exc_info=True)
+                pdf_error = f"PDF render failed: {exc}"
+                failed_materials = outcome.materials.with_resume_attempt(
+                    outcome.materials.tailored_resume,
+                    validation=ValidationResult.failure((pdf_error,)),
+                    verdict=outcome.materials.last_verdict,
+                    updated_at=utc_now(),
+                )
+                use_case._repository.save(failed_materials)  # noqa: SLF001 — DI seam
+                return {
+                    "url": job["url"],
+                    "path": outcome.text_path,
+                    "pdf_path": None,
+                    "title": job["title"],
+                    "site": job.get("site"),
+                    "status": "error",
+                    "attempts": outcome.attempts,
+                    "materials": failed_materials,
+                    "error": pdf_error,
+                }
 
     return {
         "url": job["url"],

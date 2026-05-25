@@ -9,6 +9,7 @@ from jobhunter.database import close_connection, get_connection, get_jobs_by_sta
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials import (
     Artifact,
+    ArtifactStatus,
     ArtifactType,
     JudgeVerdict,
     MaterialsSetFactory,
@@ -240,6 +241,14 @@ class _RecordingPdfRenderer:
         raise AssertionError("tailor runner should not render cover letters")
 
 
+class _FailingPdfRenderer:
+    def render_resume_to_pdf(self, *, tailored_payload, profile_dict, output_path, created_at):
+        raise RuntimeError("latex failed")
+
+    def render_cover_letter_to_pdf(self, *, cover_letter_text, output_path, created_at):
+        raise AssertionError("tailor runner should not render cover letters")
+
+
 def test_tailor_one_job_renders_pdf_from_selected_candidate_payload(tmp_path):
     profile = {
         "personal": {"full_name": "Jordan Candidate", "email": "jordan@example.com"},
@@ -333,6 +342,102 @@ def test_tailor_one_job_renders_pdf_from_selected_candidate_payload(tmp_path):
     assert result["pdf_path"] == str(text_path.with_suffix(".pdf"))
     assert renderer.calls[0]["tailored_payload"] == selected_payload
     assert use_case._repository.saved[-1].resume_pdf is not None
+
+
+def test_tailor_one_job_fails_when_selected_candidate_pdf_render_fails(tmp_path):
+    profile = {
+        "personal": {"full_name": "Jordan Candidate", "email": "jordan@example.com"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Platform engineer."},
+            "experience_entries": [
+                {
+                    "id": "platform_engineer",
+                    "date_range": "2024 -- Present",
+                    "title": "Platform Engineer",
+                    "company": "Example",
+                    "location": "Remote",
+                    "bullets": ["Reduced deployment time by 35%."],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [{"id": "platform", "label": "Platform", "items": ["Python"]}],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["platform_engineer"],
+                "required_skill_category_ids": ["platform"],
+                "max_experience_bullets": 4,
+            },
+        },
+    }
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    job = {
+        "url": "https://example.com/pdf-job",
+        "title": "Platform Engineer",
+        "site": "example",
+        "full_description": "Build Python platforms.",
+    }
+    text_path = tmp_path / "tailored.txt"
+    text_path.write_text("tailored resume", encoding="utf-8")
+    materials = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2026-05-25T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path=str(text_path),
+            created_at="2026-05-25T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(score=0.93),
+        updated_at="2026-05-25T00:00:00+00:00",
+    )
+    selected_payload = {
+        "executive_profile": "Platform engineer.",
+        "experience_updates": [{"id": "platform_engineer", "bullets": ["Built Python platforms."]}],
+        "skill_category_updates": [{"id": "platform", "items": ["Python"]}],
+    }
+    outcome = TailorOutcome(
+        materials=materials,
+        status="approved",
+        attempts=1,
+        text_path=str(text_path),
+        report={
+            "selected_candidate": "candidate-good",
+            "attempt_history": [
+                {
+                    "candidates": [
+                        {
+                            "candidate_id": "candidate-good",
+                            "status": "approved",
+                            "parsed_json": selected_payload,
+                        },
+                    ]
+                }
+            ],
+        },
+    )
+    use_case = _FakeTailorUseCase(outcome)
+
+    result = _tailor_one_job(
+        job,
+        "",
+        snapshot,
+        "normal",
+        use_case=use_case,
+        pdf_renderer=_FailingPdfRenderer(),
+    )
+
+    saved_materials = use_case._repository.saved[-1]
+    assert result["status"] == "error"
+    assert result["pdf_path"] is None
+    assert result["error"] == "PDF render failed: latex failed"
+    assert saved_materials.resume_pdf is None
+    assert saved_materials.is_resume_approved is False
+    assert saved_materials.tailored_resume is not None
+    assert saved_materials.tailored_resume.status is ArtifactStatus.REJECTED
+    assert saved_materials.last_validation is not None
+    assert saved_materials.last_validation.errors == ("PDF render failed: latex failed",)
 
 
 def test_tailor_prompt_includes_writing_style_and_custom_guidance():
