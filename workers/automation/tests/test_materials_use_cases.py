@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import pytest
 
@@ -35,6 +35,8 @@ from jobhunter.domain.materials.services import ContentValidator, ResumeAssemble
 from jobhunter.domain.materials.use_cases import (
     GenerateCoverLetterUseCase,
     RenderPdfUseCase,
+    TAILORED_RESUME_RESPONSE_SCHEMA,
+    TAILORING_JUDGE_RESPONSE_SCHEMA,
     TailoringLlmPolicy,
     TailorResumeUseCase,
 )
@@ -172,7 +174,7 @@ def _good_json_payload() -> str:
         {
             "executive_profile": "Senior engineer focused on systems.",
             "experience_updates": [
-                {"id": "acme_swe", "bullets": ["Cut latency 40%."]},
+                {"id": "acme_swe", "title": "", "bullets": ["Cut latency 40%."]},
             ],
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
@@ -250,6 +252,48 @@ def _judge_with_score(score: float, verdict: str = "PASS") -> str:
 # ---------------------------------------------------------------------------
 # TailorResumeUseCase
 # ---------------------------------------------------------------------------
+
+
+def _assert_openai_strict_schema(schema: dict[str, Any], path: str = "$") -> None:
+    unsupported = {"minLength", "maxLength"}
+    assert unsupported.isdisjoint(schema), f"{path} uses unsupported string constraints"
+
+    if "anyOf" in schema:
+        for index, child in enumerate(schema["anyOf"]):
+            _assert_openai_strict_schema(child, f"{path}.anyOf[{index}]")
+        return
+
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        for child_type in schema_type:
+            if child_type != "null":
+                child = dict(schema)
+                child["type"] = child_type
+                _assert_openai_strict_schema(child, path)
+        return
+
+    if schema_type == "object":
+        properties = schema.get("properties", {})
+        assert schema.get("additionalProperties") is False, (
+            f"{path} must set additionalProperties to false"
+        )
+        assert set(schema.get("required", [])) == set(properties), (
+            f"{path} must require every property"
+        )
+        for name, child in properties.items():
+            _assert_openai_strict_schema(child, f"{path}.{name}")
+    elif schema_type == "array":
+        _assert_openai_strict_schema(schema["items"], f"{path}[]")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [TAILORED_RESUME_RESPONSE_SCHEMA, TAILORING_JUDGE_RESPONSE_SCHEMA],
+)
+def test_tailoring_structured_output_schemas_are_openai_strict_compatible(
+    schema: dict[str, Any],
+) -> None:
+    _assert_openai_strict_schema(schema)
 
 
 def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, job: dict) -> None:

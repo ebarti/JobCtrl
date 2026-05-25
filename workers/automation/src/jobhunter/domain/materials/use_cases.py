@@ -96,6 +96,27 @@ log = logging.getLogger(__name__)
 TAILORING_PROMPT_VERSION = "tailor.v2.quality-gated"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v1"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v1"
+TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
+    "relevance_to_job",
+    "evidence_support",
+    "fabrication_safety",
+    "required_content_preserved",
+    "ats_readability",
+    "specificity_and_metrics",
+)
+
+
+def _score_schema() -> dict[str, Any]:
+    return {"type": "number", "minimum": 0, "maximum": 1}
+
+
+def _criterion_scores_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(TAILORING_JUDGE_CRITERIA),
+        "properties": {criterion: _score_schema() for criterion in TAILORING_JUDGE_CRITERIA},
+    }
 
 TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
     "title": "TailoredResumePayload",
@@ -103,21 +124,21 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "required": ["executive_profile", "experience_updates", "skill_category_updates"],
     "properties": {
-        "executive_profile": {"type": "string", "minLength": 1},
+        "executive_profile": {"type": "string"},
         "experience_updates": {
             "type": "array",
             "minItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["id", "bullets"],
+                "required": ["id", "title", "bullets"],
                 "properties": {
-                    "id": {"type": "string", "minLength": 1},
+                    "id": {"type": "string"},
                     "title": {"type": "string"},
                     "bullets": {
                         "type": "array",
                         "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
+                        "items": {"type": "string"},
                     },
                 },
             },
@@ -130,11 +151,11 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                 "additionalProperties": False,
                 "required": ["id", "items"],
                 "properties": {
-                    "id": {"type": "string", "minLength": 1},
+                    "id": {"type": "string"},
                     "items": {
                         "type": "array",
                         "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
+                        "items": {"type": "string"},
                     },
                 },
             },
@@ -154,14 +175,12 @@ TAILORING_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
         "unsupported_claims",
         "fabrications",
         "missing_required_evidence",
+        "repair_instructions",
     ],
     "properties": {
         "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
         "score": {"type": "number", "minimum": 0, "maximum": 1},
-        "criterion_scores": {
-            "type": "object",
-            "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1},
-        },
+        "criterion_scores": _criterion_scores_schema(),
         "issues": {"type": "array", "items": {"type": "string"}},
         "unsupported_claims": {"type": "array", "items": {"type": "string"}},
         "fabrications": {"type": "array", "items": {"type": "string"}},
@@ -440,6 +459,7 @@ The code will inject all fixed structure from the master resume:
 
 HARD RULES:
 - Return EVERY required experience entry id exactly once
+- Return a title field for EVERY experience update; set it to "" unless policy allows and needs a rewritten title
 - Return EVERY required skill category id exactly once
 - Preserve every required bullet listed below in the matching experience entry
 - Do NOT add or remove experience entries
@@ -482,7 +502,7 @@ OUTPUT ONLY VALID JSON:
 {{
   "executive_profile": "2-4 sentences tailored to the target role.",
   "experience_updates": [
-    {{"id": "{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}", "title": "optional rewritten title only when policy allows", "bullets": ["bullet 1", "bullet 2"]}}
+    {{"id": "{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}", "title": "", "bullets": ["bullet 1", "bullet 2"]}}
   ],
   "skill_category_updates": [
     {{"id": "{required_skill_ids[0] if required_skill_ids else 'skill_category_id'}", "items": ["item 1", "item 2"]}}

@@ -111,6 +111,26 @@ def test_llm_adapter_routes_explicit_provider_model(monkeypatch: pytest.MonkeyPa
     assert len(routed.calls) == 1
 
 
+def test_llm_adapter_routes_explicit_openai_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    default = _FakeClient(model="default-model")
+    routed = _FakeClient(response="routed", model="gpt-test")
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_create_client(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        return routed
+
+    monkeypatch.setattr(adapter_module, "create_client", fake_create_client)
+    adapter = LlmAdapter(client=default)  # type: ignore[arg-type]
+
+    response = adapter.chat([LlmMessage(role="user", content="hi")], model="openai:gpt-test")
+
+    assert response == "routed"
+    assert created == [("openai", "gpt-test")]
+    assert len(default.calls) == 0
+    assert len(routed.calls) == 1
+
+
 def test_llm_adapter_rejects_raw_provider_config_in_model_spec() -> None:
     adapter = LlmAdapter(client=_FakeClient())  # type: ignore[arg-type]
 
