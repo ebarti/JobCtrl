@@ -20,7 +20,11 @@ from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.pipeline import _count_pending
-from jobhunter.scoring.tailor import _build_master_tailor_prompt, _tailor_one_job
+from jobhunter.scoring.tailor import (
+    _build_llm_policy,
+    _build_master_tailor_prompt,
+    _tailor_one_job,
+)
 
 
 def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None, tailor_attempts: int = 0) -> None:
@@ -146,6 +150,22 @@ def test_tailor_cli_passes_tailoring_model_controls(monkeypatch):
     assert captured["kwargs"]["tailor_models"] == ("local:draft-a", "gemini:draft-b")
     assert captured["kwargs"]["tailor_judge_model"] == "openai:judge-c"
     assert captured["kwargs"]["tailor_judge_min_score"] == 0.9
+
+
+def test_tailor_policy_prefers_explicit_judge_min_score_over_env(monkeypatch):
+    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.3")
+
+    policy = _build_llm_policy(tailor_judge_min_score=0.9)
+
+    assert policy.judge_min_score == 0.9
+
+
+def test_tailor_policy_uses_env_judge_min_score_when_omitted(monkeypatch):
+    monkeypatch.setenv("TAILORING_JUDGE_MIN_SCORE", "0.77")
+
+    policy = _build_llm_policy(tailor_judge_min_score=None)
+
+    assert policy.judge_min_score == 0.77
 
 
 class _RecordingRepository:

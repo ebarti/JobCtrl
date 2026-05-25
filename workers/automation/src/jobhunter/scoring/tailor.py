@@ -69,7 +69,7 @@ def _build_llm_policy(
     *,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float = 0.82,
+    tailor_judge_min_score: float | None = None,
 ) -> TailoringLlmPolicy:
     env_models = _split_model_specs(
         os.environ.get("TAILORING_GENERATOR_MODELS")
@@ -81,16 +81,17 @@ def _build_llm_policy(
         or os.environ.get("TAILOR_JUDGE_MODEL")
         or ""
     ).strip() or None
+    judge_min_score = 0.82 if tailor_judge_min_score is None else tailor_judge_min_score
     env_min_score = os.environ.get("TAILORING_JUDGE_MIN_SCORE") or os.environ.get("TAILOR_JUDGE_MIN_SCORE")
-    if env_min_score:
+    if tailor_judge_min_score is None and env_min_score:
         try:
-            tailor_judge_min_score = float(env_min_score)
+            judge_min_score = float(env_min_score)
         except ValueError:
-            log.warning("Invalid tailoring judge min score %r; using %.2f", env_min_score, tailor_judge_min_score)
+            log.warning("Invalid tailoring judge min score %r; using %.2f", env_min_score, judge_min_score)
     return TailoringLlmPolicy(
         candidate_models=tailor_models or env_models,
         judge_model=tailor_judge_model or env_judge_model,
-        judge_min_score=tailor_judge_min_score,
+        judge_min_score=judge_min_score,
     )
 
 
