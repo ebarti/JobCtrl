@@ -1420,6 +1420,20 @@ class _StageTracker:
             self._results[stage] = result or {"status": "ok"}
         self._events[stage].set()
 
+    def status(self, stage: str) -> str:
+        with self._lock:
+            result = self._results.get(stage)
+        if not isinstance(result, dict):
+            return "pending"
+        return str(result.get("status", "ok"))
+
+    def failed_upstream(self, stages: tuple[str, ...]) -> tuple[str, str] | None:
+        for stage in stages:
+            status = self.status(stage)
+            if status not in ("ok", "partial", "skipped"):
+                return stage, status
+        return None
+
     def is_done(self, stage: str) -> bool:
         return self._events[stage].is_set()
 
@@ -1677,6 +1691,20 @@ def _run_stage_streaming(
     while not stop_event.is_set():
         pending = _count_pending(stage, min_score, retailor=retailor)
         upstream_done = all(tracker.is_done(s) for s in upstreams)
+        failed_upstream = tracker.failed_upstream(upstreams) if upstream_done else None
+
+        if failed_upstream is not None:
+            upstream_stage, upstream_status = failed_upstream
+            tracker.mark_done(
+                stage,
+                {
+                    "status": f"blocked: upstream {upstream_stage} failed",
+                    "blocked_by": upstream_stage,
+                    "upstream_status": upstream_status,
+                    "passes": passes,
+                },
+            )
+            return
 
         if pending > 0:
             try:
@@ -1735,6 +1763,14 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
     pipeline_start = time.time()
 
     for name in ordered:
+        blocked_by = next((upstream for upstream in _UPSTREAMS[name] if upstream in errors), None)
+        if blocked_by is not None:
+            status = f"blocked: upstream {blocked_by} failed"
+            results.append({"stage": name, "status": status, "elapsed": 0.0})
+            errors[name] = status
+            console.print(f"\n  [yellow]Stage '{name}' skipped:[/yellow] {status}")
+            continue
+
         meta = STAGE_META[name]
         console.print(f"\n{'=' * 70}")
         console.print(f"  [bold]STAGE: {name}[/bold] — {meta['desc']}")

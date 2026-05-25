@@ -425,6 +425,52 @@ def test_discover_status_fails_when_internal_enrichment_fails():
     assert status == "error: timeout"
 
 
+def test_sequential_pipeline_blocks_score_after_discovery_enrichment_failure(monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setitem(
+        runner._STAGE_RUNNERS,
+        "discover",
+        lambda **_kwargs: calls.append("discover") or {"enrichment": "error: timeout"},
+    )
+    monkeypatch.setitem(
+        runner._STAGE_RUNNERS,
+        "score",
+        lambda **_kwargs: calls.append("score") or {"status": "ok"},
+    )
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+
+    result = runner._run_sequential(["discover", "score"], min_score=7)
+
+    assert calls == ["discover"]
+    assert result["stages"] == [
+        {"stage": "discover", "status": "error: timeout", "elapsed": result["stages"][0]["elapsed"]},
+        {"stage": "score", "status": "blocked: upstream discover failed", "elapsed": 0.0},
+    ]
+    assert result["errors"] == {
+        "discover": "error: timeout",
+        "score": "blocked: upstream discover failed",
+    }
+
+
+def test_streaming_stage_blocks_on_failed_upstream(monkeypatch):
+    tracker = runner._StageTracker()
+    stop_event = runner.threading.Event()
+    tracker.mark_done("discover", {"status": "error: timeout"})
+
+    monkeypatch.setattr(runner, "_count_pending", lambda stage, min_score=7, retailor=False: 1)
+    monkeypatch.setitem(
+        runner._STAGE_RUNNERS,
+        "score",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("score should not run")),
+    )
+
+    runner._run_stage_streaming("score", tracker, stop_event)
+
+    assert tracker.get_results()["score"]["status"] == "blocked: upstream discover failed"
+    assert tracker.get_results()["score"]["blocked_by"] == "discover"
+
+
 def test_enrich_limit_propagates_to_runner(monkeypatch):
     calls: list[dict[str, int]] = []
 
