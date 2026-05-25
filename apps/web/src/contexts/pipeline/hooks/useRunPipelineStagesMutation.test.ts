@@ -31,6 +31,7 @@ describe("useRunPipelineStagesMutation", () => {
         retailor: false,
         headless: true,
         model: "sonnet",
+        tailorModels: [],
         continuous: true,
       },
       actions: [],
@@ -51,6 +52,8 @@ describe("useRunPipelineStagesMutation", () => {
         rescore: true,
         retailor: false,
         model: "sonnet",
+        tailorModels: [],
+        tailorJudgeModel: undefined,
         headless: true,
         continuous: true,
       });
@@ -67,6 +70,8 @@ describe("useRunPipelineStagesMutation", () => {
       rescore: true,
       retailor: false,
       model: "sonnet",
+      tailorModels: [],
+      tailorJudgeModel: undefined,
       headless: true,
       continuous: true,
     });

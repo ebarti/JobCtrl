@@ -12,6 +12,7 @@ LLM_MODEL env var overrides the model name for any provider.
 import json
 import logging
 import os
+import re
 import time
 
 import httpx
@@ -28,8 +29,8 @@ DEFAULT_LOCAL_MODEL = "local-model"
 # Provider detection
 # ---------------------------------------------------------------------------
 
-def _detect_provider() -> tuple[str, str, str]:
-    """Return (base_url, model, api_key) based on environment variables.
+def _provider_config(provider: str | None, model_override: str | None = None) -> tuple[str, str, str]:
+    """Return (base_url, model, api_key) for a provider/model selection.
 
     Reads env at call time (not module import time) so that load_env() called
     in _bootstrap() is always visible here.
@@ -37,26 +38,58 @@ def _detect_provider() -> tuple[str, str, str]:
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     local_url = os.environ.get("LLM_URL", "")
-    model_override = os.environ.get("LLM_MODEL", "")
+    env_model = os.environ.get("LLM_MODEL", "")
+    selected_model = (model_override or "").strip()
+    provider = (provider or "").strip().lower() or None
+
+    if provider in {"default", "auto"}:
+        provider = None
+
+    if provider == "gemini":
+        if not gemini_key:
+            raise RuntimeError("Gemini model requested but GEMINI_API_KEY is not set.")
+        return (
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            selected_model or env_model or DEFAULT_GEMINI_MODEL,
+            gemini_key,
+        )
+
+    if provider == "openai":
+        if not openai_key:
+            raise RuntimeError("OpenAI model requested but OPENAI_API_KEY is not set.")
+        return (
+            "https://api.openai.com/v1",
+            selected_model or env_model or DEFAULT_OPENAI_MODEL,
+            openai_key,
+        )
+
+    if provider == "local":
+        if not local_url:
+            raise RuntimeError("Local model requested but LLM_URL is not set.")
+        return (
+            local_url.rstrip("/"),
+            selected_model or env_model or DEFAULT_LOCAL_MODEL,
+            os.environ.get("LLM_API_KEY", ""),
+        )
 
     if gemini_key and not local_url:
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            model_override or DEFAULT_GEMINI_MODEL,
+            selected_model or env_model or DEFAULT_GEMINI_MODEL,
             gemini_key,
         )
 
     if openai_key and not local_url:
         return (
             "https://api.openai.com/v1",
-            model_override or DEFAULT_OPENAI_MODEL,
+            selected_model or env_model or DEFAULT_OPENAI_MODEL,
             openai_key,
         )
 
     if local_url:
         return (
             local_url.rstrip("/"),
-            model_override or DEFAULT_LOCAL_MODEL,
+            selected_model or env_model or DEFAULT_LOCAL_MODEL,
             os.environ.get("LLM_API_KEY", ""),
         )
 
@@ -64,6 +97,18 @@ def _detect_provider() -> tuple[str, str, str]:
         "No LLM provider configured. "
         "Set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL in your environment."
     )
+
+
+def _detect_provider() -> tuple[str, str, str]:
+    """Return the default provider configuration from environment variables."""
+    return _provider_config(None)
+
+
+def create_client(provider: str | None = None, model: str | None = None) -> "LLMClient":
+    """Create an uncached client for a specific provider/model selection."""
+    base_url, resolved_model, api_key = _provider_config(provider, model)
+    log.info("LLM provider: %s  model: %s", base_url, resolved_model)
+    return LLMClient(base_url, resolved_model, api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +211,9 @@ class LLMClient:
             # Native Gemini wants JSON mode + the schema spelled inline.
             generation_config["responseMimeType"] = "application/json"
             generation_config["responseSchema"] = response_schema
-        if thinking_budget is not None:
-            generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+        thinking_config = _gemini_thinking_config(self.model, thinking_budget)
+        if thinking_config is not None:
+            generation_config["thinkingConfig"] = thinking_config
 
         payload: dict = {
             "contents": contents,
@@ -236,8 +282,9 @@ class LLMClient:
             }
         if thinking_budget is not None and self._is_gemini:
             # Gemini-only knob exposed via OpenAI-compat's `extra_body`.
+            thinking_config = _gemini_thinking_config(self.model, thinking_budget, compat=True)
             payload["extra_body"] = {
-                "google": {"thinking_config": {"thinking_budget": thinking_budget}}
+                "google": {"thinking_config": thinking_config}
             }
 
         params = {"temperature": temperature, "max_tokens": max_tokens}
@@ -284,10 +331,10 @@ class LLMClient:
         instructed to return a JSON document conforming to the schema.
         Use :meth:`chat_json` for the parsed-dict convenience.
 
-        ``thinking_budget`` (Gemini only): caps internal reasoning tokens.
-        Set to ``0`` to skip thinking entirely on Gemini thinking models
-        whose default budget can swallow the entire ``max_tokens`` allotment
-        before any visible content is produced.
+        ``thinking_budget`` (Gemini only): caps Gemini 2.5 internal reasoning
+        tokens. For Gemini 3.x models, ``0`` maps to the closest low-latency
+        setting, ``thinkingLevel=minimal``; Gemini 3 thinking cannot be fully
+        disabled.
         """
         # Qwen3 optimization: prepend /no_think to skip chain-of-thought
         # reasoning, saving tokens on structured extraction tasks.
@@ -430,7 +477,7 @@ def _extract_compat_text(data: dict, *, model: str) -> str:
         hint = (
             "max_tokens budget exhausted before any visible content was emitted "
             "(common with Gemini 3.x thinking models). Raise max_tokens, or pass "
-            "thinking_budget=0 to disable internal reasoning."
+            "thinking_budget=0 to request Gemini 3 minimal thinking."
         )
     raise LlmEmptyResponseError(finish_reason=finish_reason, model=model, hint=hint)
 
@@ -458,9 +505,33 @@ def _extract_native_gemini_text(data: dict, *, model: str) -> str:
         hint = (
             "max_tokens budget exhausted before any visible content was emitted "
             "(common with Gemini 3.x thinking models). Raise max_tokens, or pass "
-            "thinking_budget=0 to disable internal reasoning."
+            "thinking_budget=0 to request Gemini 3 minimal thinking."
         )
     raise LlmEmptyResponseError(finish_reason=finish_reason, model=model, hint=hint)
+
+
+def _is_gemini_3_model(model: str) -> bool:
+    return bool(re.match(r"gemini-3(?:[.-]|$)", str(model or "").casefold()))
+
+
+def _thinking_level_from_budget(thinking_budget: int) -> str:
+    if thinking_budget <= 0:
+        return "minimal"
+    if thinking_budget <= 1024:
+        return "low"
+    if thinking_budget <= 4096:
+        return "medium"
+    return "high"
+
+
+def _gemini_thinking_config(model: str, thinking_budget: int | None, *, compat: bool = False) -> dict | None:
+    if thinking_budget is None:
+        return None
+    if _is_gemini_3_model(model):
+        key = "thinking_level" if compat else "thinkingLevel"
+        return {key: _thinking_level_from_budget(thinking_budget)}
+    key = "thinking_budget" if compat else "thinkingBudget"
+    return {key: thinking_budget}
 
 
 class _GeminiCompatForbidden(Exception):

@@ -348,8 +348,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       retailor: body.retailor,
       headless: body.headless,
       model: body.model,
+      tailorModels: body.tailorModels,
       continuous: body.continuous,
     };
+    if (body.tailorJudgeModel) {
+      command.tailorJudgeModel = body.tailorJudgeModel;
+    }
+    if (body.tailorJudgeMinScore !== undefined) {
+      command.tailorJudgeMinScore = body.tailorJudgeMinScore;
+    }
     const dispatch = await actionDispatcher(command, actionContext);
     actions.push(buildActionResponse(command, dispatch));
     const status = stageRunStatus(actions);

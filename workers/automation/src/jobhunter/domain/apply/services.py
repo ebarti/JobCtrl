@@ -105,6 +105,14 @@ class ApplyEligibilityChecker:
         if not tailored:
             return EligibilityResult(ok=False, reason="missing_tailored_resume")
 
+        # Canonical materials rows are only apply-ready after the selected
+        # tailored resume also has an approved rendered PDF. Legacy callers
+        # may still pass a bare jobs-row dict without these joined fields.
+        has_canonical_materials = job.get("materials_generation") is not None
+        resume_pdf = (job.get("resume_pdf_path") or "").strip()
+        if has_canonical_materials and not resume_pdf:
+            return EligibilityResult(ok=False, reason="missing_resume_pdf")
+
         # Already applied — read both the legacy column AND the
         # canonical ``apply_status`` (so this still works after the
         # legacy column drop).

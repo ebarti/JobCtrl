@@ -76,6 +76,57 @@ def test_sequential_stage_emits_pipeline_span_and_stage_events(monkeypatch, in_m
     assert spans["pipeline.stage.score"]["langfuse.observation.type"] == "span"
 
 
+def test_tailor_stage_fails_pipeline_when_quality_gate_fails(monkeypatch):
+    monkeypatch.setattr(
+        "jobhunter.scoring.tailor.run_tailoring",
+        lambda **_kwargs: {"approved": 0, "failed": 2, "errors": 0, "elapsed": 0.1},
+    )
+
+    result = runner._run_tailor()
+
+    assert result["status"] == "failed"
+    assert result["failed"] == 2
+    assert result["error_class"] == "TailorQualityGateFailed"
+
+
+def test_tailor_stage_errors_pipeline_when_tailoring_errors(monkeypatch):
+    monkeypatch.setattr(
+        "jobhunter.scoring.tailor.run_tailoring",
+        lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 1, "elapsed": 0.1},
+    )
+
+    result = runner._run_tailor()
+
+    assert result["status"] == "error: tailor errors"
+    assert result["errors"] == 1
+    assert result["error_class"] == "TailorStageErrors"
+
+
+def test_tailor_quality_gate_failure_propagates_through_pipeline(monkeypatch):
+    monkeypatch.setattr(
+        "jobhunter.scoring.tailor.run_tailoring",
+        lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 0, "elapsed": 0.1},
+    )
+
+    result = runner._run_sequential(["tailor"], min_score=7)
+
+    assert result["stages"][0]["status"] == "failed"
+    assert result["errors"] == {"tailor": "failed"}
+
+
+def test_tailor_quality_gate_failure_propagates_through_streaming_pipeline(monkeypatch):
+    monkeypatch.setattr(
+        "jobhunter.scoring.tailor.run_tailoring",
+        lambda **_kwargs: {"approved": 0, "failed": 1, "errors": 0, "elapsed": 0.1},
+    )
+    monkeypatch.setattr(runner, "_count_pending", lambda stage, min_score=7, retailor=False: 1)
+
+    result = runner._run_streaming(["tailor"], min_score=7)
+
+    assert result["stages"][0]["status"] == "failed"
+    assert result["errors"] == {"tailor": "failed"}
+
+
 def test_discover_emits_source_events(monkeypatch):
     events: list[tuple[str, str, str, dict]] = []
 
@@ -103,6 +154,7 @@ def test_discover_emits_source_events(monkeypatch):
 
     assert result["workday"] == "ok"
     assert result["smartextract"] == "ok"
+    assert result["ats_api"] == "ok"
     source_events = [(event_type, payload.get("source")) for _, event_type, _, payload in events]
     assert source_events == [
         ("StageStarted", "jobspy"),

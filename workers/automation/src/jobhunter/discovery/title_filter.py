@@ -91,6 +91,57 @@ _RECALL_LEADERSHIP_TOKENS = {
     "vp",
 }
 
+_MANAGEMENT_TOKENS = {"manager", "management", "director", "head"}
+_EXECUTIVE_TOKENS = {"chief", "cio", "ciso", "cto", "evp", "svp", "vp", "vice", "president"}
+_IC_TOKENS = {
+    "architect",
+    "engineer",
+    "engineering",
+    "expert",
+    "fellow",
+    "ic",
+    "individual",
+    "lead",
+    "principal",
+    "staff",
+}
+_TRACKS = {"ic", "management", "executive"}
+
+_SENIORITY_RANKS = {
+    "intern": 0,
+    "junior": 1,
+    "entry": 1,
+    "associate": 1,
+    "mid": 2,
+    "engineer": 2,
+    "analyst": 2,
+    "senior": 3,
+    "sr": 3,
+    "lead": 4,
+    "manager": 4,
+    "staff": 5,
+    "principal": 6,
+    "architect": 6,
+    "director": 6,
+    "head": 6,
+    "vp": 7,
+    "svp": 7,
+    "evp": 7,
+    "vice": 7,
+    "president": 7,
+    "chief": 8,
+    "cio": 8,
+    "ciso": 8,
+    "cto": 8,
+}
+
+_SENIORITY_ALIASES = {
+    "c level": "chief",
+    "c suite": "chief",
+    "chief level": "chief",
+    "csuite": "chief",
+}
+
 _RECALL_DOMAIN_TOKENS = {
     "engineering": {
         "cloud",
@@ -141,7 +192,14 @@ _RECALL_TOKEN_EXPANSIONS = {
 }
 
 
-def title_matches_query(title: str | None, query: str | None, *, match_mode: str = "strict") -> bool:
+def title_matches_query(
+    title: str | None,
+    query: str | None,
+    *,
+    match_mode: str = "strict",
+    target_track: str | None = None,
+    seniority_floor: str | None = None,
+) -> bool:
     """Return whether a posting title satisfies a target search query."""
     normalized_query = normalize_query(query)
     if not normalized_query:
@@ -158,7 +216,12 @@ def title_matches_query(title: str | None, query: str | None, *, match_mode: str
     if _has_excluded_engineering_specialty(title_sequence, query_tokens):
         return False
     if match_mode == _RECALL_MATCH_MODE:
-        return _recall_title_matches_query(title_sequence, query_tokens)
+        return _recall_title_matches_query(
+            title_sequence,
+            query_tokens,
+            target_track=target_track,
+            seniority_floor=seniority_floor,
+        )
     return _query_tokens_match_compactly(query_tokens, title_sequence) or _query_alias_matches(
         query_tokens,
         title_sequence,
@@ -240,16 +303,33 @@ def _token_spans(token: str, title_sequence: Sequence[str]) -> tuple[tuple[int, 
     return tuple(spans)
 
 
-def _recall_title_matches_query(title_sequence: Sequence[str], query_tokens: Sequence[str]) -> bool:
+def _recall_title_matches_query(
+    title_sequence: Sequence[str],
+    query_tokens: Sequence[str],
+    *,
+    target_track: str | None = None,
+    seniority_floor: str | None = None,
+) -> bool:
     title_tokens = set(title_sequence)
     expanded_title = _expanded_title_tokens(title_tokens)
     expanded_query = _expanded_tokens(query_tokens)
+    query_track = _normalize_track(target_track) or _classify_track(expanded_query)
+    query_rank = _seniority_rank(seniority_floor) if seniority_floor else _rank_from_tokens(expanded_query)
+    title_track = _classify_track(expanded_title)
+    title_rank = _rank_from_tokens(expanded_title)
+    if query_track and title_track != query_track:
+        return False
+    if title_rank < query_rank:
+        return False
     domain_tokens = _recall_domain_tokens(expanded_query)
     if not domain_tokens:
         domain_tokens = {
             token
             for token in expanded_query
-            if token not in _RECALL_LEADERSHIP_TOKENS and token not in _STOPWORDS
+            if token not in _MANAGEMENT_TOKENS
+            and token not in _EXECUTIVE_TOKENS
+            and token not in _IC_TOKENS
+            and token not in _STOPWORDS
         }
     title_leadership_tokens = expanded_title.intersection(_RECALL_LEADERSHIP_TOKENS)
     title_domain_tokens = expanded_title.intersection(domain_tokens)
@@ -258,6 +338,50 @@ def _recall_title_matches_query(title_sequence: Sequence[str], query_tokens: Seq
         title_leadership_tokens,
         title_domain_tokens,
     )
+
+
+def _classify_track(tokens: set[str]) -> str | None:
+    if tokens.intersection(_EXECUTIVE_TOKENS):
+        return "executive"
+    if tokens.intersection(_MANAGEMENT_TOKENS):
+        return "management"
+    if tokens.intersection(_IC_TOKENS):
+        return "ic"
+    return None
+
+
+def _normalize_track(value: str | None) -> str | None:
+    normalized = str(value or "").strip().casefold().replace("-", "_")
+    if normalized in {"individual_contributor", "individual contributor", "staff_plus", "staff plus"}:
+        return "ic"
+    if normalized in {"manager", "management", "people_manager", "people manager"}:
+        return "management"
+    if normalized in {"exec", "executive", "leadership"}:
+        return "executive"
+    return normalized if normalized in _TRACKS else None
+
+
+def _rank_from_tokens(tokens: set[str]) -> int:
+    if not tokens:
+        return 0
+    if "vice" in tokens and "president" in tokens:
+        return _SENIORITY_RANKS["vp"]
+    return max((_SENIORITY_RANKS.get(token, 0) for token in tokens), default=0)
+
+
+def _seniority_rank(value: str | None) -> int:
+    seniority_alias = _seniority_alias(value)
+    if seniority_alias:
+        return _SENIORITY_RANKS[seniority_alias]
+    tokens = _expanded_tokens(_tokens(value))
+    return _rank_from_tokens(tokens)
+
+
+def _seniority_alias(value: str | None) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+    if not normalized:
+        return None
+    return _SENIORITY_ALIASES.get(normalized) or _SENIORITY_ALIASES.get(normalized.replace(" ", ""))
 
 
 def _recall_domain_tokens(query_tokens: set[str]) -> set[str]:

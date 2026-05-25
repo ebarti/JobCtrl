@@ -39,6 +39,9 @@ class LocalActionRequest:
     dry_run: bool = False
     rescore: bool = False
     retailor: bool = False
+    tailor_models: tuple[str, ...] = ()
+    tailor_judge_model: str | None = None
+    tailor_judge_min_score: float | None = None
     model: str = "default"
     headless: bool = False
     continuous: bool = False
@@ -138,6 +141,9 @@ def run_stage_action(
     dry_run: bool = False,
     rescore: bool = False,
     retailor: bool = False,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
 ) -> LocalActionResult:
     """Convenience entrypoint for a pipeline stage action."""
     return run_local_action(
@@ -151,6 +157,9 @@ def run_stage_action(
             dry_run=dry_run,
             rescore=rescore,
             retailor=retailor,
+            tailor_models=tailor_models,
+            tailor_judge_model=tailor_judge_model,
+            tailor_judge_min_score=tailor_judge_min_score,
         )
     )
 
@@ -172,6 +181,9 @@ def _execute_action(request: LocalActionRequest) -> dict[str, Any]:
             limit=request.limit,
             rescore=request.rescore,
             retailor=request.retailor,
+            tailor_models=request.tailor_models,
+            tailor_judge_model=request.tailor_judge_model,
+            tailor_judge_min_score=request.tailor_judge_min_score,
         )
     if request.stage == "apply":
         from jobhunter.apply.launcher import main as apply_main
@@ -299,6 +311,9 @@ def _record_dry_run_metric(request: LocalActionRequest, action_id: str, duration
             "limit": request.limit,
             "rescore": request.rescore,
             "retailor": request.retailor,
+            "tailor_models": list(request.tailor_models),
+            "tailor_judge_model": request.tailor_judge_model,
+            "tailor_judge_min_score": request.tailor_judge_min_score,
         },
     )
     conn.commit()

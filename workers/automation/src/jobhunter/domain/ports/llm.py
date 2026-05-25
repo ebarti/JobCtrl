@@ -62,10 +62,9 @@ class LlmPort(Protocol):
         support it return a JSON document conforming to the schema.
         Use :meth:`chat_json` for the parsed-dict convenience.
 
-        ``thinking_budget`` (Gemini-only) caps internal reasoning tokens.
-        Set to ``0`` to skip thinking entirely on Gemini thinking models
-        whose default budget can swallow the entire ``max_tokens`` allotment
-        before any visible content is produced.
+        ``thinking_budget`` (Gemini-only) caps Gemini 2.5 internal reasoning
+        tokens. On Gemini 3.x, ``0`` maps to ``thinkingLevel=minimal`` because
+        Gemini 3 thinking cannot be fully disabled.
         """
         ...
 

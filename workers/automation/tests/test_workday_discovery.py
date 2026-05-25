@@ -264,7 +264,7 @@ def test_workday_source_first_search_filters_against_expanded_query_specs(
         reject_locs=["United States", "Canada"],
         query_specs=[
             {"query": "Head of Platform", "match_mode": "strict"},
-            {"query": "platform director", "match_mode": "recall"},
+            {"query": "platform manager", "match_mode": "recall"},
         ],
     )
 

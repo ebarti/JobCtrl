@@ -163,14 +163,27 @@ def test_smart_extract_target_builder_uses_source_capability() -> None:
     ]
     assert targets[0]["query_mode"] == "source_first"
     assert targets[0]["query"] is None
-    assert targets[0]["queries"] == [
-        {"query": "Director of Engineering", "match_mode": "strict", "tier": 1},
-        {"query": "technology director", "match_mode": "recall", "tier": 1},
+    expected_query_specs = [
+        {
+            "query": "Director of Engineering",
+            "match_mode": "strict",
+            "tier": 1,
+            "target_track": "",
+            "seniority_floor": "",
+        },
+        {
+            "query": "technology director",
+            "match_mode": "recall",
+            "tier": 1,
+            "target_track": "",
+            "seniority_floor": "",
+        },
     ]
+    assert targets[0]["queries"] == expected_query_specs
     assert targets[1]["query"] == "Director of Engineering"
-    assert targets[1]["query_spec"] == {"query": "Director of Engineering", "match_mode": "strict", "tier": 1}
+    assert targets[1]["query_spec"] == expected_query_specs[0]
     assert targets[2]["query"] == "technology director"
-    assert targets[2]["query_spec"] == {"query": "technology director", "match_mode": "recall", "tier": 1}
+    assert targets[2]["query_spec"] == expected_query_specs[1]
     assert targets[3]["url"] == "https://example.com/jobs?q=&l=Spain"
     assert targets[3]["queries"] == targets[0]["queries"]
 

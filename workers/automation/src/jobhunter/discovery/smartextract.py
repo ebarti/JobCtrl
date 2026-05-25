@@ -107,7 +107,7 @@ def _store_jobs_filtered(
     missing_description = 0
 
     for job in jobs:
-        if limit > 0 and new + existing >= limit:
+        if limit > 0 and new >= limit:
             break
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
@@ -222,9 +222,7 @@ def _title_matches_target_query(title: str | None, query: object | None) -> bool
     if isinstance(query, list):
         if not query:
             return True
-        if all(isinstance(item, Mapping) for item in query):
-            return title_matches_any_query(title, query)
-        return any(title_matches_query(title, str(item)) for item in query)
+        return any(_title_matches_target_query(title, item) for item in query)
     if query is None:
         return title_matches_query(title, None)
     return title_matches_query(title, str(query))
@@ -1247,12 +1245,9 @@ def _run_all(
     total_new = 0
     total_existing = 0
 
-    if limit > 0:
-        targets = targets[:limit]
-
     def _process_result(r: dict, target: dict) -> None:
         nonlocal total_new, total_existing
-        remaining = max(limit - (total_new + total_existing), 0) if limit > 0 else 0
+        remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             return
         jobs = r.get("jobs", [])
@@ -1299,7 +1294,7 @@ def _run_all(
     else:
         # Sequential mode (default)
         for i, target in enumerate(targets):
-            if limit > 0 and total_new + total_existing >= limit:
+            if limit > 0 and total_new >= limit:
                 break
             label = target["name"]
             if target.get("query"):

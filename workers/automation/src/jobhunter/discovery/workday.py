@@ -424,12 +424,34 @@ def store_results(
 ) -> tuple[int, int]:
     """Store corporate jobs through the Discovery write boundary."""
     now = datetime.now(timezone.utc).isoformat()
+    use_case = DiscoverJobsUseCase(
+        repository=SqliteJobRepository(conn),
+        publisher=_DiscoveryEventPublisher(conn),
+    )
+    if limit > 0:
+        new_jobs = 0
+        observed_jobs = 0
+        for job in jobs:
+            if new_jobs >= limit:
+                break
+            posting = _posting_from_job(job, employers)
+            if posting is None:
+                continue
+            summary = use_case.execute(
+                tenant_id=LOCAL_TENANT,
+                postings=[posting],
+                run_id=run_id,
+            )
+            new_jobs += summary.new_jobs
+            observed_jobs += summary.observed
+            _update_detail_columns(conn, job, posting.posting_url.value, now)
+        conn.commit()
+        return new_jobs, observed_jobs
+
     postings: list[ScrapedJobPosting] = []
     detail_updates: list[tuple[dict, str]] = []
 
     for job in jobs:
-        if limit > 0 and len(postings) >= limit:
-            break
         posting = _posting_from_job(job, employers)
         if posting is None:
             continue
@@ -439,10 +461,7 @@ def store_results(
     if not postings:
         return 0, 0
 
-    summary = DiscoverJobsUseCase(
-        repository=SqliteJobRepository(conn),
-        publisher=_DiscoveryEventPublisher(conn),
-    ).execute(
+    summary = use_case.execute(
         tenant_id=LOCAL_TENANT,
         postings=postings,
         run_id=run_id,
@@ -510,7 +529,7 @@ def _search_and_fetch_one(
             emp,
             search_text,
             location_filter=location_filter,
-            max_results=limit,
+            max_results=0,
             max_pages=max_pages_per_employer,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
@@ -615,18 +634,17 @@ def scrape_employers(
                 completed += 1
                 jobs = result.pop("jobs", [])
                 if jobs:
-                    remaining = max(limit - total_found, 0) if limit > 0 else 0
+                    remaining = max(limit - total_new, 0) if limit > 0 else 0
                     if limit <= 0 or remaining > 0:
-                        jobs_to_store = jobs[:remaining] if limit > 0 else jobs
                         conn = get_connection()
                         new, existing = store_results(
                             conn,
-                            jobs_to_store,
+                            jobs,
                             employers,
                             limit=remaining if limit > 0 else 0,
                             run_id=run_id,
                         )
-                        result = {**result, "found": len(jobs_to_store), "new": new, "existing": existing}
+                        result = {**result, "found": len(jobs), "new": new, "existing": existing}
                 total_new += result["new"]
                 total_existing += result["existing"]
                 total_found += result["found"]
@@ -645,7 +663,7 @@ def scrape_employers(
                         errors,
                         elapsed,
                     )
-                if limit > 0 and total_found >= limit:
+                if limit > 0 and total_new >= limit:
                     for pending in futures:
                         pending.cancel()
                     break
@@ -653,7 +671,7 @@ def scrape_employers(
         # Sequential mode (default)
         completed = 0
         for key in valid_keys:
-            remaining = max(limit - total_found, 0) if limit > 0 else 0
+            remaining = max(limit - total_new, 0) if limit > 0 else 0
             if limit > 0 and remaining <= 0:
                 break
             result = _process_one(

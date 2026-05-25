@@ -170,6 +170,7 @@ def _stage_list(params: dict[str, Any]) -> list[str]:
 def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     stages = _stage_list(params)
+    raw_judge_min_score = params.get("tailorJudgeMinScore")
     payload = JobPipelineWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
@@ -182,6 +183,15 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
         dry_run=bool(params.get("dryRun", False)),
         rescore=bool(params.get("rescore", False)),
         retailor=bool(params.get("retailor", False)),
+        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
+        tailor_judge_model=(
+            str(params["tailorJudgeModel"])
+            if params.get("tailorJudgeModel")
+            else None
+        ),
+        tailor_judge_min_score=(
+            float(raw_judge_min_score) if raw_judge_min_score is not None else None
+        ),
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),

@@ -63,6 +63,15 @@ def _make_cover_artifact(path: str = "/tmp/c.txt") -> Artifact:
     )
 
 
+def _make_resume_pdf_artifact(path: str = "/tmp/r.pdf") -> Artifact:
+    return Artifact.create(
+        type=ArtifactType.RESUME_PDF,
+        path=path,
+        created_at="2024-01-02T01:00:00+00:00",
+        render_format=RenderFormat.LATEX_PDF,
+    )
+
+
 # ---------------------------------------------------------------------------
 # pending_tailor
 # ---------------------------------------------------------------------------
@@ -147,6 +156,7 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
     conn: sqlite3.Connection,
 ) -> None:
     url_resume = _seed_job(conn, "https://example.com/resume-only")
+    url_text_only = _seed_job(conn, "https://example.com/text-only")
     url_full = _seed_job(conn, "https://example.com/full")
     repo = SqliteMaterialsRepository(conn)
     base = MaterialsSetFactory.initial(
@@ -158,8 +168,22 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
         validation=ValidationResult.success(),
         verdict=JudgeVerdict.passed(),
         updated_at="2024-01-02T00:00:00+00:00",
+    ).with_resume_pdf(
+        _make_resume_pdf_artifact(),
+        updated_at="2024-01-02T01:00:00+00:00",
     )
     repo.save(base)
+    text_only = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url_text_only),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        _make_resume_artifact("/tmp/text-only-r.txt"),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(text_only)
     full = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
         job_id=JobId(url_full),
@@ -169,6 +193,9 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
         validation=ValidationResult.success(),
         verdict=JudgeVerdict.passed(),
         updated_at="2024-01-02T00:00:00+00:00",
+    ).with_resume_pdf(
+        _make_resume_pdf_artifact("/tmp/full-r.pdf"),
+        updated_at="2024-01-02T01:00:00+00:00",
     ).with_cover_letter(
         _make_cover_artifact("/tmp/full-c.txt"),
         validation=ValidationResult.success(),
@@ -179,6 +206,7 @@ def test_pending_cover_returns_only_jobs_with_resume_no_cover(
     rows = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7, limit=0)
     urls = {row["url"] for row in rows}
     assert url_resume in urls
+    assert url_text_only not in urls
     assert url_full not in urls
 
 
@@ -264,8 +292,36 @@ def test_get_stats_with_cover_letter_count_reflects_materials_writes(
 
 
 def test_get_stats_ready_to_apply_reflects_materials_writes(conn: sqlite3.Connection) -> None:
-    """``ready_to_apply`` requires tailored materials AND application_url."""
+    """``ready_to_apply`` requires tailored text, resume PDF, and application_url."""
     url = _seed_job(conn, "https://example.com/job")
+    conn.execute(
+        "UPDATE jobs SET application_url = 'https://example.com/apply' WHERE url = ?",
+        (url,),
+    )
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(
+        MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            created_at="2024-01-01T00:00:00+00:00",
+        ).with_resume_attempt(
+            _make_resume_artifact(),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2024-01-02T00:00:00+00:00",
+        ).with_resume_pdf(
+            _make_resume_pdf_artifact(),
+            updated_at="2024-01-02T01:00:00+00:00",
+        )
+    )
+    stats = get_stats(conn)
+    assert stats["ready_to_apply"] == 1
+
+
+def test_get_stats_ready_to_apply_excludes_text_only_tailored_materials(
+    conn: sqlite3.Connection,
+) -> None:
+    url = _seed_job(conn, "https://example.com/text-only")
     conn.execute(
         "UPDATE jobs SET application_url = 'https://example.com/apply' WHERE url = ?",
         (url,),
@@ -283,8 +339,52 @@ def test_get_stats_ready_to_apply_reflects_materials_writes(conn: sqlite3.Connec
             updated_at="2024-01-02T00:00:00+00:00",
         )
     )
+
     stats = get_stats(conn)
-    assert stats["ready_to_apply"] == 1
+
+    assert stats["ready_to_apply"] == 0
+
+
+def test_pipeline_count_pending_cover_excludes_text_only_tailored_materials(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
+
+    url_text_only = _seed_job(conn, "https://example.com/text-only")
+    url_with_pdf = _seed_job(conn, "https://example.com/with-pdf")
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(
+        MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url_text_only),
+            created_at="2024-01-01T00:00:00+00:00",
+        ).with_resume_attempt(
+            _make_resume_artifact("/tmp/text-only-r.txt"),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2024-01-02T00:00:00+00:00",
+        )
+    )
+    repo.save(
+        MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url_with_pdf),
+            created_at="2024-01-01T00:00:00+00:00",
+        ).with_resume_attempt(
+            _make_resume_artifact("/tmp/with-pdf-r.txt"),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2024-01-02T00:00:00+00:00",
+        ).with_resume_pdf(
+            _make_resume_pdf_artifact("/tmp/with-pdf-r.pdf"),
+            updated_at="2024-01-02T01:00:00+00:00",
+        )
+    )
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
+
+    assert pipeline._count_pending("cover", min_score=7) == 1
 
 
 def test_get_stats_untailored_eligible_excludes_materials_tailored(
@@ -542,6 +642,9 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
                 validation=ValidationResult.success(),
                 verdict=JudgeVerdict.passed(),
                 updated_at="2024-01-02T00:00:00+00:00",
+            ).with_resume_pdf(
+                _make_resume_pdf_artifact("/tmp/materials-resume.pdf"),
+                updated_at="2024-01-02T01:00:00+00:00",
             )
         )
         legacy_path = conn.execute(
@@ -559,6 +662,69 @@ def test_acquire_job_picks_up_materials_only_tailored_jobs(tmp_path) -> None:
             assert job is not None
             assert job["url"] == url
             assert job["tailored_resume_path"] == "/tmp/materials-resume.txt"
+        finally:
+            launcher_mod.get_connection = original
+    finally:
+        close_connection(db_path)
+
+
+def test_acquire_job_excludes_materials_only_text_resume_without_pdf(tmp_path) -> None:
+    from jobhunter.apply.launcher import acquire_job
+    from jobhunter.database import close_connection, get_connection
+    from jobhunter.domain.scoring import (
+        FitScore,
+        JobScore,
+        MatchedKeywords,
+        ScoreBreakdown,
+    )
+    from jobhunter.infrastructure.scoring import SqliteScoreRepository
+
+    db_path = tmp_path / "apply.db"
+    conn = init_db(db_path)
+    try:
+        url = "https://example.com/job"
+        conn.execute(
+            "INSERT INTO jobs (url, title, site, application_url, "
+            "full_description, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                url,
+                "Engineer",
+                "Acme",
+                "https://example.com/apply",
+                "desc",
+                "2024-01-01T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+        SqliteScoreRepository(conn).save(
+            JobScore.initial(
+                tenant_id=LOCAL_TENANT,
+                job_id=JobId(url),
+                fit_score=FitScore.create(9),
+                breakdown=ScoreBreakdown(reasoning="ok"),
+                matched_keywords=MatchedKeywords.from_iterable(["python"]),
+                scored_at="2024-01-02T00:00:00+00:00",
+            )
+        )
+        SqliteMaterialsRepository(conn).save(
+            MaterialsSetFactory.initial(
+                tenant_id=LOCAL_TENANT,
+                job_id=JobId(url),
+                created_at="2024-01-01T00:00:00+00:00",
+            ).with_resume_attempt(
+                _make_resume_artifact("/tmp/materials-resume.txt"),
+                validation=ValidationResult.success(),
+                verdict=JudgeVerdict.passed(),
+                updated_at="2024-01-02T00:00:00+00:00",
+            )
+        )
+
+        import jobhunter.apply.launcher as launcher_mod
+
+        original = launcher_mod.get_connection
+        launcher_mod.get_connection = lambda: get_connection(db_path)
+        try:
+            assert acquire_job(min_score=7, worker_id=1) is None
         finally:
             launcher_mod.get_connection = original
     finally:

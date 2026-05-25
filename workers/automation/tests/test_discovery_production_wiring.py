@@ -852,6 +852,38 @@ def test_discovery_hygiene_applies_to_workday_and_smart_extract_rows(
     assert "missing_description" in deleted["https://wellfound.com/jobs/missing-description"]
 
 
+def test_canonical_ats_limit_counts_new_jobs_not_existing_observations(
+    conn: sqlite3.Connection,
+) -> None:
+    registry = _barcelona_registry()
+    schedule = DiscoveryScheduler().plan(registry=registry)
+    ats_sources = schedule.for_kinds(SourceKind.ATS_API)
+    first_source = ats_sources[:1]
+
+    initial = run_scheduled_ats_sources(
+        conn,
+        first_source,
+        search_cfg=_search_cfg(),
+        run_id="acceptance:ats:initial",
+        http=_fake_ats_http,
+        limit=1,
+    )
+    assert initial["new_jobs"] == 1
+
+    limited = run_scheduled_ats_sources(
+        conn,
+        ats_sources,
+        search_cfg=_search_cfg(),
+        run_id="acceptance:ats:limited",
+        http=_fake_ats_http,
+        limit=1,
+    )
+
+    assert limited["new_jobs"] == 1
+    assert limited["observed_jobs"] >= 1
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+
+
 def test_canonical_ats_scheduler_preserves_successes_when_one_source_fails(
     conn: sqlite3.Connection,
 ) -> None:

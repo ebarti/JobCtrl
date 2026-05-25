@@ -506,6 +506,10 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             experience_current_job_title      TEXT NOT NULL DEFAULT '',
             experience_current_company        TEXT NOT NULL DEFAULT '',
             experience_target_role            TEXT NOT NULL DEFAULT '',
+            experience_target_track           TEXT NOT NULL DEFAULT '',
+            experience_target_seniority_floor TEXT NOT NULL DEFAULT '',
+            experience_target_functions       TEXT NOT NULL DEFAULT '',
+            experience_target_specializations TEXT NOT NULL DEFAULT '',
             experience_target_locations       TEXT NOT NULL DEFAULT '',
             experience_target_work_models     TEXT NOT NULL DEFAULT '',
             availability_earliest_start_date  TEXT NOT NULL DEFAULT '',
@@ -700,6 +704,10 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
 
 
 _PROFILE_COLUMN_MIGRATIONS: dict[str, str] = {
+    "experience_target_track": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_seniority_floor": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_functions": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_specializations": "TEXT NOT NULL DEFAULT ''",
     "experience_target_locations": "TEXT NOT NULL DEFAULT ''",
     "experience_target_work_models": "TEXT NOT NULL DEFAULT ''",
 }
@@ -1838,6 +1846,13 @@ _LATEST_MATERIALS_JOIN: str = (
 
 _EFFECTIVE_TAILOR_PATH: str = "COALESCE(jm.jm_tailored_path, jobs.tailored_resume_path)"
 _EFFECTIVE_COVER_PATH: str = "COALESCE(jm.jm_cover_path, jobs.cover_letter_path)"
+_READY_TAILORED_RESUME_WITH_PDF: str = (
+    "((jm.jm_job_url IS NOT NULL "
+    "AND jm.jm_tailored_path IS NOT NULL AND jm.jm_tailored_path != '' "
+    "AND jm.jm_resume_pdf_path IS NOT NULL AND jm.jm_resume_pdf_path != '') "
+    "OR (jm.jm_job_url IS NULL "
+    "AND jobs.tailored_resume_path IS NOT NULL AND jobs.tailored_resume_path != ''))"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -2149,7 +2164,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     stats["ready_to_apply"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
         f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
-        f"WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+        f"WHERE {_READY_TAILORED_RESUME_WITH_PDF} "
         f"AND {_EFFECTIVE_FIT_SCORE} >= 7 "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
@@ -2176,8 +2191,7 @@ def count_ready_to_apply(
     """
 
     where = [
-        f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
-        f"{_EFFECTIVE_TAILOR_PATH} != ''",
+        _READY_TAILORED_RESUME_WITH_PDF,
         f"{_EFFECTIVE_FIT_SCORE} >= ?",
         _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
         _SCORE_CURRENT_FOR_DOWNSTREAM,
@@ -2477,7 +2491,7 @@ def get_jobs_by_stage(
             f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
-            f"AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {_EFFECTIVE_TAILOR_PATH} != '' "
+            f"AND {_READY_TAILORED_RESUME_WITH_PDF} "
             f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
             f"AND {_COVER_NOT_EXHAUSTED} "
             f"AND {_EFFECTIVE_COVER_ATTEMPTS} < 5"
@@ -2491,7 +2505,7 @@ def get_jobs_by_stage(
         # through ``apply_run_projections`` so the new write path
         # (which leaves jobs.applied_at NULL) is visible.
         "pending_apply": (
-            f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+            f"{_READY_TAILORED_RESUME_WITH_PDF} "
             f"AND {_EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "

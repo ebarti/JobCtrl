@@ -261,6 +261,9 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "dryRun": True,
                 "rescore": True,
                 "retailor": True,
+                "tailorModels": ["local:draft-a", "openai:draft-b"],
+                "tailorJudgeModel": "gemini:judge-c",
+                "tailorJudgeMinScore": 0.9,
             },
             id=1,
         )
@@ -288,7 +291,42 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         dry_run=True,
         rescore=True,
         retailor=True,
+        tailor_models=("local:draft-a", "openai:draft-b"),
+        tailor_judge_model="gemini:judge-c",
+        tailor_judge_min_score=0.9,
     )
+
+
+def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> None:
+    seen: list[WorkflowStartSpec] = []
+
+    async def starter(spec: WorkflowStartSpec) -> _StubHandle:
+        seen.append(spec)
+        return _StubHandle("pipeline-wf", "pipeline-run")
+
+    server = JsonRpcServer(workflow_starter=starter)
+    register_default_handlers(server, canceler=_stub_canceler)
+
+    response = server.dispatch(
+        JsonRpcRequest(
+            method="run_stage",
+            params={
+                "tenantId": "local",
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "stage": "tailor",
+                "stages": ["tailor"],
+                "tailorModels": ["local:draft-a"],
+                "tailorJudgeModel": "gemini:judge-c",
+            },
+            id=1,
+        )
+    )
+
+    assert response is not None
+    assert len(seen) == 1
+    (payload,) = seen[0].args
+    assert payload.tailor_judge_min_score is None
 
 
 def test_profile_import_remains_sync_local_action(tmp_db: Path, monkeypatch) -> None:

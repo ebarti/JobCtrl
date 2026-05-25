@@ -40,6 +40,68 @@ def test_local_stage_action_records_events(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
+def test_tailor_action_passes_tailoring_model_controls(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+    calls = []
+
+    def fake_pipeline(**kwargs):
+        calls.append(kwargs)
+        return {"stages": [{"stage": "tailor", "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
+
+    try:
+        result = run_local_action(
+            LocalActionRequest(
+                stage="tailor",
+                tailor_models=("local:draft-a", "openai:draft-b"),
+                tailor_judge_model="gemini:judge-c",
+                tailor_judge_min_score=0.9,
+            )
+        )
+
+        assert result.ok is True
+        assert calls[0]["tailor_models"] == ("local:draft-a", "openai:draft-b")
+        assert calls[0]["tailor_judge_model"] == "gemini:judge-c"
+        assert calls[0]["tailor_judge_min_score"] == 0.9
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_action_fails_when_pipeline_reports_quality_gate_failure(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    init_db(db_path)
+
+    def fake_pipeline(**_kwargs):
+        return {
+            "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.01}],
+            "errors": {"tailor": "failed"},
+            "elapsed": 0.01,
+        }
+
+    monkeypatch.setattr(actions, "_bootstrap_runtime", lambda: None)
+    monkeypatch.setattr(actions, "get_connection", lambda: get_connection(db_path))
+    monkeypatch.setattr(actions, "run_pipeline", fake_pipeline)
+
+    try:
+        result = run_local_action(LocalActionRequest(stage="tailor"))
+        conn = get_connection(db_path)
+        failure = conn.execute(
+            "SELECT event_type, level FROM job_events ORDER BY event_id DESC LIMIT 1"
+        ).fetchone()
+
+        assert result.ok is False
+        assert result.status == "failed"
+        assert result.result["errors"] == {"tailor": "failed"}
+        assert failure["event_type"] == "ActionFailed"
+        assert failure["level"] == "error"
+    finally:
+        close_connection(db_path)
+
+
 def test_local_action_returns_structured_failure(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)

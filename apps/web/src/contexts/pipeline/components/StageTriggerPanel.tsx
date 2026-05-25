@@ -37,6 +37,18 @@ function numberValue(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function decimalValue(value: string, fallback: number): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function modelSpecList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 function stageActionCountLabel(count: number): string {
   return `${count} ${count === 1 ? "stage action" : "stage actions"}`;
 }
@@ -125,6 +137,7 @@ interface StageControlSet {
   validationMode: boolean;
   rescore: boolean;
   retailor: boolean;
+  tailorModels: boolean;
   applyModel: boolean;
   headless: boolean;
   continuous: boolean;
@@ -137,6 +150,7 @@ const BASE_CONTROLS: StageControlSet = {
   validationMode: false,
   rescore: false,
   retailor: false,
+  tailorModels: false,
   applyModel: false,
   headless: false,
   continuous: false,
@@ -152,6 +166,7 @@ const STAGE_CONTROLS: Record<PipelineRunStage, StageControlSet> = {
     minScore: true,
     validationMode: true,
     retailor: true,
+    tailorModels: true,
   },
   cover: { ...BASE_CONTROLS, limit: true, minScore: true, validationMode: true },
   apply: {
@@ -207,6 +222,10 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
     if (workerUnhealthy) return;
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
+    const tailorJudgeMinScore =
+      controls.tailorModels && config.tailorJudgeMinScore.trim()
+        ? decimalValue(config.tailorJudgeMinScore, 0.82)
+        : undefined;
     runStages.mutate({
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
@@ -216,6 +235,9 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       dryRun: config.dryRun,
       rescore: controls.rescore ? config.rescore : false,
       retailor: controls.retailor ? config.retailor : false,
+      tailorModels: controls.tailorModels ? modelSpecList(config.tailorModels) : [],
+      tailorJudgeModel: controls.tailorModels ? config.tailorJudgeModel.trim() || undefined : undefined,
+      ...(tailorJudgeMinScore === undefined ? {} : { tailorJudgeMinScore }),
       headless: controls.headless ? config.headless : false,
       model: controls.applyModel ? selectedApplyModel : "default",
       continuous: controls.continuous ? config.continuous : false,
@@ -293,6 +315,38 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             </select>
           </label>
         ) : null}
+        {controls.tailorModels ? (
+          <>
+            <label className="field">
+              <span>Tailor models</span>
+              <input
+                placeholder="default, gemini:gemini-3.5-flash"
+                value={config.tailorModels}
+                onChange={(event) => patchConfig({ tailorModels: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Judge model</span>
+              <input
+                placeholder="default"
+                value={config.tailorJudgeModel}
+                onChange={(event) => patchConfig({ tailorJudgeModel: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Minimum judge score</span>
+              <input
+                min={0}
+                max={1}
+                step={0.01}
+                type="number"
+                placeholder="env/default"
+                value={config.tailorJudgeMinScore}
+                onChange={(event) => patchConfig({ tailorJudgeMinScore: event.target.value })}
+              />
+            </label>
+          </>
+        ) : null}
       </div>
 
       <div className="stage-trigger-options">
@@ -321,7 +375,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
               checked={config.retailor}
               onChange={(event) => patchConfig({ retailor: event.currentTarget.checked })}
             />
-            <span>Retailor</span>
+            <span>Re-tailor</span>
           </label>
         ) : null}
         {controls.headless ? (

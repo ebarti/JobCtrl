@@ -138,14 +138,16 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
 `validationMode`, `dryRun`, score/tailor flags (`rescore`, `retailor`), and
-apply flags (`headless`, `model`, `continuous`). The route dispatches the
-ordered stage list to JSON-RPC `run_stage`, which starts `JobPipelineWorkflow`;
-if the list includes `apply`, that workflow delegates the apply step to
-`ApplyWorkflow` as a child workflow after preceding stages complete. The route
-uses the command key `pipeline` only as the local action response handle, not
-as a fake job URL. Successful workflow starts return `202` with the queued
-workflow ID. Workflow-start failures return `200` with the dispatcher-derived
-failed action.
+tailoring LLM controls (`tailorModels`, `tailorJudgeModel`,
+`tailorJudgeMinScore`), and apply flags (`headless`, `model`, `continuous`).
+`model` remains apply-only; the tailoring generator and judge specs are
+separate fields. The route dispatches the ordered stage list to JSON-RPC
+`run_stage`, which starts `JobPipelineWorkflow`; if the list includes `apply`,
+that workflow delegates the apply step to `ApplyWorkflow` as a child workflow
+after preceding stages complete. The route uses the command key `pipeline` only
+as the local action response handle, not as a fake job URL. Successful workflow
+starts return `202` with the queued workflow ID. Workflow-start failures return
+`200` with the dispatcher-derived failed action.
 `dryRun` defaults to `true`, preserving apply safety. The apply model defaults
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.
@@ -159,11 +161,15 @@ as Discovery; `enrich` remains an internal retry/diagnostic stage, not a
 top-level `run-stage` request value.
 
 Discover honors the profile Target search saved from the Preferences tab.
-Target roles replace the active discovery query list with exact role queries
-plus deterministic recall queries. Recall queries keep the same search tier as
-exact queries because relevance is determined after discovery by scoring, not by
-query generation. JobSpy uses exact-plus-recall queries as broad-board retrieval
-probes. Direct ATS, Workday, and source-first Smart Extract sources enumerate
+Target roles replace the active discovery query list with exact role queries;
+target tracks, seniority floors, functions, and specializations add structured
+intent for deterministic recall expansion. Recall queries keep the same search
+tier as exact queries because relevance is determined after discovery by
+scoring, not by query generation. Recall matching enforces both track and
+seniority: IC targets stay IC, management targets stay management, and a
+candidate who configures both tracks can receive both. JobSpy uses
+exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
+Workday, and source-first Smart Extract sources enumerate
 their known board/source and apply that same title intent internally, avoiding
 repeated board fetches for each role variant. Smart Extract search-only sources
 still fan out by query when the source has no useful browse/all-jobs page.
@@ -178,10 +184,11 @@ API validates target locations as real places before saving profile preferences.
 Hybrid and on-site target work models search and filter only the target
 location. Remote target work models search and filter the target country, and
 European countries also add an Europe-remote search and accept pattern.
-Profile-driven discovery searches at least the last 30 days
-unless local config sets a larger window. Spain or Europe targets set JobSpy's
-Indeed country to Spain, reject America-only non-remote locations, and filter
-API-visible America-only source rows from `GET /v1/discovery/sources`.
+Profile-driven discovery searches at least the last 30 days unless local config
+sets a larger window. Spain or Europe targets set JobSpy's Indeed country to
+Spain, reject America-only non-remote locations, and filter API-visible
+America-only source rows from `GET /v1/discovery/sources`. Discover limits are
+new-job budgets: duplicate/rediscovered observations do not consume the cap.
 
 The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same

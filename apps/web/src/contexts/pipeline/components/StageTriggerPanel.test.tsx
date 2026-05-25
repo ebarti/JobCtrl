@@ -77,8 +77,9 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
 
@@ -96,7 +97,10 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Workers")).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
-    expect(screen.getByLabelText("Retailor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Re-tailor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tailor models")).toBeInTheDocument();
+    expect(screen.getByLabelText("Judge model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Minimum judge score")).toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
@@ -106,7 +110,7 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
     expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
     expect(screen.queryByLabelText("Workers")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
@@ -118,7 +122,7 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByLabelText("Continuous")).toBeInTheDocument();
     expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
   });
 
   it("renders supplemental content only for the active stage", async () => {
@@ -143,7 +147,7 @@ describe("StageTriggerPanel", () => {
 
   it("submits a bounded Discover run from the stage tab", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
       status: "succeeded",
@@ -160,6 +164,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        tailorModels: [],
         continuous: false,
       },
       actions: [],
@@ -176,7 +181,8 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("button", { name: "Run Discover" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
-    expect(runPipelineStages).toHaveBeenCalledWith({
+    const request = runPipelineStages.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
       stages: ["discover"],
       limit: 1000,
       workers: 1,
@@ -185,15 +191,18 @@ describe("StageTriggerPanel", () => {
       dryRun: false,
       rescore: false,
       retailor: false,
+      tailorModels: [],
+      tailorJudgeModel: undefined,
       headless: false,
       model: "default",
       continuous: false,
     });
+    expect(request).not.toHaveProperty("tailorJudgeMinScore");
   });
 
   it("submits the active stage and its persisted options through the pipeline mutation", async () => {
     const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
       ok: true as const,
       action: "run_stage" as const,
       status: "queued",
@@ -210,6 +219,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: true,
         model: "sonnet",
+        tailorModels: [],
         continuous: true,
       },
       actions: [
@@ -252,7 +262,8 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("button", { name: "Run Apply" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
-    expect(runPipelineStages).toHaveBeenCalledWith({
+    const request = runPipelineStages.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
       stages: ["apply"],
       limit: 12,
       workers: 3,
@@ -261,11 +272,132 @@ describe("StageTriggerPanel", () => {
       dryRun: true,
       rescore: false,
       retailor: false,
+      tailorModels: [],
+      tailorJudgeModel: undefined,
       headless: true,
       model: "sonnet",
       continuous: true,
     });
+    expect(request).not.toHaveProperty("tailorJudgeMinScore");
     expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
+  });
+
+  it("submits tailor model and judge settings for the Tailor stage", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "queued",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["tailor"],
+        limit: 4,
+        workers: 2,
+        minScore: 9,
+        validationMode: "strict" as const,
+        dryRun: true,
+        rescore: false,
+        retailor: true,
+        headless: false,
+        model: "default",
+        tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
+        tailorJudgeModel: "local:judge",
+        tailorJudgeMinScore: 0.9,
+        continuous: false,
+      },
+      actions: [],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.clear(screen.getByLabelText("Limit"));
+    await user.type(screen.getByLabelText("Limit"), "4");
+    await user.clear(screen.getByLabelText("Workers"));
+    await user.type(screen.getByLabelText("Workers"), "2");
+    await user.clear(screen.getByLabelText("Minimum score"));
+    await user.type(screen.getByLabelText("Minimum score"), "9");
+    await user.selectOptions(screen.getByLabelText("Validation mode"), "strict");
+    await user.click(screen.getByLabelText("Re-tailor"));
+    await user.type(screen.getByLabelText("Tailor models"), "local:fast, gemini:gemini-3.5-flash");
+    await user.type(screen.getByLabelText("Judge model"), "local:judge");
+    await user.clear(screen.getByLabelText("Minimum judge score"));
+    await user.type(screen.getByLabelText("Minimum judge score"), "0.9");
+    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
+
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
+    expect(runPipelineStages).toHaveBeenCalledWith({
+      stages: ["tailor"],
+      limit: 4,
+      workers: 2,
+      minScore: 9,
+      validationMode: "strict",
+      dryRun: true,
+      rescore: false,
+      retailor: true,
+      tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
+      tailorJudgeModel: "local:judge",
+      tailorJudgeMinScore: 0.9,
+      headless: false,
+      model: "default",
+      continuous: false,
+    });
+  });
+
+  it("lets the Tailor stage use the environment/default judge threshold when the input is blank", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "queued",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["tailor"],
+        limit: 25,
+        workers: 1,
+        minScore: 7,
+        validationMode: "normal" as const,
+        dryRun: true,
+        rescore: false,
+        retailor: false,
+        headless: false,
+        model: "default",
+        tailorModels: ["local:fast"],
+        tailorJudgeModel: "local:judge",
+        continuous: false,
+      },
+      actions: [],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { runPipelineStages } }),
+    });
+
+    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.type(screen.getByLabelText("Tailor models"), "local:fast");
+    await user.type(screen.getByLabelText("Judge model"), "local:judge");
+    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
+
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
+    const request = runPipelineStages.mock.calls[0]?.[0];
+    expect(request).toMatchObject({
+      stages: ["tailor"],
+      limit: 25,
+      workers: 1,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: true,
+      rescore: false,
+      retailor: false,
+      tailorModels: ["local:fast"],
+      tailorJudgeModel: "local:judge",
+      headless: false,
+      model: "default",
+      continuous: false,
+    });
+    expect(request).not.toHaveProperty("tailorJudgeMinScore");
   });
 
   it("shows a live starting status while the worker request is pending", async () => {
@@ -364,6 +496,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        tailorModels: [],
         continuous: false,
       },
       actions: [
@@ -411,11 +544,11 @@ describe("StageTriggerPanel", () => {
     await user.click(screen.getByRole("tab", { name: "Tailor" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "13");
-    await user.click(screen.getByLabelText("Retailor"));
+    await user.click(screen.getByLabelText("Re-tailor"));
 
     await user.click(screen.getByRole("tab", { name: "Discover" }));
     expect(screen.getByLabelText("Workers")).toHaveValue(5);
-    expect(screen.queryByLabelText("Retailor")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
 
     unmount();
     renderWithProviders(<StageTriggerPanel />);
@@ -425,6 +558,6 @@ describe("StageTriggerPanel", () => {
 
     await user.click(screen.getByRole("tab", { name: "Tailor" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);
-    expect(screen.getByLabelText("Retailor")).toBeChecked();
+    expect(screen.getByLabelText("Re-tailor")).toBeChecked();
   });
 });
