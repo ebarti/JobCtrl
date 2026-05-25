@@ -57,7 +57,7 @@ def test_gemini_native_path_does_not_leak_api_key(in_memory_exporter, monkeypatc
 
     client = LLMClient(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        model="gemini-2.0-flash",
+        model="gemini-3.5-flash",
         api_key=_TEST_KEY,
     )
     # Drop the production httpx.Client and install one with a MockTransport,

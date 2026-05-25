@@ -2,7 +2,7 @@
 Unified LLM client for JobHunter.
 
 Auto-detects provider from environment:
-  GEMINI_API_KEY  -> Google Gemini (default: gemini-2.0-flash)
+  GEMINI_API_KEY  -> Google Gemini (default: gemini-3.5-flash)
   OPENAI_API_KEY  -> OpenAI (default: gpt-4o-mini)
   LLM_URL         -> Local llama.cpp / Ollama compatible endpoint
 
@@ -19,6 +19,10 @@ import httpx
 from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
 
 log = logging.getLogger(__name__)
+
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_LOCAL_MODEL = "local-model"
 
 # ---------------------------------------------------------------------------
 # Provider detection
@@ -38,21 +42,21 @@ def _detect_provider() -> tuple[str, str, str]:
     if gemini_key and not local_url:
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            model_override or "gemini-2.0-flash",
+            model_override or DEFAULT_GEMINI_MODEL,
             gemini_key,
         )
 
     if openai_key and not local_url:
         return (
             "https://api.openai.com/v1",
-            model_override or "gpt-4o-mini",
+            model_override or DEFAULT_OPENAI_MODEL,
             openai_key,
         )
 
     if local_url:
         return (
             local_url.rstrip("/"),
-            model_override or "local-model",
+            model_override or DEFAULT_LOCAL_MODEL,
             os.environ.get("LLM_API_KEY", ""),
         )
 
@@ -281,7 +285,7 @@ class LLMClient:
         Use :meth:`chat_json` for the parsed-dict convenience.
 
         ``thinking_budget`` (Gemini only): caps internal reasoning tokens.
-        Set to ``0`` to skip thinking entirely on Gemini 3.x preview models
+        Set to ``0`` to skip thinking entirely on Gemini thinking models
         whose default budget can swallow the entire ``max_tokens`` allotment
         before any visible content is produced.
         """

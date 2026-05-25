@@ -443,7 +443,8 @@ Common environment variables:
 
 - `JOBHUNTER_DIR`: override the local app directory.
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
-- `LLM_MODEL`: choose the model for the configured provider.
+- `LLM_MODEL`: choose the model for the configured provider. Gemini defaults to
+  `gemini-3.5-flash`.
 - `CHROME_PATH`: override Chrome/Chromium detection.
 - `PDFLATEX_PATH`: override LaTeX detection.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.

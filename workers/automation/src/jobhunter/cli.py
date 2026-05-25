@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from jobhunter import __version__
+from jobhunter.llm import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL
 from jobhunter.pipeline import STAGE_ORDER, run_pipeline, run_single_job
 
 logging.basicConfig(
@@ -1324,10 +1325,10 @@ def doctor() -> None:
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
     if has_gemini:
-        model = os.environ.get("LLM_MODEL", "gemini-2.0-flash")
+        model = os.environ.get("LLM_MODEL", DEFAULT_GEMINI_MODEL)
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
-        model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+        model = os.environ.get("LLM_MODEL", DEFAULT_OPENAI_MODEL)
         results.append(("LLM API key", ok_mark, f"OpenAI ({model})"))
     elif has_local:
         results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
