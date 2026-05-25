@@ -411,6 +411,20 @@ def test_discovery_detail_enrichment_uses_same_worker_count(monkeypatch):
     assert result == {"status": "ok", "passes": 1, "pending": 0}
 
 
+def test_discover_status_fails_when_internal_enrichment_fails():
+    status = runner._stage_status(
+        "discover",
+        {
+            "jobspy": "ok",
+            "workday": "ok",
+            "smartextract": "ok",
+            "enrichment": "error: timeout",
+        },
+    )
+
+    assert status == "error: timeout"
+
+
 def test_enrich_limit_propagates_to_runner(monkeypatch):
     calls: list[dict[str, int]] = []
 

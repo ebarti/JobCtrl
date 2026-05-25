@@ -242,7 +242,11 @@ def _stage_status(stage: str, result: dict[str, Any] | None) -> str:
                 if isinstance(v, str) and v.startswith(("error", "stuck"))
             ]
             if sub_errors:
-                status = "partial"
+                enrichment_status = str(result.get("enrichment", "ok"))
+                if enrichment_status.startswith(("error", "stuck")):
+                    status = enrichment_status
+                else:
+                    status = "partial"
     return status
 
 
