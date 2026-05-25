@@ -615,7 +615,7 @@ def run(
         "--tailor-models",
         help=(
             "Comma-separated LLM specs for tailor candidate generation "
-            "(examples: gemini:gemini-3-flash-preview, openai:gpt-4o-mini, local:resume-a)."
+            "(examples: gemini:gemini-3.5-flash, openai:gpt-4o-mini, local:resume-a)."
         ),
     ),
     tailor_judge_model: str = typer.Option(
@@ -1389,7 +1389,7 @@ def doctor() -> None:
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
     if has_gemini:
-        model = os.environ.get("LLM_MODEL", "gemini-3-flash-preview")
+        model = os.environ.get("LLM_MODEL", "gemini-3.5-flash")
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
         model = os.environ.get("LLM_MODEL", "gpt-4o-mini")

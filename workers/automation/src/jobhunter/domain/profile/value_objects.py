@@ -134,6 +134,10 @@ class ExperienceMetadata:
     current_job_title: str = ""
     current_company: str = ""
     target_role: str = ""
+    target_track: str = ""
+    target_seniority_floor: str = ""
+    target_functions: str = ""
+    target_specializations: str = ""
     target_locations: str = ""
     target_work_models: str = ""
 

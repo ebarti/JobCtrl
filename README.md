@@ -80,8 +80,8 @@ Core pipeline:
 - Python 3.11 or newer.
 - A local LLM provider configuration for scoring, tailoring, and cover letters.
   Gemini, OpenAI, and local HTTP-backed providers are supported through
-  environment variables. Gemini defaults to `gemini-3-flash-preview` when
-  `GEMINI_API_KEY` is set and `LLM_MODEL` is not.
+  environment variables. Gemini keys default to `gemini-3.5-flash` unless
+  `LLM_MODEL` overrides the model.
 - A TeX distribution with `pdflatex` for PDF output.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
   workflow engine the Python worker runs against. The local dev launcher starts
@@ -195,7 +195,7 @@ Useful options:
 - `--validation strict|normal|lenient`: tune tailoring and cover-letter checks.
 - `--retailor`: regenerate tailored resumes for jobs that already have one.
 - `--tailor-models`: comma-separated tailoring generator model specs such as
-  `local:draft-a,gemini:gemini-3-flash-preview`; omit it to use the existing
+  `local:draft-a,gemini:gemini-3.5-flash`; omit it to use the existing
   `LLM_MODEL`/provider default.
 - `--tailor-judge-model`: optional separate model spec for the structured
   tailoring judge. This is independent of the apply `--model` option.
@@ -428,30 +428,36 @@ Smart Extract entries start as `experimental` with the
 working while sources are promoted or rejected.
 
 The Preferences tab's Target search fields are discovery inputs. Target roles
-replace the active discovery query list with exact role queries plus
+stay as explicit guidance and replace the active discovery query list with exact
+role queries. Target tracks, seniority floors, functions, and specializations
+add structured intent; resume import can suggest these fields conservatively but
+does not overwrite existing user choices. The worker expands that intent into
 deterministic recall queries. Recall queries keep the same search tier as exact
 queries because relevance is determined after discovery by scoring, not by query
-generation. Broad-board providers such as JobSpy use those queries as retrieval
-probes. Direct ATS, Workday, and source-first Smart Extract sources enumerate
-their known board/source and apply the same exact-plus-recall title intent
-internally, avoiding repeated board fetches for each role variant. Smart
-Extract search-only sources still fan out by query when the source has no
-useful browse/all-jobs page. Canonical ATS rows must include a usable
-description before insertion; Greenhouse reads the public board content payload
-instead of creating blank-description rows. Each discovery run also performs a
-source hygiene pass across JobSpy, direct ATS, Workday, and Smart Extract rows
-so active jobs that no longer satisfy the current title, location, or
-description contract are soft-deleted instead of remaining visible. Target
-locations replace the active
-location list, and if target locations are blank the worker falls back to the
-profile city/country. Target locations are validated as real places before they
-can be saved. Hybrid and on-site target work models search and filter only the
-target location. Remote target work models search and filter the target country,
-and European countries also add an Europe-remote search and accept pattern.
-Profile-driven discovery searches at least the last 30 days unless local config
-sets a larger window. A Spain or Europe target sets JobSpy's Indeed country to
-Spain, rejects America-only non-remote locations, and hides packaged
-America-only source rows from discovery controls.
+generation. Recall title matching enforces candidate seniority and track: IC
+targets stay IC, management targets stay management, and mixed profiles can opt
+into both tracks explicitly. Broad-board providers such as JobSpy use exact and
+recall queries as retrieval probes. Direct ATS, Workday, and source-first Smart
+Extract sources enumerate their known board/source and apply the same
+exact-plus-recall title intent internally, avoiding repeated board fetches for
+each role variant. Smart Extract search-only sources still fan out by query when
+the source has no useful browse/all-jobs page. Canonical ATS rows must include a
+usable description before insertion; Greenhouse reads the public board content
+payload instead of creating blank-description rows. Each discovery run also
+performs a source hygiene pass across JobSpy, direct ATS, Workday, and Smart
+Extract rows so active jobs that no longer satisfy the current title, location,
+or description contract are soft-deleted instead of remaining visible. Target
+locations replace the active location list, and if target locations are blank
+the worker falls back to the profile city/country. Target locations are
+validated as real places before they can be saved. Hybrid and on-site target
+work models search and filter only the target location. Remote target work
+models search and filter the target country, and European countries also add an
+Europe-remote search and accept pattern. Profile-driven discovery searches at
+least the last 30 days unless local config sets a larger window. A Spain or
+Europe target sets JobSpy's Indeed country to Spain, rejects America-only
+non-remote locations, and hides packaged America-only source rows from discovery
+controls. Discovery `limit` is a new-job budget: already-seen jobs record
+observations but do not consume the cap.
 
 Common environment variables:
 

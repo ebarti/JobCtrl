@@ -506,6 +506,10 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             experience_current_job_title      TEXT NOT NULL DEFAULT '',
             experience_current_company        TEXT NOT NULL DEFAULT '',
             experience_target_role            TEXT NOT NULL DEFAULT '',
+            experience_target_track           TEXT NOT NULL DEFAULT '',
+            experience_target_seniority_floor TEXT NOT NULL DEFAULT '',
+            experience_target_functions       TEXT NOT NULL DEFAULT '',
+            experience_target_specializations TEXT NOT NULL DEFAULT '',
             experience_target_locations       TEXT NOT NULL DEFAULT '',
             experience_target_work_models     TEXT NOT NULL DEFAULT '',
             availability_earliest_start_date  TEXT NOT NULL DEFAULT '',
@@ -700,6 +704,10 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
 
 
 _PROFILE_COLUMN_MIGRATIONS: dict[str, str] = {
+    "experience_target_track": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_seniority_floor": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_functions": "TEXT NOT NULL DEFAULT ''",
+    "experience_target_specializations": "TEXT NOT NULL DEFAULT ''",
     "experience_target_locations": "TEXT NOT NULL DEFAULT ''",
     "experience_target_work_models": "TEXT NOT NULL DEFAULT ''",
 }

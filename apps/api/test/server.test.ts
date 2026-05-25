@@ -40,6 +40,11 @@ function profileWithTargetSearch(fullName: string, location: string, workModel: 
   return {
     ...validProfileFixture(fullName),
     experience: {
+      target_role: "Principal Platform Engineer",
+      target_track: "IC",
+      target_seniority_floor: "Principal",
+      target_functions: "Platform",
+      target_specializations: "SaaS",
       target_locations: location,
       target_work_models: workModel,
     },
@@ -2116,8 +2121,23 @@ describe("local TypeScript API", () => {
     const db = new Database(options.dbPath);
     try {
       expect(
-        db.prepare("SELECT experience_target_locations, experience_target_work_models FROM candidate_profiles").get(),
+        db.prepare(
+          `SELECT
+             experience_target_role,
+             experience_target_track,
+             experience_target_seniority_floor,
+             experience_target_functions,
+             experience_target_specializations,
+             experience_target_locations,
+             experience_target_work_models
+           FROM candidate_profiles`,
+        ).get(),
       ).toMatchObject({
+        experience_target_role: "Principal Platform Engineer",
+        experience_target_track: "IC",
+        experience_target_seniority_floor: "Principal",
+        experience_target_functions: "Platform",
+        experience_target_specializations: "SaaS",
         experience_target_locations: "Barcelona, Spain",
         experience_target_work_models: "Remote",
       });

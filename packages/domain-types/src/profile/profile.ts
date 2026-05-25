@@ -76,6 +76,10 @@ export interface ExperienceMetadata {
   readonly currentJobTitle: string;
   readonly currentCompany: string;
   readonly targetRole: string;
+  readonly targetTrack: string;
+  readonly targetSeniorityFloor: string;
+  readonly targetFunctions: string;
+  readonly targetSpecializations: string;
 }
 
 export interface EeoVoluntary {

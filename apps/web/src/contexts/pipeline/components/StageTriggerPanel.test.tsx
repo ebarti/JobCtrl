@@ -308,7 +308,7 @@ describe("StageTriggerPanel", () => {
         retailor: true,
         headless: false,
         model: "default",
-        tailorModels: ["local:fast", "gemini:gemini-3-flash-preview"],
+        tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
         tailorJudgeModel: "local:judge",
         tailorJudgeMinScore: 0.9,
         continuous: false,
@@ -328,7 +328,7 @@ describe("StageTriggerPanel", () => {
     await user.type(screen.getByLabelText("Minimum score"), "9");
     await user.selectOptions(screen.getByLabelText("Validation mode"), "strict");
     await user.click(screen.getByLabelText("Re-tailor"));
-    await user.type(screen.getByLabelText("Tailor models"), "local:fast, gemini:gemini-3-flash-preview");
+    await user.type(screen.getByLabelText("Tailor models"), "local:fast, gemini:gemini-3.5-flash");
     await user.type(screen.getByLabelText("Judge model"), "local:judge");
     await user.clear(screen.getByLabelText("Minimum judge score"));
     await user.type(screen.getByLabelText("Minimum judge score"), "0.9");
@@ -344,7 +344,7 @@ describe("StageTriggerPanel", () => {
       dryRun: true,
       rescore: false,
       retailor: true,
-      tailorModels: ["local:fast", "gemini:gemini-3-flash-preview"],
+      tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
       tailorJudgeModel: "local:judge",
       tailorJudgeMinScore: 0.9,
       headless: false,

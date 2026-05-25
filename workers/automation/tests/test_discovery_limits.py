@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from jobhunter.database import close_connection, init_db
-from jobhunter.discovery import jobspy
+from jobhunter.discovery import jobspy, smartextract, workday
 
 
 _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
@@ -520,6 +520,108 @@ def test_jobspy_store_limit_counts_new_jobs_not_existing_observations(tmp_path):
         assert "https://www.linkedin.com/jobs/view/existing" in urls
         assert "https://www.linkedin.com/jobs/view/new" in urls
         assert "https://www.linkedin.com/jobs/view/second-new" not in urls
+    finally:
+        close_connection(db_path)
+
+
+def test_smartextract_store_limit_counts_new_jobs_not_existing_observations(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        existing_job = {
+            "url": "https://jobs.example/existing",
+            "title": "Head of Engineering",
+            "company": "Acme",
+            "location": "Barcelona, Spain",
+            "description": "Lead engineering teams.",
+        }
+        assert smartextract._store_jobs_filtered(
+            conn,
+            [existing_job],
+            "Example",
+            "json_ld",
+            ["Barcelona, Spain"],
+            [],
+            limit=1,
+            source_url="https://jobs.example/",
+        ) == (1, 0)
+
+        new_job = {
+            "url": "https://jobs.example/new",
+            "title": "Head of Technology",
+            "company": "Acme",
+            "location": "Barcelona, Spain",
+            "description": "Lead technology teams.",
+        }
+        second_new_job = {
+            "url": "https://jobs.example/second-new",
+            "title": "Technology Director",
+            "company": "Acme",
+            "location": "Barcelona, Spain",
+            "description": "Lead platform teams.",
+        }
+
+        assert smartextract._store_jobs_filtered(
+            conn,
+            [existing_job, new_job, second_new_job],
+            "Example",
+            "json_ld",
+            ["Barcelona, Spain"],
+            [],
+            limit=1,
+            source_url="https://jobs.example/",
+        ) == (1, 1)
+        urls = {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()}
+        assert "https://jobs.example/existing" in urls
+        assert "https://jobs.example/new" in urls
+        assert "https://jobs.example/second-new" not in urls
+    finally:
+        close_connection(db_path)
+
+
+def test_workday_store_limit_counts_new_jobs_not_existing_observations(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    employers = {
+        "acme": {
+            "base_url": "https://acme.wd1.myworkdayjobs.com",
+            "site_id": "careers",
+            "name": "Acme",
+        }
+    }
+    try:
+        existing_job = {
+            "title": "Head of Engineering",
+            "location": "Barcelona, Spain",
+            "external_path": "/job/existing",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": "Lead engineering teams. " * 20,
+        }
+        assert workday.store_results(conn, [existing_job], employers, limit=1) == (1, 0)
+
+        new_job = {
+            "title": "Head of Technology",
+            "location": "Barcelona, Spain",
+            "external_path": "/job/new",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": "Lead technology teams. " * 20,
+        }
+        second_new_job = {
+            "title": "Technology Director",
+            "location": "Barcelona, Spain",
+            "external_path": "/job/second-new",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+            "full_description": "Lead platform teams. " * 20,
+        }
+
+        assert workday.store_results(conn, [existing_job, new_job, second_new_job], employers, limit=1) == (1, 1)
+        urls = {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()}
+        assert "https://acme.wd1.myworkdayjobs.com/careers/job/existing" in urls
+        assert "https://acme.wd1.myworkdayjobs.com/careers/job/new" in urls
+        assert "https://acme.wd1.myworkdayjobs.com/careers/job/second-new" not in urls
     finally:
         close_connection(db_path)
 

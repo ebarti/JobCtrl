@@ -320,7 +320,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             <label className="field">
               <span>Tailor models</span>
               <input
-                placeholder="default, gemini:gemini-3-flash-preview"
+                placeholder="default, gemini:gemini-3.5-flash"
                 value={config.tailorModels}
                 onChange={(event) => patchConfig({ tailorModels: event.target.value })}
               />

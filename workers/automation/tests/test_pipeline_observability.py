@@ -140,6 +140,7 @@ def test_discover_emits_source_events(monkeypatch):
 
     assert result["workday"] == "ok"
     assert result["smartextract"] == "ok"
+    assert result["ats_api"] == "ok"
     source_events = [(event_type, payload.get("source")) for _, event_type, _, payload in events]
     assert source_events == [
         ("StageStarted", "jobspy"),
