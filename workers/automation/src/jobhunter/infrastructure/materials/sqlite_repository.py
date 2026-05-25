@@ -203,7 +203,7 @@ class SqliteMaterialsRepository:
         limit: int = 0,
     ) -> list[JobId]:
         """Return job URLs whose latest generation has an approved
-        tailored resume but no approved cover letter."""
+        tailored resume PDF but no approved cover letter."""
         params: list[Any] = [str(tenant_id)]
         score_join = (
             "LEFT JOIN ("
@@ -228,7 +228,8 @@ class SqliteMaterialsRepository:
         materials_join = (
             "INNER JOIN ("
             "SELECT m.job_url AS mj_job_url, m.generation AS mj_gen, "
-            "tr.status AS mj_resume_status, cl.status AS mj_cover_status "
+            "tr.status AS mj_resume_status, rpdf.status AS mj_resume_pdf_status, "
+            "cl.status AS mj_cover_status "
             "FROM job_materials m "
             "INNER JOIN ("
             "SELECT job_url, MAX(generation) AS mg FROM job_materials GROUP BY job_url"
@@ -236,6 +237,9 @@ class SqliteMaterialsRepository:
             "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
             "AND tr.generation = m.generation AND tr.artifact_type = 'tailored_resume' "
             "AND tr.status = 'approved' "
+            "INNER JOIN job_materials_artifacts rpdf ON rpdf.job_url = m.job_url "
+            "AND rpdf.generation = m.generation AND rpdf.artifact_type = 'resume_pdf' "
+            "AND rpdf.status = 'approved' "
             "LEFT JOIN job_materials_artifacts cl ON cl.job_url = m.job_url "
             "AND cl.generation = m.generation AND cl.artifact_type = 'cover_letter' "
             "AND cl.status = 'approved' "

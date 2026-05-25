@@ -1492,7 +1492,7 @@ _PENDING_SQL: dict[str, str] = {
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
-        f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {db_module._EFFECTIVE_TAILOR_PATH} != '' "
+        f"AND {db_module._READY_TAILORED_RESUME_WITH_PDF} "
         f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
         f"AND {db_module._COVER_NOT_EXHAUSTED} "
         f"AND {db_module._EFFECTIVE_COVER_ATTEMPTS} < 5"

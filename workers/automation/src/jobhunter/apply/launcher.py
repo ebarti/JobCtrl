@@ -69,6 +69,7 @@ from jobhunter.database import (
     _LATEST_APPLY_RUN_JOIN,
     _LATEST_MATERIALS_JOIN,
     _LATEST_SCORE_JOIN,
+    _READY_TAILORED_RESUME_WITH_PDF,
     _SCORE_DOWNSTREAM_STATE_JOIN,
     _SCORE_CURRENT_FOR_DOWNSTREAM,
     _SCORE_ELIGIBLE_FOR_DOWNSTREAM,
@@ -188,6 +189,8 @@ def acquire_job(
             f"jobs.url AS url, jobs.title AS title, jobs.site AS site, "
             f"{_EFFECTIVE_APPLICATION_URL} AS application_url, "
             f"{_EFFECTIVE_TAILOR_PATH} AS tailored_resume_path, "
+            f"jm.jm_resume_pdf_path AS resume_pdf_path, "
+            f"jm.jm_generation AS materials_generation, "
             f"{_EFFECTIVE_FIT_SCORE} AS fit_score, "
             f"jobs.location AS location, "
             f"{_EFFECTIVE_FULL_DESCRIPTION} AS full_description, "
@@ -210,7 +213,7 @@ def acquire_job(
                 FROM jobs {common_joins}
                 WHERE (jobs.url = ? OR {_EFFECTIVE_APPLICATION_URL} = ?
                        OR {_EFFECTIVE_APPLICATION_URL} LIKE ? OR jobs.url LIKE ?)
-                  AND {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
+                  AND {_READY_TAILORED_RESUME_WITH_PDF}
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                   AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
                 LIMIT 1
@@ -238,7 +241,7 @@ def acquire_job(
                 f"""
                 SELECT {common_columns}
                 FROM jobs {common_joins}
-                WHERE {_EFFECTIVE_TAILOR_PATH} IS NOT NULL
+                WHERE {_READY_TAILORED_RESUME_WITH_PDF}
                   AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
                   AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
                   AND NOT EXISTS (

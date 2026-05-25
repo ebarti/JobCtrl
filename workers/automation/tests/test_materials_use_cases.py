@@ -567,6 +567,40 @@ def test_cover_letter_use_case_requires_approved_resume(
     assert outcome.status == "error"
 
 
+def test_cover_letter_use_case_requires_approved_resume_pdf(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    resume_path = tmp_path / "resume.txt"
+    resume_path.write_text("Tailored resume body", encoding="utf-8")
+    materials = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path=str(resume_path),
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(materials)
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=_ScriptedLlm([]),
+        validator=ContentValidator(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path)
+
+    assert outcome.status == "error"
+    assert "resume pdf" in outcome.error.lower()
+
+
 def test_cover_letter_use_case_happy_path(
     tmp_path: Path, snapshot: ProfileSnapshot, job: dict
 ) -> None:
@@ -588,6 +622,14 @@ def test_cover_letter_use_case_happy_path(
         validation=ValidationResult.success(),
         verdict=JudgeVerdict.passed(),
         updated_at="2024-01-02T00:00:00+00:00",
+    ).with_resume_pdf(
+        Artifact.create(
+            type=ArtifactType.RESUME_PDF,
+            path=str(tmp_path / "resume.pdf"),
+            created_at="2024-01-02T01:00:00+00:00",
+            render_format=RenderFormat.LATEX_PDF,
+        ),
+        updated_at="2024-01-02T01:00:00+00:00",
     )
     repo.save(materials)
     llm = _ScriptedLlm([

@@ -1299,6 +1299,12 @@ class GenerateCoverLetterUseCase:
                 status="error",
                 error="Cover letter requires an approved tailored resume",
             )
+        if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
+            return CoverLetterOutcome(
+                materials=materials,
+                status="error",
+                error="Cover letter requires an approved tailored resume PDF",
+            )
 
         # Read the resume text (the cover-letter prompt benefits from
         # seeing the tailored content). The §4.5 invariant guarantees

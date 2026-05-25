@@ -84,6 +84,17 @@ def _approved(url: str) -> MaterialsSet:
     )
 
 
+def _approved_with_pdf(url: str) -> MaterialsSet:
+    return _approved(url).with_resume_pdf(
+        _make_artifact(
+            ArtifactType.RESUME_PDF,
+            path=f"/tmp/{url[-3:]}.pdf",
+            render_format=RenderFormat.LATEX_PDF,
+        ),
+        updated_at="2024-01-02T01:00:00+00:00",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Round-trip
 # ---------------------------------------------------------------------------
@@ -250,10 +261,12 @@ def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
     conn: sqlite3.Connection,
 ) -> None:
     url_resume_only = _seed_with_score(conn, "https://example.com/resume-only")
+    url_text_only = _seed_with_score(conn, "https://example.com/text-only")
     url_complete = _seed_with_score(conn, "https://example.com/complete")
     repo = SqliteMaterialsRepository(conn)
-    repo.save(_approved(url_resume_only))
-    full = _approved(url_complete).with_cover_letter(
+    repo.save(_approved_with_pdf(url_resume_only))
+    repo.save(_approved(url_text_only))
+    full = _approved_with_pdf(url_complete).with_cover_letter(
         _make_artifact(ArtifactType.COVER_LETTER, path="/tmp/c.txt"),
         validation=ValidationResult.success(),
         updated_at="2024-01-03T00:00:00+00:00",
@@ -269,8 +282,8 @@ def test_list_pending_cover_excludes_blocked_scores(conn: sqlite3.Connection) ->
     url_blocked = _seed_with_score(conn, "https://example.com/cover-blocked")
     _seed_blocked_latest_score(conn, url_blocked, fit_score=10)
     repo = SqliteMaterialsRepository(conn)
-    repo.save(_approved(url_allowed))
-    repo.save(_approved(url_blocked))
+    repo.save(_approved_with_pdf(url_allowed))
+    repo.save(_approved_with_pdf(url_blocked))
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
 
