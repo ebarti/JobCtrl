@@ -325,13 +325,19 @@ classDiagram
   `source_registry_entries`.
 - Reads source-quality snapshots to schedule and budget sources.
 - Reads target search from `candidate_profiles` and overlays it onto discovery
-  search config as exact role queries plus deterministic recall queries. Recall
-  queries keep the same search tier as exact queries because scoring, not query
-  generation, determines relevance.
+  search config. Target roles remain exact role guidance. Target tracks,
+  seniority floors, functions, and specializations add structured intent for
+  deterministic recall expansion. Resume import may suggest those structured
+  fields, but existing user-entered profile values win.
 - Compiles target roles into two query kinds:
   - exact queries, copied from the saved profile role text after note stripping;
   - recall queries, generated from the same target-role intent and marked with
-    `match_mode=recall` and `generated_from=target_roles`.
+    `match_mode=recall`, `generated_from=target_roles`, `target_track`, and
+    `seniority_floor`.
+- Recall query matching is a retrieval guard, not a relevance score. It enforces
+  target track and seniority before scoring: IC targets stay IC, management
+  targets stay management, executive targets stay executive, and candidates who
+  configure multiple tracks get per-track recall.
 - Applies exact-plus-recall intent to every discovery source family, but the
   execution shape differs by source type. JobSpy is a broad-board retrieval
   provider, so exact and recall queries are sent as external search probes.
@@ -368,10 +374,10 @@ classDiagram
 Each source family is isolated. A failed JobSpy, ATS, Workday, or Smart Extract
 step records failure information and lets the caller see a partial source
 result. With `limit > 0`, the stage uses sequential source execution and skips
-remaining source families once the new-job cap is consumed. JobSpy also applies
-that cap inside its query loop: existing rediscoveries record observations but
-do not consume the remaining new-job budget, so exact-query duplicates do not
-prevent later recall queries from running.
+remaining source families once the new-job cap is consumed. All discovery source
+families treat the cap as a new-job budget: existing rediscoveries record
+observations but do not consume the remaining budget, so exact-query duplicates
+do not prevent later recall queries or sources from running.
 
 ## Phase 2: Enrich
 

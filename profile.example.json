@@ -38,6 +38,10 @@
     "current_job_title": "Software Engineer",
     "current_company": "Example Corp",
     "target_role": "backend software engineer",
+    "target_track": "IC",
+    "target_seniority_floor": "Senior",
+    "target_functions": "Backend; Platform",
+    "target_specializations": "SaaS",
     "target_locations": "Barcelona, Spain; Europe",
     "target_work_models": "Hybrid, Remote; Remote"
   },
