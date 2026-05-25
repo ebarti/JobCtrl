@@ -152,12 +152,13 @@ starts return `202` with the queued workflow ID. Workflow-start failures return
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.
 
-The `limit` field is forwarded to every stage. For `discover`, the Python
-runner passes it into JobSpy, Workday, and Smart Extract and forces bounded
-source crawls to run sequentially, skipping remaining sources once the cap is
-reached so `limit: 1` is usable for local debugging. For `enrich`, the same
-field caps pending detail jobs instead of falling back to the enrichment default
-batch size.
+The `limit` field is forwarded to every user-facing stage. For `discover`, the
+Python runner passes it into JobSpy, Workday, Smart Extract, and Discovery's
+internal detail-enrichment queue drain. Bounded source crawls run sequentially,
+skipping remaining sources once the cap is reached so `limit: 1` is usable for
+local debugging. Detail enrichment uses the same `limit` and `workers` values
+as Discovery; `enrich` remains an internal retry/diagnostic stage, not a
+top-level `run-stage` request value.
 
 Discover honors the profile Target search saved from the Preferences tab.
 Target roles replace the active discovery query list with exact role queries;

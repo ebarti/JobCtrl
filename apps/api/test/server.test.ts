@@ -1794,6 +1794,22 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("rejects direct top-level enrich runs because Discovery owns detail enrichment", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/pipeline/actions/run-stage",
+      payload: { stages: ["enrich"], dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it("returns queued non-apply global stage workflow starts as 202", async () => {
     const dispatch = vi.fn(async () => ({
       status: "queued",

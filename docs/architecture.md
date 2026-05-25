@@ -100,10 +100,11 @@ TS↔Python integration protocol (§6.5 of `docs/ddd-target.md`). The pre-DDD
 The Scoring context owns a local hybrid retrieval service under
 `workers/automation/src/jobhunter/domain/scoring/retrieval.py`. It builds an
 in-memory lexical index over normalized posting fields already produced by
-Discovery and Enrichment, then ranks candidate jobs before the scorer spends
-LLM calls. When `jobhunter run score --limit N` or equivalent pipeline calls
-cap scoring, the runner fetches a broader pending/enriched pool and lets hybrid
-retrieval choose the top N.
+Discovery, including Discovery's internal detail-enrichment queue drain, then
+ranks candidate jobs before the scorer spends LLM calls. When
+`jobhunter run score --limit N` or equivalent pipeline calls cap scoring, the
+runner fetches a broader pending/enriched pool and lets hybrid retrieval choose
+the top N.
 
 Semantic search is optional. The `EmbeddingIndexPort` in
 `workers/automation/src/jobhunter/domain/ports/retrieval.py` is the adapter seam
@@ -225,7 +226,7 @@ truth per fact; components consume state through hooks (never raw stores or the
 | Frontend folder | Owns | Backend mirror |
 |---|---|---|
 | `discovery/` | `useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`, `useHideJobsBulkMutation`, `useUnhideJobsBulkMutation`, `usePermanentlyDeleteJobsBulkMutation`; future `useImportJobMutation`. | Job Discovery |
-| `enrichment/` | `JobEnriched` / `EnrichmentFailed` invalidation handlers; future `useEnrichmentRetryMutation`. | Job Enrichment |
+| `enrichment/` | `JobEnriched` / `EnrichmentFailed` invalidation handlers; future `useEnrichmentRetryMutation`. The enrichment aggregate is internal to Discovery's detail queue drain. | Job Enrichment |
 | `profile/` | `useProfileQuery`, `useUpdateProfileMutation`, `useImportResumeMutation`, settings + credentials hooks, profile-import wizard store, profile editor + resume preview components. | Candidate Profile |
 | `scoring/` | `<ScoreBadge>`, `<ScoreBreakdown>`; future `useCorrectScoreMutation`. | Scoring |
 | `materials/` | `useGenerateMaterialsMutation`, `useOpenArtifactMutation`, generate / open buttons. | Materials Generation |

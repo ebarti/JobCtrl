@@ -29,6 +29,7 @@ from jobhunter.config import (
 from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.profile import get_profile_repository
+from jobhunter.llm import DEFAULT_GEMINI_MODEL
 
 console = Console()
 
@@ -398,7 +399,7 @@ def _setup_ai_features() -> None:
 
     if provider == "gemini":
         api_key = Prompt.ask("Gemini API key (from aistudio.google.com)")
-        model = Prompt.ask("Model", default="gemini-3.5-flash")
+        model = Prompt.ask("Model", default=DEFAULT_GEMINI_MODEL)
         env_lines.append(f"GEMINI_API_KEY={api_key}")
         env_lines.append(f"LLM_MODEL={model}")
     elif provider == "openai":

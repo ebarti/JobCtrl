@@ -422,7 +422,7 @@ class ScoreJobUseCase:
         ]
         # Structured outputs: the LLM gateway returns a JSON object that
         # already conforms to SCORE_SCHEMA. max_tokens is generous because
-        # Gemini 3.x preview models spend invisible tokens on internal
+        # Gemini thinking models spend invisible tokens on internal
         # reasoning before emitting the schema fill.
         with otel_trace.get_tracer("jobhunter.scoring").start_as_current_span("scoring.score_job") as span:
             span.set_attribute("langfuse.observation.type", "span")

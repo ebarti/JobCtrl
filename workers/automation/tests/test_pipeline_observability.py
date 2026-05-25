@@ -36,6 +36,20 @@ def no_operational_metric_side_effects(monkeypatch):
     monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
 
 
+@pytest.fixture(autouse=True)
+def no_discovery_detail_enrichment(monkeypatch):
+    """Keep discovery-source tests scoped to source scheduling."""
+    monkeypatch.setattr(
+        runner,
+        "_start_discovery_enrichment_worker",
+        lambda *, workers, limit: (
+            SimpleNamespace(set=lambda: None),
+            {"status": "ok", "passes": 0, "pending": 0},
+            SimpleNamespace(join=lambda: None),
+        ),
+    )
+
+
 def test_sequential_stage_emits_pipeline_span_and_stage_events(monkeypatch, in_memory_exporter):
     events: list[tuple[str, str, str, dict]] = []
 
@@ -186,7 +200,7 @@ def test_discover_limit_propagates_to_sources(monkeypatch):
 
     result = runner._run_discover(workers=4, limit=1)
 
-    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok", "enrichment": "ok"}
     assert calls == [
         ("jobspy", 1, None),
         ("workday", 1, 4),
@@ -227,7 +241,7 @@ def test_discover_passes_remaining_limit_to_downstream_sources(monkeypatch):
 
     result = runner._run_discover(workers=4, limit=10)
 
-    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok", "enrichment": "ok"}
     assert calls == [("jobspy", 10), ("workday", 4), ("smartextract", 2)]
 
 
@@ -394,7 +408,7 @@ def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     result = runner._run_discover(workers=4, limit=1)
 
     assert calls == ["jobspy"]
-    assert result == {"jobspy": "ok", "workday": "skipped_limit", "smartextract": "skipped_limit"}
+    assert result == {"jobspy": "ok", "workday": "skipped_limit", "smartextract": "skipped_limit", "enrichment": "ok"}
 
 
 def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate(monkeypatch):
@@ -426,7 +440,87 @@ def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate
     result = runner._run_discover(workers=4, limit=1)
 
     assert calls == ["jobspy", "workday", "smartextract"]
-    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok"}
+    assert result == {"jobspy": "ok", "ats_api": "ok", "workday": "ok", "smartextract": "ok", "enrichment": "ok"}
+
+
+def test_discovery_detail_enrichment_uses_same_worker_count(monkeypatch):
+    calls: list[dict[str, int]] = []
+    pending_counts = iter([1, 0, 0])
+    done = runner.threading.Event()
+    done.set()
+    result: dict = {}
+
+    monkeypatch.setattr(runner, "_count_pending", lambda stage, min_score=7, retailor=False: next(pending_counts))
+    monkeypatch.setattr(
+        runner,
+        "_run_enrich",
+        lambda workers=1, limit=0: calls.append({"workers": workers, "limit": limit}) or {"status": "ok"},
+    )
+
+    runner._run_discovery_enrichment_until_idle(done, result, workers=4, limit=10)
+
+    assert calls == [{"workers": 4, "limit": 10}]
+    assert result == {"status": "ok", "passes": 1, "pending": 0}
+
+
+def test_discover_status_fails_when_internal_enrichment_fails():
+    status = runner._stage_status(
+        "discover",
+        {
+            "jobspy": "ok",
+            "workday": "ok",
+            "smartextract": "ok",
+            "enrichment": "error: timeout",
+        },
+    )
+
+    assert status == "error: timeout"
+
+
+def test_sequential_pipeline_blocks_score_after_discovery_enrichment_failure(monkeypatch):
+    calls: list[str] = []
+
+    monkeypatch.setitem(
+        runner._STAGE_RUNNERS,
+        "discover",
+        lambda **_kwargs: calls.append("discover") or {"enrichment": "error: timeout"},
+    )
+    monkeypatch.setitem(
+        runner._STAGE_RUNNERS,
+        "score",
+        lambda **_kwargs: calls.append("score") or {"status": "ok"},
+    )
+    monkeypatch.setattr(runner, "_record_pipeline_event", lambda *_args, **_kwargs: None)
+
+    result = runner._run_sequential(["discover", "score"], min_score=7)
+
+    assert calls == ["discover"]
+    assert result["stages"] == [
+        {"stage": "discover", "status": "error: timeout", "elapsed": result["stages"][0]["elapsed"]},
+        {"stage": "score", "status": "blocked: upstream discover failed", "elapsed": 0.0},
+    ]
+    assert result["errors"] == {
+        "discover": "error: timeout",
+        "score": "blocked: upstream discover failed",
+    }
+
+
+def test_streaming_stage_blocks_on_failed_upstream(monkeypatch):
+    tracker = runner._StageTracker()
+    stop_event = runner.threading.Event()
+    tracker.mark_done("discover", {"status": "error: timeout"})
+
+    monkeypatch.setattr(runner, "_count_pending", lambda stage, min_score=7, retailor=False: 1)
+    monkeypatch.setitem(
+        runner._STAGE_RUNNERS,
+        "score",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("score should not run")),
+    )
+
+    runner._run_stage_streaming("score", tracker, stop_event)
+
+    assert tracker.get_results()["score"]["status"] == "blocked: upstream discover failed"
+    assert tracker.get_results()["score"]["blocked_by"] == "discover"
 
 
 def test_enrich_limit_propagates_to_runner(monkeypatch):

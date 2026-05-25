@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from jobhunter import __version__
+from jobhunter.llm import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL
 from jobhunter.pipeline import STAGE_ORDER, run_pipeline, run_single_job
 
 logging.basicConfig(
@@ -590,7 +591,7 @@ def run(
         1,
         "--workers",
         "-w",
-        help="Parallel threads for discovery, enrichment, scoring, and tailoring stages.",
+        help="Parallel threads for discovery/detail enrichment, scoring, and tailoring stages.",
     ),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
@@ -681,7 +682,7 @@ def run(
 
 @app.command()
 def discover(
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery backends."),
+    workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery backends and detail enrichment."),
     limit: int = typer.Option(0, "--limit", help="Maximum jobs to discover. 0 means all eligible jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
@@ -695,7 +696,7 @@ def enrich(
     limit: int = typer.Option(0, "--limit", help="Maximum jobs to enrich. 0 means all eligible jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
-    """Run only the enrichment stage."""
+    """Run the detail-enrichment queue directly for diagnostics."""
     _run_stage_command("enrich", workers=workers, limit=limit, dry_run=dry_run)
 
 
@@ -1097,10 +1098,11 @@ def retry(
     """Reset one job/stage so it can be retried."""
     _bootstrap()
 
-    if stage not in (*VALID_STAGES, "apply"):
+    retry_stages = (*VALID_STAGES, "enrich", "apply")
+    if stage not in retry_stages:
         console.print(
             f"[red]Unknown stage:[/red] '{stage}'. "
-            f"Valid stages: {', '.join((*VALID_STAGES, 'apply'))}"
+            f"Valid stages: {', '.join(retry_stages)}"
         )
         raise typer.Exit(code=1)
 
@@ -1119,7 +1121,7 @@ def retry(
             from jobhunter.apply.launcher import main as apply_main
 
             apply_main(limit=1, target_url=job_url)
-        elif stage in VALID_STAGES:
+        elif stage in (*VALID_STAGES, "enrich"):
             _run_stage_command(stage, limit=1)
 
 
@@ -1389,10 +1391,10 @@ def doctor() -> None:
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
     if has_gemini:
-        model = os.environ.get("LLM_MODEL", "gemini-3.5-flash")
+        model = os.environ.get("LLM_MODEL", DEFAULT_GEMINI_MODEL)
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
-        model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+        model = os.environ.get("LLM_MODEL", DEFAULT_OPENAI_MODEL)
         results.append(("LLM API key", ok_mark, f"OpenAI ({model})"))
     elif has_local:
         results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))

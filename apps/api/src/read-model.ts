@@ -38,7 +38,7 @@ import type {
   WorkflowRunSummary,
   WorkflowRunsListQuery,
 } from "./contracts.js";
-import { ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
+import { PIPELINE_RUN_STAGES, ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
@@ -678,7 +678,7 @@ function parseFunnel(funnelJson: string): DashboardSummary["funnel"] {
       failed: Number(item.failed ?? 0),
     });
   }
-  return STAGES.map(
+  return PIPELINE_RUN_STAGES.map(
     (stage) =>
       byStage.get(stage) ?? {
         stage,
@@ -693,7 +693,7 @@ function parseFunnel(funnelJson: string): DashboardSummary["funnel"] {
 }
 
 function defaultFunnel(): DashboardSummary["funnel"] {
-  return STAGES.map((stage) => ({
+  return PIPELINE_RUN_STAGES.map((stage) => ({
     stage,
     total: 0,
     succeeded: 0,
