@@ -107,10 +107,16 @@ class JobPipelineWorkflow:
 
         for stage in payload.stages:
             try:
-                await _execute_stage(stage, payload)
+                result = await _execute_stage(stage, payload)
             except ActivityError as exc:
                 failed.append(stage)
                 failure = f"{stage}: {exc.cause if exc.cause else exc}"
+                break
+
+            result_failure = _stage_result_failure(stage, result)
+            if result_failure is not None:
+                failed.append(stage)
+                failure = result_failure
                 break
 
             completed.append(stage)
@@ -229,6 +235,46 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
         f"Unknown stage: {stage}",
         non_retryable=True,
     )
+
+
+_SUCCESS_STAGE_STATUSES = frozenset({"ok", "partial", "skipped"})
+
+
+def _stage_result_failure(stage: str, result: Any) -> str | None:
+    """Return a workflow failure message for non-exception stage failures."""
+    errors = _result_value(result, "errors")
+    if errors:
+        return f"{stage}: {_format_result_error(stage, errors)}"
+
+    ok = _result_value(result, "ok")
+    if ok is False:
+        status = _result_value(result, "status") or "failed"
+        error = _result_value(result, "error")
+        detail = f"{status}: {error}" if error else str(status)
+        return f"{stage}: {detail}"
+
+    status = _result_value(result, "status")
+    if status is None:
+        return None
+
+    normalized_status = str(status).lower()
+    if normalized_status in _SUCCESS_STAGE_STATUSES:
+        return None
+    return f"{stage}: {status}"
+
+
+def _result_value(result: Any, key: str) -> Any:
+    if isinstance(result, dict):
+        return result.get(key)
+    return getattr(result, key, None)
+
+
+def _format_result_error(stage: str, errors: Any) -> str:
+    if isinstance(errors, dict):
+        if set(errors) == {stage}:
+            return str(errors[stage])
+        return "; ".join(f"{key}: {value}" for key, value in errors.items())
+    return str(errors)
 
 
 __all__ = [

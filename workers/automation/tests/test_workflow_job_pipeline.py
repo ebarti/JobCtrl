@@ -201,6 +201,79 @@ async def test_pipeline_workflow_records_failed_stage_and_stops():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_workflow_records_failed_stage_output_and_stops():
+    queue = f"pipeline-stage-output-fail-{uuid.uuid4()}"
+
+    def _runner(*, stages: list[str], **kwargs):
+        if stages == ["tailor"]:
+            return {
+                "stages": [{"stage": "tailor", "status": "failed", "elapsed": 0.1}],
+                "errors": {"tailor": "judge rejected all candidates"},
+                "elapsed": 0.1,
+            }
+        return _OK_RESULT
+
+    with patch("jobhunter.pipeline.run_pipeline", side_effect=_runner) as runner_mock:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["score", "tailor", "cover"],
+                    ),
+                    id=f"pipeline-stage-output-fail-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["score"]
+    assert result.stages_failed == ["tailor"]
+    assert result.failure == "tailor: judge rejected all candidates"
+    invoked_stages = [call.kwargs["stages"][0] for call in runner_mock.call_args_list]
+    assert invoked_stages == ["score", "tailor"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_workflow_records_failed_apply_child_result_and_stops():
+    queue = f"pipeline-apply-output-fail-{uuid.uuid4()}"
+
+    with (
+        patch("jobhunter.apply.launcher.main", return_value=(0, 1)) as apply_mock,
+        patch("jobhunter.pipeline.run_pipeline", return_value=_OK_RESULT) as runner_mock,
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow, ApplyWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["apply", "score"],
+                        dry_run=True,
+                    ),
+                    id=f"pipeline-apply-output-fail-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == []
+    assert result.stages_failed == ["apply"]
+    assert result.failure == "apply: failed"
+    apply_mock.assert_called_once()
+    runner_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
     queue = f"pipeline-validation-{uuid.uuid4()}"
 
