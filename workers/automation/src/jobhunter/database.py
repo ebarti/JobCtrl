@@ -145,7 +145,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_state_tables(conn)
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
+    ensure_tailoring_policy_tables(conn)
     ensure_materials_tables(conn)
+    ensure_preparation_work_item_tables(conn)
     ensure_enrichment_tables(conn)
     ensure_posting_snapshot_tables(conn)
     ensure_discovery_run_tables(conn)
@@ -1089,6 +1091,90 @@ def ensure_score_staleness_tables(conn: sqlite3.Connection | None = None) -> lis
     return ["job_score_staleness"]
 
 
+def ensure_tailoring_policy_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create Materials-owned tailoring-policy version persistence."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tailoring_policies (
+            tenant_id                   TEXT NOT NULL,
+            version                     INTEGER NOT NULL,
+            prompt_version              TEXT NOT NULL,
+            schema_version              TEXT NOT NULL,
+            judge_schema_version        TEXT NOT NULL,
+            prompt_fingerprint          TEXT NOT NULL,
+            config_fingerprint          TEXT NOT NULL,
+            profile_policy_fingerprint  TEXT NOT NULL,
+            custom_prompt_fingerprint   TEXT NOT NULL,
+            generator_settings_json     TEXT NOT NULL DEFAULT '{}',
+            judge_settings_json         TEXT NOT NULL DEFAULT '{}',
+            runtime_settings_json       TEXT NOT NULL DEFAULT '{}',
+            rollback_of_version         INTEGER,
+            rollback_reason             TEXT NOT NULL DEFAULT '',
+            created_at                  TEXT NOT NULL,
+            created_from_event_id       INTEGER,
+            PRIMARY KEY (tenant_id, version)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_tailoring_policies_current
+        ON tailoring_policies(tenant_id, version DESC)
+        """
+    )
+    conn.commit()
+    return ["tailoring_policies"]
+
+
+def ensure_preparation_work_item_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create Pipeline/Preparation durable work-item persistence tables."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS preparation_work_items (
+            item_id          TEXT NOT NULL PRIMARY KEY,
+            tenant_id        TEXT NOT NULL DEFAULT 'local',
+            job_id           TEXT NOT NULL,
+            kind             TEXT NOT NULL,
+            target_version   INTEGER NOT NULL,
+            source_event_id  TEXT NOT NULL DEFAULT '',
+            state            TEXT NOT NULL,
+            idempotency_key  TEXT NOT NULL,
+            attempts         INTEGER NOT NULL DEFAULT 0,
+            last_error       TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL,
+            updated_at       TEXT NOT NULL,
+            available_at     TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_preparation_work_items_idempotency
+        ON preparation_work_items(tenant_id, idempotency_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_preparation_work_items_claim
+        ON preparation_work_items(tenant_id, state, kind, available_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_preparation_work_items_job_target
+        ON preparation_work_items(tenant_id, job_id, kind, target_version)
+        """
+    )
+    conn.commit()
+    return ["preparation_work_items"]
+
+
 def ensure_materials_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     """Create the per-job ``job_materials`` tables and run their backfill.
 
@@ -1808,11 +1894,10 @@ _ENRICHMENT_PENDING: str = (
 # previously read bare ``jobs.tailored_resume_path`` / ``cover_letter_path``.
 # After Phase 6 the canonical artifact paths live in ``job_materials_artifacts``
 # (latest generation per ``job_url``); the legacy ``jobs.*_path`` columns
-# stay as read-only fallback for historical rows. ``_EFFECTIVE_TAILOR_PATH``
-# / ``_EFFECTIVE_COVER_PATH`` are the COALESCE expressions every WHERE /
-# ORDER BY query should use instead of bare column reads so the worker
-# queue selectors see new materials immediately and don't re-pick already-
-# tailored jobs forever (mirrors Phase-5 round-1 review B1).
+# stay as read-only fallback for historical rows that have no canonical
+# materials row. Once ``job_materials`` exists, approved artifacts are the
+# only active paths; suppressed artifacts must not fall through to legacy
+# columns left populated by the backfill.
 # ---------------------------------------------------------------------------
 
 # LEFT JOIN that surfaces the latest generation's tailored-resume and
@@ -1844,8 +1929,14 @@ _LATEST_MATERIALS_JOIN: str = (
     ") jm ON jm.jm_job_url = jobs.url"
 )
 
-_EFFECTIVE_TAILOR_PATH: str = "COALESCE(jm.jm_tailored_path, jobs.tailored_resume_path)"
-_EFFECTIVE_COVER_PATH: str = "COALESCE(jm.jm_cover_path, jobs.cover_letter_path)"
+_EFFECTIVE_TAILOR_PATH: str = (
+    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_tailored_path "
+    "ELSE jobs.tailored_resume_path END"
+)
+_EFFECTIVE_COVER_PATH: str = (
+    "CASE WHEN jm.jm_job_url IS NOT NULL THEN jm.jm_cover_path "
+    "ELSE jobs.cover_letter_path END"
+)
 _READY_TAILORED_RESUME_WITH_PDF: str = (
     "((jm.jm_job_url IS NOT NULL "
     "AND jm.jm_tailored_path IS NOT NULL AND jm.jm_tailored_path != '' "
@@ -2552,6 +2643,7 @@ def get_jobs_by_stage(
     # round-trip through the repository.
     query = (
         f"SELECT jobs.*, js.js_fit_score AS js_fit_score, "
+        f"jm.jm_job_url AS jm_job_url, "
         f"jm.jm_tailored_path AS jm_tailored_path, "
         f"jm.jm_tailored_at AS jm_tailored_at, "
         f"jm.jm_cover_path AS jm_cover_path, "
@@ -2601,18 +2693,16 @@ def get_jobs_by_stage(
         js_value = record.pop("js_fit_score", None)
         if js_value is not None:
             record["fit_score"] = js_value
+        jm_job_url = record.pop("jm_job_url", None)
         jm_tailored = record.pop("jm_tailored_path", None)
         jm_tailored_at = record.pop("jm_tailored_at", None)
         jm_cover = record.pop("jm_cover_path", None)
         jm_cover_at = record.pop("jm_cover_at", None)
-        if jm_tailored is not None:
+        if jm_job_url is not None:
             record["tailored_resume_path"] = jm_tailored
-            if jm_tailored_at is not None:
-                record["tailored_at"] = jm_tailored_at
-        if jm_cover is not None:
+            record["tailored_at"] = jm_tailored_at
             record["cover_letter_path"] = jm_cover
-            if jm_cover_at is not None:
-                record["cover_letter_at"] = jm_cover_at
+            record["cover_letter_at"] = jm_cover_at
         # Phase 7 (S-26): promote enrichment fields from job_enrichments
         # into the legacy column slots so downstream consumers (apply,
         # scoring, tailor) that still read ``full_description`` /

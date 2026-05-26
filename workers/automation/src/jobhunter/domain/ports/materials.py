@@ -20,6 +20,7 @@ from typing import Protocol
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.aggregate import MaterialsSet
 from jobhunter.domain.materials.entities import Artifact
+from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -126,6 +127,33 @@ class MaterialsRepository(Protocol):
         carries the requested artifact status."""
         ...
 
+    def suppress_active_artifacts(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        reason: str,
+        suppressed_at: str,
+    ) -> MaterialsSet | None:
+        """Soft-suppress latest active artifacts without deleting history."""
+        ...
+
+
+class TailoringPolicyRepository(Protocol):
+    """Persistence port for the current versioned tailoring policy."""
+
+    def get_current(self, tenant_id: TenantId) -> TailoringPolicy | None:
+        """Return the latest persisted tailoring policy, or ``None``."""
+        ...
+
+    def save(self, policy: TailoringPolicy) -> None:
+        """Persist a tailoring policy version."""
+        ...
+
+    def resolve_current(self, candidate: TailoringPolicy) -> TailoringPolicy:
+        """Return current policy, creating a new version when config changed."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # PdfRendererPort
@@ -183,4 +211,5 @@ __all__ = [
     "MaterialsRepository",
     "PdfRendererPort",
     "RenderFormat",
+    "TailoringPolicyRepository",
 ]

@@ -60,12 +60,15 @@ class ArtifactStatus(str, Enum):
     ``superseded`` — replaced by a newer generation's artifact of the
                      same type. Set when ``MaterialsSetFactory.next_generation``
                      creates a fresh aggregate.
+    ``suppressed`` — hidden from active/default use by policy while retained
+                     for audit and historical inspection.
     """
 
     CANDIDATE = "candidate"
     APPROVED = "approved"
     REJECTED = "rejected"
     SUPERSEDED = "superseded"
+    SUPPRESSED = "suppressed"
 
 
 class RenderFormat(str, Enum):

@@ -11,11 +11,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from jobhunter.database import ensure_materials_tables, init_db
+from jobhunter.database import (
+    close_connection,
+    ensure_materials_tables,
+    get_connection,
+    get_jobs_by_stage,
+    get_stats,
+    init_db,
+)
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials import (
     Artifact,
@@ -27,10 +36,12 @@ from jobhunter.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
+from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.materials import (
     MaterialsGenerationConflict,
     SqliteMaterialsRepository,
+    SqliteTailoringPolicyRepository,
 )
 
 
@@ -309,6 +320,173 @@ def test_list_by_status_returns_aggregates_with_matching_artifact_status(
     matches = repo.list_by_status(LOCAL_TENANT, ArtifactStatus.APPROVED)
     assert len(matches) == 1
     assert str(matches[0].job_id) == url
+
+
+def test_suppress_active_artifacts_hides_without_deleting_history(conn: sqlite3.Connection) -> None:
+    url = _seed_with_score(conn, "https://example.com/suppress")
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(_approved_with_pdf(url))
+
+    suppressed = repo.suppress_active_artifacts(
+        LOCAL_TENANT,
+        JobId(url),
+        reason="threshold_raised",
+        suppressed_at="2026-05-26T00:00:00+00:00",
+    )
+
+    assert suppressed is not None
+    assert suppressed.tailored_resume is not None
+    assert suppressed.tailored_resume.status is ArtifactStatus.SUPPRESSED
+    assert suppressed.tailored_resume.metadata["suppression"]["reason"] == "threshold_raised"
+    row_count = conn.execute(
+        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
+        (url,),
+    ).fetchone()[0]
+    assert row_count == 2
+    assert repo.list_pending_tailor(LOCAL_TENANT, min_score=7) == [JobId(url)]
+
+
+def test_suppress_backfilled_legacy_job_makes_selectors_treat_paths_inactive(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "legacy.db"
+    conn = init_db(db_path)
+    url = "https://example.com/backfilled-suppress"
+    resume_path = str(tmp_path / "tailored.txt")
+    cover_path = str(tmp_path / "cover.txt")
+    (tmp_path / "tailored.txt").write_text("tailored", encoding="utf-8")
+    (tmp_path / "cover.txt").write_text("cover", encoding="utf-8")
+    conn.execute(
+        "INSERT INTO jobs (url, title, full_description, fit_score, tailored_resume_path, "
+        "tailored_at, cover_letter_path, cover_letter_at, discovered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            url,
+            "Engineer",
+            "Description",
+            9,
+            resume_path,
+            "2024-01-01T00:00:00+00:00",
+            cover_path,
+            "2024-01-01T01:00:00+00:00",
+            "2024-01-01T00:00:00+00:00",
+        ),
+    )
+    conn.execute("DROP TABLE job_materials_artifacts")
+    conn.execute("DROP TABLE job_materials")
+    conn.commit()
+    ensure_materials_tables(conn)
+    repo = SqliteMaterialsRepository(conn)
+
+    repo.suppress_active_artifacts(
+        LOCAL_TENANT,
+        JobId(url),
+        reason="threshold_raised",
+        suppressed_at="2026-05-26T00:00:00+00:00",
+    )
+
+    stats = get_stats(conn)
+    assert stats["tailored"] == 0
+    assert stats["with_cover_letter"] == 0
+    assert stats["untailored_eligible"] == 1
+    pending_tailor = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7, limit=0)
+    assert [row["url"] for row in pending_tailor] == [url]
+    assert pending_tailor[0]["tailored_resume_path"] is None
+    assert pending_tailor[0]["cover_letter_path"] is None
+    tailored = get_jobs_by_stage(conn=conn, stage="tailored")
+    assert url not in {row["url"] for row in tailored}
+
+
+# ---------------------------------------------------------------------------
+# Tailoring policy persistence
+# ---------------------------------------------------------------------------
+
+
+def _policy(*, fingerprint: str = "sha256:a", version: int = 1) -> TailoringPolicy:
+    return TailoringPolicy(
+        tenant_id=LOCAL_TENANT,
+        version=version,
+        prompt_version="tailor.v2.quality-gated",
+        schema_version="tailored-resume.v1",
+        judge_schema_version="tailor-judge.v1",
+        prompt_fingerprint=fingerprint,
+        config_fingerprint=fingerprint,
+        profile_policy_fingerprint="sha256:profile",
+        custom_prompt_fingerprint="sha256:custom",
+        generator_settings={"candidate_models": ["local:draft"]},
+        judge_settings={"judge_model": "local:judge", "min_score": 0.82},
+        runtime_settings={"validation_mode": "normal"},
+        created_at="2026-05-26T00:00:00+00:00",
+    )
+
+
+def test_tailoring_policy_repository_reuses_same_config(conn: sqlite3.Connection) -> None:
+    repo = SqliteTailoringPolicyRepository(conn)
+
+    first = repo.resolve_current(_policy(fingerprint="sha256:same"))
+    second = repo.resolve_current(_policy(fingerprint="sha256:same"))
+
+    assert first.version == 1
+    assert second.version == 1
+    assert repo.get_current(LOCAL_TENANT) == first
+    count = conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0]
+    assert count == 1
+
+
+def test_tailoring_policy_repository_versions_changed_config(conn: sqlite3.Connection) -> None:
+    repo = SqliteTailoringPolicyRepository(conn)
+
+    first = repo.resolve_current(_policy(fingerprint="sha256:old"))
+    second = repo.resolve_current(_policy(fingerprint="sha256:new"))
+
+    assert first.version == 1
+    assert second.version == 2
+    assert second.config_fingerprint == "sha256:new"
+
+
+@pytest.mark.parametrize(
+    ("seed_fingerprint", "expected_version", "expected_count"),
+    [
+        (None, 1, 1),
+        ("sha256:old", 2, 2),
+    ],
+)
+def test_tailoring_policy_repository_resolves_current_concurrently(
+    tmp_path: Path,
+    seed_fingerprint: str | None,
+    expected_version: int,
+    expected_count: int,
+) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    setup_conn = init_db(db_path)
+    if seed_fingerprint is not None:
+        SqliteTailoringPolicyRepository(setup_conn).resolve_current(
+            _policy(fingerprint=seed_fingerprint)
+        )
+    close_connection(db_path)
+    start = threading.Event()
+
+    def resolve() -> TailoringPolicy:
+        conn = get_connection(db_path)
+        try:
+            repo = SqliteTailoringPolicyRepository(conn)
+            start.wait(timeout=5)
+            return repo.resolve_current(_policy(fingerprint="sha256:parallel"))
+        finally:
+            close_connection(db_path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(resolve) for _ in range(2)]
+        start.set()
+        policies = [future.result(timeout=10) for future in futures]
+
+    assert [policy.version for policy in policies] == [expected_version, expected_version]
+    check_conn = get_connection(db_path)
+    try:
+        count = check_conn.execute("SELECT COUNT(*) FROM tailoring_policies").fetchone()[0]
+        assert count == expected_count
+    finally:
+        close_connection(db_path)
 
 
 # ---------------------------------------------------------------------------

@@ -385,6 +385,37 @@ class MaterialsSet:
             updated_at=at,
         )
 
+    def suppress_active_artifacts(self, *, at: str, reason: str) -> "MaterialsSet":
+        """Soft-hide approved artifacts while retaining their audit rows."""
+
+        def _suppress(artifact: Artifact | None) -> Artifact | None:
+            if artifact is None or artifact.status is not ArtifactStatus.APPROVED:
+                return artifact
+            return artifact.suppress(at=at, reason=reason)
+
+        return replace(
+            self,
+            tailored_resume=_suppress(self.tailored_resume),
+            cover_letter=_suppress(self.cover_letter),
+            resume_pdf=_suppress(self.resume_pdf),
+            cover_letter_pdf=_suppress(self.cover_letter_pdf),
+            metadata={
+                **dict(self.metadata),
+                "suppression": {
+                    "reason": " ".join(str(reason or "").split()) or "policy_suppressed",
+                    "suppressed_at": at,
+                },
+            },
+            updated_at=at,
+        )
+
+    def with_metadata(self, metadata: Mapping[str, Any], *, updated_at: str | None = None) -> "MaterialsSet":
+        return replace(
+            self,
+            metadata=dict(metadata),
+            updated_at=updated_at if updated_at is not None else self.updated_at,
+        )
+
     # ------------------------------------------------------------------
     # Serialization (used by the SQLite repository adapter)
     # ------------------------------------------------------------------

@@ -18,6 +18,7 @@ from jobhunter.domain.materials.aggregate import (
     MaterialsSetFactory,
 )
 from jobhunter.domain.materials.entities import Artifact
+from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -36,5 +37,6 @@ __all__ = [
     "MaterialsSet",
     "MaterialsSetFactory",
     "RenderFormat",
+    "TailoringPolicy",
     "ValidationResult",
 ]

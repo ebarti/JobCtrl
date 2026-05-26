@@ -54,6 +54,7 @@ from jobhunter.domain.materials.aggregate import (
     MaterialsSetFactory,
 )
 from jobhunter.domain.materials.entities import Artifact
+from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.services import (
     BANNED_WORDS,
     ContentValidator,
@@ -72,7 +73,11 @@ from jobhunter.domain.materials.value_objects import (
 )
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage, LlmPort
-from jobhunter.domain.ports.materials import MaterialsRepository, PdfRendererPort
+from jobhunter.domain.ports.materials import (
+    MaterialsRepository,
+    PdfRendererPort,
+    TailoringPolicyRepository,
+)
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
@@ -690,6 +695,7 @@ class TailorResumeUseCase:
         publisher: EventPublisher | None = None,
         max_retries: int = 3,
         llm_policy: TailoringLlmPolicy | None = None,
+        policy_repository: TailoringPolicyRepository | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -698,6 +704,7 @@ class TailorResumeUseCase:
         self._publisher = publisher
         self._max_retries = max_retries
         self._llm_policy = llm_policy or TailoringLlmPolicy.from_env()
+        self._policy_repository = policy_repository
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -779,9 +786,19 @@ class TailorResumeUseCase:
             size_bytes = None
 
         judge_record = self._judge_record(verdict)
+        tailoring_policy = self._resolve_tailoring_policy(
+            profile_snapshot=profile_snapshot,
+            report=report,
+            validation_mode=validation_mode,
+            tenant_id=tenant_id,
+        )
+        policy_metadata = tailoring_policy.as_artifact_metadata()
         tailoring_metadata = {
             "validation_mode": validation_mode,
             "attempts": attempts,
+            "tailoring_policy_id": tailoring_policy.policy_id,
+            "tailoring_policy_version": tailoring_policy.version,
+            "tailoring_policy": policy_metadata,
             "prompt_version": report.get("prompt_version"),
             "schema_version": report.get("schema_version"),
             "candidate_models": report.get("candidate_models") or [],
@@ -807,6 +824,15 @@ class TailorResumeUseCase:
             validation=validation,
             verdict=verdict,
             updated_at=_utc_now(),
+        )
+        materials = materials.with_metadata(
+            {
+                **dict(materials.metadata),
+                "tailoring_policy_id": tailoring_policy.policy_id,
+                "tailoring_policy_version": tailoring_policy.version,
+                "tailoring_policy": policy_metadata,
+            },
+            updated_at=materials.updated_at,
         )
         self._repository.save(materials)
 
@@ -985,6 +1011,43 @@ class TailorResumeUseCase:
         if last_payload is not None and not last_validation.passed:
             report["status"] = "failed_validation"
         return report, last_payload, last_validation, last_verdict
+
+    def _resolve_tailoring_policy(
+        self,
+        *,
+        profile_snapshot: ProfileSnapshot,
+        report: dict,
+        validation_mode: str,
+        tenant_id: TenantId,
+    ) -> TailoringPolicy:
+        profile = profile_snapshot.as_dict()
+        candidate = TailoringPolicy.from_runtime(
+            tenant_id=tenant_id,
+            version=1,
+            prompt_version=TAILORING_PROMPT_VERSION,
+            schema_version=TAILORING_SCHEMA_VERSION,
+            judge_schema_version=TAILORING_JUDGE_SCHEMA_VERSION,
+            prompt_text=str(report.get("system_prompt") or ""),
+            profile_policy=get_tailoring_policy(profile),
+            custom_prompt=get_custom_tailoring_prompt(profile),
+            generator_settings={
+                "candidate_models": list(self._llm_policy.effective_candidate_models),
+                "temperature": self._llm_policy.candidate_temperature,
+                "max_tokens": self._llm_policy.candidate_max_tokens,
+                "thinking_budget": self._llm_policy.thinking_budget,
+            },
+            judge_settings={
+                "judge_model": self._llm_policy.effective_judge_model,
+                "temperature": self._llm_policy.judge_temperature,
+                "max_tokens": self._llm_policy.judge_max_tokens,
+                "min_score": self._llm_policy.judge_min_score,
+            },
+            runtime_settings={"validation_mode": validation_mode},
+            created_at=_utc_now(),
+        )
+        if self._policy_repository is None:
+            return candidate
+        return self._policy_repository.resolve_current(candidate)
 
     def _run_candidate(
         self,
@@ -1258,6 +1321,43 @@ class TailorResumeUseCase:
             self._publisher.publish(event)
         except Exception:  # noqa: BLE001
             log.exception("Failed to publish ResumeFailed for %s", materials.job_id)
+
+
+# ---------------------------------------------------------------------------
+# SuppressTailoredArtifactsUseCase
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SuppressTailoredArtifactsOutcome:
+    materials: MaterialsSet | None
+    suppressed: bool
+
+
+class SuppressTailoredArtifactsUseCase:
+    """Soft-suppress latest active tailored artifacts for a job."""
+
+    def __init__(self, *, repository: MaterialsRepository) -> None:
+        self._repository = repository
+
+    def execute(
+        self,
+        *,
+        tenant_id: TenantId,
+        job_id: JobId,
+        reason: str,
+        suppressed_at: str | None = None,
+    ) -> SuppressTailoredArtifactsOutcome:
+        materials = self._repository.suppress_active_artifacts(
+            tenant_id,
+            job_id,
+            reason=reason,
+            suppressed_at=suppressed_at or _utc_now(),
+        )
+        return SuppressTailoredArtifactsOutcome(
+            materials=materials,
+            suppressed=materials is not None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1613,6 +1713,8 @@ __all__ = [
     "MaterialsLifecycle",
     "RenderPdfOutcome",
     "RenderPdfUseCase",
+    "SuppressTailoredArtifactsOutcome",
+    "SuppressTailoredArtifactsUseCase",
     "TailorOutcome",
     "TailorResumeUseCase",
     "build_cover_letter_prompt",

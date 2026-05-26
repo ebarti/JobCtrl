@@ -139,6 +139,12 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "CoverLetterGenerated",
     "PdfRendered",
     "MaterialsExhausted",
+    "TailorRetailorRequested",
+    "TailoredArtifactsSuppressed",
+    "PreparationWorkItemQueued",
+    "PreparationWorkItemStarted",
+    "PreparationWorkItemCompleted",
+    "PreparationWorkItemFailed",
     "ApplyRunStarted",
     "ApplyRunEventRecorded",
     "ApplicationSubmitted",
@@ -153,6 +159,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "StageCanceled",
     "ProfileUpdated",
     "ProfileImported",
+    "TailoringPolicyUpdated",
 )
 
 __all__ = [
