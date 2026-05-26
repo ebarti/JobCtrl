@@ -497,13 +497,13 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("returns all matching dashboard activity events", async () => {
+  it("keeps dashboard activity bounded while debug activity is paginated", async () => {
     const db = new Database(options.dbPath);
     try {
       const insertActivity = db.prepare(
         "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at) VALUES (?, ?, ?, ?, ?, ?)",
       );
-      for (let index = 0; index < 25; index += 1) {
+      for (let index = 0; index < 75; index += 1) {
         const suffix = String(index + 1).padStart(2, "0");
         insertActivity.run(
           "https://example.com/jobs/ready",
@@ -519,12 +519,22 @@ describe("local TypeScript API", () => {
     }
 
     const app = buildApp(options);
-    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    const dashboard = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    const debugPageOne = await app.inject({ method: "GET", url: "/v1/debug/activity?page=1&pageSize=50" });
+    const debugPageTwo = await app.inject({ method: "GET", url: "/v1/debug/activity?page=2&pageSize=50" });
 
-    expect(response.statusCode, response.body).toBe(200);
-    const activity = response.json().activity as Array<{ message: string }>;
-    expect(activity).toHaveLength(26);
-    expect(activity.filter((event) => event.message.startsWith("Uncapped dashboard activity"))).toHaveLength(25);
+    expect(dashboard.statusCode, dashboard.body).toBe(200);
+    expect(dashboard.json().activity).toHaveLength(50);
+    expect(debugPageOne.statusCode, debugPageOne.body).toBe(200);
+    expect(debugPageOne.json().pagination).toMatchObject({ page: 1, total: 76, pages: 2 });
+    expect(debugPageOne.json().items).toHaveLength(50);
+    expect(debugPageTwo.statusCode, debugPageTwo.body).toBe(200);
+    expect(debugPageTwo.json().pagination).toMatchObject({ page: 2, total: 76, pages: 2 });
+    expect(debugPageTwo.json().items).toHaveLength(26);
+    const olderEventId = debugPageTwo.json().items[0].eventId;
+    const olderEvent = await app.inject({ method: "GET", url: `/v1/debug/activity/${olderEventId}` });
+    expect(olderEvent.statusCode, olderEvent.body).toBe(200);
+    expect(olderEvent.json().event).toMatchObject({ eventId: olderEventId, title: "Platform Engineer" });
 
     await app.close();
   });

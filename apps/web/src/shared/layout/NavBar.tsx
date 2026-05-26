@@ -8,6 +8,7 @@ const NAV_ITEMS: ReadonlyArray<{
     | "/pipelines"
     | "/discovery"
     | "/runs"
+    | "/debug"
     | "/artifacts"
     | "/profile"
     | "/preferences"
@@ -18,6 +19,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { label: "Pipelines", to: "/pipelines" },
   { label: "Discovery", to: "/discovery" },
   { label: "Runs", to: "/runs" },
+  { label: "Debug", to: "/debug" },
   { label: "Artifacts", to: "/artifacts" },
   { label: "Profile", to: "/profile" },
   { label: "Preferences", to: "/preferences" },

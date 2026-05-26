@@ -210,9 +210,12 @@ Smart Extract source steps. Those event types are part of the SSE domain
 catalog, so the dashboard can refresh recent activity and source health while a
 long synchronous stage request is still running.
 
-`GET /v1/dashboard/summary` includes `activity[].eventType` for those rows so
-the web UI can render started, completed, and failed stage states from backend
-events instead of local button state alone.
+`GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
+`activity[].eventType` so the web UI can render started, completed, and failed
+stage states from backend events instead of local button state alone. The
+top-level Debug tab uses `GET /v1/debug/activity` for the full activity log as a
+paginated, sortable table; this keeps Dashboard lightweight without imposing an
+event-history cap.
 
 ## Related Packages
 

@@ -3,6 +3,7 @@ import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { eventByType } from "../../test/fixtures/events.js";
+import { activityKeys } from "./activityKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
@@ -246,18 +247,22 @@ describe("invalidationRouter", () => {
     it(`fires the expected invalidation set for ${eventType} (exact match)`, () => {
       const event = eventByType[eventType];
       invalidationRouter.handle(event, queryClient);
+      const expectedKeys =
+        eventType === "ApplyRunEventRecorded"
+          ? expected
+          : [...expected, activityKeys.lists(LOCAL_TENANT)];
 
       const invalidatedKeys = invalidateSpy.mock.calls.map((call: unknown[]) => {
         const args = call[0] as { queryKey?: QueryKey };
         return args.queryKey;
       });
 
-      expect(invalidatedKeys).toHaveLength(expected.length);
-      for (const key of expected) {
+      expect(invalidatedKeys).toHaveLength(expectedKeys.length);
+      for (const key of expectedKeys) {
         expect(invalidatedKeys).toContainEqual(key);
       }
       for (const actual of invalidatedKeys) {
-        const matched = expected.some(
+        const matched = expectedKeys.some(
           (expectedKey) => JSON.stringify(expectedKey) === JSON.stringify(actual),
         );
         expect(

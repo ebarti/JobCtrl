@@ -1,23 +1,21 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { dashboardKeys } from "../contexts/operations/dashboardKeys.js";
-import type { DashboardSummary } from "../contexts/operations/types.js";
-import { ActivityDetailDrawer } from "../views/dashboard/ActivityDetailDrawer.js";
-
-type ActivityEvent = DashboardSummary["activity"][number];
+import { activityKeys } from "../contexts/operations/activityKeys.js";
+import { ActivityDetailDrawer } from "../views/debug/ActivityDetailDrawer.js";
 
 export const Route = createFileRoute("/activity/$eventId")({
   loader: async ({ params, context }): Promise<void> => {
-    const summary = await context.queryClient.ensureQueryData<DashboardSummary>({
-      queryKey: dashboardKeys.summary(context.tenantId),
-      queryFn: () => context.ports.api.dashboardSummary(),
+    const event = await context.queryClient.ensureQueryData({
+      queryKey: activityKeys.detail(context.tenantId, params.eventId),
+      queryFn: async () => {
+        const response = await context.ports.api.activityEvent(params.eventId);
+        return response.event;
+      },
     });
-    const activity =
-      summary.activity.find((entry: ActivityEvent) => entry.eventId === params.eventId) ?? null;
-    if (activity?.jobKey) {
+    if (event.jobKey) {
       throw redirect({
         to: "/jobs/$jobId",
-        params: { jobId: activity.jobKey },
+        params: { jobId: event.jobKey },
         replace: true,
       });
     }

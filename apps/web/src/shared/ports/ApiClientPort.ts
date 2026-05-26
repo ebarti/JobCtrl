@@ -1,5 +1,8 @@
 import type {
   ActionRunResponse,
+  ActivityEventResponse,
+  ActivityEventSummary,
+  ActivityListQuery,
   ApplyJobRequest,
   ArtifactDetail,
   ArtifactListQuery,
@@ -83,6 +86,8 @@ export interface ApiHealthResponse {
 export interface ApiClientPort {
   health(): Promise<ApiHealthResponse>;
   dashboardSummary(): Promise<DashboardSummary>;
+  activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
+  activityEvent(eventId: string): Promise<ActivityEventResponse>;
   discoverySources(): Promise<SourceRegistryListResponse>;
   upsertDiscoverySource(body: SourceUpsertRequest): Promise<SourceRegistryMutationResponse>;
   patchDiscoverySourceState(

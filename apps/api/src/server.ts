@@ -7,6 +7,7 @@ import { type ZodType } from "zod";
 import {
   type ActionCommandPayload,
   type ActionRunResponse,
+  ActivityListQuerySchema,
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
@@ -74,8 +75,10 @@ import {
 } from "./manual-capture-worker.js";
 import {
   buildDashboardSummary,
+  getActivityEvent,
   getArtifactDetail,
   getJobDetail,
+  listActivity,
   listArtifacts,
   listJobs,
   listWorkflowRuns,
@@ -185,6 +188,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
+  );
+
+  app.get("/v1/debug/activity", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => listActivity(db, ActivityListQuerySchema.parse(request.query))),
+  );
+
+  app.get<{ Params: { eventId: string } }>("/v1/debug/activity/:eventId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const event = getActivityEvent(db, decodeRouteParam(request.params.eventId));
+      if (!event) {
+        void reply.code(404);
+        return { ok: false, error: "activity_event_not_found" };
+      }
+      return { ok: true, event };
+    }),
   );
 
   app.get("/v1/discovery/sources", async (_request, reply) =>

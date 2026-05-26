@@ -1,6 +1,5 @@
 import { useDashboardSummaryQuery } from "../../contexts/operations/hooks/useDashboardSummaryQuery.js";
 import { Empty } from "../../shared/ui/empty.js";
-import { ActivityFeed } from "./ActivityFeed.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 import { Funnel } from "./Funnel.js";
 import { KpiGrid, KpiSkeleton } from "./KpiGrid.js";
@@ -18,7 +17,6 @@ export function DashboardView() {
           <Funnel summary={summary} />
           <SourceHealthCard summary={summary} />
           <ApplyRunsCard summary={summary} />
-          <ActivityFeed summary={summary} />
         </div>
       ) : (
         <Empty title={isLoading ? "Loading dashboard." : "No dashboard data."} />

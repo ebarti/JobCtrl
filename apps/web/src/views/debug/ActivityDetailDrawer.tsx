@@ -15,7 +15,7 @@ export interface ActivityDetailDrawerProps {
 export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
   const navigate = useNavigate();
   const close = useCallback(() => {
-    void navigate({ to: "/dashboard" });
+    void navigate({ to: "/debug" });
   }, [navigate]);
   useEscapeKey(true, close);
 

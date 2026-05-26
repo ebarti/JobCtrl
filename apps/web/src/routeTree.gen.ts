@@ -16,6 +16,7 @@ import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as JobsRouteImport } from "./routes/jobs";
 import { Route as DiscoveryRouteImport } from "./routes/discovery";
+import { Route as DebugRouteImport } from "./routes/debug";
 import { Route as DashboardRouteImport } from "./routes/dashboard";
 import { Route as ArtifactsRouteImport } from "./routes/artifacts";
 import { Route as IndexRouteImport } from "./routes/index";
@@ -69,6 +70,11 @@ const JobsRoute = JobsRouteImport.update({
 const DiscoveryRoute = DiscoveryRouteImport.update({
   id: "/discovery",
   path: "/discovery",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const DebugRoute = DebugRouteImport.update({
+  id: "/debug",
+  path: "/debug",
   getParentRoute: () => rootRouteImport,
 } as any);
 const DashboardRoute = DashboardRouteImport.update({
@@ -171,6 +177,7 @@ export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
+  "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
@@ -198,6 +205,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/dashboard": typeof DashboardRoute;
+  "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
@@ -223,6 +231,7 @@ export interface FileRoutesById {
   "/": typeof IndexRoute;
   "/artifacts": typeof ArtifactsRouteWithChildren;
   "/dashboard": typeof DashboardRoute;
+  "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
@@ -253,6 +262,7 @@ export interface FileRouteTypes {
     | "/"
     | "/artifacts"
     | "/dashboard"
+    | "/debug"
     | "/discovery"
     | "/jobs"
     | "/pipelines"
@@ -280,6 +290,7 @@ export interface FileRouteTypes {
   to:
     | "/"
     | "/dashboard"
+    | "/debug"
     | "/discovery"
     | "/pipelines"
     | "/preferences"
@@ -304,6 +315,7 @@ export interface FileRouteTypes {
     | "/"
     | "/artifacts"
     | "/dashboard"
+    | "/debug"
     | "/discovery"
     | "/jobs"
     | "/pipelines"
@@ -333,6 +345,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
   ArtifactsRoute: typeof ArtifactsRouteWithChildren;
   DashboardRoute: typeof DashboardRoute;
+  DebugRoute: typeof DebugRoute;
   DiscoveryRoute: typeof DiscoveryRoute;
   JobsRoute: typeof JobsRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
@@ -393,6 +406,13 @@ declare module "@tanstack/react-router" {
       path: "/discovery";
       fullPath: "/discovery";
       preLoaderRoute: typeof DiscoveryRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/debug": {
+      id: "/debug";
+      path: "/debug";
+      fullPath: "/debug";
+      preLoaderRoute: typeof DebugRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/dashboard": {
@@ -628,6 +648,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ArtifactsRoute: ArtifactsRouteWithChildren,
   DashboardRoute: DashboardRoute,
+  DebugRoute: DebugRoute,
   DiscoveryRoute: DiscoveryRoute,
   JobsRoute: JobsRouteWithChildren,
   PipelinesRoute: PipelinesRoute,

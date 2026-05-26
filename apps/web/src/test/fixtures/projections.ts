@@ -1,6 +1,7 @@
 import type {
   ArtifactDetail,
   ArtifactSummary,
+  ActivityEventSummary,
   CredentialsResponse,
   DashboardSummary,
   JobDetail,
@@ -213,6 +214,26 @@ export function makeArtifactsPage(items: readonly ArtifactSummary[] = [sampleArt
       pages: 1,
     },
     sort: { field: "created_at", dir: "desc" },
+    filter: {},
+  };
+}
+
+export function makeActivityPage(
+  items: readonly ActivityEventSummary[] = sampleDashboardSummary.activity,
+  page = 1,
+  pageSize = 50,
+  total = items.length,
+): PaginatedResponse<ActivityEventSummary> {
+  return {
+    ok: true,
+    items: [...items],
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+    sort: { field: "occurred_at", dir: "desc" },
     filter: {},
   };
 }

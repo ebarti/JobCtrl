@@ -1,11 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { ActivityDetailDrawer } from "./ActivityDetailDrawer.js";
 
 const meta = {
-  title: "Views/Dashboard/ActivityDetailDrawer",
+  title: "Views/Debug/ActivityDetailDrawer",
   component: ActivityDetailDrawer,
   parameters: {
     withRouter: true,
@@ -25,8 +24,8 @@ export const NotFound: Story = {
   parameters: {
     msw: {
       handlers: [
-        http.get("*/v1/dashboard/summary", () =>
-          HttpResponse.json({ ...sampleDashboardSummary, activity: [] }),
+        http.get("*/v1/debug/activity/:eventId", () =>
+          HttpResponse.json({ ok: false, error: "activity_event_not_found" }, { status: 404 }),
         ),
       ],
     },

@@ -2,6 +2,7 @@ import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { describe, expect, it } from "vitest";
 
 import { applyRunsKeys } from "./applyRunsKeys.js";
+import { activityKeys } from "./activityKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { healthKeys } from "./healthKeys.js";
@@ -34,6 +35,22 @@ describe("operations queryKeys", () => {
       LOCAL_TENANT,
       "dashboard",
       "summary",
+    ]);
+  });
+
+  it("scopes activity keys under tenant + activity prefix", () => {
+    expect(activityKeys.lists(LOCAL_TENANT)).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "activity",
+      "list",
+    ]);
+    expect(activityKeys.list(LOCAL_TENANT, { page: 2 })).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "activity",
+      "list",
+      { page: 2 },
     ]);
   });
 

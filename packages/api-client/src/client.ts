@@ -1,5 +1,8 @@
 import type {
   ActionRunResponse,
+  ActivityEventResponse,
+  ActivityEventSummary,
+  ActivityListQuery,
   ApplyJobRequest,
   ArtifactDetail,
   ArtifactListQuery,
@@ -108,6 +111,14 @@ export class JobHunterApiClient {
 
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get("/v1/dashboard/summary");
+  }
+
+  activity(query: Partial<ActivityListQuery> = {}): Promise<PaginatedResponse<ActivityEventSummary>> {
+    return this.get("/v1/debug/activity", query);
+  }
+
+  activityEvent(eventId: string): Promise<ActivityEventResponse> {
+    return this.get(`/v1/debug/activity/${encodeURIComponent(eventId)}`);
   }
 
   discoverySources(): Promise<SourceRegistryListResponse> {

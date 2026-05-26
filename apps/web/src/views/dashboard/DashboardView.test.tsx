@@ -15,5 +15,6 @@ describe("DashboardView", () => {
 
     expect(screen.queryByRole("heading", { name: "Pipeline actions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Discovery controls" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Recent activity")).not.toBeInTheDocument();
   });
 });

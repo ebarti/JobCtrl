@@ -2,18 +2,28 @@ import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { dashboardKeys } from "../dashboardKeys.js";
-import type { DashboardSummary } from "../types.js";
+import { activityKeys } from "../activityKeys.js";
+import type { ActivityEventSummary } from "../types.js";
 
-export type ActivityEvent = DashboardSummary["activity"][number];
+export type ActivityEvent = ActivityEventSummary;
+
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "status" in error && error.status === 404;
+}
 
 export function useActivityEventQuery(eventId: string): UseQueryResult<ActivityEvent | null> {
   const tenantId = useTenantId();
   const { api } = usePorts();
-  return useQuery({
-    queryKey: dashboardKeys.summary(tenantId),
-    queryFn: () => api.dashboardSummary(),
-    select: (summary) =>
-      summary.activity.find((entry) => entry.eventId === eventId) ?? null,
+  return useQuery<ActivityEvent | null>({
+    queryKey: activityKeys.detail(tenantId, eventId),
+    queryFn: async () => {
+      try {
+        const response = await api.activityEvent(eventId);
+        return response.event;
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        throw error;
+      }
+    },
   });
 }
