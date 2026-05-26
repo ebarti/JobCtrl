@@ -593,6 +593,61 @@ def test_tailor_use_case_retailor_supersedes_previous_generation(
     assert superseded_save is not None
 
 
+def test_tailor_use_case_retailor_suppresses_previous_generation_when_requested(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    initial = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path="/tmp/old.txt",
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(initial)
+
+    llm = _ScriptedLlm([_good_json_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        retailor=True,
+        suppress_existing_artifacts=True,
+    )
+
+    assert outcome.materials is not None
+    assert outcome.materials.generation == 2
+    suppressed_save = next(
+        (
+            m
+            for m in repo.saved
+            if m.generation == 1
+            and m.tailored_resume is not None
+            and m.tailored_resume.status is ArtifactStatus.SUPPRESSED
+        ),
+        None,
+    )
+    assert suppressed_save is not None
+    assert suppressed_save.tailored_resume is not None
+    assert suppressed_save.tailored_resume.metadata["suppression"]["reason"] == (
+        "retailor_current_policy"
+    )
+
+
 # ---------------------------------------------------------------------------
 # GenerateCoverLetterUseCase
 # ---------------------------------------------------------------------------

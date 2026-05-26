@@ -424,6 +424,7 @@ def score_job_by_url(
     job_url: str,
     *,
     tenant_id: TenantId = LOCAL_TENANT,
+    rescore: bool = False,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     profile_snapshot: ProfileSnapshot | None = None,
     resume_text: str | None = None,
@@ -438,7 +439,8 @@ def score_job_by_url(
     Internal Discovery preparation uses durable work items keyed to one job,
     so it cannot safely call the batch selector-based ``run_scoring`` helper.
     This entrypoint preserves the same Scoring use case and stage-state writes
-    while targeting the claimed work item only.
+    while targeting the claimed work item only. ``rescore=True`` forces a new
+    score version even when the job already has a current score.
     """
     conn = get_connection()
     job = load_job_with_enrichment(conn, job_url)
@@ -461,7 +463,7 @@ def score_job_by_url(
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
     existing = repository.load(tenant_id, JobId(job_url))
-    if existing is not None:
+    if existing is not None and not rescore:
         _ensure_existing_score_stage_succeeded(
             conn,
             job=job,

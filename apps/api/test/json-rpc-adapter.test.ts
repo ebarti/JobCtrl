@@ -5,9 +5,13 @@
  * factory using a fake in-memory ``JsonRpcDispatcher`` so we don't need
  * to spawn the Python worker subprocess in CI.
  */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_PIPELINE_LLM_MODEL } from "../src/contracts.js";
+import { DEFAULT_PIPELINE_LLM_MODEL, type ActionCommandPayload } from "../src/contracts.js";
 import {
   buildActionResponse,
   createActionDispatcher,
@@ -18,6 +22,8 @@ import type {
   JsonRpcDispatcher,
 } from "../src/json-rpc-adapter.js";
 import type { JsonRpcResponse, RpcMethod } from "../src/contracts.js";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 class FakeDispatcher implements JsonRpcDispatcher {
   public readonly calls: Array<{ method: RpcMethod; params: Record<string, unknown> }> = [];
@@ -152,6 +158,198 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         firstExecutionRunId: "first-exec-run-id",
       },
     });
+  });
+
+  it("maps preparation maintenance actions to current-policy RPC methods", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" };
+
+    await dispatcher(
+      {
+        action: "rescore_job",
+        jobKey: "https://example.com/jobs/current",
+        dryRun: true,
+        reason: "policy refresh",
+      },
+      context,
+    );
+    await dispatcher(
+      {
+        action: "rescore_jobs_not_on_current_scoring_policy",
+        jobKey: "pipeline",
+        jobKeys: ["https://example.com/jobs/stale"],
+        limit: 10,
+        dryRun: true,
+      },
+      context,
+    );
+    await dispatcher(
+      {
+        action: "retailor_job",
+        jobKey: "https://example.com/jobs/current",
+        dryRun: true,
+        suppressExistingArtifacts: false,
+        tailorModels: ["gemini:test"],
+        tailorJudgeModel: "judge:test",
+        tailorJudgeMinScore: 0.82,
+      },
+      context,
+    );
+    await dispatcher(
+      {
+        action: "retailor_current_policy",
+        jobKey: "pipeline",
+        jobKeys: ["https://example.com/jobs/current"],
+        limit: 5,
+        dryRun: false,
+      },
+      context,
+    );
+
+    expect(fake.calls).toEqual([
+      {
+        method: "rescore_job",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          jobUrl: "https://example.com/jobs/current",
+          dryRun: true,
+          reason: "policy refresh",
+        },
+      },
+      {
+        method: "rescore_jobs_not_on_current_scoring_policy",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          limit: 10,
+          jobUrls: ["https://example.com/jobs/stale"],
+          dryRun: true,
+        },
+      },
+      {
+        method: "retailor_job",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          jobUrl: "https://example.com/jobs/current",
+          dryRun: true,
+          suppressExistingArtifacts: false,
+          tailorModels: ["gemini:test"],
+          tailorJudgeModel: "judge:test",
+          tailorJudgeMinScore: 0.82,
+        },
+      },
+      {
+        method: "retailor_current_policy",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          limit: 5,
+          jobUrls: ["https://example.com/jobs/current"],
+          dryRun: false,
+          suppressExistingArtifacts: true,
+        },
+      },
+    ]);
+  });
+
+  it("surfaces workflow start identifiers for preparation maintenance actions", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" };
+    const commands: ActionCommandPayload[] = [
+      {
+        action: "rescore_job",
+        jobKey: "https://example.com/jobs/current",
+      },
+      {
+        action: "rescore_jobs_not_on_current_scoring_policy",
+        jobKey: "pipeline",
+      },
+      {
+        action: "retailor_job",
+        jobKey: "https://example.com/jobs/current",
+      },
+      {
+        action: "retailor_current_policy",
+        jobKey: "pipeline",
+      },
+    ];
+
+    for (const command of commands) {
+      fake.setResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          runId: `${command.action}-run`,
+          workflowId: `${command.action}-workflow`,
+          firstExecutionRunId: `${command.action}-first-execution`,
+        },
+      } as JsonRpcResponse);
+
+      const result = await dispatcher(command, context);
+      const response = buildActionResponse(command, result);
+
+      expect(response).toMatchObject({
+        status: "queued",
+        runId: `${command.action}-run`,
+        actionId: `${command.action}-run`,
+        workflowId: `${command.action}-workflow`,
+        firstExecutionRunId: `${command.action}-first-execution`,
+      });
+    }
+  });
+
+  it("dispatches only RPC methods registered by the Python worker", async () => {
+    const registeredWorkerMethods = new Set(
+      [
+        ...fs
+          .readFileSync(
+            path.join(
+              REPO_ROOT,
+              "workers/automation/src/jobhunter/infrastructure/rpc/handlers.py",
+            ),
+            "utf8",
+          )
+          .matchAll(/server\.register\(\s*"([^"]+)"/g),
+      ].map((match) => match[1]),
+    );
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+    const context = { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" };
+
+    await dispatcher({ action: "run_stage", jobKey: "pipeline", stage: "score" }, context);
+    await dispatcher(
+      {
+        action: "retry_stage",
+        jobKey: "https://example.com/jobs/current",
+        stage: "apply",
+        runAfter: true,
+      },
+      context,
+    );
+    await dispatcher({ action: "apply", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "cancel", jobKey: "pipeline", runId: "run-1" }, context);
+    await dispatcher({ action: "rescore_job", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher(
+      {
+        action: "rescore_jobs_not_on_current_scoring_policy",
+        jobKey: "pipeline",
+      },
+      context,
+    );
+    await dispatcher({ action: "retailor_job", jobKey: "https://example.com/jobs/current" }, context);
+    await dispatcher({ action: "retailor_current_policy", jobKey: "pipeline" }, context);
+
+    const dispatchedMethods = [...new Set(fake.calls.map((call) => call.method))];
+    const unregisteredMethods = dispatchedMethods.filter((method) => !registeredWorkerMethods.has(method));
+    expect(unregisteredMethods).toEqual([]);
   });
 
   it("creates the production JSON-RPC dispatcher with the API runtime appDir", async () => {

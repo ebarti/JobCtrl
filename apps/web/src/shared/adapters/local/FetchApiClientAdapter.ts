@@ -119,6 +119,20 @@ export class FetchApiClientAdapter implements ApiClientPort {
   resetStaleScoresForRescore(body: Parameters<JobHunterApiClient["resetStaleScoresForRescore"]>[0]) {
     return this.client.resetStaleScoresForRescore(body);
   }
+  rescoreJob(jobKey: string, body: Parameters<JobHunterApiClient["rescoreJob"]>[1] = {}) {
+    return this.client.rescoreJob(jobKey, body);
+  }
+  rescoreJobsNotOnCurrentScoringPolicy(
+    body: Parameters<JobHunterApiClient["rescoreJobsNotOnCurrentScoringPolicy"]>[0],
+  ) {
+    return this.client.rescoreJobsNotOnCurrentScoringPolicy(body);
+  }
+  retailorJob(jobKey: string, body: Parameters<JobHunterApiClient["retailorJob"]>[1] = {}) {
+    return this.client.retailorJob(jobKey, body);
+  }
+  retailorCurrentPolicy(body: Parameters<JobHunterApiClient["retailorCurrentPolicy"]>[0]) {
+    return this.client.retailorCurrentPolicy(body);
+  }
   workflowRuns(query: Parameters<JobHunterApiClient["workflowRuns"]>[0] = {}) {
     return this.client.workflowRuns(query);
   }

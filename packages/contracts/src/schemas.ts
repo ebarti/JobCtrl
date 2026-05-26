@@ -771,6 +771,7 @@ export interface DashboardSummary {
     appliedToday: number;
     dryRuns: number;
   };
+  preparation?: PreparationSummary;
   funnel: Array<{
     stage: Stage;
     total: number;
@@ -792,6 +793,18 @@ export interface DashboardSummary {
     dryRun: boolean;
     startedAt: string | null;
   }>;
+}
+
+export interface PreparationSummary {
+  currentScoringPolicyVersion: number | null;
+  currentTailoringPolicyVersion: number | null;
+  outdatedScoreCount: number;
+  outdatedTailoredArtifactCount: number;
+  workItems: {
+    queued: number;
+    running: number;
+    failed: number;
+  };
 }
 
 export interface SourceHealthSummary {
@@ -895,6 +908,10 @@ export interface ActionCommandPayload {
   action:
     | "run_stage"
     | "retry_stage"
+    | "rescore_job"
+    | "rescore_jobs_not_on_current_scoring_policy"
+    | "retailor_job"
+    | "retailor_current_policy"
     | "generate_materials"
     | "apply"
     | "cancel"
@@ -907,6 +924,7 @@ export interface ActionCommandPayload {
   resetAttempts?: boolean;
   runAfter?: boolean;
   dryRun?: boolean;
+  jobKeys?: string[];
   limit?: number;
   workers?: number;
   minScore?: number;
@@ -918,6 +936,7 @@ export interface ActionCommandPayload {
   tailorModels?: string[];
   tailorJudgeModel?: string;
   tailorJudgeMinScore?: number;
+  suppressExistingArtifacts?: boolean;
   headless?: boolean;
   continuous?: boolean;
   runId?: string;

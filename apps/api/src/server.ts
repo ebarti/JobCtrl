@@ -11,6 +11,8 @@ import {
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
+  BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema,
+  BulkRetailorCurrentPolicyRequestSchema,
   CancelJobActionRequestSchema,
   CorrectScoreRequestSchema,
   PIPELINE_ACTION_JOB_KEY,
@@ -30,8 +32,10 @@ import {
   type ProfileConfigResponse,
   ProfileUpdateRequestSchema,
   QuarantineDecisionSchema,
+  RescoreJobRequestSchema,
   ResetStaleScoresForRescoreRequestSchema,
   RetryStageRequestSchema,
+  RetailorJobRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
   SourceLocatorDecisionSchema,
@@ -488,6 +492,58 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     return withWritableDb(reply, options.dbPath, (db) => resetStaleScoresForRescore(db, body));
   });
 
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/actions/rescore-current-policy",
+    async (request, reply) => {
+      const body = parseBody(reply, RescoreJobRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      const outcome = await withWritableDb(reply, options.dbPath, async (db) => {
+        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobUrl) {
+          return { ok: false, error: "job_not_found" };
+        }
+        const command: ActionCommandPayload = {
+          action: "rescore_job",
+          jobKey: jobUrl,
+          dryRun: body.dryRun,
+        };
+        if (body.reason) command.reason = body.reason;
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
+        const dispatch = await actionDispatcher(command, actionContext);
+        void reply.code(202);
+        return buildActionResponse(command, dispatch);
+      });
+      return outcome;
+    },
+  );
+
+  app.post("/v1/scoring/actions/rescore-current-policy", async (request, reply) => {
+    const body = parseBody(reply, BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    const command: ActionCommandPayload = {
+      action: "rescore_jobs_not_on_current_scoring_policy",
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+      jobKeys: body.jobKeys,
+      limit: body.limit,
+      dryRun: body.dryRun,
+    };
+    if (body.reason) command.reason = body.reason;
+    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+    if (!workerReady) {
+      return undefined;
+    }
+    const dispatch = await actionDispatcher(command, actionContext);
+    void reply.code(202);
+    return buildActionResponse(command, dispatch);
+  });
+
   app.delete<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) => {
     const body = parseBody(reply, DeleteJobRequestSchema, request.body ?? {});
     if (!body) {
@@ -564,6 +620,70 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(400);
       return unsupportedPerJobMaterialAction(jobUrl);
     });
+  });
+
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/actions/retailor-current-policy",
+    async (request, reply) => {
+      const body = parseBody(reply, RetailorJobRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      const outcome = await withWritableDb(reply, options.dbPath, async (db) => {
+        const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobUrl) {
+          return { ok: false, error: "job_not_found" };
+        }
+        const command: ActionCommandPayload = {
+          action: "retailor_job",
+          jobKey: jobUrl,
+          dryRun: body.dryRun,
+          suppressExistingArtifacts: body.suppressExistingArtifacts,
+          tailorModels: body.tailorModels,
+        };
+        if (body.reason) command.reason = body.reason;
+        if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
+        if (body.tailorJudgeMinScore !== undefined) {
+          command.tailorJudgeMinScore = body.tailorJudgeMinScore;
+        }
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
+        const dispatch = await actionDispatcher(command, actionContext);
+        void reply.code(202);
+        return buildActionResponse(command, dispatch);
+      });
+      return outcome;
+    },
+  );
+
+  app.post("/v1/materials/actions/retailor-current-policy", async (request, reply) => {
+    const body = parseBody(reply, BulkRetailorCurrentPolicyRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    const command: ActionCommandPayload = {
+      action: "retailor_current_policy",
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+      jobKeys: body.jobKeys,
+      limit: body.limit,
+      dryRun: body.dryRun,
+      suppressExistingArtifacts: body.suppressExistingArtifacts,
+      tailorModels: body.tailorModels,
+    };
+    if (body.reason) command.reason = body.reason;
+    if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
+    if (body.tailorJudgeMinScore !== undefined) {
+      command.tailorJudgeMinScore = body.tailorJudgeMinScore;
+    }
+    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+    if (!workerReady) {
+      return undefined;
+    }
+    const dispatch = await actionDispatcher(command, actionContext);
+    void reply.code(202);
+    return buildActionResponse(command, dispatch);
   });
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/apply", async (request, reply) => {
