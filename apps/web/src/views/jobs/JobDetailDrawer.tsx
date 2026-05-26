@@ -13,6 +13,7 @@ import { ScoreBreakdown } from "../../contexts/scoring/components/ScoreBreakdown
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
+import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 import { JobDescription } from "./JobDescription.js";
@@ -41,8 +42,8 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
   const errorMessage = detailErrorTitle(detailError);
 
   return (
-    <div className="drawer-backdrop">
-      <aside className="drawer">
+    <DetailDrawerBackdrop onDismiss={close}>
+      <div className="drawer" role="dialog" aria-modal="true" aria-label="Job details">
         <button
           aria-label="Close job details"
           className="drawer-close"
@@ -116,7 +117,7 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
             </Section>
           </>
         ) : null}
-      </aside>
-    </div>
+      </div>
+    </DetailDrawerBackdrop>
   );
 }

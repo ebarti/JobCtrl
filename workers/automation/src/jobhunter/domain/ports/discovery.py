@@ -166,7 +166,13 @@ class JobRepository(Protocol):
         """
         ...
 
-    def restore(self, tenant_id: TenantId, job_id: JobId) -> Job | None:
+    def restore(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        restored_at: str | None = None,
+    ) -> Job | None:
         """Clear the soft-delete tombstone.
 
         Returns the updated aggregate, or ``None`` if the job did not

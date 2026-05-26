@@ -50,6 +50,7 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     run_scheduled_ats_sources,
     seed_discovery_control_queues,
 )
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.operational_metrics import record_operational_attempt_metric
 from jobhunter.infrastructure.observability.source_spans import discovery_run_span
 from jobhunter.state import record_job_event, utc_now
@@ -1107,11 +1108,19 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
-    try:
-        hygiene = retire_invalid_source_jobs(conn, search_cfg=search_cfg)
+    def run_hygiene(label: str) -> int:
+        hygiene = retire_invalid_source_jobs(
+            conn,
+            search_cfg=search_cfg,
+            run_id=f"discovery:hygiene:{label}",
+        )
         retired = int(hygiene.get("retired_jobs") or 0)
         if retired:
             console.print(f"  [yellow]Discovery hygiene retired {retired} invalid source jobs[/yellow]")
+        return retired
+
+    try:
+        run_hygiene("before")
     except Exception:
         log.warning("Discovery hygiene failed", exc_info=True)
     enrichment_done, enrichment_result, enrichment_thread = _start_discovery_enrichment_worker(
@@ -1126,6 +1135,10 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             enrichment_result,
         )
         stats["enrichment"] = str(enrichment_stats.get("status", "ok"))
+        try:
+            run_hygiene("after")
+        except Exception:
+            log.warning("Post-discovery hygiene failed", exc_info=True)
         return stats
 
     jobspy_sources = schedule.for_prefix("jobspy")
@@ -1282,11 +1295,16 @@ def _run_enrich(workers: int = 1, limit: int = 0) -> dict:
         return {"status": f"error: {e}", "error_class": type(e).__name__, "error_message": str(e)}
 
 
-def _run_score(limit: int = 0, rescore: bool = False, workers: int = 1) -> dict:
+def _run_score(
+    limit: int = 0,
+    rescore: bool = False,
+    workers: int = 1,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     try:
         from jobhunter.scoring.scorer import run_scoring
-        run_scoring(limit=limit, rescore=rescore, workers=workers)
+        run_scoring(limit=limit, rescore=rescore, workers=workers, llm_model=llm_model)
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)
@@ -1299,6 +1317,7 @@ def _run_tailor(
     validation_mode: str = "normal",
     workers: int = 1,
     retailor: bool = False,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
@@ -1315,6 +1334,7 @@ def _run_tailor(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            llm_model=llm_model,
         )
         failed = int(result.get("failed") or 0)
         errors = int(result.get("errors") or 0)
@@ -1342,6 +1362,7 @@ def _run_cover(
     min_score: int = 7,
     limit: int = 0,
     validation_mode: str = "normal",
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
 ) -> dict:
     """Stage: Cover letter generation."""
     try:
@@ -1350,6 +1371,7 @@ def _run_cover(
             min_score=min_score,
             limit=limit,
             validation_mode=validation_mode,
+            llm_model=llm_model,
         )
         return {"status": "ok"}
     except Exception as e:
@@ -1378,6 +1400,7 @@ def _build_stage_kwargs(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
@@ -1391,10 +1414,12 @@ def _build_stage_kwargs(
         kwargs["limit"] = limit
     if stage == "score":
         kwargs["rescore"] = rescore
+        kwargs["llm_model"] = llm_model
     elif stage in ("tailor", "cover"):
         kwargs["min_score"] = min_score
         kwargs["limit"] = limit
         kwargs["validation_mode"] = validation_mode
+        kwargs["llm_model"] = llm_model
         if stage == "tailor":
             kwargs["workers"] = workers
             kwargs["retailor"] = retailor
@@ -1678,6 +1703,7 @@ def _run_stage_streaming(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
@@ -1697,6 +1723,7 @@ def _run_stage_streaming(
         limit=limit,
         rescore=rescore,
         retailor=retailor,
+        llm_model=llm_model,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
@@ -1794,6 +1821,7 @@ def _run_stage_streaming(
 def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     validation_mode: str = "normal", limit: int = 0,
                     rescore: bool = False, retailor: bool = False,
+                    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
                     tailor_models: tuple[str, ...] = (),
                     tailor_judge_model: str | None = None,
                     tailor_judge_min_score: float | None = None) -> dict:
@@ -1829,6 +1857,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                 limit=limit,
                 rescore=rescore,
                 retailor=retailor,
+                llm_model=llm_model,
                 tailor_models=tailor_models,
                 tailor_judge_model=tailor_judge_model,
                 tailor_judge_min_score=tailor_judge_min_score,
@@ -1860,6 +1889,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
 def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    validation_mode: str = "normal", limit: int = 0,
                    rescore: bool = False, retailor: bool = False,
+                   llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
                    tailor_models: tuple[str, ...] = (),
                    tailor_judge_model: str | None = None,
                    tailor_judge_min_score: float | None = None) -> dict:
@@ -1886,7 +1916,8 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
             target=_run_stage_streaming,
             args=(name, tracker, stop_event, min_score, workers,
                   validation_mode, limit, rescore, retailor,
-                  tailor_models, tailor_judge_model, tailor_judge_min_score),
+                  llm_model, tailor_models, tailor_judge_model,
+                  tailor_judge_min_score),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -1937,6 +1968,7 @@ def run_pipeline(
     limit: int = 0,
     rescore: bool = False,
     retailor: bool = False,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
@@ -1954,6 +1986,7 @@ def run_pipeline(
         limit: Optional per-stage batch limit. 0 means no limit.
         rescore: Re-score already scored jobs when running the score stage.
         retailor: Re-tailor already tailored jobs when running the tailor stage.
+        llm_model: Default LLM model spec for score, tailor, and cover stages.
         tailor_models: Optional model specs for candidate generation.
         tailor_judge_model: Optional model spec for the structured judge.
         tailor_judge_min_score: Optional minimum judge score required for approval.
@@ -2029,6 +2062,7 @@ def run_pipeline(
             limit=limit,
             rescore=rescore,
             retailor=retailor,
+            llm_model=llm_model,
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
@@ -2042,6 +2076,7 @@ def run_pipeline(
             limit=limit,
             rescore=rescore,
             retailor=retailor,
+            llm_model=llm_model,
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,

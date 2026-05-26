@@ -4,6 +4,7 @@ export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"
 export type Stage = (typeof STAGES)[number];
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
+export const DEFAULT_PIPELINE_LLM_MODEL = "gemini:gemini-3.5-flash" as const;
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 
 export const MATERIAL_STAGES = ["tailor", "cover"] as const;
@@ -40,6 +41,16 @@ export type JobSortField = (typeof JOB_SORT_FIELDS)[number];
 
 export const ARTIFACT_SORT_FIELDS = ["created_at", "title", "company", "type", "status", "size_bytes"] as const;
 export type ArtifactSortField = (typeof ARTIFACT_SORT_FIELDS)[number];
+
+export const ACTIVITY_SORT_FIELDS = [
+  "occurred_at",
+  "event_id",
+  "stage",
+  "level",
+  "event_type",
+  "message",
+] as const;
+export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
 
@@ -109,6 +120,7 @@ export const RunPipelineStagesRequestSchema = z
     retailor: z.boolean().default(false),
     headless: z.boolean().default(false),
     model: z.string().trim().min(1).max(80).default("default"),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
     tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
@@ -434,6 +446,32 @@ export const ArtifactListQuerySchema = z
 
 export type ArtifactListQuery = z.infer<typeof ArtifactListQuerySchema>;
 
+export const ActivityListQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1).catch(1),
+    pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    page_size: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
+    sort: z.enum(ACTIVITY_SORT_FIELDS).default("occurred_at").catch("occurred_at"),
+    dir: SortDirectionSchema,
+    q: optionalText,
+    level: optionalText,
+    stage: optionalText,
+    eventType: optionalText,
+    event_type: optionalText,
+  })
+  .transform((value) => ({
+    page: value.page,
+    pageSize: value.pageSize ?? value.page_size ?? 50,
+    sort: value.sort,
+    dir: value.dir,
+    q: value.q,
+    level: value.level,
+    stage: value.stage,
+    eventType: value.eventType || value.event_type,
+  }));
+
+export type ActivityListQuery = z.infer<typeof ActivityListQuerySchema>;
+
 // ---------------------------------------------------------------------------
 // Workflow runs (PR 5 of the Temporal stack)
 //
@@ -657,15 +695,34 @@ export interface PaginatedResponse<T> {
   filter: Record<string, unknown>;
 }
 
+export interface ActivityEventSummary {
+  eventId: string;
+  eventType: string;
+  jobKey: string | null;
+  title: string | null;
+  company: string | null;
+  stage: string;
+  level: string;
+  message: string;
+  at: string | null;
+}
+
+export interface ActivityEventResponse {
+  ok: true;
+  event: ActivityEventSummary;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
   totals: {
     jobs: number;
+    jobsToday: number;
     failures: number;
     blocked: number;
     ready: number;
     applied: number;
+    appliedToday: number;
     dryRuns: number;
   };
   funnel: Array<{
@@ -677,17 +734,7 @@ export interface DashboardSummary {
     blocked: number;
     failed: number;
   }>;
-  activity: Array<{
-    eventId: string;
-    eventType: string;
-    jobKey: string | null;
-    title: string | null;
-    company: string | null;
-    stage: string;
-    level: string;
-    message: string;
-    at: string | null;
-  }>;
+  activity: ActivityEventSummary[];
   sourceHealth: SourceHealthSummary[];
   operationalMetrics: OperationalMetricsSummary;
   applyRuns: Array<{
@@ -821,6 +868,7 @@ export interface ActionCommandPayload {
   rescore?: boolean;
   retailor?: boolean;
   model?: string;
+  llmModel?: string;
   tailorModels?: string[];
   tailorJudgeModel?: string;
   tailorJudgeMinScore?: number;

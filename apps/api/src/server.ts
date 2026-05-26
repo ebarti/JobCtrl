@@ -1,5 +1,5 @@
 import cors from "@fastify/cors";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import fs from "node:fs";
 import path from "node:path";
 import { type ZodType } from "zod";
@@ -7,6 +7,7 @@ import { type ZodType } from "zod";
 import {
   type ActionCommandPayload,
   type ActionRunResponse,
+  ActivityListQuerySchema,
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
@@ -74,8 +75,10 @@ import {
 } from "./manual-capture-worker.js";
 import {
   buildDashboardSummary,
+  getActivityEvent,
   getArtifactDetail,
   getJobDetail,
+  listActivity,
   listArtifacts,
   listJobs,
   listWorkflowRuns,
@@ -136,6 +139,7 @@ export interface BuildAppOptions {
   placeValidator?: PlaceValidator;
   profileImporter?: ProfileImporter;
   profilePreviewRenderer?: ProfilePreviewRenderer;
+  requireHealthyWorkerForActions?: boolean;
   logger?: boolean;
 }
 
@@ -149,6 +153,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
   const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
   const actionContext = { appDir, dbPath: options.dbPath };
+  const requireHealthyWorkerForActions =
+    options.requireHealthyWorkerForActions ?? !options.actionDispatcher;
 
   void app.register(cors, {
     origin: LOCAL_ORIGIN_PATTERNS,
@@ -182,6 +188,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/dashboard/summary", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => buildDashboardSummary(db)),
+  );
+
+  app.get("/v1/debug/activity", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => listActivity(db, ActivityListQuerySchema.parse(request.query))),
+  );
+
+  app.get<{ Params: { eventId: string } }>("/v1/debug/activity/:eventId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const event = getActivityEvent(db, decodeRouteParam(request.params.eventId));
+      if (!event) {
+        void reply.code(404);
+        return { ok: false, error: "activity_event_not_found" };
+      }
+      return { ok: true, event };
+    }),
   );
 
   app.get("/v1/discovery/sources", async (_request, reply) =>
@@ -348,6 +369,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       retailor: body.retailor,
       headless: body.headless,
       model: body.model,
+      llmModel: body.llmModel,
       tailorModels: body.tailorModels,
       continuous: body.continuous,
     };
@@ -356,6 +378,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (body.tailorJudgeMinScore !== undefined) {
       command.tailorJudgeMinScore = body.tailorJudgeMinScore;
+    }
+    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+    if (!workerReady) {
+      return undefined;
     }
     const dispatch = await actionDispatcher(command, actionContext);
     actions.push(buildActionResponse(command, dispatch));
@@ -512,6 +538,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         dryRun: body.dryRun,
         limit: 1,
       };
+      if (body.runAfter) {
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
+      }
       const dispatch = body.runAfter ? await actionDispatcher(command, actionContext) : { status: "reset" };
       void reply.code(body.runAfter ? 202 : 200);
       return buildActionResponse(command, dispatch, { stage: reset.stage });
@@ -552,6 +584,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         limit: body.limit,
         model: body.model,
       };
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
       const dispatch = await actionDispatcher(command, actionContext);
       void reply.code(202);
       return buildActionResponse(command, dispatch);
@@ -840,7 +876,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     if (profileUpdatedEvent && queueRetailor) {
       try {
-        await handleProfileUpdatedEvent(profileUpdatedEvent, actionDispatcher, actionContext);
+        const workerHealth = readWorkerHealth(options.dbPath);
+        if (requireHealthyWorkerForActions && workerHealth.status !== "healthy") {
+          request.log.warn(
+            { workerHealth },
+            "Skipped profile-update re-tailoring run because the worker runtime is not healthy",
+          );
+        } else {
+          await handleProfileUpdatedEvent(profileUpdatedEvent, actionDispatcher, actionContext);
+        }
       } catch (error) {
         request.log.error({ err: error }, "Failed to dispatch profile-update re-tailoring run");
       }
@@ -920,6 +964,23 @@ function decodeRouteParam(value: string): string {
   } catch {
     return value;
   }
+}
+
+function requireWorkerReady(reply: FastifyReply, dbPath: string, enabled: boolean): boolean {
+  if (!enabled) {
+    return true;
+  }
+  const worker = readWorkerHealth(dbPath);
+  if (worker.status === "healthy") {
+    return true;
+  }
+  void reply.code(503).send({
+    ok: false,
+    error: "worker_runtime_unavailable",
+    message: worker.message,
+    worker,
+  });
+  return false;
 }
 
 function isPdfArtifact(artifactType: string, localPath: string): boolean {

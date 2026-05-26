@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { useApplyRunQuery } from "../../contexts/operations/hooks/useApplyRunQuery.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
+import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
@@ -35,8 +36,13 @@ export function ApplyRunDrawer({ runId }: ApplyRunDrawerProps) {
   const notFound = !isLoading && !message && run === null;
 
   return (
-    <div className="drawer-backdrop">
-      <aside className="drawer detail-drawer">
+    <DetailDrawerBackdrop onDismiss={close}>
+      <div
+        className="drawer detail-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Apply run details"
+      >
         <button
           aria-label="Close apply run details"
           className="drawer-close"
@@ -99,7 +105,7 @@ export function ApplyRunDrawer({ runId }: ApplyRunDrawerProps) {
             </Section>
           </>
         ) : null}
-      </aside>
-    </div>
+      </div>
+    </DetailDrawerBackdrop>
   );
 }

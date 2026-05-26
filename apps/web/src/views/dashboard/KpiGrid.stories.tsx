@@ -26,10 +26,12 @@ export const ZeroState: Story = {
       ...sampleDashboardSummary,
       totals: {
         jobs: 0,
+        jobsToday: 0,
         failures: 0,
         blocked: 0,
         ready: 0,
         applied: 0,
+        appliedToday: 0,
         dryRuns: 0,
       },
     },

@@ -347,9 +347,10 @@ persisted local config, and the tab only shows controls that the selected stage
 actually consumes. Running a tab submits that stage through the local API. The
 panel reports when the request is waiting on the local worker, whether the start
 was queued, completed, dry-run, or failed, and the returned run/action id when
-one is available. Longer-running progress appears in the dashboard pipeline,
-apply runs, and recent activity cards after the API invalidates those read
-models. Non-apply stages emit pipeline lifecycle events; Discover also emits
+one is available. Longer-running progress appears in the dashboard pipeline and
+apply-runs cards, while the Debug tab owns the paginated Recent activity table
+for event-level inspection. Non-apply stages emit pipeline lifecycle events;
+Discover also emits
 source-step events and scheduled discovery-run events for JobSpy, Workday, and
 Smart Extract so a stuck or low-quality source is visible before the request
 finishes. The dashboard source-health card summarizes the local source-quality
@@ -460,6 +461,13 @@ Europe target sets JobSpy's Indeed country to Spain, rejects America-only
 non-remote locations, and hides packaged America-only source rows from discovery
 controls. Discovery `limit` is a new-job budget: already-seen jobs record
 observations but do not consume the cap.
+Title matching uses deterministic exact/alias checks first. When a posting only
+matches a target role loosely and an LLM provider is configured, discovery asks
+the LLM to adjudicate the role family, primary function, seniority, and track
+before keeping the row. This prevents broad-board keyword overlap such as
+finance, vendor, construction, project, product, or sales manager titles from
+entering engineering, platform, security, IT, or technology leadership queues
+just because they contain one target keyword.
 
 Common environment variables:
 
@@ -467,6 +475,14 @@ Common environment variables:
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
 - `LLM_MODEL`: choose the model for the configured provider. Gemini defaults to
   `gemini-3.5-flash`.
+- Pipeline scoring, resume tailoring, and cover-letter generation default to
+  the explicit model spec `gemini:gemini-3.5-flash`; stage-specific tailoring
+  model variables below override that pipeline default.
+- `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER`: controls LLM adjudication for loose
+  discovery title matches. Defaults to `auto`, which enables the check when an
+  LLM provider is configured. Set `0` to force deterministic title matching.
+- `JOBHUNTER_DISCOVERY_ROLE_FILTER_MODEL`: optional model spec for discovery
+  role adjudication; defaults to the configured LLM model.
 - `TAILORING_GENERATOR_MODELS`: optional comma-separated generator model specs
   for resume tailoring.
 - `TAILORING_JUDGE_MODEL`: optional separate judge model spec for resume

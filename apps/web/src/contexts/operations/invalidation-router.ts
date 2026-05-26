@@ -59,6 +59,7 @@ import {
   scoreCorrectedHandler,
   scoreRescoreRequestedHandler,
 } from "../scoring/handlers.js";
+import { activityKeys } from "./activityKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import type { KnownDomainEvent, KnownDomainEventType } from "./types.js";
 
@@ -153,7 +154,11 @@ export function dispatch<K extends KnownDomainEventType>(
   event: Extract<KnownDomainEvent, { eventType: K }>,
 ): readonly InvalidationItem[] {
   const handler = handlers[event.eventType] as InvalidationHandler<typeof event>;
-  return handler(event);
+  const items = handler(event);
+  if (event.eventType === "ApplyRunEventRecorded") {
+    return items;
+  }
+  return [...items, invalidate(activityKeys.lists(event.tenantId))];
 }
 
 export const invalidationRouter: InvalidationRouter = {

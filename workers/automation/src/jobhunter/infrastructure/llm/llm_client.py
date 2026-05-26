@@ -66,9 +66,18 @@ class LlmAdapter:
     the label or in caller-visible metadata.
     """
 
-    def __init__(self, client: LLMClient | None = None) -> None:
-        self._client = client or get_client()
-        self._clients: dict[str, LLMClient] = {"default": self._client}
+    def __init__(self, client: LLMClient | None = None, *, default_model: str | None = None) -> None:
+        if client is not None:
+            self._client = client
+            self._clients: dict[str, LLMClient] = {"default": self._client}
+            return
+
+        provider, selected_model, label = _parse_model_spec(default_model)
+        if label == "default":
+            self._client = get_client()
+        else:
+            self._client = create_client(provider, selected_model)
+        self._clients = {"default": self._client, label: self._client}
 
     @property
     def client(self) -> LLMClient:

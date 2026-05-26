@@ -2,6 +2,8 @@ import type {
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
+  ActivityEventSummary,
+  ActivityListQuery,
   CredentialsResponse,
   DashboardSettings,
   DashboardSummary,
@@ -41,6 +43,8 @@ export type {
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
+  ActivityEventSummary,
+  ActivityListQuery,
   CredentialsResponse,
   DashboardSettings,
   DashboardSummary,
@@ -80,6 +84,7 @@ export type JobId = string;
 export type JobsListInput = Partial<JobListQuery>;
 export type ArtifactsListInput = Partial<ArtifactListQuery>;
 export type WorkflowRunsListInput = Partial<WorkflowRunsListQuery>;
+export type ActivityListInput = Partial<ActivityListQuery>;
 
 export type StageOrAll = Stage | "all";
 export type StageStateOrAll = StageState | "all";

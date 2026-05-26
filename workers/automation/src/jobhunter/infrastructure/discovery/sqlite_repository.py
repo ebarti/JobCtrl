@@ -33,6 +33,7 @@ it natively is deferred to the table-narrowing PR called out by §8.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from jobhunter.domain.discovery.aggregate import Job
@@ -142,7 +143,8 @@ class SqliteJobRepository:
                    d.deleted_at, d.reason
             FROM jobs j
             LEFT JOIN jobhunter_deleted_jobs d
-              ON d.job_url = j.url AND d.restored_at IS NULL
+              ON d.job_url = j.url
+             AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
             WHERE j.url = ?
             LIMIT 1
             """,
@@ -166,7 +168,8 @@ class SqliteJobRepository:
             JOIN job_source_observations o
               ON o.job_url = j.url AND o.tenant_id = ?
             LEFT JOIN jobhunter_deleted_jobs d
-              ON d.job_url = j.url AND d.restored_at IS NULL
+              ON d.job_url = j.url
+             AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
             WHERE o.normalized_observed_url = ?
             LIMIT 1
             """,
@@ -190,7 +193,8 @@ class SqliteJobRepository:
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
                 "LEFT JOIN jobhunter_deleted_jobs d "
-                "  ON d.job_url = j.url AND d.restored_at IS NULL "
+                "  ON d.job_url = j.url "
+                " AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)) "
                 "WHERE d.job_url IS NULL "
                 "ORDER BY j.discovered_at DESC NULLS LAST"
             )
@@ -201,7 +205,8 @@ class SqliteJobRepository:
                 "d.deleted_at, d.reason "
                 "FROM jobs j "
                 "LEFT JOIN jobhunter_deleted_jobs d "
-                "  ON d.job_url = j.url AND d.restored_at IS NULL "
+                "  ON d.job_url = j.url "
+                " AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)) "
                 "ORDER BY j.discovered_at DESC NULLS LAST"
             )
         params: list[Any] = []
@@ -320,18 +325,26 @@ class SqliteJobRepository:
         self._conn.commit()
         return deleted
 
-    def restore(self, tenant_id: TenantId, job_id: JobId) -> Job | None:
+    def restore(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        restored_at: str | None = None,
+    ) -> Job | None:
         existing = self.load(tenant_id, job_id)
         if existing is None:
             return None
         restored = existing.restore()
+        restore_timestamp = _restore_timestamp(restored_at, deleted_at=existing.deleted_at)
         # Mirror the API's restore semantics — set restored_at rather
         # than deleting the tombstone row so audit history is
         # preserved.
         self._conn.execute(
             "UPDATE jobhunter_deleted_jobs SET restored_at = ? "
-            "WHERE job_url = ? AND restored_at IS NULL",
-            (restored.discovered_at, str(restored.job_id)),
+            "WHERE job_url = ? "
+            "AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
+            (restore_timestamp, str(restored.job_id)),
         )
         self._conn.commit()
         return restored
@@ -497,8 +510,6 @@ class SqliteJobRepository:
     ) -> None:
         """Persist (or replace) the canonical identity decision for a Job."""
 
-        from datetime import datetime, timezone
-
         self._conn.execute(
             """
             INSERT INTO job_canonical_identities (
@@ -637,12 +648,13 @@ class SqliteJobRepository:
                 (str(job.job_id), job.deleted_at, job.delete_reason),
             )
         else:
-            # Mark any active tombstone as restored so the soft-delete
-            # filter picks the row back up. Using the discovered_at
-            # gives a stable, audit-friendly timestamp.
+            # Keep legacy active-save behaviour, but timestamp-aware
+            # readers only treat this as restored when the active row
+            # is newer than the tombstone.
             self._conn.execute(
                 "UPDATE jobhunter_deleted_jobs SET restored_at = ? "
-                "WHERE job_url = ? AND restored_at IS NULL",
+                "WHERE job_url = ? "
+                "AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
                 (job.discovered_at, str(job.job_id)),
             )
 
@@ -696,3 +708,21 @@ class SqliteJobRepository:
             deleted_at=(str(deleted_at) if deleted_at else None),
             delete_reason=(str(delete_reason) if delete_reason else None),
         )
+
+
+def _restore_timestamp(restored_at: str | None, *, deleted_at: str | None) -> str:
+    candidate = str(restored_at or "").strip() or datetime.now(timezone.utc).isoformat()
+    if deleted_at and _timestamp_lte(candidate, str(deleted_at)):
+        return datetime.now(timezone.utc).isoformat()
+    return candidate
+
+
+def _timestamp_lte(left: str, right: str) -> bool:
+    try:
+        return _parse_iso(left) <= _parse_iso(right)
+    except ValueError:
+        return False
+
+
+def _parse_iso(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

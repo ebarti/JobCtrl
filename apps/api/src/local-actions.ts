@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import {
+  DEFAULT_PIPELINE_LLM_MODEL,
   PIPELINE_ACTION_JOB_KEY,
   type ActionCommandPayload,
   type ActionRunResponse,
@@ -350,6 +351,7 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     retailor: Boolean(command.retailor),
     headless: Boolean(command.headless),
     model: command.model ?? "default",
+    llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     continuous: Boolean(command.continuous),
   };
   if (command.tailorModels && command.tailorModels.length > 0) {

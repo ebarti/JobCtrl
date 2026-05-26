@@ -18,10 +18,10 @@ import time
 import httpx
 
 from jobhunter.infrastructure.observability.llm_spans import llm_generation_span
+from jobhunter.model_defaults import DEFAULT_GEMINI_MODEL
 
 log = logging.getLogger(__name__)
 
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_LOCAL_MODEL = "local-model"
 

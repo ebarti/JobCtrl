@@ -318,10 +318,11 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
 ) -> None:
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
+    current_time = "2026-05-12T00:00:00Z"
     use_case = DiscoverJobsUseCase(
         repository=repo,
         publisher=publisher,
-        clock=lambda: "2026-05-12T00:00:00Z",
+        clock=lambda: current_time,
     )
 
     summary = use_case.execute(
@@ -354,10 +355,11 @@ def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
 ) -> None:
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
+    current_time = "2026-05-12T00:00:00Z"
     use_case = DiscoverJobsUseCase(
         repository=repo,
         publisher=publisher,
-        clock=lambda: "2026-05-12T00:00:00Z",
+        clock=lambda: current_time,
     )
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
     publisher.events.clear()
@@ -395,10 +397,11 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
 ) -> None:
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
+    current_time = "2026-05-12T00:00:00Z"
     use_case = DiscoverJobsUseCase(
         repository=repo,
         publisher=publisher,
-        clock=lambda: "2026-05-12T00:00:00Z",
+        clock=lambda: current_time,
     )
     use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
     repo.soft_delete(
@@ -407,6 +410,7 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
         reason="not relevant right now",
         deleted_at="2026-05-13T00:00:00Z",
     )
+    current_time = "2026-05-14T00:00:00Z"
 
     summary = use_case.execute(
         tenant_id=LOCAL_TENANT,
@@ -436,7 +440,7 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
         ("https://boards.greenhouse.io/acme/jobs/123",),
     ).fetchone()
     assert tombstone is not None
-    assert tombstone["restored_at"] == "2026-05-12T00:00:00Z"
+    assert tombstone["restored_at"] == "2026-05-14T00:00:00Z"
 
 
 def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_blank(

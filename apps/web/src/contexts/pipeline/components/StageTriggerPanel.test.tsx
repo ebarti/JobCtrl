@@ -1,4 +1,4 @@
-import { PIPELINE_RUN_STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
+import { DEFAULT_PIPELINE_LLM_MODEL, PIPELINE_RUN_STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,11 +15,11 @@ describe("StageTriggerPanel", () => {
     useStageTriggerStore.getState().reset();
   });
 
-  it("defaults to the Discover tab with dry-run enabled", () => {
+  it("defaults to the Discover tab with dry-run enabled", async () => {
     renderWithProviders(<StageTriggerPanel />);
 
     expect(screen.getByLabelText("Dry run")).toBeChecked();
-    expect(screen.getByRole("button", { name: "Run Discover" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
   });
 
   it("blocks stage runs when the Temporal worker heartbeat is missing", async () => {
@@ -47,6 +47,42 @@ describe("StageTriggerPanel", () => {
       "No Temporal worker heartbeat has been written to the API database.",
     );
     await user.click(screen.getByRole("button", { name: "Worker unavailable" }));
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
+
+  it("rechecks worker runtime health immediately before dispatching a stage run", async () => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn();
+    const health = vi
+      .fn()
+      .mockResolvedValueOnce(sampleHealthResponse)
+      .mockResolvedValueOnce({
+        ...sampleHealthResponse,
+        worker: {
+          ...sampleHealthResponse.worker,
+          status: "mismatched" as const,
+          message:
+            "Temporal worker runtime does not match the API runtime: worker DB /tmp/old.db, API DB /tmp/new.db.",
+        },
+      });
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          health,
+          runPipelineStages,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("button", { name: "Run Discover" })).toBeEnabled();
+
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+
+    await waitFor(() => expect(health).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Worker unavailable" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Temporal worker runtime does not match the API runtime",
+    );
     expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
@@ -164,6 +200,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: false,
       },
@@ -178,7 +215,7 @@ describe("StageTriggerPanel", () => {
     await user.clear(limitInput);
     await user.type(limitInput, "1000");
     await user.click(screen.getByLabelText("Dry run"));
-    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
     await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
     const request = runPipelineStages.mock.calls[0]?.[0];
@@ -195,6 +232,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeModel: undefined,
       headless: false,
       model: "default",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
@@ -219,6 +257,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: true,
         model: "sonnet",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: true,
       },
@@ -240,6 +279,7 @@ describe("StageTriggerPanel", () => {
             dryRun: true,
             headless: true,
             model: "sonnet",
+            llmModel: DEFAULT_PIPELINE_LLM_MODEL,
             continuous: true,
           },
         },
@@ -276,6 +316,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeModel: undefined,
       headless: true,
       model: "sonnet",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: true,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
@@ -301,6 +342,7 @@ describe("StageTriggerPanel", () => {
         retailor: true,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
         tailorJudgeModel: "local:judge",
         tailorJudgeMinScore: 0.9,
@@ -342,6 +384,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeMinScore: 0.9,
       headless: false,
       model: "default",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
     });
   });
@@ -365,6 +408,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: ["local:fast"],
         tailorJudgeModel: "local:judge",
         continuous: false,
@@ -395,6 +439,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeModel: "local:judge",
       headless: false,
       model: "default",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
@@ -407,7 +452,7 @@ describe("StageTriggerPanel", () => {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Starting Discover... waiting for local worker response.",
@@ -441,7 +486,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    await user.click(screen.getByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Discover in progress: Discovery source workday started (#538).",
@@ -496,6 +541,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: false,
       },

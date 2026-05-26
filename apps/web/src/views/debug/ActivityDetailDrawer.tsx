@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { useActivityEventQuery } from "../../contexts/operations/hooks/useActivityEventQuery.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
+import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
 
@@ -14,15 +15,20 @@ export interface ActivityDetailDrawerProps {
 export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
   const navigate = useNavigate();
   const close = useCallback(() => {
-    void navigate({ to: "/dashboard" });
+    void navigate({ to: "/debug" });
   }, [navigate]);
   useEscapeKey(true, close);
 
   const { data: activity } = useActivityEventQuery(eventId);
 
   return (
-    <div className="drawer-backdrop">
-      <aside className="drawer detail-drawer">
+    <DetailDrawerBackdrop onDismiss={close}>
+      <div
+        className="drawer detail-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Activity details"
+      >
         <button
           aria-label="Close activity details"
           className="drawer-close"
@@ -71,7 +77,7 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
             </Section>
           </>
         )}
-      </aside>
-    </div>
+      </div>
+    </DetailDrawerBackdrop>
   );
 }

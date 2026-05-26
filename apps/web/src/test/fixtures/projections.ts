@@ -1,6 +1,7 @@
 import type {
   ArtifactDetail,
   ArtifactSummary,
+  ActivityEventSummary,
   CredentialsResponse,
   DashboardSummary,
   JobDetail,
@@ -217,6 +218,26 @@ export function makeArtifactsPage(items: readonly ArtifactSummary[] = [sampleArt
   };
 }
 
+export function makeActivityPage(
+  items: readonly ActivityEventSummary[] = sampleDashboardSummary.activity,
+  page = 1,
+  pageSize = 50,
+  total = items.length,
+): PaginatedResponse<ActivityEventSummary> {
+  return {
+    ok: true,
+    items: [...items],
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pages: Math.max(1, Math.ceil(total / pageSize)),
+    },
+    sort: { field: "occurred_at", dir: "desc" },
+    filter: {},
+  };
+}
+
 export function makeArtifactDetail(artifact: ArtifactSummary = sampleArtifact): ArtifactDetail {
   return { ok: true, artifact };
 }
@@ -226,10 +247,12 @@ export const sampleDashboardSummary: DashboardSummary = {
   generatedAt: "2026-05-06T08:00:00Z",
   totals: {
     jobs: 12,
+    jobsToday: 2,
     failures: 1,
     blocked: 0,
     ready: 5,
     applied: 3,
+    appliedToday: 1,
     dryRuns: 2,
   },
   funnel: [

@@ -1,5 +1,5 @@
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type {
   JobSummary,
@@ -40,6 +40,9 @@ export function JobsTable({
   onPageSizeChange,
   onOpenJob,
 }: JobsTableProps) {
+  const [selectionAnchorJobKey, setSelectionAnchorJobKey] = useState<
+    string | null
+  >(null);
   const displayedRowSelection = useMemo<RowSelectionState>(() => {
     if (!allMatchingSelected) {
       return rowSelection;
@@ -50,13 +53,20 @@ export function JobsTable({
     }
     return next;
   }, [allMatchingSelected, data?.items, rowSelection]);
+  useEffect(() => {
+    if (!allMatchingSelected && !Object.values(rowSelection).some(Boolean)) {
+      setSelectionAnchorJobKey(null);
+    }
+  }, [allMatchingSelected, rowSelection]);
   const columns = useMemo(
     () =>
       jobColumns({
         rowSelection: displayedRowSelection,
         onRowSelectionChange,
+        selectionAnchorJobKey,
+        onSelectionAnchorChange: setSelectionAnchorJobKey,
       }),
-    [displayedRowSelection, onRowSelectionChange],
+    [displayedRowSelection, onRowSelectionChange, selectionAnchorJobKey],
   );
   const gridSort = useMemo<DataGridSortState>(() => {
     const head = sorting[0];

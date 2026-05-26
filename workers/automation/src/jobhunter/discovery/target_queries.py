@@ -6,13 +6,14 @@ import re
 from dataclasses import dataclass
 from collections.abc import Iterable, Mapping, Sequence
 
-from jobhunter.discovery.title_filter import normalize_query
+from jobhunter.discovery.title_filter import RoleTitleMatchAdjudicator, normalize_query
 from jobhunter.discovery.title_filter import title_matches_query
 
 
 RECALL_MATCH_MODE = "recall"
 
 _RECALL_QUERY_LIMIT = 14
+_AUTO_ROLE_MATCHER = object()
 
 _QUERY_DEDUPE_STOPWORDS = {
     "a",
@@ -257,22 +258,28 @@ def query_specs_for_source(
     return result
 
 
-def title_matches_any_query(title: str | None, queries: Iterable[Mapping[str, object]]) -> bool:
+def title_matches_any_query(
+    title: str | None,
+    queries: Iterable[Mapping[str, object]],
+    *,
+    role_matcher: RoleTitleMatchAdjudicator | None | object = _AUTO_ROLE_MATCHER,
+) -> bool:
     """Return whether a title matches at least one exact or recall query spec."""
 
     materialized = list(queries)
     if not materialized:
         return True
-    return any(
-        title_matches_query(
-            title,
-            str(item.get("query") or ""),
-            match_mode=str(item.get("match_mode") or "strict"),
-            target_track=str(item.get("target_track") or "") or None,
-            seniority_floor=str(item.get("seniority_floor") or "") or None,
-        )
-        for item in materialized
-    )
+    for item in materialized:
+        kwargs = {
+            "match_mode": str(item.get("match_mode") or "strict"),
+            "target_track": str(item.get("target_track") or "") or None,
+            "seniority_floor": str(item.get("seniority_floor") or "") or None,
+        }
+        if role_matcher is not _AUTO_ROLE_MATCHER:
+            kwargs["role_matcher"] = role_matcher
+        if title_matches_query(title, str(item.get("query") or ""), **kwargs):
+            return True
+    return False
 
 
 def _recall_queries_for_roles(

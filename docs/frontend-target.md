@@ -316,13 +316,15 @@ graph TB
     end
 
     subgraph "View composers (NOT bounded contexts)"
-        VD["views/dashboard/<br/>KpiGrid, Funnel, ActivityFeed"]
+        VD["views/dashboard/<br/>KpiGrid, Funnel"]
+        VDBG["views/debug/<br/>DebugActivityTable, FilterBar"]
         VJ["views/jobs/<br/>JobsTable, FilterBar, BulkActions, DetailDrawer"]
         VA["views/artifacts/<br/>ArtifactsTable, FilterBar, DetailPanel"]
     end
 
     subgraph "Routes (URL → typed search params)"
         RD["/dashboard"]
+        RDBG["/debug"]
         RJ["/jobs + /jobs/$jobId"]
         RA["/artifacts + /artifacts/$artifactId"]
         RP["/profile (+/import wizard)"]
@@ -697,7 +699,8 @@ another view (cross-view navigation goes through the URL).
 
 | View | Composition |
 |---|---|
-| `views/dashboard/` | `<KpiGrid>` (operations: `useDashboardSummaryQuery`), `<Funnel>` (operations + pipeline `<StageBadge>`), `<ActivityFeed>` (operations data; per-event-type rows dispatched to context-owned row components), `<ApplyRunsCard>` (operations: `useApplyRunsListQuery`, apply `<ApplyRunBadge>`). |
+| `views/dashboard/` | `<KpiGrid>` (operations: `useDashboardSummaryQuery`), `<Funnel>` (operations + pipeline `<StageBadge>`), `<ApplyRunsCard>` (operations: `useApplyRunsListQuery`, apply `<ApplyRunBadge>`). |
+| `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (binds to URL state), activity-detail navigation for event inspection. |
 | `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`), `<JobFilterBar>` (binds to URL state), `<JobBulkActions>` (discovery: `useDeleteJobsBulkMutation` / `useRestoreJobsBulkMutation`), `<JobDetailDrawer>` (composes `<JobOverview>` + `<ScoreBreakdown>` + `<StageTimeline>` + `<ArtifactGroup>` + `<ApplyHistory>` + `<JobActions>`). |
 | `views/artifacts/` | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`, materials: `useOpenArtifactMutation`). |
 
@@ -975,7 +978,8 @@ do not own queries, mutations, or persistent stores. They own:
 
 | View | Owned files | Composes from |
 |---|---|---|
-| `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `Funnel.tsx`, `ActivityFeed.tsx`, `ApplyRunsCard.tsx` | operations (`useDashboardSummaryQuery`, `useApplyRunsListQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`); per-event-type row components contributed by the contexts that own them |
+| `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `Funnel.tsx`, `ApplyRunsCard.tsx` | operations (`useDashboardSummaryQuery`, `useApplyRunsListQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`) |
+| `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `activity-columns.tsx` | operations (`useActivityListQuery`); URL-bound event search, sorting, and pagination |
 | `views/jobs/` | `JobsView.tsx` (assembles table + filter + bulk-actions toolbar), `JobsTable.tsx`, `JobFilterBar.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx` | operations (`useJobsListQuery`, `useJobDetailQuery`); discovery (`useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`); scoring (`<ScoreBadge>`, `<ScoreBreakdown>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<GenerateMaterialsButton>`); apply (`<ApplyButton>`, `<DryRunButton>`, `<ApplyHistory>`); artifacts grouping (`<ArtifactGroup>` from `views/artifacts/` since the grouping component is itself view-level) |
 | `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `ArtifactGroup.tsx` (grouping helper used by Jobs drawer) | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`) |
 
@@ -2359,9 +2363,13 @@ apps/web/
 │   │   │   ├── DashboardView.tsx
 │   │   │   ├── KpiGrid.tsx
 │   │   │   ├── Funnel.tsx
-│   │   │   ├── ActivityFeed.tsx
 │   │   │   ├── ApplyRunsCard.tsx
 │   │   │   └── index.ts
+│   │   ├── debug/
+│   │   │   ├── DebugView.tsx
+│   │   │   ├── DebugActivityTable.tsx     # paginated activity table
+│   │   │   ├── DebugFilterBar.tsx         # binds to URL via useSearch
+│   │   │   └── activity-columns.tsx
 │   │   ├── jobs/
 │   │   │   ├── JobsView.tsx
 │   │   │   ├── JobsTable.tsx              # shared data grid

@@ -551,6 +551,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
       if (job.url) dirtyJobs.add(job.url);
     }
   }
+  for (const jobUrl of staleDeletedProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobUrl);
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
@@ -908,10 +911,26 @@ function loadDeletedAt(db: SqliteDatabase, jobUrl: string): string | null {
   if (!tableExists(db, "jobhunter_deleted_jobs")) return null;
   const row = getRow<{ deleted_at: string | null }>(
     db,
-    "SELECT deleted_at FROM jobhunter_deleted_jobs WHERE job_url = ? AND restored_at IS NULL",
+    "SELECT deleted_at FROM jobhunter_deleted_jobs WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
     [jobUrl],
   );
   return row ? nullableString(row.deleted_at) : null;
+}
+
+function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  if (!tableExists(db, "jobhunter_deleted_jobs")) return [];
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT p.job_id
+     FROM job_list_projections p
+     JOIN jobhunter_deleted_jobs d
+       ON d.job_url = p.job_id
+     WHERE p.tenant_id = ?
+       AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+       AND (p.deleted_at IS NULL OR p.deleted_at != d.deleted_at)`,
+    [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
 }
 
 interface StageRow extends Record<string, unknown> {
@@ -1366,7 +1385,7 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   if (tableExists(db, "apply_run_projections")) {
     if (tableExists(db, "jobhunter_deleted_jobs") || tableExists(db, "jobhunter_hidden_jobs")) {
       const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
-        ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
+        ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
         : "";
       const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
         ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"

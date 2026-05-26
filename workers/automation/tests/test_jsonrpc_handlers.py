@@ -17,6 +17,7 @@ from jobhunter.domain.rpc.messages import (
 from jobhunter.infrastructure.rpc import handlers as handlers_mod
 from jobhunter.infrastructure.rpc.handlers import register_default_handlers
 from jobhunter.infrastructure.rpc.server import JsonRpcServer
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 
 
@@ -294,6 +295,7 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         tailor_models=("local:draft-a", "openai:draft-b"),
         tailor_judge_model="gemini:judge-c",
         tailor_judge_min_score=0.9,
+        llm_model=DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     )
 
 

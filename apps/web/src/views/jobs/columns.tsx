@@ -1,4 +1,4 @@
-import { type ChangeEvent, type MouseEvent } from "react";
+import { type ChangeEvent, type MouseEvent, useRef } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
@@ -9,6 +9,7 @@ import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import type { JobSummary } from "../../contexts/operations/types.js";
 import type {
   DataGridColumn,
+  DataGridCellContext,
   DataGridHeaderContext,
 } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
@@ -17,6 +18,8 @@ import { TitleStack } from "../../shared/ui/title-stack.js";
 interface JobColumnsOptions {
   rowSelection: RowSelectionState;
   onRowSelectionChange: (next: RowSelectionState) => void;
+  selectionAnchorJobKey: string | null;
+  onSelectionAnchorChange: (jobKey: string) => void;
 }
 
 function updateSelectedRows(
@@ -37,12 +40,33 @@ function updateSelectedRows(
 }
 
 function updateSelectedRow(
-  rowSelection: RowSelectionState,
-  onRowSelectionChange: (next: RowSelectionState) => void,
+  {
+    rowSelection,
+    onRowSelectionChange,
+    selectionAnchorJobKey,
+    onSelectionAnchorChange,
+  }: JobColumnsOptions,
   row: JobSummary,
   checked: boolean,
+  shiftKey: boolean,
+  pageRows: readonly JobSummary[],
 ) {
-  updateSelectedRows(rowSelection, onRowSelectionChange, [row], checked);
+  const anchorIndex = pageRows.findIndex(
+    (pageRow) => pageRow.jobKey === selectionAnchorJobKey,
+  );
+  const rowIndex = pageRows.findIndex(
+    (pageRow) => pageRow.jobKey === row.jobKey,
+  );
+  const rows =
+    shiftKey && anchorIndex >= 0 && rowIndex >= 0
+      ? pageRows.slice(
+          Math.min(anchorIndex, rowIndex),
+          Math.max(anchorIndex, rowIndex) + 1,
+        )
+      : [row];
+
+  updateSelectedRows(rowSelection, onRowSelectionChange, rows, checked);
+  onSelectionAnchorChange(row.jobKey);
 }
 
 function selectHeader(
@@ -56,25 +80,88 @@ function selectHeader(
     Boolean(rowSelection[row.jobKey]),
   );
   return (
-    <input
-      type="checkbox"
-      aria-label="Select all rows on this page"
-      checked={allSelected}
-      ref={(node) => {
-        if (node) {
-          node.indeterminate = someSelected && !allSelected;
+    <span
+      className="row-check-hitbox"
+      onClick={(event: MouseEvent<HTMLSpanElement>) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) {
+          updateSelectedRows(
+            rowSelection,
+            onRowSelectionChange,
+            pageRows,
+            !allSelected,
+          );
         }
       }}
-      onChange={(event: ChangeEvent<HTMLInputElement>) =>
-        updateSelectedRows(
-          rowSelection,
-          onRowSelectionChange,
-          pageRows,
-          event.target.checked,
-        )
-      }
-      onClick={(event: MouseEvent) => event.stopPropagation()}
-    />
+    >
+      <input
+        type="checkbox"
+        aria-label="Select all rows on this page"
+        checked={allSelected}
+        ref={(node) => {
+          if (node) {
+            node.indeterminate = someSelected && !allSelected;
+          }
+        }}
+        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+          updateSelectedRows(
+            rowSelection,
+            onRowSelectionChange,
+            pageRows,
+            event.target.checked,
+          )
+        }
+        onClick={(event: MouseEvent) => event.stopPropagation()}
+      />
+    </span>
+  );
+}
+
+interface RowSelectionControlProps {
+  context: DataGridCellContext<JobSummary>;
+  options: JobColumnsOptions;
+  row: JobSummary;
+}
+
+function RowSelectionControl({
+  context,
+  options,
+  row,
+}: RowSelectionControlProps) {
+  const shiftKeyRef = useRef(false);
+  const checked = Boolean(options.rowSelection[row.jobKey]);
+  const updateRow = (nextChecked: boolean, shiftKey: boolean) =>
+    updateSelectedRow(options, row, nextChecked, shiftKey, context.pageRows);
+
+  return (
+    <span
+      className="row-check-hitbox"
+      onClick={(event: MouseEvent<HTMLSpanElement>) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) {
+          updateRow(!checked, event.shiftKey);
+        }
+      }}
+    >
+      <input
+        type="checkbox"
+        aria-label={`Select ${row.title}`}
+        checked={checked}
+        onPointerDown={(event) => {
+          shiftKeyRef.current = event.shiftKey;
+        }}
+        onKeyDown={(event) => {
+          if (event.key === " " || event.key === "Enter") {
+            shiftKeyRef.current = event.shiftKey;
+          }
+        }}
+        onChange={(event: ChangeEvent<HTMLInputElement>) => {
+          updateRow(event.target.checked, shiftKeyRef.current);
+          shiftKeyRef.current = false;
+        }}
+        onClick={(event: MouseEvent) => event.stopPropagation()}
+      />
+    </span>
   );
 }
 
@@ -88,21 +175,8 @@ export function jobColumns(
       header: (context) => selectHeader(options, context),
       className: "row-check",
       headerClassName: "row-check",
-      render: (row) => (
-        <input
-          type="checkbox"
-          aria-label={`Select ${row.title}`}
-          checked={Boolean(options.rowSelection[row.jobKey])}
-          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-            updateSelectedRow(
-              options.rowSelection,
-              options.onRowSelectionChange,
-              row,
-              event.target.checked,
-            )
-          }
-          onClick={(event: MouseEvent) => event.stopPropagation()}
-        />
+      render: (row, context) => (
+        <RowSelectionControl context={context} options={options} row={row} />
       ),
     },
     {

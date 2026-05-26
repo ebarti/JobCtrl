@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 
-import { STAGES } from "./schemas.js";
+import { DEFAULT_PIPELINE_LLM_MODEL, STAGES } from "./schemas.js";
 
 /* ------------------------------------------------------------------ codes */
 
@@ -166,6 +166,7 @@ export const RunStageParamsSchema = z
     retailor: z.boolean().default(false),
     headless: z.boolean().default(false),
     model: z.string().trim().min(1).max(80).default("default"),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
     tailorJudgeMinScore: z.number().min(0).max(1).optional(),

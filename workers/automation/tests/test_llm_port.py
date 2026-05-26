@@ -91,6 +91,24 @@ def test_llm_adapter_routes_default_model_without_mismatch_error() -> None:
     assert response == "ok"
 
 
+def test_llm_adapter_can_pin_its_default_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    routed = _FakeClient(response="routed", model="gemini-3.5-flash")
+    created: list[tuple[str | None, str | None]] = []
+
+    def fake_create_client(provider: str | None = None, model: str | None = None) -> _FakeClient:
+        created.append((provider, model))
+        return routed
+
+    monkeypatch.setattr(adapter_module, "create_client", fake_create_client)
+    adapter = LlmAdapter(default_model="gemini:gemini-3.5-flash")
+
+    response = adapter.chat([LlmMessage(role="user", content="hi")])
+
+    assert response == "routed"
+    assert adapter.model == "gemini-3.5-flash"
+    assert created == [("gemini", "gemini-3.5-flash")]
+
+
 def test_llm_adapter_routes_explicit_provider_model(monkeypatch: pytest.MonkeyPatch) -> None:
     default = _FakeClient(model="default-model")
     routed = _FakeClient(response="routed", model="judge-model")

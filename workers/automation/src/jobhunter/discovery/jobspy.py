@@ -635,7 +635,8 @@ def _find_content_duplicate_survivor(
         FROM jobs j
         LEFT JOIN job_enrichments je ON je.job_url = j.url
         LEFT JOIN jobhunter_deleted_jobs d
-          ON d.job_url = j.url AND d.restored_at IS NULL
+          ON d.job_url = j.url
+         AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
         WHERE 1 = 1
           {self_filter}
           AND lower(trim(COALESCE(j.title, ''))) = ?

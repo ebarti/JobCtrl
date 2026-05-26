@@ -457,7 +457,9 @@ export function restoreJobs(db: SqliteDatabase, request: BulkJobMutationRequest)
   ensureDeletedJobsTable(db);
   const restoredAt = new Date().toISOString();
   const jobKeys = mutableJobKeys(db, request);
-  const statement = db.prepare("UPDATE jobhunter_deleted_jobs SET restored_at = ? WHERE job_url = ? AND restored_at IS NULL");
+  const statement = db.prepare(
+    "UPDATE jobhunter_deleted_jobs SET restored_at = ? WHERE job_url = ? AND (restored_at IS NULL OR julianday(restored_at) <= julianday(deleted_at))",
+  );
   const transaction = db.transaction((keys: string[]) => {
     for (const jobUrl of keys) {
       statement.run(restoredAt, jobUrl);

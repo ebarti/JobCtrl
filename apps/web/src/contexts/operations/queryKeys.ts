@@ -1,4 +1,5 @@
 export { jobsKeys } from "./jobsKeys.js";
+export { activityKeys } from "./activityKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
 export { applyRunsKeys } from "./applyRunsKeys.js";

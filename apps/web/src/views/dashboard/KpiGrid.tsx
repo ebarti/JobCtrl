@@ -32,16 +32,52 @@ export function kpiSearchFor(target: KpiTarget): JobsSearch {
 const ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly key: keyof DashboardSummary["totals"];
-  readonly caption: string;
+  readonly caption: (summary: DashboardSummary) => string;
   readonly target: KpiTarget;
   readonly tone: string;
 }> = [
-  { label: "Jobs", key: "jobs", caption: "+0 today", target: "all", tone: "" },
-  { label: "Failures", key: "failures", caption: "needs retry", target: "failed", tone: "alert" },
-  { label: "Blocked", key: "blocked", caption: "needs review", target: "blocked", tone: "warn" },
-  { label: "Ready", key: "ready", caption: "ready queue", target: "ready", tone: "ok" },
-  { label: "Applied", key: "applied", caption: "+0 today", target: "all", tone: "" },
-  { label: "Dry runs", key: "dryRuns", caption: "today excluded", target: "all", tone: "" },
+  {
+    label: "Jobs",
+    key: "jobs",
+    caption: (summary) => `+${summary.totals.jobsToday} today`,
+    target: "all",
+    tone: "",
+  },
+  {
+    label: "Failures",
+    key: "failures",
+    caption: () => "needs retry",
+    target: "failed",
+    tone: "alert",
+  },
+  {
+    label: "Blocked",
+    key: "blocked",
+    caption: () => "needs review",
+    target: "blocked",
+    tone: "warn",
+  },
+  {
+    label: "Ready",
+    key: "ready",
+    caption: () => "ready queue",
+    target: "ready",
+    tone: "ok",
+  },
+  {
+    label: "Applied",
+    key: "applied",
+    caption: (summary) => `+${summary.totals.appliedToday} today`,
+    target: "all",
+    tone: "",
+  },
+  {
+    label: "Dry runs",
+    key: "dryRuns",
+    caption: () => "today excluded",
+    target: "all",
+    tone: "",
+  },
 ];
 
 export interface KpiGridProps {
@@ -61,7 +97,7 @@ export function KpiGrid({ summary }: KpiGridProps) {
         >
           <span className="kpi-lbl">{label}</span>
           <span className="kpi-val">{summary.totals[key]}</span>
-          <span className="kpi-delta">{caption}</span>
+          <span className="kpi-delta">{caption(summary)}</span>
         </button>
       ))}
     </section>

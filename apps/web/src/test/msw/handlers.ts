@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw";
 
 import {
   makeArtifactDetail,
+  makeActivityPage,
   makeArtifactsPage,
   makeJobDetail,
   makeJobsPage,
@@ -54,6 +55,16 @@ const sampleDiscoverySource = {
 export const handlers = [
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
+  http.get("*/v1/debug/activity", () =>
+    HttpResponse.json(makeActivityPage(sampleDashboardSummary.activity)),
+  ),
+  http.get("*/v1/debug/activity/:eventId", ({ params }) => {
+    const event =
+      sampleDashboardSummary.activity.find((entry) => entry.eventId === String(params["eventId"])) ?? null;
+    return event
+      ? HttpResponse.json({ ok: true, event })
+      : HttpResponse.json({ ok: false, error: "activity_event_not_found" }, { status: 404 });
+  }),
   http.get("*/v1/discovery/sources", () =>
     HttpResponse.json({ ok: true, sources: [sampleDiscoverySource] }),
   ),

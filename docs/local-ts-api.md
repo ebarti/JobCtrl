@@ -138,10 +138,12 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
 `validationMode`, `dryRun`, score/tailor flags (`rescore`, `retailor`), and
-tailoring LLM controls (`tailorModels`, `tailorJudgeModel`,
-`tailorJudgeMinScore`), and apply flags (`headless`, `model`, `continuous`).
-`model` remains apply-only; the tailoring generator and judge specs are
-separate fields. The route dispatches the ordered stage list to JSON-RPC
+the default pipeline LLM model (`llmModel`, default
+`gemini:gemini-3.5-flash`), tailoring LLM controls (`tailorModels`,
+`tailorJudgeModel`, `tailorJudgeMinScore`), and apply flags (`headless`,
+`model`, `continuous`). `model` remains apply-only; scoring, tailoring, and
+cover generation use `llmModel` unless a tailoring generator or judge override
+is supplied. The route dispatches the ordered stage list to JSON-RPC
 `run_stage`, which starts `JobPipelineWorkflow`; if the list includes `apply`,
 that workflow delegates the apply step to `ApplyWorkflow` as a child workflow
 after preceding stages complete. The route uses the command key `pipeline` only
@@ -208,9 +210,12 @@ Smart Extract source steps. Those event types are part of the SSE domain
 catalog, so the dashboard can refresh recent activity and source health while a
 long synchronous stage request is still running.
 
-`GET /v1/dashboard/summary` includes `activity[].eventType` for those rows so
-the web UI can render started, completed, and failed stage states from backend
-events instead of local button state alone.
+`GET /v1/dashboard/summary` includes a bounded recent `activity[]` slice with
+`activity[].eventType` so the web UI can render started, completed, and failed
+stage states from backend events instead of local button state alone. The
+top-level Debug tab uses `GET /v1/debug/activity` for the full activity log as a
+paginated, sortable table; this keeps Dashboard lightweight without imposing an
+event-history cap.
 
 ## Related Packages
 

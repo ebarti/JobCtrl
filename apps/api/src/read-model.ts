@@ -17,6 +17,8 @@
 import fs from "node:fs";
 
 import type {
+  ActivityEventSummary,
+  ActivityListQuery,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
@@ -248,6 +250,15 @@ const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   fit_score: "COALESCE(fit_score, -1)",
 };
 
+const SQL_ACTIVITY_SORT_COLUMNS: Partial<Record<string, string>> = {
+  occurred_at: "e.occurred_at",
+  event_id: "e.event_id",
+  stage: "LOWER(e.stage)",
+  level: "LOWER(e.level)",
+  event_type: "LOWER(event_type)",
+  message: "LOWER(e.message)",
+};
+
 export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   refreshProjections(db, DEFAULT_TENANT);
   const dashboardRow = getRow<DashboardProjectionRow>(
@@ -257,15 +268,18 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
   );
   const dashboard = dashboardRow ?? defaultDashboardRow();
   const operationalMetrics = buildOperationalMetrics(db);
+  const todayMetrics = dashboardTodayMetrics(db);
   return {
     ok: true,
     generatedAt: dashboard.generated_at || new Date().toISOString(),
     totals: {
       jobs: Number(dashboard.total_jobs ?? 0),
+      jobsToday: todayMetrics.jobsToday,
       failures: Number(dashboard.failures ?? 0),
       blocked: Number(dashboard.blocked ?? 0),
       ready: Number(dashboard.ready ?? 0),
       applied: Number(dashboard.applied ?? 0),
+      appliedToday: todayMetrics.appliedToday,
       dryRuns: Number(dashboard.dry_runs ?? 0),
     },
     funnel: parseFunnel(dashboard.funnel_json),
@@ -273,6 +287,40 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     sourceHealth: listSourceHealth(db),
     operationalMetrics,
     applyRuns: recentApplyRuns(db),
+  };
+}
+
+function localDateKey(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function dashboardTodayMetrics(
+  db: SqliteDatabase,
+): Pick<DashboardSummary["totals"], "jobsToday" | "appliedToday"> {
+  const activeFilter = jobSqlFilter(db, {
+    page: 1,
+    pageSize: 1,
+    q: "",
+    sort: "discovered_at",
+    dir: "desc",
+    deleted: "active",
+    source: "",
+    company: "",
+  });
+  const rows = allRows<{ discovered_at: string | null; applied_at: string | null }>(
+    db,
+    `SELECT discovered_at, applied_at FROM job_list_projections${activeFilter.where}`,
+    activeFilter.params,
+  );
+  const today = localDateKey(new Date());
+  return {
+    jobsToday: rows.filter((row) => localDateKey(row.discovered_at) === today).length,
+    appliedToday: rows.filter((row) => localDateKey(row.applied_at) === today).length,
   };
 }
 
@@ -370,7 +418,7 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
   refreshProjections(db, DEFAULT_TENANT);
   const normalizedQuery = query.q.toLowerCase();
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ap.job_id AND d.restored_at IS NULL"
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = ap.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
     : "";
   const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
     ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = ap.job_id AND h.unhidden_at IS NULL"
@@ -397,6 +445,19 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
     status: query.status,
     type: query.type,
   });
+}
+
+export function listActivity(
+  db: SqliteDatabase,
+  query: ActivityListQuery,
+): PaginatedResponse<ActivityEventSummary> {
+  refreshProjections(db, DEFAULT_TENANT);
+  return listActivityFromEvents(db, query);
+}
+
+export function getActivityEvent(db: SqliteDatabase, eventId: string): ActivityEventSummary | null {
+  refreshProjections(db, DEFAULT_TENANT);
+  return getActivityEventFromEvents(db, eventId);
 }
 
 export function getArtifactDetail(db: SqliteDatabase, artifactId: string): ArtifactDetail | null {
@@ -1216,11 +1277,12 @@ function countJobProjections(
   db: SqliteDatabase,
   filter: { where: string; params: SqliteValue[] },
 ): number {
-  const row = getRow<{ count: number }>(
-    db,
-    `SELECT COUNT(*) AS count FROM job_list_projections${filter.where}`,
-    filter.params,
-  );
+  const row = getRow<{ count: number }>(db, `SELECT COUNT(*) AS count FROM job_list_projections${filter.where}`, filter.params);
+  return Number(row?.count ?? 0);
+}
+
+function countRows(db: SqliteDatabase, sql: string, params: SqliteValue[]): number {
+  const row = getRow<{ count: number }>(db, sql, params);
   return Number(row?.count ?? 0);
 }
 
@@ -1382,11 +1444,30 @@ function paginateWithTotal<T>(
 }
 
 function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
-  if (!tableExists(db, "job_events")) return [];
+  return listActivityFromEvents(db, {
+    page: 1,
+    pageSize: 50,
+    sort: "occurred_at",
+    dir: "desc",
+    q: "",
+    level: "",
+    stage: "",
+    eventType: "",
+  }).items;
+}
+
+function listActivityFromEvents(
+  db: SqliteDatabase,
+  query: ActivityListQuery,
+): PaginatedResponse<ActivityEventSummary> {
+  if (!tableExists(db, "job_events")) {
+    return paginateWithTotal([], 0, 1, query.pageSize, query.sort, query.dir, activityFilterPayload(query));
+  }
   const eventColumns = columnNames(db, "job_events");
   const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
+  const eventTypePredicate = eventColumns.has("event_type") ? "COALESCE(e.event_type, '')" : "'Event'";
   const hideDeletedJoin = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = e.job_url AND d.restored_at IS NULL"
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = e.job_url AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
     : "";
   const hideHiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
     ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
@@ -1396,7 +1477,48 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     tableExists(db, "jobhunter_deleted_jobs") ? "d.job_url IS NULL" : "",
     tableExists(db, "jobhunter_hidden_jobs") ? "h.job_url IS NULL" : "",
   ].filter(Boolean);
+  const params: SqliteValue[] = [DEFAULT_TENANT];
+  if (query.level) {
+    activityClauses.push("LOWER(COALESCE(e.level, '')) = LOWER(?)");
+    params.push(query.level);
+  }
+  if (query.stage) {
+    activityClauses.push("LOWER(COALESCE(e.stage, '')) = LOWER(?)");
+    params.push(query.stage);
+  }
+  if (query.eventType) {
+    activityClauses.push(`LOWER(${eventTypePredicate}) = LOWER(?)`);
+    params.push(query.eventType);
+  }
+  const normalizedQuery = query.q.trim();
+  if (normalizedQuery) {
+    const search = `%${normalizedQuery.toLowerCase()}%`;
+    activityClauses.push(`(
+      LOWER(COALESCE(e.level, '')) LIKE ?
+      OR LOWER(COALESCE(e.stage, '')) LIKE ?
+      OR LOWER(${eventTypePredicate}) LIKE ?
+      OR LOWER(COALESCE(e.message, '')) LIKE ?
+      OR LOWER(COALESCE(jp.title, '')) LIKE ?
+      OR LOWER(COALESCE(jp.employer, '')) LIKE ?
+      OR LOWER(COALESCE(e.job_url, '')) LIKE ?
+      OR LOWER(CAST(e.event_id AS TEXT)) LIKE ?
+      OR LOWER(COALESCE(e.occurred_at, '')) LIKE ?
+    )`);
+    params.push(search, search, search, search, search, search, search, search, search);
+  }
   const activityWhere = `WHERE ${activityClauses.join(" AND ")}`;
+  const fromSql = `
+    FROM job_events e
+    LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
+    ${hideDeletedJoin}
+    ${hideHiddenJoin}
+    ${activityWhere}`;
+  const total = countRows(db, `SELECT COUNT(*) AS count ${fromSql}`, params);
+  const pages = Math.max(1, Math.ceil(total / query.pageSize));
+  const page = Math.min(query.page, pages);
+  const offset = (page - 1) * query.pageSize;
+  const direction = query.dir === "asc" ? "ASC" : "DESC";
+  const sortColumn = SQL_ACTIVITY_SORT_COLUMNS[query.sort] ?? "e.occurred_at";
   const sql = `
     SELECT
       e.event_id,
@@ -1408,14 +1530,75 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
       e.occurred_at,
       jp.title    AS title,
       jp.employer AS employer
-    FROM job_events e
-    LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
-    ${hideDeletedJoin}
-    ${hideHiddenJoin}
-    ${activityWhere}
-    ORDER BY e.occurred_at DESC, e.event_id DESC
-    LIMIT 20`;
-  return allRows<Record<string, unknown>>(db, sql, [DEFAULT_TENANT]).map((row) => ({
+    ${fromSql}
+    ORDER BY ${sortColumn} ${direction}, e.event_id ${direction}
+    LIMIT ? OFFSET ?`;
+  const items = allRows<Record<string, unknown>>(db, sql, [
+    ...params,
+    query.pageSize,
+    offset,
+  ]).map(activityRowToSummary);
+  return paginateWithTotal(
+    items,
+    total,
+    page,
+    query.pageSize,
+    query.sort,
+    query.dir,
+    activityFilterPayload(query),
+  );
+}
+
+function getActivityEventFromEvents(db: SqliteDatabase, eventId: string): ActivityEventSummary | null {
+  if (!tableExists(db, "job_events")) return null;
+  const eventColumns = columnNames(db, "job_events");
+  const eventTypeSelect = eventColumns.has("event_type") ? "e.event_type" : "'Event' AS event_type";
+  const hideDeletedJoin = tableExists(db, "jobhunter_deleted_jobs")
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = e.job_url AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
+    : "";
+  const hideHiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+    ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = e.job_url AND h.unhidden_at IS NULL"
+    : "";
+  const activityClauses = [
+    "e.event_id = ?",
+    "(e.job_url IS NULL OR e.job_url = '' OR jp.job_id IS NOT NULL)",
+    tableExists(db, "jobhunter_deleted_jobs") ? "d.job_url IS NULL" : "",
+    tableExists(db, "jobhunter_hidden_jobs") ? "h.job_url IS NULL" : "",
+  ].filter(Boolean);
+  const row = getRow<Record<string, unknown>>(
+    db,
+    `SELECT
+       e.event_id,
+       ${eventTypeSelect},
+       e.job_url,
+       e.stage,
+       e.level,
+       e.message,
+       e.occurred_at,
+       jp.title    AS title,
+       jp.employer AS employer
+     FROM job_events e
+     LEFT JOIN job_list_projections jp ON jp.tenant_id = ? AND jp.job_id = e.job_url
+     ${hideDeletedJoin}
+     ${hideHiddenJoin}
+     WHERE ${activityClauses.join(" AND ")}
+     LIMIT 1`,
+    [DEFAULT_TENANT, eventId],
+  );
+  return row ? activityRowToSummary(row) : null;
+}
+
+function activityFilterPayload(query: ActivityListQuery): Record<string, unknown> {
+  return {
+    q: query.q,
+    level: query.level,
+    stage: query.stage,
+    eventType: query.eventType,
+  };
+}
+
+function activityRowToSummary(row: Record<string, unknown>): ActivityEventSummary {
+  return {
     eventId: stringField(row.event_id),
     eventType: stringField(row.event_type) || "Event",
     jobKey: nullableString(row.job_url),
@@ -1425,7 +1608,7 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     level: stringField(row.level) || "info",
     message: stringField(row.message) || "event",
     at: nullableString(row.occurred_at),
-  }));
+  };
 }
 
 function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
@@ -1455,7 +1638,7 @@ export function listWorkflowRuns(
     });
   }
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
     : "";
   const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
     ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
@@ -1542,7 +1725,7 @@ function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
   // L3 (round-1 review): caller (``buildDashboardSummary``) already
   // refreshed projections; do not double-refresh here.
   const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
-    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND d.restored_at IS NULL"
+    ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
     : "";
   const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
     ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"

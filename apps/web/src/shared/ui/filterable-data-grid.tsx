@@ -54,7 +54,9 @@ export interface DataGridHeaderContext<TData> {
 }
 
 export interface DataGridCellContext<TData> {
+  pageRows: readonly TData[];
   rowId: string;
+  rowIndex: number;
 }
 
 export interface DataGridPaginationState {
@@ -606,7 +608,7 @@ export function FilterableDataGrid<TData>({
             </tr>
           </thead>
           <tbody>
-            {pageRows.map((row) => {
+            {pageRows.map((row, rowIndex) => {
               const rowId = getRowId(row);
               return (
                 <tr
@@ -630,11 +632,11 @@ export function FilterableDataGrid<TData>({
                         className={column.className}
                         scope="row"
                       >
-                        {column.render(row, { rowId })}
+                        {column.render(row, { pageRows, rowId, rowIndex })}
                       </th>
                     ) : (
                       <td key={column.id} className={column.className}>
-                        {column.render(row, { rowId })}
+                        {column.render(row, { pageRows, rowId, rowIndex })}
                       </td>
                     ),
                   )}

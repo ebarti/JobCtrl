@@ -7,6 +7,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_PIPELINE_LLM_MODEL } from "../src/contracts.js";
 import {
   buildActionResponse,
   createActionDispatcher,
@@ -138,6 +139,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         continuous: false,
       },
     });
@@ -197,6 +199,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       stage: "tailor",
       stages: ["tailor"],
       model: "sonnet",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       tailorModels: ["local:draft-a", "openai:draft-b"],
       tailorJudgeModel: "gemini:judge-c",
       tailorJudgeMinScore: 0.9,
