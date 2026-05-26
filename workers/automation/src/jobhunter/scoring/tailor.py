@@ -50,6 +50,7 @@ from jobhunter.infrastructure.materials import (
     LatexPdfAdapter,
     SqliteMaterialsRepository,
 )
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.state import (
     ensure_job_stage_rows,
     record_job_event,
@@ -71,6 +72,7 @@ def _build_llm_policy(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
 ) -> TailoringLlmPolicy:
     env_models = _split_model_specs(
         os.environ.get("TAILORING_GENERATOR_MODELS")
@@ -96,8 +98,8 @@ def _build_llm_policy(
                 judge_min_score,
             )
     return TailoringLlmPolicy(
-        candidate_models=tailor_models or env_models,
-        judge_model=tailor_judge_model or env_judge_model,
+        candidate_models=tailor_models or env_models or ((llm_model,) if llm_model else ()),
+        judge_model=tailor_judge_model or env_judge_model or llm_model,
         judge_min_score=judge_min_score,
     )
 
@@ -335,6 +337,7 @@ def run_tailoring(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
 ) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
@@ -394,6 +397,7 @@ def run_tailoring(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
+        llm_model=llm_model,
     )
 
     started_ats: dict[str, str] = {}

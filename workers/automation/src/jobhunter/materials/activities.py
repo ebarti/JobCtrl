@@ -7,6 +7,8 @@ from typing import Any
 
 from temporalio import activity
 
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
 
 # ---------------------------------------------------------------------------
 # Tailor
@@ -29,6 +31,7 @@ class TailorActivityInput:
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
+            llm_model=payload.llm_model,
         )
 
     result = await run_blocking_with_heartbeat(
@@ -99,6 +103,7 @@ class CoverActivityInput:
     limit: int = 0
     validation_mode: str = "normal"
     dry_run: bool = False
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
             validation_mode=payload.validation_mode,
             limit=payload.limit,
             dry_run=payload.dry_run,
+            llm_model=payload.llm_model,
         )
 
     result = await run_blocking_with_heartbeat(

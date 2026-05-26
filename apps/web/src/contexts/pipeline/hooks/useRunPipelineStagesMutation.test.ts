@@ -1,4 +1,4 @@
-import type { PipelineStageRunResponse } from "@jobhunter/contracts";
+import { DEFAULT_PIPELINE_LLM_MODEL, type PipelineStageRunResponse } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { waitFor } from "@testing-library/react";
 import { act } from "react";
@@ -31,6 +31,7 @@ describe("useRunPipelineStagesMutation", () => {
         retailor: false,
         headless: true,
         model: "sonnet",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: true,
       },
@@ -52,6 +53,7 @@ describe("useRunPipelineStagesMutation", () => {
         rescore: true,
         retailor: false,
         model: "sonnet",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         tailorJudgeModel: undefined,
         headless: true,
@@ -70,6 +72,7 @@ describe("useRunPipelineStagesMutation", () => {
       rescore: true,
       retailor: false,
       model: "sonnet",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       tailorModels: [],
       tailorJudgeModel: undefined,
       headless: true,

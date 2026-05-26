@@ -4,6 +4,7 @@ export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"
 export type Stage = (typeof STAGES)[number];
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
+export const DEFAULT_PIPELINE_LLM_MODEL = "gemini:gemini-3.5-flash" as const;
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 
 export const MATERIAL_STAGES = ["tailor", "cover"] as const;
@@ -109,6 +110,7 @@ export const RunPipelineStagesRequestSchema = z
     retailor: z.boolean().default(false),
     headless: z.boolean().default(false),
     model: z.string().trim().min(1).max(80).default("default"),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
     tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
@@ -823,6 +825,7 @@ export interface ActionCommandPayload {
   rescore?: boolean;
   retailor?: boolean;
   model?: string;
+  llmModel?: string;
   tailorModels?: string[];
   tailorJudgeModel?: string;
   tailorJudgeMinScore?: number;

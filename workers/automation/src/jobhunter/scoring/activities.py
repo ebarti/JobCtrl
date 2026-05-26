@@ -7,6 +7,8 @@ from typing import Any
 
 from temporalio import activity
 
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
 
 @dataclass(frozen=True)
 class ScoreActivityInput:
@@ -19,6 +21,7 @@ class ScoreActivityInput:
     workers: int = 1
     dry_run: bool = False
     rescore: bool = False
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
             limit=payload.limit,
             dry_run=payload.dry_run,
             rescore=payload.rescore,
+            llm_model=payload.llm_model,
         )
 
     result = await run_blocking_with_heartbeat(

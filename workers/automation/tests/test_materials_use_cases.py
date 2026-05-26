@@ -45,6 +45,7 @@ from jobhunter.domain.ports.llm import LlmMessage, LlmPort
 from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +295,13 @@ def test_tailoring_structured_output_schemas_are_openai_strict_compatible(
     schema: dict[str, Any],
 ) -> None:
     _assert_openai_strict_schema(schema)
+
+
+def test_tailoring_policy_defaults_to_pipeline_gemini_flash() -> None:
+    policy = TailoringLlmPolicy()
+
+    assert policy.effective_candidate_models == (DEFAULT_PIPELINE_LLM_MODEL_SPEC,)
+    assert policy.effective_judge_model == DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, job: dict) -> None:

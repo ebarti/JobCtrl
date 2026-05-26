@@ -138,10 +138,12 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
 `validationMode`, `dryRun`, score/tailor flags (`rescore`, `retailor`), and
-tailoring LLM controls (`tailorModels`, `tailorJudgeModel`,
-`tailorJudgeMinScore`), and apply flags (`headless`, `model`, `continuous`).
-`model` remains apply-only; the tailoring generator and judge specs are
-separate fields. The route dispatches the ordered stage list to JSON-RPC
+the default pipeline LLM model (`llmModel`, default
+`gemini:gemini-3.5-flash`), tailoring LLM controls (`tailorModels`,
+`tailorJudgeModel`, `tailorJudgeMinScore`), and apply flags (`headless`,
+`model`, `continuous`). `model` remains apply-only; scoring, tailoring, and
+cover generation use `llmModel` unless a tailoring generator or judge override
+is supplied. The route dispatches the ordered stage list to JSON-RPC
 `run_stage`, which starts `JobPipelineWorkflow`; if the list includes `apply`,
 that workflow delegates the apply step to `ApplyWorkflow` as a child workflow
 after preceding stages complete. The route uses the command key `pipeline` only

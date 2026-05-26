@@ -43,7 +43,8 @@ from jobhunter.domain.scoring.use_cases import (
 )
 from jobhunter.domain.scoring.value_objects import ScoringCriteria
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
-from jobhunter.infrastructure.llm import get_llm_adapter
+from jobhunter.infrastructure.llm import LlmAdapter, get_llm_adapter
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.infrastructure.profile.factory import get_profile_repository
 from jobhunter.infrastructure.scoring import (
     LocalScoringCriteriaProvider,
@@ -70,6 +71,7 @@ def _build_use_case(
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
+    llm_model: str | None = None,
     publisher: EventPublisher | None = None,
 ) -> ScoreJobUseCase:
     """Construct a ``ScoreJobUseCase`` using local-mode defaults.
@@ -86,7 +88,11 @@ def _build_use_case(
     elif policy_repository is None and isinstance(repository, SqliteScoreRepository):
         policy_repository = SqliteScoringPolicyRepository(repository.connection)
     if llm_port is None:
-        llm_port = get_llm_adapter()
+        llm_port = (
+            LlmAdapter(default_model=llm_model)
+            if llm_model
+            else get_llm_adapter()
+        )
     return ScoreJobUseCase(
         repository=repository,
         llm=llm_port,
@@ -108,6 +114,7 @@ def score_job(
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
+    llm_model: str | None = None,
     publisher: EventPublisher | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     resume_text: str | None = None,
@@ -125,6 +132,7 @@ def score_job(
             repository=repository,
             policy_repository=policy_repository,
             llm_port=llm_port,
+            llm_model=llm_model,
             publisher=publisher,
         )
     return use_case.score(
@@ -144,6 +152,7 @@ def run_scoring(
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     publisher: EventPublisher | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     profile_snapshot: ProfileSnapshot | None = None,
@@ -179,6 +188,7 @@ def run_scoring(
         repository=repository,
         policy_repository=policy_repository,
         llm_port=llm_port,
+        llm_model=llm_model,
         publisher=publisher,
     )
 

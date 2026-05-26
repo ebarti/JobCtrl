@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         cover_activity,
         tailor_activity,
     )
+    from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
     from jobhunter.scoring.activities import (
         ScoreActivityInput,
         score_activity,
@@ -64,6 +65,7 @@ class JobPipelineWorkflowInput:
     job_url: str | None = None
     headless: bool = False
     model: str = "default"
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     continuous: bool = False
 
 
@@ -171,6 +173,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
                 dry_run=payload.dry_run,
                 rescore=payload.rescore,
+                llm_model=payload.llm_model,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -192,6 +195,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
+                llm_model=payload.llm_model,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -208,6 +212,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
+                llm_model=payload.llm_model,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

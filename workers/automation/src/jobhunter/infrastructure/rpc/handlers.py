@@ -33,6 +33,7 @@ from jobhunter.domain.rpc.messages import WorkflowStartSpec
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.rpc.server import JsonRpcServer, invalid_params
 from jobhunter.infrastructure.rpc.workflow_starter import WorkflowCanceler
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
 from jobhunter.state import record_job_event, reset_job_stage, set_stage_state, utc_now
 
@@ -195,6 +196,7 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         continuous=bool(params.get("continuous", False)),
     )
     return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))

@@ -74,6 +74,7 @@ from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage, LlmPort
 from jobhunter.domain.ports.materials import MaterialsRepository, PdfRendererPort
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.resume_profile import (
     get_custom_tailoring_prompt,
@@ -227,7 +228,7 @@ class TailoringLlmPolicy:
 
     @property
     def effective_candidate_models(self) -> tuple[str, ...]:
-        return self.candidate_models or ("default",)
+        return self.candidate_models or (DEFAULT_PIPELINE_LLM_MODEL_SPEC,)
 
     @property
     def effective_judge_model(self) -> str:

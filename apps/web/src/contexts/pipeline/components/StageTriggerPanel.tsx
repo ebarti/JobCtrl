@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PIPELINE_LLM_MODEL,
   PIPELINE_RUN_STAGES,
   PIPELINE_VALIDATION_MODES,
   type ActionRunResponse,
@@ -241,6 +242,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       dryRun: config.dryRun,
       rescore: controls.rescore ? config.rescore : false,
       retailor: controls.retailor ? config.retailor : false,
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       tailorModels: controls.tailorModels ? modelSpecList(config.tailorModels) : [],
       tailorJudgeModel: controls.tailorModels ? config.tailorJudgeModel.trim() || undefined : undefined,
       ...(tailorJudgeMinScore === undefined ? {} : { tailorJudgeMinScore }),
@@ -326,7 +328,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             <label className="field">
               <span>Tailor models</span>
               <input
-                placeholder="default, gemini:gemini-3.5-flash"
+                placeholder={DEFAULT_PIPELINE_LLM_MODEL}
                 value={config.tailorModels}
                 onChange={(event) => patchConfig({ tailorModels: event.target.value })}
               />
@@ -334,7 +336,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             <label className="field">
               <span>Judge model</span>
               <input
-                placeholder="default"
+                placeholder={DEFAULT_PIPELINE_LLM_MODEL}
                 value={config.tailorJudgeModel}
                 onChange={(event) => patchConfig({ tailorJudgeModel: event.target.value })}
               />

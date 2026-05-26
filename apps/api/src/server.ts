@@ -351,6 +351,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       retailor: body.retailor,
       headless: body.headless,
       model: body.model,
+      llmModel: body.llmModel,
       tailorModels: body.tailorModels,
       continuous: body.continuous,
     };

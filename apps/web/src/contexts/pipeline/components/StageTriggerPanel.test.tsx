@@ -1,4 +1,4 @@
-import { PIPELINE_RUN_STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
+import { DEFAULT_PIPELINE_LLM_MODEL, PIPELINE_RUN_STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -200,6 +200,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: false,
       },
@@ -231,6 +232,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeModel: undefined,
       headless: false,
       model: "default",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
@@ -255,6 +257,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: true,
         model: "sonnet",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: true,
       },
@@ -276,6 +279,7 @@ describe("StageTriggerPanel", () => {
             dryRun: true,
             headless: true,
             model: "sonnet",
+            llmModel: DEFAULT_PIPELINE_LLM_MODEL,
             continuous: true,
           },
         },
@@ -312,6 +316,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeModel: undefined,
       headless: true,
       model: "sonnet",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: true,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
@@ -337,6 +342,7 @@ describe("StageTriggerPanel", () => {
         retailor: true,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
         tailorJudgeModel: "local:judge",
         tailorJudgeMinScore: 0.9,
@@ -378,6 +384,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeMinScore: 0.9,
       headless: false,
       model: "default",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
     });
   });
@@ -401,6 +408,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: ["local:fast"],
         tailorJudgeModel: "local:judge",
         continuous: false,
@@ -431,6 +439,7 @@ describe("StageTriggerPanel", () => {
       tailorJudgeModel: "local:judge",
       headless: false,
       model: "default",
+      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: false,
     });
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
@@ -532,6 +541,7 @@ describe("StageTriggerPanel", () => {
         retailor: false,
         headless: false,
         model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
         tailorModels: [],
         continuous: false,
       },

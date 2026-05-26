@@ -474,6 +474,9 @@ Common environment variables:
 - `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `LLM_URL`: configure LLM access.
 - `LLM_MODEL`: choose the model for the configured provider. Gemini defaults to
   `gemini-3.5-flash`.
+- Pipeline scoring, resume tailoring, and cover-letter generation default to
+  the explicit model spec `gemini:gemini-3.5-flash`; stage-specific tailoring
+  model variables below override that pipeline default.
 - `JOBHUNTER_DISCOVERY_LLM_ROLE_FILTER`: controls LLM adjudication for loose
   discovery title matches. Defaults to `auto`, which enables the check when an
   LLM provider is configured. Set `0` to force deterministic title matching.
