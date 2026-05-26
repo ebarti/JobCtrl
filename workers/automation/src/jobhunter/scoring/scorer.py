@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from jobhunter.config import RESUME_PATH
-from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.job_content_identity import job_content_fingerprint
 from jobhunter.domain.ports.events import EventPublisher
@@ -418,6 +418,123 @@ def run_scoring(
         "elapsed": elapsed,
         "distribution": distribution,
     }
+
+
+def score_job_by_url(
+    job_url: str,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    profile_snapshot: ProfileSnapshot | None = None,
+    resume_text: str | None = None,
+    criteria: ScoringCriteria | None = None,
+    repository: ScoreRepository | None = None,
+    policy_repository: ScoringPolicyRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+) -> ScoreJobOutcome:
+    """Score exactly one enriched job by URL.
+
+    Internal Discovery preparation uses durable work items keyed to one job,
+    so it cannot safely call the batch selector-based ``run_scoring`` helper.
+    This entrypoint preserves the same Scoring use case and stage-state writes
+    while targeting the claimed work item only.
+    """
+    conn = get_connection()
+    job = load_job_with_enrichment(conn, job_url)
+    if job is None:
+        return ScoreJobOutcome(ok=False, score=None, error=f"Job not found: {job_url}")
+    if not job.get("full_description"):
+        return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {job_url}")
+
+    if profile_snapshot is None:
+        profile_snapshot = get_profile_repository().load_snapshot(tenant_id)
+    if resume_text is None:
+        try:
+            resume_text = RESUME_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            resume_text = ""
+    if criteria is None:
+        criteria = LocalScoringCriteriaProvider().load(profile_snapshot)
+    if repository is None:
+        repository = SqliteScoreRepository(conn)
+    if policy_repository is None:
+        policy_repository = SqliteScoringPolicyRepository(conn)
+    existing = repository.load(tenant_id, JobId(job_url))
+    if existing is not None:
+        return ScoreJobOutcome(ok=True, score=existing)
+
+    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    started_at = utc_now()
+    set_stage_state(
+        conn,
+        job_url,
+        "score",
+        "running",
+        started_at=started_at,
+        validate_transition=False,
+    )
+    record_job_event(conn, job_url, "score", "StageStarted", message="Scoring started")
+    conn.commit()
+
+    outcome = score_job(
+        profile_snapshot,
+        job,
+        use_case=_build_use_case(
+            repository=repository,
+            policy_repository=policy_repository,
+            llm_port=llm_port,
+            llm_model=llm_model,
+            publisher=publisher,
+        ),
+        tenant_id=tenant_id,
+        resume_text=resume_text,
+        criteria=criteria,
+    )
+    finished_at = utc_now()
+    if outcome.ok and outcome.score is not None:
+        set_stage_state(
+            conn,
+            job_url,
+            "score",
+            "succeeded",
+            attempt_count=1,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "score",
+            "StageCompleted",
+            message=f"Fit score {outcome.score.fit_score.value}/10",
+            payload={"keywords": list(outcome.score.matched_keywords)},
+        )
+    else:
+        set_stage_state(
+            conn,
+            job_url,
+            "score",
+            "failed",
+            attempt_count=1,
+            started_at=started_at,
+            finished_at=finished_at,
+            error_code="SCORE_FAILED",
+            error_message=outcome.error or "Scoring failed",
+            retryable=True,
+            next_action=f"jobhunter retry score {job_url}",
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "score",
+            "StageFailed",
+            level="error",
+            message=outcome.error or "Scoring failed",
+        )
+    conn.commit()
+    return outcome
 
 
 # ---------------------------------------------------------------------------

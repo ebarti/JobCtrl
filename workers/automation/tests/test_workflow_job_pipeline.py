@@ -327,10 +327,12 @@ async def test_pipeline_workflow_preserves_stage_options():
                     JobPipelineWorkflow.run,
                     JobPipelineWorkflowInput(
                         tenant_id="local",
-                        stages=["score", "tailor"],
+                        stages=["discover", "score", "tailor"],
                         dry_run=True,
                         rescore=True,
                         retailor=True,
+                        min_score=8,
+                        validation_mode="strict",
                         tailor_models=("local:fast", "openai:accurate"),
                         tailor_judge_model="gemini:judge",
                         tailor_judge_min_score=0.9,
@@ -345,7 +347,14 @@ async def test_pipeline_workflow_preserves_stage_options():
     }
     assert by_stage["score"]["dry_run"] is True
     assert by_stage["score"]["rescore"] is True
+    assert by_stage["discover"]["dry_run"] is True
+    assert by_stage["discover"]["min_score"] == 8
+    assert by_stage["discover"]["validation_mode"] == "strict"
+    assert by_stage["discover"]["tailor_models"] == ("local:fast", "openai:accurate")
+    assert by_stage["discover"]["tailor_judge_model"] == "gemini:judge"
+    assert by_stage["discover"]["tailor_judge_min_score"] == pytest.approx(0.9)
     assert by_stage["tailor"]["dry_run"] is True
+    assert by_stage["tailor"]["min_score"] == 8
     assert by_stage["tailor"]["retailor"] is True
     assert by_stage["tailor"]["tailor_models"] == ("local:fast", "openai:accurate")
     assert by_stage["tailor"]["tailor_judge_model"] == "gemini:judge"
