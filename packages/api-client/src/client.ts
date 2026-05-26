@@ -9,6 +9,8 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
+  BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
   CredentialKey,
   CorrectScoreRequest,
@@ -40,6 +42,8 @@ import type {
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
+  RescoreJobRequest,
+  RetailorJobRequest,
   RetryStageRequest,
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
@@ -257,6 +261,24 @@ export class JobHunterApiClient {
     body: ResetStaleScoresForRescoreRequest = { limit: 0, jobKeys: [] },
   ): Promise<ResetStaleScoresForRescoreResponse> {
     return this.post("/v1/scoring/stale-scores/actions/reset-for-rescore", body);
+  }
+
+  rescoreJob(jobKey: string, body: Partial<RescoreJobRequest> = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/rescore-current-policy`, body);
+  }
+
+  rescoreJobsNotOnCurrentScoringPolicy(
+    body: BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
+  ): Promise<ActionRunResponse> {
+    return this.post("/v1/scoring/actions/rescore-current-policy", body);
+  }
+
+  retailorJob(jobKey: string, body: Partial<RetailorJobRequest> = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/retailor-current-policy`, body);
+  }
+
+  retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse> {
+    return this.post("/v1/materials/actions/retailor-current-policy", body);
   }
 
   workflowRuns(

@@ -1063,8 +1063,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
 
-  const tailorPath = materials.tailorPath ?? nullableString(job.tailored_resume_path);
-  const coverPath = materials.coverPath ?? nullableString(job.cover_letter_path);
+  const hasCanonicalMaterials = materials.generation !== null && materials.generation !== undefined;
+  const tailorPath = hasCanonicalMaterials ? materials.tailorPath : nullableString(job.tailored_resume_path);
+  const coverPath = hasCanonicalMaterials ? materials.coverPath : nullableString(job.cover_letter_path);
   const hasResume = Boolean(tailorPath);
   const hasCoverLetter = Boolean(coverPath);
   const hasPdf = Boolean(materials.resumePdfPath ?? materials.coverPdfPath);
@@ -1078,6 +1079,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const lastUpdatedAt = new Date().toISOString();
 
   const artifacts = collectArtifacts(db, jobUrl, materials);
+  const activeArtifacts = artifacts.filter(isDefaultVisibleArtifact);
 
   db.prepare(
     `INSERT INTO job_list_projections (
@@ -1155,7 +1157,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     hasPdf ? 1 : 0,
     applyStatus,
     appliedAt,
-    artifacts.length,
+    activeArtifacts.length,
     deletedAt,
     lastUpdatedAt,
   );
@@ -1306,7 +1308,7 @@ function collectArtifacts(
   // still see the matching ``*_pdf`` row.  When a real PDF artifact is
   // registered we never overwrite it (``seen`` guards against
   // duplicates).
-  const tailorTxt = out.find((a) => a.artifactType === "tailored_resume_txt");
+  const tailorTxt = out.find((a) => a.artifactType === "tailored_resume_txt" && isDefaultVisibleArtifact(a));
   const tailorPdfPath =
     materials.resumePdfPath ?? (tailorTxt ? pdfSibling(tailorTxt.localPath) : null);
   if (tailorPdfPath && !seen.has(`tailored_resume_pdf:${tailorPdfPath}`)) {
@@ -1321,7 +1323,7 @@ function collectArtifacts(
       generation: null,
     });
   }
-  const coverTxt = out.find((a) => a.artifactType === "cover_letter_txt");
+  const coverTxt = out.find((a) => a.artifactType === "cover_letter_txt" && isDefaultVisibleArtifact(a));
   const coverPdfPath =
     materials.coverPdfPath ?? (coverTxt ? pdfSibling(coverTxt.localPath) : null);
   if (coverPdfPath && !seen.has(`cover_letter_pdf:${coverPdfPath}`)) {
@@ -1337,6 +1339,10 @@ function collectArtifacts(
     });
   }
   return out;
+}
+
+function isDefaultVisibleArtifact(artifact: Pick<ArtifactRow, "status">): boolean {
+  return String(artifact.status ?? "").toLowerCase() !== "suppressed";
 }
 
 function pdfSibling(value: string | null | undefined): string | null {
@@ -1358,12 +1364,13 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     apply_status: string | null;
     applied_at: string | null;
     deleted_at: string | null;
+    has_resume: number;
     fit_score: number | null;
     source: string;
   }>(
     db,
     `SELECT job_id, current_stage, current_state, apply_status, applied_at,
-            deleted_at, fit_score, source
+            deleted_at, has_resume, fit_score, source
      FROM job_list_projections jlp
      WHERE tenant_id = ?
        ${hiddenWhere}`,
@@ -1376,7 +1383,8 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   ).length;
   const blocked = active.filter((row) => row.current_state === "blocked").length;
   const ready = active.filter(
-    (row) => row.current_stage === "apply" && row.current_state === "pending",
+    (row) =>
+      row.current_stage === "apply" && row.current_state === "pending" && Number(row.has_resume ?? 0) === 1,
   ).length;
   const applied = active.filter(
     (row) => row.applied_at || row.apply_status === "applied",

@@ -63,6 +63,10 @@ class JobPipelineWorkflowInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     job_url: str | None = None
+    job_urls: tuple[str, ...] = ()
+    score_current_policy_only: bool = False
+    tailor_current_policy_only: bool = False
+    suppress_existing_artifacts: bool = False
     headless: bool = False
     model: str = "default"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -179,6 +183,8 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
                 dry_run=payload.dry_run,
                 rescore=payload.rescore,
+                job_urls=_selected_job_urls(payload),
+                current_policy_only=payload.score_current_policy_only,
                 llm_model=payload.llm_model,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
@@ -198,6 +204,9 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
                 retailor=payload.retailor,
+                job_urls=_selected_job_urls(payload),
+                current_policy_only=payload.tailor_current_policy_only,
+                suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
@@ -246,6 +255,14 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
         f"Unknown stage: {stage}",
         non_retryable=True,
     )
+
+
+def _selected_job_urls(payload: JobPipelineWorkflowInput) -> tuple[str, ...]:
+    if payload.job_urls:
+        return payload.job_urls
+    if payload.job_url:
+        return (payload.job_url,)
+    return ()
 
 
 _SUCCESS_STAGE_STATUSES = frozenset({"ok", "partial", "skipped"})

@@ -30,6 +30,7 @@ import type {
   JobListQuery,
   JobSummary,
   PaginatedResponse,
+  PreparationSummary,
   ProfileShape,
   ScoreBreakdown,
   SettingsResponse,
@@ -287,6 +288,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     sourceHealth: listSourceHealth(db),
     operationalMetrics,
     applyRuns: recentApplyRuns(db),
+    preparation: buildPreparationSummary(db, DEFAULT_TENANT),
   };
 }
 
@@ -322,6 +324,188 @@ function dashboardTodayMetrics(
     jobsToday: rows.filter((row) => localDateKey(row.discovered_at) === today).length,
     appliedToday: rows.filter((row) => localDateKey(row.applied_at) === today).length,
   };
+}
+
+function buildPreparationSummary(db: SqliteDatabase, tenantId: string): PreparationSummary {
+  const currentScoringPolicyVersion = latestPolicyVersion(db, "scoring_policies", tenantId);
+  const currentTailoringPolicyVersion = latestPolicyVersion(db, "tailoring_policies", tenantId);
+  return {
+    currentScoringPolicyVersion,
+    currentTailoringPolicyVersion,
+    outdatedScoreCount: countOutdatedScores(db, tenantId, currentScoringPolicyVersion),
+    outdatedTailoredArtifactCount: countOutdatedTailoredArtifacts(db, tenantId, currentTailoringPolicyVersion),
+    workItems: countPreparationWorkItems(db, tenantId),
+  };
+}
+
+function latestPolicyVersion(
+  db: SqliteDatabase,
+  tableName: "scoring_policies" | "tailoring_policies",
+  tenantId: string,
+): number | null {
+  if (!tableExists(db, tableName)) return null;
+  const row = getRow<{ version: number | null }>(
+    db,
+    `SELECT MAX(version) AS version FROM ${tableName} WHERE tenant_id = ?`,
+    [tenantId],
+  );
+  return nullableNumber(row?.version);
+}
+
+function countOutdatedScores(
+  db: SqliteDatabase,
+  tenantId: string,
+  currentPolicyVersion: number | null,
+): number {
+  const activeJobs = activeJobUrlSet(db);
+  if (activeJobs.size === 0) return 0;
+
+  if (tableExists(db, "job_score_staleness")) {
+    const rows = tableExists(db, "job_scores")
+      ? allRows<{ job_url: string }>(
+          db,
+          `SELECT DISTINCT stale.job_url
+             FROM job_score_staleness stale
+             JOIN (
+               SELECT job_url, MAX(version) AS max_version
+               FROM job_scores
+               WHERE tenant_id = ?
+               GROUP BY job_url
+             ) latest ON latest.job_url = stale.job_url
+             JOIN job_scores s
+               ON s.tenant_id = stale.tenant_id
+              AND s.job_url = stale.job_url
+              AND s.version = latest.max_version
+            WHERE stale.tenant_id = ?
+              AND stale.resolved = 0
+              AND (s.correction_json IS NULL OR TRIM(s.correction_json) = '')`,
+          [tenantId, tenantId],
+        )
+      : allRows<{ job_url: string }>(
+          db,
+          "SELECT DISTINCT job_url FROM job_score_staleness WHERE tenant_id = ? AND resolved = 0",
+          [tenantId],
+        );
+    return rows.filter((row) => activeJobs.has(row.job_url)).length;
+  }
+
+  if (currentPolicyVersion === null || !tableExists(db, "job_scores")) return 0;
+  const rows = allRows<{ job_url: string; trace_json: string | null; correction_json: string | null }>(
+    db,
+    `SELECT s.job_url, s.trace_json, s.correction_json
+       FROM job_scores s
+       JOIN (
+         SELECT job_url, MAX(version) AS max_version
+         FROM job_scores
+         WHERE tenant_id = ?
+         GROUP BY job_url
+       ) latest ON latest.job_url = s.job_url AND latest.max_version = s.version
+      WHERE s.tenant_id = ?`,
+    [tenantId, tenantId],
+  );
+  return rows.filter((row) => {
+    if (!activeJobs.has(row.job_url)) return false;
+    if (row.correction_json?.trim()) return false;
+    const policyVersion = policyVersionFromJson(row.trace_json, [
+      "scoring_policy_version",
+      "scoringPolicyVersion",
+    ]);
+    return policyVersion === null || policyVersion < currentPolicyVersion;
+  }).length;
+}
+
+function countOutdatedTailoredArtifacts(
+  db: SqliteDatabase,
+  tenantId: string,
+  currentPolicyVersion: number | null,
+): number {
+  if (
+    currentPolicyVersion === null ||
+    !tableExists(db, "job_materials") ||
+    !tableExists(db, "job_materials_artifacts")
+  ) {
+    return 0;
+  }
+  const activeJobs = activeJobUrlSet(db);
+  if (activeJobs.size === 0) return 0;
+  const rows = allRows<{ job_url: string; metadata_json: string | null }>(
+    db,
+    `WITH latest AS (
+       SELECT job_url, MAX(generation) AS max_generation
+       FROM job_materials
+       WHERE tenant_id = ?
+       GROUP BY job_url
+     )
+     SELECT a.job_url, a.metadata_json
+       FROM job_materials_artifacts a
+       JOIN latest ON latest.job_url = a.job_url AND latest.max_generation = a.generation
+      WHERE a.artifact_type = 'tailored_resume'
+        AND a.status = 'approved'`,
+    [tenantId],
+  );
+  return rows.filter((row) => {
+    if (!activeJobs.has(row.job_url)) return false;
+    const policyVersion = policyVersionFromJson(row.metadata_json, [
+      "tailoring_policy_version",
+      "tailoringPolicyVersion",
+    ]);
+    return policyVersion === null || policyVersion < currentPolicyVersion;
+  }).length;
+}
+
+function countPreparationWorkItems(
+  db: SqliteDatabase,
+  tenantId: string,
+): PreparationSummary["workItems"] {
+  const counts: PreparationSummary["workItems"] = { queued: 0, running: 0, failed: 0 };
+  if (!tableExists(db, "preparation_work_items")) return counts;
+  const activeJobs = activeJobUrlSet(db);
+  if (activeJobs.size === 0) return counts;
+  const rows = allRows<{ job_id: string; state: string }>(
+    db,
+    `SELECT job_id, state
+       FROM preparation_work_items
+      WHERE tenant_id = ?
+        AND state IN ('queued', 'running', 'failed')`,
+    [tenantId],
+  );
+  for (const row of rows) {
+    if (!activeJobs.has(row.job_id)) continue;
+    if (row.state === "queued" || row.state === "running" || row.state === "failed") {
+      counts[row.state] += 1;
+    }
+  }
+  return counts;
+}
+
+function activeJobUrlSet(db: SqliteDatabase): Set<string> {
+  if (!tableExists(db, "job_list_projections")) return new Set();
+  const filter = jobSqlFilter(db, {
+    page: 1,
+    pageSize: 1,
+    q: "",
+    sort: "discovered_at",
+    dir: "desc",
+    deleted: "active",
+    source: "",
+    company: "",
+  });
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT job_id FROM job_list_projections${filter.where}`,
+    filter.params,
+  );
+  return new Set(rows.map((row) => row.job_id).filter(Boolean));
+}
+
+function policyVersionFromJson(value: string | null, fields: readonly string[]): number | null {
+  const parsed = parseJsonRecord(value);
+  if (!parsed) return null;
+  for (const field of fields) {
+    const version = nullableNumber(parsed[field]);
+    if (version !== null) return version;
+  }
+  return null;
 }
 
 export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResponse<JobSummary> {
@@ -432,6 +616,7 @@ export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): Pag
     [DEFAULT_TENANT],
   );
   const artifacts = rows.map(rowToArtifactSummary).filter((artifact) => {
+    if (!query.status && isSuppressedArtifactStatus(artifact.status)) return false;
     if (query.status && artifact.status !== query.status) return false;
     if (query.type && artifact.type !== query.type) return false;
     if (!normalizedQuery) return true;
@@ -699,7 +884,7 @@ function rowToArtifactSummary(row: ArtifactProjectionRow): ArtifactSummary {
     sizeBytes = localFileSize(localPath);
   }
   let status = row.status || "active";
-  if (localPath && sizeBytes === null) {
+  if (localPath && sizeBytes === null && !isSuppressedArtifactStatus(status)) {
     status = "missing";
   }
   return {
@@ -1057,7 +1242,11 @@ function artifactsForJob(db: SqliteDatabase, jobId: string): ArtifactSummary[] {
     "SELECT * FROM artifact_list_projections WHERE tenant_id = ? AND job_id = ?",
     [DEFAULT_TENANT, jobId],
   );
-  return rows.map(rowToArtifactSummary);
+  return rows.map(rowToArtifactSummary).filter((artifact) => !isSuppressedArtifactStatus(artifact.status));
+}
+
+function isSuppressedArtifactStatus(status: string | null | undefined): boolean {
+  return String(status ?? "").toLowerCase() === "suppressed";
 }
 
 // ================================================================ filters

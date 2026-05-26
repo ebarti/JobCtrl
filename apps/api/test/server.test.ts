@@ -1359,6 +1359,303 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("hides suppressed current tailored artifacts from active displays and apply readiness", async () => {
+    const suppressedUrl = "https://example.com/jobs/suppressed-artifact";
+    const suppressedPath = path.join(tempDir, "suppressed-resume.txt");
+    fs.writeFileSync(suppressedPath, "suppressed resume");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: suppressedUrl,
+      title: "Suppressed Materials Engineer",
+      site: "ExampleCo",
+      fitScore: 9,
+      tailoredPath: suppressedPath,
+    });
+    insertScore(seedDb, suppressedUrl, 1, 9);
+    for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+      insertStage(seedDb, suppressedUrl, stage, "succeeded");
+    }
+    insertStage(seedDb, suppressedUrl, "apply", "pending");
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: suppressedUrl,
+      artifactId: "artifact-suppressed-resume",
+      artifactType: "tailored_resume",
+      status: "suppressed",
+      path: suppressedPath,
+      metadata: { tailoring_policy_version: 1 },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    try {
+      const detailResponse = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent(suppressedUrl)}`,
+      });
+      const defaultArtifactsResponse = await app.inject({
+        method: "GET",
+        url: "/v1/artifacts?type=tailored_resume",
+      });
+      const suppressedArtifactsResponse = await app.inject({
+        method: "GET",
+        url: "/v1/artifacts?type=tailored_resume&status=suppressed",
+      });
+      const artifactDetailResponse = await app.inject({
+        method: "GET",
+        url: "/v1/artifacts/artifact-suppressed-resume",
+      });
+      const dashboardResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+      expect(detailResponse.statusCode, detailResponse.body).toBe(200);
+      const detailBody = detailResponse.json();
+      expect(detailBody.job).toMatchObject({
+        jobKey: suppressedUrl,
+        artifactCount: 0,
+      });
+      expect(detailBody.artifacts).toEqual([]);
+
+      expect(defaultArtifactsResponse.statusCode, defaultArtifactsResponse.body).toBe(200);
+      expect(
+        defaultArtifactsResponse
+          .json()
+          .items.some((artifact: { artifactId: string }) => artifact.artifactId === "artifact-suppressed-resume"),
+      ).toBe(false);
+
+      expect(suppressedArtifactsResponse.statusCode, suppressedArtifactsResponse.body).toBe(200);
+      expect(suppressedArtifactsResponse.json().items).toEqual([
+        expect.objectContaining({
+          artifactId: "artifact-suppressed-resume",
+          jobKey: suppressedUrl,
+          status: "suppressed",
+          type: "tailored_resume",
+        }),
+      ]);
+
+      expect(artifactDetailResponse.statusCode, artifactDetailResponse.body).toBe(200);
+      expect(artifactDetailResponse.json().artifact).toMatchObject({
+        artifactId: "artifact-suppressed-resume",
+        status: "suppressed",
+      });
+
+      expect(dashboardResponse.statusCode, dashboardResponse.body).toBe(200);
+      expect(dashboardResponse.json().totals.ready).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("exposes preparation policy versions, distinct outdated counts, and work-item counts in the dashboard summary", async () => {
+    const seedDb = new Database(options.dbPath);
+    createScoreStalenessTable(seedDb);
+    createMaterialsTables(seedDb);
+    seedDb.exec(`
+      CREATE TABLE scoring_policies (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        version INTEGER NOT NULL,
+        rubric_json TEXT NOT NULL,
+        anchors_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        created_from_event_id INTEGER,
+        PRIMARY KEY (tenant_id, version)
+      );
+      CREATE TABLE tailoring_policies (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        version INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, version)
+      );
+      CREATE TABLE preparation_work_items (
+        item_id TEXT NOT NULL PRIMARY KEY,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        target_version INTEGER NOT NULL,
+        source_event_id TEXT NOT NULL DEFAULT '',
+        state TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        available_at TEXT NOT NULL
+      );
+    `);
+    const insertScoringPolicy = seedDb.prepare(
+      "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) VALUES (?, ?, ?, ?, ?)",
+    );
+    insertScoringPolicy.run("local", 2, "{}", "[]", "2026-05-26T10:00:00+00:00");
+    insertScoringPolicy.run("local", 3, "{}", "[]", "2026-05-26T10:05:00+00:00");
+    seedDb
+      .prepare("INSERT INTO tailoring_policies (tenant_id, version, created_at) VALUES (?, ?, ?)")
+      .run("local", 2, "2026-05-26T10:00:00+00:00");
+    seedDb
+      .prepare(
+        `INSERT INTO job_score_staleness (
+           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           new_policy_id, new_policy_version, marked_at, resolved
+         ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+           'local:scoring-policy-v2', 2, '2026-05-26T10:01:00+00:00', 0)`,
+      )
+      .run("https://example.com/jobs/failed-score");
+    seedDb
+      .prepare(
+        `INSERT INTO job_score_staleness (
+           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           new_policy_id, new_policy_version, marked_at, resolved
+         ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+           'local:scoring-policy-v3', 3, '2026-05-26T10:06:00+00:00', 0)`,
+      )
+      .run("https://example.com/jobs/failed-score");
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/ready",
+      artifactId: "artifact-ready-old-policy",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: path.join(tempDir, "ready-resume.txt"),
+      metadata: { tailoring_policy_version: 1 },
+    });
+    for (const [itemId, jobId, state] of [
+      ["prep-queued", "https://example.com/jobs/ready", "queued"],
+      ["prep-running", "https://example.com/jobs/failed-score", "running"],
+      ["prep-failed", "https://example.com/jobs/blocked-tailor", "failed"],
+    ] as const) {
+      seedDb
+        .prepare(
+          `INSERT INTO preparation_work_items (
+             item_id, tenant_id, job_id, kind, target_version, source_event_id, state,
+             idempotency_key, attempts, last_error, created_at, updated_at, available_at
+           ) VALUES (?, 'local', ?, 'rescore', 2, 'event-1', ?, ?, 0, '', ?, ?, ?)`,
+        )
+        .run(
+          itemId,
+          jobId,
+          state,
+          `${itemId}-key`,
+          "2026-05-26T10:02:00+00:00",
+          "2026-05-26T10:02:00+00:00",
+          "2026-05-26T10:02:00+00:00",
+        );
+    }
+    seedDb.close();
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().preparation).toEqual({
+        currentScoringPolicyVersion: 3,
+        currentTailoringPolicyVersion: 2,
+        outdatedScoreCount: 1,
+        outdatedTailoredArtifactCount: 1,
+        workItems: { queued: 1, running: 1, failed: 1 },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not count corrected old-policy scores as outdated when staleness markers are absent", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      CREATE TABLE scoring_policies (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        version INTEGER NOT NULL,
+        rubric_json TEXT NOT NULL,
+        anchors_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        created_from_event_id INTEGER,
+        PRIMARY KEY (tenant_id, version)
+      );
+    `);
+    seedDb
+      .prepare(
+        "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("local", 2, "{}", "[]", "2026-05-26T10:00:00+00:00");
+    seedDb
+      .prepare("UPDATE job_scores SET trace_json = ?")
+      .run(JSON.stringify({ scoring_policy_id: "local:scoring-policy-v2", scoring_policy_version: 2 }));
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/outdated-policy-score",
+      title: "Outdated Score",
+      site: "ExampleCo",
+      fitScore: 8,
+    });
+    insertScore(seedDb, "https://example.com/jobs/outdated-policy-score", 1, 8, { policyVersion: 1 });
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/corrected-policy-score",
+      title: "Corrected Score",
+      site: "ExampleCo",
+      fitScore: 9,
+    });
+    insertScore(seedDb, "https://example.com/jobs/corrected-policy-score", 1, 9, {
+      correction: { fit_score: 9, reason: "user corrected score" },
+      policyVersion: 1,
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().preparation.outdatedScoreCount).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("does not count corrected latest scores as outdated when stale markers remain unresolved", async () => {
+    const seedDb = new Database(options.dbPath);
+    createScoreStalenessTable(seedDb);
+    seedDb.exec(`
+      CREATE TABLE scoring_policies (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        version INTEGER NOT NULL,
+        rubric_json TEXT NOT NULL,
+        anchors_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        created_from_event_id INTEGER,
+        PRIMARY KEY (tenant_id, version)
+      );
+    `);
+    seedDb
+      .prepare(
+        "INSERT INTO scoring_policies (tenant_id, version, rubric_json, anchors_json, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("local", 3, "{}", "[]", "2026-05-26T10:00:00+00:00");
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/stale-but-corrected",
+      title: "Corrected Stale Score",
+      site: "ExampleCo",
+      fitScore: 9,
+    });
+    insertScore(seedDb, "https://example.com/jobs/stale-but-corrected", 1, 7, { policyVersion: 1 });
+    insertScore(seedDb, "https://example.com/jobs/stale-but-corrected", 2, 9, {
+      correction: { fit_score: 9, reason: "user corrected score" },
+      policyVersion: 1,
+    });
+    seedDb
+      .prepare(
+        `INSERT INTO job_score_staleness (
+           tenant_id, job_url, stale_reason, old_policy_id, old_policy_version,
+           new_policy_id, new_policy_version, marked_at, resolved
+         ) VALUES ('local', ?, 'scoring_policy_changed', 'local:scoring-policy-v1', 1,
+           'local:scoring-policy-v3', 3, '2026-05-26T10:06:00+00:00', 0)`,
+      )
+      .run("https://example.com/jobs/stale-but-corrected");
+    seedDb.close();
+
+    const app = buildApp(options);
+    try {
+      const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().preparation.outdatedScoreCount).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("formats zero-byte artifacts as real files instead of missing files", async () => {
     const db = new Database(options.dbPath);
     db.prepare("UPDATE job_artifacts SET size_bytes = 0 WHERE artifact_type = ?").run("tailored_resume_txt");
@@ -1851,6 +2148,103 @@ describe("local TypeScript API", () => {
     });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("dispatches current-policy rescore and re-tailor maintenance actions", async () => {
+    const dispatch = vi.fn(async (command: ActionCommandPayload): Promise<ActionDispatchResult> => ({
+      status: "queued",
+      runId: `run-${command.action}`,
+      result: { ok: true, action: command.action },
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const rescoreJob = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/rescore-current-policy`,
+      payload: { dryRun: true, reason: "policy refresh" },
+    });
+    const rescoreBulk = await app.inject({
+      method: "POST",
+      url: "/v1/scoring/actions/rescore-current-policy",
+      payload: { jobKeys: ["https://example.com/jobs/failed-score"], limit: 10, dryRun: true },
+    });
+    const retailorJob = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retailor-current-policy`,
+      payload: {
+        dryRun: true,
+        suppressExistingArtifacts: false,
+        tailorModels: ["gemini:test"],
+        tailorJudgeModel: "judge:test",
+        tailorJudgeMinScore: 0.82,
+        reason: "policy refresh",
+      },
+    });
+    const retailorBulk = await app.inject({
+      method: "POST",
+      url: "/v1/materials/actions/retailor-current-policy",
+      payload: {
+        jobKeys: ["https://example.com/jobs/ready"],
+        limit: 5,
+        dryRun: false,
+        suppressExistingArtifacts: true,
+      },
+    });
+
+    for (const response of [rescoreJob, rescoreBulk, retailorJob, retailorBulk]) {
+      expect(response.statusCode, response.body).toBe(202);
+      expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    }
+    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(dispatch).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        action: "rescore_job",
+        jobKey: "https://example.com/jobs/ready",
+        dryRun: true,
+        reason: "policy refresh",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        action: "rescore_jobs_not_on_current_scoring_policy",
+        jobKey: "pipeline",
+        jobKeys: ["https://example.com/jobs/failed-score"],
+        limit: 10,
+        dryRun: true,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        action: "retailor_job",
+        jobKey: "https://example.com/jobs/ready",
+        dryRun: true,
+        suppressExistingArtifacts: false,
+        tailorModels: ["gemini:test"],
+        tailorJudgeModel: "judge:test",
+        tailorJudgeMinScore: 0.82,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        action: "retailor_current_policy",
+        jobKey: "pipeline",
+        jobKeys: ["https://example.com/jobs/ready"],
+        limit: 5,
+        dryRun: false,
+        suppressExistingArtifacts: true,
+      }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
@@ -3119,6 +3513,76 @@ function createScoreStalenessTable(db: Database.Database): void {
       )
     )
   `);
+}
+
+function createMaterialsTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_materials (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_validation_json TEXT,
+      last_verdict_json TEXT,
+      metadata_json TEXT,
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE IF NOT EXISTS job_materials_artifacts (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_type TEXT NOT NULL,
+      artifact_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      path TEXT NOT NULL,
+      render_format TEXT NOT NULL,
+      size_bytes INTEGER,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      superseded_at TEXT,
+      PRIMARY KEY (job_url, generation, artifact_type)
+    );
+  `);
+}
+
+function insertMaterialsGeneration(
+  db: Database.Database,
+  artifact: {
+    jobUrl: string;
+    artifactId: string;
+    artifactType: string;
+    status: string;
+    path: string;
+    metadata?: Record<string, unknown>;
+  },
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO job_materials (
+       job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+     ) VALUES (?, 1, 'local', ?, ?, ?, ?)`,
+  ).run(
+    artifact.jobUrl,
+    artifact.status === "suppressed" ? "suppressed" : "resume_approved",
+    "2026-05-26T10:00:00+00:00",
+    "2026-05-26T10:00:00+00:00",
+    "{}",
+  );
+  db.prepare(
+    `INSERT OR REPLACE INTO job_materials_artifacts (
+       job_url, generation, artifact_type, artifact_id, status, path,
+       render_format, size_bytes, metadata_json, created_at
+     ) VALUES (?, 1, ?, ?, ?, ?, 'text', ?, ?, ?)`,
+  ).run(
+    artifact.jobUrl,
+    artifact.artifactType,
+    artifact.artifactId,
+    artifact.status,
+    artifact.path,
+    fs.existsSync(artifact.path) ? fs.statSync(artifact.path).size : null,
+    JSON.stringify(artifact.metadata ?? {}),
+    "2026-05-26T10:00:00+00:00",
+  );
 }
 
 function insertStage(

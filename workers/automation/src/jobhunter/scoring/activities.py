@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import time
 from typing import Any
 
 from temporalio import activity
@@ -21,6 +22,8 @@ class ScoreActivityInput:
     workers: int = 1
     dry_run: bool = False
     rescore: bool = False
+    job_urls: tuple[str, ...] = ()
+    current_policy_only: bool = False
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -46,6 +49,32 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
+    if payload.current_policy_only:
+        result = await run_blocking_with_heartbeat(
+            lambda: _run_current_policy_scores(payload),
+            starting_message="current-policy score starting",
+            progress_message="current-policy score still running",
+        )
+        return ScoreActivityOutput(
+            status=str(result["status"]),
+            elapsed=float(result["elapsed"]),
+            errors=dict(result["errors"]),
+            stages=list(result["stages"]),
+        )
+
+    if payload.job_urls:
+        result = await run_blocking_with_heartbeat(
+            lambda: _run_selected_scores(payload),
+            starting_message="selected score starting",
+            progress_message="selected score still running",
+        )
+        return ScoreActivityOutput(
+            status=str(result["status"]),
+            elapsed=float(result["elapsed"]),
+            errors=dict(result["errors"]),
+            stages=list(result["stages"]),
+        )
+
     def _do() -> dict[str, Any]:
         return run_pipeline(
             stages=["score"],
@@ -70,3 +99,77 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
         errors=errors,
         stages=stages,
     )
+
+
+def _run_current_policy_scores(payload: ScoreActivityInput) -> dict[str, Any]:
+    from jobhunter.database import get_connection
+    from jobhunter.pipeline.current_policy_selectors import scoring_current_policy_job_urls
+
+    urls = scoring_current_policy_job_urls(
+        get_connection(),
+        tenant_id=payload.tenant_id,
+        limit=payload.limit,
+        job_urls=payload.job_urls,
+    )
+    return _run_selected_scores(replace(payload, job_urls=urls, limit=0))
+
+
+def _run_selected_scores(payload: ScoreActivityInput) -> dict[str, Any]:
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.scorer import score_job_by_url
+
+    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    if payload.dry_run:
+        return {
+            "status": "ok",
+            "elapsed": 0.0,
+            "errors": {},
+            "stages": [
+                {
+                    "stage": "score",
+                    "status": "ok",
+                    "elapsed": 0.0,
+                    "selected": len(urls),
+                    "dry_run": True,
+                }
+            ],
+        }
+
+    t0 = time.time()
+    errors: dict[str, str] = {}
+    scored = 0
+    for url in urls:
+        outcome = score_job_by_url(
+            url,
+            tenant_id=TenantId(payload.tenant_id),
+            rescore=payload.rescore,
+            llm_model=payload.llm_model,
+        )
+        if outcome.ok:
+            scored += 1
+        else:
+            errors[url] = outcome.error or "Scoring failed"
+
+    elapsed = time.time() - t0
+    status = "failed" if errors else "ok"
+    return {
+        "status": status,
+        "elapsed": elapsed,
+        "errors": errors,
+        "stages": [
+            {
+                "stage": "score",
+                "status": status,
+                "elapsed": elapsed,
+                "selected": len(urls),
+                "scored": scored,
+            }
+        ],
+    }
+
+
+def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
+    unique = tuple(dict.fromkeys(url for url in job_urls if url))
+    if limit > 0:
+        return unique[:limit]
+    return unique

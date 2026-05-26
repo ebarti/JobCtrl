@@ -208,6 +208,7 @@ def _tailor_one_job(
     use_case: TailorResumeUseCase | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     retailor: bool = False,
+    suppress_existing_artifacts: bool = False,
     tenant_id: TenantId = LOCAL_TENANT,
     llm_policy: TailoringLlmPolicy | None = None,
 ) -> dict:
@@ -230,6 +231,7 @@ def _tailor_one_job(
         validation_mode=validation_mode,
         tenant_id=tenant_id,
         retailor=retailor,
+        suppress_existing_artifacts=suppress_existing_artifacts,
     )
 
     pdf_path: str | None = None
@@ -572,6 +574,7 @@ def tailor_job_by_url(
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
+    suppress_existing_artifacts: bool = False,
 ) -> dict:
     """Tailor exactly one eligible job by URL.
 
@@ -627,6 +630,7 @@ def tailor_job_by_url(
         use_case=None,
         pdf_renderer=pdf_renderer,
         retailor=retailor,
+        suppress_existing_artifacts=suppress_existing_artifacts,
         tenant_id=tenant_id,
         llm_policy=llm_policy,
     )

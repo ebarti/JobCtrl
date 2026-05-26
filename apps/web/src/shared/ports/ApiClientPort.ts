@@ -9,6 +9,8 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
+  BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
   CredentialKey,
   CorrectScoreRequest,
@@ -40,6 +42,8 @@ import type {
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
+  RescoreJobRequest,
+  RetailorJobRequest,
   RetryStageRequest,
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
@@ -137,6 +141,12 @@ export interface ApiClientPort {
   resetStaleScoresForRescore(
     body: ResetStaleScoresForRescoreRequest,
   ): Promise<ResetStaleScoresForRescoreResponse>;
+  rescoreJob(jobKey: string, body?: Partial<RescoreJobRequest>): Promise<ActionRunResponse>;
+  rescoreJobsNotOnCurrentScoringPolicy(
+    body: BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
+  ): Promise<ActionRunResponse>;
+  retailorJob(jobKey: string, body?: Partial<RetailorJobRequest>): Promise<ActionRunResponse>;
+  retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
 

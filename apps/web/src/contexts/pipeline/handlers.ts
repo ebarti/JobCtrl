@@ -13,6 +13,7 @@ import type {
   PreparationWorkItemStarted,
 } from "@jobhunter/domain-types";
 
+import { artifactsKeys } from "../operations/artifactsKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
@@ -77,11 +78,20 @@ type PreparationWorkItemEvent =
 
 const preparationWorkItemHandler = (
   event: PreparationWorkItemEvent,
-): readonly InvalidationItem[] => [
-  invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
-  invalidate(dashboardKeys.summary(event.tenantId)),
-];
+): readonly InvalidationItem[] => {
+  const invalidations = [
+    invalidate(jobsKeys.lists(event.tenantId)),
+    invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  ];
+  if (
+    event.eventType === "PreparationWorkItemCompleted" &&
+    event.payload.kind === "suppress_tailored_artifacts"
+  ) {
+    invalidations.push(invalidate(artifactsKeys.lists(event.tenantId)));
+  }
+  invalidations.push(invalidate(dashboardKeys.summary(event.tenantId)));
+  return invalidations;
+};
 
 export const preparationWorkItemQueuedHandler = preparationWorkItemHandler;
 export const preparationWorkItemStartedHandler = preparationWorkItemHandler;
