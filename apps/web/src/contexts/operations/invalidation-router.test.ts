@@ -167,6 +167,43 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  TailoringPolicyUpdated: [
+    profileKeys.profile(LOCAL_TENANT),
+    jobsKeys.all(LOCAL_TENANT),
+    artifactsKeys.all(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  TailorRetailorRequested: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  TailoredArtifactsSuppressed: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    artifactsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  PreparationWorkItemQueued: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  PreparationWorkItemStarted: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  PreparationWorkItemCompleted: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
+  PreparationWorkItemFailed: [
+    jobsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   ApplyRunStarted: [
     applyRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.lists(LOCAL_TENANT),

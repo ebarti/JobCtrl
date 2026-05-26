@@ -113,7 +113,32 @@ export {
   type MaterialsExhaustedPayload,
   type MaterialsExhausted,
   createMaterialsExhausted,
+  RETAILOR_REQUEST_KINDS,
+  type RetailorRequestKind,
+  type TailorRetailorRequestedPayload,
+  type TailorRetailorRequested,
+  createTailorRetailorRequested,
+  type TailoredArtifactsSuppressedPayload,
+  type TailoredArtifactsSuppressed,
+  createTailoredArtifactsSuppressed,
 } from "./materials.js";
+
+export {
+  PREPARATION_WORK_ITEM_KINDS,
+  type PreparationWorkItemKind,
+  type PreparationWorkItemQueuedPayload,
+  type PreparationWorkItemQueued,
+  createPreparationWorkItemQueued,
+  type PreparationWorkItemStartedPayload,
+  type PreparationWorkItemStarted,
+  createPreparationWorkItemStarted,
+  type PreparationWorkItemCompletedPayload,
+  type PreparationWorkItemCompleted,
+  createPreparationWorkItemCompleted,
+  type PreparationWorkItemFailedPayload,
+  type PreparationWorkItemFailed,
+  createPreparationWorkItemFailed,
+} from "./preparation.js";
 
 export {
   type ApplicationSubmittedPayload,
@@ -164,6 +189,9 @@ export {
   type ProfileImportedPayload,
   type ProfileImported,
   createProfileImported,
+  type TailoringPolicyUpdatedPayload,
+  type TailoringPolicyUpdated,
+  createTailoringPolicyUpdated,
 } from "./profile.js";
 
 import type {
@@ -200,13 +228,16 @@ import type {
   PdfRendered,
   ResumeApproved,
   ResumeFailed,
+  TailoredArtifactsSuppressed,
+  TailorRetailorRequested,
 } from "./materials.js";
 import type {
-  ApplicationFailed,
-  ApplicationSubmitted,
-  ApplyRunEventRecorded,
-  ApplyRunStarted,
-} from "./apply.js";
+  PreparationWorkItemCompleted,
+  PreparationWorkItemFailed,
+  PreparationWorkItemQueued,
+  PreparationWorkItemStarted,
+} from "./preparation.js";
+import type { ApplicationFailed, ApplicationSubmitted, ApplyRunEventRecorded, ApplyRunStarted } from "./apply.js";
 import type {
   StageBlocked,
   StageCanceled,
@@ -217,7 +248,7 @@ import type {
   StageSkipped,
   StageStarted,
 } from "./orchestration.js";
-import type { ProfileImported, ProfileUpdated } from "./profile.js";
+import type { ProfileImported, ProfileUpdated, TailoringPolicyUpdated } from "./profile.js";
 
 export type DomainEventUnion =
   | JobDiscovered
@@ -251,6 +282,12 @@ export type DomainEventUnion =
   | CoverLetterGenerated
   | PdfRendered
   | MaterialsExhausted
+  | TailorRetailorRequested
+  | TailoredArtifactsSuppressed
+  | PreparationWorkItemQueued
+  | PreparationWorkItemStarted
+  | PreparationWorkItemCompleted
+  | PreparationWorkItemFailed
   | ApplyRunStarted
   | ApplyRunEventRecorded
   | ApplicationSubmitted
@@ -264,7 +301,8 @@ export type DomainEventUnion =
   | StageSkipped
   | StageCanceled
   | ProfileUpdated
-  | ProfileImported;
+  | ProfileImported
+  | TailoringPolicyUpdated;
 
 export type DomainEventType = DomainEventUnion["eventType"];
 
@@ -300,6 +338,12 @@ export const DOMAIN_EVENT_TYPES = [
   "CoverLetterGenerated",
   "PdfRendered",
   "MaterialsExhausted",
+  "TailorRetailorRequested",
+  "TailoredArtifactsSuppressed",
+  "PreparationWorkItemQueued",
+  "PreparationWorkItemStarted",
+  "PreparationWorkItemCompleted",
+  "PreparationWorkItemFailed",
   "ApplyRunStarted",
   "ApplyRunEventRecorded",
   "ApplicationSubmitted",
@@ -314,6 +358,7 @@ export const DOMAIN_EVENT_TYPES = [
   "StageCanceled",
   "ProfileUpdated",
   "ProfileImported",
+  "TailoringPolicyUpdated",
 ] as const satisfies readonly DomainEventType[];
 
 type EnumeratedDomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];

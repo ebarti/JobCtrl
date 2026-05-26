@@ -18,10 +18,7 @@ export interface ResumeApprovedPayload {
 
 export type ResumeApproved = DomainEvent<"ResumeApproved", ResumeApprovedPayload>;
 
-export function createResumeApproved(
-  tenantId: TenantId,
-  payload: ResumeApprovedPayload,
-): ResumeApproved {
+export function createResumeApproved(tenantId: TenantId, payload: ResumeApprovedPayload): ResumeApproved {
   return createDomainEvent("ResumeApproved", tenantId, payload);
 }
 
@@ -35,10 +32,7 @@ export interface ResumeFailedPayload {
 
 export type ResumeFailed = DomainEvent<"ResumeFailed", ResumeFailedPayload>;
 
-export function createResumeFailed(
-  tenantId: TenantId,
-  payload: ResumeFailedPayload,
-): ResumeFailed {
+export function createResumeFailed(tenantId: TenantId, payload: ResumeFailedPayload): ResumeFailed {
   return createDomainEvent("ResumeFailed", tenantId, payload);
 }
 
@@ -70,10 +64,7 @@ export interface PdfRenderedPayload {
 
 export type PdfRendered = DomainEvent<"PdfRendered", PdfRenderedPayload>;
 
-export function createPdfRendered(
-  tenantId: TenantId,
-  payload: PdfRenderedPayload,
-): PdfRendered {
+export function createPdfRendered(tenantId: TenantId, payload: PdfRenderedPayload): PdfRendered {
   return createDomainEvent("PdfRendered", tenantId, payload);
 }
 
@@ -88,9 +79,55 @@ export interface MaterialsExhaustedPayload {
 
 export type MaterialsExhausted = DomainEvent<"MaterialsExhausted", MaterialsExhaustedPayload>;
 
-export function createMaterialsExhausted(
-  tenantId: TenantId,
-  payload: MaterialsExhaustedPayload,
-): MaterialsExhausted {
+export function createMaterialsExhausted(tenantId: TenantId, payload: MaterialsExhaustedPayload): MaterialsExhausted {
   return createDomainEvent("MaterialsExhausted", tenantId, payload);
+}
+
+// -- TailorRetailorRequested -----------------------------------------------
+
+export const RETAILOR_REQUEST_KINDS = ["single_job", "bulk_current_policy", "policy_update", "repair"] as const;
+export type RetailorRequestKind = (typeof RETAILOR_REQUEST_KINDS)[number];
+
+export interface TailorRetailorRequestedPayload {
+  readonly requestId: string;
+  readonly jobId: string;
+  readonly requestKind: RetailorRequestKind;
+  readonly currentPolicyVersion: number;
+  readonly latestArtifactPolicyVersion: number | null;
+  readonly reason: string;
+  readonly requestedAt: string;
+  readonly sourceEventId?: string | null;
+}
+
+export type TailorRetailorRequested = DomainEvent<"TailorRetailorRequested", TailorRetailorRequestedPayload>;
+
+export function createTailorRetailorRequested(
+  tenantId: TenantId,
+  payload: TailorRetailorRequestedPayload,
+): TailorRetailorRequested {
+  return createDomainEvent("TailorRetailorRequested", tenantId, payload);
+}
+
+// -- TailoredArtifactsSuppressed -------------------------------------------
+
+export interface TailoredArtifactsSuppressedPayload {
+  readonly jobId: string;
+  readonly artifactIds: readonly string[];
+  readonly suppressionReason: string;
+  readonly suppressedAt: string;
+  readonly currentFitScore?: number;
+  readonly scoreThreshold?: number;
+  readonly currentTailoringPolicyVersion?: number;
+}
+
+export type TailoredArtifactsSuppressed = DomainEvent<
+  "TailoredArtifactsSuppressed",
+  TailoredArtifactsSuppressedPayload
+>;
+
+export function createTailoredArtifactsSuppressed(
+  tenantId: TenantId,
+  payload: TailoredArtifactsSuppressedPayload,
+): TailoredArtifactsSuppressed {
+  return createDomainEvent("TailoredArtifactsSuppressed", tenantId, payload);
 }

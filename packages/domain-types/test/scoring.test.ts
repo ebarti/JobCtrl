@@ -46,6 +46,16 @@ describe("Scoring types", () => {
       experienceFit: 7,
       roleFit: 8,
       reasoning: "Strong overlap on Python and FastAPI",
+      fitBand: "strong",
+      confidence: "high",
+      eligibility: {
+        status: "eligible",
+        hardBlockers: [],
+        warnings: [],
+      },
+      matchedSignals: ["python", "fastapi"],
+      missingSignals: [],
+      transferableSignals: [],
     };
     const matchedKeywords: MatchedKeywords = {
       values: ["python", "fastapi"],
@@ -64,6 +74,22 @@ describe("Scoring types", () => {
       breakdown,
       matchedKeywords,
       scoredAt: "2024-01-02T00:00:00+00:00",
+      criteria: {
+        minFitScore: 7,
+        criteriaText: "remote, US-based, Python or Go",
+        targetCriteria: "",
+        profilePreferences: {},
+        criteriaVersion: "criteria-1",
+      },
+      trace: {
+        promptVersion: "score-fit-assessment-v1",
+        schemaVersion: "score-fit-assessment-v1",
+        model: "test-model",
+        criteriaVersion: "criteria-1",
+        profileSnapshotVersion: 1,
+        parserWarnings: [],
+        correctionHistory: [correction],
+      },
       correction,
     };
 
@@ -77,6 +103,9 @@ describe("Scoring types", () => {
     const criteria: ScoringCriteria = {
       minFitScore: 7,
       criteriaText: "remote, US-based, Python or Go",
+      targetCriteria: "",
+      profilePreferences: {},
+      criteriaVersion: "criteria-1",
     };
     expect(criteria.minFitScore).toBe(7);
   });
@@ -87,9 +116,40 @@ describe("Scoring types", () => {
       jobId: generateJobId(),
       version: 1,
       fitScore: createFitScore(5),
-      breakdown: { technicalFit: 0, experienceFit: 0, roleFit: 0, reasoning: "" },
+      breakdown: {
+        technicalFit: 0,
+        experienceFit: 0,
+        roleFit: 0,
+        reasoning: "",
+        fitBand: "poor",
+        confidence: "low",
+        eligibility: {
+          status: "unknown",
+          hardBlockers: [],
+          warnings: [],
+        },
+        matchedSignals: [],
+        missingSignals: [],
+        transferableSignals: [],
+      },
       matchedKeywords: { values: [] },
       scoredAt: "2024-01-01T00:00:00+00:00",
+      criteria: {
+        minFitScore: 7,
+        criteriaText: "",
+        targetCriteria: "",
+        profilePreferences: {},
+        criteriaVersion: "criteria-1",
+      },
+      trace: {
+        promptVersion: "score-fit-assessment-v1",
+        schemaVersion: "score-fit-assessment-v1",
+        model: "test-model",
+        criteriaVersion: "criteria-1",
+        profileSnapshotVersion: 1,
+        parserWarnings: [],
+        correctionHistory: [],
+      },
       correction: null,
     };
     expect(score.correction).toBeNull();
