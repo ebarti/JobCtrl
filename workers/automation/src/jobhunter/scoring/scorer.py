@@ -462,6 +462,12 @@ def score_job_by_url(
         policy_repository = SqliteScoringPolicyRepository(conn)
     existing = repository.load(tenant_id, JobId(job_url))
     if existing is not None:
+        _ensure_existing_score_stage_succeeded(
+            conn,
+            job=job,
+            score=existing,
+            tenant_id=tenant_id,
+        )
         return ScoreJobOutcome(ok=True, score=existing)
 
     ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
@@ -535,6 +541,79 @@ def score_job_by_url(
         )
     conn.commit()
     return outcome
+
+
+def _ensure_existing_score_stage_succeeded(
+    conn: sqlite3.Connection,
+    *,
+    job: dict[str, Any],
+    score: JobScore,
+    tenant_id: TenantId,
+) -> None:
+    job_url = str(score.job_id)
+    if _has_unresolved_score_staleness(conn, tenant_id=tenant_id, job_url=job_url):
+        return
+
+    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    row = conn.execute(
+        "SELECT state, started_at, attempt_count "
+        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+        (job_url,),
+    ).fetchone()
+    state = _row_value(row, "state", 0)
+    if state == "succeeded":
+        return
+
+    finished_at = utc_now()
+    started_at = _row_value(row, "started_at", 1) or finished_at
+    attempt_count = max(int(_row_value(row, "attempt_count", 2) or 0), 1)
+    set_stage_state(
+        conn,
+        job_url,
+        "score",
+        "succeeded",
+        attempt_count=attempt_count,
+        started_at=str(started_at),
+        finished_at=finished_at,
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_url,
+        "score",
+        "StageCompleted",
+        message=f"Fit score {score.fit_score.value}/10",
+        payload={"keywords": list(score.matched_keywords)},
+    )
+    conn.commit()
+
+
+def _has_unresolved_score_staleness(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_url: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM job_score_staleness
+        WHERE tenant_id = ?
+          AND job_url = ?
+          AND resolved = 0
+        LIMIT 1
+        """,
+        (str(tenant_id), job_url),
+    ).fetchone()
+    return row is not None
+
+
+def _row_value(row: Any, key: str, index: int) -> Any:
+    if row is None:
+        return None
+    if isinstance(row, sqlite3.Row):
+        return row[key]
+    return row[index]
 
 
 # ---------------------------------------------------------------------------

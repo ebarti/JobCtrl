@@ -311,6 +311,7 @@ def test_stage_cli_commands_accept_limits(monkeypatch):
         return {"stages": [{"stage": stage, "status": "ok", "elapsed": 0.01}], "errors": {}, "elapsed": 0.01}
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr("jobhunter.config.check_tier", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "run_pipeline", fake_pipeline)
 
     runner = CliRunner()
@@ -320,6 +321,46 @@ def test_stage_cli_commands_accept_limits(monkeypatch):
 
     assert [call["stages"] for call in calls] == [["discover"], ["enrich"], ["discover"]]
     assert [call["limit"] for call in calls] == [1, 1, 1]
+
+
+def test_discover_cli_requires_tier2_guard(monkeypatch):
+    guard_calls = []
+
+    def fake_check_tier(required, feature):
+        guard_calls.append((required, feature))
+        raise SystemExit(1)
+
+    def should_not_run_pipeline(**_kwargs):
+        raise AssertionError("discover should be tier-gated before pipeline execution")
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr("jobhunter.config.check_tier", fake_check_tier)
+    monkeypatch.setattr(cli, "run_pipeline", should_not_run_pipeline)
+
+    result = CliRunner().invoke(app, ["discover", "--limit", "1"])
+
+    assert result.exit_code == 1
+    assert guard_calls == [(2, "AI discovery preparation")]
+
+
+def test_run_discover_requires_tier2_guard(monkeypatch):
+    guard_calls = []
+
+    def fake_check_tier(required, feature):
+        guard_calls.append((required, feature))
+        raise SystemExit(1)
+
+    def should_not_run_pipeline(**_kwargs):
+        raise AssertionError("run discover should be tier-gated before pipeline execution")
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr("jobhunter.config.check_tier", fake_check_tier)
+    monkeypatch.setattr(cli, "run_pipeline", should_not_run_pipeline)
+
+    result = CliRunner().invoke(app, ["run", "discover", "--limit", "1"])
+
+    assert result.exit_code == 1
+    assert guard_calls == [(2, "AI discovery preparation")]
 
 
 def test_action_cli_reports_validation_errors_without_traceback(tmp_path, monkeypatch):

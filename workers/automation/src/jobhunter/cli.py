@@ -18,7 +18,7 @@ from rich.text import Text
 
 from jobhunter import __version__
 from jobhunter.llm import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL
-from jobhunter.pipeline import STAGE_ORDER, run_pipeline, run_single_job
+from jobhunter.pipeline import SUPPORTED_STAGE_ORDER, run_pipeline, run_single_job
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +35,13 @@ console = Console()
 log = logging.getLogger(__name__)
 
 # Valid pipeline stages (in execution order)
-VALID_STAGES = STAGE_ORDER
+VALID_STAGES = SUPPORTED_STAGE_ORDER
+_TIER2_STAGE_FEATURES = {
+    "discover": "AI discovery preparation",
+    "score": "AI scoring",
+    "tailor": "resume tailoring",
+    "cover": "cover letter generation",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +95,27 @@ def _bootstrap() -> None:
             _projection_subscription = builder.subscribe_to(get_default_publisher())
     except Exception:  # noqa: BLE001 — projection refresh failure must not break boot
         log.exception("ProjectionBuilder backfill on bootstrap failed")
+
+
+def _check_tier2_stage(stage: str) -> None:
+    feature = _TIER2_STAGE_FEATURES.get(stage)
+    if feature is None:
+        return
+
+    from jobhunter.config import check_tier
+
+    check_tier(2, feature)
+
+
+def _check_tier2_stage_list(stage_list: list[str]) -> None:
+    if "all" in stage_list or "discover" in stage_list:
+        _check_tier2_stage("discover")
+        return
+
+    if any(s in stage_list for s in ("score", "tailor", "cover")):
+        from jobhunter.config import check_tier
+
+        check_tier(2, "AI scoring/tailoring")
 
 
 def _version_callback(value: bool) -> None:
@@ -470,15 +497,7 @@ def _run_stage_command(
     """Run a single pipeline stage through the shared orchestrator."""
     _bootstrap()
 
-    if stage in {"score", "tailor", "cover"}:
-        from jobhunter.config import check_tier
-
-        feature_names = {
-            "score": "AI scoring",
-            "tailor": "resume tailoring",
-            "cover": "cover letter generation",
-        }
-        check_tier(2, feature_names[stage])
+    _check_tier2_stage(stage)
 
     validation = _validate_validation_mode(validation)
 
@@ -646,11 +665,9 @@ def run(
             )
             raise typer.Exit(code=1)
 
-    # Gate AI stages behind Tier 2
-    llm_stages = {"score", "tailor", "cover"}
-    if any(s in stage_list for s in llm_stages) or "all" in stage_list:
-        from jobhunter.config import check_tier
-        check_tier(2, "AI scoring/tailoring")
+    # Discovery now drains scoring/tailoring preparation work, so explicit
+    # discover uses the same Tier 2 preflight as the maintenance AI stages.
+    _check_tier2_stage_list(stage_list)
 
     # Validate the --validation flag value
     validation = _validate_validation_mode(validation)

@@ -17,6 +17,7 @@ from jobhunter.domain.materials import (
     ArtifactType,
     JudgeVerdict,
     MaterialsSet,
+    MaterialsSetFactory,
     RenderFormat,
     ValidationResult,
 )
@@ -76,6 +77,49 @@ def _approved_materials(url: str) -> MaterialsSet:
     )
 
 
+def test_all_stage_expands_to_primary_discover_only_and_keeps_maintenance_explicit() -> None:
+    assert runner.PRIMARY_STAGE_ORDER == ("discover",)
+    assert runner.MAINTENANCE_STAGE_ORDER == ("score", "tailor", "cover")
+    assert runner.SUPPORTED_STAGE_ORDER == ("discover", "score", "tailor", "cover")
+    assert runner._resolve_stages(["all"]) == ["discover"]
+    assert runner._resolve_stages(["score", "tailor", "cover"]) == ["score", "tailor", "cover"]
+
+
+def test_run_pipeline_default_uses_primary_stage_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(runner, "load_env", lambda: None)
+    monkeypatch.setattr(runner, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(runner, "init_db", lambda: None)
+    empty_stats = {
+        "total": 0,
+        "pending_detail": 0,
+        "with_description": 0,
+        "scored": 0,
+        "tailored": 0,
+        "with_cover_letter": 0,
+        "ready_to_apply": 0,
+        "applied": 0,
+    }
+    monkeypatch.setattr(runner, "get_stats", lambda: empty_stats)
+
+    def fake_run_sequential(ordered, min_score, **_kwargs):
+        captured["ordered"] = ordered
+        captured["min_score"] = min_score
+        return {
+            "stages": [{"stage": stage, "status": "ok", "elapsed": 0.0} for stage in ordered],
+            "errors": {},
+            "elapsed": 0.0,
+        }
+
+    monkeypatch.setattr(runner, "_run_sequential", fake_run_sequential)
+
+    result = runner.run_pipeline(stages=None, min_score=8)
+
+    assert captured == {"ordered": ["discover"], "min_score": 8}
+    assert [stage["stage"] for stage in result["stages"]] == ["discover"]
+
+
 def test_discovery_preparation_drains_score_then_tailor_work_items(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
@@ -113,6 +157,56 @@ def test_discovery_preparation_drains_score_then_tailor_work_items(
     }
 
 
+def test_discovery_preparation_retries_failed_work_item_on_later_drain(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/job/transient-score-failure"
+    _seed_enriched_job(conn, url)
+    score_calls = 0
+    tailor_calls = 0
+
+    def fail_once_score(item, **_kwargs):
+        nonlocal score_calls
+        score_calls += 1
+        if score_calls == 1:
+            raise RuntimeError("temporary scoring outage")
+        _save_score(conn, str(item.job_id), 8)
+        return {"scoreVersion": 1}
+
+    def fake_tailor(item, **_kwargs):
+        nonlocal tailor_calls
+        tailor_calls += 1
+        return {"status": "approved", "materialsGeneration": 1}
+
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "_score_item", fail_once_score)
+    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
+
+    first_stats = preparation.drain_discovery_preparation(min_score=7)
+
+    assert first_stats["status"] == "partial"
+    assert first_stats["failed"]["score_job"] == 1
+    assert score_calls == 1
+    assert tailor_calls == 0
+
+    second_stats = preparation.drain_discovery_preparation(min_score=7)
+
+    assert second_stats["status"] == "ok"
+    assert second_stats["queued"]["score_job"] == 1
+    assert second_stats["completed"]["score_job"] == 1
+    assert second_stats["completed"]["tailor_resume"] == 1
+    assert score_calls == 2
+    assert tailor_calls == 1
+    rows = conn.execute(
+        "SELECT kind, state, attempts, last_error FROM preparation_work_items ORDER BY kind"
+    ).fetchall()
+    assert [(row["kind"], row["state"], row["attempts"], row["last_error"]) for row in rows] == [
+        ("score_job", "completed", 2, ""),
+        ("tailor_resume", "completed", 1, ""),
+    ]
+
+
 def test_threshold_recompute_suppresses_now_ineligible_artifacts(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
@@ -132,6 +226,63 @@ def test_threshold_recompute_suppresses_now_ineligible_artifacts(
     assert suppressed is not None
     assert suppressed.tailored_resume is not None
     assert suppressed.tailored_resume.status.value == "suppressed"
+
+
+def test_threshold_recompute_requeues_same_threshold_after_new_active_generation(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/job/repeated-threshold"
+    _seed_enriched_job(conn, url)
+    _save_score(conn, url, 6)
+    materials_repo = SqliteMaterialsRepository(conn)
+    materials_repo.save(_approved_materials(url))
+
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    first_stats = preparation.drain_discovery_preparation(min_score=7)
+
+    assert first_stats["completed"]["suppress_tailored_artifacts"] == 1
+    first_suppressed = materials_repo.load(LOCAL_TENANT, JobId(url))
+    assert first_suppressed is not None
+    assert first_suppressed.tailored_resume is not None
+    assert first_suppressed.tailored_resume.status.value == "suppressed"
+
+    superseded, fresh = MaterialsSetFactory.next_generation(
+        first_suppressed,
+        created_at="2026-05-26T00:03:00+00:00",
+    )
+    second_artifact = Artifact.create(
+        type=ArtifactType.TAILORED_RESUME,
+        path="/tmp/repeated-threshold-g2.txt",
+        created_at="2026-05-26T00:04:00+00:00",
+        render_format=RenderFormat.TEXT,
+        size_bytes=256,
+    )
+    materials_repo.save(superseded)
+    materials_repo.save(
+        fresh.with_resume_attempt(
+            second_artifact,
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2026-05-26T00:05:00+00:00",
+        )
+    )
+
+    second_stats = preparation.drain_discovery_preparation(min_score=7)
+
+    assert second_stats["queued"]["suppress_tailored_artifacts"] == 1
+    assert second_stats["completed"]["suppress_tailored_artifacts"] == 1
+    second_suppressed = materials_repo.load(LOCAL_TENANT, JobId(url))
+    assert second_suppressed is not None
+    assert second_suppressed.generation == 2
+    assert second_suppressed.tailored_resume is not None
+    assert second_suppressed.tailored_resume.status.value == "suppressed"
+    rows = conn.execute(
+        "SELECT source_event_id, state FROM preparation_work_items "
+        "WHERE kind = 'suppress_tailored_artifacts' ORDER BY created_at, source_event_id"
+    ).fetchall()
+    assert [row["state"] for row in rows] == ["completed", "completed"]
+    assert len({row["source_event_id"] for row in rows}) == 2
 
 
 def test_preparation_work_item_key_includes_source_event_id(

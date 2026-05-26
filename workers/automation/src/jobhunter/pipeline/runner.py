@@ -65,8 +65,11 @@ _PIPELINE_JOB_ID = "pipeline"
 # Stage definitions
 # ---------------------------------------------------------------------------
 
-STAGE_ORDER = ("discover", "score", "tailor", "cover")
-INTERNAL_STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover")
+PRIMARY_STAGE_ORDER = ("discover",)
+MAINTENANCE_STAGE_ORDER = ("score", "tailor", "cover")
+STAGE_ORDER = PRIMARY_STAGE_ORDER
+SUPPORTED_STAGE_ORDER = (*PRIMARY_STAGE_ORDER, *MAINTENANCE_STAGE_ORDER)
+INTERNAL_STAGE_ORDER = ("discover", "enrich", *MAINTENANCE_STAGE_ORDER)
 
 STAGE_META: dict[str, dict] = {
     "discover": {"desc": "Job discovery + detail enrichment"},
@@ -1475,14 +1478,14 @@ def _build_stage_kwargs(
 def _resolve_stages(stage_names: list[str]) -> list[str]:
     """Resolve 'all' and validate/order stage names."""
     if "all" in stage_names:
-        return list(STAGE_ORDER)
+        return list(PRIMARY_STAGE_ORDER)
 
     resolved = []
     for name in stage_names:
         if name not in STAGE_META:
             console.print(
                 f"[red]Unknown stage:[/red] '{name}'. "
-                f"Available: {', '.join((*STAGE_ORDER, 'enrich'))}, all"
+                f"Available: {', '.join((*SUPPORTED_STAGE_ORDER, 'enrich'))}, all"
             )
             raise SystemExit(1)
         if name not in resolved:

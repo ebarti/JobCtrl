@@ -19,10 +19,10 @@ from jobhunter import config
 from jobhunter.database import get_connection, init_db
 from jobhunter.infrastructure.profile import get_profile_repository
 from jobhunter.operational_metrics import record_operational_attempt_metric
-from jobhunter.pipeline import STAGE_ORDER, run_pipeline
+from jobhunter.pipeline import SUPPORTED_STAGE_ORDER, run_pipeline
 from jobhunter.state import record_job_event, utc_now
 
-INTERNAL_PIPELINE_ACTION_STAGES: tuple[str, ...] = (*STAGE_ORDER, "enrich")
+INTERNAL_PIPELINE_ACTION_STAGES: tuple[str, ...] = (*SUPPORTED_STAGE_ORDER, "enrich")
 ACTION_STAGES: tuple[str, ...] = (*INTERNAL_PIPELINE_ACTION_STAGES, "apply", "profile_import")
 
 

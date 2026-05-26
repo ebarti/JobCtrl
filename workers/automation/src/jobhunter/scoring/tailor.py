@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from jobhunter import database as db_module
 from jobhunter import config
 from jobhunter.config import TAILORED_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
@@ -583,14 +585,12 @@ def tailor_job_by_url(
         snapshot = get_profile_repository().load_snapshot(tenant_id)
 
     conn = get_connection()
-    eligible_jobs = get_jobs_by_stage(
-        conn=conn,
-        stage="pending_tailor",
+    job = _load_tailor_eligible_job_by_url(
+        conn,
+        job_url,
         min_score=min_score,
-        limit=0,
         retailor=retailor,
     )
-    job = next((candidate for candidate in eligible_jobs if candidate.get("url") == job_url), None)
     if job is None:
         return {"url": job_url, "status": "skipped", "reason": "not_eligible"}
 
@@ -684,6 +684,92 @@ def tailor_job_by_url(
         )
     conn.commit()
     return result
+
+
+def _load_tailor_eligible_job_by_url(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    min_score: int,
+    retailor: bool,
+) -> dict | None:
+    if retailor:
+        where = (
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
+            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+            f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+            f"OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
+        )
+    else:
+        where = (
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
+            f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
+            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+            f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
+        )
+    row = conn.execute(
+        f"""
+        SELECT jobs.*, js.js_fit_score AS js_fit_score,
+               jm.jm_job_url AS jm_job_url,
+               jm.jm_tailored_path AS jm_tailored_path,
+               jm.jm_tailored_at AS jm_tailored_at,
+               jm.jm_cover_path AS jm_cover_path,
+               jm.jm_cover_at AS jm_cover_at,
+               jm.jm_resume_pdf_path AS jm_resume_pdf_path,
+               jm.jm_cover_pdf_path AS jm_cover_pdf_path,
+               jm.jm_generation AS jm_generation,
+               jm.jm_status AS jm_status,
+               je.full_description AS je_full_description,
+               je.application_url AS je_application_url,
+               je.enriched_at AS je_enriched_at,
+               je.current_status AS je_current_status,
+               je.extraction_tier AS je_extraction_tier
+        FROM jobs {db_module._LATEST_SCORE_JOIN} {db_module._LATEST_MATERIALS_JOIN}
+        {db_module._LATEST_STAGE_ATTEMPTS_JOIN} {db_module._SCORE_DOWNSTREAM_STATE_JOIN}
+        {db_module._ENRICHMENT_JOIN}
+        WHERE jobs.url = ? AND {where}
+        LIMIT 1
+        """,
+        (job_url, int(min_score)),
+    ).fetchone()
+    if row is None:
+        return None
+    return _promote_tailor_job_row(row)
+
+
+def _promote_tailor_job_row(row: sqlite3.Row) -> dict:
+    record = dict(row)
+    js_value = record.pop("js_fit_score", None)
+    if js_value is not None:
+        record["fit_score"] = js_value
+    jm_job_url = record.pop("jm_job_url", None)
+    jm_tailored = record.pop("jm_tailored_path", None)
+    jm_tailored_at = record.pop("jm_tailored_at", None)
+    jm_cover = record.pop("jm_cover_path", None)
+    jm_cover_at = record.pop("jm_cover_at", None)
+    if jm_job_url is not None:
+        record["tailored_resume_path"] = jm_tailored
+        record["tailored_at"] = jm_tailored_at
+        record["cover_letter_path"] = jm_cover
+        record["cover_letter_at"] = jm_cover_at
+    je_full = record.pop("je_full_description", None)
+    je_app = record.pop("je_application_url", None)
+    je_at = record.pop("je_enriched_at", None)
+    record.pop("je_current_status", None)
+    record.pop("je_extraction_tier", None)
+    if je_full is not None:
+        record["full_description"] = je_full
+    if je_app is not None:
+        record["application_url"] = je_app
+    if je_at is not None:
+        record["detail_scraped_at"] = je_at
+    return record
 
 
 __all__ = [

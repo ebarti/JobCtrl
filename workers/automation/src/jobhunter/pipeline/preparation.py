@@ -151,6 +151,17 @@ def _enqueue_pending_scores(
     for job in get_jobs_by_stage(conn=conn, stage="pending_score", limit=0):
         job_id = JobId(str(job["url"]))
         source_event_id = _latest_source_event_id(conn, str(job_id))
+        if _retry_failed_item(
+            conn,
+            repo,
+            stats,
+            tenant_id,
+            job_id,
+            PreparationWorkItemKind.SCORE_JOB,
+            target_version,
+            source_event_id,
+        ):
+            continue
         if _has_incomplete_item(
             conn,
             tenant_id,
@@ -183,6 +194,17 @@ def _recompute_tailoring_eligibility(
     for job in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=0):
         job_id = JobId(str(job["url"]))
         source_event_id = _latest_source_event_id(conn, str(job_id))
+        if _retry_failed_item(
+            conn,
+            repo,
+            stats,
+            tenant_id,
+            job_id,
+            PreparationWorkItemKind.TAILOR_RESUME,
+            target_version,
+            source_event_id,
+        ):
+            continue
         if _has_incomplete_item(
             conn,
             tenant_id,
@@ -202,8 +224,21 @@ def _recompute_tailoring_eligibility(
         stats["queued"][item.kind.value] += 1
         _record_work_item_event(conn, item, "PreparationWorkItemQueued", "Tailor work item queued")
 
-    for job_id in _jobs_needing_artifact_suppression(conn, min_score=min_score):
-        source_event_id = f"threshold:{min_score}"
+    for job_id, source_event_id in _jobs_needing_artifact_suppression(
+        conn,
+        min_score=min_score,
+    ):
+        if _retry_failed_item(
+            conn,
+            repo,
+            stats,
+            tenant_id,
+            job_id,
+            PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS,
+            min_score,
+            source_event_id,
+        ):
+            continue
         if _has_incomplete_item(
             conn,
             tenant_id,
@@ -382,6 +417,49 @@ def _has_incomplete_item(
     return row is not None
 
 
+def _retry_failed_item(
+    conn: sqlite3.Connection,
+    repo: SqlitePreparationWorkItemRepository,
+    stats: dict[str, Any],
+    tenant_id: TenantId,
+    job_id: JobId,
+    kind: PreparationWorkItemKind,
+    target_version: int,
+    source_event_id: str,
+) -> bool:
+    now = utc_now()
+    row = conn.execute(
+        """
+        SELECT item_id
+        FROM preparation_work_items
+        WHERE tenant_id = ?
+          AND job_id = ?
+          AND kind = ?
+          AND target_version = ?
+          AND source_event_id = ?
+          AND state = 'failed'
+          AND available_at <= ?
+        LIMIT 1
+        """,
+        (str(tenant_id), str(job_id), kind.value, int(target_version), str(source_event_id or ""), now),
+    ).fetchone()
+    if row is None:
+        return False
+    item_id = str(row["item_id"] if isinstance(row, sqlite3.Row) else row[0])
+    item = repo.retry(tenant_id=tenant_id, item_id=item_id, available_at=now, retried_at=now)
+    if item is None:
+        return False
+    stats["queued"][item.kind.value] += 1
+    _record_work_item_event(
+        conn,
+        item,
+        "PreparationWorkItemQueued",
+        f"{kind.value} work item requeued",
+        payload={"retry": True},
+    )
+    return True
+
+
 def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
     row = conn.execute(
         """
@@ -405,10 +483,21 @@ def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:
     return str(row["event_id"] if isinstance(row, sqlite3.Row) else row[0])
 
 
-def _jobs_needing_artifact_suppression(conn: sqlite3.Connection, *, min_score: int) -> list[JobId]:
+def _jobs_needing_artifact_suppression(
+    conn: sqlite3.Connection,
+    *,
+    min_score: int,
+) -> list[tuple[JobId, str]]:
     rows = conn.execute(
         f"""
-        SELECT jobs.url
+        SELECT jobs.url,
+               jm.jm_generation AS materials_generation,
+               jm.jm_tailored_path AS materials_tailored_path,
+               jm.jm_cover_path AS materials_cover_path,
+               jm.jm_resume_pdf_path AS materials_resume_pdf_path,
+               jm.jm_cover_pdf_path AS materials_cover_pdf_path,
+               jobs.tailored_resume_path AS legacy_tailored_path,
+               jobs.cover_letter_path AS legacy_cover_path
         FROM jobs
         {db_module._LATEST_SCORE_JOIN}
         {db_module._LATEST_MATERIALS_JOIN}
@@ -422,7 +511,38 @@ def _jobs_needing_artifact_suppression(conn: sqlite3.Connection, *, min_score: i
         """,
         (int(min_score),),
     ).fetchall()
-    return [JobId(str(row["url"] if isinstance(row, sqlite3.Row) else row[0])) for row in rows]
+    result: list[tuple[JobId, str]] = []
+    for row in rows:
+        record = dict(row) if isinstance(row, sqlite3.Row) else {
+            "url": row[0],
+            "materials_generation": row[1],
+            "materials_tailored_path": row[2],
+            "materials_cover_path": row[3],
+            "materials_resume_pdf_path": row[4],
+            "materials_cover_pdf_path": row[5],
+            "legacy_tailored_path": row[6],
+            "legacy_cover_path": row[7],
+        }
+        job_id = JobId(str(record["url"]))
+        result.append((job_id, _artifact_suppression_source_event_id(record, min_score=min_score)))
+    return result
+
+
+def _artifact_suppression_source_event_id(record: dict[str, Any], *, min_score: int) -> str:
+    generation = record.get("materials_generation")
+    if generation is not None:
+        paths = (
+            record.get("materials_tailored_path") or "",
+            record.get("materials_cover_path") or "",
+            record.get("materials_resume_pdf_path") or "",
+            record.get("materials_cover_pdf_path") or "",
+        )
+        return f"threshold:{min_score}:materials:g{generation}:{':'.join(paths)}"
+    return (
+        f"threshold:{min_score}:legacy:"
+        f"{record.get('legacy_tailored_path') or ''}:"
+        f"{record.get('legacy_cover_path') or ''}"
+    )
 
 
 def _record_work_item_event(

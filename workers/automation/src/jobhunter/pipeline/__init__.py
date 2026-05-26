@@ -7,8 +7,11 @@ Temporal workflow definitions in ``workflow.py``.
 """
 
 from jobhunter.pipeline.runner import (
+    MAINTENANCE_STAGE_ORDER,
+    PRIMARY_STAGE_ORDER,
     STAGE_META,
     STAGE_ORDER,
+    SUPPORTED_STAGE_ORDER,
     _PENDING_SQL,
     _count_pending,
     _resolve_stages,
@@ -20,8 +23,11 @@ from jobhunter.pipeline.runner import (
 )
 
 __all__ = [
+    "MAINTENANCE_STAGE_ORDER",
+    "PRIMARY_STAGE_ORDER",
     "STAGE_META",
     "STAGE_ORDER",
+    "SUPPORTED_STAGE_ORDER",
     "_PENDING_SQL",
     "_count_pending",
     "_resolve_stages",

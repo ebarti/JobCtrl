@@ -15,13 +15,22 @@ import pytest
 
 from jobhunter.database import init_db
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.scoring import ScoringCriteria, ScoringPolicy, WeightedScoreDimension
+from jobhunter.domain.scoring import (
+    FitScore,
+    JobScore,
+    MatchedKeywords,
+    ScoreBreakdown,
+    ScoringCriteria,
+    ScoringPolicy,
+    WeightedScoreDimension,
+)
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import (
     SqliteScoreRepository,
     SqliteScoringPolicyRepository,
 )
 from jobhunter.scoring import scorer as scorer_module
+from jobhunter.state import set_stage_state
 
 
 class _ScriptedLlm:
@@ -232,6 +241,72 @@ def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
     assert persisted.trace.resolved_dimensions == (
         {"name": "technical_fit", "value": 1, "weight": 1.0, "weighted_value": 1.0},
     )
+
+
+def test_score_job_by_url_repairs_existing_score_stage_state(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/existing-score-repair"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    existing = JobScore.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        fit_score=FitScore.create(8),
+        breakdown=ScoreBreakdown(reasoning="persisted before stage repair"),
+        matched_keywords=MatchedKeywords.from_iterable(["python"]),
+        scored_at="2026-05-26T00:00:00+00:00",
+    )
+    repo.save(existing)
+    set_stage_state(
+        conn,
+        url,
+        "score",
+        "failed",
+        error_code="SCORE_FAILED",
+        error_message="crashed after score save",
+        validate_transition=False,
+    )
+    llm = _ScriptedLlm(
+        {
+            "score": 1,
+            "technical_fit": 1,
+            "experience_fit": 1,
+            "role_fit": 1,
+            "keywords": [],
+            "reasoning": "should not be called",
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    outcome = scorer_module.score_job_by_url(
+        url,
+        profile_snapshot=profile_snapshot,
+        resume_text="Engineer with Python.",
+        criteria=ScoringCriteria(),
+        repository=repo,
+        llm_port=llm,
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 8
+    assert llm.calls == 0
+    stage_row = conn.execute(
+        "SELECT state, error_code, error_message "
+        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+        (url,),
+    ).fetchone()
+    assert stage_row["state"] == "succeeded"
+    assert stage_row["error_code"] is None
+    assert stage_row["error_message"] is None
+    events = conn.execute(
+        "SELECT event_type FROM job_events WHERE job_url = ? AND stage = 'score'",
+        (url,),
+    ).fetchall()
+    assert [row["event_type"] for row in events] == ["StageCompleted"]
 
 
 def test_score_job_prompt_uses_company_not_source(
