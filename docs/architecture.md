@@ -95,6 +95,13 @@ domain events and the **`SubprocessJsonRpcAdapter`** (Phase 9, S-34) for the
 TS↔Python integration protocol (§6.5 of `docs/ddd-target.md`). The pre-DDD
 "call out via `uv run jobhunter action ...` per request" pattern is gone.
 
+Discovery preparation is a cross-context workflow, not a merged aggregate.
+Discovery owns source and enrichment facts, then durable
+`preparation_work_items` dispatch `score_job`, `tailor_resume`, and
+`suppress_tailored_artifacts` to the Scoring and Materials contexts. The user
+sees one preparation stage (`Discover`), while policy versions, score rows,
+materials rows, and suppression state stay owned by their bounded contexts.
+
 ## Retrieval Before Scoring
 
 The Scoring context owns a local hybrid retrieval service under
@@ -354,6 +361,8 @@ Current responsibilities:
 - resume PDF import draft endpoint (via JSON-RPC `profile_import`)
 - structured job action endpoints for retry, material generation, dry-run apply,
   cancel, mark-applied, mark-skipped
+- current-policy preparation maintenance endpoints for per-job/bulk rescore and
+  per-job/bulk re-tailor
 - global/batch pipeline stage actions via `POST /v1/pipeline/actions/run-stage`
 - pagination, filtering, and global sorting
 - read-model projection refresh on every request
@@ -371,6 +380,7 @@ Python owns automation execution:
 
 - discovery
 - job detail enrichment
+- Discovery preparation work-item drain
 - scoring
 - resume tailoring
 - cover letters
@@ -402,12 +412,14 @@ engine for the Python worker. The infrastructure split lives under
   The CLI imports both lists and passes them to `build_worker`; new
   workflows / activities are added by appending here.
 
-Each pipeline stage (discover, enrich, score, tailor, cover, apply,
-profile_import) ships as a Temporal **Activity** under the owning bounded
-context's package — e.g. `jobhunter/scoring/activities.py`,
-`jobhunter/materials/activities.py`. Activities are thin adapters: they
-defer heavy imports inside the activity body and forward to the existing
-stage runner (`run_pipeline` / `apply_main` / `run_local_action`).
+Each internal pipeline stage (`discover`, `enrich`, `score`, `tailor`,
+`cover`, `apply`, `profile_import`) ships as a Temporal **Activity** under the
+owning bounded context's package — e.g. `jobhunter/scoring/activities.py`,
+`jobhunter/materials/activities.py`. Activities are thin adapters: they defer
+heavy imports inside the activity body and forward to the existing stage runner
+(`run_pipeline` / `apply_main` / `run_local_action`). The product-facing stage
+order is narrower: `discover -> apply`; `discover` drains enrichment plus
+internal preparation work before the user chooses to apply.
 
 Two production workflows live alongside the activities:
 
@@ -518,24 +530,27 @@ event (PR 7 of the Temporal stack).
 1. Discovery creates or updates jobs (via `JobRepository`).
 2. Pipeline Orchestration creates `JobPipelineState` rows for the canonical
    stages.
-3. Each domain operation publishes events through `InProcessEventBus`.
-4. Workers record events in `job_events` and update per-aggregate tables
+3. Discovery preparation creates durable work items for scoring, tailoring, and
+   artifact suppression when enriched jobs or live eligibility settings require
+   internal preparation subwork.
+4. Each domain operation publishes events through `InProcessEventBus`.
+5. Workers record events in `job_events` and update per-aggregate tables
    (`job_scores`, `job_materials`, `job_enrichments`). The apply lifecycle
    is observable via `apply_run_projections`, sourced from `job_events`
    by the projection builder — the bespoke `apply_runs` table was
    collapsed into the Temporal workflow run history (PR 4 of the
    Temporal stack).
-5. Generated files are registered in `job_artifacts` /
+6. Generated files are registered in `job_artifacts` /
    `job_materials_artifacts`.
-6. `ProjectionBuilder` (Python) and `refreshProjections` (TS) consume new
+7. `ProjectionBuilder` (Python) and `refreshProjections` (TS) consume new
    `job_events` rows and rebuild affected projection rows from canonical
    aggregate state. The Python builder owns `apply_run_projections`;
    the TS API reads it directly.
-7. The UI reads from the projection tables via the TS read-model — no joins.
+8. The UI reads from the projection tables via the TS read-model — no joins.
    The Workflow Runs view at `/runs` (PR 5 of the Temporal stack) reads
    `apply_run_projections` via `GET /v1/workflow-runs` and deep-links each
    row to the local Temporal Web UI (`http://127.0.0.1:8233`).
-8. UI actions are routed through JSON-RPC for complex commands or executed
+9. UI actions are routed through JSON-RPC for complex commands or executed
    inline for simple state transitions. JSON-RPC worker subprocesses inherit
    the API runtime `JOBHUNTER_DIR`, so action writes land in the same
    database the API and web UI read.
