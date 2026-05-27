@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
+from jobhunter.database import ensure_tailoring_policy_tables
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.aggregate import MaterialsSet
 from jobhunter.domain.materials.entities import Artifact
+from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -387,6 +390,21 @@ class SqliteMaterialsRepository:
 
         self._conn.commit()
 
+    def suppress_active_artifacts(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        reason: str,
+        suppressed_at: str,
+    ) -> MaterialsSet | None:
+        materials = self.load(tenant_id, job_id)
+        if materials is None:
+            return None
+        suppressed = materials.suppress_active_artifacts(at=suppressed_at, reason=reason)
+        self.save(suppressed)
+        return suppressed
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -527,3 +545,132 @@ def _loads(value: str | None) -> dict | None:
     except (TypeError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+class SqliteTailoringPolicyRepository:
+    """SQLite-backed current policy adapter for the Materials context."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        ensure_tailoring_policy_tables(conn)
+
+    def get_current(self, tenant_id: TenantId) -> TailoringPolicy | None:
+        row = self._conn.execute(
+            """
+            SELECT tenant_id, version, prompt_version, schema_version,
+                   judge_schema_version, prompt_fingerprint, config_fingerprint,
+                   profile_policy_fingerprint, custom_prompt_fingerprint,
+                   generator_settings_json, judge_settings_json,
+                   runtime_settings_json, rollback_of_version, rollback_reason,
+                   created_at, created_from_event_id
+            FROM tailoring_policies
+            WHERE tenant_id = ?
+            ORDER BY version DESC
+            LIMIT 1
+            """,
+            (str(tenant_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_policy(row)
+
+    def save(self, policy: TailoringPolicy) -> None:
+        self._insert(policy)
+        self._conn.commit()
+
+    def _insert(self, policy: TailoringPolicy) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO tailoring_policies (
+                tenant_id, version, prompt_version, schema_version,
+                judge_schema_version, prompt_fingerprint, config_fingerprint,
+                profile_policy_fingerprint, custom_prompt_fingerprint,
+                generator_settings_json, judge_settings_json,
+                runtime_settings_json, rollback_of_version, rollback_reason,
+                created_at, created_from_event_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(policy.tenant_id),
+                policy.version,
+                policy.prompt_version,
+                policy.schema_version,
+                policy.judge_schema_version,
+                policy.prompt_fingerprint,
+                policy.config_fingerprint,
+                policy.profile_policy_fingerprint,
+                policy.custom_prompt_fingerprint,
+                json.dumps(policy.generator_settings, sort_keys=True),
+                json.dumps(policy.judge_settings, sort_keys=True),
+                json.dumps(policy.runtime_settings, sort_keys=True),
+                policy.rollback_of_version,
+                policy.rollback_reason,
+                policy.created_at or _utc_now(),
+                policy.created_from_event_id,
+            ),
+        )
+
+    def resolve_current(self, candidate: TailoringPolicy) -> TailoringPolicy:
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = self.get_current(candidate.tenant_id)
+            if current is not None and current.same_config_as(candidate):
+                self._conn.commit()
+                return current
+
+            next_version = 1 if current is None else current.version + 1
+            policy = TailoringPolicy(
+                tenant_id=candidate.tenant_id,
+                version=next_version,
+                prompt_version=candidate.prompt_version,
+                schema_version=candidate.schema_version,
+                judge_schema_version=candidate.judge_schema_version,
+                prompt_fingerprint=candidate.prompt_fingerprint,
+                config_fingerprint=candidate.config_fingerprint,
+                profile_policy_fingerprint=candidate.profile_policy_fingerprint,
+                custom_prompt_fingerprint=candidate.custom_prompt_fingerprint,
+                generator_settings=candidate.generator_settings,
+                judge_settings=candidate.judge_settings,
+                runtime_settings=candidate.runtime_settings,
+                rollback_of_version=candidate.rollback_of_version,
+                rollback_reason=candidate.rollback_reason,
+                created_at=candidate.created_at or _utc_now(),
+                created_from_event_id=candidate.created_from_event_id,
+            )
+            self._insert(policy)
+            self._conn.commit()
+            return policy
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    @staticmethod
+    def _row_to_policy(row: Any) -> TailoringPolicy:
+        return TailoringPolicy.from_persistence(
+            tenant_id=TenantId(str(_row_value(row, "tenant_id", 0))),
+            version=int(_row_value(row, "version", 1)),
+            prompt_version=str(_row_value(row, "prompt_version", 2)),
+            schema_version=str(_row_value(row, "schema_version", 3)),
+            judge_schema_version=str(_row_value(row, "judge_schema_version", 4)),
+            prompt_fingerprint=str(_row_value(row, "prompt_fingerprint", 5)),
+            config_fingerprint=str(_row_value(row, "config_fingerprint", 6)),
+            profile_policy_fingerprint=str(_row_value(row, "profile_policy_fingerprint", 7)),
+            custom_prompt_fingerprint=str(_row_value(row, "custom_prompt_fingerprint", 8)),
+            generator_settings=_loads(_row_value(row, "generator_settings_json", 9)) or {},
+            judge_settings=_loads(_row_value(row, "judge_settings_json", 10)) or {},
+            runtime_settings=_loads(_row_value(row, "runtime_settings_json", 11)) or {},
+            rollback_of_version=_row_value(row, "rollback_of_version", 12),
+            rollback_reason=str(_row_value(row, "rollback_reason", 13) or ""),
+            created_at=str(_row_value(row, "created_at", 14)),
+            created_from_event_id=_row_value(row, "created_from_event_id", 15),
+        )
+
+
+def _row_value(row: Any, name: str, index: int) -> Any:
+    if isinstance(row, sqlite3.Row):
+        return row[name]
+    return row[index]
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()

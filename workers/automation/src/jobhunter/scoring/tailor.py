@@ -42,13 +42,18 @@ from jobhunter.domain.materials.use_cases import (
 )
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmPort
-from jobhunter.domain.ports.materials import MaterialsRepository, PdfRendererPort
+from jobhunter.domain.ports.materials import (
+    MaterialsRepository,
+    PdfRendererPort,
+    TailoringPolicyRepository,
+)
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import get_llm_adapter
 from jobhunter.infrastructure.materials import (
     LatexPdfAdapter,
     SqliteMaterialsRepository,
+    SqliteTailoringPolicyRepository,
 )
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.state import (
@@ -117,10 +122,14 @@ def _build_use_case(
     validator: ContentValidator | None = None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
+    policy_repository: TailoringPolicyRepository | None = None,
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
+    conn = get_connection()
     if repository is None:
-        repository = SqliteMaterialsRepository(get_connection())
+        repository = SqliteMaterialsRepository(conn)
+    if policy_repository is None:
+        policy_repository = SqliteTailoringPolicyRepository(conn)
     if llm_port is None:
         llm_port = get_llm_adapter()
     if validator is None:
@@ -136,6 +145,7 @@ def _build_use_case(
         assembler=assembler,
         publisher=publisher,
         llm_policy=llm_policy,
+        policy_repository=policy_repository,
     )
 
 

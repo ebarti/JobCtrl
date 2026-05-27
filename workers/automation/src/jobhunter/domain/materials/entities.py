@@ -179,6 +179,28 @@ class Artifact:
             raise ValueError("supersede(at=…) requires a non-empty timestamp")
         return self.with_status(ArtifactStatus.SUPERSEDED, superseded_at=at)
 
+    def suppress(self, *, at: str, reason: str) -> "Artifact":
+        if not at or not str(at).strip():
+            raise ValueError("suppress(at=…) requires a non-empty timestamp")
+        normalized_reason = " ".join(str(reason or "").split()) or "policy_suppressed"
+        return Artifact(
+            artifact_id=self.artifact_id,
+            type=self.type,
+            status=ArtifactStatus.SUPPRESSED,
+            path=self.path,
+            render_format=self.render_format,
+            created_at=self.created_at,
+            size_bytes=self.size_bytes,
+            metadata={
+                **dict(self.metadata),
+                "suppression": {
+                    "reason": normalized_reason,
+                    "suppressed_at": at,
+                },
+            },
+            superseded_at=None,
+        )
+
     # ------------------------------------------------------------------
     # Serialization (used by the SQLite repository adapter)
     # ------------------------------------------------------------------

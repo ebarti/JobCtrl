@@ -139,6 +139,14 @@ class _FakeRepository:
     def list_by_status(self, *args, **kwargs):
         return []
 
+    def suppress_active_artifacts(self, tenant_id, job_id, *, reason, suppressed_at):
+        materials = self.load(tenant_id, job_id)
+        if materials is None:
+            return None
+        suppressed = materials.suppress_active_artifacts(at=suppressed_at, reason=reason)
+        self.save(suppressed)
+        return suppressed
+
 
 class _ScriptedLlm:
     """Replays a queue of canned LLM responses so tests stay deterministic."""
@@ -388,8 +396,12 @@ def test_tailor_use_case_routes_multiple_candidate_models_and_persists_safe_meta
     metadata = outcome.materials.tailored_resume.metadata
     assert metadata["selected_model"] == "openai:draft-b"
     assert metadata["judge_model"] == "gemini:judge-c"
+    assert metadata["tailoring_policy_version"] == 1
+    assert metadata["tailoring_policy"]["prompt_fingerprint"].startswith("sha256:")
+    assert metadata["tailoring_policy"]["config_fingerprint"].startswith("sha256:")
     assert metadata["candidate_summaries"][0]["generator"] == "local:draft-a"
     assert "api_key" not in json.dumps(metadata).lower()
+    assert "platform leadership language" not in json.dumps(metadata).lower()
 
 
 def test_tailor_use_case_lenient_skips_judge(
@@ -846,7 +858,14 @@ def _good_json_payload_dict() -> dict:
 def test_repository_protocol_satisfied_by_fake() -> None:
     fake: object = _FakeRepository()
     # Structural typing — any class with the right methods passes.
-    for name in ("load", "save", "list_pending_tailor", "list_pending_cover", "list_pending_pdf"):
+    for name in (
+        "load",
+        "save",
+        "list_pending_tailor",
+        "list_pending_cover",
+        "list_pending_pdf",
+        "suppress_active_artifacts",
+    ):
         assert hasattr(fake, name)
 
 

@@ -19,6 +19,7 @@ from jobhunter.infrastructure.materials.playwright_html_pdf import (
 from jobhunter.infrastructure.materials.sqlite_repository import (
     MaterialsGenerationConflict,
     SqliteMaterialsRepository,
+    SqliteTailoringPolicyRepository,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "MaterialsGenerationConflict",
     "PlaywrightHtmlPdfAdapter",
     "SqliteMaterialsRepository",
+    "SqliteTailoringPolicyRepository",
 ]
