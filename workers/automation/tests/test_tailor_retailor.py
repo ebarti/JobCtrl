@@ -1,6 +1,7 @@
 """Tests for re-tailoring selection and CLI flag wiring."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
@@ -25,6 +26,7 @@ from jobhunter.scoring.tailor import (
     _build_llm_policy,
     _build_master_tailor_prompt,
     _tailor_one_job,
+    tailor_job_by_url,
 )
 
 
@@ -102,6 +104,56 @@ def test_count_pending_retailor_includes_already_tailored_jobs(tmp_path, monkeyp
 
         assert _count_pending("tailor", min_score=7) == 1
         assert _count_pending("tailor", min_score=7, retailor=True) == 2
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    target_url = "https://example.com/target"
+    unrelated_url = "https://example.com/unrelated"
+    calls: list[str] = []
+
+    try:
+        _insert_job(conn, url=target_url, fit_score=8)
+        _insert_job(conn, url=unrelated_url, fit_score=10)
+
+        def forbidden_batch_selector(*_args, **_kwargs):
+            raise AssertionError("single-job tailoring must not call get_jobs_by_stage")
+
+        def fake_tailor_one_job(job, *_args, **_kwargs):
+            calls.append(job["url"])
+            return {
+                "url": job["url"],
+                "title": job["title"],
+                "site": job.get("site"),
+                "status": "approved",
+                "attempts": 1,
+                "path": "/tmp/target.txt",
+                "pdf_path": None,
+                "materials": SimpleNamespace(generation=1),
+            }
+
+        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobhunter.scoring.tailor.get_jobs_by_stage", forbidden_batch_selector)
+        monkeypatch.setattr("jobhunter.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fake_tailor_one_job)
+
+        result = tailor_job_by_url(
+            target_url,
+            min_score=7,
+            snapshot=SimpleNamespace(),
+            llm_model=None,
+        )
+
+        assert result["status"] == "approved"
+        assert calls == [target_url]
+        unrelated_stage = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'tailor'",
+            (unrelated_url,),
+        ).fetchone()
+        assert unrelated_stage is None
     finally:
         close_connection(db_path)
 

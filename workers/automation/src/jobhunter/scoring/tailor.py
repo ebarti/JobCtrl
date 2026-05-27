@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from jobhunter import database as db_module
 from jobhunter import config
 from jobhunter.config import TAILORED_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
@@ -556,6 +558,220 @@ def run_tailoring(
     }
 
 
+def tailor_job_by_url(
+    job_url: str,
+    *,
+    min_score: int = 7,
+    validation_mode: str = "normal",
+    workers: int = 1,
+    retailor: bool = False,
+    snapshot: ProfileSnapshot | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+    pdf_renderer: PdfRendererPort | None = None,
+) -> dict:
+    """Tailor exactly one eligible job by URL.
+
+    Durable Discovery-preparation items are job-scoped. This helper keeps the
+    existing Materials use case and stage-state behavior while avoiding the
+    batch ``pending_tailor`` selector from choosing a different job.
+    """
+    if snapshot is None:
+        from jobhunter.infrastructure.profile import get_profile_repository
+
+        snapshot = get_profile_repository().load_snapshot(tenant_id)
+
+    conn = get_connection()
+    job = _load_tailor_eligible_job_by_url(
+        conn,
+        job_url,
+        min_score=min_score,
+        retailor=retailor,
+    )
+    if job is None:
+        return {"url": job_url, "status": "skipped", "reason": "not_eligible"}
+
+    worker_count = max(1, workers)
+    _ = worker_count  # same validation surface as batch runner; single work item runs one job.
+    TAILORED_DIR.mkdir(parents=True, exist_ok=True)
+    if pdf_renderer is None:
+        pdf_renderer = _build_pdf_renderer()
+    llm_policy = _build_llm_policy(
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score,
+        llm_model=llm_model,
+    )
+
+    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    started_at = utc_now()
+    set_stage_state(
+        conn,
+        job_url,
+        "tailor",
+        "running",
+        started_at=started_at,
+        validate_transition=False,
+    )
+    record_job_event(conn, job_url, "tailor", "StageStarted", message="Tailoring started")
+    conn.commit()
+
+    result = _tailor_one_job(
+        job,
+        "",
+        snapshot,
+        validation_mode,
+        use_case=None,
+        pdf_renderer=pdf_renderer,
+        retailor=retailor,
+        tenant_id=tenant_id,
+        llm_policy=llm_policy,
+    )
+    finished_at = utc_now()
+    attempts = result.get("attempts") or 1
+    if result.get("status") == "approved":
+        set_stage_state(
+            conn,
+            job_url,
+            "tailor",
+            "succeeded",
+            attempt_count=attempts,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "tailor",
+            "StageCompleted",
+            message="Tailoring approved",
+            payload={"attempts": attempts},
+        )
+    else:
+        exhausted = (
+            attempts >= config.DEFAULTS["max_tailor_attempts"]
+            or result.get("status") == "exhausted_retries"
+        )
+        set_stage_state(
+            conn,
+            job_url,
+            "tailor",
+            "exhausted" if exhausted else "failed",
+            attempt_count=attempts,
+            max_attempts=config.DEFAULTS["max_tailor_attempts"],
+            started_at=started_at,
+            finished_at=finished_at,
+            error_code=str(result.get("status", "error")).upper(),
+            error_message=f"Tailoring ended with status {result.get('status', 'error')}",
+            retryable=True,
+            next_action=(
+                f"jobhunter retry tailor {job_url} --reset-attempts"
+                if exhausted
+                else f"jobhunter retry tailor {job_url}"
+            ),
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "tailor",
+            "StageFailed",
+            level="error",
+            message=f"Tailoring ended with status {result.get('status', 'error')}",
+        )
+    conn.commit()
+    return result
+
+
+def _load_tailor_eligible_job_by_url(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    min_score: int,
+    retailor: bool,
+) -> dict | None:
+    if retailor:
+        where = (
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
+            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+            f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL "
+            f"OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
+        )
+    else:
+        where = (
+            f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
+            f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
+            f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
+            f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
+            f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
+            f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
+        )
+    row = conn.execute(
+        f"""
+        SELECT jobs.*, js.js_fit_score AS js_fit_score,
+               jm.jm_job_url AS jm_job_url,
+               jm.jm_tailored_path AS jm_tailored_path,
+               jm.jm_tailored_at AS jm_tailored_at,
+               jm.jm_cover_path AS jm_cover_path,
+               jm.jm_cover_at AS jm_cover_at,
+               jm.jm_resume_pdf_path AS jm_resume_pdf_path,
+               jm.jm_cover_pdf_path AS jm_cover_pdf_path,
+               jm.jm_generation AS jm_generation,
+               jm.jm_status AS jm_status,
+               je.full_description AS je_full_description,
+               je.application_url AS je_application_url,
+               je.enriched_at AS je_enriched_at,
+               je.current_status AS je_current_status,
+               je.extraction_tier AS je_extraction_tier
+        FROM jobs {db_module._LATEST_SCORE_JOIN} {db_module._LATEST_MATERIALS_JOIN}
+        {db_module._LATEST_STAGE_ATTEMPTS_JOIN} {db_module._SCORE_DOWNSTREAM_STATE_JOIN}
+        {db_module._ENRICHMENT_JOIN}
+        WHERE jobs.url = ? AND {where}
+        LIMIT 1
+        """,
+        (job_url, int(min_score)),
+    ).fetchone()
+    if row is None:
+        return None
+    return _promote_tailor_job_row(row)
+
+
+def _promote_tailor_job_row(row: sqlite3.Row) -> dict:
+    record = dict(row)
+    js_value = record.pop("js_fit_score", None)
+    if js_value is not None:
+        record["fit_score"] = js_value
+    jm_job_url = record.pop("jm_job_url", None)
+    jm_tailored = record.pop("jm_tailored_path", None)
+    jm_tailored_at = record.pop("jm_tailored_at", None)
+    jm_cover = record.pop("jm_cover_path", None)
+    jm_cover_at = record.pop("jm_cover_at", None)
+    if jm_job_url is not None:
+        record["tailored_resume_path"] = jm_tailored
+        record["tailored_at"] = jm_tailored_at
+        record["cover_letter_path"] = jm_cover
+        record["cover_letter_at"] = jm_cover_at
+    je_full = record.pop("je_full_description", None)
+    je_app = record.pop("je_application_url", None)
+    je_at = record.pop("je_enriched_at", None)
+    record.pop("je_current_status", None)
+    record.pop("je_extraction_tier", None)
+    if je_full is not None:
+        record["full_description"] = je_full
+    if je_app is not None:
+        record["application_url"] = je_app
+    if je_at is not None:
+        record["detail_scraped_at"] = je_at
+    return record
+
+
 __all__ = [
     "MAX_ATTEMPTS",
     "TailorOutcome",
@@ -563,4 +779,5 @@ __all__ = [
     "_tailor_one_job",
     "run_tailoring",
     "tailor_resume",
+    "tailor_job_by_url",
 ]

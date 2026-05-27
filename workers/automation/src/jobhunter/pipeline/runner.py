@@ -65,8 +65,11 @@ _PIPELINE_JOB_ID = "pipeline"
 # Stage definitions
 # ---------------------------------------------------------------------------
 
-STAGE_ORDER = ("discover", "score", "tailor", "cover")
-INTERNAL_STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover")
+PRIMARY_STAGE_ORDER = ("discover",)
+MAINTENANCE_STAGE_ORDER = ("score", "tailor", "cover")
+STAGE_ORDER = PRIMARY_STAGE_ORDER
+SUPPORTED_STAGE_ORDER = (*PRIMARY_STAGE_ORDER, *MAINTENANCE_STAGE_ORDER)
+INTERNAL_STAGE_ORDER = ("discover", "enrich", *MAINTENANCE_STAGE_ORDER)
 
 STAGE_META: dict[str, dict] = {
     "discover": {"desc": "Job discovery + detail enrichment"},
@@ -1093,7 +1096,16 @@ def _row_get(row: Any, key: str, index: int) -> Any:
 # Individual stage runners
 # ---------------------------------------------------------------------------
 
-def _run_discover(workers: int = 1, limit: int = 0) -> dict:
+def _run_discover(
+    workers: int = 1,
+    limit: int = 0,
+    min_score: int = 7,
+    validation_mode: str = "normal",
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
@@ -1139,6 +1151,28 @@ def _run_discover(workers: int = 1, limit: int = 0) -> dict:
             run_hygiene("after")
         except Exception:
             log.warning("Post-discovery hygiene failed", exc_info=True)
+        try:
+            from jobhunter.pipeline.preparation import drain_discovery_preparation
+
+            preparation_stats = drain_discovery_preparation(
+                min_score=min_score,
+                limit=limit,
+                workers=bounded_workers,
+                validation_mode=validation_mode,
+                llm_model=llm_model,
+                tailor_models=tailor_models,
+                tailor_judge_model=tailor_judge_model,
+                tailor_judge_min_score=tailor_judge_min_score,
+            )
+            if preparation_stats.get("has_work"):
+                stats["preparation"] = str(preparation_stats.get("status", "ok"))
+                stats["preparation_counts"] = preparation_stats
+                if preparation_stats.get("status") != "ok":
+                    stats["status"] = "partial"
+        except Exception as exc:
+            log.exception("Discovery preparation orchestration failed")
+            stats["preparation"] = f"error: {exc}"
+            stats["status"] = "partial"
         return stats
 
     jobspy_sources = schedule.for_prefix("jobspy")
@@ -1412,7 +1446,14 @@ def _build_stage_kwargs(
         kwargs["workers"] = workers
     if stage in ("discover", "enrich", "score"):
         kwargs["limit"] = limit
-    if stage == "score":
+    if stage == "discover":
+        kwargs["min_score"] = min_score
+        kwargs["validation_mode"] = validation_mode
+        kwargs["llm_model"] = llm_model
+        kwargs["tailor_models"] = tailor_models
+        kwargs["tailor_judge_model"] = tailor_judge_model
+        kwargs["tailor_judge_min_score"] = tailor_judge_min_score
+    elif stage == "score":
         kwargs["rescore"] = rescore
         kwargs["llm_model"] = llm_model
     elif stage in ("tailor", "cover"):
@@ -1437,14 +1478,14 @@ def _build_stage_kwargs(
 def _resolve_stages(stage_names: list[str]) -> list[str]:
     """Resolve 'all' and validate/order stage names."""
     if "all" in stage_names:
-        return list(STAGE_ORDER)
+        return list(PRIMARY_STAGE_ORDER)
 
     resolved = []
     for name in stage_names:
         if name not in STAGE_META:
             console.print(
                 f"[red]Unknown stage:[/red] '{name}'. "
-                f"Available: {', '.join((*STAGE_ORDER, 'enrich'))}, all"
+                f"Available: {', '.join((*SUPPORTED_STAGE_ORDER, 'enrich'))}, all"
             )
             raise SystemExit(1)
         if name not in resolved:

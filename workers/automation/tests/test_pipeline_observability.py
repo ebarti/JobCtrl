@@ -48,6 +48,10 @@ def no_discovery_detail_enrichment(monkeypatch):
             SimpleNamespace(join=lambda: None),
         ),
     )
+    monkeypatch.setattr(
+        "jobhunter.pipeline.preparation.drain_discovery_preparation",
+        lambda **_kwargs: {"status": "ok", "has_work": False},
+    )
 
 
 def test_sequential_stage_emits_pipeline_span_and_stage_events(monkeypatch, in_memory_exporter):
@@ -564,5 +568,15 @@ def test_enrich_limit_propagates_to_runner(monkeypatch):
 
 
 def test_stage_kwargs_include_limits_for_discover_and_enrich():
-    assert runner._build_stage_kwargs("discover", workers=2, limit=1) == {"workers": 2, "limit": 1}
+    discover_kwargs = runner._build_stage_kwargs("discover", workers=2, limit=1)
+    assert discover_kwargs == {
+        "workers": 2,
+        "limit": 1,
+        "min_score": 7,
+        "validation_mode": "normal",
+        "llm_model": runner.DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+        "tailor_models": (),
+        "tailor_judge_model": None,
+        "tailor_judge_min_score": None,
+    }
     assert runner._build_stage_kwargs("enrich", workers=2, limit=1) == {"workers": 2, "limit": 1}

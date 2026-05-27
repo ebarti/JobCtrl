@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from jobhunter.config import RESUME_PATH
-from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.job_content_identity import job_content_fingerprint
 from jobhunter.domain.ports.events import EventPublisher
@@ -418,6 +418,202 @@ def run_scoring(
         "elapsed": elapsed,
         "distribution": distribution,
     }
+
+
+def score_job_by_url(
+    job_url: str,
+    *,
+    tenant_id: TenantId = LOCAL_TENANT,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    profile_snapshot: ProfileSnapshot | None = None,
+    resume_text: str | None = None,
+    criteria: ScoringCriteria | None = None,
+    repository: ScoreRepository | None = None,
+    policy_repository: ScoringPolicyRepository | None = None,
+    llm_port: LlmPort | None = None,
+    publisher: EventPublisher | None = None,
+) -> ScoreJobOutcome:
+    """Score exactly one enriched job by URL.
+
+    Internal Discovery preparation uses durable work items keyed to one job,
+    so it cannot safely call the batch selector-based ``run_scoring`` helper.
+    This entrypoint preserves the same Scoring use case and stage-state writes
+    while targeting the claimed work item only.
+    """
+    conn = get_connection()
+    job = load_job_with_enrichment(conn, job_url)
+    if job is None:
+        return ScoreJobOutcome(ok=False, score=None, error=f"Job not found: {job_url}")
+    if not job.get("full_description"):
+        return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {job_url}")
+
+    if profile_snapshot is None:
+        profile_snapshot = get_profile_repository().load_snapshot(tenant_id)
+    if resume_text is None:
+        try:
+            resume_text = RESUME_PATH.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            resume_text = ""
+    if criteria is None:
+        criteria = LocalScoringCriteriaProvider().load(profile_snapshot)
+    if repository is None:
+        repository = SqliteScoreRepository(conn)
+    if policy_repository is None:
+        policy_repository = SqliteScoringPolicyRepository(conn)
+    existing = repository.load(tenant_id, JobId(job_url))
+    if existing is not None:
+        _ensure_existing_score_stage_succeeded(
+            conn,
+            job=job,
+            score=existing,
+            tenant_id=tenant_id,
+        )
+        return ScoreJobOutcome(ok=True, score=existing)
+
+    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    started_at = utc_now()
+    set_stage_state(
+        conn,
+        job_url,
+        "score",
+        "running",
+        started_at=started_at,
+        validate_transition=False,
+    )
+    record_job_event(conn, job_url, "score", "StageStarted", message="Scoring started")
+    conn.commit()
+
+    outcome = score_job(
+        profile_snapshot,
+        job,
+        use_case=_build_use_case(
+            repository=repository,
+            policy_repository=policy_repository,
+            llm_port=llm_port,
+            llm_model=llm_model,
+            publisher=publisher,
+        ),
+        tenant_id=tenant_id,
+        resume_text=resume_text,
+        criteria=criteria,
+    )
+    finished_at = utc_now()
+    if outcome.ok and outcome.score is not None:
+        set_stage_state(
+            conn,
+            job_url,
+            "score",
+            "succeeded",
+            attempt_count=1,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "score",
+            "StageCompleted",
+            message=f"Fit score {outcome.score.fit_score.value}/10",
+            payload={"keywords": list(outcome.score.matched_keywords)},
+        )
+    else:
+        set_stage_state(
+            conn,
+            job_url,
+            "score",
+            "failed",
+            attempt_count=1,
+            started_at=started_at,
+            finished_at=finished_at,
+            error_code="SCORE_FAILED",
+            error_message=outcome.error or "Scoring failed",
+            retryable=True,
+            next_action=f"jobhunter retry score {job_url}",
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "score",
+            "StageFailed",
+            level="error",
+            message=outcome.error or "Scoring failed",
+        )
+    conn.commit()
+    return outcome
+
+
+def _ensure_existing_score_stage_succeeded(
+    conn: sqlite3.Connection,
+    *,
+    job: dict[str, Any],
+    score: JobScore,
+    tenant_id: TenantId,
+) -> None:
+    job_url = str(score.job_id)
+    if _has_unresolved_score_staleness(conn, tenant_id=tenant_id, job_url=job_url):
+        return
+
+    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    row = conn.execute(
+        "SELECT state, started_at, attempt_count "
+        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+        (job_url,),
+    ).fetchone()
+    state = _row_value(row, "state", 0)
+    if state == "succeeded":
+        return
+
+    finished_at = utc_now()
+    started_at = _row_value(row, "started_at", 1) or finished_at
+    attempt_count = max(int(_row_value(row, "attempt_count", 2) or 0), 1)
+    set_stage_state(
+        conn,
+        job_url,
+        "score",
+        "succeeded",
+        attempt_count=attempt_count,
+        started_at=str(started_at),
+        finished_at=finished_at,
+        validate_transition=False,
+    )
+    record_job_event(
+        conn,
+        job_url,
+        "score",
+        "StageCompleted",
+        message=f"Fit score {score.fit_score.value}/10",
+        payload={"keywords": list(score.matched_keywords)},
+    )
+    conn.commit()
+
+
+def _has_unresolved_score_staleness(
+    conn: sqlite3.Connection,
+    *,
+    tenant_id: TenantId,
+    job_url: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM job_score_staleness
+        WHERE tenant_id = ?
+          AND job_url = ?
+          AND resolved = 0
+        LIMIT 1
+        """,
+        (str(tenant_id), job_url),
+    ).fetchone()
+    return row is not None
+
+
+def _row_value(row: Any, key: str, index: int) -> Any:
+    if row is None:
+        return None
+    if isinstance(row, sqlite3.Row):
+        return row[key]
+    return row[index]
 
 
 # ---------------------------------------------------------------------------

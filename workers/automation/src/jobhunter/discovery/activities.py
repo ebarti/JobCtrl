@@ -11,6 +11,8 @@ from typing import Any
 
 from temporalio import activity
 
+from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
+
 
 @dataclass(frozen=True)
 class DiscoverActivityInput:
@@ -22,6 +24,12 @@ class DiscoverActivityInput:
     limit: int = 0
     workers: int = 1
     dry_run: bool = False
+    min_score: int = 7
+    validation_mode: str = "normal"
+    tailor_models: tuple[str, ...] = ()
+    tailor_judge_model: str | None = None
+    tailor_judge_min_score: float | None = None
+    llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,12 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
             workers=payload.workers,
             limit=payload.limit,
             dry_run=payload.dry_run,
+            min_score=payload.min_score,
+            validation_mode=payload.validation_mode,
+            tailor_models=payload.tailor_models,
+            tailor_judge_model=payload.tailor_judge_model,
+            tailor_judge_min_score=payload.tailor_judge_min_score,
+            llm_model=payload.llm_model,
         )
 
     result = await run_blocking_with_heartbeat(
