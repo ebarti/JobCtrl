@@ -154,11 +154,13 @@ dispatches the ordered stage list to JSON-RPC
 `run_stage`, which starts `JobPipelineWorkflow`; when `discover` runs, the
 Python runner discovers jobs, drains detail enrichment, and then drains
 internal preparation work for scoring, tailoring, and artifact suppression.
-When `apply` runs, the dispatcher uses the dedicated apply JSON-RPC method and
-`ApplyWorkflow`. The route uses the command key `pipeline` only as the local
-action response handle, not as a fake job URL. Successful workflow starts
-return `202` with the queued workflow ID. Workflow-start failures return `200`
-with the dispatcher-derived failed action.
+When the selected stage is `apply`, the same `run_stage` request remains inside
+`JobPipelineWorkflow`, which delegates to `ApplyWorkflow` as a child workflow.
+The dedicated apply JSON-RPC method is used by per-job apply actions, not by
+this global/batch run-stage route. The route uses the command key `pipeline`
+only as the local action response handle, not as a fake job URL. Successful
+workflow starts return `202` with the queued workflow ID. Workflow-start
+failures return `200` with the dispatcher-derived failed action.
 `dryRun` defaults to `true`, preserving apply safety. The apply model defaults
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.

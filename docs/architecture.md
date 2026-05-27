@@ -426,9 +426,9 @@ Two production workflows live alongside the activities:
 - `JobPipelineWorkflow` (`jobhunter/pipeline/workflow.py`) — drives the
   configured stage list serially in **batch mode** against eligible jobs in
   the local DB. Stage eligibility is owned by the underlying runner via
-  `state.set_stage_state`, not by the workflow. Passing `"apply"` is
-  rejected with a non-retryable `ApplicationError` that points callers at
-  `ApplyWorkflow`.
+  `state.set_stage_state`, not by the workflow. Passing `"apply"` keeps the
+  request on the same pipeline workflow path; the workflow delegates that stage
+  to `ApplyWorkflow` as a child workflow.
 - `ApplyWorkflow` (`jobhunter/apply/workflow.py`) — single-activity,
   **per-job** workflow with its own retry policy (`max_attempts=2`) and
   parameter shape. `apply_activity` re-raises transient failures so the
