@@ -51,11 +51,15 @@ Discovery preparation runs these internal steps:
    longer qualify; `tailor_resume` work items call Materials Generation for
    eligible jobs missing current-policy active artifacts.
 
-`apply` is deliberately separate. Non-apply stages currently run through the
-JSON-RPC `run_stage` method and the synchronous `pipeline.runner` stage
-functions. `apply` runs through the JSON-RPC `apply` method, starts
-`ApplyWorkflow` in Temporal, and reports lifecycle progress through
-apply-specific events and projections.
+`apply` is deliberately separate at workflow execution, not at pipeline action
+dispatch. The Pipelines UI still sends `discover` and `apply` through
+`POST /v1/pipeline/actions/run-stage`; the TS API dispatches JSON-RPC
+`run_stage` and starts `JobPipelineWorkflow`. Non-apply stages enter the
+synchronous `pipeline.runner` stage functions as Temporal activities. When the
+selected stage is `apply`, `JobPipelineWorkflow` delegates to child
+`ApplyWorkflow`, which reports lifecycle progress through apply-specific events
+and projections. The dedicated JSON-RPC `apply` method is reserved for per-job
+apply and retry actions.
 
 ## Execution Surfaces
 
@@ -64,9 +68,9 @@ implementations where possible, but they differ in orchestration.
 
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
-| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` starts the dedicated apply path. | User-facing Discover and Apply |
+| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
-| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities. A Discover activity owns enrichment plus preparation queue drain. | Non-apply internal stages |
+| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation queue drain. | Discover and Apply |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
 
 ### End-To-End UI/API Call Path
@@ -925,9 +929,11 @@ pending cover letters.
 ### Purpose And Boundary
 
 Apply drives browser/agent automation to submit or dry-run applications. It is
-the riskiest and longest-running phase, so it uses a Temporal workflow instead
-of the synchronous `run_stage` path. It owns apply-run lifecycle, browser
-execution, dry-run submission safety, cancellation, and apply artifacts/logs.
+the riskiest and longest-running phase, so the batch pipeline `run_stage` route
+keeps orchestration in Temporal and `JobPipelineWorkflow` delegates the selected
+`apply` stage to child `ApplyWorkflow` instead of a synchronous runner activity.
+It owns apply-run lifecycle, browser execution, dry-run submission safety,
+cancellation, and apply artifacts/logs.
 
 ### Sequence
 
@@ -939,6 +945,7 @@ sequenceDiagram
     participant JsonRpc as SubprocessJsonRpcAdapter
     participant Rpc as JsonRpcServer
     participant Temporal as Temporal service
+    participant PipelineWorkflow as JobPipelineWorkflow
     participant Workflow as ApplyWorkflow
     participant Activity as apply_activity
     participant Launcher as apply.launcher.main
@@ -946,15 +953,16 @@ sequenceDiagram
     participant DB as SQLite
     participant Ops as Apply projections / SSE
 
-    Web->>Api: POST /v1/pipeline/actions/run-stage(stage="apply")
-    Api->>JsonRpc: call("apply", params)
+    Web->>Api: POST /v1/pipeline/actions/run-stage with apply selected
+    Api->>JsonRpc: call("run_stage", params)
     JsonRpc->>Rpc: JSON-RPC request
-    Rpc->>Temporal: start ApplyWorkflow(payload)
+    Rpc->>Temporal: start JobPipelineWorkflow(stages=["apply"])
     Temporal-->>Rpc: workflow handle
     Rpc-->>Api: {runId, workflowId}
     Api-->>Web: 202 queued
 
-    Temporal->>Workflow: run(payload)
+    Temporal->>PipelineWorkflow: run(stages=["apply"])
+    PipelineWorkflow->>Workflow: execute child ApplyWorkflow(payload)
     Workflow->>Activity: execute apply_activity(payload)
     Activity->>Launcher: apply_main(limit, min_score, dry_run, headless, model, continuous)
     Launcher->>DB: acquire apply stage lock and publish ApplyRunStarted
