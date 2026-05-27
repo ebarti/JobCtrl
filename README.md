@@ -346,40 +346,39 @@ local database; discovery can add the same posting again later because that
 action clears the delete/hide tombstones instead of creating a new suppression
 record.
 
-The Pipelines tab includes the product-stage starts for `discover` and `apply`,
-plus lower-level `enrich`, `score`, `tailor`, and `cover` maintenance tabs.
-Each tab keeps persisted local config and only shows controls that the selected
-stage actually consumes. Running a tab submits that stage through the local API.
-The panel reports when the request is waiting on the local worker, whether the
-start was queued, completed, dry-run, or failed, and the returned run/action id
-when one is available. Longer-running progress appears in the dashboard
-pipeline and apply-runs cards, while the Debug tab owns the paginated Recent
-activity table for event-level inspection. Non-apply stages emit pipeline
-lifecycle events; Discover also emits
-source-step events and scheduled discovery-run events for JobSpy, Workday, and
-Smart Extract so a stuck or low-quality source is visible before the request
-finishes. The dashboard source-health card summarizes the local source-quality
-projection used to budget and demote future crawls. The Discovery page owns the
-local source registry, source locator candidates, observed-source preview,
-quarantined leads, and manual-capture queue. Its source registry tab renders
-sources as a filterable, sortable table with company, source id, source type,
-state, priority, recommendation, activity, run health, and quality-metric
-columns. Located parseable sources are automatically approved into the active
-source registry; manual review is reserved for blocked, ambiguous, or
-unparseable sources. JobSpy broad-board results can also learn durable sources:
-when a result exposes a direct owner URL, JobHunter records the board
-provenance, links the job to the canonical posting URL, and promotes runnable
-ATS sources into the registry; unknown owner URLs and ATS URLs that still need
-adapter configuration stay in review. These controls can add an experimental
-source, preview recently observed leads for a source, enable or quarantine a
-source, approve or reject quarantined leads, record source feedback, open a
-blocked lead in the local browser, and import a user-provided URL, current-page
-URL, pasted text, saved HTML, or email content as manual-capture provenance.
-Manual capture
-stores local provenance metadata and content hashes, not raw captured posting
-text in domain events. The `limit`
-control is honored by every pipeline stage tab, including `discover` and `enrich`, so
-local debug runs can be bounded to one job. A bounded Discover run stops
+The Pipelines tab exposes the product-stage starts for `discover` and `apply`.
+Discover owns preparation and Apply owns browser automation; lower-level
+`enrich`, `score`, `tailor`, and `cover` remain CLI/API maintenance and
+diagnostic surfaces rather than product tabs. Each product tab keeps persisted
+local config and only shows controls that the selected stage actually consumes.
+Running a tab submits that stage through the local API. The panel reports when
+the request is waiting on the local worker, whether the start was queued,
+completed, dry-run, or failed, and the returned run/action id when one is
+available. Longer-running progress appears in the dashboard pipeline and
+apply-runs cards, while the Debug tab owns the paginated Recent activity table
+for event-level inspection. Non-apply stages emit pipeline lifecycle events;
+Discover also emits source-step events and scheduled discovery-run events for
+JobSpy, Workday, and Smart Extract so a stuck or low-quality source is visible
+before the request finishes. The dashboard source-health card summarizes the
+local source-quality projection used to budget and demote future crawls. The
+Discovery page owns the local source registry, source locator candidates,
+observed-source preview, quarantined leads, and manual-capture queue. Its source
+registry tab renders sources as a filterable, sortable table with company,
+source id, source type, state, priority, recommendation, activity, run health,
+and quality-metric columns. Located parseable sources are automatically approved
+into the active source registry; manual review is reserved for blocked,
+ambiguous, or unparseable sources. JobSpy broad-board results can also learn
+durable sources: when a result exposes a direct owner URL, JobHunter records the
+board provenance, links the job to the canonical posting URL, and promotes
+runnable ATS sources into the registry; unknown owner URLs and ATS URLs that
+still need adapter configuration stay in review. These controls can add an
+experimental source, preview recently observed leads for a source, enable or
+quarantine a source, approve or reject quarantined leads, record source
+feedback, open a blocked lead in the local browser, and import a user-provided
+URL, current-page URL, pasted text, saved HTML, or email content as
+manual-capture provenance. Manual capture stores local provenance metadata and
+content hashes, not raw captured posting text in domain events. The `limit`
+control is honored by the Discover and Apply tabs; a bounded Discover run stops
 remaining sources once the cap is reached. Tabs default to dry-run mode so apply
 automation does not submit applications unless you explicitly clear dry run.
 
