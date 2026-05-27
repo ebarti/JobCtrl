@@ -87,6 +87,10 @@ describe("Profile types", () => {
         currentJobTitle: "",
         currentCompany: "",
         targetRole: "",
+        targetTrack: "",
+        targetSeniorityFloor: "",
+        targetFunctions: "",
+        targetSpecializations: "",
       },
       applicationDefaults: {
         availability: {
@@ -174,6 +178,10 @@ describe("Profile types", () => {
         currentJobTitle: "",
         currentCompany: "",
         targetRole: "",
+        targetTrack: "",
+        targetSeniorityFloor: "",
+        targetFunctions: "",
+        targetSpecializations: "",
       },
       applicationDefaults: {
         availability: {

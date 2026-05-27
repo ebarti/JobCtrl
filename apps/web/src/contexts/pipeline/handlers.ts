@@ -7,6 +7,10 @@ import type {
   StageReset,
   StageSkipped,
   StageStarted,
+  PreparationWorkItemCompleted,
+  PreparationWorkItemFailed,
+  PreparationWorkItemQueued,
+  PreparationWorkItemStarted,
 } from "@jobhunter/domain-types";
 
 import { dashboardKeys } from "../operations/dashboardKeys.js";
@@ -64,3 +68,22 @@ export const stageCanceledHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
+
+type PreparationWorkItemEvent =
+  | PreparationWorkItemQueued
+  | PreparationWorkItemStarted
+  | PreparationWorkItemCompleted
+  | PreparationWorkItemFailed;
+
+const preparationWorkItemHandler = (
+  event: PreparationWorkItemEvent,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const preparationWorkItemQueuedHandler = preparationWorkItemHandler;
+export const preparationWorkItemStartedHandler = preparationWorkItemHandler;
+export const preparationWorkItemCompletedHandler = preparationWorkItemHandler;
+export const preparationWorkItemFailedHandler = preparationWorkItemHandler;

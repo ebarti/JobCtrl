@@ -4,6 +4,8 @@ import type {
   PdfRendered,
   ResumeApproved,
   ResumeFailed,
+  TailoredArtifactsSuppressed,
+  TailorRetailorRequested,
 } from "@jobhunter/domain-types";
 
 import { artifactsKeys } from "../operations/artifactsKeys.js";
@@ -47,5 +49,22 @@ export const materialsExhaustedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const tailorRetailorRequestedHandler = (
+  event: TailorRetailorRequested,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const tailoredArtifactsSuppressedHandler = (
+  event: TailoredArtifactsSuppressed,
+): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];

@@ -28,10 +28,22 @@ import {
   createPostingContentSnapshotFailed,
 } from "../src/events/enrichment.js";
 import { createJobScored, createScoreRescoreRequested } from "../src/events/scoring.js";
-import { createResumeApproved, createMaterialsExhausted } from "../src/events/materials.js";
+import {
+  createResumeApproved,
+  createMaterialsExhausted,
+  createTailoredArtifactsSuppressed,
+  createTailorRetailorRequested,
+} from "../src/events/materials.js";
+import {
+  PREPARATION_WORK_ITEM_KINDS,
+  createPreparationWorkItemCompleted,
+  createPreparationWorkItemFailed,
+  createPreparationWorkItemQueued,
+  createPreparationWorkItemStarted,
+} from "../src/events/preparation.js";
 import { createApplicationSubmitted, createApplyRunStarted } from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
-import { createProfileUpdated, createProfileImported } from "../src/events/profile.js";
+import { createProfileUpdated, createProfileImported, createTailoringPolicyUpdated } from "../src/events/profile.js";
 
 describe("DomainEvent base", () => {
   it("createDomainEvent sets envelope fields", () => {
@@ -278,6 +290,19 @@ describe("Scoring events", () => {
     expect(event.payload.fitScore).toBe(8);
     expect(event.payload.keywords).toEqual(["python", "react"]);
   });
+
+  it("ScoreRescoreRequested carries policy version metadata", () => {
+    const event = createScoreRescoreRequested(LOCAL_TENANT, {
+      jobId: "j1",
+      staleReason: "scoring_policy_changed",
+      oldPolicyVersion: 1,
+      newPolicyVersion: 2,
+      nextAction: "jobhunter run score --rescore",
+    });
+    expect(event.eventType).toBe("ScoreRescoreRequested");
+    expect(event.payload.oldPolicyVersion).toBe(1);
+    expect(event.payload.newPolicyVersion).toBe(2);
+  });
 });
 
 describe("Materials events", () => {
@@ -301,6 +326,99 @@ describe("Materials events", () => {
     });
     expect(event.eventType).toBe("MaterialsExhausted");
     expect(event.payload.attemptCount).toBe(3);
+  });
+
+  it("TailorRetailorRequested carries stale policy details", () => {
+    const event = createTailorRetailorRequested(LOCAL_TENANT, {
+      requestId: "retailor-1",
+      jobId: "j1",
+      requestKind: "policy_update",
+      currentPolicyVersion: 4,
+      latestArtifactPolicyVersion: 3,
+      reason: "tailoring_policy_changed",
+      requestedAt: "2026-05-26T10:00:00Z",
+      sourceEventId: "event-1",
+    });
+    expect(event.eventType).toBe("TailorRetailorRequested");
+    expect(event.payload.jobId).toBe("j1");
+    expect(event.payload.currentPolicyVersion).toBe(4);
+  });
+
+  it("TailoredArtifactsSuppressed carries artifact ids but no local paths", () => {
+    const event = createTailoredArtifactsSuppressed(LOCAL_TENANT, {
+      jobId: "j1",
+      artifactIds: ["artifact-1"],
+      suppressionReason: "tailoring_policy_changed",
+      suppressedAt: "2026-05-26T10:01:00Z",
+      currentTailoringPolicyVersion: 4,
+    });
+    expect(event.eventType).toBe("TailoredArtifactsSuppressed");
+    expect(event.payload.artifactIds).toEqual(["artifact-1"]);
+    expect(event.payload.currentTailoringPolicyVersion).toBe(4);
+  });
+});
+
+describe("Preparation events", () => {
+  it("exposes the durable preparation command vocabulary", () => {
+    expect(PREPARATION_WORK_ITEM_KINDS).toEqual([
+      "score_job",
+      "tailor_resume",
+      "suppress_tailored_artifacts",
+    ]);
+  });
+
+  it("PreparationWorkItemQueued carries queue metadata", () => {
+    const event = createPreparationWorkItemQueued(LOCAL_TENANT, {
+      workItemId: "prep-1",
+      jobId: "j1",
+      kind: "score_job",
+      reason: "new_job_discovered",
+      targetVersion: 2,
+      sourceEventId: "job-enriched-1",
+      queuedAt: "2026-05-26T10:00:00Z",
+    });
+    expect(event.eventType).toBe("PreparationWorkItemQueued");
+    expect(event.payload.kind).toBe("score_job");
+    expect(event.payload.targetVersion).toBe(2);
+    expect(event.payload.sourceEventId).toBe("job-enriched-1");
+  });
+
+  it("PreparationWorkItemStarted carries worker identity", () => {
+    const event = createPreparationWorkItemStarted(LOCAL_TENANT, {
+      workItemId: "prep-1",
+      jobId: "j1",
+      kind: "tailor_resume",
+      workerId: "worker-1",
+      startedAt: "2026-05-26T10:01:00Z",
+    });
+    expect(event.eventType).toBe("PreparationWorkItemStarted");
+    expect(event.payload.workerId).toBe("worker-1");
+  });
+
+  it("PreparationWorkItemCompleted carries duration", () => {
+    const event = createPreparationWorkItemCompleted(LOCAL_TENANT, {
+      workItemId: "prep-1",
+      jobId: "j1",
+      kind: "suppress_tailored_artifacts",
+      completedAt: "2026-05-26T10:02:00Z",
+      durationMs: 1200,
+    });
+    expect(event.eventType).toBe("PreparationWorkItemCompleted");
+    expect(event.payload.durationMs).toBe(1200);
+  });
+
+  it("PreparationWorkItemFailed carries retry classification", () => {
+    const event = createPreparationWorkItemFailed(LOCAL_TENANT, {
+      workItemId: "prep-1",
+      jobId: "j1",
+      kind: "tailor_resume",
+      errorCode: "POLICY_VERSION_MISSING",
+      retryable: false,
+      failedAt: "2026-05-26T10:03:00Z",
+    });
+    expect(event.eventType).toBe("PreparationWorkItemFailed");
+    expect(event.payload.retryable).toBe(false);
+    expect(event.payload.errorCode).toBe("POLICY_VERSION_MISSING");
   });
 });
 
@@ -375,6 +493,20 @@ describe("Profile events", () => {
     });
     expect(event.eventType).toBe("ProfileImported");
     expect(event.payload.source).toBe("resume.pdf");
+  });
+
+  it("TailoringPolicyUpdated carries policy version metadata without content", () => {
+    const event = createTailoringPolicyUpdated(LOCAL_TENANT, {
+      policyId: "tailoring:default",
+      policyVersion: 4,
+      previousPolicyVersion: 3,
+      policyFingerprint: "tailoring-policy:4",
+      changedFields: ["writing_style", "tailoring_policy"],
+      updatedAt: "2026-05-26T10:00:00Z",
+    });
+    expect(event.eventType).toBe("TailoringPolicyUpdated");
+    expect(event.payload.policyId).toBe("tailoring:default");
+    expect(event.payload.changedFields).toEqual(["writing_style", "tailoring_policy"]);
   });
 });
 
@@ -478,6 +610,25 @@ describe("All events carry tenantId", () => {
         approvedAt: "t",
       }),
     () =>
+      createTailoringPolicyUpdated(LOCAL_TENANT, {
+        policyId: "tailoring:default",
+        policyVersion: 1,
+        previousPolicyVersion: null,
+        policyFingerprint: "tailoring-policy:1",
+        changedFields: ["tailoring_policy"],
+        updatedAt: "t",
+      }),
+    () =>
+      createPreparationWorkItemQueued(LOCAL_TENANT, {
+        workItemId: "prep-1",
+        jobId: "j1",
+        kind: "score_job",
+        reason: "new_job_discovered",
+        targetVersion: 1,
+        sourceEventId: "job-enriched-1",
+        queuedAt: "t",
+      }),
+    () =>
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j1",
         runId: "r1",
@@ -508,7 +659,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(45);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(52);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -689,6 +840,61 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         stage: "tailor",
         attemptCount: 1,
         maxAttempts: 1,
+      }).eventType,
+      createTailoringPolicyUpdated(LOCAL_TENANT, {
+        policyId: "tailoring:default",
+        policyVersion: 2,
+        previousPolicyVersion: 1,
+        policyFingerprint: "tailoring-policy:2",
+        changedFields: ["tailoring_policy"],
+        updatedAt: "t",
+      }).eventType,
+      createTailorRetailorRequested(LOCAL_TENANT, {
+        requestId: "retailor-1",
+        jobId: "j",
+        requestKind: "policy_update",
+        currentPolicyVersion: 2,
+        latestArtifactPolicyVersion: 1,
+        reason: "tailoring_policy_changed",
+        requestedAt: "t",
+      }).eventType,
+      createTailoredArtifactsSuppressed(LOCAL_TENANT, {
+        jobId: "j",
+        artifactIds: ["a"],
+        suppressionReason: "tailoring_policy_changed",
+        suppressedAt: "t",
+        currentTailoringPolicyVersion: 2,
+      }).eventType,
+      createPreparationWorkItemQueued(LOCAL_TENANT, {
+        workItemId: "prep-1",
+        jobId: "j",
+        kind: "score_job",
+        reason: "new_job_discovered",
+        targetVersion: 2,
+        sourceEventId: "job-enriched-1",
+        queuedAt: "t",
+      }).eventType,
+      createPreparationWorkItemStarted(LOCAL_TENANT, {
+        workItemId: "prep-1",
+        jobId: "j",
+        kind: "score_job",
+        workerId: "w",
+        startedAt: "t",
+      }).eventType,
+      createPreparationWorkItemCompleted(LOCAL_TENANT, {
+        workItemId: "prep-1",
+        jobId: "j",
+        kind: "tailor_resume",
+        completedAt: "t",
+        durationMs: 1,
+      }).eventType,
+      createPreparationWorkItemFailed(LOCAL_TENANT, {
+        workItemId: "prep-1",
+        jobId: "j",
+        kind: "suppress_tailored_artifacts",
+        errorCode: "FAILED",
+        retryable: true,
+        failedAt: "t",
       }).eventType,
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j",

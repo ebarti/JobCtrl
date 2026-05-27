@@ -42,8 +42,14 @@ import {
   pdfRenderedHandler,
   resumeApprovedHandler,
   resumeFailedHandler,
+  tailoredArtifactsSuppressedHandler,
+  tailorRetailorRequestedHandler,
 } from "../materials/handlers.js";
 import {
+  preparationWorkItemCompletedHandler,
+  preparationWorkItemFailedHandler,
+  preparationWorkItemQueuedHandler,
+  preparationWorkItemStartedHandler,
   stageBlockedHandler,
   stageCanceledHandler,
   stageCompletedHandler,
@@ -53,7 +59,11 @@ import {
   stageSkippedHandler,
   stageStartedHandler,
 } from "../pipeline/handlers.js";
-import { profileImportedHandler, profileUpdatedHandler } from "../profile/handlers.js";
+import {
+  profileImportedHandler,
+  profileUpdatedHandler,
+  tailoringPolicyUpdatedHandler,
+} from "../profile/handlers.js";
 import {
   jobScoredHandler,
   scoreCorrectedHandler,
@@ -130,6 +140,13 @@ export const handlers: HandlerMap = {
   CoverLetterGenerated: coverLetterGeneratedHandler,
   PdfRendered: pdfRenderedHandler,
   MaterialsExhausted: materialsExhaustedHandler,
+  TailoringPolicyUpdated: tailoringPolicyUpdatedHandler,
+  TailorRetailorRequested: tailorRetailorRequestedHandler,
+  TailoredArtifactsSuppressed: tailoredArtifactsSuppressedHandler,
+  PreparationWorkItemQueued: preparationWorkItemQueuedHandler,
+  PreparationWorkItemStarted: preparationWorkItemStartedHandler,
+  PreparationWorkItemCompleted: preparationWorkItemCompletedHandler,
+  PreparationWorkItemFailed: preparationWorkItemFailedHandler,
   ApplyRunStarted: applyRunStartedHandler,
   ApplyRunEventRecorded: applyRunEventRecordedHandler,
   ApplicationSubmitted: applicationSubmittedHandler,

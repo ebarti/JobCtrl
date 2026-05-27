@@ -39,3 +39,24 @@ export function createProfileImported(
 ): ProfileImported {
   return createDomainEvent("ProfileImported", tenantId, payload);
 }
+
+// -- TailoringPolicyUpdated -------------------------------------------------
+
+export interface TailoringPolicyUpdatedPayload {
+  readonly policyId: string;
+  readonly policyVersion: number;
+  readonly previousPolicyVersion: number | null;
+  readonly policyFingerprint: string;
+  readonly changedFields: readonly string[];
+  readonly updatedAt: string;
+  readonly rollbackOfPolicyVersion?: number | null;
+}
+
+export type TailoringPolicyUpdated = DomainEvent<"TailoringPolicyUpdated", TailoringPolicyUpdatedPayload>;
+
+export function createTailoringPolicyUpdated(
+  tenantId: TenantId,
+  payload: TailoringPolicyUpdatedPayload,
+): TailoringPolicyUpdated {
+  return createDomainEvent("TailoringPolicyUpdated", tenantId, payload);
+}

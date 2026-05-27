@@ -89,6 +89,52 @@ export interface ResetStaleScoresForRescoreResponse {
   nextAction: string;
 }
 
+export const RescoreJobRequestSchema = z
+  .object({
+    dryRun: z.boolean().default(false),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type RescoreJobRequest = z.infer<typeof RescoreJobRequestSchema>;
+
+export const BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(1000).default(100),
+    jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
+    dryRun: z.boolean().default(false),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type BulkRescoreJobsNotOnCurrentScoringPolicyRequest = z.infer<
+  typeof BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema
+>;
+
+export const RetailorJobRequestSchema = z
+  .object({
+    dryRun: z.boolean().default(false),
+    suppressExistingArtifacts: z.boolean().default(true),
+    reason: z.string().trim().max(400).optional(),
+    tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
+    tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
+    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type RetailorJobRequest = z.infer<typeof RetailorJobRequestSchema>;
+
+export const BulkRetailorCurrentPolicyRequestSchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(1000).default(100),
+    jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
+    dryRun: z.boolean().default(false),
+    suppressExistingArtifacts: z.boolean().default(true),
+    reason: z.string().trim().max(400).optional(),
+    tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
+    tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
+    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type BulkRetailorCurrentPolicyRequest = z.infer<typeof BulkRetailorCurrentPolicyRequestSchema>;
+
 export const GenerateMaterialsRequestSchema = z
   .object({
     stages: z.array(z.enum(MATERIAL_STAGES)).min(1).default(["tailor", "cover"]),
@@ -910,6 +956,22 @@ export interface JobMutationResponse {
   ok: true;
   count: number;
   jobKeys: string[];
+}
+
+export interface RescoreJobResponse extends JobMutationResponse {
+  currentPolicyVersion: number | null;
+}
+
+export interface BulkRescoreJobsNotOnCurrentScoringPolicyResponse extends JobMutationResponse {
+  currentPolicyVersion: number | null;
+}
+
+export interface RetailorJobResponse extends JobMutationResponse {
+  currentPolicyVersion: number | null;
+}
+
+export interface BulkRetailorCurrentPolicyResponse extends JobMutationResponse {
+  currentPolicyVersion: number | null;
 }
 
 export const CorrectScoreRequestSchema = z
