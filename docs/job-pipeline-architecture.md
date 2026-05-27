@@ -152,10 +152,14 @@ classDiagram
       +register workflow handlers
       +dispatch request
     }
-    class LocalAction {
-      +run_local_action()
-      +dry-run short circuit
-      +record ActionStarted/ActionSucceeded
+    class JobPipelineWorkflow {
+      +run ordered stages
+      +execute stage activities
+      +delegate apply child workflow
+    }
+    class DiscoverActivity {
+      +run_pipeline(stages=["discover"])
+      +heartbeat while blocking
     }
     class PipelineRunner {
       +run_pipeline()
@@ -180,9 +184,11 @@ classDiagram
     FastifyApi --> DefaultActionDispatcher
     DefaultActionDispatcher --> SubprocessJsonRpcAdapter
     SubprocessJsonRpcAdapter --> JsonRpcServer
-    JsonRpcServer --> LocalAction : run_stage
-    JsonRpcServer --> ApplyWorkflow : apply
-    LocalAction --> PipelineRunner
+    JsonRpcServer --> JobPipelineWorkflow : run_stage
+    JsonRpcServer --> ApplyWorkflow : per-job apply
+    JobPipelineWorkflow --> DiscoverActivity : discover
+    JobPipelineWorkflow --> ApplyWorkflow : apply child workflow
+    DiscoverActivity --> PipelineRunner
     PipelineRunner --> OperationsReadSide : events
     ApplyWorkflow --> OperationsReadSide : events
 ```
@@ -207,9 +213,9 @@ also emits `DiscoveryRunStarted`, `DiscoveryRunCompleted`, and
 
 ### Dry Run
 
-For non-apply stages, `dryRun=true` is handled before the stage implementation
-executes. `run_local_action()` returns a planned action result and records
-action lifecycle events, but it does not call `_execute_action()`.
+For non-apply stages, `dryRun=true` is passed through the workflow activity into
+`run_pipeline()`. The runner returns planned stage metadata and records dry-run
+operational attempts before executing any stage implementation.
 
 For apply, `dryRun` is passed into `ApplyWorkflowInput` and down to the apply
 launcher. The workflow still starts, but the launcher follows the dry-run path
@@ -267,7 +273,8 @@ sequenceDiagram
     autonumber
     participant Api as TS API
     participant Rpc as JSON-RPC run_stage
-    participant Action as run_local_action
+    participant Workflow as JobPipelineWorkflow
+    participant Activity as discover_activity
     participant Runner as _run_discover
     participant QueryPlanner as Target query planner
     participant Scheduler as DiscoveryScheduler
@@ -283,8 +290,9 @@ sequenceDiagram
     participant Ops as Operations projections
 
     Api->>Rpc: run_stage(stage="discover", limit, workers)
-    Rpc->>Action: LocalActionRequest(stage="discover")
-    Action->>Runner: run_pipeline(stages=["discover"])
+    Rpc->>Workflow: start JobPipelineWorkflow(stages=["discover"])
+    Workflow->>Activity: execute discover_activity(payload)
+    Activity->>Runner: run_pipeline(stages=["discover"])
     Runner->>DB: init_db
     Runner->>DB: refresh source-control rows idempotently
     Runner->>QueryPlanner: compile profile target roles and locations
