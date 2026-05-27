@@ -20,26 +20,46 @@ is intentionally function-based.
 The user-facing stage order is:
 
 ```text
-discover -> score -> tailor -> cover -> apply
+discover -> apply
 ```
 
-The Python batch runner's `STAGE_ORDER` covers the non-apply stages:
+`Discover` is the single preparation stage. It finds jobs, enriches usable
+postings, and then drains internal preparation work for scoring, tailoring, and
+artifact suppression. `Apply` stays separate because it can submit applications
+and has its own safety controls.
+
+The persisted/internal stage vocabulary still includes the preparation
+substatuses:
 
 ```text
-discover -> score -> tailor -> cover
+discover -> enrich -> score -> tailor -> cover -> apply
 ```
 
-Detail enrichment is an internal Discovery subphase: discovered jobs that pass
-the light title/location filter are placed on the enrichment queue, and
-Discovery drains that queue with the same worker count before it completes.
-The `enrich` state, aggregate, and retry path remain in the domain model for
-diagnostics and per-job retry.
+Those names remain in stage rows, low-level contracts, CLI maintenance paths,
+and diagnostics. The product UI maps `enrich`, `score`, `tailor`, and `cover`
+back to `Discover` while still exposing their detail in job timelines and
+operational views.
 
-`apply` is deliberately separate. Non-apply stages currently run through the
-JSON-RPC `run_stage` method and the synchronous `pipeline.runner` stage
-functions. `apply` runs through the JSON-RPC `apply` method, starts
-`ApplyWorkflow` in Temporal, and reports lifecycle progress through
-apply-specific events and projections.
+Discovery preparation runs these internal steps:
+
+1. Detail enrichment fetches full descriptions and application URLs.
+2. `score_job` work items call the Scoring context with the current scoring
+   policy.
+3. Tailor eligibility is recomputed from persisted scores, hard blockers, the
+   live fit-score threshold, and the current tailoring policy.
+4. `suppress_tailored_artifacts` work items soft-hide active materials that no
+   longer qualify; `tailor_resume` work items call Materials Generation for
+   eligible jobs missing current-policy active artifacts.
+
+`apply` is deliberately separate at workflow execution, not at pipeline action
+dispatch. The Pipelines UI still sends `discover` and `apply` through
+`POST /v1/pipeline/actions/run-stage`; the TS API dispatches JSON-RPC
+`run_stage` and starts `JobPipelineWorkflow`. Non-apply stages enter the
+synchronous `pipeline.runner` stage functions as Temporal activities. When the
+selected stage is `apply`, `JobPipelineWorkflow` delegates to child
+`ApplyWorkflow`, which reports lifecycle progress through apply-specific events
+and projections. The dedicated JSON-RPC `apply` method is reserved for per-job
+apply and retry actions.
 
 ## Execution Surfaces
 
@@ -48,9 +68,9 @@ implementations where possible, but they differ in orchestration.
 
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
-| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends the ordered stage list to JSON-RPC `run_stage`, which starts one `JobPipelineWorkflow`; apply steps run as child `ApplyWorkflow` executions. | All user-facing stages |
-| CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes stages sequentially or streaming. | Non-apply stages |
-| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches each non-apply stage as a Temporal activity. | Non-apply stages |
+| Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
+| CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
+| Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation queue drain. | Discover and Apply |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
 
 ### End-To-End UI/API Call Path
@@ -67,6 +87,9 @@ sequenceDiagram
     participant Temporal as Temporal
     participant Activity as Stage activity
     participant Runner as pipeline.runner
+    participant Prep as preparation_work_items
+    participant Scoring as Scoring context
+    participant Materials as Materials context
     participant DB as SQLite
     participant SSE as SSE / projections
 
@@ -80,10 +103,15 @@ sequenceDiagram
     Temporal-->>Rpc: workflow handle
     Rpc-->>JsonRpc: {runId, workflowId}
 
-    alt discover/enrich/score/tailor/cover step
-        Temporal->>Activity: execute stage activity
+    alt discover preparation
+        Temporal->>Activity: execute discover activity
         Activity->>Runner: run_pipeline(stages=[stage])
-        Runner->>DB: stage writes, events, artifacts
+        Runner->>DB: discovery/enrichment writes and events
+        Runner->>Prep: enqueue and drain score/tailor/suppress work
+        Prep->>Scoring: score_job with current policy
+        Prep->>Materials: tailor_resume or suppress artifacts
+        Scoring-->>DB: scores and score events
+        Materials-->>DB: materials/suppression events
     else apply step
         Temporal->>Temporal: execute child ApplyWorkflow
         Temporal->>DB: ApplyRun* events while workflow runs
@@ -124,15 +152,20 @@ classDiagram
       +register workflow handlers
       +dispatch request
     }
-    class LocalAction {
-      +run_local_action()
-      +dry-run short circuit
-      +record ActionStarted/ActionSucceeded
+    class JobPipelineWorkflow {
+      +run ordered stages
+      +execute stage activities
+      +delegate apply child workflow
+    }
+    class DiscoverActivity {
+      +run_pipeline(stages=["discover"])
+      +heartbeat while blocking
     }
     class PipelineRunner {
       +run_pipeline()
       +_run_stage_observed()
       +_run_discover()
+      +drain_discovery_preparation()
       +_run_enrich()
       +_run_score()
       +_run_tailor()
@@ -151,9 +184,11 @@ classDiagram
     FastifyApi --> DefaultActionDispatcher
     DefaultActionDispatcher --> SubprocessJsonRpcAdapter
     SubprocessJsonRpcAdapter --> JsonRpcServer
-    JsonRpcServer --> LocalAction : run_stage
-    JsonRpcServer --> ApplyWorkflow : apply
-    LocalAction --> PipelineRunner
+    JsonRpcServer --> JobPipelineWorkflow : run_stage
+    JsonRpcServer --> ApplyWorkflow : per-job apply
+    JobPipelineWorkflow --> DiscoverActivity : discover
+    JobPipelineWorkflow --> ApplyWorkflow : apply child workflow
+    DiscoverActivity --> PipelineRunner
     PipelineRunner --> OperationsReadSide : events
     ApplyWorkflow --> OperationsReadSide : events
 ```
@@ -178,9 +213,9 @@ also emits `DiscoveryRunStarted`, `DiscoveryRunCompleted`, and
 
 ### Dry Run
 
-For non-apply stages, `dryRun=true` is handled before the stage implementation
-executes. `run_local_action()` returns a planned action result and records
-action lifecycle events, but it does not call `_execute_action()`.
+For non-apply stages, `dryRun=true` is passed through the workflow activity into
+`run_pipeline()`. The runner returns planned stage metadata and records dry-run
+operational attempts before executing any stage implementation.
 
 For apply, `dryRun` is passed into `ApplyWorkflowInput` and down to the apply
 launcher. The workflow still starts, but the launcher follows the dry-run path
@@ -193,10 +228,11 @@ instead of submitting applications.
 - Discover: global cap for observed jobs across scheduled sources. When set,
   Discover runs sources sequentially and skips remaining sources once the cap is
   consumed; the same value is also used by the internal detail-enrichment queue
-  drain.
-- Score: cap for jobs selected for scoring after retrieval preselection.
-- Tailor: cap for eligible high-fit jobs to tailor.
-- Cover: cap for eligible jobs needing cover letters.
+  drain and the internal preparation work-item drains.
+- Score: internal/maintenance cap for jobs selected for scoring after retrieval
+  preselection.
+- Tailor: internal/maintenance cap for eligible high-fit jobs to tailor.
+- Cover: internal/maintenance cap for eligible jobs needing cover letters.
 - PDF: cap for pending PDF render jobs.
 - Apply: cap for apply attempts unless `continuous=true`, in which case the
   apply launcher runs continuously.
@@ -211,11 +247,12 @@ instead of submitting applications.
   they have no remaining work.
 
 The UI `run-stage` endpoint preserves request order by starting one
-`JobPipelineWorkflow` for the selected stage list. Non-apply stages run
-serially as Temporal activities; each activity still enters the Python runner
-as a single-stage `run_pipeline(stages=[stage])` invocation. `apply` remains
-the dedicated `ApplyWorkflow`, executed as a child workflow when it appears in
-the ordered pipeline list.
+`JobPipelineWorkflow` for the selected stage list. The product stage trigger
+normally sends only `discover` or `apply`. Non-apply stages run serially as
+Temporal activities; each activity still enters the Python runner as a
+single-stage `run_pipeline(stages=[stage])` invocation. `apply` remains the
+dedicated `ApplyWorkflow`, executed as a child workflow when it appears in the
+ordered pipeline list.
 
 ## Phase 1: Discover
 
@@ -226,7 +263,8 @@ records plus source observations. It owns source scheduling, source-quality
 feedback, canonical identity, idempotent source-control refresh, manual-capture
 queue entries for protected sources, dedupe against existing jobs, and the
 detail-enrichment queue drain for jobs that pass the initial title/location
-filter. It does not score jobs or generate materials.
+filter. After enrichment, it orchestrates durable preparation work; Scoring and
+Materials still own the score and artifact writes.
 
 ### Sequence
 
@@ -235,7 +273,8 @@ sequenceDiagram
     autonumber
     participant Api as TS API
     participant Rpc as JSON-RPC run_stage
-    participant Action as run_local_action
+    participant Workflow as JobPipelineWorkflow
+    participant Activity as discover_activity
     participant Runner as _run_discover
     participant QueryPlanner as Target query planner
     participant Scheduler as DiscoveryScheduler
@@ -244,12 +283,16 @@ sequenceDiagram
     participant Workday
     participant Smart as Smart Extract
     participant Detail as Detail enrichment queue
+    participant Prep as Preparation queue
+    participant Scoring as Scoring context
+    participant Materials as Materials context
     participant DB as SQLite
     participant Ops as Operations projections
 
     Api->>Rpc: run_stage(stage="discover", limit, workers)
-    Rpc->>Action: LocalActionRequest(stage="discover")
-    Action->>Runner: run_pipeline(stages=["discover"])
+    Rpc->>Workflow: start JobPipelineWorkflow(stages=["discover"])
+    Workflow->>Activity: execute discover_activity(payload)
+    Activity->>Runner: run_pipeline(stages=["discover"])
     Runner->>DB: init_db
     Runner->>DB: refresh source-control rows idempotently
     Runner->>QueryPlanner: compile profile target roles and locations
@@ -267,6 +310,11 @@ sequenceDiagram
     Smart->>DB: insert jobs, quarantine, manual-capture queue
     Runner->>Detail: run_enrichment(limit, workers)
     Detail->>DB: persist full descriptions, apply URLs, attempts/errors
+    Runner->>Prep: enqueue score_job for enriched pending scores
+    Prep->>Scoring: score_job current scoring policy
+    Scoring->>DB: persist JobScore and score events
+    Runner->>Prep: recompute TailorEligibility
+    Prep->>Materials: tailor_resume or suppress_tailored_artifacts
 
     Runner->>DB: DiscoveryRun*, Stage*, and operational attempt metrics
     DB->>Ops: source-quality and dashboard projections refresh
@@ -370,6 +418,10 @@ classDiagram
   registry updates, review queue entries, quarantine entries, discovery run
   rows, `job_events`, and source-level operational attempt metrics.
 - Emits stage events and source-level discovery events.
+- Enqueues and drains `PreparationWorkItemQueued`,
+  `PreparationWorkItemStarted`, `PreparationWorkItemCompleted`, and
+  `PreparationWorkItemFailed` events for internal scoring, tailoring, and
+  suppression work after enrichment.
 - Treats JobSpy result URLs as broad-board observations and JobSpy direct URLs
   as owner-source evidence. Runnable ATS direct URLs are promoted into
   `source_registry_entries`; ambiguous direct URLs and ATS URLs that still need
@@ -387,7 +439,10 @@ result. With `limit > 0`, the stage uses sequential source execution and skips
 remaining source families once the new-job cap is consumed. All discovery source
 families treat the cap as a new-job budget: existing rediscoveries record
 observations but do not consume the remaining budget, so exact-query duplicates
-do not prevent later recall queries or sources from running.
+do not prevent later recall queries or sources from running. If internal
+preparation work fails after enrichment, the durable work item remains failed or
+retryable and the Discover result reports partial preparation status without
+collapsing the owning Scoring or Materials failure into Discovery state.
 
 ## Internal Discovery Subphase: Detail Enrichment
 
@@ -470,13 +525,92 @@ classDiagram
 Individual detail failures are recorded on the job so later runs can retry or
 surface the error without crashing unrelated jobs.
 
-## Phase 2: Score
+## Internal Discovery Preparation Work
+
+### Purpose And Boundary
+
+Preparation work items are the durable bridge between the user-facing Discover
+stage and the internal Scoring and Materials bounded contexts. The queue makes
+post-enrichment work idempotent, restartable, and observable without letting
+Discovery write scores or artifacts directly.
+
+Work item kinds are:
+
+- `score_job`: score one enriched job with the current scoring policy.
+- `tailor_resume`: create current-policy tailored materials for an eligible
+  job.
+- `suppress_tailored_artifacts`: soft-hide active tailored artifacts when the
+  job no longer satisfies the live threshold or hard-blocker eligibility.
+
+### Event Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Discover as Discover runner
+    participant Queue as preparation_work_items
+    participant Scoring as Scoring context
+    participant Materials as Materials Generation context
+    participant Ops as Operations projections + SSE
+
+    Discover->>Queue: enqueue score_job(target=scoring policy version)
+    Queue-->>Ops: PreparationWorkItemQueued
+    Queue->>Scoring: score_job_by_url(job, current policy)
+    Scoring-->>Ops: JobScored
+    Queue-->>Ops: PreparationWorkItemCompleted
+
+    Discover->>Discover: recompute TailorEligibility from persisted scores
+    alt eligible and no current active artifact
+        Discover->>Queue: enqueue tailor_resume(target=tailoring policy version)
+        Queue->>Materials: tailor_job_by_url(job, current policy)
+        Materials-->>Ops: ResumeApproved / ResumeFailed
+        Queue-->>Ops: PreparationWorkItemCompleted or Failed
+    else ineligible with active artifacts
+        Discover->>Queue: enqueue suppress_tailored_artifacts(target=threshold)
+        Queue->>Materials: SuppressTailoredArtifactsUseCase
+        Materials-->>Ops: TailoredArtifactsSuppressed
+        Queue-->>Ops: PreparationWorkItemCompleted
+    end
+```
+
+### Data And Events
+
+- `preparation_work_items` keys work by tenant, job, kind, target version,
+  source event, and idempotency key so reruns do not duplicate in-flight work.
+- `target_version` is the scoring policy version for `score_job`, the tailoring
+  policy version for `tailor_resume`, and the live fit-score threshold for
+  `suppress_tailored_artifacts`.
+- `source_event_id` ties each item to the latest discovery/enrichment/source
+  fact that made the work necessary.
+- Work item lifecycle events are part of the SSE catalog, so Operations can
+  invalidate dashboard, job detail, artifact, and activity projections while
+  Discover is still running.
+- Scoring policy changes do not silently rescore existing jobs. Current-version
+  actions use `rescore_job` or
+  `rescore_jobs_not_on_current_scoring_policy`.
+- Tailoring policy changes do not silently regenerate existing artifacts.
+  Current-version actions use `retailor_job` or `retailor_current_policy`.
+- Threshold changes are live eligibility changes, not scoring policy changes:
+  lowering the threshold can enqueue `tailor_resume` from persisted scores;
+  raising it can enqueue `suppress_tailored_artifacts`. Neither path invokes
+  the scoring LLM.
+
+### Failure And Limits
+
+Each work item is claimed, completed, failed, or retried independently. A
+failed score does not block unrelated tailoring/suppression work for other jobs,
+and a failed tailoring job can be retried without rediscovering the posting.
+`limit` bounds each drain pass so local debug runs can stay small.
+
+## Internal Preparation Context: Score
 
 ### Purpose And Boundary
 
 Score assigns applicant-side fit scores and structured reasoning to enriched
 jobs. It owns retrieval preselection, scoring criteria, LLM parsing, score
 versioning, and user-corrected score history. It does not tailor materials.
+In the product flow this is Discover subwork; explicit rescore actions are
+maintenance controls.
 
 ### Sequence
 
@@ -484,7 +618,8 @@ versioning, and user-corrected score history. It does not tailor materials.
 sequenceDiagram
     autonumber
     participant Api as TS API
-    participant Rpc as JSON-RPC run_stage
+    participant Rpc as JSON-RPC current-policy action
+    participant Prep as Preparation queue
     participant Runner as _run_score
     participant Scorer as run_scoring
     participant Retrieval as Hybrid retrieval
@@ -494,8 +629,9 @@ sequenceDiagram
     participant DB as SQLite
     participant Ops as Operations projections
 
-    Api->>Rpc: run_stage(stage="score", limit, workers, rescore)
-    Rpc->>Runner: run_pipeline(stages=["score"])
+    Api->>Rpc: rescore_job or rescore_jobs_not_on_current_scoring_policy
+    Prep->>Runner: score_job work item during Discover
+    Rpc->>Runner: run_pipeline(stages=["score"]) for low-level maintenance
     Runner->>Scorer: run_scoring(limit, rescore, workers)
     Scorer->>DB: select enriched jobs needing score
     Scorer->>Retrieval: rank candidate pool
@@ -578,13 +714,14 @@ local scoring eval gate documented in `docs/local-reliability-qa.md`; the gate
 checks deterministic policy resolution separately from the raw LLM score and
 pins stale-score exclusion until explicit reset/rescore.
 
-## Phase 3: Tailor
+## Internal Preparation Context: Tailor
 
 ### Purpose And Boundary
 
 Tailor creates job-specific resume materials for high-fit jobs. It owns resume
 generation, validation mode, retry/retailor decisions, and resume artifact
-registration. It does not submit applications.
+registration. It does not submit applications. In the product flow this is
+Discover subwork; explicit re-tailor actions are maintenance controls.
 
 ### Weaknesses Addressed
 
@@ -617,7 +754,8 @@ but normal and strict modes are quality-gated.
 sequenceDiagram
     autonumber
     participant Api as TS API
-    participant Rpc as JSON-RPC run_stage
+    participant Rpc as JSON-RPC current-policy action
+    participant Prep as Preparation queue
     participant Runner as _run_tailor
     participant Tailor as run_tailoring
     participant Profile as Profile repository
@@ -627,8 +765,9 @@ sequenceDiagram
     participant Files as Local files
     participant DB as SQLite
 
-    Api->>Rpc: run_stage(stage="tailor", minScore, limit, validationMode, workers, retailor, tailorModels, tailorJudgeModel)
-    Rpc->>Runner: run_pipeline(stages=["tailor"])
+    Api->>Rpc: retailor_job or retailor_current_policy
+    Prep->>Runner: tailor_resume work item during Discover
+    Rpc->>Runner: run_pipeline(stages=["tailor"]) for low-level maintenance
     Runner->>Tailor: run_tailoring(...)
     Tailor->>DB: select scored jobs meeting minScore
     Tailor->>Profile: load resume baseline and tailoring rules
@@ -705,14 +844,15 @@ judge returns `PASS` above the configured score threshold; `lenient` mode skips
 the judge for local low-cost runs. Failures are tracked per job/material so the
 stage can be retried without losing successful materials.
 
-## Phase 4: Cover
+## Internal Material Context: Cover
 
 ### Purpose And Boundary
 
 Cover creates job-specific cover letters for jobs that already have sufficient
 score/material context. It owns cover-letter text generation and persistence.
 It also renders the cover-letter PDF, so the stage outputs the artifacts Apply
-needs without relying on a later PDF-only phase.
+needs without relying on a later PDF-only phase. It is surfaced as Discover
+diagnostic state in the product UI rather than a primary preparation stage.
 
 ### Sequence
 
@@ -792,14 +932,16 @@ classDiagram
 Failures are local to individual jobs so a retry can continue from the remaining
 pending cover letters.
 
-## Phase 5: Apply
+## Phase 2: Apply
 
 ### Purpose And Boundary
 
 Apply drives browser/agent automation to submit or dry-run applications. It is
-the riskiest and longest-running phase, so it uses a Temporal workflow instead
-of the synchronous `run_stage` path. It owns apply-run lifecycle, browser
-execution, dry-run submission safety, cancellation, and apply artifacts/logs.
+the riskiest and longest-running phase, so the batch pipeline `run_stage` route
+keeps orchestration in Temporal and `JobPipelineWorkflow` delegates the selected
+`apply` stage to child `ApplyWorkflow` instead of a synchronous runner activity.
+It owns apply-run lifecycle, browser execution, dry-run submission safety,
+cancellation, and apply artifacts/logs.
 
 ### Sequence
 
@@ -811,6 +953,7 @@ sequenceDiagram
     participant JsonRpc as SubprocessJsonRpcAdapter
     participant Rpc as JsonRpcServer
     participant Temporal as Temporal service
+    participant PipelineWorkflow as JobPipelineWorkflow
     participant Workflow as ApplyWorkflow
     participant Activity as apply_activity
     participant Launcher as apply.launcher.main
@@ -818,15 +961,16 @@ sequenceDiagram
     participant DB as SQLite
     participant Ops as Apply projections / SSE
 
-    Web->>Api: POST /v1/pipeline/actions/run-stage(stage="apply")
-    Api->>JsonRpc: call("apply", params)
+    Web->>Api: POST /v1/pipeline/actions/run-stage with apply selected
+    Api->>JsonRpc: call("run_stage", params)
     JsonRpc->>Rpc: JSON-RPC request
-    Rpc->>Temporal: start ApplyWorkflow(payload)
+    Rpc->>Temporal: start JobPipelineWorkflow(stages=["apply"])
     Temporal-->>Rpc: workflow handle
     Rpc-->>Api: {runId, workflowId}
     Api-->>Web: 202 queued
 
-    Temporal->>Workflow: run(payload)
+    Temporal->>PipelineWorkflow: run(stages=["apply"])
+    PipelineWorkflow->>Workflow: execute child ApplyWorkflow(payload)
     Workflow->>Activity: execute apply_activity(payload)
     Activity->>Launcher: apply_main(limit, min_score, dry_run, headless, model, continuous)
     Launcher->>DB: acquire apply stage lock and publish ApplyRunStarted
@@ -950,9 +1094,10 @@ than inferred from dashboard labels or free-form event messages. Rows include
 `stage`, `source_id`, source role, adapter, attempt kind, outcome,
 operational/scrape/retryable flags, counts, durations, `error_class`,
 `error_message`, `run_id`, and `job_url` when known. Discovery, enrichment,
-scoring, tailoring, cover generation, apply dry-runs, and orphan cleanup all
-record structured attempts so `discovery_runs.status='failed'` no longer has to
-carry unrelated failure causes by itself.
+scoring, tailoring, preparation work items, cover generation, apply dry-runs,
+and orphan cleanup all record structured attempts so
+`discovery_runs.status='failed'` no longer has to carry unrelated failure
+causes by itself.
 
 ## Source Files
 

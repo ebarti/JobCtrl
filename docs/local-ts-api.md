@@ -136,31 +136,70 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 (`http://127.0.0.1:8233`).
 
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
-from the UI. The request accepts `stages`, `limit`, `workers`, `minScore`,
-`validationMode`, `dryRun`, score/tailor flags (`rescore`, `retailor`), and
-the default pipeline LLM model (`llmModel`, default
+from the UI. The product-facing stage order is `discover -> apply`: the stage
+trigger sends `discover` for preparation and `apply` for browser automation.
+The low-level contracts still accept internal `score`, `tailor`, and `cover`
+values for compatibility, diagnostics, and maintenance commands, but they are
+not primary user-facing stages.
+
+The request accepts `stages`, `limit`, `workers`, `minScore`,
+`validationMode`, `dryRun`, the default pipeline LLM model (`llmModel`, default
 `gemini:gemini-3.5-flash`), tailoring LLM controls (`tailorModels`,
 `tailorJudgeModel`, `tailorJudgeMinScore`), and apply flags (`headless`,
 `model`, `continuous`). `model` remains apply-only; scoring, tailoring, and
 cover generation use `llmModel` unless a tailoring generator or judge override
-is supplied. The route dispatches the ordered stage list to JSON-RPC
-`run_stage`, which starts `JobPipelineWorkflow`; if the list includes `apply`,
-that workflow delegates the apply step to `ApplyWorkflow` as a child workflow
-after preceding stages complete. The route uses the command key `pipeline` only
-as the local action response handle, not as a fake job URL. Successful workflow
-starts return `202` with the queued workflow ID. Workflow-start failures return
-`200` with the dispatcher-derived failed action.
+is supplied. Low-level internal requests can still pass `rescore` and
+`retailor` flags for the `score` and `tailor` maintenance stages. The route
+dispatches the ordered stage list to JSON-RPC
+`run_stage`, which starts `JobPipelineWorkflow`; when `discover` runs, the
+Python runner discovers jobs, drains detail enrichment, and then drains
+internal preparation work for scoring, tailoring, and artifact suppression.
+When the selected stage is `apply`, the same `run_stage` request remains inside
+`JobPipelineWorkflow`, which delegates to `ApplyWorkflow` as a child workflow.
+The dedicated apply JSON-RPC method is used by per-job apply actions, not by
+this global/batch run-stage route. The route uses the command key `pipeline`
+only as the local action response handle, not as a fake job URL. Successful
+workflow starts return `202` with the queued workflow ID. Workflow-start
+failures return `200` with the dispatcher-derived failed action.
 `dryRun` defaults to `true`, preserving apply safety. The apply model defaults
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.
 
-The `limit` field is forwarded to every user-facing stage. For `discover`, the
-Python runner passes it into JobSpy, Workday, Smart Extract, and Discovery's
-internal detail-enrichment queue drain. Bounded source crawls run sequentially,
-skipping remaining sources once the cap is reached so `limit: 1` is usable for
-local debugging. Detail enrichment uses the same `limit` and `workers` values
-as Discovery; `enrich` remains an internal retry/diagnostic stage, not a
-top-level `run-stage` request value.
+The `limit` field is forwarded to every selected stage. For `discover`, the
+Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's
+internal detail-enrichment queue drain, and the preparation work-item drains.
+Bounded source crawls run sequentially, skipping remaining sources once the cap
+is reached so `limit: 1` is usable for local debugging. Detail enrichment uses
+the same `limit` and `workers` values as Discovery; `enrich` remains an
+internal retry/diagnostic stage, not a top-level product `run-stage` value.
+
+Discovery preparation uses `preparation_work_items` to keep internal subwork
+durable and idempotent. The work item kinds are `score_job`, `tailor_resume`,
+and `suppress_tailored_artifacts`. The queue emits
+`PreparationWorkItemQueued`, `PreparationWorkItemStarted`,
+`PreparationWorkItemCompleted`, and `PreparationWorkItemFailed`; the owning
+contexts still emit their own events such as `JobScored`,
+`TailorRetailorRequested`, `TailoredArtifactsSuppressed`, and
+`TailoringPolicyUpdated`. These events are part of the SSE catalog and drive
+dashboard, jobs, artifacts, and activity invalidation.
+
+Current-version preparation maintenance actions are separate endpoints:
+
+- `POST /v1/jobs/:jobKey/actions/rescore-current-policy` dispatches
+  `rescore_job` for one job.
+- `POST /v1/scoring/actions/rescore-current-policy` dispatches
+  `rescore_jobs_not_on_current_scoring_policy` for selected or bounded active
+  jobs.
+- `POST /v1/jobs/:jobKey/actions/retailor-current-policy` dispatches
+  `retailor_job` for one job and can suppress the prior active artifacts.
+- `POST /v1/materials/actions/retailor-current-policy` dispatches
+  `retailor_current_policy` for selected or bounded eligible jobs and can
+  suppress prior active artifacts.
+
+The minimum fit score is a live eligibility threshold, not a scoring policy
+version. Lowering it can make existing persisted scores eligible for
+`tailor_resume`; raising it can make active artifacts ineligible and enqueue
+`suppress_tailored_artifacts`. Neither threshold path invokes the scoring LLM.
 
 Discover honors the profile Target search saved from the Preferences tab.
 Target roles replace the active discovery query list with exact role queries;
