@@ -35,9 +35,9 @@ describe("PipelinesView", () => {
       screen.queryByRole("heading", { name: "Discovery controls" }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Score" }));
+    await user.click(screen.getByRole("tab", { name: "Apply" }));
 
-    expect(await screen.findByRole("button", { name: "Run Score" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Run Apply" })).toBeEnabled();
     expect(
       screen.queryByRole("link", { name: "Open Discovery" }),
     ).not.toBeInTheDocument();

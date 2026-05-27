@@ -15,6 +15,11 @@ export { RetryStageButton, type RetryStageButtonProps } from "./components/Retry
 export { StageTriggerPanel } from "./components/StageTriggerPanel.js";
 export { StageBadge, type StageBadgeProps } from "./components/StageBadge.js";
 export { StageTimeline, type StageTimelineProps } from "./components/StageTimeline.js";
+export {
+  UserFacingStageBadge,
+  type UserFacingStageBadgeProps,
+  userFacingStage,
+} from "./components/UserFacingStageBadge.js";
 export { stageStateTone, type StageStateTone } from "./lib/stage-state-tone.js";
 export { stageTone, type StageTone } from "./lib/stage-tone.js";
 

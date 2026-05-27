@@ -130,6 +130,8 @@ function stageActivityStatusLine(stage: Stage, activity: StageActivity): string 
 }
 
 const APPLY_MODEL_OPTIONS = ["default", "opus", "sonnet"] as const;
+const USER_FACING_PIPELINE_STAGES = ["discover", "apply"] as const satisfies readonly PipelineRunStage[];
+const USER_FACING_PIPELINE_STAGE_SET: ReadonlySet<PipelineRunStage> = new Set(USER_FACING_PIPELINE_STAGES);
 
 interface StageControlSet {
   limit: boolean;
@@ -198,8 +200,11 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
   const dashboardSummary = useDashboardSummaryQuery();
   const health = useHealthQuery();
-  const activeStage = useStageTriggerStore((state) => state.activeStage);
-  const config = useStageTriggerStore((state) => state.configs[state.activeStage]);
+  const persistedActiveStage = useStageTriggerStore((state) => state.activeStage);
+  const activeStage: PipelineRunStage = USER_FACING_PIPELINE_STAGE_SET.has(persistedActiveStage)
+    ? persistedActiveStage
+    : "discover";
+  const config = useStageTriggerStore((state) => state.configs[activeStage]);
   const setActiveStage = useStageTriggerStore((state) => state.setActiveStage);
   const patchStageConfig = useStageTriggerStore((state) => state.patchStageConfig);
   const controls = STAGE_CONTROLS[activeStage];
@@ -454,19 +459,19 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
           className="stage-trigger-tabs"
           value={activeStage}
           onValueChange={(value) => {
-            if (PIPELINE_RUN_STAGES.includes(value as PipelineRunStage)) {
+            if (USER_FACING_PIPELINE_STAGE_SET.has(value as PipelineRunStage)) {
               setActiveStage(value as PipelineRunStage);
             }
           }}
         >
           <TabsList aria-label="Pipeline stages" className="stage-trigger-tab-list">
-            {PIPELINE_RUN_STAGES.map((stage) => (
+            {USER_FACING_PIPELINE_STAGES.map((stage) => (
               <TabsTrigger key={stage} value={stage}>
                 {labelForStage(stage)}
               </TabsTrigger>
             ))}
           </TabsList>
-          {PIPELINE_RUN_STAGES.map((stage) => (
+          {USER_FACING_PIPELINE_STAGES.map((stage) => (
             <TabsContent key={stage} forceMount value={stage} className="stage-trigger-tab-panel">
               {stage === activeStage ? stageForm : null}
             </TabsContent>

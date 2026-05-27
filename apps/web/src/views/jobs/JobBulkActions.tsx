@@ -1,9 +1,12 @@
+import { RetailorCurrentPolicyButton } from "../../contexts/materials/components/RetailorCurrentPolicyButton.js";
+import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export interface JobBulkActionsProps {
   search: JobsSearch;
   selectedCount: number;
+  selectedJobKeys?: readonly string[];
   staleCount?: number;
   selectedStaleKeys?: readonly string[];
   hasItems: boolean;
@@ -19,11 +22,13 @@ export interface JobBulkActionsProps {
   onRetryFailedSelected?: () => void;
   onRetryAllFailed?: () => void;
   onResetStaleSuccess?: () => void;
+  onMaintenanceSuccess?: () => void;
 }
 
 export function JobBulkActions({
   search,
   selectedCount,
+  selectedJobKeys = [],
   staleCount = 0,
   selectedStaleKeys = [],
   hasItems,
@@ -39,6 +44,7 @@ export function JobBulkActions({
   onRetryFailedSelected = () => {},
   onRetryAllFailed = () => {},
   onResetStaleSuccess = () => {},
+  onMaintenanceSuccess = () => {},
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
@@ -88,6 +94,26 @@ export function JobBulkActions({
           label={selectedStaleKeys.length ? "reset stale selected" : "reset all stale scores"}
           onSuccess={onResetStaleSuccess}
         />
+      ) : null}
+      {!restoring && !hidden ? (
+        <>
+          <RescoreCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
+          <RetailorCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
+          {selectedJobKeys.length ? (
+            <>
+              <RescoreCurrentPolicyButton
+                jobKeys={selectedJobKeys}
+                label="rescore selected"
+                onSuccess={onMaintenanceSuccess}
+              />
+              <RetailorCurrentPolicyButton
+                jobKeys={selectedJobKeys}
+                label="re-tailor selected"
+                onSuccess={onMaintenanceSuccess}
+              />
+            </>
+          ) : null}
+        </>
       ) : null}
       {retryableFailures ? (
         <>

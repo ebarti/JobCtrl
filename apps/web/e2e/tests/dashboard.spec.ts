@@ -16,7 +16,7 @@ test("Dashboard renders KPIs, click 'Jobs' KPI navigates to /jobs and row count 
   await jobsKpi.click();
   await expect(page).toHaveURL(/\/jobs\b/);
 
-  const rows = page.locator(".table .data-row.job:not(.job-header)");
+  const rows = page.locator("table.jobs-data-grid-table tbody tr");
   await expect(rows.first()).toBeVisible({ timeout: 30_000 });
   await expect.poll(async () => rows.count(), { timeout: 30_000 }).toBe(totalJobs);
 });

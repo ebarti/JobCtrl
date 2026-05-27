@@ -7,6 +7,7 @@ export const ARTIFACT_STATUSES = [
   "candidate",
   "stale",
   "missing",
+  "suppressed",
 ] as const;
 
 export const ARTIFACT_SORT_FIELDS_TUPLE = [

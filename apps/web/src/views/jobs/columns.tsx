@@ -6,6 +6,10 @@ import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
+import {
+  UserFacingStageBadge,
+  userFacingStage,
+} from "../../contexts/pipeline/components/UserFacingStageBadge.js";
 import type { JobSummary } from "../../contexts/operations/types.js";
 import type {
   DataGridColumn,
@@ -236,7 +240,15 @@ export function jobColumns(
       label: "Stage",
       sortable: true,
       getFilterValue: (row) => row.currentStage,
-      render: (row) => <StageBadge stage={row.currentStage} />,
+      render: (row) => {
+        const visibleStage = userFacingStage(row.currentStage);
+        return (
+          <TitleStack
+            primary={<UserFacingStageBadge stage={row.currentStage} />}
+            secondary={visibleStage === row.currentStage ? null : `${row.currentStage} substatus`}
+          />
+        );
+      },
     },
     {
       id: "current_state",

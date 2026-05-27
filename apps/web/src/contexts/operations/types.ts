@@ -81,7 +81,10 @@ export type {
 
 export type JobId = string;
 
-export type JobsListInput = Partial<JobListQuery>;
+export type JobsListInput = Partial<Omit<JobListQuery, "stage">> & {
+  readonly stage?: Stage;
+  readonly stages?: readonly Stage[];
+};
 export type ArtifactsListInput = Partial<ArtifactListQuery>;
 export type WorkflowRunsListInput = Partial<WorkflowRunsListQuery>;
 export type ActivityListInput = Partial<ActivityListQuery>;

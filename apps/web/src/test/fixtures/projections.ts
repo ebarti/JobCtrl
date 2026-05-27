@@ -255,6 +255,17 @@ export const sampleDashboardSummary: DashboardSummary = {
     appliedToday: 1,
     dryRuns: 2,
   },
+  preparation: {
+    currentScoringPolicyVersion: 2,
+    currentTailoringPolicyVersion: 2,
+    outdatedScoreCount: 1,
+    outdatedTailoredArtifactCount: 1,
+    workItems: {
+      queued: 1,
+      running: 1,
+      failed: 0,
+    },
+  },
   funnel: [
     { stage: "discover", total: 12, succeeded: 12, running: 0, pending: 0, blocked: 0, failed: 0 },
     { stage: "score", total: 12, succeeded: 10, running: 1, pending: 0, blocked: 0, failed: 1 },

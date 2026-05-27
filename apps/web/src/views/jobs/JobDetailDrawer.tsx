@@ -1,4 +1,5 @@
 import { JobHunterApiError } from "@jobhunter/api-client";
+import type { StageSummary } from "@jobhunter/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
@@ -28,6 +29,10 @@ function detailErrorTitle(error: unknown): string {
     return "Job not found.";
   }
   return error instanceof Error ? error.message : "";
+}
+
+function preparationStages(stages: readonly StageSummary[]): StageSummary[] {
+  return stages.filter((stage) => stage.stage !== "apply");
 }
 
 export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
@@ -62,21 +67,25 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
               currentStage={detail.job.currentStage}
               nextAction={detail.job.nextAction}
             />
-            <Section title="Stage timeline">
-              <StageTimeline stages={detail.stages} />
+            <Section title="Preparation diagnostics">
+              <StageTimeline stages={preparationStages(detail.stages)} />
             </Section>
-            <Section title="Artifacts">
-              {detail.artifacts.map((artifact) => (
-                <div className="mini-row" key={artifact.artifactId}>
-                  <ArtifactStatusBadge status={artifact.status} />
-                  <span>{artifact.type}</span>
-                  <code>{artifact.localPath}</code>
-                  <OpenArtifactButton
-                    artifactId={artifact.artifactId}
-                    disabled={artifact.status === "missing"}
-                  />
-                </div>
-              ))}
+            <Section title="Active artifacts">
+              {detail.artifacts.length ? (
+                detail.artifacts.map((artifact) => (
+                  <div className="mini-row" key={artifact.artifactId}>
+                    <ArtifactStatusBadge status={artifact.status} />
+                    <span>{artifact.type}</span>
+                    <code>{artifact.localPath}</code>
+                    <OpenArtifactButton
+                      artifactId={artifact.artifactId}
+                      disabled={artifact.status === "missing"}
+                    />
+                  </div>
+                ))
+              ) : (
+                <Empty title="No active apply-ready artifacts." />
+              )}
             </Section>
             <Section title="Apply history">
               <ApplyHistory jobId={detail.job.jobKey} />
