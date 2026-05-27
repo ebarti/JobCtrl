@@ -719,34 +719,50 @@ class TailorResumeUseCase:
         validation_mode: str = "normal",
         tenant_id: TenantId = LOCAL_TENANT,
         retailor: bool = False,
+        suppress_existing_artifacts: bool = False,
     ) -> TailorOutcome:
         job_id = JobId(str(job["url"]))
         previous = self._repository.load(tenant_id, job_id)
+        created_at = _utc_now()
 
         # Decide which generation we're writing.
         if previous is None:
             materials = MaterialsSetFactory.initial(
                 tenant_id=tenant_id,
                 job_id=job_id,
-                created_at=_utc_now(),
+                created_at=created_at,
             )
-            superseded = None
+            prior_generation = None
         elif retailor:
-            superseded, materials = MaterialsSetFactory.next_generation(
-                previous,
-                created_at=_utc_now(),
-            )
+            if suppress_existing_artifacts:
+                prior_generation = previous.suppress_active_artifacts(
+                    at=created_at,
+                    reason="retailor_current_policy",
+                )
+                materials = MaterialsSet(
+                    tenant_id=previous.tenant_id,
+                    job_id=previous.job_id,
+                    generation=previous.generation + 1,
+                    status=MaterialsLifecycle.RESUME_IN_PROGRESS,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            else:
+                prior_generation, materials = MaterialsSetFactory.next_generation(
+                    previous,
+                    created_at=created_at,
+                )
         else:
             # Re-saving the same generation (typical when a previous run
             # crashed mid-flight and left the aggregate in
             # ``resume_in_progress``).
-            superseded = None
+            prior_generation = None
             materials = previous
 
-        # Persist the superseded predecessor first so its artifacts carry
-        # ``superseded_at`` and the queue selectors stop picking them.
-        if superseded is not None:
-            self._repository.save(superseded)
+        # Persist the predecessor first so existing artifacts stop being
+        # active before the new generation is written.
+        if prior_generation is not None:
+            self._repository.save(prior_generation)
 
         report, parsed_payload, validation, verdict = self._run_attempts(
             job=job,

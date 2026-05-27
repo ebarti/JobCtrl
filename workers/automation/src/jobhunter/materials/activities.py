@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import time
 from typing import Any
 
 from temporalio import activity
@@ -28,6 +29,9 @@ class TailorActivityInput:
     validation_mode: str = "normal"
     dry_run: bool = False
     retailor: bool = False
+    job_urls: tuple[str, ...] = ()
+    current_policy_only: bool = False
+    suppress_existing_artifacts: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
@@ -55,6 +59,32 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
         expected_app_dir=payload.expected_app_dir,
         expected_db_path=payload.expected_db_path,
     )
+
+    if payload.current_policy_only:
+        result = await run_blocking_with_heartbeat(
+            lambda: _run_current_policy_tailoring(payload),
+            starting_message="current-policy tailor starting",
+            progress_message="current-policy tailor still running",
+        )
+        return TailorActivityOutput(
+            status=str(result["status"]),
+            elapsed=float(result["elapsed"]),
+            errors=dict(result["errors"]),
+            stages=list(result["stages"]),
+        )
+
+    if payload.job_urls:
+        result = await run_blocking_with_heartbeat(
+            lambda: _run_selected_tailoring(payload),
+            starting_message="selected tailor starting",
+            progress_message="selected tailor still running",
+        )
+        return TailorActivityOutput(
+            status=str(result["status"]),
+            elapsed=float(result["elapsed"]),
+            errors=dict(result["errors"]),
+            stages=list(result["stages"]),
+        )
 
     def _do() -> dict[str, Any]:
         return run_pipeline(
@@ -85,6 +115,96 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
         errors=errors,
         stages=stages,
     )
+
+
+def _run_current_policy_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
+    from jobhunter.database import get_connection
+    from jobhunter.pipeline.current_policy_selectors import tailoring_current_policy_job_urls
+
+    urls = tailoring_current_policy_job_urls(
+        get_connection(),
+        tenant_id=payload.tenant_id,
+        min_score=payload.min_score,
+        limit=payload.limit,
+        job_urls=payload.job_urls,
+    )
+    return _run_selected_tailoring(replace(payload, job_urls=urls, limit=0))
+
+
+def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.tailor import tailor_job_by_url
+
+    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    if payload.dry_run:
+        return {
+            "status": "ok",
+            "elapsed": 0.0,
+            "errors": {},
+            "stages": [
+                {
+                    "stage": "tailor",
+                    "status": "ok",
+                    "elapsed": 0.0,
+                    "selected": len(urls),
+                    "dry_run": True,
+                }
+            ],
+        }
+
+    t0 = time.time()
+    approved = 0
+    skipped = 0
+    failed = 0
+    errors: dict[str, str] = {}
+    for url in urls:
+        result = tailor_job_by_url(
+            url,
+            min_score=payload.min_score,
+            validation_mode=payload.validation_mode,
+            workers=payload.workers,
+            retailor=payload.retailor,
+            tenant_id=TenantId(payload.tenant_id),
+            llm_model=payload.llm_model,
+            suppress_existing_artifacts=payload.suppress_existing_artifacts,
+            tailor_models=payload.tailor_models,
+            tailor_judge_model=payload.tailor_judge_model,
+            tailor_judge_min_score=payload.tailor_judge_min_score,
+        )
+        status = str(result.get("status") or "error")
+        if status == "approved":
+            approved += 1
+        elif status in {"skipped", "not_eligible"}:
+            skipped += 1
+        else:
+            failed += 1
+            errors[url] = str(result.get("error") or f"Tailoring ended with status {status}")
+
+    elapsed = time.time() - t0
+    status = "failed" if errors else "ok"
+    return {
+        "status": status,
+        "elapsed": elapsed,
+        "errors": errors,
+        "stages": [
+            {
+                "stage": "tailor",
+                "status": status,
+                "elapsed": elapsed,
+                "selected": len(urls),
+                "approved": approved,
+                "skipped": skipped,
+                "failed": failed,
+            }
+        ],
+    }
+
+
+def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
+    unique = tuple(dict.fromkeys(url for url in job_urls if url))
+    if limit > 0:
+        return unique[:limit]
+    return unique
 
 
 # ---------------------------------------------------------------------------

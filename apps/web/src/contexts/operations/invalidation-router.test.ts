@@ -197,6 +197,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   PreparationWorkItemCompleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    artifactsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   PreparationWorkItemFailed: [

@@ -9,9 +9,10 @@ Per S-11 the initial method set covers:
 * Existing local-action wrappers — ``profile_import`` delegates to
   ``actions.run_local_action``.
 * Workflow starters — ``apply`` returns a :class:`WorkflowStartSpec` for
-  :class:`ApplyWorkflow`; ``run_stage`` returns one for
-  :class:`JobPipelineWorkflow`. The server starts them on the Temporal task
-  queue and ships back ``{"runId", "workflowId", "firstExecutionRunId"}``.
+  :class:`ApplyWorkflow`; ``run_stage`` and the current-policy maintenance
+  methods return one for :class:`JobPipelineWorkflow`. The server starts them
+  on the Temporal task queue and ships back
+  ``{"runId", "workflowId", "firstExecutionRunId"}``.
 * Cooperative cancellation — ``cancel_run`` cancels an in-flight workflow
   via the injected canceler.
 
@@ -53,6 +54,26 @@ def _require(params: dict[str, Any], name: str) -> Any:
     if name not in params or params[name] in (None, ""):
         raise invalid_params(f"missing required param: {name}")
     return params[name]
+
+
+def _bool_param(params: dict[str, Any], name: str, *, default: bool = False) -> bool:
+    raw = params.get(name, default)
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(raw)
+
+
+def _job_urls(params: dict[str, Any]) -> tuple[str, ...]:
+    raw = params.get("jobUrls") or ()
+    if not raw:
+        return ()
+    if not isinstance(raw, list):
+        raise invalid_params("jobUrls must be an array")
+    return tuple(str(item).strip() for item in raw if str(item).strip())
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +223,102 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
     return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
 
 
+def rescore_job(params: dict[str, Any]) -> WorkflowStartSpec:
+    job_url = str(_require(params, "jobUrl"))
+    return _pipeline_workflow_spec(
+        params,
+        stages=["score"],
+        limit=1,
+        rescore=True,
+        job_url=job_url,
+    )
+
+
+def rescore_jobs_not_on_current_scoring_policy(params: dict[str, Any]) -> WorkflowStartSpec:
+    return _pipeline_workflow_spec(
+        params,
+        stages=["score"],
+        limit=int(params.get("limit", 100)),
+        rescore=True,
+        job_urls=_job_urls(params),
+        score_current_policy_only=True,
+    )
+
+
+def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
+    job_url = str(_require(params, "jobUrl"))
+    return _pipeline_workflow_spec(
+        params,
+        stages=["tailor"],
+        limit=1,
+        retailor=True,
+        job_url=job_url,
+        suppress_existing_artifacts=_bool_param(
+            params, "suppressExistingArtifacts", default=True
+        ),
+    )
+
+
+def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
+    return _pipeline_workflow_spec(
+        params,
+        stages=["tailor"],
+        limit=int(params.get("limit", 100)),
+        retailor=True,
+        job_urls=_job_urls(params),
+        tailor_current_policy_only=True,
+        suppress_existing_artifacts=_bool_param(
+            params, "suppressExistingArtifacts", default=True
+        ),
+    )
+
+
+def _pipeline_workflow_spec(
+    params: dict[str, Any],
+    *,
+    stages: list[str],
+    limit: int,
+    rescore: bool = False,
+    retailor: bool = False,
+    job_url: str | None = None,
+    job_urls: tuple[str, ...] = (),
+    score_current_policy_only: bool = False,
+    tailor_current_policy_only: bool = False,
+    suppress_existing_artifacts: bool = False,
+) -> WorkflowStartSpec:
+    tenant_id = _tenant_id(params)
+    raw_judge_min_score = params.get("tailorJudgeMinScore")
+    payload = JobPipelineWorkflowInput(
+        tenant_id=tenant_id,
+        expected_app_dir=params.get("expectedAppDir"),
+        expected_db_path=params.get("expectedDbPath"),
+        stages=stages,
+        min_score=int(params.get("minScore", 7)),
+        workers=int(params.get("workers", 1)),
+        limit=limit,
+        validation_mode=str(params.get("validationMode", "normal")),
+        dry_run=bool(params.get("dryRun", False)),
+        rescore=rescore,
+        retailor=retailor,
+        tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
+        tailor_judge_model=(
+            str(params["tailorJudgeModel"])
+            if params.get("tailorJudgeModel")
+            else None
+        ),
+        tailor_judge_min_score=(
+            float(raw_judge_min_score) if raw_judge_min_score is not None else None
+        ),
+        job_url=job_url,
+        job_urls=job_urls,
+        score_current_policy_only=score_current_policy_only,
+        tailor_current_policy_only=tailor_current_policy_only,
+        suppress_existing_artifacts=suppress_existing_artifacts,
+        llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+    )
+    return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
+
+
 def profile_import(params: dict[str, Any]) -> dict[str, Any]:
     _tenant_id(params)
     pdf_path = str(_require(params, "pdfPath"))
@@ -272,6 +389,14 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("profile_import", profile_import, mode="sync")
     # Workflow starters.
     server.register("run_stage", run_stage, mode="workflow")
+    server.register("rescore_job", rescore_job, mode="workflow")
+    server.register(
+        "rescore_jobs_not_on_current_scoring_policy",
+        rescore_jobs_not_on_current_scoring_policy,
+        mode="workflow",
+    )
+    server.register("retailor_job", retailor_job, mode="workflow")
+    server.register("retailor_current_policy", retailor_current_policy, mode="workflow")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

@@ -126,9 +126,8 @@ export function createActionDispatcher(
         result: response.error.data,
       };
     }
-    if (rpcCall.method === "apply") {
-      // workflow start — server returns { runId } (the Temporal workflow id).
-      const workflowStart = extractWorkflowStart(response.result);
+    const workflowStart = extractWorkflowStart(response.result);
+    if (hasWorkflowStart(workflowStart)) {
       const result: ActionDispatchResult = {
         status: "queued",
         result: response.result,
@@ -140,20 +139,13 @@ export function createActionDispatcher(
       }
       return result;
     }
+    if (rpcCall.method === "apply") {
+      return {
+        status: "queued",
+        result: response.result,
+      };
+    }
     if (rpcCall.method === "run_stage") {
-      const workflowStart = extractWorkflowStart(response.result);
-      if (workflowStart.runId) {
-        const result: ActionDispatchResult = {
-          status: "queued",
-          runId: workflowStart.runId,
-          result: response.result,
-        };
-        if (workflowStart.workflowId) result.workflowId = workflowStart.workflowId;
-        if (workflowStart.firstExecutionRunId) {
-          result.firstExecutionRunId = workflowStart.firstExecutionRunId;
-        }
-        return result;
-      }
       const status = extractStatus(response.result) ?? "succeeded";
       const result: ActionDispatchResult = {
         status,
@@ -310,6 +302,45 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
     }
     return null;
   }
+  if (command.action === "rescore_job") {
+    return {
+      method: "rescore_job",
+      params: {
+        tenantId: "local",
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+        jobUrl: command.jobKey,
+        dryRun: Boolean(command.dryRun),
+        ...(command.reason ? { reason: command.reason } : {}),
+      },
+    };
+  }
+  if (command.action === "rescore_jobs_not_on_current_scoring_policy") {
+    return {
+      method: "rescore_jobs_not_on_current_scoring_policy",
+      params: {
+        tenantId: "local",
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+        limit: command.limit ?? 100,
+        jobUrls: command.jobKeys ?? [],
+        dryRun: Boolean(command.dryRun),
+        ...(command.reason ? { reason: command.reason } : {}),
+      },
+    };
+  }
+  if (command.action === "retailor_job") {
+    return {
+      method: "retailor_job",
+      params: retailorRpcParams(command, context, command.jobKey),
+    };
+  }
+  if (command.action === "retailor_current_policy") {
+    return {
+      method: "retailor_current_policy",
+      params: retailorRpcParams(command, context),
+    };
+  }
   if (command.action === "generate_materials") return null;
   if (command.action === "apply") {
     return { method: "apply", params: applyRpcParams(command, context) };
@@ -369,6 +400,39 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   return params;
 }
 
+function retailorRpcParams(
+  command: ActionCommandPayload,
+  context: ActionDispatchContext,
+  jobUrl?: string,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
+    dryRun: Boolean(command.dryRun),
+    suppressExistingArtifacts: command.suppressExistingArtifacts !== false,
+  };
+  if (jobUrl) {
+    params.jobUrl = jobUrl;
+  } else {
+    params.limit = command.limit ?? 100;
+    params.jobUrls = command.jobKeys ?? [];
+  }
+  if (command.reason) {
+    params.reason = command.reason;
+  }
+  if (command.tailorModels && command.tailorModels.length > 0) {
+    params.tailorModels = command.tailorModels;
+  }
+  if (command.tailorJudgeModel) {
+    params.tailorJudgeModel = command.tailorJudgeModel;
+  }
+  if (command.tailorJudgeMinScore !== undefined) {
+    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
+  }
+  return params;
+}
+
 function applyRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
   const params: Record<string, unknown> = {
     tenantId: "local",
@@ -401,6 +465,10 @@ function extractWorkflowStart(result: unknown): {
   const firstExecutionRunId =
     typeof result.firstExecutionRunId === "string" ? result.firstExecutionRunId : null;
   return { runId, workflowId, firstExecutionRunId };
+}
+
+function hasWorkflowStart(workflowStart: ReturnType<typeof extractWorkflowStart>): boolean {
+  return Boolean(workflowStart.runId || workflowStart.workflowId || workflowStart.firstExecutionRunId);
 }
 
 function extractActionId(result: unknown): string | null {
