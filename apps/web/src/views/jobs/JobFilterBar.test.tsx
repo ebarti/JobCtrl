@@ -38,24 +38,34 @@ function buildRouter(initialPath = "/jobs?stage=all&state=all&deleted=active&sor
 }
 
 describe("<JobFilterBar>", () => {
-  it("updates the stage URL search-param when the user picks a stage", async () => {
+  it("updates the stage URL search-param when the user picks a product stage", async () => {
     const user = userEvent.setup();
     const router = buildRouter();
     const view = render(<RouterProvider router={router} />);
 
     await waitFor(() => expect(screen.getByTestId("stage-value")).toHaveTextContent("all"));
     const stageSelect = view.container.querySelectorAll("select")[0]!;
-    await user.selectOptions(stageSelect, "tailor");
-    await waitFor(() => expect(screen.getByTestId("stage-value")).toHaveTextContent("tailor"));
+    await user.selectOptions(stageSelect, "discover");
+    await waitFor(() => expect(screen.getByTestId("stage-value")).toHaveTextContent("discover"));
   });
 
-  it("renders an option per stage", async () => {
+  it("renders only product-stage filter options", async () => {
     const router = buildRouter();
     const view = render(<RouterProvider router={router} />);
     await waitFor(() => expect(screen.getByTestId("stage-value")).toHaveTextContent("all"));
     const stageSelect = view.container.querySelectorAll("select")[0]!;
-    const options = stageSelect.querySelectorAll("option");
-    expect(options.length).toBeGreaterThanOrEqual(7);
+    const options = Array.from(stageSelect.querySelectorAll("option")).map((option) => ({
+      value: option.value,
+      label: option.textContent,
+    }));
+    expect(options).toEqual([
+      { value: "all", label: "all stages" },
+      { value: "discover", label: "discover" },
+      { value: "apply", label: "apply" },
+    ]);
+    expect(options.map((option) => option.value)).not.toEqual(
+      expect.arrayContaining(["enrich", "score", "tailor", "cover"]),
+    );
   });
 
   it("updates the minimum fit score URL search-param", async () => {

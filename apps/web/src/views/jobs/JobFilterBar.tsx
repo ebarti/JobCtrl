@@ -1,8 +1,13 @@
-import { STAGES, STAGE_STATES } from "@jobhunter/contracts";
+import { STAGE_STATES } from "@jobhunter/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
+const STAGE_OPTIONS = [
+  { value: "all", label: "all stages" },
+  { value: "discover", label: "discover" },
+  { value: "apply", label: "apply" },
+] as const satisfies ReadonlyArray<{ value: JobsSearch["stage"]; label: string }>;
 const STATE_OPTIONS = ["all", ...STAGE_STATES] as const;
 const SCORE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
@@ -41,10 +46,9 @@ export function JobFilterBar({ search }: JobFilterBarProps) {
         value={search.stage}
         onChange={(event) => apply({ stage: event.target.value as JobsSearch["stage"] })}
       >
-        <option value="all">all stages</option>
-        {STAGES.map((item) => (
-          <option key={item} value={item}>
-            {item}
+        {STAGE_OPTIONS.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
           </option>
         ))}
       </select>

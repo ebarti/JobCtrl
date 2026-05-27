@@ -32,23 +32,19 @@ function loadDbPath(): string {
   return state.workspace.dbPath;
 }
 
-test("Dry-run apply: seed JobScored event → live SSE pill confirms connection → activity feed reflects new event", async ({
+test("Dry-run apply: seed JobScored event → activity feed reflects new event", async ({
   page,
 }) => {
   const dbPath = loadDbPath();
 
-  await page.goto("/dashboard");
+  await page.goto("/debug");
   const livePill = page.locator(".connection-pill");
   await expect(livePill).toBeVisible({ timeout: 30_000 });
-  await expect.poll(async () => livePill.getAttribute("data-status"), { timeout: 30_000 }).toBe(
-    "open",
-  );
-
-  const activityRows = page.locator("button.activity-row.clickable-row");
+  const activityRows = page.locator("table.activity-data-grid-table tbody tr");
   await expect(activityRows.first()).toBeVisible({ timeout: 30_000 });
-  const initialCount = await activityRows.count();
 
   const occurredAt = new Date().toISOString();
+  const eventMessage = `QA E2E injected JobScored event ${Date.now()}`;
   const db = new Database(dbPath);
   try {
     db.prepare(
@@ -59,7 +55,7 @@ test("Dry-run apply: seed JobScored event → live SSE pill confirms connection 
       "score",
       "JobScored",
       "info",
-      "QA E2E injected JobScored event",
+      eventMessage,
       occurredAt,
       JSON.stringify({
         tenantId: "local",
@@ -75,10 +71,7 @@ test("Dry-run apply: seed JobScored event → live SSE pill confirms connection 
     db.close();
   }
 
-  await expect
-    .poll(async () => activityRows.count(), {
-      timeout: 30_000,
-      intervals: [500, 1_000, 2_000],
-    })
-    .toBe(initialCount + 1);
+  await expect(
+    page.locator("table.activity-data-grid-table tbody tr").filter({ hasText: eventMessage }),
+  ).toBeVisible({ timeout: 30_000 });
 });

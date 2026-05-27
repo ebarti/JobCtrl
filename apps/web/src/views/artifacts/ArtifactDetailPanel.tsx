@@ -25,6 +25,10 @@ function artifactPreviewCacheKey(createdAt: string | null, sizeBytes: number | n
   return `${createdAt ?? "unknown"}:${sizeBytes ?? "unknown"}`;
 }
 
+function isSuppressed(status: string): boolean {
+  return status.toLowerCase() === "suppressed";
+}
+
 export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   const navigate = useNavigate();
   const search = useSearch({ from: "/artifacts" });
@@ -80,6 +84,11 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
             </div>
             <div className="artifact-detail-layout">
               <Section title="Artifact details">
+                {isSuppressed(detail.artifact.status) ? (
+                  <div className="banner inline">
+                    This artifact is historical audit material and is not active apply-ready material.
+                  </div>
+                ) : null}
                 <dl className="detail-list">
                   <div>
                     <dt>Status</dt>

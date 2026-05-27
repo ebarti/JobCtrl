@@ -24,12 +24,12 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
   ),
 }));
 
-function renderArtifactRoute(children: ReactNode) {
+function renderArtifactRoute(children: ReactNode, status = "approved") {
   const artifact = {
     ...sampleArtifact,
     artifactId: "artifact-preview",
     type: "resume_pdf",
-    status: "approved",
+    status,
     localPath: "/tmp/artifact-preview.pdf",
     sizeBytes: 1234,
   };
@@ -85,5 +85,15 @@ describe("<ArtifactDetailPanel>", () => {
       "artifact-preview",
       expect.stringContaining("1234"),
     );
+  });
+
+  it("marks suppressed artifacts as historical audit material", async () => {
+    renderArtifactRoute(<ArtifactDetailPanel artifactId="artifact-preview" />, "suppressed");
+
+    expect(
+      await screen.findByText(
+        "This artifact is historical audit material and is not active apply-ready material.",
+      ),
+    ).toBeInTheDocument();
   });
 });

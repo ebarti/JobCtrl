@@ -1,4 +1,4 @@
-import { DEFAULT_PIPELINE_LLM_MODEL, PIPELINE_RUN_STAGES, type PipelineStageRunResponse } from "@jobhunter/contracts";
+import { DEFAULT_PIPELINE_LLM_MODEL, type PipelineStageRunResponse } from "@jobhunter/contracts";
 import { userEvent } from "@testing-library/user-event";
 import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,8 +89,11 @@ describe("StageTriggerPanel", () => {
   it("renders a matching tabpanel for every stage trigger", () => {
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(PIPELINE_RUN_STAGES.length);
+    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(2);
     expect(screen.queryByRole("tab", { name: "Enrich" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Score" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Tailor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Cover" })).not.toBeInTheDocument();
 
     for (const tab of screen.getAllByRole("tab")) {
       const panelId = tab.getAttribute("aria-controls");
@@ -119,35 +122,6 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Score" }));
-    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
-    expect(screen.getByLabelText("Rescore")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Minimum score")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Validation mode")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
-    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
-    expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
-    expect(screen.getByLabelText("Re-tailor")).toBeInTheDocument();
-    expect(screen.getByLabelText("Tailor models")).toBeInTheDocument();
-    expect(screen.getByLabelText("Judge model")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum judge score")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Cover" }));
-    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
-    expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Workers")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toBeInTheDocument();
     expect(screen.getByLabelText("Workers")).toBeInTheDocument();
@@ -167,17 +141,17 @@ describe("StageTriggerPanel", () => {
       <StageTriggerPanel
         stagePanels={{
           discover: <div>Discover supplemental controls</div>,
-          score: <div>Score supplemental controls</div>,
+          apply: <div>Apply supplemental controls</div>,
         }}
       />,
     );
 
     expect(screen.getByText("Discover supplemental controls")).toBeInTheDocument();
-    expect(screen.queryByText("Score supplemental controls")).not.toBeInTheDocument();
+    expect(screen.queryByText("Apply supplemental controls")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Score" }));
+    await user.click(screen.getByRole("tab", { name: "Apply" }));
 
-    expect(screen.getByText("Score supplemental controls")).toBeInTheDocument();
+    expect(screen.getByText("Apply supplemental controls")).toBeInTheDocument();
     expect(screen.queryByText("Discover supplemental controls")).not.toBeInTheDocument();
   });
 
@@ -323,128 +297,6 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
   });
 
-  it("submits tailor model and judge settings for the Tailor stage", async () => {
-    const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "queued",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["tailor"],
-        limit: 4,
-        workers: 2,
-        minScore: 9,
-        validationMode: "strict" as const,
-        dryRun: true,
-        rescore: false,
-        retailor: true,
-        headless: false,
-        model: "default",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
-        tailorJudgeModel: "local:judge",
-        tailorJudgeMinScore: 0.9,
-        continuous: false,
-      },
-      actions: [],
-    }));
-    renderWithProviders(<StageTriggerPanel />, {
-      ports: buildTestPorts({ api: { runPipelineStages } }),
-    });
-
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
-    await user.clear(screen.getByLabelText("Limit"));
-    await user.type(screen.getByLabelText("Limit"), "4");
-    await user.clear(screen.getByLabelText("Workers"));
-    await user.type(screen.getByLabelText("Workers"), "2");
-    await user.clear(screen.getByLabelText("Minimum score"));
-    await user.type(screen.getByLabelText("Minimum score"), "9");
-    await user.selectOptions(screen.getByLabelText("Validation mode"), "strict");
-    await user.click(screen.getByLabelText("Re-tailor"));
-    await user.type(screen.getByLabelText("Tailor models"), "local:fast, gemini:gemini-3.5-flash");
-    await user.type(screen.getByLabelText("Judge model"), "local:judge");
-    await user.clear(screen.getByLabelText("Minimum judge score"));
-    await user.type(screen.getByLabelText("Minimum judge score"), "0.9");
-    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
-
-    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
-    expect(runPipelineStages).toHaveBeenCalledWith({
-      stages: ["tailor"],
-      limit: 4,
-      workers: 2,
-      minScore: 9,
-      validationMode: "strict",
-      dryRun: true,
-      rescore: false,
-      retailor: true,
-      tailorModels: ["local:fast", "gemini:gemini-3.5-flash"],
-      tailorJudgeModel: "local:judge",
-      tailorJudgeMinScore: 0.9,
-      headless: false,
-      model: "default",
-      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-      continuous: false,
-    });
-  });
-
-  it("lets the Tailor stage use the environment/default judge threshold when the input is blank", async () => {
-    const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "queued",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["tailor"],
-        limit: 25,
-        workers: 1,
-        minScore: 7,
-        validationMode: "normal" as const,
-        dryRun: true,
-        rescore: false,
-        retailor: false,
-        headless: false,
-        model: "default",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: ["local:fast"],
-        tailorJudgeModel: "local:judge",
-        continuous: false,
-      },
-      actions: [],
-    }));
-    renderWithProviders(<StageTriggerPanel />, {
-      ports: buildTestPorts({ api: { runPipelineStages } }),
-    });
-
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
-    await user.type(screen.getByLabelText("Tailor models"), "local:fast");
-    await user.type(screen.getByLabelText("Judge model"), "local:judge");
-    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
-
-    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledTimes(1));
-    const request = runPipelineStages.mock.calls[0]?.[0];
-    expect(request).toMatchObject({
-      stages: ["tailor"],
-      limit: 25,
-      workers: 1,
-      minScore: 7,
-      validationMode: "normal",
-      dryRun: true,
-      rescore: false,
-      retailor: false,
-      tailorModels: ["local:fast"],
-      tailorJudgeModel: "local:judge",
-      headless: false,
-      model: "default",
-      llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-      continuous: false,
-    });
-    expect(request).not.toHaveProperty("tailorJudgeMinScore");
-  });
-
   it("shows a live starting status while the worker request is pending", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
@@ -531,7 +383,7 @@ describe("StageTriggerPanel", () => {
       jobKey: "pipeline",
       count: 1,
       command: {
-        stages: ["score"],
+        stages: ["discover"],
         limit: 12,
         workers: 1,
         minScore: 7,
@@ -556,7 +408,7 @@ describe("StageTriggerPanel", () => {
           command: {
             action: "run_stage",
             jobKey: "pipeline",
-            stage: "score",
+            stage: "discover",
             limit: 12,
             workers: 1,
             minScore: 7,
@@ -573,10 +425,9 @@ describe("StageTriggerPanel", () => {
       ports: buildTestPorts({ api: { runPipelineStages } }),
     });
 
-    await user.click(screen.getByRole("tab", { name: "Score" }));
-    await user.click(screen.getByRole("button", { name: "Run Score" }));
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
 
-    expect(await screen.findByText("Score failed to start: Worker unavailable.")).toBeInTheDocument();
+    expect(await screen.findByText("Discover failed to start: Worker unavailable.")).toBeInTheDocument();
   });
 
   it("keeps separate per-stage tab config and restores it after remount", async () => {
@@ -587,10 +438,10 @@ describe("StageTriggerPanel", () => {
     await user.clear(screen.getByLabelText("Workers"));
     await user.type(screen.getByLabelText("Workers"), "5");
 
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.click(screen.getByRole("tab", { name: "Apply" }));
     await user.clear(screen.getByLabelText("Limit"));
     await user.type(screen.getByLabelText("Limit"), "13");
-    await user.click(screen.getByLabelText("Re-tailor"));
+    await user.click(screen.getByLabelText("Headless browser"));
 
     await user.click(screen.getByRole("tab", { name: "Discover" }));
     expect(screen.getByLabelText("Workers")).toHaveValue(5);
@@ -602,8 +453,8 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByRole("tab", { name: "Discover" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByLabelText("Workers")).toHaveValue(5);
 
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
+    await user.click(screen.getByRole("tab", { name: "Apply" }));
     expect(screen.getByLabelText("Limit")).toHaveValue(13);
-    expect(screen.getByLabelText("Re-tailor")).toBeChecked();
+    expect(screen.getByLabelText("Headless browser")).toBeChecked();
   });
 });

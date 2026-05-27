@@ -378,7 +378,8 @@ textarea {
 }
 
 .bulk-bar .tab,
-.score-policy-row .tab {
+.score-policy-row .tab,
+.action-panel .tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;

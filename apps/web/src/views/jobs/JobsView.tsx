@@ -1,4 +1,8 @@
-import { type BulkJobMutationRequest, type JobMutationResponse, type JobSortField } from "@jobhunter/contracts";
+import {
+  type BulkJobMutationRequest,
+  type JobMutationResponse,
+  type JobSortField,
+} from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
@@ -16,21 +20,7 @@ import { CardHeader } from "../../shared/ui/card-header.js";
 import { JobBulkActions } from "./JobBulkActions.js";
 import { JobFilterBar } from "./JobFilterBar.js";
 import { JobsTable } from "./JobsTable.js";
-
-function jobsListInput(search: JobsSearch) {
-  return {
-    page: search.page,
-    pageSize: search.pageSize,
-    q: search.q,
-    sort: search.sort,
-    dir: search.dir,
-    deleted: search.deleted,
-    minFitScore: search.minFitScore,
-    maxFitScore: search.maxFitScore,
-    ...(search.stage !== "all" ? { stage: search.stage } : {}),
-    ...(search.state !== "all" ? { state: search.state } : {}),
-  };
-}
+import { bulkJobFilters, jobsListInput } from "./jobStageFilters.js";
 
 const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
   "discovered_at",
@@ -42,7 +32,11 @@ const SORTABLE_JOB_FIELDS: ReadonlySet<JobSortField> = new Set([
   "current_state",
 ]);
 
-type BulkJobMutation = UseMutationResult<JobMutationResponse, Error, BulkJobMutationRequest>;
+type BulkJobMutation = UseMutationResult<
+  JobMutationResponse,
+  Error,
+  BulkJobMutationRequest
+>;
 
 function isJobSortField(value: string): value is JobSortField {
   return SORTABLE_JOB_FIELDS.has(value as JobSortField);
@@ -107,11 +101,17 @@ export function JobsView() {
   };
 
   const selectedKeys = useMemo(
-    () => Object.entries(rowSelection).filter(([, on]) => on).map(([key]) => key),
+    () =>
+      Object.entries(rowSelection)
+        .filter(([, on]) => on)
+        .map(([key]) => key),
     [rowSelection],
   );
   const staleKeysOnPage = useMemo(
-    () => (data?.items ?? []).filter((job) => job.scoreStaleness.isStale).map((job) => job.jobKey),
+    () =>
+      (data?.items ?? [])
+        .filter((job) => job.scoreStaleness.isStale)
+        .map((job) => job.jobKey),
     [data?.items],
   );
   const selectedStaleKeys = useMemo(
@@ -142,27 +142,13 @@ export function JobsView() {
     setRowSelection(next);
   };
 
-  const currentJobFilter = (): NonNullable<BulkJobMutationRequest["filter"]> => {
-    const filter: NonNullable<BulkJobMutationRequest["filter"]> = {
-      q: search.q,
-      deleted: search.deleted,
-      source: "",
-      company: "",
-      minFitScore: search.minFitScore,
-      maxFitScore: search.maxFitScore,
-    };
-    if (search.stage !== "all") {
-      filter.stage = search.stage;
-    }
-    if (search.state !== "all") {
-      filter.state = search.state;
-    }
-    return filter;
-  };
-
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
-  const primaryMutation = hidden ? unhideJobs : restoring ? restoreJobs : deleteJobs;
+  const primaryMutation = hidden
+    ? unhideJobs
+    : restoring
+      ? restoreJobs
+      : deleteJobs;
   const mutateBusy =
     deleteJobs.isPending ||
     hideJobs.isPending ||
@@ -171,26 +157,52 @@ export function JobsView() {
     unhideJobs.isPending ||
     retryFailedJobs.isPending;
 
-  const selectedPayload = (): BulkJobMutationRequest =>
+  const selectedPayloads = (): BulkJobMutationRequest[] =>
     allMatchingSelected
-      ? { allMatching: true, filter: currentJobFilter(), jobKeys: [] }
-      : { allMatching: false, jobKeys: selectedKeys };
+      ? bulkJobFilters(search).map((filter) => ({
+          allMatching: true,
+          filter,
+          jobKeys: [],
+        }))
+      : [{ allMatching: false, jobKeys: selectedKeys }];
+
+  const mutatePayloads = (
+    mutation: BulkJobMutation,
+    payloads: readonly BulkJobMutationRequest[],
+  ) => {
+    if (payloads.length === 1) {
+      mutation.mutate(payloads[0]!, {
+        onSuccess: () => clearSelection(),
+      });
+      return;
+    }
+    void Promise.all(payloads.map((payload) => mutation.mutateAsync(payload)))
+      .then(() => clearSelection())
+      .catch(() => undefined);
+  };
 
   const mutateSelected = (mutation: BulkJobMutation, label: string) => {
-    const count = allMatchingSelected ? (data?.pagination.total ?? 0) : selectedKeys.length;
+    const count = allMatchingSelected
+      ? (data?.pagination.total ?? 0)
+      : selectedKeys.length;
     if (!count) {
       return;
     }
-    if (!window.confirm(`${label} ${count} selected job${count === 1 ? "" : "s"}?`)) {
+    if (
+      !window.confirm(
+        `${label} ${count} selected job${count === 1 ? "" : "s"}?`,
+      )
+    ) {
       return;
     }
-    mutation.mutate(selectedPayload(), {
-      onSuccess: () => clearSelection(),
-    });
+    mutatePayloads(mutation, selectedPayloads());
   };
 
   const mutatePrimarySelected = () => {
-    mutateSelected(primaryMutation, hidden ? "Unhide" : restoring ? "Restore" : "Delete");
+    mutateSelected(
+      primaryMutation,
+      hidden ? "Unhide" : restoring ? "Restore" : "Delete",
+    );
   };
 
   const hideSelected = () => {
@@ -206,18 +218,20 @@ export function JobsView() {
     if (!count) {
       return;
     }
-    if (!window.confirm(`Retry ${count} failed job${count === 1 ? "" : "s"}?`)) {
+    if (
+      !window.confirm(`Retry ${count} failed job${count === 1 ? "" : "s"}?`)
+    ) {
       return;
     }
-    retryFailedJobs.mutate(
-      {
-        allMatching: true,
-        filter: { ...currentJobFilter(), deleted: "active", state: "failed" },
-        jobKeys: [],
-      },
-      {
-        onSuccess: () => clearSelection(),
-      },
+    mutatePayloads(
+      retryFailedJobs,
+      bulkJobFilters(search, { deleted: "active", state: "failed" }).map(
+        (filter) => ({
+          allMatching: true,
+          filter,
+          jobKeys: [],
+        }),
+      ),
     );
   };
 
@@ -240,12 +254,16 @@ export function JobsView() {
   return (
     <>
       <section className="card full">
-        <CardHeader title="Jobs" meta={data ? `${data.pagination.total} total` : "loading"} />
+        <CardHeader
+          title="Jobs"
+          meta={data ? `${data.pagination.total} total` : "loading"}
+        />
         {message ? <div className="banner inline">{message}</div> : null}
         <JobFilterBar search={search} />
         <JobBulkActions
           search={search}
           selectedCount={selectedCount}
+          selectedJobKeys={allMatchingSelected ? [] : selectedKeys}
           staleCount={staleKeysOnPage.length}
           selectedStaleKeys={selectedStaleKeys}
           hasItems={Boolean(data?.items.length)}
@@ -261,6 +279,7 @@ export function JobsView() {
           onRetryFailedSelected={retryFailedSelected}
           onRetryAllFailed={retryAllFailed}
           onResetStaleSuccess={clearSelection}
+          onMaintenanceSuccess={clearSelection}
         />
         <JobsTable
           data={data ?? null}

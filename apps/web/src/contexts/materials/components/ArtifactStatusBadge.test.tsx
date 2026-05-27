@@ -23,4 +23,10 @@ describe("<ArtifactStatusBadge>", () => {
       </span>
     `);
   });
+
+  it("describes suppressed artifacts as historical audit material", () => {
+    render(<ArtifactStatusBadge status="suppressed" />);
+
+    expect(screen.getByLabelText(/historical audit material/i)).toBeInTheDocument();
+  });
 });

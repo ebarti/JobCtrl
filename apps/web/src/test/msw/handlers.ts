@@ -285,11 +285,23 @@ export const handlers = [
       nextAction: "jobhunter run score --rescore",
     });
   }),
+  http.post("*/v1/jobs/:jobKey/actions/rescore-current-policy", ({ params }) =>
+    HttpResponse.json(actionRunResponse(String(params["jobKey"]), "rescore_job")),
+  ),
+  http.post("*/v1/scoring/actions/rescore-current-policy", () =>
+    HttpResponse.json(actionRunResponse("pipeline", "rescore_jobs_not_on_current_scoring_policy")),
+  ),
   http.post("*/v1/jobs/:jobKey/actions/retry-stage", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "retry_stage")),
   ),
   http.post("*/v1/jobs/:jobKey/actions/generate-materials", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "generate_materials")),
+  ),
+  http.post("*/v1/jobs/:jobKey/actions/retailor-current-policy", ({ params }) =>
+    HttpResponse.json(actionRunResponse(String(params["jobKey"]), "retailor_job")),
+  ),
+  http.post("*/v1/materials/actions/retailor-current-policy", () =>
+    HttpResponse.json(actionRunResponse("pipeline", "retailor_current_policy")),
   ),
   http.post("*/v1/jobs/:jobKey/actions/apply", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "apply")),

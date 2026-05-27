@@ -6,6 +6,8 @@ const DESCRIPTIONS: Record<string, string> = {
   rejected: "Rejected means validation or review did not accept this generated material.",
   stale: "Stale means the artifact may no longer match the latest job or profile state.",
   superseded: "Superseded means a newer artifact replaced this version.",
+  suppressed:
+    "Suppressed means this file is retained as historical audit material and is not apply-ready.",
 };
 
 export function artifactStatusDescription(status: string): string {
