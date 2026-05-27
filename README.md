@@ -9,9 +9,9 @@ discover -> apply
 ```
 
 Discovery also drains the internal preparation work needed before applying,
-including enrichment, scoring, resume tailoring, cover-letter generation, and
-artifact suppression. Those lower-level stages remain available as maintenance
-and diagnostic commands.
+including enrichment, scoring, resume tailoring, and artifact suppression.
+Those lower-level stages remain available as maintenance and diagnostic
+commands.
 
 The automation engine is Python. The newer product surface is a local
 TypeScript API plus a React/Vite web shell. The intended frontend direction is
