@@ -16,4 +16,6 @@ export const discoveryKeys = {
     ["tenant", tenantId, "discovery", "manual-capture"] as const,
   feedback: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "feedback"] as const,
+  roleMatchFeedback: (tenantId: TenantId) =>
+    ["tenant", tenantId, "discovery", "role-match-feedback"] as const,
 };

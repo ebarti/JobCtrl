@@ -42,6 +42,9 @@ import type {
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
+  RoleMatchFeedbackDecisionRequest,
+  RoleMatchFeedbackDecisionResponse,
+  RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
   RetryStageRequest,
@@ -199,6 +202,20 @@ export class JobHunterApiClient {
 
   recordDiscoveryFeedback(body: DiscoveryFeedbackRequest): Promise<DiscoveryFeedbackResponse> {
     return this.post("/v1/discovery/feedback", body);
+  }
+
+  roleMatchFeedbackSuggestions(): Promise<RoleMatchFeedbackListResponse> {
+    return this.get("/v1/discovery/role-match-feedback");
+  }
+
+  decideRoleMatchFeedbackSuggestion(
+    suggestionId: string,
+    body: RoleMatchFeedbackDecisionRequest,
+  ): Promise<RoleMatchFeedbackDecisionResponse> {
+    return this.post(
+      `/v1/discovery/role-match-feedback/${encodeURIComponent(suggestionId)}/decision`,
+      body,
+    );
   }
 
   jobs(query: Partial<JobListQuery> = {}): Promise<PaginatedResponse<JobSummary>> {

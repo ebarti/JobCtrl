@@ -42,6 +42,9 @@ import type {
   QuarantineDecision,
   QuarantineDecisionResponse,
   QuarantineListResponse,
+  RoleMatchFeedbackDecisionRequest,
+  RoleMatchFeedbackDecisionResponse,
+  RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
   RetryStageRequest,
@@ -123,6 +126,11 @@ export interface ApiClientPort {
     body?: ManualCaptureDismissRequest,
   ): Promise<ManualCaptureDismissResponse>;
   recordDiscoveryFeedback(body: DiscoveryFeedbackRequest): Promise<DiscoveryFeedbackResponse>;
+  roleMatchFeedbackSuggestions(): Promise<RoleMatchFeedbackListResponse>;
+  decideRoleMatchFeedbackSuggestion(
+    suggestionId: string,
+    body: RoleMatchFeedbackDecisionRequest,
+  ): Promise<RoleMatchFeedbackDecisionResponse>;
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
   job(jobKey: string): Promise<JobDetail>;

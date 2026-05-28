@@ -243,6 +243,57 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("surfaces low-score role-match suggestions and records approval decisions", async () => {
+    const db = new Database(options.dbPath);
+    const jobKey = "https://example.com/jobs/test-engineering";
+    insertJob(db, {
+      url: jobKey,
+      title: "Manager, Test Engineering",
+      site: "Monolithic Power Systems",
+      fitScore: 2,
+    });
+    insertScore(db, jobKey, 1, 2);
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/discovery/role-match-feedback",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body.suggestions).toHaveLength(1);
+    expect(body.suggestions[0]).toMatchObject({
+      status: "pending",
+      ruleKind: "exact_title_exclusion",
+      titlePattern: "manager test engineering",
+      titleDisplay: "Manager, Test Engineering",
+      reasonCode: "low_role_fit",
+      sampleCount: 1,
+    });
+
+    const suggestionId = body.suggestions[0].suggestionId;
+    const decision = await app.inject({
+      method: "POST",
+      url: `/v1/discovery/role-match-feedback/${encodeURIComponent(suggestionId)}/decision`,
+      payload: {
+        decision: "approve",
+        reason: "Confirmed low-signal test-management title.",
+      },
+      headers: { origin: "http://localhost:5173" },
+    });
+
+    expect(decision.statusCode, decision.body).toBe(200);
+    expect(decision.json().suggestion).toMatchObject({
+      suggestionId,
+      status: "approved",
+      decisionReason: "Confirmed low-signal test-management title.",
+    });
+
+    await app.close();
+  });
+
   it("blocks stage dispatch when the worker runtime does not match the API runtime", async () => {
     const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-ignored" }));
     insertWorkerHeartbeat(options.dbPath, {

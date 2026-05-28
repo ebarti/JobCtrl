@@ -300,6 +300,90 @@ describe("DiscoveryProductControls", () => {
     });
   });
 
+  it("shows low-score role-match suggestions for approval", async () => {
+    const roleMatchFeedbackSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      suggestions: [
+        {
+          suggestionId: "role-title-exclusion-manager-test-engineering",
+          status: "pending" as const,
+          ruleKind: "exact_title_exclusion" as const,
+          titlePattern: "manager test engineering",
+          titleDisplay: "Manager, Test Engineering",
+          reasonCode: "low_role_fit" as const,
+          reason: "Role fit is 1/10 on a job scored 2/10.",
+          sampleCount: 1,
+          sourceIds: ["jobspy:linkedin"],
+          evidence: [
+            {
+              jobKey: "https://example.com/jobs/test-engineering",
+              title: "Manager, Test Engineering",
+              company: "Monolithic Power Systems",
+              sourceId: "jobspy:linkedin",
+              fitScore: 2,
+              roleFit: 1,
+              reason: "Role fit is 1/10 on a job scored 2/10.",
+              scoredAt: "2026-05-12T10:00:00+00:00",
+            },
+          ],
+          createdAt: "2026-05-12T10:00:00+00:00",
+          updatedAt: "2026-05-12T10:00:00+00:00",
+          decidedAt: null,
+          decisionReason: null,
+        },
+      ],
+    }));
+    const decideRoleMatchFeedbackSuggestion = vi.fn(async () => ({
+      ok: true as const,
+      suggestion: {
+        suggestionId: "role-title-exclusion-manager-test-engineering",
+        status: "approved" as const,
+        ruleKind: "exact_title_exclusion" as const,
+        titlePattern: "manager test engineering",
+        titleDisplay: "Manager, Test Engineering",
+        reasonCode: "low_role_fit" as const,
+        reason: "Role fit is 1/10 on a job scored 2/10.",
+        sampleCount: 1,
+        sourceIds: ["jobspy:linkedin"],
+        evidence: [],
+        createdAt: "2026-05-12T10:00:00+00:00",
+        updatedAt: "2026-05-12T10:01:00+00:00",
+        decidedAt: "2026-05-12T10:01:00+00:00",
+        decisionReason: "User approved low-score role-match suggestion.",
+      },
+    }));
+
+    renderWithProviders(<DiscoveryProductControls layout="tabs" />, {
+      ports: buildTestPorts({
+        api: {
+          roleMatchFeedbackSuggestions,
+          decideRoleMatchFeedbackSuggestion,
+        },
+      }),
+    });
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "Role matching" }));
+    expect(await screen.findByText(/Exclude .Manager, Test Engineering./i)).toBeInTheDocument();
+    expect(screen.getByText(/Role fit is 1\/10/i)).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /approve role-match rule for manager, test engineering/i,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(decideRoleMatchFeedbackSuggestion).toHaveBeenCalledWith(
+        "role-title-exclusion-manager-test-engineering",
+        {
+          decision: "approve",
+          reason: "User approved low-score role-match suggestion.",
+        },
+      ),
+    );
+  });
+
   it("imports pasted manual capture content with follow-up provenance", async () => {
     const importManualCapture = vi.fn(async () => ({
       ok: true as const,

@@ -127,6 +127,13 @@ type and policy metadata are visible as columns instead of compact badges:
 - `POST /v1/discovery/feedback` records `DiscoveryFeedbackRecorded` with IDs,
   source, kind, and timestamp only; free-form notes stay out of the domain event
   payload.
+- `GET /v1/discovery/role-match-feedback` derives a local review queue from
+  newly scored jobs with very low fit scores and role-fit evidence. Suggestions
+  are exact title-exclusion rules, not automatic prompt or query changes.
+- `POST /v1/discovery/role-match-feedback/:suggestionId/decision` approves or
+  declines a suggestion. Approved exact-title exclusions are visible in the
+  Discovery page and are consumed by future discovery title matching; declined
+  suggestions remain recorded but inactive.
 
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal
@@ -219,6 +226,10 @@ inserted; Greenhouse reads the public board content payload for that text. Each
 discover run also applies the current title, location, and description contract
 to active JobSpy, direct ATS, Workday, and Smart Extract rows and soft-deletes
 rows that no longer pass those source-family filters.
+Approved role-match feedback adds a user-reviewed title-exclusion layer on top
+of that matcher. The rule scope is exact normalized title text, so approving a
+bad low-score pattern suppresses repeat false positives without weakening the
+broader exact-plus-recall role family.
 Target locations replace the active location list, and the
 worker falls back to profile city/country when target locations are blank. The
 API validates target locations as real places before saving profile preferences.

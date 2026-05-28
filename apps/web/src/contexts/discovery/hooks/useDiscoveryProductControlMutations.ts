@@ -8,6 +8,7 @@ import type {
   DiscoveryFeedbackRequest,
   ManualCaptureImportRequest,
   QuarantineDecision,
+  RoleMatchFeedbackDecisionRequest,
   SourceLocatorDecisionRequest,
   SourceStatePatch,
   SourceUpsertRequest,
@@ -139,6 +140,26 @@ export function useDiscoveryFeedbackMutation() {
         queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceQuality(tenantId) }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
       ]);
+    },
+  });
+}
+
+export function useRoleMatchFeedbackDecisionMutation() {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      suggestionId,
+      body,
+    }: {
+      suggestionId: string;
+      body: RoleMatchFeedbackDecisionRequest;
+    }) => api.decideRoleMatchFeedbackSuggestion(suggestionId, body),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: discoveryKeys.roleMatchFeedback(tenantId),
+      });
     },
   });
 }

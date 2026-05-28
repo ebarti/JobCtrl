@@ -7,6 +7,7 @@ import type {
   ManualCaptureListResponse,
   QuarantineListResponse,
   DiscoveryPreviewResponse,
+  RoleMatchFeedbackListResponse,
   SourceLocatorListResponse,
   SourceRegistryListResponse,
 } from "../types.js";
@@ -60,6 +61,16 @@ export function useManualCaptureQueueQuery(): UseQueryResult<ManualCaptureListRe
   return useQuery({
     queryKey: discoveryKeys.manualCapture(tenantId),
     queryFn: () => api.manualCaptureQueue(),
+    staleTime: 0,
+  });
+}
+
+export function useRoleMatchFeedbackQuery(): UseQueryResult<RoleMatchFeedbackListResponse> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  return useQuery({
+    queryKey: discoveryKeys.roleMatchFeedback(tenantId),
+    queryFn: () => api.roleMatchFeedbackSuggestions(),
     staleTime: 0,
   });
 }
