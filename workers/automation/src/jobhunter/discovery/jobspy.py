@@ -17,7 +17,11 @@ from datetime import datetime, timezone
 from jobhunter import config
 from jobhunter.database import ensure_source_observation_tables, get_connection, init_db, resurface_deleted_job
 from jobhunter.domain.discovery.identity import normalize_observed_url
-from jobhunter.domain.job_content_identity import job_content_fingerprint, normalize_identity_text
+from jobhunter.domain.job_content_identity import (
+    descriptions_substantially_match,
+    job_content_fingerprint,
+    normalize_identity_text,
+)
 
 # Phase 7 (S-27 round-1 review M1): ``parse_proxy`` lives under
 # ``jobhunter.infrastructure.network`` so the Enrichment context's
@@ -652,6 +656,8 @@ def _find_content_duplicate_survivor(
             description=existing["description"],
         )
         if existing_key == incoming_key:
+            return str(existing["url"])
+        if descriptions_substantially_match(description, existing["description"]):
             return str(existing["url"])
     return None
 

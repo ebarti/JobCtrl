@@ -8,6 +8,12 @@ import unicodedata
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_MARKDOWN_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>])")
+_MARKDOWN_MARKER_RE = re.compile(r'[*_`>"]+')
+_CONTENT_TOKEN_RE = re.compile(r"[\w+]+")
+_DESCRIPTION_SHINGLE_SIZE = 5
+_MIN_DESCRIPTION_TOKENS_FOR_SIMILARITY = 80
+_DESCRIPTION_SHINGLE_JACCARD_THRESHOLD = 0.83
 _PUNCT_TRANSLATION = str.maketrans(
     {
         "\u2018": "'",
@@ -32,6 +38,15 @@ def normalize_identity_text(value: object) -> str:
     return _WHITESPACE_RE.sub(" ", text).casefold()
 
 
+def normalize_description_text(value: object) -> str:
+    """Return a board-format-stable description identity component."""
+
+    text = normalize_identity_text(value)
+    text = _MARKDOWN_ESCAPE_RE.sub(r"\1", text)
+    text = _MARKDOWN_MARKER_RE.sub("", text)
+    return _WHITESPACE_RE.sub(" ", text).strip()
+
+
 def job_content_fingerprint(
     *,
     title: object,
@@ -43,10 +58,40 @@ def job_content_fingerprint(
 
     normalized_title = normalize_identity_text(title)
     normalized_company = normalize_identity_text(company)
-    normalized_description = normalize_identity_text(description)
+    normalized_description = normalize_description_text(description)
     if description_limit is not None and description_limit > 0:
         normalized_description = normalized_description[:description_limit]
     if not normalized_title or not normalized_company or not normalized_description:
         return None
     payload = "\x1f".join((normalized_title, normalized_company, normalized_description))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def descriptions_substantially_match(left: object, right: object) -> bool:
+    """Return true when two board descriptions represent the same posting."""
+
+    left_text = normalize_description_text(left)
+    right_text = normalize_description_text(right)
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+
+    left_shingles = _description_shingles(left_text)
+    right_shingles = _description_shingles(right_text)
+    if not left_shingles or not right_shingles:
+        return False
+
+    intersection = len(left_shingles & right_shingles)
+    union = len(left_shingles | right_shingles)
+    return union > 0 and intersection / union >= _DESCRIPTION_SHINGLE_JACCARD_THRESHOLD
+
+
+def _description_shingles(text: str) -> set[tuple[str, ...]]:
+    tokens = _CONTENT_TOKEN_RE.findall(text)
+    if len(tokens) < _MIN_DESCRIPTION_TOKENS_FOR_SIMILARITY:
+        return set()
+    return {
+        tuple(tokens[index : index + _DESCRIPTION_SHINGLE_SIZE])
+        for index in range(len(tokens) - _DESCRIPTION_SHINGLE_SIZE + 1)
+    }

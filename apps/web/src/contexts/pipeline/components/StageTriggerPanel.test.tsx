@@ -374,6 +374,35 @@ describe("StageTriggerPanel", () => {
     );
   });
 
+  it("shows backend discovery percent progress when available", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            progress: [
+              {
+                stage: "discover" as const,
+                status: "running" as const,
+                percent: 60,
+                completed: 3,
+                total: 5,
+                currentStep: "Workday scraper",
+                message: "Workday scraper complete",
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover 60% complete (3/5): Workday scraper complete.",
+    );
+    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
+  });
+
   it("surfaces failed worker action responses", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
