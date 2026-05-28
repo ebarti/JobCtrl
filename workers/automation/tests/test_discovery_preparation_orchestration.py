@@ -343,6 +343,61 @@ def test_discover_stage_kwargs_include_preparation_controls() -> None:
     }
 
 
+def test_discovery_source_failure_records_failed_progress(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, str, str, dict]] = []
+    scheduled = runner.ScheduledSource(
+        source_id="jobspy:linkedin",
+        display_name="LinkedIn",
+        source_kind=runner.SourceKind.BROAD_BOARD,
+        priority=runner.SourcePriority.STANDARD,
+        configured_state=runner.SourceState.ACTIVE,
+        crawl_budget=1,
+        decision="run",
+        reason="scheduled",
+        recommended_state="normal",
+    )
+
+    monkeypatch.setattr(runner, "get_connection", lambda: conn)
+    monkeypatch.setattr(runner, "_record_source_state_changes", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner, "_record_discovery_run_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        runner,
+        "_record_pipeline_event",
+        lambda stage, event_type, _level, message, payload=None: events.append(
+            (stage, event_type, message, payload or {})
+        ),
+    )
+
+    def fail_source() -> None:
+        raise RuntimeError("source outage")
+
+    result = runner._run_discovery_source(
+        "jobspy",
+        "JobSpy",
+        (scheduled,),
+        fail_source,
+        progress_completed=1,
+        progress_total=5,
+    )
+
+    assert result == "error: source outage"
+    failed_event = [event for event in events if event[1] == "StageFailed"][0]
+    assert failed_event[0] == "discover"
+    assert failed_event[2] == "Discovery source jobspy failed: source outage"
+    assert failed_event[3]["progress"] == {
+        "completed": 2,
+        "total": 5,
+        "percent": 40,
+        "currentStep": "JobSpy",
+        "status": "failed",
+        "message": "JobSpy failed",
+    }
+
+
 def test_discover_runs_internal_preparation_after_enrichment(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,

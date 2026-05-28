@@ -972,6 +972,113 @@ def test_jobspy_content_dedupe_normalizes_typographic_punctuation(tmp_path):
         close_connection(db_path)
 
 
+def test_jobspy_rejects_cross_board_markdown_description_variants(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    shared_body = (
+        "G\\+D makes the lives of billions of people around the world more secure. "
+        "We shape trust in the digital age with built-in security technology. "
+        "The Head of Technology owns platform delivery, engineering standards, "
+        "vendor coordination, security governance, architecture roadmaps, "
+        "cloud reliability, compliance, and stakeholder communication. "
+    ) * 5
+    indeed_description = f"**{shared_body}**\n\nEqual opportunity footer and Indeed metadata."
+    linkedin_description = f"{shared_body}\n\nLinkedIn workplace summary."
+    try:
+        first = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://es.indeed.com/viewjob?jk=6b34cd5504dac130",
+                    "job_url_direct": "https://www.gi-de.com/en/careers/jobs/jobs-detail-view/27069-en-US",
+                    "title": "Head of Technology",
+                    "company": "Giesecke+Devrient",
+                    "location": "Catalonia, Spain (Remote)",
+                    "site": "indeed",
+                    "description": indeed_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, first, "Head of Technology", limit=10) == (1, 0)
+
+        duplicate = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://www.linkedin.com/jobs/view/4409381449",
+                    "title": "Head of Technology",
+                    "company": "Giesecke+Devrient",
+                    "location": "Sant Joan Despí, Catalonia, Spain (Remote)",
+                    "site": "linkedin",
+                    "description": linkedin_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, duplicate, "Head of Technology", limit=10) == (0, 1)
+
+        assert conn.execute("SELECT COUNT(*) FROM jobs WHERE company = 'Giesecke+Devrient'").fetchone()[0] == 1
+        link = conn.execute(
+            "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
+        ).fetchone()
+        assert link["surviving_job_id"] == "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"
+        assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4409381449"
+        assert link["reason"] == "content_fingerprint_match"
+        observations = conn.execute(
+            "SELECT source_id FROM job_source_observations WHERE job_url = ? ORDER BY source_id",
+            ("https://es.indeed.com/viewjob?jk=6b34cd5504dac130",),
+        ).fetchall()
+        assert [row["source_id"] for row in observations] == ["jobspy:indeed", "jobspy:linkedin"]
+    finally:
+        close_connection(db_path)
+
+
+def test_jobspy_keeps_same_title_company_when_descriptions_diverge(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    shared_intro = (
+        "G\\+D makes the lives of billions of people around the world more secure. "
+        "We shape trust in the digital age with built-in security technology. "
+    ) * 2
+    platform_description = shared_intro + (
+        "This Head of Technology role owns platform reliability, incident response, "
+        "cloud architecture, developer tooling, service ownership, and infrastructure roadmaps. "
+    ) * 6
+    payments_description = shared_intro + (
+        "This Head of Technology role owns card personalization, payment terminals, "
+        "manufacturing systems, embedded firmware, supply-chain delivery, and factory operations. "
+    ) * 6
+    try:
+        first = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://example.test/jobs/platform",
+                    "title": "Head of Technology",
+                    "company": "Giesecke+Devrient",
+                    "location": "Catalonia, Spain",
+                    "site": "indeed",
+                    "description": platform_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, first, "Head of Technology", limit=10) == (1, 0)
+
+        second = _jobspy_frame(
+            [
+                {
+                    "job_url": "https://example.test/jobs/payments",
+                    "title": "Head of Technology",
+                    "company": "Giesecke+Devrient",
+                    "location": "Madrid, Spain",
+                    "site": "linkedin",
+                    "description": payments_description,
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, second, "Head of Technology", limit=10) == (1, 0)
+        assert conn.execute("SELECT COUNT(*) FROM jobs WHERE company = 'Giesecke+Devrient'").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+    finally:
+        close_connection(db_path)
+
+
 def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)

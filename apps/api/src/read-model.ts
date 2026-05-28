@@ -285,6 +285,7 @@ export function buildDashboardSummary(db: SqliteDatabase): DashboardSummary {
     },
     funnel: parseFunnel(dashboard.funnel_json),
     activity: recentActivity(db),
+    progress: listPipelineProgress(db),
     sourceHealth: listSourceHealth(db),
     operationalMetrics,
     applyRuns: recentApplyRuns(db),
@@ -1643,6 +1644,189 @@ function recentActivity(db: SqliteDatabase): DashboardSummary["activity"] {
     stage: "",
     eventType: "",
   }).items;
+}
+
+function listPipelineProgress(db: SqliteDatabase): DashboardSummary["progress"] {
+  if (!tableExists(db, "job_events")) {
+    return [];
+  }
+  const rows = allRows<{
+    stage: string | null;
+    event_type: string | null;
+    message: string | null;
+    occurred_at: string | null;
+    payload_json: string | null;
+  }>(
+    db,
+    `SELECT stage, event_type, message, occurred_at, payload_json
+       FROM job_events
+      WHERE COALESCE(job_url, '') IN ('', 'pipeline')
+        AND (
+          event_type IN ('StageStarted', 'StageCompleted', 'StageFailed')
+          OR (
+            payload_json IS NOT NULL
+            AND json_valid(payload_json)
+            AND (
+              JSON_EXTRACT(payload_json, '$.progress') IS NOT NULL
+              OR JSON_EXTRACT(payload_json, '$.progressTotal') IS NOT NULL
+            )
+          )
+        )
+        AND (
+          stage IN ('discover', 'enrich', 'score', 'tailor', 'cover', 'apply')
+          OR (
+            payload_json IS NOT NULL
+            AND json_valid(payload_json)
+            AND JSON_EXTRACT(payload_json, '$.stage') IN ('discover', 'enrich', 'score', 'tailor', 'cover', 'apply')
+          )
+        )
+      ORDER BY event_id DESC
+      LIMIT 100`,
+  );
+  const byStage = new Map<Stage, DashboardSummary["progress"][number]>();
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    const stage = isStage(row.stage)
+      ? row.stage
+      : isStage(payload?.stage)
+        ? payload.stage
+        : null;
+    if (!stage || byStage.has(stage)) {
+      continue;
+    }
+    const progress = parseProgressPayload(payload, { ...row, stage });
+    if (progress) {
+      byStage.set(stage, progress);
+    }
+  }
+  return [...byStage.values()];
+}
+
+const COMPLETE_STAGE_MESSAGES = new Set(["stage ok", "stage partial", "stage skipped"]);
+const DISCOVERY_SOURCE_PROGRESS = [
+  ["jobspy", "JobSpy"],
+  ["ats_api", "Canonical ATS APIs"],
+  ["workday", "Workday scraper"],
+  ["smartextract", "Smart extract"],
+] as const;
+
+function parseProgressPayload(
+  payload: Record<string, unknown> | null,
+  row: {
+    stage: string | null;
+    event_type: string | null;
+    message: string | null;
+    occurred_at: string | null;
+  },
+): DashboardSummary["progress"][number] | null {
+  if (!payload || !isStage(row.stage)) {
+    return parseFallbackProgressPayload(row);
+  }
+  const source = isRecord(payload.progress) ? payload.progress : payload;
+  const completed = nullableNumber(source.completed ?? source.progressCompleted);
+  const total = nullableNumber(source.total ?? source.progressTotal);
+  if (completed === null || total === null || total <= 0) {
+    return parseFallbackProgressPayload(row);
+  }
+  const rawPercent = nullableNumber(source.percent ?? source.progressPercent);
+  const percent = rawPercent === null
+    ? Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
+    : Math.max(0, Math.min(100, Math.round(rawPercent)));
+  return {
+    stage: row.stage,
+    status: progressStatus(source.status ?? source.progressStatus, row.event_type),
+    percent,
+    completed,
+    total,
+    currentStep: nullableString(source.currentStep ?? source.current_step),
+    message: stringField(source.message) || stringField(row.message),
+    updatedAt: nullableString(row.occurred_at),
+  };
+}
+
+function parseFallbackProgressPayload(row: {
+  stage: string | null;
+  event_type: string | null;
+  message: string | null;
+  occurred_at: string | null;
+}): DashboardSummary["progress"][number] | null {
+  if (!isStage(row.stage)) {
+    return null;
+  }
+  const status = progressStatus(null, row.event_type);
+  const message = stringField(row.message);
+  const discoverySourceProgress = row.stage === "discover"
+    ? parseDiscoverySourceProgress(row, status, message)
+    : null;
+  if (discoverySourceProgress) {
+    return discoverySourceProgress;
+  }
+  const normalizedMessage = message.replace(row.stage, "").trim().toLowerCase();
+  const isWholeStageCompletion =
+    row.event_type === "StageCompleted" && COMPLETE_STAGE_MESSAGES.has(normalizedMessage);
+  if (row.event_type === "StageCompleted" && !isWholeStageCompletion) {
+    return null;
+  }
+  const percent = status === "succeeded" ? 100 : status === "failed" ? 0 : 0;
+  return {
+    stage: row.stage,
+    status,
+    percent,
+    completed: status === "succeeded" ? 1 : 0,
+    total: 1,
+    currentStep: null,
+    message: message || (status === "succeeded" ? "Stage complete" : "Stage started"),
+    updatedAt: nullableString(row.occurred_at),
+  };
+}
+
+function parseDiscoverySourceProgress(
+  row: {
+    stage: string | null;
+    event_type: string | null;
+    message: string | null;
+    occurred_at: string | null;
+  },
+  status: DashboardSummary["progress"][number]["status"],
+  message: string,
+): DashboardSummary["progress"][number] | null {
+  const lowerMessage = message.toLowerCase();
+  const sourceIndex = DISCOVERY_SOURCE_PROGRESS.findIndex(([source]) =>
+    lowerMessage.includes(`discovery source ${source}`),
+  );
+  if (sourceIndex < 0) {
+    return null;
+  }
+  const sourceProgress = DISCOVERY_SOURCE_PROGRESS[sourceIndex];
+  if (!sourceProgress) {
+    return null;
+  }
+  const started = row.event_type === "StageStarted";
+  const completed = Math.max(0, sourceIndex + (started ? 0 : 1));
+  const total = DISCOVERY_SOURCE_PROGRESS.length + 1;
+  return {
+    stage: "discover",
+    status: status === "failed" ? "failed" : "running",
+    percent: Math.max(0, Math.min(100, Math.round((completed / total) * 100))),
+    completed,
+    total,
+    currentStep: sourceProgress[1],
+    message,
+    updatedAt: nullableString(row.occurred_at),
+  };
+}
+
+function progressStatus(value: unknown, eventType: string | null): DashboardSummary["progress"][number]["status"] {
+  if (value === "succeeded" || value === "failed" || value === "running" || value === "partial") {
+    return value;
+  }
+  if (eventType === "StageFailed") {
+    return "failed";
+  }
+  if (eventType === "StageCompleted") {
+    return "succeeded";
+  }
+  return "running";
 }
 
 function listActivityFromEvents(

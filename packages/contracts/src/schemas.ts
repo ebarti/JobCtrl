@@ -758,6 +758,17 @@ export interface ActivityEventResponse {
   event: ActivityEventSummary;
 }
 
+export interface PipelineProgressSummary {
+  stage: Stage;
+  status: "running" | "succeeded" | "failed" | "partial";
+  percent: number | null;
+  completed: number;
+  total: number;
+  currentStep: string | null;
+  message: string;
+  updatedAt: string | null;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
@@ -782,6 +793,7 @@ export interface DashboardSummary {
     failed: number;
   }>;
   activity: ActivityEventSummary[];
+  progress: PipelineProgressSummary[];
   sourceHealth: SourceHealthSummary[];
   operationalMetrics: OperationalMetricsSummary;
   applyRuns: Array<{

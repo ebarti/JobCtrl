@@ -195,6 +195,28 @@ def _pipeline_event_payload(
     return enriched
 
 
+def _discovery_progress_payload(
+    *,
+    completed: int,
+    total: int,
+    current_step: str,
+    status: str = "running",
+    message: str | None = None,
+) -> dict[str, Any]:
+    bounded_total = max(1, total)
+    bounded_completed = min(max(0, completed), bounded_total)
+    progress: dict[str, Any] = {
+        "completed": bounded_completed,
+        "total": bounded_total,
+        "percent": round((bounded_completed / bounded_total) * 100),
+        "currentStep": current_step,
+        "status": status,
+    }
+    if message:
+        progress["message"] = message
+    return {"progress": progress}
+
+
 def _record_pipeline_observation_event(
     stage: str,
     event_type: str,
@@ -385,11 +407,21 @@ def _run_discovery_source(
     label: str,
     scheduled_sources: tuple[ScheduledSource, ...],
     run: Callable[[], Any],
+    *,
+    progress_completed: int | None = None,
+    progress_total: int | None = None,
 ) -> str:
     runnable = tuple(item for item in scheduled_sources if item.should_run)
     if not runnable:
         reason = scheduled_sources[0].reason if scheduled_sources else "not scheduled"
-        return _record_skipped_discovery_run(source, label, scheduled_sources, reason)
+        return _record_skipped_discovery_run(
+            source,
+            label,
+            scheduled_sources,
+            reason,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
 
     source_ids = tuple(item.source_id for item in runnable)
     run_id = f"discovery:{source}:{uuid.uuid4().hex}"
@@ -427,7 +459,22 @@ def _run_discovery_source(
         "StageStarted",
         "info",
         f"Discovery source {source} started",
-        {"source": source, "sourceLabel": label, "runId": run_id, "sourceIds": list(source_ids)},
+        {
+            "source": source,
+            "sourceLabel": label,
+            "runId": run_id,
+            "sourceIds": list(source_ids),
+            **(
+                _discovery_progress_payload(
+                    completed=progress_completed,
+                    total=progress_total,
+                    current_step=label,
+                    message=f"{label} started",
+                )
+                if progress_completed is not None and progress_total is not None
+                else {}
+            ),
+        },
     )
     _record_discovery_source_attempts(
         source,
@@ -506,6 +553,17 @@ def _run_discovery_source(
                     "error": str(exc),
                     "errorCode": type(exc).__name__,
                     "errorMessage": str(exc),
+                    **(
+                        _discovery_progress_payload(
+                            completed=progress_completed + 1,
+                            total=progress_total,
+                            current_step=label,
+                            status="failed",
+                            message=f"{label} failed",
+                        )
+                        if progress_completed is not None and progress_total is not None
+                        else {}
+                    ),
                 },
             )
             return f"error: {exc}"
@@ -572,6 +630,16 @@ def _run_discovery_source(
                 "sourceIds": list(source_ids),
                 "durationMs": duration_ms,
                 "status": status,
+                **(
+                    _discovery_progress_payload(
+                        completed=progress_completed + 1,
+                        total=progress_total,
+                        current_step=label,
+                        message=f"{label} complete",
+                    )
+                    if progress_completed is not None and progress_total is not None
+                    else {}
+                ),
             },
         )
         return status
@@ -669,6 +737,9 @@ def _record_skipped_discovery_run(
     label: str,
     scheduled_sources: tuple[ScheduledSource, ...],
     reason: str,
+    *,
+    progress_completed: int | None = None,
+    progress_total: int | None = None,
 ) -> str:
     source_ids = tuple(item.source_id for item in scheduled_sources) or (source,)
     run_id = f"discovery:{source}:{uuid.uuid4().hex}"
@@ -751,6 +822,8 @@ def _record_skipped_discovery_run(
         run_id=run_id,
         source_ids=source_ids,
         record_metric=False,
+        progress_completed=progress_completed,
+        progress_total=progress_total,
     )
 
 
@@ -762,6 +835,8 @@ def _skip_discovery_source(
     run_id: str | None = None,
     source_ids: tuple[str, ...] = (),
     record_metric: bool = True,
+    progress_completed: int | None = None,
+    progress_total: int | None = None,
 ) -> str:
     status = _skip_status(reason)
     payload: dict[str, Any] = {
@@ -774,6 +849,15 @@ def _skip_discovery_source(
         payload["runId"] = run_id
     if source_ids:
         payload["sourceIds"] = list(source_ids)
+    if progress_completed is not None and progress_total is not None:
+        payload.update(
+            _discovery_progress_payload(
+                completed=progress_completed + 1,
+                total=progress_total,
+                current_step=label,
+                message=f"{label} skipped: {reason}",
+            )
+        )
     _record_pipeline_event(
         "discover",
         "StageCompleted",
@@ -1117,6 +1201,16 @@ def _run_discover(
     schedule = _plan_discovery_schedule(limit)
     bounded_workers = max(1, workers)
     start_count = _pipeline_job_count() if limit > 0 else 0
+    jobspy_sources = schedule.for_prefix("jobspy")
+    ats_sources = tuple(
+        source
+        for source in schedule.for_kinds(SourceKind.ATS_API)
+        if not source.source_id.startswith("workday:")
+    )
+    workday_sources = schedule.for_prefix("workday")
+    smart_extract_sources = _smart_extract_sources(schedule)
+    progress_total = 3 + (1 if ats_sources else 0) + 2
+    progress_completed = 0
 
     # JobSpy — skip if disabled in config or module not installed
     search_cfg = config.load_search_config() or {}
@@ -1141,16 +1235,54 @@ def _run_discover(
     )
 
     def finish_discovery() -> dict:
+        nonlocal progress_completed
+        _record_pipeline_event(
+            "discover",
+            "StageStarted",
+            "info",
+            "Discovery detail enrichment finishing",
+            _discovery_progress_payload(
+                completed=progress_completed,
+                total=progress_total,
+                current_step="Detail enrichment",
+                message="Detail enrichment finishing",
+            ),
+        )
         enrichment_stats = _finish_discovery_enrichment_worker(
             enrichment_done,
             enrichment_thread,
             enrichment_result,
         )
         stats["enrichment"] = str(enrichment_stats.get("status", "ok"))
+        progress_completed += 1
+        _record_pipeline_event(
+            "discover",
+            "StageCompleted",
+            "info",
+            "Discovery detail enrichment complete",
+            _discovery_progress_payload(
+                completed=progress_completed,
+                total=progress_total,
+                current_step="Detail enrichment",
+                message="Detail enrichment complete",
+            ),
+        )
         try:
             run_hygiene("after")
         except Exception:
             log.warning("Post-discovery hygiene failed", exc_info=True)
+        _record_pipeline_event(
+            "discover",
+            "StageStarted",
+            "info",
+            "Discovery preparation started",
+            _discovery_progress_payload(
+                completed=progress_completed,
+                total=progress_total,
+                current_step="Preparation",
+                message="Preparation started",
+            ),
+        )
         try:
             from jobhunter.pipeline.preparation import drain_discovery_preparation
 
@@ -1169,13 +1301,40 @@ def _run_discover(
                 stats["preparation_counts"] = preparation_stats
                 if preparation_stats.get("status") != "ok":
                     stats["status"] = "partial"
+            preparation_status = "partial" if preparation_stats.get("status") not in (None, "ok") else "succeeded"
+            progress_completed += 1
+            _record_pipeline_event(
+                "discover",
+                "StageCompleted",
+                "warn" if preparation_status == "partial" else "info",
+                "Discovery preparation complete",
+                _discovery_progress_payload(
+                    completed=progress_completed,
+                    total=progress_total,
+                    current_step="Preparation",
+                    status=preparation_status,
+                    message="Preparation complete",
+                ),
+            )
         except Exception as exc:
             log.exception("Discovery preparation orchestration failed")
             stats["preparation"] = f"error: {exc}"
             stats["status"] = "partial"
+            progress_completed += 1
+            _record_pipeline_event(
+                "discover",
+                "StageFailed",
+                "error",
+                f"Discovery preparation failed: {exc}",
+                _discovery_progress_payload(
+                    completed=progress_completed,
+                    total=progress_total,
+                    current_step="Preparation",
+                    status="failed",
+                    message="Preparation failed",
+                ),
+            )
         return stats
-
-    jobspy_sources = schedule.for_prefix("jobspy")
 
     def run_jobspy(run_id: str | None = None) -> dict:
         if search_cfg.get("disable_jobspy", False):
@@ -1225,19 +1384,40 @@ def _run_discover(
         "JobSpy",
         jobspy_sources,
         run_jobspy,
+        progress_completed=progress_completed,
+        progress_total=progress_total,
     )
+    progress_completed += 1
     if isinstance(stats["jobspy"], str) and stats["jobspy"].startswith("error"):
         console.print(f"  [red]JobSpy error:[/red] {stats['jobspy'][7:]}")
     if _discover_limit_consumed(start_count, limit, source_results.get("jobspy")):
-        stats["workday"] = _skip_discovery_source("workday", "Workday scraper", "limit reached")
-        stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
+        if ats_sources:
+            stats["ats_api"] = _skip_discovery_source(
+                "ats_api",
+                "Canonical ATS APIs",
+                "limit reached",
+                progress_completed=progress_completed,
+                progress_total=progress_total,
+            )
+            progress_completed += 1
+        stats["workday"] = _skip_discovery_source(
+            "workday",
+            "Workday scraper",
+            "limit reached",
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        progress_completed += 1
+        stats["smartextract"] = _skip_discovery_source(
+            "smartextract",
+            "Smart extract",
+            "limit reached",
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        progress_completed += 1
         return finish_discovery()
 
-    ats_sources = tuple(
-        source
-        for source in schedule.for_kinds(SourceKind.ATS_API)
-        if not source.source_id.startswith("workday:")
-    )
     if ats_sources:
         def run_ats(run_id: str | None = None) -> dict:
             console.print("  [cyan]Canonical ATS APIs...[/cyan]")
@@ -1255,17 +1435,32 @@ def _run_discover(
             "Canonical ATS APIs",
             ats_sources,
             run_ats,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
         )
+        progress_completed += 1
         if isinstance(stats["ats_api"], str) and stats["ats_api"].startswith("error"):
             console.print(f"  [red]Canonical ATS API error:[/red] {stats['ats_api'][7:]}")
         if _discover_limit_consumed(start_count, limit, source_results.get("ats_api")):
-            stats["workday"] = _skip_discovery_source("workday", "Workday scraper", "limit reached")
-            stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
+            stats["workday"] = _skip_discovery_source(
+                "workday",
+                "Workday scraper",
+                "limit reached",
+                progress_completed=progress_completed,
+                progress_total=progress_total,
+            )
+            progress_completed += 1
+            stats["smartextract"] = _skip_discovery_source(
+                "smartextract",
+                "Smart extract",
+                "limit reached",
+                progress_completed=progress_completed,
+                progress_total=progress_total,
+            )
+            progress_completed += 1
             return finish_discovery()
 
     # Workday corporate scraper
-    workday_sources = schedule.for_prefix("workday")
-
     def run_workday(run_id: str | None = None) -> dict:
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         from jobhunter.discovery.workday import run_workday_discovery
@@ -1282,16 +1477,24 @@ def _run_discover(
         "Workday scraper",
         workday_sources,
         run_workday,
+        progress_completed=progress_completed,
+        progress_total=progress_total,
     )
+    progress_completed += 1
     if isinstance(stats["workday"], str) and stats["workday"].startswith("error"):
         console.print(f"  [red]Workday error:[/red] {stats['workday'][7:]}")
     if _discover_limit_consumed(start_count, limit, source_results.get("workday")):
-        stats["smartextract"] = _skip_discovery_source("smartextract", "Smart extract", "limit reached")
+        stats["smartextract"] = _skip_discovery_source(
+            "smartextract",
+            "Smart extract",
+            "limit reached",
+            progress_completed=progress_completed,
+            progress_total=progress_total,
+        )
+        progress_completed += 1
         return finish_discovery()
 
     # Smart extract
-    smart_extract_sources = _smart_extract_sources(schedule)
-
     def run_smart_extract_source() -> dict:
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         enqueue_manual_action_for_sources(conn, smart_extract_sources)
@@ -1311,7 +1514,10 @@ def _run_discover(
         "Smart extract",
         smart_extract_sources,
         run_smart_extract_source,
+        progress_completed=progress_completed,
+        progress_total=progress_total,
     )
+    progress_completed += 1
     if isinstance(stats["smartextract"], str) and stats["smartextract"].startswith("error"):
         console.print(f"  [red]Smart extract error:[/red] {stats['smartextract'][7:]}")
 

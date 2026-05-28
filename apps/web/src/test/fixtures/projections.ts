@@ -285,6 +285,7 @@ export const sampleDashboardSummary: DashboardSummary = {
       at: "2026-05-06T07:30:00Z",
     },
   ],
+  progress: [],
   sourceHealth: [
     {
       sourceId: "greenhouse:acme",

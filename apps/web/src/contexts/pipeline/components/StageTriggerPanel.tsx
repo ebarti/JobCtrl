@@ -21,6 +21,7 @@ import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutat
 import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
 
 type StageActivity = DashboardSummary["activity"][number];
+type StageProgress = DashboardSummary["progress"][number];
 
 function labelForStage(stage: Stage): string {
   return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
@@ -102,10 +103,20 @@ function latestStageActivity(summary: DashboardSummary | undefined, stage: Stage
   return summary?.activity.find((activity) => activity.stage === stage) ?? null;
 }
 
+function latestStageProgress(summary: DashboardSummary | undefined, stage: Stage): StageProgress | null {
+  return summary?.progress.find((progress) => progress.stage === stage) ?? null;
+}
+
 function isActivityAfter(activity: StageActivity, timestamp: number | null): boolean {
   if (timestamp === null || activity.at === null) return true;
   const occurredAt = Date.parse(activity.at);
   return Number.isNaN(occurredAt) || occurredAt >= timestamp - 5000;
+}
+
+function isProgressAfter(progress: StageProgress, timestamp: number | null): boolean {
+  if (timestamp === null || progress.updatedAt === null) return true;
+  const updatedAt = Date.parse(progress.updatedAt);
+  return Number.isNaN(updatedAt) || updatedAt >= timestamp - 5000;
 }
 
 function isRunningActivity(activity: StageActivity): boolean {
@@ -127,6 +138,48 @@ function stageActivityStatusLine(stage: Stage, activity: StageActivity): string 
     return `${stageLabel} latest failure: ${activity.message}${eventReference}.`;
   }
   return `${stageLabel} latest event: ${activity.message}${eventReference}.`;
+}
+
+function stageProgressStatusLine(stage: Stage, progress: StageProgress): string {
+  const stageLabel = labelForStage(stage);
+  const percent = progress.percent === null ? null : `${progress.percent}%`;
+  const count = `${progress.completed}/${progress.total}`;
+  const detail = progress.message || progress.currentStep || "stage progress updated";
+
+  if (progress.status === "failed") {
+    return percent
+      ? `${stageLabel} ${percent} complete (${count}): ${detail}.`
+      : `${stageLabel} progress (${count}): ${detail}.`;
+  }
+  if (progress.status === "succeeded" || progress.percent === 100) {
+    return `${stageLabel} 100% complete (${count}): ${detail}.`;
+  }
+  if (progress.status === "partial") {
+    return percent
+      ? `${stageLabel} ${percent} complete with warnings (${count}): ${detail}.`
+      : `${stageLabel} progress with warnings (${count}): ${detail}.`;
+  }
+  return percent
+    ? `${stageLabel} ${percent} complete (${count}): ${detail}.`
+    : `${stageLabel} progress (${count}): ${detail}.`;
+}
+
+function StageProgressLine({ stage, progress }: { readonly stage: Stage; readonly progress: StageProgress }) {
+  const progressValue = progress.percent ?? undefined;
+  return (
+    <span
+      className={progress.status === "failed" ? "status-line stage-progress-line danger-action" : "status-line stage-progress-line"}
+      role="status"
+    >
+      <span>{stageProgressStatusLine(stage, progress)}</span>
+      <progress
+        aria-label={`${labelForStage(stage)} progress`}
+        className="stage-progress-meter"
+        max={100}
+        value={progressValue}
+      />
+    </span>
+  );
 }
 
 const APPLY_MODEL_OPTIONS = ["default", "opus", "sonnet"] as const;
@@ -211,9 +264,12 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const selectedApplyModel = applyModelValue(config.model);
   const statusStage = submittedStage ?? activeStage;
   const stageActivity = latestStageActivity(dashboardSummary.data, statusStage);
+  const stageProgress = latestStageProgress(dashboardSummary.data, statusStage);
   const relevantPendingActivity =
     runStages.isPending && stageActivity && isActivityAfter(stageActivity, submittedAt) ? stageActivity : null;
   const visibleStageActivity = relevantPendingActivity ?? (!runStages.isPending ? stageActivity : null);
+  const visibleStageProgress =
+    stageProgress && isProgressAfter(stageProgress, submittedAt) ? stageProgress : null;
   const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
   const activeStagePanel = stagePanels[activeStage] ?? null;
   const workerUnhealthy =
@@ -429,11 +485,17 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
             {workerHealthMessage}
           </span>
         ) : runStages.isPending ? (
-          <span className="status-line" role="status">
-            {relevantPendingActivity
-              ? stageActivityStatusLine(statusStage, relevantPendingActivity)
-              : pendingStageStatusLine(statusStage)}
-          </span>
+          visibleStageProgress ? (
+            <StageProgressLine stage={statusStage} progress={visibleStageProgress} />
+          ) : (
+            <span className="status-line" role="status">
+              {relevantPendingActivity
+                ? stageActivityStatusLine(statusStage, relevantPendingActivity)
+                : pendingStageStatusLine(statusStage)}
+            </span>
+          )
+        ) : visibleStageProgress ? (
+          <StageProgressLine stage={statusStage} progress={visibleStageProgress} />
         ) : runStages.data ? (
           <span className={runStages.data.status === "failed" ? "status-line danger-action" : "status-line"} role="status">
             {pipelineRunStatusLine(statusStage, runStages.data)}

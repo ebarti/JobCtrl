@@ -474,6 +474,56 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns the latest pipeline progress snapshot from durable events", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "info",
+        "Discovery source workday ok",
+        "2026-04-29T10:20:00+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          progress: {
+            completed: 3,
+            total: 5,
+            percent: 60,
+            currentStep: "Workday scraper",
+            status: "running",
+            message: "Workday scraper complete",
+          },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress).toEqual([
+      {
+        stage: "discover",
+        status: "running",
+        percent: 60,
+        completed: 3,
+        total: 5,
+        currentStep: "Workday scraper",
+        message: "Workday scraper complete",
+        updatedAt: "2026-04-29T10:20:00+00:00",
+      },
+    ]);
+
+    await app.close();
+  });
+
   it("returns local-day dashboard deltas for active jobs and applications", async () => {
     const now = new Date().toISOString();
     const db = new Database(options.dbPath);
