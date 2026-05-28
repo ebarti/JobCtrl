@@ -4,6 +4,7 @@ import type {
   ManualCaptureImportRequest,
   ManualCaptureListResponse,
   QuarantineListResponse,
+  RoleMatchFeedbackListResponse,
   SourceLocatorListResponse,
   SourceRegistryEntrySummary,
 } from "@jobhunter/contracts";
@@ -24,6 +25,7 @@ import {
   useDiscoveryQuarantineQuery,
   useDiscoverySourcePreviewQuery,
   useManualCaptureQueueQuery,
+  useRoleMatchFeedbackQuery,
   useSourceLocatorCandidatesQuery,
   useSourceRegistryQuery,
 } from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
@@ -50,12 +52,14 @@ import {
   usePatchDiscoverySourceStateMutation,
   usePromoteSourceLocatorCandidateMutation,
   useRejectSourceLocatorCandidateMutation,
+  useRoleMatchFeedbackDecisionMutation,
   useUpsertDiscoverySourceMutation,
 } from "../hooks/useDiscoveryProductControlMutations.js";
 
 type QuarantineEntry = QuarantineListResponse["entries"][number];
 type ManualCaptureItem = ManualCaptureListResponse["items"][number];
 type LocatorCandidate = SourceLocatorListResponse["candidates"][number];
+type RoleMatchSuggestion = RoleMatchFeedbackListResponse["suggestions"][number];
 type PreviewLead = DiscoveryPreviewResponse["leads"][number];
 type SourceMetricTone = "good" | "warn" | "bad" | "unknown";
 type SourceChipTone = "good" | "info" | "warn" | "bad" | "neutral";
@@ -366,22 +370,28 @@ export function DiscoveryProductControls({
   const locatorCandidates = useSourceLocatorCandidatesQuery();
   const quarantine = useDiscoveryQuarantineQuery();
   const manualCapture = useManualCaptureQueueQuery();
+  const roleMatchFeedback = useRoleMatchFeedbackQuery();
   const sourceCount = sources.data?.sources.length ?? 0;
   const quarantineCount = quarantine.data?.entries.length ?? 0;
   const manualCount = manualCapture.data?.items.length ?? 0;
   const candidateCount = locatorCandidates.data?.candidates.length ?? 0;
+  const pendingRoleSuggestionCount =
+    roleMatchFeedback.data?.suggestions.filter(
+      (suggestion) => suggestion.status === "pending",
+    ).length ?? 0;
   const error =
     sources.error ??
     quarantine.error ??
     manualCapture.error ??
-    locatorCandidates.error;
+    locatorCandidates.error ??
+    roleMatchFeedback.error;
   const message = error instanceof Error ? error.message : null;
 
   return (
     <section className="card full discovery-controls">
       <CardHeader
         title="Discovery controls"
-        meta={`${sourceCount} sources · ${candidateCount} candidates · ${quarantineCount + manualCount} review`}
+        meta={`${sourceCount} sources · ${candidateCount} candidates · ${quarantineCount + manualCount + pendingRoleSuggestionCount} review`}
       />
       {message ? <div className="banner inline">{message}</div> : null}
       {layout === "tabs" ? (
@@ -390,6 +400,7 @@ export function DiscoveryProductControls({
             <TabsTrigger value="sources">Source registry</TabsTrigger>
             <TabsTrigger value="locator">Source locator</TabsTrigger>
             <TabsTrigger value="quarantine">Quarantine review</TabsTrigger>
+            <TabsTrigger value="role-match">Role matching</TabsTrigger>
             <TabsTrigger value="manual">Manual capture</TabsTrigger>
           </TabsList>
           <TabsContent value="sources" className="discovery-tab-panel">
@@ -409,6 +420,12 @@ export function DiscoveryProductControls({
             <QuarantinePanel
               entries={quarantine.data?.entries ?? []}
               loading={quarantine.isLoading}
+            />
+          </TabsContent>
+          <TabsContent value="role-match" className="discovery-tab-panel">
+            <RoleMatchFeedbackPanel
+              suggestions={roleMatchFeedback.data?.suggestions ?? []}
+              loading={roleMatchFeedback.isLoading}
             />
           </TabsContent>
           <TabsContent value="manual" className="discovery-tab-panel">
@@ -431,6 +448,10 @@ export function DiscoveryProductControls({
           <QuarantinePanel
             entries={quarantine.data?.entries ?? []}
             loading={quarantine.isLoading}
+          />
+          <RoleMatchFeedbackPanel
+            suggestions={roleMatchFeedback.data?.suggestions ?? []}
+            loading={roleMatchFeedback.isLoading}
           />
           <ManualCapturePanel
             items={manualCapture.data?.items ?? []}
@@ -1072,6 +1093,116 @@ function QuarantinePanel({
           <Empty
             title={
               loading ? "Loading quarantined leads." : "No quarantined leads."
+            }
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RoleMatchFeedbackPanel({
+  suggestions,
+  loading,
+}: {
+  suggestions: RoleMatchSuggestion[];
+  loading: boolean;
+}) {
+  const decision = useRoleMatchFeedbackDecisionMutation();
+  const pendingCount = suggestions.filter(
+    (suggestion) => suggestion.status === "pending",
+  ).length;
+
+  return (
+    <div className="discovery-control-panel">
+      <div className="discovery-panel-head">
+        <h3>Role matching</h3>
+        <span className="meta">
+          {pendingCount} pending · {suggestions.length} total
+        </span>
+      </div>
+      <div className="rows compact">
+        {suggestions.map((suggestion) => (
+          <div
+            className="discovery-review-row role-match-feedback-row"
+            key={suggestion.suggestionId}
+          >
+            <AlertTriangle size={16} aria-hidden="true" />
+            <span className="title-stack">
+              <b>Exclude “{suggestion.titleDisplay}”</b>
+              <span>
+                {label(suggestion.status)} · {suggestion.sampleCount} low-score{" "}
+                {suggestion.sampleCount === 1 ? "example" : "examples"} ·{" "}
+                {label(suggestion.reasonCode)}
+              </span>
+              <span>{suggestion.reason}</span>
+              {suggestion.sourceIds.length ? (
+                <span className="mono">
+                  sources: {suggestion.sourceIds.join(", ")}
+                </span>
+              ) : null}
+              {suggestion.evidence[0] ? (
+                <span>
+                  Latest: {suggestion.evidence[0].company || "Unknown company"} ·{" "}
+                  score {suggestion.evidence[0].fitScore}/10
+                  {suggestion.evidence[0].roleFit === null
+                    ? ""
+                    : ` · role ${suggestion.evidence[0].roleFit}/10`}
+                </span>
+              ) : null}
+            </span>
+            <div className="row-actions">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Approve role-match rule for ${suggestion.titleDisplay}`}
+                title="Approve rule"
+                disabled={
+                  decision.isPending || suggestion.status === "approved"
+                }
+                onClick={() =>
+                  decision.mutate({
+                    suggestionId: suggestion.suggestionId,
+                    body: {
+                      decision: "approve",
+                      reason: "User approved low-score role-match suggestion.",
+                    },
+                  })
+                }
+              >
+                <Check size={14} aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Decline role-match rule for ${suggestion.titleDisplay}`}
+                title="Decline rule"
+                disabled={
+                  decision.isPending || suggestion.status === "declined"
+                }
+                onClick={() =>
+                  decision.mutate({
+                    suggestionId: suggestion.suggestionId,
+                    body: {
+                      decision: "decline",
+                      reason: "User declined low-score role-match suggestion.",
+                    },
+                  })
+                }
+              >
+                <X size={14} aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        ))}
+        {!suggestions.length ? (
+          <Empty
+            title={
+              loading
+                ? "Loading role-match feedback."
+                : "No role-match feedback suggestions."
             }
           />
         ) : null}

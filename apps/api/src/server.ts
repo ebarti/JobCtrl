@@ -35,6 +35,7 @@ import {
   RescoreJobRequestSchema,
   ResetStaleScoresForRescoreRequestSchema,
   RetryStageRequestSchema,
+  RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
   RunPipelineStagesRequestSchema,
   SettingsUpdateRequestSchema,
@@ -48,8 +49,10 @@ import { databaseExists, openDatabase } from "./db.js";
 import {
   decideQuarantineEntry,
   dismissManualCapture,
+  decideRoleMatchFeedbackSuggestion,
   listManualCaptureQueue,
   listQuarantine,
+  listRoleMatchFeedbackSuggestions,
   listSourceLocatorCandidates,
   listSourceRegistry,
   patchSourceState,
@@ -347,6 +350,27 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return withWritableDb(reply, options.dbPath, (db) => recordDiscoveryFeedback(db, body));
   });
+
+  app.get("/v1/discovery/role-match-feedback", async (_request, reply) =>
+    withWritableDb(reply, options.dbPath, (db) => listRoleMatchFeedbackSuggestions(db)),
+  );
+
+  app.post<{ Params: { suggestionId: string } }>(
+    "/v1/discovery/role-match-feedback/:suggestionId/decision",
+    async (request, reply) => {
+      const body = parseBody(reply, RoleMatchFeedbackDecisionSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        decideRoleMatchFeedbackSuggestion(
+          db,
+          decodeRouteParam(request.params.suggestionId),
+          body,
+        ),
+      );
+    },
+  );
 
   app.post("/v1/pipeline/actions/run-stage", async (request, reply) => {
     const body = parseBody(reply, RunPipelineStagesRequestSchema, request.body ?? {});

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from jobhunter.discovery.title_filter import title_matches_query
+import sqlite3
+
+from jobhunter.discovery.title_filter import reset_role_match_feedback_cache, title_matches_query
 
 
 class _FakeRoleMatcher:
@@ -162,3 +164,37 @@ def test_loose_recall_title_matching_uses_role_adjudicator() -> None:
     )
 
     assert len(matcher.calls) == 1
+
+
+def test_approved_role_feedback_title_exclusions_apply(monkeypatch, tmp_path) -> None:
+    from jobhunter import config
+
+    db_path = tmp_path / "jobhunter.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE role_match_feedback_suggestions (
+              tenant_id TEXT,
+              suggestion_id TEXT,
+              status TEXT,
+              rule_kind TEXT,
+              title_pattern TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO role_match_feedback_suggestions (
+              tenant_id, suggestion_id, status, rule_kind, title_pattern
+            ) VALUES ('local', 'suggestion-1', 'approved', 'exact_title_exclusion', ?)
+            """,
+            ("manager test engineering",),
+        )
+
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    reset_role_match_feedback_cache()
+
+    assert not title_matches_query("Manager, Test Engineering", "Engineering Manager")
+    assert title_matches_query("Engineering Manager", "Engineering Manager")
+
+    reset_role_match_feedback_cache()

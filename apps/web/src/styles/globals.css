@@ -511,7 +511,7 @@ textarea {
 
 .discovery-control-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) repeat(3, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 0;
 }
 
@@ -1129,6 +1129,10 @@ textarea {
 
 .manual-capture-row {
   align-items: start;
+}
+
+.role-match-feedback-row {
+  min-height: 96px;
 }
 
 .manual-capture-body {

@@ -1243,6 +1243,65 @@ export interface DiscoveryFeedbackResponse {
   recordedAt: string;
 }
 
+export const ROLE_MATCH_FEEDBACK_STATUSES = ["pending", "approved", "declined"] as const;
+export type RoleMatchFeedbackStatus = (typeof ROLE_MATCH_FEEDBACK_STATUSES)[number];
+
+export const ROLE_MATCH_FEEDBACK_RULE_KINDS = ["exact_title_exclusion"] as const;
+export type RoleMatchFeedbackRuleKind = (typeof ROLE_MATCH_FEEDBACK_RULE_KINDS)[number];
+
+export const ROLE_MATCH_FEEDBACK_REASON_CODES = [
+  "low_role_fit",
+  "role_mismatch_evidence",
+  "very_low_score",
+] as const;
+export type RoleMatchFeedbackReasonCode = (typeof ROLE_MATCH_FEEDBACK_REASON_CODES)[number];
+
+export interface RoleMatchFeedbackEvidence {
+  jobKey: string;
+  title: string;
+  company: string;
+  sourceId: string | null;
+  fitScore: number;
+  roleFit: number | null;
+  reason: string;
+  scoredAt: string | null;
+}
+
+export interface RoleMatchFeedbackSuggestion {
+  suggestionId: string;
+  status: RoleMatchFeedbackStatus;
+  ruleKind: RoleMatchFeedbackRuleKind;
+  titlePattern: string;
+  titleDisplay: string;
+  reasonCode: RoleMatchFeedbackReasonCode;
+  reason: string;
+  sampleCount: number;
+  sourceIds: string[];
+  evidence: RoleMatchFeedbackEvidence[];
+  createdAt: string;
+  updatedAt: string;
+  decidedAt: string | null;
+  decisionReason: string | null;
+}
+
+export interface RoleMatchFeedbackListResponse {
+  ok: true;
+  suggestions: RoleMatchFeedbackSuggestion[];
+}
+
+export const RoleMatchFeedbackDecisionSchema = z
+  .object({
+    decision: z.enum(["approve", "decline"]),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict();
+export type RoleMatchFeedbackDecisionRequest = z.infer<typeof RoleMatchFeedbackDecisionSchema>;
+
+export interface RoleMatchFeedbackDecisionResponse {
+  ok: true;
+  suggestion: RoleMatchFeedbackSuggestion;
+}
+
 export const SourceUpsertRequestSchema = z
   .object({
     sourceId: z.string().trim().min(1).max(160),

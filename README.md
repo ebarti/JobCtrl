@@ -374,11 +374,13 @@ runnable ATS sources into the registry; unknown owner URLs and ATS URLs that
 still need adapter configuration stay in review. These controls can add an
 experimental source, preview recently observed leads for a source, enable or
 quarantine a source, approve or reject quarantined leads, record source
-feedback, open a blocked lead in the local browser, and import a user-provided
-URL, current-page URL, pasted text, saved HTML, or email content as
-manual-capture provenance. Manual capture stores local provenance metadata and
-content hashes, not raw captured posting text in domain events. The `limit`
-control is honored by the Discover and Apply tabs; a bounded Discover run stops
+feedback, review low-score role-match suggestions, approve or decline exact
+title-exclusion rules for future discovery, open a blocked lead in the local
+browser, and import a user-provided URL, current-page URL, pasted text, saved
+HTML, or email content as manual-capture provenance. Manual capture stores
+local provenance metadata and content hashes, not raw captured posting text in
+domain events. The `limit` control is honored by the Discover and Apply tabs; a
+bounded Discover run stops
 remaining sources once the cap is reached. Tabs default to dry-run mode so apply
 automation does not submit applications unless you explicitly clear dry run.
 

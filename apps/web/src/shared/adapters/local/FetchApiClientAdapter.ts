@@ -74,6 +74,15 @@ export class FetchApiClientAdapter implements ApiClientPort {
   recordDiscoveryFeedback(body: Parameters<JobHunterApiClient["recordDiscoveryFeedback"]>[0]) {
     return this.client.recordDiscoveryFeedback(body);
   }
+  roleMatchFeedbackSuggestions() {
+    return this.client.roleMatchFeedbackSuggestions();
+  }
+  decideRoleMatchFeedbackSuggestion(
+    suggestionId: string,
+    body: Parameters<JobHunterApiClient["decideRoleMatchFeedbackSuggestion"]>[1],
+  ) {
+    return this.client.decideRoleMatchFeedbackSuggestion(suggestionId, body);
+  }
   jobs(query: Parameters<JobHunterApiClient["jobs"]>[0] = {}) {
     return this.client.jobs(query);
   }

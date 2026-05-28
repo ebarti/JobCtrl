@@ -215,6 +215,62 @@ export const handlers = [
       recordedAt: "2026-05-12T10:00:00+00:00",
     });
   }),
+  http.get("*/v1/discovery/role-match-feedback", () =>
+    HttpResponse.json({
+      ok: true,
+      suggestions: [
+        {
+          suggestionId: "role-title-exclusion-manager-test-engineering",
+          status: "pending",
+          ruleKind: "exact_title_exclusion",
+          titlePattern: "manager test engineering",
+          titleDisplay: "Manager, Test Engineering",
+          reasonCode: "low_role_fit",
+          reason: "Role fit is 1/10 on a job scored 2/10.",
+          sampleCount: 1,
+          sourceIds: ["jobspy:linkedin"],
+          evidence: [
+            {
+              jobKey: "https://example.com/jobs/test-engineering",
+              title: "Manager, Test Engineering",
+              company: "ExampleCo",
+              sourceId: "jobspy:linkedin",
+              fitScore: 2,
+              roleFit: 1,
+              reason: "Role fit is 1/10 on a job scored 2/10.",
+              scoredAt: "2026-05-12T10:00:00+00:00",
+            },
+          ],
+          createdAt: "2026-05-12T10:00:00+00:00",
+          updatedAt: "2026-05-12T10:00:00+00:00",
+          decidedAt: null,
+          decisionReason: null,
+        },
+      ],
+    }),
+  ),
+  http.post("*/v1/discovery/role-match-feedback/:suggestionId/decision", async ({ params, request }) => {
+    const body = (await request.json()) as { decision: "approve" | "decline"; reason?: string };
+    return HttpResponse.json({
+      ok: true,
+      suggestion: {
+        suggestionId: String(params["suggestionId"]),
+        status: body.decision === "approve" ? "approved" : "declined",
+        ruleKind: "exact_title_exclusion",
+        titlePattern: "manager test engineering",
+        titleDisplay: "Manager, Test Engineering",
+        reasonCode: "low_role_fit",
+        reason: "Role fit is 1/10 on a job scored 2/10.",
+        sampleCount: 1,
+        sourceIds: ["jobspy:linkedin"],
+        evidence: [],
+        createdAt: "2026-05-12T10:00:00+00:00",
+        updatedAt: "2026-05-12T10:01:00+00:00",
+        decidedAt: "2026-05-12T10:01:00+00:00",
+        decisionReason: body.reason ?? null,
+      },
+    });
+  }),
 
   http.get("*/v1/jobs", () => HttpResponse.json(makeJobsPage())),
   http.post("*/v1/jobs/bulk-delete", async ({ request }) => {

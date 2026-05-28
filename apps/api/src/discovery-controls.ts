@@ -2,6 +2,14 @@ import crypto from "node:crypto";
 
 import type {
   DiscoveryFeedbackResponse,
+  RoleMatchFeedbackDecisionRequest,
+  RoleMatchFeedbackDecisionResponse,
+  RoleMatchFeedbackEvidence,
+  RoleMatchFeedbackListResponse,
+  RoleMatchFeedbackReasonCode,
+  RoleMatchFeedbackRuleKind,
+  RoleMatchFeedbackStatus,
+  RoleMatchFeedbackSuggestion,
   ManualCaptureDismissResponse,
   ManualCaptureListResponse,
   ManualActionReasonValue,
@@ -141,6 +149,35 @@ interface ManualCaptureRow extends Record<string, unknown> {
   status: string;
 }
 
+interface LowScoreJobRow extends Record<string, unknown> {
+  job_key: string;
+  title: string | null;
+  company: string | null;
+  site: string | null;
+  strategy: string | null;
+  fit_score: number;
+  breakdown_json: string | null;
+  scored_at: string | null;
+}
+
+interface RoleMatchFeedbackRow extends Record<string, unknown> {
+  tenant_id: string;
+  suggestion_id: string;
+  status: string;
+  rule_kind: string;
+  title_pattern: string;
+  title_display: string;
+  reason_code: string;
+  reason: string;
+  sample_count: number;
+  source_ids_json: string;
+  evidence_json: string;
+  created_at: string;
+  updated_at: string;
+  decided_at: string | null;
+  decision_reason: string | null;
+}
+
 interface CandidateProfileTargetRow extends Record<string, unknown> {
   experience_target_locations?: string;
   personal_city?: string;
@@ -224,6 +261,24 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       note        TEXT,
       recorded_at TEXT NOT NULL,
       PRIMARY KEY (tenant_id, feedback_id)
+    );
+    CREATE TABLE IF NOT EXISTS role_match_feedback_suggestions (
+      tenant_id       TEXT NOT NULL DEFAULT 'local',
+      suggestion_id   TEXT NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      rule_kind       TEXT NOT NULL,
+      title_pattern   TEXT NOT NULL,
+      title_display   TEXT NOT NULL,
+      reason_code     TEXT NOT NULL,
+      reason          TEXT NOT NULL,
+      sample_count    INTEGER NOT NULL DEFAULT 0,
+      source_ids_json TEXT NOT NULL DEFAULT '[]',
+      evidence_json   TEXT NOT NULL DEFAULT '[]',
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL,
+      decided_at      TEXT,
+      decision_reason TEXT,
+      PRIMARY KEY (tenant_id, suggestion_id)
     );
   `);
 }
@@ -656,6 +711,52 @@ export function recordDiscoveryFeedback(
   };
 }
 
+export function listRoleMatchFeedbackSuggestions(
+  db: SqliteDatabase,
+): RoleMatchFeedbackListResponse {
+  ensureDiscoveryControlTables(db);
+  refreshRoleMatchFeedbackSuggestions(db);
+  const rows = allRows<RoleMatchFeedbackRow>(
+    db,
+    `SELECT tenant_id, suggestion_id, status, rule_kind, title_pattern,
+            title_display, reason_code, reason, sample_count, source_ids_json,
+            evidence_json, created_at, updated_at, decided_at, decision_reason
+     FROM role_match_feedback_suggestions
+     WHERE tenant_id = ?
+     ORDER BY
+       CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+       sample_count DESC,
+       updated_at DESC`,
+    [DEFAULT_TENANT],
+  );
+  return { ok: true, suggestions: rows.map(rowToRoleMatchSuggestion) };
+}
+
+export function decideRoleMatchFeedbackSuggestion(
+  db: SqliteDatabase,
+  suggestionId: string,
+  decision: RoleMatchFeedbackDecisionRequest,
+): RoleMatchFeedbackDecisionResponse {
+  ensureDiscoveryControlTables(db);
+  refreshRoleMatchFeedbackSuggestions(db);
+  const existing = getRoleMatchFeedbackRow(db, suggestionId);
+  if (!existing) {
+    throw new InputError(`Role-match feedback suggestion ${suggestionId} was not found.`);
+  }
+  const now = new Date().toISOString();
+  const status = decision.decision === "approve" ? "approved" : "declined";
+  db.prepare(
+    `UPDATE role_match_feedback_suggestions
+     SET status = ?, decision_reason = ?, decided_at = ?, updated_at = ?
+     WHERE tenant_id = ? AND suggestion_id = ?`,
+  ).run(status, decision.reason ?? null, now, now, DEFAULT_TENANT, suggestionId);
+  const row = getRoleMatchFeedbackRow(db, suggestionId);
+  if (!row) {
+    throw new Error(`Unable to read role-match feedback suggestion ${suggestionId}.`);
+  }
+  return { ok: true, suggestion: rowToRoleMatchSuggestion(row) };
+}
+
 export function previewDiscoverySource(
   db: SqliteDatabase,
   sourceId: string,
@@ -758,6 +859,261 @@ function deleteSourceLocatorCandidate(db: SqliteDatabase, candidateId: string): 
     `DELETE FROM source_locator_candidates
      WHERE tenant_id = ? AND candidate_id = ?`,
   ).run(DEFAULT_TENANT, candidateId);
+}
+
+function refreshRoleMatchFeedbackSuggestions(db: SqliteDatabase): void {
+  const groups = lowScoreRoleMatchGroups(db);
+  const now = new Date().toISOString();
+  const upsert = db.prepare(
+    `INSERT INTO role_match_feedback_suggestions (
+       tenant_id, suggestion_id, status, rule_kind, title_pattern,
+       title_display, reason_code, reason, sample_count, source_ids_json,
+       evidence_json, created_at, updated_at
+     ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(tenant_id, suggestion_id) DO UPDATE SET
+       title_display = excluded.title_display,
+       reason_code = excluded.reason_code,
+       reason = excluded.reason,
+       sample_count = excluded.sample_count,
+       source_ids_json = excluded.source_ids_json,
+       evidence_json = excluded.evidence_json,
+       updated_at = excluded.updated_at`,
+  );
+  for (const group of groups.values()) {
+    upsert.run(
+      DEFAULT_TENANT,
+      group.suggestionId,
+      group.ruleKind,
+      group.titlePattern,
+      group.titleDisplay,
+      group.reasonCode,
+      group.reason,
+      group.sampleCount,
+      JSON.stringify(group.sourceIds),
+      JSON.stringify(group.evidence),
+      now,
+      now,
+    );
+  }
+}
+
+function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedbackSuggestion> {
+  const groups = new Map<string, RoleMatchFeedbackSuggestion>();
+  const rows = lowScoreJobRows(db);
+  const sourceByJobKey = latestSourceIdsByJobKey(db);
+  for (const row of rows) {
+    const evidence = roleMatchFeedbackEvidence(row, sourceByJobKey.get(row.job_key) ?? null);
+    if (!evidence) {
+      continue;
+    }
+    const titlePattern = normalizeTitlePattern(evidence.title);
+    if (!titlePattern) {
+      continue;
+    }
+    const suggestionId = `role-title-exclusion:${shortHash(titlePattern)}`;
+    const sourceIds = evidence.sourceId ? [evidence.sourceId] : [];
+    const existing = groups.get(suggestionId);
+    if (existing) {
+      existing.sampleCount += 1;
+      existing.evidence.push(evidence);
+      existing.sourceIds = [...new Set([...existing.sourceIds, ...sourceIds])].sort();
+      if (evidence.scoredAt && (!existing.updatedAt || evidence.scoredAt > existing.updatedAt)) {
+        existing.updatedAt = evidence.scoredAt;
+      }
+      continue;
+    }
+    groups.set(suggestionId, {
+      suggestionId,
+      status: "pending",
+      ruleKind: "exact_title_exclusion",
+      titlePattern,
+      titleDisplay: evidence.title,
+      reasonCode: roleMatchReasonCode(row),
+      reason: evidence.reason,
+      sampleCount: 1,
+      sourceIds,
+      evidence: [evidence],
+      createdAt: evidence.scoredAt ?? new Date().toISOString(),
+      updatedAt: evidence.scoredAt ?? new Date().toISOString(),
+      decidedAt: null,
+      decisionReason: null,
+    });
+  }
+  for (const suggestion of groups.values()) {
+    suggestion.evidence = suggestion.evidence
+      .sort((left, right) => String(right.scoredAt ?? "").localeCompare(String(left.scoredAt ?? "")))
+      .slice(0, 5);
+  }
+  return groups;
+}
+
+function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
+  if (!tableExists(db, "jobs") || !tableExists(db, "job_scores")) {
+    return [];
+  }
+  const columns = tableColumns(db, "jobs");
+  const titleExpr = columns.has("title") ? "COALESCE(j.title, '')" : "''";
+  const companyExpr = columns.has("company")
+    ? "COALESCE(j.company, j.site, '')"
+    : columns.has("site")
+      ? "COALESCE(j.site, '')"
+      : "''";
+  const siteExpr = columns.has("site") ? "COALESCE(j.site, '')" : "''";
+  const strategyExpr = columns.has("strategy") ? "COALESCE(j.strategy, '')" : "''";
+  return allRows<LowScoreJobRow>(
+    db,
+    `WITH latest_scores AS (
+       SELECT job_url, MAX(version) AS version
+       FROM job_scores
+       WHERE tenant_id = ?
+       GROUP BY job_url
+     )
+     SELECT j.url AS job_key,
+            ${titleExpr} AS title,
+            ${companyExpr} AS company,
+            ${siteExpr} AS site,
+            ${strategyExpr} AS strategy,
+            s.fit_score,
+            s.breakdown_json,
+            s.scored_at
+     FROM latest_scores latest
+     JOIN job_scores s ON s.job_url = latest.job_url AND s.version = latest.version
+     JOIN jobs j ON j.url = s.job_url
+     WHERE s.tenant_id = ?
+       AND s.fit_score <= 2
+     ORDER BY s.scored_at DESC
+     LIMIT 250`,
+    [DEFAULT_TENANT, DEFAULT_TENANT],
+  );
+}
+
+function latestSourceIdsByJobKey(db: SqliteDatabase): Map<string, string> {
+  if (!tableExists(db, "job_source_observations")) {
+    return new Map();
+  }
+  const rows = allRows<{ job_url: string; source_id: string }>(
+    db,
+    `SELECT job_url, source_id
+     FROM job_source_observations
+     WHERE tenant_id = ?
+       AND source_id != ''
+     ORDER BY observed_at DESC, source_observation_id DESC`,
+    [DEFAULT_TENANT],
+  );
+  const result = new Map<string, string>();
+  for (const row of rows) {
+    if (!result.has(row.job_url)) {
+      result.set(row.job_url, row.source_id);
+    }
+  }
+  return result;
+}
+
+function roleMatchFeedbackEvidence(
+  row: LowScoreJobRow,
+  observedSourceId: string | null,
+): RoleMatchFeedbackEvidence | null {
+  const title = String(row.title ?? "").trim();
+  if (!title || normalizeTitlePattern(title).split(" ").length < 2) {
+    return null;
+  }
+  const breakdown = parseObject(row.breakdown_json);
+  const roleFit = nullableNumber(breakdown.roleFit ?? breakdown.role_fit);
+  const reasonText = scoreEvidenceText(breakdown);
+  const hasRoleEvidence =
+    (roleFit !== null && roleFit <= 2) ||
+    /\b(role|title|seniority|domain|function|track|manager|management|engineering|technical|technology)\b/i.test(
+      reasonText,
+    );
+  const hasOnlyNonRoleBlocker =
+    !hasRoleEvidence &&
+    /\b(location|remote|visa|sponsor|sponsorship|country|salary|compensation|language)\b/i.test(
+      reasonText,
+    );
+  if (hasOnlyNonRoleBlocker || (!hasRoleEvidence && Number(row.fit_score) > 1)) {
+    return null;
+  }
+  return {
+    jobKey: row.job_key,
+    title,
+    company: String(row.company ?? "").trim(),
+    sourceId: observedSourceId ?? inferredSourceId(row),
+    fitScore: Number(row.fit_score),
+    roleFit,
+    reason:
+      roleFit !== null && roleFit <= 2
+        ? `Role fit is ${roleFit}/10 on a job scored ${row.fit_score}/10.`
+        : `Job scored ${row.fit_score}/10 with role-matching evidence.`,
+    scoredAt: row.scored_at ?? null,
+  };
+}
+
+function roleMatchReasonCode(row: LowScoreJobRow): RoleMatchFeedbackReasonCode {
+  const breakdown = parseObject(row.breakdown_json);
+  const roleFit = nullableNumber(breakdown.roleFit ?? breakdown.role_fit);
+  if (roleFit !== null && roleFit <= 2) {
+    return "low_role_fit";
+  }
+  if (Number(row.fit_score) <= 1) {
+    return "very_low_score";
+  }
+  return "role_mismatch_evidence";
+}
+
+function scoreEvidenceText(breakdown: Record<string, unknown>): string {
+  const eligibility = parseObject(breakdown.eligibility);
+  return [
+    breakdown.reasoning,
+    ...stringArray(breakdown.missingSignals ?? breakdown.missing_signals),
+    ...stringArray(breakdown.matchedSignals ?? breakdown.matched_signals),
+    ...stringArray(eligibility.hardBlockers ?? eligibility.hard_blockers),
+    ...stringArray(eligibility.warnings),
+  ]
+    .map((value) => String(value ?? ""))
+    .join(" ");
+}
+
+function inferredSourceId(row: LowScoreJobRow): string | null {
+  const strategy = String(row.strategy ?? "").trim().toLowerCase();
+  const site = String(row.site ?? "").trim().toLowerCase();
+  if (strategy === "jobspy" && site) {
+    return `jobspy:${slugText(site)}`;
+  }
+  return strategy ? strategy : null;
+}
+
+function getRoleMatchFeedbackRow(
+  db: SqliteDatabase,
+  suggestionId: string,
+): RoleMatchFeedbackRow | undefined {
+  return getRow<RoleMatchFeedbackRow>(
+    db,
+    `SELECT tenant_id, suggestion_id, status, rule_kind, title_pattern,
+            title_display, reason_code, reason, sample_count, source_ids_json,
+            evidence_json, created_at, updated_at, decided_at, decision_reason
+     FROM role_match_feedback_suggestions
+     WHERE tenant_id = ? AND suggestion_id = ?`,
+    [DEFAULT_TENANT, suggestionId],
+  );
+}
+
+function rowToRoleMatchSuggestion(row: RoleMatchFeedbackRow): RoleMatchFeedbackSuggestion {
+  return {
+    suggestionId: row.suggestion_id,
+    status: roleMatchFeedbackStatus(row.status),
+    ruleKind: roleMatchFeedbackRuleKind(row.rule_kind),
+    titlePattern: row.title_pattern,
+    titleDisplay: row.title_display,
+    reasonCode: roleMatchFeedbackReasonCode(row.reason_code),
+    reason: row.reason,
+    sampleCount: Number(row.sample_count ?? 0),
+    sourceIds: stringArrayJson(row.source_ids_json),
+    evidence: evidenceArrayJson(row.evidence_json),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    decidedAt: row.decided_at,
+    decisionReason: row.decision_reason,
+  };
 }
 
 function rowToSourceSummary(
@@ -931,6 +1287,92 @@ function parseObject(raw: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+}
+
+function stringArrayJson(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return stringArray(raw);
+  }
+  if (typeof raw !== "string") {
+    return [];
+  }
+  try {
+    return stringArray(JSON.parse(raw) as unknown);
+  } catch {
+    return [];
+  }
+}
+
+function evidenceArrayJson(raw: unknown): RoleMatchFeedbackEvidence[] {
+  const parsed = typeof raw === "string" ? safeJson(raw) : raw;
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed
+    .map((item) => parseObject(item))
+    .map((item) => ({
+      jobKey: String(item.jobKey ?? ""),
+      title: String(item.title ?? ""),
+      company: String(item.company ?? ""),
+      sourceId: typeof item.sourceId === "string" ? item.sourceId : null,
+      fitScore: Number(item.fitScore ?? 0),
+      roleFit: nullableNumber(item.roleFit),
+      reason: String(item.reason ?? ""),
+      scoredAt: typeof item.scoredAt === "string" ? item.scoredAt : null,
+    }))
+    .filter((item) => item.jobKey && item.title);
+}
+
+function safeJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function roleMatchFeedbackStatus(value: string): RoleMatchFeedbackStatus {
+  if (value === "approved" || value === "declined") {
+    return value;
+  }
+  return "pending";
+}
+
+function roleMatchFeedbackRuleKind(value: string): RoleMatchFeedbackRuleKind {
+  return value === "exact_title_exclusion" ? value : "exact_title_exclusion";
+}
+
+function roleMatchFeedbackReasonCode(value: string): RoleMatchFeedbackReasonCode {
+  if (value === "role_mismatch_evidence" || value === "very_low_score") {
+    return value;
+  }
+  return "low_role_fit";
+}
+
+function normalizeTitlePattern(value: string): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g)
+    ?.join(" ") ?? "";
+}
+
+function shortHash(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function tableColumns(db: SqliteDatabase, tableName: string): Set<string> {
+  return new Set(
+    allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name),
+  );
 }
 
 function nullableNumber(value: unknown): number | null {

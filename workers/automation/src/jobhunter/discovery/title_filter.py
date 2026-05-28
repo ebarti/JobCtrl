@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import sqlite3
+import time
 from collections.abc import Sequence
 from itertools import product
 from typing import Protocol, cast
@@ -206,6 +208,8 @@ _RECALL_TOKEN_EXPANSIONS = {
 }
 
 _AUTO_ROLE_MATCHER = object()
+_ROLE_FEEDBACK_CACHE_TTL_SECONDS = 30.0
+_ROLE_FEEDBACK_CACHE: tuple[float, tuple[str, ...]] = (0.0, ())
 
 
 def title_matches_query(
@@ -218,6 +222,8 @@ def title_matches_query(
     role_matcher: RoleTitleMatchAdjudicator | None | object = _AUTO_ROLE_MATCHER,
 ) -> bool:
     """Return whether a posting title satisfies a target search query."""
+    if _title_excluded_by_role_feedback(title):
+        return False
     normalized_query = normalize_query(query)
     if not normalized_query:
         return True
@@ -276,6 +282,63 @@ def normalize_query(query: str | None) -> str:
     if not raw:
         return ""
     return raw.split("|", 1)[0].strip()
+
+
+def reset_role_match_feedback_cache() -> None:
+    """Clear the approved title-exclusion cache for tests and long-lived workers."""
+
+    global _ROLE_FEEDBACK_CACHE
+    _ROLE_FEEDBACK_CACHE = (0.0, ())
+
+
+def _title_excluded_by_role_feedback(title: str | None) -> bool:
+    pattern = _normalize_title_pattern(title)
+    if not pattern:
+        return False
+    return pattern in _approved_role_feedback_title_patterns()
+
+
+def _normalize_title_pattern(title: str | None) -> str:
+    return " ".join(_tokens(title))
+
+
+def _approved_role_feedback_title_patterns() -> tuple[str, ...]:
+    global _ROLE_FEEDBACK_CACHE
+    now = time.monotonic()
+    cached_at, cached_patterns = _ROLE_FEEDBACK_CACHE
+    if now - cached_at < _ROLE_FEEDBACK_CACHE_TTL_SECONDS:
+        return cached_patterns
+    try:
+        from jobhunter import config
+
+        db_path = config.DB_PATH
+        if not db_path.exists():
+            patterns: tuple[str, ...] = ()
+        else:
+            with sqlite3.connect(db_path) as conn:
+                table = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'role_match_feedback_suggestions'"
+                ).fetchone()
+                if table is None:
+                    patterns = ()
+                else:
+                    patterns = tuple(
+                        str(row[0] or "").strip()
+                        for row in conn.execute(
+                            """
+                            SELECT title_pattern
+                            FROM role_match_feedback_suggestions
+                            WHERE tenant_id = 'local'
+                              AND status = 'approved'
+                              AND rule_kind = 'exact_title_exclusion'
+                            """
+                        ).fetchall()
+                        if str(row[0] or "").strip()
+                    )
+    except Exception:
+        patterns = ()
+    _ROLE_FEEDBACK_CACHE = (now, patterns)
+    return patterns
 
 
 def _token_matches_title(token: str, title_tokens: set[str]) -> bool:
