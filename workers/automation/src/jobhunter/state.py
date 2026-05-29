@@ -52,6 +52,13 @@ MAX_ATTEMPTS: dict[str, int | None] = {
 
 ORPHANED_RUNNING_STAGE_GRACE_SECONDS = 150
 ORPHAN_RECOVERY_STAGES: tuple[str, ...] = tuple(stage for stage in STAGE_ORDER if stage != "apply")
+ORPHANED_DISCOVERY_RUN_ERROR_CODE = "ORPHANED_DISCOVERY_RUN"
+DISCOVERY_SOURCE_PROGRESS: tuple[tuple[str, str], ...] = (
+    ("jobspy", "JobSpy"),
+    ("ats_api", "Canonical ATS APIs"),
+    ("workday", "Workday scraper"),
+    ("smartextract", "Smart extract"),
+)
 _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
     "enrich": (("score", ("Enrichment has not completed.",)),),
     "score": (("tailor", ("score has not completed.",)),),
@@ -120,6 +127,72 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _source_from_discovery_run_id(run_id: str) -> str:
+    parts = run_id.split(":")
+    if len(parts) >= 3 and parts[0] == "discovery":
+        return parts[1]
+    return ""
+
+
+def _discovery_source_label(source: str) -> str:
+    for source_id, label in DISCOVERY_SOURCE_PROGRESS:
+        if source_id == source:
+            return label
+    return source.replace("_", " ").title() if source else "Discovery"
+
+
+def _orphaned_discovery_run_internal_message(source: str) -> str:
+    if source:
+        return (
+            f"Discovery source {source} was left running by a prior worker "
+            "and has been marked failed for retry."
+        )
+    return "Discovery run was left running by a prior worker and has been marked failed for retry."
+
+
+def _orphaned_discovery_run_message(source: str) -> str:
+    if source:
+        return f"{_discovery_source_label(source)} is ready to run again."
+    return "Discover is ready to run again."
+
+
+def _orphaned_pipeline_stage_message(source: str, detail: str) -> str:
+    if source:
+        return f"{_discovery_source_label(source)} is not running. {detail}"
+    return f"Discover is not running. {detail}"
+
+
+def _orphaned_discovery_progress_payload(source: str, message: str) -> dict[str, Any]:
+    source_index = next(
+        (index for index, (source_id, _label) in enumerate(DISCOVERY_SOURCE_PROGRESS) if source_id == source),
+        -1,
+    )
+    if source_index < 0:
+        return {}
+    total = len(DISCOVERY_SOURCE_PROGRESS) + 1
+    completed = max(0, min(source_index, total))
+    percent = max(0, min(100, round((completed / total) * 100)))
+    label = _discovery_source_label(source)
+    return {
+        "progress": {
+            "completed": completed,
+            "total": total,
+            "percent": percent,
+            "currentStep": label,
+            "status": "failed",
+            "message": message,
+        }
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +560,152 @@ def recover_orphaned_running_stages(
             is_retryable=True,
             occurred_at=recovered_at_iso,
             metadata={"previousUpdatedAt": row["updated_at"]},
+        )
+        recovered += 1
+
+    if recovered:
+        conn.commit()
+    return recovered
+
+
+def recover_orphaned_discovery_runs(
+    conn,
+    *,
+    stale_after_seconds: int = ORPHANED_RUNNING_STAGE_GRACE_SECONDS,
+    now: datetime | None = None,
+    started_before: datetime | None = None,
+) -> int:
+    """Fail stale discovery runs left ``running`` by a dead worker.
+
+    Source-level discovery runs feed the Pipelines progress read model through
+    durable ``DiscoveryRun*`` and pipeline ``Stage*`` events. If a worker dies
+    after ``DiscoveryRunStarted``/``StageStarted`` but before a terminal event,
+    the primary Pipelines UI otherwise shows that old source as active forever.
+
+    ``started_before`` lets a live worker sweep runs inherited from a prior
+    runtime without marking discovery work that the current worker started.
+    """
+
+    if not _table_exists(conn, "discovery_runs"):
+        return 0
+
+    recovered_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = recovered_at - timedelta(seconds=max(0, stale_after_seconds))
+    rows = conn.execute(
+        """
+        SELECT tenant_id, run_id, source_ids_json, counts_json, error_classes_json, started_at
+        FROM discovery_runs
+        WHERE status = 'running'
+        """
+    ).fetchall()
+
+    recovered = 0
+    recovered_at_iso = recovered_at.isoformat()
+    started_before_utc = (
+        started_before.astimezone(timezone.utc) if started_before is not None else None
+    )
+    for row in rows:
+        started_at = _parse_timestamp(row["started_at"])
+        if (
+            started_before_utc is not None
+            and started_at is not None
+            and started_at >= started_before_utc
+        ):
+            continue
+        if started_at is not None and started_at > cutoff:
+            continue
+
+        run_id = str(row["run_id"])
+        source_ids = tuple(str(value) for value in _json_loads(row["source_ids_json"], []))
+        source = _source_from_discovery_run_id(run_id)
+        source_label = _discovery_source_label(source)
+        failed_source_id = source_ids[0] if len(source_ids) == 1 else ""
+        message = _orphaned_discovery_run_message(source)
+        internal_message = _orphaned_discovery_run_internal_message(source)
+        existing_errors = tuple(str(value) for value in _json_loads(row["error_classes_json"], []))
+        error_classes = tuple(dict.fromkeys((*existing_errors, ORPHANED_DISCOVERY_RUN_ERROR_CODE)))
+
+        conn.execute(
+            """
+            UPDATE discovery_runs
+            SET status = 'failed',
+                error_classes_json = ?,
+                failed_at = ?
+            WHERE tenant_id = ? AND run_id = ?
+            """,
+            (
+                json.dumps(list(error_classes)),
+                recovered_at_iso,
+                row["tenant_id"],
+                run_id,
+            ),
+        )
+        record_job_event(
+            conn,
+            None,
+            "discover",
+            "DiscoveryRunFailed",
+            level="error",
+            message=f"Discovery run {run_id} failed: {internal_message}",
+            occurred_at=recovered_at_iso,
+            payload={
+                "run_id": run_id,
+                "runId": run_id,
+                "source_id": failed_source_id,
+                "sourceId": failed_source_id,
+                "source_ids": list(source_ids),
+                "sourceIds": list(source_ids),
+                "error_class": ORPHANED_DISCOVERY_RUN_ERROR_CODE,
+                "errorClass": ORPHANED_DISCOVERY_RUN_ERROR_CODE,
+                "retryable": True,
+                "failed_at": recovered_at_iso,
+                "failedAt": recovered_at_iso,
+                "recovered_at": recovered_at_iso,
+                "recoveredAt": recovered_at_iso,
+                "previous_started_at": row["started_at"],
+                "previousStartedAt": row["started_at"],
+            },
+        )
+        record_job_event(
+            conn,
+            None,
+            "discover",
+            "StageFailed",
+            level="error",
+            message=_orphaned_pipeline_stage_message(source, message),
+            occurred_at=recovered_at_iso,
+            payload={
+                "jobId": "pipeline",
+                "stage": "discover",
+                "component": "pipeline",
+                "source": source,
+                "sourceLabel": source_label,
+                "runId": run_id,
+                "sourceIds": list(source_ids),
+                "errorCode": ORPHANED_DISCOVERY_RUN_ERROR_CODE,
+                "errorMessage": message,
+                "retryable": True,
+                "recoveredAt": recovered_at_iso,
+                "previousStartedAt": row["started_at"],
+                **_orphaned_discovery_progress_payload(source, message),
+            },
+        )
+        record_operational_attempt_metric(
+            conn,
+            stage="discover",
+            attempt_kind="orphan_recovery",
+            outcome="failed",
+            adapter=source or None,
+            run_id=run_id,
+            counts=_json_loads(row["counts_json"], {}),
+            error_class=ORPHANED_DISCOVERY_RUN_ERROR_CODE,
+            error_message=internal_message,
+            failure_category="orphaned_discovery_run",
+            is_operational_failure=True,
+            is_scrape_failure=True,
+            is_retryable=True,
+            occurred_at=recovered_at_iso,
+            metadata={"previousStartedAt": row["started_at"]},
         )
         recovered += 1
 

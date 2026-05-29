@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from jobhunter.database import close_connection, init_db
 from jobhunter.state import (
     ensure_job_stage_rows,
+    recover_orphaned_discovery_runs,
     recover_orphaned_running_stages,
     set_stage_state,
 )
@@ -140,5 +142,121 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
         assert metric["is_scrape_failure"] == 0
         assert metric["is_retryable"] == 1
         assert metric["error_class"] == "ORPHANED_STAGE_RUN"
+    finally:
+        close_connection(db_path)
+
+
+def test_recover_orphaned_discovery_runs_marks_stale_pipeline_progress_failed(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = init_db(db_path)
+    old_run_id = "discovery:smartextract:old"
+    current_worker_run_id = "discovery:workday:current-worker"
+    fresh_run_id = "discovery:jobspy:fresh"
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO discovery_runs (
+                tenant_id, run_id, source_ids_json, profile_snapshot_id,
+                status, counts_json, error_classes_json, started_at,
+                completed_at, failed_at
+            ) VALUES
+              ('local', ?, ?, NULL, 'running', ?, '[]', ?, NULL, NULL),
+              ('local', ?, ?, NULL, 'running', '{}', '[]', ?, NULL, NULL),
+              ('local', ?, ?, NULL, 'running', '{}', '[]', ?, NULL, NULL)
+            """,
+            (
+                old_run_id,
+                json.dumps(["smart_extract:talent-com", "smart_extract:simplyhired"]),
+                json.dumps({"total": 0, "new_jobs": 0}),
+                "2026-05-21T20:00:00+00:00",
+                current_worker_run_id,
+                json.dumps(["workday:acme"]),
+                "2026-05-21T20:03:00+00:00",
+                fresh_run_id,
+                json.dumps(["jobspy:linkedin"]),
+                "2026-05-21T20:09:00+00:00",
+            ),
+        )
+        conn.commit()
+
+        recovered = recover_orphaned_discovery_runs(
+            conn,
+            now=datetime(2026, 5, 21, 20, 10, 0, tzinfo=timezone.utc),
+            stale_after_seconds=150,
+            started_before=datetime(2026, 5, 21, 20, 2, 0, tzinfo=timezone.utc),
+        )
+
+        assert recovered == 1
+        old_row = conn.execute(
+            """
+            SELECT status, failed_at, error_classes_json
+            FROM discovery_runs
+            WHERE run_id = ?
+            """,
+            (old_run_id,),
+        ).fetchone()
+        assert old_row["status"] == "failed"
+        assert old_row["failed_at"] == "2026-05-21T20:10:00+00:00"
+        assert json.loads(old_row["error_classes_json"]) == ["ORPHANED_DISCOVERY_RUN"]
+
+        fresh_row = conn.execute(
+            "SELECT status FROM discovery_runs WHERE run_id = ?",
+            (fresh_run_id,),
+        ).fetchone()
+        assert fresh_row["status"] == "running"
+
+        current_worker_row = conn.execute(
+            "SELECT status FROM discovery_runs WHERE run_id = ?",
+            (current_worker_run_id,),
+        ).fetchone()
+        assert current_worker_row["status"] == "running"
+
+        events = conn.execute(
+            """
+            SELECT event_type, level, message, payload_json
+            FROM job_events
+            WHERE stage = 'discover'
+            ORDER BY event_id
+            """
+        ).fetchall()
+        assert [event["event_type"] for event in events] == [
+            "DiscoveryRunFailed",
+            "StageFailed",
+        ]
+        assert all(event["level"] == "error" for event in events)
+        assert events[1]["message"] == (
+            "Smart extract is not running. Smart extract is ready to run again."
+        )
+        payload = json.loads(events[1]["payload_json"])
+        assert payload["errorCode"] == "ORPHANED_DISCOVERY_RUN"
+        assert payload["progress"] == {
+            "completed": 3,
+            "total": 5,
+            "percent": 60,
+            "currentStep": "Smart extract",
+            "status": "failed",
+            "message": "Smart extract is ready to run again.",
+        }
+
+        metric = conn.execute(
+            """
+            SELECT stage, attempt_kind, outcome, failure_category,
+                   is_operational_failure, is_scrape_failure, is_retryable,
+                   run_id, adapter, error_class
+            FROM operational_attempt_metrics
+            WHERE run_id = ?
+            ORDER BY metric_id DESC LIMIT 1
+            """,
+            (old_run_id,),
+        ).fetchone()
+        assert metric["attempt_kind"] == "orphan_recovery"
+        assert metric["outcome"] == "failed"
+        assert metric["failure_category"] == "orphaned_discovery_run"
+        assert metric["is_operational_failure"] == 1
+        assert metric["is_scrape_failure"] == 1
+        assert metric["is_retryable"] == 1
+        assert metric["adapter"] == "smartextract"
+        assert metric["error_class"] == "ORPHANED_DISCOVERY_RUN"
     finally:
         close_connection(db_path)

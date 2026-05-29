@@ -7,6 +7,7 @@ import contextlib
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -1274,7 +1275,7 @@ def worker(
         write_worker_heartbeat,
     )
     from jobhunter.database import get_connection
-    from jobhunter.state import recover_orphaned_running_stages
+    from jobhunter.state import recover_orphaned_discovery_runs, recover_orphaned_running_stages
 
     queue = task_queue or JOBHUNTER_TASK_QUEUE
 
@@ -1286,15 +1287,30 @@ def worker(
             activities=ACTIVITIES,
             task_queue=queue,
         )
+        worker_started_at = datetime.now(timezone.utc)
         identity = current_runtime_identity()
-        recovered = recover_orphaned_running_stages(get_connection())
+        conn = get_connection()
+        recovered = recover_orphaned_running_stages(conn)
+        recovered_discovery_runs = recover_orphaned_discovery_runs(
+            conn,
+            started_before=worker_started_at,
+        )
         heartbeat_worker_id = write_worker_heartbeat(task_queue=queue)
         heartbeat_task = asyncio.create_task(
-            _worker_heartbeat_loop(queue, heartbeat_worker_id)
+            _worker_heartbeat_loop(
+                queue,
+                heartbeat_worker_id,
+                worker_started_at=worker_started_at,
+            )
         )
         if recovered:
             console.print(
                 f"[yellow]Recovered {recovered} orphaned pipeline stage run(s) "
+                "from prior worker shutdown.[/yellow]"
+            )
+        if recovered_discovery_runs:
+            console.print(
+                f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "
                 "from prior worker shutdown.[/yellow]"
             )
         console.print(
@@ -1320,12 +1336,34 @@ def worker(
         shutdown_otel()
 
 
-async def _worker_heartbeat_loop(task_queue: str, worker_id: str) -> None:
+async def _worker_heartbeat_loop(
+    task_queue: str,
+    worker_id: str,
+    *,
+    worker_started_at: datetime | None = None,
+) -> None:
+    from jobhunter.database import get_connection
     from jobhunter.infrastructure.runtime_identity import write_worker_heartbeat
+    from jobhunter.state import recover_orphaned_discovery_runs
 
     while True:
         await asyncio.sleep(15)
         write_worker_heartbeat(task_queue=task_queue, worker_id=worker_id)
+        if worker_started_at is None:
+            continue
+        try:
+            recovered_discovery_runs = recover_orphaned_discovery_runs(
+                get_connection(),
+                started_before=worker_started_at,
+            )
+        except Exception:
+            log.warning("Discovery run orphan recovery sweep failed", exc_info=True)
+            continue
+        if recovered_discovery_runs:
+            console.print(
+                f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "
+                "from prior worker shutdown.[/yellow]"
+            )
 
 
 @app.command()

@@ -47,7 +47,10 @@ from jobhunter.domain.enrichment import (
     SnapshotConfidence,
     SnapshotDescriptionHash,
 )
-from jobhunter.domain.enrichment.snapshot_services import judge_snapshot_confidence
+from jobhunter.domain.enrichment.snapshot_services import (
+    ActiveStateVerifier,
+    judge_snapshot_confidence,
+)
 from jobhunter.domain.enrichment.services import (
     CssSelectorExtractor,
     ExtractionResult,
@@ -298,6 +301,9 @@ def scrape_detail_page(page, url: str) -> dict:
         "status": "error",
         "tier_used": None,
         "error": None,
+        "active_state": None,
+        "verification_method": None,
+        "http_status": None,
     }
     t0 = time.time()
 
@@ -307,7 +313,11 @@ def scrape_detail_page(page, url: str) -> dict:
         if resp is not None:
             status_code = resp.status
             if status_code in _PERMANENT_FAILURES:
+                active_state = ActiveState.REMOVED
                 result["error"] = f"HTTP {status_code}"
+                result["active_state"] = active_state.value
+                result["verification_method"] = "http_status"
+                result["http_status"] = status_code
                 result["elapsed"] = time.time() - t0
                 return result
         page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -322,6 +332,10 @@ def scrape_detail_page(page, url: str) -> dict:
         return result
 
     detail_page = _page_to_detail_page(page, url, status=status_code)
+    active_state, verification_method = ActiveStateVerifier().verify(detail_page)
+    result["active_state"] = active_state.value
+    result["verification_method"] = verification_method
+    result["http_status"] = status_code
 
     cascade = (
         (1, ExtractionTier.JSON_LD, JsonLdExtractor()),
@@ -343,7 +357,11 @@ def scrape_detail_page(page, url: str) -> dict:
             result["full_description"] = extracted.full_description.text
             result["application_url"] = apply_final.value if apply_final else None
             result["tier_used"] = tier_num
-            result["status"] = "ok" if result["application_url"] else "partial"
+            if active_state is ActiveState.ACTIVE:
+                result["status"] = "ok" if result["application_url"] else "partial"
+            else:
+                result["status"] = "inactive"
+                result["error"] = f"posting {active_state.value}"
             result["elapsed"] = time.time() - t0
             return result
 
@@ -551,6 +569,45 @@ def scrape_site_batch(
                         message=f"Enrichment {status}: {desc_len} description chars",
                         payload={"tier": tier, "elapsed": elapsed},
                     )
+                elif status == "inactive":
+                    stats["error"] += 1
+                    _record_posting_snapshot_from_cascade(
+                        conn,
+                        url=url,
+                        source_id=site or "enrichment",
+                        title=title or "",
+                        cascade_result=cascade_result,
+                        captured_at=finished_at,
+                    )
+                    err = EnrichmentError(
+                        code="POSTING_INACTIVE",
+                        message=str(cascade_result.get("error") or "posting inactive")[:500],
+                        retryable=False,
+                    )
+                    failed = aggregate.fail_attempt(
+                        error=err, finished_at=finished_at
+                    )
+                    repo.save(failed)
+                    set_stage_state(
+                        conn,
+                        url,
+                        "enrich",
+                        "failed",
+                        attempt_count=failed.attempt_count,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        error_code="POSTING_INACTIVE",
+                        error_message=err.message,
+                        retryable=False,
+                    )
+                    record_job_event(
+                        conn,
+                        url,
+                        "enrich",
+                        "StageFailed",
+                        level="info",
+                        message=err.message,
+                    )
                 else:
                     stats["error"] += 1
                     err = EnrichmentError(
@@ -582,6 +639,13 @@ def scrape_site_batch(
                         "StageFailed",
                         level="error",
                         message=err.message,
+                    )
+                    _record_posting_snapshot_failure_from_cascade(
+                        conn,
+                        url=url,
+                        source_id=site or "enrichment",
+                        cascade_result=cascade_result,
+                        failed_at=finished_at,
                     )
 
                 conn.commit()
@@ -628,6 +692,13 @@ def _record_posting_snapshot_from_cascade(
             updated_at=captured_at,
         )
         previous_active = snapshot_set.latest_active_state
+        active_state = (
+            ActiveState.from_optional(cascade_result.get("active_state"))
+            or ActiveState.ACTIVE
+        )
+        verification_method = str(
+            cascade_result.get("verification_method") or "enrichment_success"
+        )
         tier = _tier_from_legacy(cascade_result.get("tier_used"))
         apply_url = (
             SnapshotApplyUrl(value=str(cascade_result["application_url"]))
@@ -649,7 +720,7 @@ def _record_posting_snapshot_from_cascade(
             extraction_tier=tier.value,
             description_hash=SnapshotDescriptionHash.from_text(description),
             apply_url=apply_url,
-            active_state=ActiveState.ACTIVE,
+            active_state=active_state,
             confidence=confidence,
             quarantine_reason=quarantine_reason,
             captured_at=captured_at,
@@ -686,7 +757,7 @@ def _record_posting_snapshot_from_cascade(
             },
             occurred_at=captured_at,
         )
-        if previous_active is not ActiveState.ACTIVE:
+        if previous_active is not active_state:
             record_job_event(
                 conn,
                 url,
@@ -697,12 +768,12 @@ def _record_posting_snapshot_from_cascade(
                     "tenantId": str(LOCAL_TENANT),
                     "job_id": url,
                     "jobId": url,
-                    "active_state": ActiveState.ACTIVE.value,
-                    "activeState": ActiveState.ACTIVE.value,
+                    "active_state": active_state.value,
+                    "activeState": active_state.value,
                     "previous_state": previous_active.value,
                     "previousState": previous_active.value,
-                    "verification_method": "enrichment_success",
-                    "verificationMethod": "enrichment_success",
+                    "verification_method": verification_method,
+                    "verificationMethod": verification_method,
                     "verified_at": captured_at,
                     "verifiedAt": captured_at,
                 },
@@ -745,6 +816,89 @@ def _record_posting_snapshot_from_cascade(
         conn.commit()
     except Exception:
         log.exception("Failed to persist PostingSnapshotSet for %s", url)
+
+
+def _record_posting_snapshot_failure_from_cascade(
+    conn: sqlite3.Connection,
+    *,
+    url: str,
+    source_id: str,
+    cascade_result: dict,
+    failed_at: str,
+) -> None:
+    """Persist verified active-state failures from the existing enrich path."""
+    active_state = ActiveState.from_optional(cascade_result.get("active_state"))
+    verification_method = str(cascade_result.get("verification_method") or "")
+    if active_state is None or verification_method == "unknown":
+        return
+    resolved_source_id = _source_id_for_enriched_job(conn, url, fallback=source_id)
+    try:
+        repo = SqlitePostingSnapshotSetRepository(conn)
+        snapshot_set = repo.load(LOCAL_TENANT, JobId(url)) or PostingSnapshotSet.empty(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            updated_at=failed_at,
+        )
+        error_class = str(cascade_result.get("error") or "DETAIL_ERROR")[:120]
+        snapshot_set, _ = snapshot_set.record_capture_failure(
+            source_id=resolved_source_id,
+            error_class=error_class,
+            message=str(cascade_result.get("error") or "detail extraction failed")[:500],
+            retryable=False,
+            failed_at=failed_at,
+        )
+        snapshot_set, previous_active = snapshot_set.mark_active_state(
+            active_state=active_state,
+            verified_at=failed_at,
+        )
+        repo.save(snapshot_set)
+
+        from jobhunter.state import record_job_event
+
+        record_job_event(
+            conn,
+            url,
+            "enrich",
+            "PostingContentSnapshotFailed",
+            message="Posting content snapshot failed.",
+            payload={
+                "tenantId": str(LOCAL_TENANT),
+                "job_id": url,
+                "jobId": url,
+                "source_id": resolved_source_id,
+                "sourceId": resolved_source_id,
+                "error_class": error_class,
+                "errorClass": error_class,
+                "retryable": False,
+                "failed_at": failed_at,
+                "failedAt": failed_at,
+            },
+            occurred_at=failed_at,
+        )
+        if previous_active is not None:
+            record_job_event(
+                conn,
+                url,
+                "enrich",
+                "JobActiveStateChanged",
+                message="Job active state changed.",
+                payload={
+                    "tenantId": str(LOCAL_TENANT),
+                    "job_id": url,
+                    "jobId": url,
+                    "active_state": active_state.value,
+                    "activeState": active_state.value,
+                    "previous_state": previous_active.value,
+                    "previousState": previous_active.value,
+                    "verification_method": verification_method,
+                    "verificationMethod": verification_method,
+                    "verified_at": failed_at,
+                    "verifiedAt": failed_at,
+                },
+                occurred_at=failed_at,
+            )
+    except Exception:
+        log.exception("Failed to persist PostingSnapshotSet failure for %s", url)
 
 
 def _source_id_for_enriched_job(

@@ -25,6 +25,7 @@ import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } f
 import { normalizeJobLocation } from "./location-normalization.js";
 
 const STAGE_ORDER: readonly string[] = STAGES;
+const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const;
 const SOURCE_BOARD_NAMES = new Set(["greenhouse", "linkedin", "talent.com"]);
 const SOURCE_QUALITY_EVENT_TYPES = new Set([
   "DiscoveryRunStarted",
@@ -1357,6 +1358,14 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
          WHERE h.job_url = jlp.job_id AND h.unhidden_at IS NULL
        )`
     : "";
+  const closedWhere = tableExists(db, "posting_snapshot_sets")
+    ? `AND NOT EXISTS (
+         SELECT 1 FROM posting_snapshot_sets pss
+         WHERE pss.tenant_id = jlp.tenant_id
+           AND pss.job_url = jlp.job_id
+           AND pss.latest_active_state IN (${CLOSED_ACTIVE_STATES.map((state) => `'${state}'`).join(", ")})
+       )`
+    : "";
   const rows = allRows<{
     job_id: string;
     current_stage: string;
@@ -1372,8 +1381,9 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
     `SELECT job_id, current_stage, current_state, apply_status, applied_at,
             deleted_at, has_resume, fit_score, source
      FROM job_list_projections jlp
-     WHERE tenant_id = ?
-       ${hiddenWhere}`,
+     WHERE jlp.tenant_id = ?
+       ${hiddenWhere}
+       ${closedWhere}`,
     [tenantId],
   );
   const active = rows.filter((row) => !row.deleted_at);
@@ -1391,21 +1401,34 @@ function rebuildDashboardProjection(db: SqliteDatabase, tenantId: string): void 
   ).length;
   let dryRuns = 0;
   if (tableExists(db, "apply_run_projections")) {
-    if (tableExists(db, "jobhunter_deleted_jobs") || tableExists(db, "jobhunter_hidden_jobs")) {
-      const deletedJoin = tableExists(db, "jobhunter_deleted_jobs")
+    if (
+      tableExists(db, "jobhunter_deleted_jobs") ||
+      tableExists(db, "jobhunter_hidden_jobs") ||
+      tableExists(db, "posting_snapshot_sets")
+    ) {
+      const hasDeleted = tableExists(db, "jobhunter_deleted_jobs");
+      const hasHidden = tableExists(db, "jobhunter_hidden_jobs");
+      const hasSnapshots = tableExists(db, "posting_snapshot_sets");
+      const deletedJoin = hasDeleted
         ? " LEFT JOIN jobhunter_deleted_jobs d ON d.job_url = arp.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))"
         : "";
-      const hiddenJoin = tableExists(db, "jobhunter_hidden_jobs")
+      const hiddenJoin = hasHidden
         ? " LEFT JOIN jobhunter_hidden_jobs h ON h.job_url = arp.job_id AND h.unhidden_at IS NULL"
         : "";
-      const hiddenWhere = [
-        tableExists(db, "jobhunter_deleted_jobs") ? "d.job_url IS NULL" : "",
-        tableExists(db, "jobhunter_hidden_jobs") ? "h.job_url IS NULL" : "",
+      const snapshotJoin = hasSnapshots
+        ? " LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = arp.tenant_id AND pss.job_url = arp.job_id"
+        : "";
+      const lifecycleWhere = [
+        hasDeleted ? "d.job_url IS NULL" : "",
+        hasHidden ? "h.job_url IS NULL" : "",
+        hasSnapshots
+          ? `(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN (${CLOSED_ACTIVE_STATES.map((state) => `'${state}'`).join(", ")}))`
+          : "",
       ].filter(Boolean).join(" AND ");
       const dryRunsRow = getRow<{ c: number }>(
         db,
-        `SELECT COUNT(*) AS c FROM apply_run_projections arp${deletedJoin}${hiddenJoin}
-         WHERE arp.dry_run = 1 AND ${hiddenWhere}`,
+        `SELECT COUNT(*) AS c FROM apply_run_projections arp${deletedJoin}${hiddenJoin}${snapshotJoin}
+         WHERE arp.dry_run = 1 AND ${lifecycleWhere}`,
       );
       dryRuns = dryRunsRow ? Number(dryRunsRow.c) : 0;
     } else {

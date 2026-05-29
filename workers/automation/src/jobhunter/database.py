@@ -1888,6 +1888,18 @@ _ENRICHMENT_PENDING: str = (
     "AND COALESCE(jss_enrich.state, CASE WHEN jobs.detail_scraped_at IS NOT NULL THEN 'succeeded' ELSE 'pending' END) = 'pending'"
 )
 
+# Closed/removed posting states are Enrichment-owned facts, not user
+# tombstones. Work queues treat them as non-actionable while leaving the
+# rows available for the Jobs > closed tab and future rediscovery.
+_CLOSED_ACTIVE_STATES_SQL = "'closed', 'expired', 'removed', 'location_incompatible'"
+_ACTIVE_STATE_JOIN: str = (
+    "LEFT JOIN posting_snapshot_sets pss "
+    "ON pss.tenant_id = 'local' AND pss.job_url = jobs.url"
+)
+_NOT_CLOSED_ACTIVE_STATE: str = (
+    f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"
+)
+
 
 # ---------------------------------------------------------------------------
 # job_materials read fragments — used by the queue selectors that
@@ -2243,25 +2255,30 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     # join so dashboard counts reflect lifecycle events (jobs.applied_at /
     # apply_status / apply_error are NULL on the new write path).
     stats["applied"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN} "
+        f"WHERE {_EFFECTIVE_APPLIED_AT} IS NOT NULL "
+        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     ).fetchone()[0]
 
     stats["apply_errors"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} "
-        f"WHERE ar.ar_status IN ('failed', 'captcha', 'login_issue', 'expired') "
-        "OR jobs.apply_error IS NOT NULL"
+        f"SELECT COUNT(*) FROM jobs {_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN} "
+        f"WHERE (ar.ar_status IN ('failed', 'captcha', 'login_issue', 'expired') "
+        f"OR jobs.apply_error IS NOT NULL) "
+        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     ).fetchone()[0]
 
     stats["ready_to_apply"] = conn.execute(
         f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
         f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+        f"{_ACTIVE_STATE_JOIN} "
         f"WHERE {_READY_TAILORED_RESUME_WITH_PDF} "
         f"AND {_EFFECTIVE_FIT_SCORE} >= 7 "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_APPLIED_AT} IS NULL "
         f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
-        f"AND {_EFFECTIVE_APPLY_TARGET_URL} != ''"
+        f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
+        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     ).fetchone()[0]
 
     return stats
@@ -2289,6 +2306,7 @@ def count_ready_to_apply(
         f"{_EFFECTIVE_APPLIED_AT} IS NULL",
         f"{_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL",
         f"{_EFFECTIVE_APPLY_TARGET_URL} != ''",
+        _NOT_CLOSED_ACTIVE_STATE,
         "NOT EXISTS ("
         "SELECT 1 FROM job_stage_states jss_active "
         "WHERE jss_active.job_url = jobs.url "
@@ -2314,6 +2332,7 @@ def count_ready_to_apply(
         conn.execute(
             f"SELECT COUNT(*) FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
             f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+            f"{_ACTIVE_STATE_JOIN} "
             f"WHERE {' AND '.join(where)}",
             params,
         ).fetchone()[0]
@@ -2566,22 +2585,28 @@ def get_jobs_by_stage(
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
-        f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
+        f"AND ({_EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {_EFFECTIVE_TAILOR_ATTEMPTS} < 5) "
+        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
         if retailor
         else f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {_SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {_EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {_TAILOR_NOT_EXHAUSTED} "
-        f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5"
+        f"AND {_EFFECTIVE_TAILOR_ATTEMPTS} < 5 "
+        f"AND {_NOT_CLOSED_ACTIVE_STATE}"
     )
 
     conditions = {
-        "discovered": "1=1",
-        "pending_detail": _ENRICHMENT_PENDING,
-        "enriched": f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL",
-        "pending_score": (f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL AND {_EFFECTIVE_FIT_SCORE} IS NULL"),
-        "scored": f"{_EFFECTIVE_FIT_SCORE} IS NOT NULL",
+        "discovered": _NOT_CLOSED_ACTIVE_STATE,
+        "pending_detail": f"{_ENRICHMENT_PENDING} AND {_NOT_CLOSED_ACTIVE_STATE}",
+        "enriched": f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL AND {_NOT_CLOSED_ACTIVE_STATE}",
+        "pending_score": (
+            f"{_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
+            f"AND {_EFFECTIVE_FIT_SCORE} IS NULL "
+            f"AND {_NOT_CLOSED_ACTIVE_STATE}"
+        ),
+        "scored": f"{_EFFECTIVE_FIT_SCORE} IS NOT NULL AND {_NOT_CLOSED_ACTIVE_STATE}",
         "pending_tailor": pending_tailor_where,
         "pending_cover": (
             f"{_EFFECTIVE_FIT_SCORE} >= ? AND {_EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
@@ -2590,13 +2615,15 @@ def get_jobs_by_stage(
             f"AND {_READY_TAILORED_RESUME_WITH_PDF} "
             f"AND ({_EFFECTIVE_COVER_PATH} IS NULL OR {_EFFECTIVE_COVER_PATH} = '') "
             f"AND {_COVER_NOT_EXHAUSTED} "
-            f"AND {_EFFECTIVE_COVER_ATTEMPTS} < 5"
+            f"AND {_EFFECTIVE_COVER_ATTEMPTS} < 5 "
+            f"AND {_NOT_CLOSED_ACTIVE_STATE}"
         ),
         "pending_pdf": (
-            f"({_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND jm.jm_resume_pdf_path IS NULL) "
-            f"OR ({_EFFECTIVE_COVER_PATH} IS NOT NULL AND jm.jm_cover_pdf_path IS NULL)"
+            f"(({_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND jm.jm_resume_pdf_path IS NULL) "
+            f"OR ({_EFFECTIVE_COVER_PATH} IS NOT NULL AND jm.jm_cover_pdf_path IS NULL)) "
+            f"AND {_NOT_CLOSED_ACTIVE_STATE}"
         ),
-        "tailored": f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL",
+        "tailored": f"{_EFFECTIVE_TAILOR_PATH} IS NOT NULL AND {_NOT_CLOSED_ACTIVE_STATE}",
         # PR 4 of the Temporal stack: pending_apply / applied read
         # through ``apply_run_projections`` so the new write path
         # (which leaves jobs.applied_at NULL) is visible.
@@ -2609,9 +2636,10 @@ def get_jobs_by_stage(
             f"AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL "
             f"AND {_EFFECTIVE_APPLY_TARGET_URL} != '' "
             "AND (ar.ar_status IS NULL "
-            "     OR ar.ar_status NOT IN ('starting', 'in_progress'))"
+            "     OR ar.ar_status NOT IN ('starting', 'in_progress')) "
+            f"AND {_NOT_CLOSED_ACTIVE_STATE}"
         ),
-        "applied": f"{_EFFECTIVE_APPLIED_AT} IS NOT NULL",
+        "applied": f"{_EFFECTIVE_APPLIED_AT} IS NOT NULL AND {_NOT_CLOSED_ACTIVE_STATE}",
     }
 
     where = conditions.get(stage, "1=1")
@@ -2664,7 +2692,7 @@ def get_jobs_by_stage(
         f"{_EFFECTIVE_APPLY_STATUS} AS effective_apply_status "
         f"FROM jobs {_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
         f"{_LATEST_STAGE_ATTEMPTS_JOIN} {_SCORE_DOWNSTREAM_STATE_JOIN} "
-        f"{_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} "
+        f"{_ENRICHMENT_JOIN} {_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN} "
         f"WHERE {where} "
         f"ORDER BY {_EFFECTIVE_FIT_SCORE} DESC NULLS LAST, discovered_at DESC"
     )

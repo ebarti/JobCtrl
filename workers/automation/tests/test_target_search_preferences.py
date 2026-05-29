@@ -364,6 +364,22 @@ def test_structured_profile_target_search_builds_track_and_seniority_aware_queri
     ]
 
 
+def test_structured_management_senior_manager_floor_excludes_manager_level_queries() -> None:
+    queries = build_target_role_queries(
+        [],
+        tracks=["management"],
+        seniority=["senior_manager"],
+        functions=["Engineering"],
+    )
+
+    query_texts = [item["query"] for item in queries]
+    assert "Engineering Manager" not in query_texts
+    assert query_texts[:2] == ["Senior Engineering Manager", "Engineering Director"]
+    assert title_matches_any_query("Senior Engineering Manager", queries)
+    assert title_matches_any_query("Head of Engineering", queries)
+    assert not title_matches_any_query("Engineering Manager", queries)
+
+
 def test_partial_structured_target_search_preserves_configured_queries_when_planner_is_empty() -> None:
     search_cfg = {"queries": [{"query": "software engineer", "tier": 1}]}
 

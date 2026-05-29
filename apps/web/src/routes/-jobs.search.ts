@@ -14,7 +14,7 @@ export const jobsSearchSchema = z.object({
   q: z.string().default(""),
   stage: z.enum(STAGE_OR_ALL).default("all"),
   state: z.enum(STATE_OR_ALL).default("all"),
-  deleted: z.enum(["active", "deleted", "hidden"]).default("active"),
+  deleted: z.enum(["active", "closed", "deleted", "hidden"]).default("active"),
   sort: z.enum(JOB_SORT_FIELDS).default("discovered_at"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),

@@ -57,6 +57,7 @@ from jobhunter.apply.dashboard import (
     update_state,
 )
 from jobhunter.database import (
+    _ACTIVE_STATE_JOIN,
     _EFFECTIVE_APPLICATION_URL,
     _EFFECTIVE_APPLIED_AT,
     _EFFECTIVE_APPLY_TARGET_URL,
@@ -69,6 +70,7 @@ from jobhunter.database import (
     _LATEST_APPLY_RUN_JOIN,
     _LATEST_MATERIALS_JOIN,
     _LATEST_SCORE_JOIN,
+    _NOT_CLOSED_ACTIVE_STATE,
     _READY_TAILORED_RESUME_WITH_PDF,
     _SCORE_DOWNSTREAM_STATE_JOIN,
     _SCORE_CURRENT_FOR_DOWNSTREAM,
@@ -202,7 +204,7 @@ def acquire_job(
         common_joins = (
             f"{_LATEST_SCORE_JOIN} {_LATEST_MATERIALS_JOIN} "
             f"{_SCORE_DOWNSTREAM_STATE_JOIN} {_ENRICHMENT_JOIN} "
-            f"{_LATEST_APPLY_RUN_JOIN}"
+            f"{_LATEST_APPLY_RUN_JOIN} {_ACTIVE_STATE_JOIN}"
         )
 
         if target_url:
@@ -216,6 +218,7 @@ def acquire_job(
                   AND {_READY_TAILORED_RESUME_WITH_PDF}
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                   AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
+                  AND {_NOT_CLOSED_ACTIVE_STATE}
                 LIMIT 1
                 """,
                 (target_url, target_url, like, like),
@@ -258,6 +261,7 @@ def acquire_job(
                   AND {_EFFECTIVE_FIT_SCORE} >= ?
                   AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
                   AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
+                  AND {_NOT_CLOSED_ACTIVE_STATE}
                   {site_clause}
                   {url_clauses}
                 ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url

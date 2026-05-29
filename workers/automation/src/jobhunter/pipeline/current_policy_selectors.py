@@ -199,6 +199,15 @@ def _active_job_filter(conn: sqlite3.Connection, job_url_expr: str) -> str:
             f"WHERE h.job_url = {job_url_expr} AND h.unhidden_at IS NULL"
             ")"
         )
+    if _table_exists(conn, "posting_snapshot_sets"):
+        clauses.append(
+            "NOT EXISTS ("
+            "SELECT 1 FROM posting_snapshot_sets pss "
+            f"WHERE pss.tenant_id = 'local' AND pss.job_url = {job_url_expr} "
+            "AND pss.latest_active_state IN "
+            "('closed', 'expired', 'removed', 'location_incompatible')"
+            ")"
+        )
     return "".join(f" AND {clause}" for clause in clauses)
 
 

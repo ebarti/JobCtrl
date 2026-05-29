@@ -111,6 +111,7 @@ export const sampleJob: JobSummary = {
   artifactCount: 1,
   applyStatus: null,
   appliedAt: null,
+  activeState: "active",
   deletedAt: null,
   hiddenAt: null,
 };

@@ -55,6 +55,7 @@ _SENIORITY_RANKS = {
     "sr": 3,
     "lead": 4,
     "manager": 4,
+    "senior_manager": 5,
     "staff": 5,
     "principal": 6,
     "architect": 6,
@@ -76,6 +77,9 @@ _SENIORITY_ALIASES = {
     "c suite": "chief",
     "chief level": "chief",
     "csuite": "chief",
+    "senior manager": "senior_manager",
+    "senior engineering manager": "senior_manager",
+    "head of engineering": "senior_manager",
 }
 
 _SENIORITY_LABELS = {
@@ -498,6 +502,8 @@ def _classify_track(tokens: set[str]) -> str | None:
 
 
 def _seniority_from_tokens(tokens: set[str]) -> str | None:
+    if "senior" in tokens and "manager" in tokens:
+        return "senior_manager"
     if "vice" in tokens and "president" in tokens:
         return "vp"
     ranked = sorted(
@@ -521,6 +527,8 @@ def _seniority_rank(value: str | None) -> int:
     tokens = _expanded_tokens([value])
     if "vice" in tokens and "president" in tokens:
         return _SENIORITY_RANKS["vp"]
+    if "senior" in tokens and "manager" in tokens:
+        return _SENIORITY_RANKS["senior_manager"]
     return max((_SENIORITY_RANKS.get(token, 0) for token in tokens), default=0)
 
 

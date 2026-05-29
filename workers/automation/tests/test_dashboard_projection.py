@@ -34,6 +34,22 @@ def _seed_job(conn: sqlite3.Connection, url: str, *, site: str = "ExampleCo") ->
     conn.commit()
 
 
+def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, updated_at
+        ) VALUES ('local', ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            latest_active_state = excluded.latest_active_state,
+            updated_at = excluded.updated_at
+        """,
+        (url, state, utc_now()),
+    )
+    conn.commit()
+
+
 def _row_value(row, key, default=None):
     if row is None:
         return default
@@ -68,6 +84,31 @@ def test_total_jobs_reflects_active_jobs(conn: sqlite3.Connection) -> None:
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
     row = _dashboard(conn)
     assert _row_value(row, "total_jobs") == 2
+
+
+def test_dashboard_excludes_closed_jobs_from_active_counts(conn: sqlite3.Connection) -> None:
+    active_url = "https://example.com/active"
+    closed_url = "https://example.com/closed"
+    _seed_job(conn, active_url)
+    _seed_job(conn, closed_url)
+    set_stage_state(conn, active_url, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, active_url, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, active_url, "score", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, active_url, "tailor", "blocked", validate_transition=False)
+    set_stage_state(conn, closed_url, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, closed_url, "enrich", "succeeded", finished_at=utc_now())
+    set_stage_state(conn, closed_url, "score", "failed", validate_transition=False)
+    record_job_event(conn, active_url, "tailor", "StageBlocked")
+    record_job_event(conn, closed_url, "score", "StageFailed")
+    _mark_closed(conn, closed_url)
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = _dashboard(conn)
+
+    assert _row_value(row, "total_jobs") == 1
+    assert _row_value(row, "blocked") == 1
+    assert _row_value(row, "failures") == 0
 
 
 def test_failures_count_includes_failed_and_exhausted(conn: sqlite3.Connection) -> None:

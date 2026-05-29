@@ -735,6 +735,27 @@ class ProjectionBuilder:
             if (row["job_id"] if not isinstance(row, tuple) else row[0])
         }
 
+    def _closed_projection_jobs(self) -> set[str]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT job_url
+                FROM posting_snapshot_sets
+                WHERE tenant_id = ?
+                  AND latest_active_state IN (
+                    'closed', 'expired', 'removed', 'location_incompatible'
+                  )
+                """,
+                (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_url"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_url"] if not isinstance(row, tuple) else row[0])
+        }
+
     def _load_artifacts(self, job_url: str) -> list[dict]:
         artifacts: list[dict] = []
         seen: set[tuple[str, str]] = set()
@@ -808,8 +829,14 @@ class ProjectionBuilder:
 
     def _rebuild_dashboard(self) -> None:
         rows = self._store.fetch_job_list(str(self._tenant_id))
-        # Filter out soft-deleted jobs.
-        active_rows = [row for row in rows if not _row_nullable_str(row, "deleted_at")]
+        closed_jobs = self._closed_projection_jobs()
+        # Filter out soft-deleted and closed/removed jobs from active dashboard counts.
+        active_rows = [
+            row
+            for row in rows
+            if not _row_nullable_str(row, "deleted_at")
+            and _row_str(row, "job_id") not in closed_jobs
+        ]
 
         total_jobs = len(active_rows)
         failures = sum(
@@ -845,7 +872,17 @@ class ProjectionBuilder:
                     LEFT JOIN jobhunter_deleted_jobs d
                         ON d.job_url = arp.job_id
                        AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
-                    WHERE arp.dry_run = 1 AND d.job_url IS NULL
+                    LEFT JOIN posting_snapshot_sets pss
+                        ON pss.tenant_id = arp.tenant_id
+                       AND pss.job_url = arp.job_id
+                    WHERE arp.dry_run = 1
+                      AND d.job_url IS NULL
+                      AND (
+                        pss.latest_active_state IS NULL
+                        OR pss.latest_active_state NOT IN (
+                          'closed', 'expired', 'removed', 'location_incompatible'
+                        )
+                      )
                     """
                 ).fetchone()[0]
             )

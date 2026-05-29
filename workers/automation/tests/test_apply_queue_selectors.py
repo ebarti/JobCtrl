@@ -31,7 +31,7 @@ from jobhunter.domain.materials import (
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.materials import SqliteMaterialsRepository
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
+from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
 
 
 @pytest.fixture()
@@ -64,6 +64,22 @@ def _insert_apply_ready_job(
             9,
             "/tmp/resume.txt",
         ),
+    )
+    conn.commit()
+
+
+def _mark_closed(conn, url: str, state: str = "removed") -> None:
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, updated_at
+        ) VALUES (?, ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            latest_active_state = excluded.latest_active_state,
+            updated_at = excluded.updated_at
+        """,
+        (str(LOCAL_TENANT), url, state, utc_now()),
     )
     conn.commit()
 
@@ -318,6 +334,19 @@ def test_pending_apply_excludes_non_current_scores(conn, score_state: str, activ
     assert url not in urls
 
 
+def test_pending_apply_excludes_closed_postings(conn):
+    url = "https://example.com/closed-apply"
+    _insert_apply_ready_job(conn, url=url)
+    _mark_closed(conn, url)
+
+    rows = get_jobs_by_stage(conn, "pending_apply", min_score=7)
+    urls = {row["url"] for row in rows}
+    assert url not in urls
+    assert count_ready_to_apply(conn, min_score=7) == 0
+    assert count_ready_to_apply(conn, min_score=7, target_url=url) == 0
+    assert get_stats(conn)["ready_to_apply"] == 0
+
+
 def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
     _insert_apply_ready_job(conn)
     ensure_job_stage_rows(conn, "https://example.com/job")
@@ -339,6 +368,48 @@ def test_pending_apply_excludes_jobs_with_succeeded_apply_run(conn):
     assert pending == []
     assert len(applied) == 1
     assert applied[0]["url"] == "https://example.com/job"
+
+
+def test_applied_selector_excludes_closed_postings(conn):
+    url = "https://example.com/closed-applied"
+    _insert_apply_ready_job(conn, url=url)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(
+        conn,
+        url,
+        "apply",
+        "succeeded",
+        finished_at="t9",
+        validate_transition=False,
+    )
+    _emit_started(conn, url, "closed-run")
+    _emit_succeeded(conn, url, "closed-run")
+    _mark_closed(conn, url)
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    assert get_jobs_by_stage(conn, "pending_apply", min_score=7) == []
+    assert get_jobs_by_stage(conn, "applied") == []
+    assert get_stats(conn)["applied"] == 0
+
+
+def test_closed_apply_failures_are_excluded_from_stats(conn):
+    url = "https://example.com/closed-apply-error"
+    _insert_apply_ready_job(conn, url=url)
+    ensure_job_stage_rows(conn, url)
+    set_stage_state(
+        conn,
+        url,
+        "apply",
+        "failed",
+        finished_at="t9",
+        validate_transition=False,
+    )
+    _emit_started(conn, url, "closed-failed-run")
+    _emit_failed(conn, url, "closed-failed-run")
+    _mark_closed(conn, url)
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    assert get_stats(conn)["apply_errors"] == 0
 
 
 def test_pending_apply_excludes_jobs_with_in_progress_apply_run(conn):

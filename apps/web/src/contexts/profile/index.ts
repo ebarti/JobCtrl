@@ -16,5 +16,6 @@ export { ProfileEditor } from "./components/ProfileEditor.js";
 export { ResumeImportWizard } from "./components/ResumeImportWizard.js";
 export { ResumePreviewIframe } from "./components/ResumePreviewIframe.js";
 export { SettingsPanel } from "./components/SettingsPanel.js";
+export { TargetSearchSettingsPanel } from "./components/TargetSearchSettingsPanel.js";
 
 export { profileImportedHandler, profileUpdatedHandler } from "./handlers.js";

@@ -140,28 +140,63 @@ function stageActivityStatusLine(stage: Stage, activity: StageActivity): string 
   return `${stageLabel} latest event: ${activity.message}${eventReference}.`;
 }
 
+function sentenceDetail(detail: string): string {
+  return /[.!?]$/.test(detail) ? detail : `${detail}.`;
+}
+
+const DISCOVERY_SOURCE_LABELS: Record<string, string> = {
+  jobspy: "JobSpy",
+  workday: "Workday",
+  smartextract: "Smart extract",
+};
+
+function discoverySourceLabel(source: string): string {
+  const normalized = source.trim().toLowerCase();
+  const known = DISCOVERY_SOURCE_LABELS[normalized];
+  if (known) return known;
+  return normalized
+    .split(/[_:-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function userFacingProgressDetail(detail: string): string {
+  const orphanedDiscoveryMatch = detail.match(
+    /^Discovery source\s+(\S+)\s+was left running by a prior worker(?:\s+and has been marked failed for retry)?\.?$/i,
+  );
+  if (orphanedDiscoveryMatch?.[1]) {
+    return `${discoverySourceLabel(orphanedDiscoveryMatch[1])} is ready to run again.`;
+  }
+  if (/^Discovery run was left running by a prior worker(?:\s+and has been marked failed for retry)?\.?$/i.test(detail)) {
+    return "Discover is ready to run again.";
+  }
+  return detail;
+}
+
 function stageProgressStatusLine(stage: Stage, progress: StageProgress): string {
   const stageLabel = labelForStage(stage);
   const percent = progress.percent === null ? null : `${progress.percent}%`;
   const count = `${progress.completed}/${progress.total}`;
-  const detail = progress.message || progress.currentStep || "stage progress updated";
+  const detail = userFacingProgressDetail(progress.message || progress.currentStep || "stage progress updated");
+  const detailSentence = sentenceDetail(detail);
 
   if (progress.status === "failed") {
     return percent
-      ? `${stageLabel} ${percent} complete (${count}): ${detail}.`
-      : `${stageLabel} progress (${count}): ${detail}.`;
+      ? `${stageLabel} not running. Last progress ${percent} (${count}): ${detailSentence}`
+      : `${stageLabel} not running. Last progress ${count}: ${detailSentence}`;
   }
   if (progress.status === "succeeded" || progress.percent === 100) {
-    return `${stageLabel} 100% complete (${count}): ${detail}.`;
+    return `${stageLabel} 100% complete (${count}): ${detailSentence}`;
   }
   if (progress.status === "partial") {
     return percent
-      ? `${stageLabel} ${percent} complete with warnings (${count}): ${detail}.`
-      : `${stageLabel} progress with warnings (${count}): ${detail}.`;
+      ? `${stageLabel} ${percent} complete with warnings (${count}): ${detailSentence}`
+      : `${stageLabel} progress with warnings (${count}): ${detailSentence}`;
   }
   return percent
-    ? `${stageLabel} ${percent} complete (${count}): ${detail}.`
-    : `${stageLabel} progress (${count}): ${detail}.`;
+    ? `${stageLabel} ${percent} complete (${count}): ${detailSentence}`
+    : `${stageLabel} progress (${count}): ${detailSentence}`;
 }
 
 function StageProgressLine({ stage, progress }: { readonly stage: Stage; readonly progress: StageProgress }) {

@@ -403,6 +403,35 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
   });
 
+  it("describes failed backend discovery progress as not running and runnable again", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            progress: [
+              {
+                stage: "discover" as const,
+                status: "failed" as const,
+                percent: 60,
+                completed: 3,
+                total: 5,
+                currentStep: "Smart extract",
+                message: "Discovery source smartextract was left running by a prior worker.",
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover not running. Last progress 60% (3/5): Smart extract is ready to run again.",
+    );
+    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
+  });
+
   it("surfaces failed worker action responses", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({

@@ -222,6 +222,8 @@ describe("<JobBulkActions>", () => {
         onPermanentlyDeleteSelected={() => {}}
       />,
     );
+    await user.click(screen.getByRole("button", { name: /closed jobs/i }));
+    expect(onSet).toHaveBeenCalledWith("closed");
     await user.click(screen.getByRole("button", { name: /deleted jobs/i }));
     expect(onSet).toHaveBeenCalledWith("deleted");
     await user.click(screen.getByRole("button", { name: /hidden jobs/i }));

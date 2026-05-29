@@ -30,8 +30,75 @@ import {
   type ProfileMonthValue,
 } from "../lib/profile-date-fields.js";
 
+interface TargetSearchOption {
+  value: string;
+  label: string;
+  aliases?: readonly string[];
+}
+
+interface TargetSearchOptionGroup {
+  label: string;
+  options: readonly TargetSearchOption[];
+}
+
+const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [
+  {
+    label: "",
+    options: [
+      {
+        value: "ic",
+        label: "Individual Contributor",
+        aliases: ["individual contributor", "individual_contributor", "staff plus", "staff_plus"],
+      },
+      {
+        value: "management",
+        label: "Management",
+        aliases: ["manager", "people manager", "people_manager"],
+      },
+      {
+        value: "executive",
+        label: "Executive",
+        aliases: ["exec", "leadership"],
+      },
+    ],
+  },
+];
+
+const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
+  {
+    label: "IC",
+    options: [
+      { value: "junior", label: "Junior Engineer" },
+      { value: "engineer", label: "Engineer", aliases: ["mid engineer", "mid-level engineer"] },
+      { value: "senior", label: "Senior Engineer" },
+      { value: "staff", label: "Staff Engineer" },
+      { value: "principal", label: "Principal Engineer" },
+    ],
+  },
+  {
+    label: "Management",
+    options: [
+      { value: "manager", label: "Engineering Manager" },
+      {
+        value: "senior_manager",
+        label: "Senior Engineering Manager / Head of Engineering",
+        aliases: ["senior manager", "senior engineering manager", "head of engineering"],
+      },
+      { value: "director", label: "Director of Engineering" },
+    ],
+  },
+  {
+    label: "Executive",
+    options: [
+      { value: "vp", label: "VP of Engineering", aliases: ["vice president engineering", "vp engineering"] },
+      { value: "svp", label: "SVP Engineering", aliases: ["senior vice president engineering"] },
+      { value: "cto", label: "CTO", aliases: ["chief technology officer"] },
+    ],
+  },
+];
+
 export interface StructuredProfileEditorProps {
-  mode?: "profile" | "preferences";
+  mode?: "profile" | "preferences" | "target-search";
   profileText: string;
   styleText: string;
   onProfileTextChange: (value: string) => void;
@@ -480,6 +547,82 @@ export function StructuredProfileEditor({
     );
   };
 
+  const targetSearchCheckboxGroup = (
+    path: string,
+    label: string,
+    groups: readonly TargetSearchOptionGroup[],
+  ) => {
+    const options = groups.flatMap((group) => group.options);
+    const values = delimitedListAt(textAt(profile, path)).map((value) => value.trim()).filter(Boolean);
+    const selected = new Set(
+      values.map((value) => normalizeTargetSearchOption(value, options)).filter((value): value is string => Boolean(value)),
+    );
+    const customValues = values.filter((value) => !normalizeTargetSearchOption(value, options));
+    const updateSelection = (optionValue: string, checked: boolean) => {
+      const next = new Set(selected);
+      if (checked) {
+        next.add(optionValue);
+      } else {
+        next.delete(optionValue);
+      }
+      const orderedKnownValues = options.map((option) => option.value).filter((value) => next.has(value));
+      updateProfilePath(path, [...orderedKnownValues, ...customValues].join("; "));
+    };
+    const removeCustomValue = (customValue: string) => {
+      const orderedKnownValues = options.map((option) => option.value).filter((value) => selected.has(value));
+      updateProfilePath(
+        path,
+        [...orderedKnownValues, ...customValues.filter((value) => value !== customValue)].join("; "),
+      );
+    };
+
+    return (
+      <fieldset className="field wide checkbox-group-field">
+        <legend>{label}</legend>
+        <div className="checkbox-group-list">
+          {groups.map((group) => (
+            <div
+              className={`checkbox-option-group${group.label ? "" : " ungrouped"}`}
+              key={`${path}-${group.label || "ungrouped"}`}
+            >
+              {group.label ? <span className="checkbox-group-label">{group.label}</span> : null}
+              <div className="checkbox-options">
+                {group.options.map((option) => (
+                  <label className="choice target-choice" key={`${path}-${option.value}`}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(option.value)}
+                      onChange={(event) => updateSelection(option.value, event.target.checked)}
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+          {customValues.length > 0 ? (
+            <div className="unsupported-target-values">
+              <span>Unsupported saved values</span>
+              <div className="unsupported-target-value-list">
+                {customValues.map((value) => (
+                  <button
+                    className="tab"
+                    type="button"
+                    key={`${path}-${value}`}
+                    onClick={() => removeCustomValue(value)}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                    {value}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </fieldset>
+    );
+  };
+
   const targetLocationWorkModelField = () => {
     const locationPath = "experience.target_locations";
     const workModelPath = "experience.target_work_models";
@@ -587,6 +730,26 @@ export function StructuredProfileEditor({
       </div>
     );
   };
+
+  const targetSearchSection = () => (
+    <section className="form-section">
+      <h3>Target search</h3>
+      <div className="target-preferences-grid">
+        {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS)}
+        {targetSearchCheckboxGroup(
+          "experience.target_seniority_floor",
+          "Seniority floors",
+          TARGET_SENIORITY_GROUPS,
+        )}
+        {delimitedListField("experience.target_functions", "Target functions", "add function", { compact: true })}
+        {delimitedListField("experience.target_specializations", "Specializations", "add specialization", {
+          compact: true,
+        })}
+        {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
+        {targetLocationWorkModelField()}
+      </div>
+    </section>
+  );
 
   const styleSelect = (path: string, label: string, options: Array<[string, string]>) => (
     <label className="field">
@@ -941,6 +1104,8 @@ export function StructuredProfileEditor({
         </div>
           </section>
         </>
+      ) : mode === "target-search" ? (
+        targetSearchSection()
       ) : (
         <>
           <section className="form-section">
@@ -975,22 +1140,6 @@ export function StructuredProfileEditor({
                 valueKind: "text",
               })}
               {textField("compensation.currency_conversion_note", "Currency note")}
-            </div>
-          </section>
-
-          <section className="form-section">
-            <h3>Target search</h3>
-            <div className="target-preferences-grid">
-              {delimitedListField("experience.target_track", "Target tracks", "add track", { compact: true })}
-              {delimitedListField("experience.target_seniority_floor", "Seniority floors", "add seniority", {
-                compact: true,
-              })}
-              {delimitedListField("experience.target_functions", "Target functions", "add function", { compact: true })}
-              {delimitedListField("experience.target_specializations", "Specializations", "add specialization", {
-                compact: true,
-              })}
-              {delimitedListField("experience.target_role", "Target roles", "add role", { compact: true })}
-              {targetLocationWorkModelField()}
             </div>
           </section>
 
@@ -1121,4 +1270,17 @@ function commaListAt(value: string): string[] {
     return [];
   }
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeTargetSearchOption(value: string, options: readonly TargetSearchOption[]): string | null {
+  const normalized = normalizeTargetSearchToken(value);
+  const match = options.find((option) => {
+    const optionTokens = [option.value, option.label, ...(option.aliases ?? [])];
+    return optionTokens.some((token) => normalizeTargetSearchToken(token) === normalized);
+  });
+  return match?.value ?? null;
+}
+
+function normalizeTargetSearchToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
