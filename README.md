@@ -102,6 +102,7 @@ Auto-apply:
 - Chrome or Chromium.
 - Node.js and `npx` for the Playwright MCP runtime.
 - Claude Code CLI for browser-driven form completion.
+- Optional Gmail MCP auth for read-only email verification codes.
 - Optional `CAPSOLVER_API_KEY` for CAPTCHA solving.
 
 Run the doctor command after setup. It is the fastest way to see which tier of
@@ -273,6 +274,20 @@ when enrichment finds one, or from the original posting URL when the local
 agent needs to click through to the employer form. The default model is
 `default`, which lets Claude Code use its configured local model; pass
 `--model <name>` only when you want to override that local default.
+
+Applications that send verification codes by email use the read-only Gmail MCP
+connector. Put your Google OAuth desktop client file at
+`~/.gmail-mcp/gcp-oauth.keys.json`, then authenticate once:
+
+```bash
+npx -y @gongrzhe/server-gmail-autoauth-mcp auth
+uv --project workers/automation run jobhunter doctor
+```
+
+`jobhunter doctor` reports `Gmail MCP auth`. Without authenticated Gmail MCP,
+auto-apply stops with `RESULT:LOGIN_ISSUE` when an application requires an
+email verification code. Override long ATS timeouts with
+`JOBHUNTER_APPLY_TIMEOUT_SECONDS=<seconds>` in `~/.jobhunter/.env`.
 
 ## Structured Local Actions
 
@@ -508,6 +523,8 @@ Common environment variables:
 - `CHROME_PATH`: override Chrome/Chromium detection.
 - `PDFLATEX_PATH`: override LaTeX detection.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
+- `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout
+  (`900` seconds by default).
 - `JOBHUNTER_API_HOST`, `JOBHUNTER_API_PORT`: local TypeScript API bind
   settings.
 - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`:

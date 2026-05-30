@@ -964,9 +964,73 @@ DEFAULTS = {
     "max_apply_attempts": 3,
     "max_tailor_attempts": 5,
     "poll_interval": 60,
-    "apply_timeout": 300,
+    "apply_timeout": 900,
     "viewport": "1280x900",
 }
+
+
+def get_gmail_mcp_dir() -> Path:
+    """Return the Gmail MCP auth directory used by the local connector."""
+    return Path(os.environ.get("GMAIL_MCP_DIR", Path.home() / ".gmail-mcp")).expanduser()
+
+
+def get_gmail_mcp_oauth_keys_path() -> Path:
+    """Return the expected Google OAuth client file for Gmail MCP setup."""
+    return Path(
+        os.environ.get(
+            "GMAIL_MCP_OAUTH_KEYS_PATH",
+            get_gmail_mcp_dir() / "gcp-oauth.keys.json",
+        )
+    ).expanduser()
+
+
+def get_gmail_mcp_credentials_path() -> Path:
+    """Return the Gmail MCP token file created by the auth flow."""
+    return Path(
+        os.environ.get(
+            "GMAIL_MCP_CREDENTIALS_PATH",
+            get_gmail_mcp_dir() / "credentials.json",
+        )
+    ).expanduser()
+
+
+def gmail_mcp_auth_status() -> tuple[bool, str]:
+    """Report whether read-only Gmail MCP verification is locally authenticated."""
+    load_env()
+    credentials_path = get_gmail_mcp_credentials_path()
+    oauth_keys_path = get_gmail_mcp_oauth_keys_path()
+    if credentials_path.exists():
+        return True, f"authenticated with {credentials_path}"
+    if not oauth_keys_path.exists():
+        return (
+            False,
+            f"missing OAuth keys at {oauth_keys_path}",
+        )
+    return (
+        False,
+        "OAuth keys found; run npx -y @gongrzhe/server-gmail-autoauth-mcp auth",
+    )
+
+
+def get_apply_timeout_seconds() -> int:
+    """Return the per-job autonomous apply timeout.
+
+    Real ATS flows can include account creation, resume parsing, and email
+    verification, so local operators may need to tune the timeout without a
+    code change.
+    """
+    load_env()
+    raw = os.environ.get("JOBHUNTER_APPLY_TIMEOUT_SECONDS")
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            log.warning("Invalid JOBHUNTER_APPLY_TIMEOUT_SECONDS=%r; using default", raw)
+        else:
+            if parsed > 0:
+                return parsed
+            log.warning("JOBHUNTER_APPLY_TIMEOUT_SECONDS must be positive; using default")
+    return int(DEFAULTS.get("apply_timeout", 900))
 
 
 def load_env():

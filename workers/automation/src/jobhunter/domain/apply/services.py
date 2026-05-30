@@ -158,6 +158,7 @@ class ApplyPromptBuilder:
         dry_run: bool = False,
         cover_letter: str | None = None,
         search_config: Mapping[str, Any] | None = None,
+        upload_dir: str | None = None,
     ) -> ApplyPrompt:
         """Render the prompt + MCP config for one job.
 
@@ -179,6 +180,7 @@ class ApplyPromptBuilder:
             dry_run=dry_run,
             snapshot=snapshot,
             search_config=dict(search_config) if search_config is not None else None,
+            upload_dir=upload_dir,
         )
         mcp_config = self._mcp_config_factory(cdp_port)
         return ApplyPrompt(text=text, mcp_config=mcp_config)

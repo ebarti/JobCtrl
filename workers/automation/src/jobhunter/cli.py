@@ -1373,6 +1373,7 @@ def doctor() -> None:
     from jobhunter.config import (
         load_env, DB_PATH, RESUME_PATH, RESUME_PDF_PATH,
         RESUME_TEMPLATE_PATH, SEARCH_CONFIG_PATH, get_chrome_path,
+        gmail_mcp_auth_status,
     )
     from jobhunter.domain.tenant import LOCAL_TENANT
     from jobhunter.infrastructure.profile import get_profile_repository
@@ -1481,6 +1482,18 @@ def doctor() -> None:
     else:
         results.append(("Node.js (npx)", fail_mark,
                         "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
+
+    # Gmail MCP is optional, but apply runs that hit email verification need it
+    # to stay browser-independent and finish automatically.
+    gmail_ok, gmail_note = gmail_mcp_auth_status()
+    if gmail_ok:
+        results.append(("Gmail MCP auth", ok_mark, gmail_note))
+    else:
+        results.append((
+            "Gmail MCP auth",
+            warn_mark,
+            f"{gmail_note}; email verification will stop as login_issue",
+        ))
 
     # CapSolver (optional)
     capsolver = os.environ.get("CAPSOLVER_API_KEY")

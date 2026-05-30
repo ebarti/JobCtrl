@@ -183,6 +183,27 @@ def test_dry_run_returns_dry_run_complete_variant(monkeypatch, repo):
     assert outcome.apply_run.status == "dry_run_complete"
 
 
+def test_execute_passes_worker_dir_to_prompt_builder(monkeypatch, repo):
+    seen = {}
+
+    def fake_build(**kwargs):
+        seen.update(kwargs)
+        return "rendered prompt"
+
+    monkeypatch.setattr("jobhunter.apply.prompt.build_prompt", fake_build)
+    use_case = _build_use_case(repo)
+
+    use_case.execute(
+        job=_ready_job(),
+        snapshot=_FakeSnapshot(),
+        worker_id=1,
+        cdp_port=9222,
+        worker_dir="/tmp/apply-worker-1",
+    )
+
+    assert seen["upload_dir"] == "/tmp/apply-worker-1"
+
+
 def test_eligibility_accepts_posting_url_without_direct_application_url(monkeypatch, repo):
     _stub_legacy_prompt(monkeypatch)
     use_case = _build_use_case(

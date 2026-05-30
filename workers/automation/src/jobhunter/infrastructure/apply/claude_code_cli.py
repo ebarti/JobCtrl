@@ -116,7 +116,7 @@ class ClaudeCodeCliAdapter:
         self._default_timeout = (
             int(default_timeout_seconds)
             if default_timeout_seconds is not None
-            else int(config.DEFAULTS.get("apply_timeout", 300))
+            else config.get_apply_timeout_seconds()
         )
 
     # ------------------------------------------------------------------

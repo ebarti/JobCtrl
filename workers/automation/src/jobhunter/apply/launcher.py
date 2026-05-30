@@ -801,7 +801,7 @@ def _build_use_case():
         browser_port=browser_port,
         agent_port=agent_port,
         repository=_NoopApplyRunRepository(),
-        timeout_seconds=int(config.DEFAULTS.get("apply_timeout", 300)),
+        timeout_seconds=config.get_apply_timeout_seconds(),
     )
     return SubmitApplicationUseCase(
         repository=_NoopApplyRunRepository(),
@@ -813,7 +813,7 @@ def _build_use_case():
         prompt_builder=ApplyPromptBuilder(),
         publisher=get_default_publisher(),
         saga=saga,
-        timeout_seconds=int(config.DEFAULTS.get("apply_timeout", 300)),
+        timeout_seconds=config.get_apply_timeout_seconds(),
     )
 
 
