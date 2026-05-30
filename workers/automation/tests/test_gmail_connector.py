@@ -63,7 +63,9 @@ def test_gmail_client_searches_recent_metadata(monkeypatch) -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/messages"):
-            assert "verification" in str(request.url.params["q"])
+            query = str(request.url.params["q"])
+            assert "verification" in query
+            assert "to:candidate@example.com" in query
             return httpx.Response(200, json={"messages": [{"id": "m1"}]})
         assert request.url.path.endswith("/messages/m1")
         return httpx.Response(
@@ -100,6 +102,40 @@ def test_gmail_client_searches_recent_metadata(monkeypatch) -> None:
             "internalDate": str(now_ms),
         }
     ]
+
+
+def test_gmail_client_rejects_search_without_recipient(monkeypatch) -> None:
+    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+    client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))))
+
+    try:
+        client.search_emails()
+    except ValueError as exc:
+        assert "requires a recipient email" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_gmail_client_bounds_query_to_verification_terms(monkeypatch) -> None:
+    monkeypatch.setattr("jobhunter.infrastructure.gmail.client.get_access_token", lambda: "token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = str(request.url.params["q"])
+        assert "verification" in query
+        assert "to:candidate@example.com" in query
+        assert "Greenhouse" in query
+        assert "from:" not in query
+        assert "older_than:" not in query
+        return httpx.Response(200, json={"messages": []})
+
+    client = GmailClient(http=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert client.search_emails(
+        query="from:bank@example.com older_than:10y Greenhouse",
+        to_email="candidate@example.com",
+        newer_than_minutes=500,
+        max_results=500,
+    ) == []
 
 
 def test_gmail_client_reads_message_body(monkeypatch) -> None:
@@ -139,11 +175,24 @@ def test_mcp_server_exposes_readonly_tools() -> None:
 
     server = GmailMcpServer(client=FakeClient())
     tools = server.handle_json(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
-    called = server.handle_json(
+    searched = server.handle_json(
         json.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_emails",
+                    "arguments": {"to_email": "candidate@example.com"},
+                },
+            }
+        )
+    )
+    called = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
                 "method": "tools/call",
                 "params": {"name": "read_email", "arguments": {"message_id": "m1"}},
             }
@@ -152,4 +201,53 @@ def test_mcp_server_exposes_readonly_tools() -> None:
 
     tool_names = {tool["name"] for tool in tools["result"]["tools"]}
     assert tool_names == {"search_emails", "read_email"}
+    assert "Code" in searched["result"]["content"][0]["text"]
     assert "code 123456" in called["result"]["content"][0]["text"]
+
+
+def test_mcp_server_reads_only_search_result_ids() -> None:
+    class FakeClient:
+        def search_emails(self, **_kwargs):
+            return [{"id": "m1", "subject": "Code"}]
+
+        def read_email(self, *, message_id):
+            return {"id": message_id, "body_text": "code 123456"}
+
+    server = GmailMcpServer(client=FakeClient())
+    before_search = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "read_email", "arguments": {"message_id": "m1"}},
+            }
+        )
+    )
+    server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_emails",
+                    "arguments": {"to_email": "candidate@example.com"},
+                },
+            }
+        )
+    )
+    after_search_wrong_id = server.handle_json(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {"name": "read_email", "arguments": {"message_id": "m2"}},
+            }
+        )
+    )
+
+    assert before_search["error"]["code"] == -32000
+    assert "returned by search_emails" in before_search["error"]["message"]
+    assert after_search_wrong_id["error"]["code"] == -32000

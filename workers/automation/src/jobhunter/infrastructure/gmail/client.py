@@ -14,6 +14,12 @@ from jobhunter.infrastructure.gmail.auth import get_access_token
 
 GMAIL_API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 _HEADERS = ("From", "To", "Subject", "Date")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_HINT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,48}")
+_VERIFICATION_TERMS = (
+    '(verification OR "verification code" OR code OR confirm OR confirmation '
+    'OR OTP OR "one-time" OR security OR login)'
+)
 
 
 class GmailClient:
@@ -30,8 +36,8 @@ class GmailClient:
         newer_than_minutes: int = 30,
         max_results: int = 10,
     ) -> list[dict[str, Any]]:
-        max_results = max(1, min(int(max_results or 10), 20))
-        newer_than_minutes = max(1, int(newer_than_minutes or 30))
+        max_results = max(1, min(int(max_results or 10), 10))
+        newer_than_minutes = max(1, min(int(newer_than_minutes or 30), 60))
         cutoff_ms = int((time.time() - newer_than_minutes * 60) * 1000)
         q = _build_query(query=query, to_email=to_email)
         with self._client() as http:
@@ -112,13 +118,29 @@ class _NullContext:
 
 
 def _build_query(*, query: str, to_email: str) -> str:
-    terms = [query.strip()] if query.strip() else [
-        '(verification OR code OR confirm OR OTP OR "one-time" OR security OR login)'
-    ]
-    if to_email.strip():
-        terms.append(f"to:{to_email.strip()}")
+    recipient = to_email.strip()
+    if not recipient or not _EMAIL_RE.match(recipient):
+        raise ValueError("Gmail verification search requires a recipient email")
+    terms = [_VERIFICATION_TERMS, f"to:{recipient}"]
+    hints = _safe_query_hints(query)
+    if hints:
+        terms.append("(" + " OR ".join(hints) + ")")
     terms.append("newer_than:1d")
     return " ".join(terms)
+
+
+def _safe_query_hints(query: str) -> list[str]:
+    """Return plain employer/ATS hints, not arbitrary Gmail search operators."""
+    hints: list[str] = []
+    for token in _HINT_RE.findall(query or ""):
+        lowered = token.lower()
+        if lowered in {"from", "to", "subject", "older_than", "newer_than", "after", "before"}:
+            continue
+        if lowered not in {hint.lower() for hint in hints}:
+            hints.append(token)
+        if len(hints) >= 6:
+            break
+    return hints
 
 
 def _headers_to_dict(headers: list[dict[str, str]]) -> dict[str, str]:

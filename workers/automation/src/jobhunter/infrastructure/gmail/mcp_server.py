@@ -24,6 +24,7 @@ def main() -> None:
 class GmailMcpServer:
     def __init__(self, *, client: GmailClient | None = None) -> None:
         self._client = client or GmailClient()
+        self._readable_message_ids: set[str] = set()
 
     def handle_json(self, line: str) -> dict[str, Any] | None:
         try:
@@ -64,10 +65,17 @@ class GmailMcpServer:
                 newer_than_minutes=int(args.get("newer_than_minutes") or 30),
                 max_results=int(args.get("max_results") or 10),
             )
+            self._readable_message_ids = {
+                str(item.get("id"))
+                for item in payload
+                if isinstance(item, dict) and item.get("id")
+            }
         elif name == "read_email":
             message_id = str(args.get("message_id") or args.get("id") or "")
             if not message_id:
                 raise ValueError("read_email requires message_id")
+            if message_id not in self._readable_message_ids:
+                raise ValueError("read_email requires a message_id returned by search_emails in this session")
             payload = self._client.read_email(message_id=message_id)
         else:
             raise ValueError(f"Unknown Gmail tool: {name}")
@@ -89,11 +97,15 @@ def _tools() -> list[dict[str, Any]]:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
+                    "query": {
+                        "type": "string",
+                        "description": "Optional employer or ATS hint words, not a raw Gmail query.",
+                    },
                     "to_email": {"type": "string"},
                     "newer_than_minutes": {"type": "integer", "default": 30},
                     "max_results": {"type": "integer", "default": 10},
                 },
+                "required": ["to_email"],
             },
         },
         {
