@@ -107,6 +107,18 @@ if platform.system() != "Windows" and threading.current_thread() is threading.ma
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
+def _kill_claude_processes_for_interrupt() -> None:
+    from jobhunter.infrastructure.apply.claude_code_cli import (
+        kill_active_claude_processes,
+    )
+
+    kill_active_claude_processes()
+    with _claude_lock:
+        for _wid, cproc in list(_claude_procs.items()):
+            if cproc.poll() is None:
+                _kill_process_tree(cproc.pid)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1284,17 +1296,11 @@ def main(
             console.print(
                 "\n[yellow]Skipping current job(s)... (Ctrl+C again to STOP)[/yellow]"
             )
-            with _claude_lock:
-                for _wid, cproc in list(_claude_procs.items()):
-                    if cproc.poll() is None:
-                        _kill_process_tree(cproc.pid)
+            _kill_claude_processes_for_interrupt()
         else:
             console.print("\n[red bold]STOPPING[/red bold]")
             _stop_event.set()
-            with _claude_lock:
-                for _wid, cproc in list(_claude_procs.items()):
-                    if cproc.poll() is None:
-                        _kill_process_tree(cproc.pid)
+            _kill_claude_processes_for_interrupt()
             kill_all_chrome()
             raise KeyboardInterrupt
 

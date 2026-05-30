@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import queue
 import re
 import subprocess
@@ -61,6 +62,8 @@ _RESULT_CODES = ("APPLIED", "DRY_RUN", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE")
 # dedicated SubmissionResult variant.
 _PROMOTED_FAILED_REASONS = {"captcha", "expired", "login_issue"}
 _DEFAULT_MODEL_SENTINELS = {"", "default", "local-default"}
+_ACTIVE_CLAUDE_PROCS: dict[int, subprocess.Popen] = {}
+_ACTIVE_CLAUDE_LOCK = threading.Lock()
 
 
 def _utc_now() -> str:
@@ -77,6 +80,17 @@ def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
 
 def _clean_reason(s: str) -> str:
     return re.sub(r'[*`"]+$', '', s).strip()
+
+
+def kill_active_claude_processes() -> None:
+    """Best-effort cleanup hook for launcher Ctrl-C handling."""
+    with _ACTIVE_CLAUDE_LOCK:
+        procs = tuple(_ACTIVE_CLAUDE_PROCS.items())
+
+    for worker_id, proc in procs:
+        if proc.poll() is None:
+            _kill_process_tree_if_alive(proc)
+        _unregister_active_claude_process(worker_id, proc)
 
 
 class ClaudeCodeCliAdapter:
@@ -161,15 +175,9 @@ class ClaudeCodeCliAdapter:
         try:
             proc = subprocess.Popen(
                 cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-                cwd=str(worker_dir),
+                **_popen_kwargs(env=env, cwd=str(worker_dir)),
             )
+            _register_active_claude_process(worker_id, proc)
             events.append(
                 {
                     "event_type": "ClaudeLaunched",
@@ -276,6 +284,7 @@ class ClaudeCodeCliAdapter:
 
             proc.wait(timeout=5)
             returncode = proc.returncode
+            _unregister_active_claude_process(worker_id, proc)
             proc = None
 
             output = "\n".join(text_parts)
@@ -323,8 +332,10 @@ class ClaudeCodeCliAdapter:
                 _kill_process_tree_if_alive(proc)
             raise
         finally:
-            if proc is not None and proc.poll() is None:
-                _kill_process_tree_if_alive(proc)
+            if proc is not None:
+                _unregister_active_claude_process(worker_id, proc)
+                if proc.poll() is None:
+                    _kill_process_tree_if_alive(proc)
 
     # ------------------------------------------------------------------
     # RESULT line parsing
@@ -395,6 +406,36 @@ def _preview(text: str, limit: int = 220) -> str:
     return compact[: max(0, limit - 3)] + "..."
 
 
+def _popen_kwargs(*, env: dict[str, str], cwd: str) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "env": env,
+        "cwd": cwd,
+    }
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def _register_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
+    with _ACTIVE_CLAUDE_LOCK:
+        _ACTIVE_CLAUDE_PROCS[int(worker_id)] = proc
+
+
+def _unregister_active_claude_process(worker_id: int, proc: subprocess.Popen) -> None:
+    with _ACTIVE_CLAUDE_LOCK:
+        active = _ACTIVE_CLAUDE_PROCS.get(int(worker_id))
+        if active is proc:
+            _ACTIVE_CLAUDE_PROCS.pop(int(worker_id), None)
+
+
 def _kill_process_tree_if_alive(proc: subprocess.Popen) -> None:
     try:
         from jobhunter.apply.chrome import _kill_process_tree
@@ -404,4 +445,4 @@ def _kill_process_tree_if_alive(proc: subprocess.Popen) -> None:
         log.exception("_kill_process_tree_if_alive: kill failed (best-effort)")
 
 
-__all__ = ["ClaudeCodeCliAdapter"]
+__all__ = ["ClaudeCodeCliAdapter", "kill_active_claude_processes"]
