@@ -249,7 +249,7 @@ def test_execute_keeps_upload_files_after_local_chrome_launch(
     monkeypatch.setattr("jobhunter.apply.prompt.config.load_env", lambda: None)
     monkeypatch.setattr(
         "jobhunter.apply.prompt.config.gmail_mcp_auth_status",
-        lambda: (False, "missing OAuth keys at /tmp/.gmail-mcp/gcp-oauth.keys.json"),
+        lambda: (False, "missing OAuth client at /tmp/.jobhunter/gmail/oauth-client.json"),
     )
 
     class FakeChromeProc:

@@ -1483,14 +1483,14 @@ def doctor() -> None:
         results.append(("Node.js (npx)", fail_mark,
                         "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
 
-    # Gmail MCP is optional, but apply runs that hit email verification need it
+    # Gmail connector is optional, but apply runs that hit email verification need it
     # to stay browser-independent and finish automatically.
     gmail_ok, gmail_note = gmail_mcp_auth_status()
     if gmail_ok:
-        results.append(("Gmail MCP auth", ok_mark, gmail_note))
+        results.append(("Gmail connector auth", ok_mark, gmail_note))
     else:
         results.append((
-            "Gmail MCP auth",
+            "Gmail connector auth",
             warn_mark,
             f"{gmail_note}; email verification will stop as login_issue",
         ))
@@ -1574,6 +1574,22 @@ def doctor() -> None:
         console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
 
     console.print()
+
+
+@app.command("gmail-auth")
+def gmail_auth(
+    no_browser: bool = typer.Option(False, "--no-browser", help="Print the auth URL without opening a browser."),
+    timeout_seconds: int = typer.Option(180, "--timeout-seconds", help="Seconds to wait for the local OAuth callback."),
+) -> None:
+    """Authenticate the first-party Gmail readonly connector."""
+    from jobhunter.infrastructure.gmail.auth import GmailAuthError, authenticate
+
+    try:
+        token_path = authenticate(open_browser=not no_browser, timeout_seconds=timeout_seconds)
+    except GmailAuthError as exc:
+        console.print(f"[red]Gmail auth failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Gmail readonly token saved:[/green] {token_path}")
 
 
 if __name__ == "__main__":

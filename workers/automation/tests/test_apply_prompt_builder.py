@@ -2,6 +2,7 @@
 the rendered text + MCP config bound to the requested CDP port."""
 
 import pytest
+import sys
 
 from jobhunter.apply import prompt as prompt_mod
 from jobhunter.domain.apply.services import ApplyPromptBuilder, _default_mcp_config
@@ -109,7 +110,7 @@ def test_legacy_prompt_copies_upload_files_into_worker_upload_dir(
     monkeypatch.setattr(
         prompt_mod.config,
         "gmail_mcp_auth_status",
-        lambda: (False, "missing OAuth keys at /tmp/.gmail-mcp/gcp-oauth.keys.json"),
+        lambda: (False, "missing OAuth client at /tmp/.jobhunter/gmail/oauth-client.json"),
     )
 
     rendered = prompt_mod.build_prompt(
@@ -143,5 +144,5 @@ def test_default_mcp_config_includes_gmail_read_connector() -> None:
     config = _default_mcp_config(9222)
 
     gmail = config["mcpServers"]["gmail"]
-    assert gmail["command"] == "npx"
-    assert gmail["args"] == ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]
+    assert gmail["command"] == sys.executable
+    assert gmail["args"] == ["-m", "jobhunter.infrastructure.gmail.mcp_server"]

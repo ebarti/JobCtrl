@@ -1,5 +1,6 @@
 """JobHunter configuration: paths, platform detection, user data."""
 
+import json
 import logging
 import os
 import platform
@@ -970,32 +971,35 @@ DEFAULTS = {
 
 
 def get_gmail_mcp_dir() -> Path:
-    """Return the Gmail MCP auth directory used by the local connector."""
-    return Path(os.environ.get("GMAIL_MCP_DIR", Path.home() / ".gmail-mcp")).expanduser()
+    """Return the first-party Gmail connector auth directory."""
+    return Path(
+        os.environ.get(
+            "JOBHUNTER_GMAIL_DIR",
+            os.environ.get("GMAIL_MCP_DIR", APP_DIR / "gmail"),
+        )
+    ).expanduser()
 
 
 def get_gmail_mcp_oauth_keys_path() -> Path:
-    """Return the expected Google OAuth client file for Gmail MCP setup."""
+    """Return the expected Google OAuth client file for Gmail setup."""
     return Path(
-        os.environ.get(
-            "GMAIL_MCP_OAUTH_KEYS_PATH",
-            get_gmail_mcp_dir() / "gcp-oauth.keys.json",
-        )
+        os.environ.get("JOBHUNTER_GMAIL_OAUTH_CLIENT_PATH")
+        or os.environ.get("GMAIL_MCP_OAUTH_KEYS_PATH")
+        or get_gmail_mcp_dir() / "oauth-client.json"
     ).expanduser()
 
 
 def get_gmail_mcp_credentials_path() -> Path:
-    """Return the Gmail MCP token file created by the auth flow."""
+    """Return the Gmail token file created by the first-party auth flow."""
     return Path(
-        os.environ.get(
-            "GMAIL_MCP_CREDENTIALS_PATH",
-            get_gmail_mcp_dir() / "credentials.json",
-        )
+        os.environ.get("JOBHUNTER_GMAIL_TOKEN_PATH")
+        or os.environ.get("GMAIL_MCP_CREDENTIALS_PATH")
+        or get_gmail_mcp_dir() / "token.json"
     ).expanduser()
 
 
 def gmail_mcp_auth_status() -> tuple[bool, str]:
-    """Report whether read-only Gmail MCP verification is locally authenticated."""
+    """Report whether read-only Gmail verification is locally authenticated."""
     load_env()
     credentials_path = get_gmail_mcp_credentials_path()
     oauth_keys_path = get_gmail_mcp_oauth_keys_path()
@@ -1004,11 +1008,25 @@ def gmail_mcp_auth_status() -> tuple[bool, str]:
     if not oauth_keys_path.exists():
         return (
             False,
-            f"missing OAuth keys at {oauth_keys_path}",
+            f"missing OAuth client at {oauth_keys_path}",
         )
+    try:
+        raw = json.loads(oauth_keys_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False, f"invalid OAuth client JSON at {oauth_keys_path}"
+    web = raw.get("web") if isinstance(raw, dict) else None
+    installed = raw.get("installed") if isinstance(raw, dict) else None
+    if not installed and web:
+        redirects = tuple(str(uri) for uri in web.get("redirect_uris") or ())
+        if not any(uri.startswith(("http://localhost:", "http://127.0.0.1:")) for uri in redirects):
+            return (
+                False,
+                "OAuth web client has no local redirect URI; use a Desktop client "
+                "or add http://localhost:3000/oauth2callback",
+            )
     return (
         False,
-        "OAuth keys found; run npx -y @gongrzhe/server-gmail-autoauth-mcp auth",
+        "OAuth client found; run jobhunter gmail-auth",
     )
 
 

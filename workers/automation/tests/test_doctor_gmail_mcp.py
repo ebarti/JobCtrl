@@ -1,4 +1,4 @@
-"""Tests for the Gmail MCP auth row in ``jobhunter doctor``."""
+"""Tests for the Gmail connector auth row in ``jobhunter doctor``."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def test_doctor_reports_gmail_mcp_auth_warning(monkeypatch) -> None:
     monkeypatch.setattr("jobhunter.config.load_env", lambda: None)
     monkeypatch.setattr(
         "jobhunter.config.gmail_mcp_auth_status",
-        lambda: (False, "missing OAuth keys at /tmp/.gmail-mcp/gcp-oauth.keys.json"),
+        lambda: (False, "missing OAuth client at /tmp/.jobhunter/gmail/oauth-client.json"),
     )
 
     with patch(
@@ -23,8 +23,9 @@ def test_doctor_reports_gmail_mcp_auth_warning(monkeypatch) -> None:
         result = CliRunner().invoke(app, ["doctor"])
 
     assert result.exit_code == 0, result.output
-    assert "Gmail MCP auth" in result.output
-    assert "email verification will stop as login_issue" in result.output
+    assert "Gmail connector auth" in result.output
+    assert "email verification will stop" in result.output
+    assert "login_issue" in result.output
 
 
 def test_doctor_reports_gmail_mcp_authenticated(monkeypatch, tmp_path) -> None:
@@ -42,5 +43,5 @@ def test_doctor_reports_gmail_mcp_authenticated(monkeypatch, tmp_path) -> None:
         result = CliRunner().invoke(app, ["doctor"])
 
     assert result.exit_code == 0, result.output
-    assert "Gmail MCP auth" in result.output
+    assert "Gmail connector auth" in result.output
     assert "authenticated with" in result.output

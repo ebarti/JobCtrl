@@ -25,6 +25,7 @@ stays separable from the eligibility/prompt logic.
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -206,8 +207,8 @@ def _default_mcp_config(cdp_port: int) -> dict[str, Any]:
                 ],
             },
             "gmail": {
-                "command": "npx",
-                "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+                "command": sys.executable,
+                "args": ["-m", "jobhunter.infrastructure.gmail.mcp_server"],
             },
         },
     }

@@ -425,20 +425,20 @@ If CapSolver genuinely failed (errorId > 0), output RESULT:CAPTCHA. Do not solve
 
 
 def _build_email_verification_section(profile: dict) -> str:
-    """Build read-only Gmail MCP instructions for application verification codes."""
+    """Build read-only Gmail connector instructions for application verification codes."""
     personal = profile["personal"]
     email = personal.get("email", "")
     gmail_ok, gmail_note = config.gmail_mcp_auth_status()
     auth_line = (
-        "Gmail MCP auth: available."
+        "Gmail connector auth: available."
         if gmail_ok
-        else f"Gmail MCP auth: unavailable ({gmail_note})."
+        else f"Gmail connector auth: unavailable ({gmail_note})."
     )
 
     return f"""== EMAIL VERIFICATION ==
 {auth_line}
 
-When a job application asks for an email verification code, one-time password, or magic-link confirmation for {email}, use the Gmail MCP connector only:
+When a job application asks for an email verification code, one-time password, or magic-link confirmation for {email}, use the Gmail connector only:
 1. Call search_emails for the newest messages to {email} from the last 30 minutes. Search for subjects or bodies containing verification, code, confirm, OTP, one-time, security, login, Greenhouse, Lever, Ashby, Workday, or the employer/ATS domain.
 2. Call read_email on the newest relevant result.
 3. Extract the code nearest the verification wording. Common formats are 6-10 letters/digits, sometimes grouped with spaces or hyphens. Strip spaces and hyphens before typing it.
@@ -446,7 +446,7 @@ When a job application asks for an email verification code, one-time password, o
 
 Only read email. Never draft, send, delete, label, modify, download attachments, or create filters from Gmail.
 Do not open Gmail in the browser.
-If Gmail MCP tools are unavailable or unauthenticated, do not wait for manual help. Output RESULT:LOGIN_ISSUE and stop."""
+If Gmail connector tools are unavailable or unauthenticated, do not wait for manual help. Output RESULT:LOGIN_ISSUE and stop."""
 
 
 def build_prompt(job: dict, tailored_resume: str,
