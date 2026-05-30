@@ -338,6 +338,75 @@ textarea {
   width: auto;
 }
 
+.checkbox-group-field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.checkbox-group-field legend {
+  margin: 0 0 6px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.checkbox-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkbox-option-group {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.28fr) minmax(0, 1fr);
+  gap: 8px 12px;
+}
+
+.checkbox-option-group.ungrouped {
+  grid-template-columns: 1fr;
+}
+
+.checkbox-group-label {
+  padding-top: 5px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.checkbox-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.target-choice {
+  min-height: 28px;
+}
+
+.target-choice input {
+  width: auto;
+}
+
+.unsupported-target-values {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.28fr) minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: start;
+}
+
+.unsupported-target-values > span {
+  padding-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.unsupported-target-value-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;
@@ -395,15 +464,18 @@ textarea {
 }
 
 .funnel {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: 120px minmax(180px, 1fr) minmax(260px, max-content);
+  column-gap: 14px;
+  row-gap: 2px;
   padding: 8px 8px 12px;
 }
 
 .funnel-row {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) 220px;
+  grid-template-columns: inherit;
+  grid-template-columns: subgrid;
   align-items: center;
   gap: 14px;
   min-height: var(--row);
@@ -473,11 +545,18 @@ textarea {
 
 .legend {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.legend > span {
+  white-space: nowrap;
 }
 
 .stage-trigger-panel {
@@ -507,6 +586,12 @@ textarea {
 
 .discovery-controls {
   margin: 0 0 18px;
+}
+
+.discovery-view-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .discovery-control-grid {
@@ -2550,6 +2635,18 @@ textarea {
   .detail-list div,
   .section .mini-row {
     grid-template-columns: 1fr;
+  }
+
+  .funnel {
+    grid-template-columns: 1fr;
+  }
+
+  .funnel-row {
+    grid-column: 1;
+  }
+
+  .funnel-row .legend {
+    justify-content: flex-start;
   }
 
   .action-panel {

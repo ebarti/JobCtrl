@@ -3,10 +3,11 @@ import {
   type SettingsUpdateRequest,
 } from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { DashboardSettings } from "../../operations/types.js";
 import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
+import { AutosaveUndoController } from "./autosave-undo-controller.js";
 
 export interface SettingsFormProps {
   initial: DashboardSettings;
@@ -24,9 +25,15 @@ function toFormValues(values: DashboardSettings): SettingsUpdateRequest {
   };
 }
 
+function serializeSettingsValues(values: SettingsUpdateRequest): string {
+  return JSON.stringify(values);
+}
+
 export function SettingsForm({ initial }: SettingsFormProps) {
   const updateSettings = useUpdateSettingsMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [resetToken, setResetToken] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const form = useForm({
     defaultValues: toFormValues(initial),
@@ -38,19 +45,29 @@ export function SettingsForm({ initial }: SettingsFormProps) {
     },
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
+      const submittedValues = serializeSettingsValues(value);
       const response = await updateSettings.mutateAsync(value);
-      formApi.reset(toFormValues(response.settings));
-      setStatusMessage("settings saved");
+      if (serializeSettingsValues(formApi.state.values) === submittedValues) {
+        formApi.reset(toFormValues(response.settings));
+        setStatusMessage("settings saved");
+      } else {
+        setStatusMessage("saved; newer changes pending");
+      }
     },
   });
 
   useEffect(() => {
+    if (form.state.isDirty || form.state.isSubmitting) {
+      return;
+    }
     form.reset(toFormValues(initial));
+    setResetToken((token) => token + 1);
   }, [form, initial]);
 
   return (
     <form
       className="config-form"
+      ref={formRef}
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -59,10 +76,31 @@ export function SettingsForm({ initial }: SettingsFormProps) {
       onReset={(event) => {
         event.preventDefault();
         form.reset(toFormValues(initial));
+        setResetToken((token) => token + 1);
         setStatusMessage("");
       }}
     >
       {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+      <form.Subscribe
+        selector={(state) => ({
+          isDirty: state.isDirty,
+          isSubmitting: state.isSubmitting,
+          values: state.values,
+        })}
+      >
+        {({ isDirty, isSubmitting, values }) => (
+          <AutosaveUndoController
+            formRef={formRef}
+            isDirty={isDirty}
+            isSubmitting={isSubmitting}
+            resetToken={resetToken}
+            restoreValues={(nextValues) => form.reset(nextValues, { keepDefaultValues: true })}
+            setStatusMessage={setStatusMessage}
+            submit={() => form.handleSubmit()}
+            values={values}
+          />
+        )}
+      </form.Subscribe>
       <form.Field name="minFitScore">
         {(field) => (
           <label className="field">

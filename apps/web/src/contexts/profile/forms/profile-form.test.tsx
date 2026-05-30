@@ -1,6 +1,6 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
@@ -8,6 +8,10 @@ import { renderWithProviders } from "../../../test/render.js";
 import { ProfileForm } from "./profile-form.js";
 
 describe("<ProfileForm>", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("keeps preference controls out of the profile section", async () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
       withRouter: true,
@@ -83,9 +87,24 @@ describe("<ProfileForm>", () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
 
     expect(await screen.findByRole("heading", { name: "Application defaults" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tailoring controls" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Target tracks" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
+  });
+
+  it("renders target search as a discovery settings section", async () => {
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
+
     expect(screen.getByRole("heading", { name: "Target search" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Target tracks 1")).toBeInTheDocument();
-    expect(screen.getByLabelText("Seniority floors 1")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Individual Contributor" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Executive" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Seniority floors" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Junior Engineer" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Senior Engineering Manager / Head of Engineering" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "CTO" })).toBeInTheDocument();
     expect(screen.getByLabelText("Target functions 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Specializations 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
@@ -93,12 +112,161 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
     expect(screen.getByLabelText("Remote")).toBeInTheDocument();
     expect(screen.getByLabelText("Hybrid")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Application defaults" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
+  });
+
+  it("saves target tracks and seniority floors as canonical values", async () => {
+    const user = userEvent.setup();
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    await user.click(await screen.findByRole("checkbox", { name: "Management" }));
+    await user.click(screen.getByRole("checkbox", { name: "Executive" }));
+    await user.click(screen.getByRole("checkbox", { name: "Senior Engineering Manager / Head of Engineering" }));
+    await user.click(screen.getByRole("checkbox", { name: "CTO" }));
+    await user.click(screen.getByRole("button", { name: /^save discovery settings$/i }));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]?.[0];
+    const profile = JSON.parse(request.profileText);
+    expect(profile.experience.target_track).toBe("management; executive");
+    expect(profile.experience.target_seniority_floor).toBe("senior_manager; cto");
+  });
+
+  it("shows unsupported target values so they can be removed", async () => {
+    const user = userEvent.setup();
+    const initial = JSON.parse(JSON.stringify(sampleProfileResponse));
+    initial.profile.experience = {
+      target_track: "management; stealth",
+      target_seniority_floor: "director; founder",
+    };
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={initial} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    expect(screen.getByRole("button", { name: /stealth/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /founder/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /stealth/i }));
+    await user.click(screen.getByRole("button", { name: /founder/i }));
+    await user.click(screen.getByRole("button", { name: /^save discovery settings$/i }));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]?.[0];
+    const profile = JSON.parse(request.profileText);
+    expect(profile.experience.target_track).toBe("management");
+    expect(profile.experience.target_seniority_floor).toBe("director");
+  });
+
+  it("autosaves edited target search settings after five seconds", async () => {
+    vi.useFakeTimers();
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    fireEvent.change(screen.getByLabelText("Target roles 1"), {
+      target: { value: "Director of Engineering" },
+    });
+
+    act(() => vi.advanceTimersByTime(4_999));
+    expect(updateProfile).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    const request = updateProfile.mock.calls[0]?.[0];
+    expect(JSON.parse(request.profileText).experience.target_role).toBe("Director of Engineering");
+  });
+
+  it("keeps newer edits when an autosave response returns for an older snapshot", async () => {
+    vi.useFakeTimers();
+    let resolveUpdate: ((response: typeof sampleProfileResponse) => void) | undefined;
+    const updateProfile = vi.fn(
+      (request) =>
+        new Promise<typeof sampleProfileResponse>((resolve) => {
+          void request;
+          resolveUpdate = resolve;
+        }),
+    );
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, {
+      target: { value: "Director of Engineering" },
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(targetRole, {
+      target: { value: "VP of Engineering" },
+    });
+    const request = updateProfile.mock.calls[0]?.[0];
+    await act(async () => {
+      resolveUpdate?.({
+        ...sampleProfileResponse,
+        profile: JSON.parse(request.profileText),
+      });
+      await Promise.resolve();
+    });
+
+    expect(targetRole).toHaveValue("VP of Engineering");
+    expect(screen.getByText("saved; newer changes pending")).toBeInTheDocument();
+  });
+
+  it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {
+    const initial = JSON.parse(JSON.stringify(sampleProfileResponse));
+    initial.profile.experience = { target_role: "Director of Engineering" };
+    const { rerender } = renderWithProviders(<ProfileForm initial={initial} section="target-search" />);
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, {
+      target: { value: "VP of Engineering" },
+    });
+    const autosavedInitial = JSON.parse(JSON.stringify(sampleProfileResponse));
+    autosavedInitial.profile.experience = { target_role: "Director of Engineering" };
+
+    rerender(<ProfileForm initial={autosavedInitial} section="target-search" />);
+
+    expect(targetRole).toHaveValue("VP of Engineering");
+  });
+
+  it("undos target search checkbox changes with the keyboard shortcut", async () => {
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
+
+    const management = screen.getByRole("checkbox", { name: "Management" });
+    fireEvent.click(management);
+    await waitFor(() => expect(management).toBeChecked());
+
+    fireEvent.keyDown(management, { key: "z", ctrlKey: true });
+
+    await waitFor(() => expect(management).not.toBeChecked());
   });
 
   it("adds and focuses the next target role with Enter", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
     await user.type(await screen.findByLabelText("Target roles 1"), "Director{Enter}");
 
@@ -107,7 +275,7 @@ describe("<ProfileForm>", () => {
 
   it("preserves spaces while editing target roles", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
     const input = await screen.findByLabelText("Target roles 1");
     await user.type(input, "Director of Engineering");
@@ -117,7 +285,7 @@ describe("<ProfileForm>", () => {
 
   it("adds and focuses the next target location with Enter", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
     await user.type(await screen.findByLabelText("Target location 1"), "Barcelona{Enter}");
 
@@ -127,7 +295,7 @@ describe("<ProfileForm>", () => {
 
   it("allows multiple work models for a target location", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />);
 
     await user.click(await screen.findByLabelText("Remote"));
     await user.click(screen.getByLabelText("Hybrid"));

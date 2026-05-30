@@ -337,14 +337,16 @@ The Jobs tab can filter by stage, state, and fit-score range. Its source column
 shows the posting owner and the discovery source separately when available, so
 broad-board results can be distinguished from canonical employer or ATS sources.
 
-The Jobs tab separates temporary removal from permanent suppression. Deleting a
-job moves it to the Deleted tab; a later discovery run can resurface that job if
-the posting is found again. Hiding a job moves it to the Hidden tab and keeps it
-hidden across future discovery runs until you select it there and use **unhide
-selected**. Deleted and hidden rows can also be permanently deleted from the
-local database; discovery can add the same posting again later because that
-action clears the delete/hide tombstones instead of creating a new suppression
-record.
+The Jobs tab separates posting lifecycle state from manual suppression. Closed
+jobs are postings the system verified as unavailable, expired, removed, or
+location-incompatible; they move to the Closed tab instead of staying in the
+active dashboard or worker queues. Deleting a job moves it to the Deleted tab; a
+later discovery run can resurface that job if the posting is found again. Hiding
+a job moves it to the Hidden tab and keeps it hidden across future discovery
+runs until you select it there and use **unhide selected**. Deleted and hidden
+rows can also be permanently deleted from the local database; discovery can add
+the same posting again later because that action clears the delete/hide
+tombstones instead of creating a new suppression record.
 
 The Pipelines tab exposes the product-stage starts for `discover` and `apply`.
 Discover owns preparation and Apply owns browser automation; lower-level
@@ -416,6 +418,11 @@ JobHunter uses local user configuration plus package-shipped registries:
 - `~/.jobhunter/searches.yaml`: searches and source settings.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
 - `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
+
+Profile, Preferences, Discovery target search, and Settings forms autosave five
+seconds after the last edit through the same local API mutations as the Save
+buttons. Checkbox, select, and other non-text setting controls keep an
+in-session undo history for Ctrl+Z / Cmd+Z.
 - `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
 - `workers/automation/src/jobhunter/config/searches.example.yaml`: example search file.
 
@@ -436,27 +443,31 @@ Smart Extract entries start as `experimental` with the
 `smart_extract_experimental` policy so existing arbitrary-site discovery keeps
 working while sources are promoted or rejected.
 
-The Preferences tab's Target search fields are discovery inputs. Target roles
+The Discovery page's Target search settings are discovery inputs. Target roles
 stay as explicit guidance and replace the active discovery query list with exact
-role queries. Target tracks, seniority floors, functions, and specializations
-add structured intent; resume import can suggest these fields conservatively but
-does not overwrite existing user choices. The worker expands that intent into
-deterministic recall queries. Recall queries keep the same search tier as exact
-queries because relevance is determined after discovery by scoring, not by query
-generation. Recall title matching enforces candidate seniority and track: IC
-targets stay IC, management targets stay management, and mixed profiles can opt
-into both tracks explicitly. Broad-board providers such as JobSpy use exact and
-recall queries as retrieval probes. Direct ATS, Workday, and source-first Smart
-Extract sources enumerate their known board/source and apply the same
+role queries. Target tracks are normalized to IC, management, and executive;
+seniority floors use the engineering ladder choices shown in Discovery settings.
+Target tracks, seniority floors, functions, and specializations add structured intent;
+resume import can suggest these fields conservatively but does not overwrite
+existing user choices. The worker expands that intent into deterministic recall
+queries. Recall queries keep the same search tier as exact queries because
+relevance is determined after discovery by scoring, not by query generation.
+Recall title matching enforces candidate seniority and track: IC targets stay
+IC, management targets stay management, executive targets stay executive, and
+mixed profiles can opt into multiple tracks explicitly. Broad-board providers
+such as JobSpy use exact and recall queries as retrieval probes. Direct ATS,
+Workday, and source-first Smart Extract sources enumerate their known
+board/source and apply the same
 exact-plus-recall title intent internally, avoiding repeated board fetches for
 each role variant. Smart Extract search-only sources still fan out by query when
 the source has no useful browse/all-jobs page. Canonical ATS rows must include a
 usable description before insertion; Greenhouse reads the public board content
 payload instead of creating blank-description rows. Each discovery run also
-performs a source hygiene pass across JobSpy, direct ATS, Workday, and Smart
-Extract rows so active jobs that no longer satisfy the current title, location,
-or description contract are soft-deleted instead of remaining visible. Target
-locations replace the active location list, and if target locations are blank
+checks discovered postings for staleness: verified unavailable, expired,
+removed, or location-incompatible postings move to Closed, while active jobs
+that no longer satisfy the current title, location, or description contract are
+soft-deleted instead of remaining visible. Target locations replace the active
+location list, and if target locations are blank
 the worker falls back to the profile city/country. Target locations are
 validated as real places before they can be saved. Hybrid and on-site target
 work models search and filter only the target location. Remote target work

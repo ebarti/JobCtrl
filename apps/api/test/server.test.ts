@@ -858,6 +858,84 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("separates closed postings from active and deleted jobs", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS posting_snapshot_sets (
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        job_url TEXT NOT NULL,
+        snapshot_set_json TEXT NOT NULL,
+        latest_snapshot_version INTEGER NOT NULL DEFAULT 0,
+        latest_active_state TEXT NOT NULL DEFAULT 'unknown',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, job_url)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO posting_snapshot_sets (
+        tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+        latest_active_state, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "local",
+      "https://example.com/jobs/failed-score",
+      JSON.stringify({ tenant_id: "local", job_id: "https://example.com/jobs/failed-score", latest_active_state: "removed" }),
+      0,
+      "removed",
+      "2026-05-29T10:00:00+00:00",
+    );
+    db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "https://example.com/jobs/failed-score",
+      "enrich",
+      "JobActiveStateChanged",
+      "info",
+      "Job active state changed.",
+      "2026-05-29T10:00:00+00:00",
+      JSON.stringify({
+        job_id: "https://example.com/jobs/failed-score",
+        active_state: "removed",
+        previous_state: "active",
+      }),
+    );
+    db.close();
+
+    const app = buildApp(options);
+
+    const active = await app.inject({ method: "GET", url: "/v1/jobs?deleted=active&sort=title&dir=asc" });
+    expect(active.statusCode, active.body).toBe(200);
+    expect(active.json().pagination.total).toBe(2);
+    expect(active.json().items.map((job: { jobKey: string }) => job.jobKey)).not.toContain(
+      "https://example.com/jobs/failed-score",
+    );
+
+    const closed = await app.inject({ method: "GET", url: "/v1/jobs?deleted=closed" });
+    expect(closed.statusCode, closed.body).toBe(200);
+    expect(closed.json().pagination.total).toBe(1);
+    expect(closed.json().items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/failed-score",
+      activeState: "removed",
+      deletedAt: null,
+      hiddenAt: null,
+    });
+
+    const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(deleted.json().pagination.total).toBe(0);
+
+    const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(summary.statusCode, summary.body).toBe(200);
+    expect(summary.json().totals).toMatchObject({
+      jobs: 2,
+      failures: 0,
+      blocked: 1,
+      ready: 1,
+    });
+
+    await app.close();
+  });
+
   it("permanently deletes job rows and clears delete/hide tombstones so rediscovery can add them again", async () => {
     const app = buildApp(options);
     const readyUrl = "https://example.com/jobs/ready";

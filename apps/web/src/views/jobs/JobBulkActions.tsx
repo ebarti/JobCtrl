@@ -48,6 +48,7 @@ export function JobBulkActions({
 }: JobBulkActionsProps) {
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
+  const closed = search.deleted === "closed";
   const retryableFailures = search.deleted === "active" && search.state === "failed";
   const primaryLabel = hidden ? "unhide selected" : restoring ? "restore selected" : "delete selected";
   return (
@@ -59,6 +60,13 @@ export function JobBulkActions({
           onClick={() => onSetDeleted("active")}
         >
           active jobs
+        </button>
+        <button
+          className={`tab ${closed ? "on" : ""}`}
+          type="button"
+          onClick={() => onSetDeleted("closed")}
+        >
+          closed jobs
         </button>
         <button
           className={`tab ${restoring ? "on" : ""}`}
@@ -95,7 +103,7 @@ export function JobBulkActions({
           onSuccess={onResetStaleSuccess}
         />
       ) : null}
-      {!restoring && !hidden ? (
+      {!restoring && !hidden && !closed ? (
         <>
           <RescoreCurrentPolicyButton onSuccess={onMaintenanceSuccess} />
           <RetailorCurrentPolicyButton onSuccess={onMaintenanceSuccess} />

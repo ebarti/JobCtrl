@@ -25,7 +25,16 @@ export const STAGE_STATES = [
   "stale",
 ] as const;
 export type StageState = (typeof STAGE_STATES)[number];
-export const JOB_DELETED_FILTERS = ["active", "deleted", "hidden", "all"] as const;
+export const ACTIVE_STATES = [
+  "unknown",
+  "active",
+  "closed",
+  "expired",
+  "removed",
+  "location_incompatible",
+] as const;
+export type ActiveState = (typeof ACTIVE_STATES)[number];
+export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "all"] as const;
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
 
 export const JOB_SORT_FIELDS = [
@@ -708,6 +717,7 @@ export interface JobSummary {
   artifactCount: number;
   applyStatus: string | null;
   appliedAt: string | null;
+  activeState: ActiveState;
   deletedAt: string | null;
   hiddenAt: string | null;
 }

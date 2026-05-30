@@ -1759,14 +1759,16 @@ _PENDING_SQL: dict[str, str] = {
     # observable. Without these the pipeline thinks "enrich" always has
     # work and "score" / "tailor" / "cover" never have work.
     "enrich": (
-        f"SELECT COUNT(*) FROM jobs {db_module._ENRICHMENT_JOIN} "
-        f"WHERE {db_module._ENRICHMENT_PENDING}"
+        f"SELECT COUNT(*) FROM jobs {db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
+        f"WHERE {db_module._ENRICHMENT_PENDING} "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
     ),
     "score": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
-        f"{db_module._ENRICHMENT_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
-        f"AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL"
+        f"AND {db_module._EFFECTIVE_FIT_SCORE} IS NULL "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
     ),
     # Phase 6 (S-20 + round-2 H1): tailor + cover predicates read through
     # ``_LATEST_MATERIALS_JOIN`` (path) and ``_LATEST_STAGE_ATTEMPTS_JOIN``
@@ -1779,20 +1781,21 @@ _PENDING_SQL: dict[str, str] = {
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
         f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
         f"{db_module._SCORE_DOWNSTREAM_STATE_JOIN} "
-        f"{db_module._ENRICHMENT_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
         f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
         f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
         f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
-        f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
+        f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5 "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
     ),
     "cover": (
         f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
         f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
         f"{db_module._SCORE_DOWNSTREAM_STATE_JOIN} "
-        f"{db_module._ENRICHMENT_JOIN} "
+        f"{db_module._ENRICHMENT_JOIN} {db_module._ACTIVE_STATE_JOIN} "
         f"WHERE {db_module._EFFECTIVE_FIT_SCORE} >= ? "
         f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
         f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
@@ -1800,7 +1803,8 @@ _PENDING_SQL: dict[str, str] = {
         f"AND {db_module._READY_TAILORED_RESUME_WITH_PDF} "
         f"AND ({db_module._EFFECTIVE_COVER_PATH} IS NULL OR {db_module._EFFECTIVE_COVER_PATH} = '') "
         f"AND {db_module._COVER_NOT_EXHAUSTED} "
-        f"AND {db_module._EFFECTIVE_COVER_ATTEMPTS} < 5"
+        f"AND {db_module._EFFECTIVE_COVER_ATTEMPTS} < 5 "
+        f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
     ),
 }
 
@@ -1823,7 +1827,8 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
             f"AND {db_module._SCORE_ELIGIBLE_FOR_DOWNSTREAM} "
             f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
-            f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5)"
+            f"AND ({db_module._EFFECTIVE_TAILOR_PATH} IS NOT NULL OR {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5) "
+            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
             if retailor else
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "
             f"AND {db_module._EFFECTIVE_FULL_DESCRIPTION} IS NOT NULL "
@@ -1831,12 +1836,14 @@ def _count_pending(stage: str, min_score: int = 7, retailor: bool = False) -> in
             f"AND {db_module._SCORE_CURRENT_FOR_DOWNSTREAM} "
             f"AND {db_module._EFFECTIVE_TAILOR_PATH} IS NULL "
             f"AND {db_module._TAILOR_NOT_EXHAUSTED} "
-            f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5"
+            f"AND {db_module._EFFECTIVE_TAILOR_ATTEMPTS} < 5 "
+            f"AND {db_module._NOT_CLOSED_ACTIVE_STATE}"
         )
         return conn.execute(
             f"SELECT COUNT(*) FROM jobs {db_module._LATEST_SCORE_JOIN} "
             f"{db_module._LATEST_MATERIALS_JOIN} {db_module._LATEST_STAGE_ATTEMPTS_JOIN} "
             f"{db_module._SCORE_DOWNSTREAM_STATE_JOIN} {db_module._ENRICHMENT_JOIN} "
+            f"{db_module._ACTIVE_STATE_JOIN} "
             f"WHERE {where}",
             (min_score,),
         ).fetchone()[0]

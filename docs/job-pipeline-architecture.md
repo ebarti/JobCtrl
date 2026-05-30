@@ -385,8 +385,10 @@ classDiagram
 - Reads target search from `candidate_profiles` and overlays it onto discovery
   search config. Target roles remain exact role guidance. Target tracks,
   seniority floors, functions, and specializations add structured intent for
-  deterministic recall expansion. Resume import may suggest those structured
-  fields, but existing user-entered profile values win.
+  deterministic recall expansion. Discovery settings store normalized track values
+  (`ic`, `management`, `executive`) and normalized engineering seniority-floor
+  values before the worker expands them. Resume import may suggest those
+  structured fields, but existing user-entered profile values win.
 - Compiles target roles into two query kinds:
   - exact queries, copied from the saved profile role text after note stripping;
   - recall queries, generated from the same target-role intent and marked with
@@ -408,9 +410,11 @@ classDiagram
   and a non-empty description must all be present before a posting reaches the
   discovery write boundary. Greenhouse uses the public board API's content
   payload so discovered rows are not created with blank descriptions.
-- Runs source hygiene before source execution: active rows from JobSpy, direct
-  ATS, Workday, and Smart Extract are rechecked against the current title,
-  location, and description contract and soft-deleted when they no longer pass.
+- Runs posting staleness and source hygiene checks before source execution:
+  verified unavailable, expired, removed, or location-incompatible postings move
+  to the closed lifecycle state, while active rows from JobSpy, direct ATS,
+  Workday, and Smart Extract are rechecked against the current title, location,
+  and description contract and soft-deleted when they no longer pass.
 - Upserts source registry control rows, source locator candidates, and
   manual-capture queue entries for protected/manual sources. Existing
   `imported` or `dismissed` manual-capture entries keep their status.

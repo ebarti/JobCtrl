@@ -42,7 +42,7 @@ from jobhunter.domain.scoring import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import SqliteScoreRepository
-from jobhunter.state import ensure_job_stage_rows, set_stage_state
+from jobhunter.state import ensure_job_stage_rows, set_stage_state, utc_now
 
 
 @pytest.fixture()
@@ -55,6 +55,22 @@ def _seed_enriched_job(conn: sqlite3.Connection, url: str) -> None:
         "INSERT INTO jobs (url, title, site, full_description, discovered_at) "
         "VALUES (?, ?, ?, ?, ?)",
         (url, "Engineer", "Acme", "Need Python.", "2024-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+
+
+def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, updated_at
+        ) VALUES (?, ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            latest_active_state = excluded.latest_active_state,
+            updated_at = excluded.updated_at
+        """,
+        (str(LOCAL_TENANT), url, state, utc_now()),
     )
     conn.commit()
 
@@ -124,6 +140,29 @@ def test_pending_score_excludes_jobs_already_in_job_scores(
     assert legacy["fit_score"] is None
 
 
+def test_closed_postings_are_excluded_from_score_and_tailor_queues(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
+
+    score_url = "https://example.com/job/closed-score"
+    tailor_url = "https://example.com/job/closed-tailor"
+    _seed_enriched_job(conn, score_url)
+    _seed_enriched_job(conn, tailor_url)
+    _save_score(conn, tailor_url, fit=8)
+    _mark_closed(conn, score_url)
+    _mark_closed(conn, tailor_url)
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
+
+    assert {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_score")} == set()
+    assert {
+        row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+    } == set()
+    assert pipeline._count_pending("score") == 0
+    assert pipeline._count_pending("tailor", min_score=7) == 0
+
+
 def test_pending_tailor_includes_jobs_scored_through_repository(
     conn: sqlite3.Connection,
 ) -> None:
@@ -176,6 +215,27 @@ def test_pending_cover_includes_jobs_scored_through_repository(
     pending = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
     urls = {row["url"] for row in pending}
     assert url in urls
+
+
+def test_closed_postings_are_excluded_from_cover_queue(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
+
+    url = "https://example.com/job/closed-cover"
+    _seed_enriched_job(conn, url)
+    _save_score(conn, url, fit=9)
+    conn.execute(
+        "UPDATE jobs SET tailored_resume_path=?, tailored_at=? WHERE url=?",
+        ("/tmp/tailored.txt", "2024-01-02T00:00:00+00:00", url),
+    )
+    _mark_closed(conn, url)
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
+
+    pending_cover = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
+    assert {row["url"] for row in pending_cover} == set()
+    assert pipeline._count_pending("cover", min_score=7) == 0
 
 
 def test_pending_cover_excludes_high_score_blocked_jobs(

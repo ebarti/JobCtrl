@@ -9,6 +9,11 @@ describe("DiscoveryView", () => {
   it("renders discovery controls as tabs with a source registry table", async () => {
     renderWithProviders(<DiscoveryView />);
 
+    expect(await screen.findByRole("heading", { name: "Discovery settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Target search" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Director of Engineering" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Discovery controls" }),
     ).toBeInTheDocument();

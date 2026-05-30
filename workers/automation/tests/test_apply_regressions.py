@@ -24,7 +24,7 @@ from jobhunter.apply.launcher import (
 )
 from jobhunter.database import close_connection, get_connection, init_db
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
+from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state, utc_now
 
 
 def _insert_ready_job(
@@ -99,6 +99,22 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
             ),
             "2026-05-14T00:00:00+00:00",
         ),
+    )
+    conn.commit()
+
+
+def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, updated_at
+        ) VALUES ('local', ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            latest_active_state = excluded.latest_active_state,
+            updated_at = excluded.updated_at
+        """,
+        (url, state, utc_now()),
     )
     conn.commit()
 
@@ -237,6 +253,22 @@ def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatc
         job = acquire_job(min_score=7, worker_id=1)
         assert job is not None
         assert job["url"] == "https://example.com/allowed"
+    finally:
+        close_connection(db_path)
+
+
+def test_acquire_job_excludes_closed_candidates(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    _insert_ready_job(conn, url="https://example.com/closed")
+    _mark_closed(conn, "https://example.com/closed")
+
+    try:
+        monkeypatch.setattr(
+            "jobhunter.apply.launcher.get_connection", lambda: get_connection(db_path)
+        )
+        assert acquire_job(min_score=7, worker_id=1) is None
+        assert acquire_job(target_url="https://example.com/closed", worker_id=1) is None
     finally:
         close_connection(db_path)
 

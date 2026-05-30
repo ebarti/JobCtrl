@@ -19,6 +19,10 @@ background `tailor` pipeline run with `retailor=true`, `dryRun=false`,
 and no item limit. The Python materials generation path creates a new materials
 generation for each re-tailored job and preserves the prior generation as
 historical/superseded artifact data.
+The web Profile, Preferences, Discovery target search, and Settings forms
+autosave five seconds after the last edit using the same profile/settings
+mutation paths as the explicit Save buttons; failed validation or mutation
+errors stay on the local form surface.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
@@ -63,14 +67,18 @@ body accepts `jobKeys` for selected stale scores or an empty list for all active
 stale scores, plus optional `limit` for bounded resets. The backend command
 that consumes those reset jobs is `jobhunter run score --rescore` or the batch
 API action with `stage: "score"` and `rescore: true`.
-The jobs list `deleted` filter accepts `active`, `deleted`, `hidden`, or `all`.
-Deleted jobs are temporary removals: discovery clears the delete tombstone when
-the same posting is observed again. Hidden jobs use a separate
-`jobhunter_hidden_jobs` tombstone and remain suppressed from active/deleted
-lists, dashboard totals, artifacts, workflow runs, and activity until an unhide
-mutation clears that hidden tombstone. The API exposes bulk hide/unhide routes
-at `POST /v1/jobs/bulk-hide` and `POST /v1/jobs/bulk-unhide`, plus single-job
-`POST /v1/jobs/:key/hide` and `POST /v1/jobs/:key/unhide`. Permanent delete is
+The jobs list `deleted` filter accepts `active`, `closed`, `deleted`, `hidden`,
+or `all`. Closed jobs are non-deleted postings whose active-state verification
+marked them unavailable, expired, removed, or location-incompatible; they are
+excluded from active lists, dashboard totals, and worker queues while remaining
+inspectable from the Closed tab. Deleted jobs are temporary removals: discovery
+clears the delete tombstone when the same posting is observed again. Hidden jobs
+use a separate `jobhunter_hidden_jobs` tombstone and remain suppressed from
+active/deleted/closed lists, dashboard totals, artifacts, workflow runs, and
+activity until an unhide mutation clears that hidden tombstone. The API exposes
+bulk hide/unhide routes at `POST /v1/jobs/bulk-hide` and
+`POST /v1/jobs/bulk-unhide`, plus single-job `POST /v1/jobs/:key/hide` and
+`POST /v1/jobs/:key/unhide`. Permanent delete is
 available at `POST /v1/jobs/bulk-delete-permanent` and
 `DELETE /v1/jobs/:key/permanent`; it removes the job row plus job-scoped state,
 projection rows, and delete/hide tombstones. It does not write a new suppression
@@ -90,8 +98,9 @@ structured stage/source/apply attempt rows, not label math over free-text event
 messages.
 
 Discovery product-control endpoints are local-first and share DTOs from
-`packages/contracts`. The web Discovery page composes these endpoints into
-source-registry, source-locator, quarantine-review, and manual-capture tabs; the
+`packages/contracts`. The web Discovery page composes these endpoints and the
+profile-backed Target search settings into source-registry, source-locator,
+quarantine-review, role-matching, and manual-capture surfaces; the
 source registry renders as a paginated, filterable, sortable table so source
 type and policy metadata are visible as columns instead of compact badges:
 
@@ -208,14 +217,17 @@ version. Lowering it can make existing persisted scores eligible for
 `tailor_resume`; raising it can make active artifacts ineligible and enqueue
 `suppress_tailored_artifacts`. Neither threshold path invokes the scoring LLM.
 
-Discover honors the profile Target search saved from the Preferences tab.
+Discover honors the profile Target search saved from the Discovery page.
 Target roles replace the active discovery query list with exact role queries;
 target tracks, seniority floors, functions, and specializations add structured
-intent for deterministic recall expansion. Recall queries keep the same search
-tier as exact queries because relevance is determined after discovery by
-scoring, not by query generation. Recall matching enforces both track and
-seniority: IC targets stay IC, management targets stay management, and a
-candidate who configures both tracks can receive both. JobSpy uses
+intent for deterministic recall expansion. The Discovery UI constrains target
+tracks to IC, management, and executive, and constrains seniority floors to the
+engineering IC, management, and executive ladder choices. Recall queries keep
+the same search tier as exact queries because relevance is determined after
+discovery by scoring, not by query generation. Recall matching enforces both
+track and seniority: IC targets stay IC, management targets stay management,
+executive targets stay executive, and a candidate who configures multiple
+tracks can receive each selected track. JobSpy uses
 exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
 Workday, and source-first Smart Extract sources enumerate
 their known board/source and apply that same title intent internally, avoiding
@@ -223,9 +235,11 @@ repeated board fetches for each role variant. Smart Extract search-only sources
 still fan out by query when the source has no useful browse/all-jobs page.
 Canonical ATS rows must also include a usable description before they are
 inserted; Greenhouse reads the public board content payload for that text. Each
-discover run also applies the current title, location, and description contract
-to active JobSpy, direct ATS, Workday, and Smart Extract rows and soft-deletes
-rows that no longer pass those source-family filters.
+discover run also performs posting staleness checks that move verified
+unavailable, expired, removed, or location-incompatible postings to the closed
+lifecycle state, and applies the current title, location, and description
+contract to active JobSpy, direct ATS, Workday, and Smart Extract rows so rows
+that no longer pass those source-family filters are soft-deleted.
 Approved role-match feedback adds a user-reviewed title-exclusion layer on top
 of that matcher. The rule scope is exact normalized title text, so approving a
 bad low-score pattern suppresses repeat false positives without weakening the

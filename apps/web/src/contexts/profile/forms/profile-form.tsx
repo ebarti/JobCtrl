@@ -1,18 +1,19 @@
 import { ProfileSchema, type ProfileShape, type ProfileUpdateRequest } from "@jobhunter/contracts";
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
+import { AutosaveUndoController } from "./autosave-undo-controller.js";
 import {
   isProfileDateRangeChronological,
   parseProfileDateRange,
 } from "../lib/profile-date-fields.js";
 
-export type ProfileSection = "profile" | "preferences";
+export type ProfileSection = "profile" | "preferences" | "target-search";
 
 export interface ProfileFormValues {
   profileText: string;
@@ -83,10 +84,20 @@ function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
   };
 }
 
+function serializeProfileValues(values: ProfileFormValues): string {
+  return JSON.stringify(values);
+}
+
 export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) {
   const updateProfile = useUpdateProfileMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const [resetToken, setResetToken] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
   const isProfileSection = section === "profile";
+  const saveLabel = section === "target-search" ? "save discovery settings" : "save all";
+  const discardLabel = section === "target-search" ? "discard changes" : "discard all";
+  const savedMessage =
+    section === "profile" ? "profile saved" : section === "target-search" ? "discovery settings saved" : "preferences saved";
 
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
@@ -96,18 +107,28 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
     },
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
+      const submittedValues = serializeProfileValues(value);
       const response = await updateProfile.mutateAsync(toUpdateRequest(value));
-      formApi.reset(toProfileFormValues(response));
-      setStatusMessage(isProfileSection ? "profile saved" : "preferences saved");
+      if (serializeProfileValues(formApi.state.values) === submittedValues) {
+        formApi.reset(toProfileFormValues(response));
+        setStatusMessage(savedMessage);
+      } else {
+        setStatusMessage("saved; newer changes pending");
+      }
     },
   });
 
   useEffect(() => {
+    if (form.state.isDirty || form.state.isSubmitting) {
+      return;
+    }
     form.reset(toProfileFormValues(initial));
+    setResetToken((token) => token + 1);
   }, [form, initial]);
 
   return (
     <form
+      ref={formRef}
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -116,10 +137,31 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
       onReset={(event) => {
         event.preventDefault();
         form.reset(toProfileFormValues(initial));
+        setResetToken((token) => token + 1);
         setStatusMessage("");
       }}
     >
       {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+      <form.Subscribe
+        selector={(state) => ({
+          isDirty: state.isDirty,
+          isSubmitting: state.isSubmitting,
+          values: state.values,
+        })}
+      >
+        {({ isDirty, isSubmitting, values }) => (
+          <AutosaveUndoController
+            formRef={formRef}
+            isDirty={isDirty}
+            isSubmitting={isSubmitting}
+            resetToken={resetToken}
+            restoreValues={(nextValues) => form.reset(nextValues, { keepDefaultValues: true })}
+            setStatusMessage={setStatusMessage}
+            submit={() => form.handleSubmit()}
+            values={values}
+          />
+        )}
+      </form.Subscribe>
       <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
         {({ isDirty, isSubmitting }) => (
           <div className="editor-bulk-actions">
@@ -133,14 +175,14 @@ export function ProfileForm({ initial, section = "profile" }: ProfileFormProps) 
               type="submit"
               disabled={!isDirty || isSubmitting}
             >
-              {isSubmitting ? "saving" : "save all"}
+              {isSubmitting ? "saving" : saveLabel}
             </button>
             <button
               className="tab"
               type="reset"
               disabled={!isDirty || isSubmitting}
             >
-              discard all
+              {discardLabel}
             </button>
           </div>
         )}

@@ -19,6 +19,7 @@ import fs from "node:fs";
 import type {
   ActivityEventSummary,
   ActivityListQuery,
+  ActiveState,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
@@ -47,6 +48,7 @@ import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
 
 const DEFAULT_TENANT = "local";
+const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const satisfies readonly ActiveState[];
 
 const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   discover: 1,
@@ -120,6 +122,7 @@ interface JobListProjectionRow extends Record<string, unknown> {
   apply_status: string | null;
   applied_at: string | null;
   artifact_count: number;
+  active_state: string | null;
   deleted_at: string | null;
   hidden_at: string | null;
   last_updated_at: string | null;
@@ -708,9 +711,21 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     artifactCount: Number(row.artifact_count ?? 0),
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
+    activeState: isActiveState(row.active_state) ? row.active_state : "unknown",
     deletedAt: row.deleted_at,
     hiddenAt: row.hidden_at,
   };
+}
+
+function isActiveState(value: unknown): value is ActiveState {
+  return (
+    value === "unknown" ||
+    value === "active" ||
+    value === "closed" ||
+    value === "expired" ||
+    value === "removed" ||
+    value === "location_incompatible"
+  );
 }
 
 function parseScoreBreakdown(value: string | null): ScoreBreakdown | null {
@@ -1273,10 +1288,30 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
   const clauses: string[] = ["tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
   const hasHiddenTable = tableExists(db, "jobhunter_hidden_jobs");
+  const closedPredicate = closedActiveStatePredicate(
+    db,
+    "job_list_projections.tenant_id",
+    "job_list_projections.job_id",
+  );
   if (query.deleted === "active") {
     clauses.push("deleted_at IS NULL");
     if (hasHiddenTable) {
       clauses.push("NOT EXISTS (SELECT 1 FROM jobhunter_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
+    }
+    if (closedPredicate) {
+      clauses.push(`NOT (${closedPredicate.sql})`);
+      params.push(...closedPredicate.params);
+    }
+  } else if (query.deleted === "closed") {
+    clauses.push("deleted_at IS NULL");
+    if (hasHiddenTable) {
+      clauses.push("NOT EXISTS (SELECT 1 FROM jobhunter_hidden_jobs h WHERE h.job_url = job_id AND h.unhidden_at IS NULL)");
+    }
+    if (closedPredicate) {
+      clauses.push(closedPredicate.sql);
+      params.push(...closedPredicate.params);
+    } else {
+      clauses.push("1 = 0");
     }
   } else if (query.deleted === "deleted") {
     clauses.push("deleted_at IS NOT NULL");
@@ -1338,6 +1373,27 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
   return { where: ` WHERE ${clauses.join(" AND ")}`, params };
 }
 
+function closedActiveStatePredicate(
+  db: SqliteDatabase,
+  tenantColumn: string,
+  jobColumn: string,
+): { sql: string; params: SqliteValue[] } | null {
+  if (!tableExists(db, "posting_snapshot_sets")) {
+    return null;
+  }
+  const placeholders = CLOSED_ACTIVE_STATES.map(() => "?").join(", ");
+  return {
+    sql: `EXISTS (
+      SELECT 1
+      FROM posting_snapshot_sets pss
+      WHERE pss.tenant_id = ${tenantColumn}
+        AND pss.job_url = ${jobColumn}
+        AND pss.latest_active_state IN (${placeholders})
+    )`,
+    params: [...CLOSED_ACTIVE_STATES],
+  };
+}
+
 function jobProjectionSelect(db: SqliteDatabase): string {
   const hiddenSelect = tableExists(db, "jobhunter_hidden_jobs")
     ? `(SELECT h.hidden_at
@@ -1379,10 +1435,18 @@ function jobProjectionSelect(db: SqliteDatabase): string {
        NULL AS score_stale_old_policy_version,
        NULL AS score_stale_new_policy_version,
        NULL AS score_stale_marked_at`;
+  const activeStateSelect = tableExists(db, "posting_snapshot_sets")
+    ? `(SELECT pss.latest_active_state
+          FROM posting_snapshot_sets pss
+         WHERE pss.tenant_id = job_list_projections.tenant_id
+           AND pss.job_url = job_list_projections.job_id
+         LIMIT 1) AS active_state`
+    : "'unknown' AS active_state";
   return `job_list_projections.*,
           ${discoverySourceSqlExpression(db)} AS discovery_source,
           ${postingSourceUrlSqlExpression(db)} AS posting_source_url,
           ${postingSourceAtsKindSqlExpression(db)} AS posting_source_ats_kind,
+          ${activeStateSelect},
           ${hiddenSelect},
           ${stalenessSelect}`;
 }

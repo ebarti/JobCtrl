@@ -42,6 +42,7 @@ from jobhunter.domain.enrichment import (
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.enrichment import SqliteEnrichmentRepository
+from jobhunter.state import utc_now
 
 
 @pytest.fixture()
@@ -54,6 +55,22 @@ def _seed_discovered(conn: sqlite3.Connection, url: str) -> None:
     conn.execute(
         "INSERT INTO jobs (url, title, site, discovered_at) VALUES (?, ?, ?, ?)",
         (url, "Engineer", "Acme", "2024-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+
+
+def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
+    conn.execute(
+        """
+        INSERT INTO posting_snapshot_sets (
+            tenant_id, job_url, snapshot_set_json, latest_snapshot_version,
+            latest_active_state, updated_at
+        ) VALUES (?, ?, '{}', 0, ?, ?)
+        ON CONFLICT(tenant_id, job_url) DO UPDATE SET
+            latest_active_state = excluded.latest_active_state,
+            updated_at = excluded.updated_at
+        """,
+        (str(LOCAL_TENANT), url, state, utc_now()),
     )
     conn.commit()
 
@@ -120,6 +137,28 @@ def test_pending_detail_excludes_jobs_with_enrichment_row(conn: sqlite3.Connecti
     rows = get_jobs_by_stage(conn, "pending_detail")
     urls = {row["url"] for row in rows}
     assert urls == {"https://example.com/jobs/2"}
+
+
+def test_closed_postings_are_excluded_from_enrichment_queues(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jobhunter import pipeline
+    from jobhunter.pipeline import runner as pipeline_runner
+
+    pending_url = "https://example.com/jobs/closed-pending-detail"
+    enriched_url = "https://example.com/jobs/closed-enriched"
+    _seed_discovered(conn, pending_url)
+    _seed_discovered(conn, enriched_url)
+    _save_enriched(conn, enriched_url)
+    _mark_closed(conn, pending_url)
+    _mark_closed(conn, enriched_url)
+    monkeypatch.setattr(pipeline_runner, "get_connection", lambda: conn)
+
+    assert {row["url"] for row in get_jobs_by_stage(conn, "pending_detail")} == set()
+    assert {row["url"] for row in get_jobs_by_stage(conn, "enriched")} == set()
+    assert {row["url"] for row in get_jobs_by_stage(conn, "pending_score")} == set()
+    assert pipeline._count_pending("enrich") == 0
+    assert pipeline._count_pending("score") == 0
 
 
 def test_pending_score_includes_jobs_enriched_via_repository(conn: sqlite3.Connection) -> None:
