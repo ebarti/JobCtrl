@@ -10,6 +10,7 @@ adapter without touching the use cases.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from jobhunter.apply import chrome as _chrome
 from jobhunter.domain.apply.value_objects import BrowserWorkerConfig
@@ -33,10 +34,14 @@ class LocalChromeAdapter:
     """
 
     def launch(self, config: BrowserWorkerConfig) -> BrowserSession:
-        # The legacy helper resets the worker dir BEFORE launching so
-        # MCP configs / resume PDFs don't bleed between runs. Mirror
-        # that ordering here.
-        worker_dir = _chrome.reset_worker_dir(config.worker_id)
+        if config.user_data_dir:
+            # The use case may prepare resume/cover-letter uploads before
+            # browser launch. Preserve that directory when it is supplied.
+            worker_dir = Path(config.user_data_dir).expanduser()
+            worker_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Standalone adapter callers still get the legacy fresh workspace.
+            worker_dir = _chrome.reset_worker_dir(config.worker_id)
         proc = _chrome.launch_chrome(
             worker_id=config.worker_id,
             port=config.cdp_port,
