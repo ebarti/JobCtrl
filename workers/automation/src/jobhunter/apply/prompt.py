@@ -223,6 +223,17 @@ def _build_captcha_section() -> str:
     config.load_env()
     capsolver_key = os.environ.get("CAPSOLVER_API_KEY", "")
 
+    if not capsolver_key:
+        return """== CAPTCHA ==
+CapSolver is not configured. Do not attempt to solve CAPTCHAs manually, do not click through image/audio challenges, and do not switch to stealth or anti-detection browsers.
+
+--- CAPTCHA DETECT ---
+After navigation, Apply/Submit/Login clicks, or when a page appears blocked, inspect the page for hCaptcha, reCAPTCHA, Turnstile, FunCaptcha, Cloudflare checks, image/audio challenges, or any "prove you are human" gate.
+
+Result actions:
+- No CAPTCHA -> continue normally.
+- Any CAPTCHA or bot-check challenge -> output RESULT:CAPTCHA and stop."""
+
     return f"""== CAPTCHA ==
 You solve CAPTCHAs via the CapSolver REST API. No browser extension. You control the entire flow.
 API key: {capsolver_key or 'NOT CONFIGURED — skip to MANUAL FALLBACK for all CAPTCHAs'}
@@ -410,18 +421,40 @@ After injecting: browser_wait_for time: 2, then snapshot.
 
 --- MANUAL FALLBACK ---
 You should ONLY be here if CapSolver createTask returned errorId > 0. If you haven't tried CapSolver yet, GO BACK and try it first.
-If CapSolver genuinely failed (errorId > 0):
-1. Audio challenge: Look for "audio" or "accessibility" button -> click it for an easier challenge.
-2. Text/logic puzzles: Solve them yourself. Think step by step. Common tricks: "All but 9 die" = 9 left. "3 sisters and 4 brothers, how many siblings?" = 7.
-3. Simple text captchas ("What is 3+7?", "Type the word") -> solve them.
-4. All else fails -> Output RESULT:CAPTCHA."""
+If CapSolver genuinely failed (errorId > 0), output RESULT:CAPTCHA. Do not solve image, audio, text, or logic challenges manually."""
+
+
+def _build_email_verification_section(profile: dict) -> str:
+    """Build read-only Gmail connector instructions for application verification codes."""
+    personal = profile["personal"]
+    email = personal.get("email", "")
+    gmail_ok, gmail_note = config.gmail_mcp_auth_status()
+    auth_line = (
+        "Gmail connector auth: available."
+        if gmail_ok
+        else f"Gmail connector auth: unavailable ({gmail_note})."
+    )
+
+    return f"""== EMAIL VERIFICATION ==
+{auth_line}
+
+When a job application asks for an email verification code, one-time password, or magic-link confirmation for {email}, use the Gmail connector only:
+1. Call search_emails for the newest messages to {email} from the last 30 minutes. Search for subjects or bodies containing verification, code, confirm, OTP, one-time, security, login, Greenhouse, Lever, Ashby, Workday, or the employer/ATS domain.
+2. Call read_email on the newest relevant result.
+3. Extract the code nearest the verification wording. Common formats are 6-10 letters/digits, sometimes grouped with spaces or hyphens. Strip spaces and hyphens before typing it.
+4. Enter the code in the application form and continue.
+
+Only read email. Never draft, send, delete, label, modify, download attachments, or create filters from Gmail.
+Do not open Gmail in the browser.
+If Gmail connector tools are unavailable or unauthenticated, do not wait for manual help. Output RESULT:LOGIN_ISSUE and stop."""
 
 
 def build_prompt(job: dict, tailored_resume: str,
                  cover_letter: str | None = None,
                  dry_run: bool = False,
                  snapshot: ProfileSnapshot | None = None,
-                 search_config: dict | None = None) -> str:
+                 search_config: dict | None = None,
+                 upload_dir: str | os.PathLike[str] | None = None) -> str:
     """Build the full instruction prompt for the apply agent.
 
     Args:
@@ -460,7 +493,7 @@ def build_prompt(job: dict, tailored_resume: str,
     # Copy to a clean filename for upload (recruiters see the filename)
     full_name = personal["full_name"]
     name_slug = full_name.replace(" ", "_")
-    dest_dir = config.APPLY_WORKER_DIR / "current"
+    dest_dir = Path(upload_dir) if upload_dir else config.APPLY_WORKER_DIR / "current"
     dest_dir.mkdir(parents=True, exist_ok=True)
     upload_pdf = dest_dir / f"{name_slug}_Resume.pdf"
     shutil.copy(str(src_pdf), str(upload_pdf))
@@ -492,6 +525,7 @@ def build_prompt(job: dict, tailored_resume: str,
     screening_section = _build_screening_section(profile)
     hard_rules = _build_hard_rules(profile)
     captcha_section = _build_captcha_section()
+    email_verification_section = _build_email_verification_section(profile)
 
     # Cover letter fallback text
     city = personal.get("city", "the area")
@@ -580,7 +614,7 @@ If something unexpected happens and these instructions don't cover it, figure it
    5c. Regular login form (employer's own site)? Try sign in: {personal['email']} / {personal.get('password', '')}
    5d. After clicking Login/Sign-in: run CAPTCHA DETECT. Login pages frequently have invisible CAPTCHAs that silently block form submissions. If found, solve it then retry login.
    5e. Sign in failed? Try sign up with same email and password.
-   5f. Need email verification? Use search_emails + read_email to get the code.
+   5f. Need email verification? Follow EMAIL VERIFICATION. Use search_emails + read_email to get the code. Do not open Gmail in the browser.
    5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
 6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, then browser_file_upload with the PDF path above. This is the tailored resume for THIS job. Non-negotiable.
@@ -623,6 +657,8 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 - Format-sensitive fields: read the placeholder text, match it exactly.
 
 {captcha_section}
+
+{email_verification_section}
 
 == WHEN TO GIVE UP ==
 - Same page after 3 attempts with no progress -> RESULT:FAILED:stuck

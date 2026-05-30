@@ -217,6 +217,7 @@ class SubmitApplicationUseCase:
             cdp_port=cdp_port,
             dry_run=dry_run,
             search_config=search_config,
+            upload_dir=worker_dir,
         )
         browser_config = BrowserWorkerConfig(
             worker_id=worker_id,

@@ -8,7 +8,9 @@ fake repository (the launcher persists lifecycle state via
 """
 
 import pytest
+from pathlib import Path
 
+from jobhunter.apply import chrome as chrome_mod
 from jobhunter.domain.apply import ApplyRun, ApplyRunStatus
 from jobhunter.domain.apply.services import (
     ApplyEligibilityChecker,
@@ -30,6 +32,7 @@ from jobhunter.domain.ports.apply import (
     BrowserSession,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.apply.local_chrome import LocalChromeAdapter
 
 
 class _InMemoryApplyRunRepository:
@@ -88,7 +91,33 @@ class _CapturingPublisher:
 
 
 class _FakeSnapshot:
-    pass
+    def as_dict(self):
+        return {
+            "personal": {
+                "full_name": "Test Applicant",
+                "email": "test@example.com",
+                "phone": "+1 555 0100",
+                "address": "",
+                "city": "Barcelona",
+                "province_state": "",
+                "country": "Spain",
+                "postal_code": "",
+            },
+            "work_authorization": {
+                "legally_authorized_to_work": "Yes",
+                "require_sponsorship": "No",
+            },
+            "compensation": {
+                "salary_expectation": "100000",
+                "salary_currency": "EUR",
+            },
+            "experience": {
+                "years_of_experience_total": "10",
+                "target_role": "Engineering leader",
+            },
+            "availability": {"earliest_start_date": "Immediately"},
+            "eeo_voluntary": {},
+        }
 
 
 @pytest.fixture()
@@ -181,6 +210,101 @@ def test_dry_run_returns_dry_run_complete_variant(monkeypatch, repo):
     )
     assert outcome.apply_run.dry_run is True
     assert outcome.apply_run.status == "dry_run_complete"
+
+
+def test_execute_passes_worker_dir_to_prompt_builder(monkeypatch, repo):
+    seen = {}
+
+    def fake_build(**kwargs):
+        seen.update(kwargs)
+        return "rendered prompt"
+
+    monkeypatch.setattr("jobhunter.apply.prompt.build_prompt", fake_build)
+    use_case = _build_use_case(repo)
+
+    use_case.execute(
+        job=_ready_job(),
+        snapshot=_FakeSnapshot(),
+        worker_id=1,
+        cdp_port=9222,
+        worker_dir="/tmp/apply-worker-1",
+    )
+
+    assert seen["upload_dir"] == "/tmp/apply-worker-1"
+
+
+def test_execute_keeps_upload_files_after_local_chrome_launch(
+    monkeypatch, tmp_path, repo
+):
+    worker_id = 4
+    materials_dir = tmp_path / "materials"
+    materials_dir.mkdir()
+    resume_txt = materials_dir / "resume.txt"
+    resume_txt.write_text("Tailored resume", encoding="utf-8")
+    resume_pdf = materials_dir / "resume.pdf"
+    resume_pdf.write_bytes(b"%PDF-1.4\n")
+    apply_workers = tmp_path / "apply-workers"
+
+    monkeypatch.setattr(chrome_mod.config, "APPLY_WORKER_DIR", apply_workers)
+    monkeypatch.setattr("jobhunter.apply.prompt.config.load_env", lambda: None)
+    monkeypatch.setattr(
+        "jobhunter.apply.prompt.config.gmail_mcp_auth_status",
+        lambda: (False, "missing OAuth client at /tmp/.jobhunter/gmail/oauth-client.json"),
+    )
+
+    class FakeChromeProc:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        chrome_mod,
+        "launch_chrome",
+        lambda *, worker_id, port, headless: FakeChromeProc(),
+    )
+
+    class PathCheckingAgent:
+        def submit_application(self, *, prompt, **_kwargs):
+            resume_line = next(
+                line
+                for line in prompt.text.splitlines()
+                if line.startswith("Resume PDF (upload this): ")
+            )
+            upload_path = Path(resume_line.split(": ", 1)[1])
+            assert upload_path.exists()
+            return AgentResult(
+                submission_result=Applied(
+                    applied_at="t9",
+                    verification_confidence=1.0,
+                ),
+                duration_ms=100,
+            )
+
+    worker_dir = str(chrome_mod.reset_worker_dir(worker_id))
+    use_case = SubmitApplicationUseCase(
+        repository=repo,
+        browser_port=LocalChromeAdapter(),
+        agent_port=PathCheckingAgent(),
+        eligibility_checker=ApplyEligibilityChecker(max_attempts=3),
+        prompt_builder=ApplyPromptBuilder(
+            mcp_config_factory=lambda port: {"port": port}
+        ),
+    )
+
+    outcome = use_case.execute(
+        job={
+            **_ready_job(),
+            "tailored_resume_path": str(resume_txt),
+        },
+        snapshot=_FakeSnapshot(),
+        worker_id=worker_id,
+        cdp_port=9222 + worker_id,
+        worker_dir=worker_dir,
+        search_config={"location": {"accept_patterns": ["Barcelona"]}},
+    )
+
+    assert outcome.apply_run.is_succeeded
 
 
 def test_eligibility_accepts_posting_url_without_direct_application_url(monkeypatch, repo):

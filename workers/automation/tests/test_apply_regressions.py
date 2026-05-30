@@ -15,7 +15,9 @@ import threading
 from pathlib import Path
 from unittest.mock import patch
 
+from jobhunter.apply import launcher as launcher_module
 from jobhunter.apply.launcher import (
+    _kill_claude_processes_for_interrupt,
     _rescue_orphaned_running_apply,
     acquire_job,
     mark_result,
@@ -237,6 +239,25 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
         "status": "dry_run",
         "duration_ms": 10,
     }
+
+
+def test_interrupt_cleanup_calls_adapter_claude_registry(monkeypatch):
+    called: list[str] = []
+    monkeypatch.setattr(
+        "jobhunter.infrastructure.apply.claude_code_cli.kill_active_claude_processes",
+        lambda: called.append("adapter"),
+    )
+    with launcher_module._claude_lock:
+        old_procs = dict(launcher_module._claude_procs)
+        launcher_module._claude_procs.clear()
+    try:
+        _kill_claude_processes_for_interrupt()
+    finally:
+        with launcher_module._claude_lock:
+            launcher_module._claude_procs.clear()
+            launcher_module._claude_procs.update(old_procs)
+
+    assert called == ["adapter"]
 
 
 def test_acquire_job_excludes_high_score_blocked_candidates(tmp_path, monkeypatch):

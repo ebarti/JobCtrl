@@ -159,7 +159,11 @@ def test_discover_emits_source_events(monkeypatch):
     assert result["workday"] == "ok"
     assert result["smartextract"] == "ok"
     assert result["ats_api"] == "ok"
-    source_events = [(event_type, payload.get("source")) for _, event_type, _, payload in events]
+    source_events = [
+        (event_type, payload.get("source"))
+        for _, event_type, _, payload in events
+        if payload.get("source")
+    ]
     assert source_events == [
         ("StageStarted", "jobspy"),
         ("StageCompleted", "jobspy"),
@@ -439,7 +443,13 @@ def test_discover_limit_skips_remaining_sources_after_cap(monkeypatch):
     result = runner._run_discover(workers=4, limit=1)
 
     assert calls == ["jobspy"]
-    assert result == {"jobspy": "ok", "workday": "skipped_limit", "smartextract": "skipped_limit", "enrichment": "ok"}
+    assert result == {
+        "jobspy": "ok",
+        "ats_api": "skipped_limit",
+        "workday": "skipped_limit",
+        "smartextract": "skipped_limit",
+        "enrichment": "ok",
+    }
 
 
 def test_discover_limit_does_not_skip_remaining_sources_after_existing_candidate(monkeypatch):
