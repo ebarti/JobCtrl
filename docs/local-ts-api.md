@@ -152,6 +152,10 @@ workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`
 uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `/runs` deep-links each row to the local Temporal Web UI
 (`http://127.0.0.1:8233`).
+`GET /v1/dashboard/summary` also carries recent apply-run timeline summaries
+from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
+the Run details drawer renders persisted history without exposing raw event
+payloads.
 
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs
 from the UI. The product-facing stage order is `discover -> apply`: the stage

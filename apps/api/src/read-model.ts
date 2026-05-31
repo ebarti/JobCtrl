@@ -2201,7 +2201,25 @@ function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
     status: normalizeWorkflowRunStatus(row.status),
     dryRun: Boolean(row.dry_run),
     startedAt: row.started_at,
+    events: parseApplyRunTimelineEvents(row.events_json),
   }));
+}
+
+function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["applyRuns"][number]["events"] {
+  let parsed: unknown = [];
+  try {
+    parsed = value ? JSON.parse(value) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isRecord).map((event) => {
+    const type = stringField(event.event_type ?? event.eventType ?? event.type) || "event";
+    const at = nullableString(event.occurred_at ?? event.occurredAt ?? event.at);
+    const level = stringField(event.level) || "info";
+    const message = nullableString(event.message);
+    return { at, type, level, message };
+  });
 }
 
 // ================================================================ helpers

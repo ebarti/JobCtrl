@@ -384,6 +384,14 @@ export const sampleDashboardSummary: DashboardSummary = {
       status: "running",
       dryRun: false,
       startedAt: "2026-05-06T07:45:00Z",
+      events: [
+        {
+          at: "2026-05-06T07:45:00Z",
+          type: "ApplyRunStarted",
+          level: "info",
+          message: "Apply agent acquired job",
+        },
+      ],
     },
   ],
 };

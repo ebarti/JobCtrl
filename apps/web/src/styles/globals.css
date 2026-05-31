@@ -1964,6 +1964,65 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.apply-run-timeline-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.apply-run-timeline-event {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.apply-run-timeline-marker {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--info);
+}
+
+.apply-run-timeline-event.tone-danger .apply-run-timeline-marker {
+  background: var(--danger);
+}
+
+.apply-run-timeline-event.tone-warn .apply-run-timeline-marker {
+  background: var(--warn);
+}
+
+.apply-run-timeline-event.tone-muted .apply-run-timeline-marker {
+  background: var(--muted);
+}
+
+.apply-run-timeline-body {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.apply-run-timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+
+.apply-run-timeline-head time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.apply-run-timeline-message {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .preformatted {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

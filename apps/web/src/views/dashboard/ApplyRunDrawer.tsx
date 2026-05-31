@@ -101,7 +101,7 @@ export function ApplyRunDrawer({ runId }: ApplyRunDrawerProps) {
               </button>
             </Section>
             <Section title="Timeline">
-              <ApplyRunTimeline runId={run.runId} />
+              <ApplyRunTimeline runId={run.runId} events={run.events} />
             </Section>
           </>
         ) : null}

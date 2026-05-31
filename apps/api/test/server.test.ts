@@ -520,7 +520,18 @@ describe("local TypeScript API", () => {
       stage: "score",
       level: "error",
     });
-    expect(body.applyRuns[0]).toMatchObject({ runId: "run-1", dryRun: true });
+    expect(body.applyRuns[0]).toMatchObject({
+      runId: "run-1",
+      dryRun: true,
+      events: [
+        {
+          at: "2026-04-29T10:15:00+00:00",
+          type: "ApplyRunStarted",
+          level: "info",
+          message: "Apply agent acquired job",
+        },
+      ],
+    });
 
     await app.close();
   });
@@ -3523,7 +3534,7 @@ function seedDatabase(dbPath: string): void {
     "2026-04-29T10:10:00+00:00",
   );
   db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "run-1",
     "https://example.com/jobs/ready",
@@ -3533,6 +3544,15 @@ function seedDatabase(dbPath: string): void {
     "succeeded",
     1,
     "2026-04-29T10:15:00+00:00",
+    JSON.stringify([
+      {
+        event_type: "ApplyRunStarted",
+        level: "info",
+        occurred_at: "2026-04-29T10:15:00+00:00",
+        message: "Apply agent acquired job",
+        payload: { run_id: "run-1" },
+      },
+    ]),
   );
   db.close();
 }

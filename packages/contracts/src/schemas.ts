@@ -783,6 +783,13 @@ export interface PipelineProgressSummary {
   updatedAt: string | null;
 }
 
+export interface ApplyRunTimelineEventSummary {
+  at: string | null;
+  type: string;
+  level: string;
+  message: string | null;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
@@ -818,6 +825,7 @@ export interface DashboardSummary {
     status: string;
     dryRun: boolean;
     startedAt: string | null;
+    events: ApplyRunTimelineEventSummary[];
   }>;
 }
 
