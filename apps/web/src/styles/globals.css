@@ -180,8 +180,11 @@ textarea {
   border: 0;
   border-right: 1px solid var(--rule);
   background: transparent;
+  color: inherit;
+  cursor: pointer;
   padding: 14px 20px;
   text-align: left;
+  text-decoration: none;
 }
 
 .kpi:hover {

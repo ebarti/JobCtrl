@@ -19,6 +19,7 @@ export function jobsListInput(search: JobsSearch): JobsListInput {
     sort: search.sort,
     dir: search.dir,
     deleted: search.deleted,
+    applyStatus: search.applyStatus,
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
     ...(search.state !== "all" ? { state: search.state } : {}),
@@ -33,6 +34,7 @@ export function bulkJobFilters(
   const filter: NonNullable<BulkJobMutationRequest["filter"]> = {
     q: search.q,
     deleted: search.deleted,
+    applyStatus: search.applyStatus,
     source: "",
     company: "",
     minFitScore: search.minFitScore,

@@ -70,6 +70,7 @@ export function JobsView() {
     search.sort,
     search.stage,
     search.state,
+    search.applyStatus,
     search.minFitScore,
     search.maxFitScore,
   ]);

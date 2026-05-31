@@ -9,6 +9,13 @@ const STAGE_OPTIONS = [
   { value: "apply", label: "apply" },
 ] as const satisfies ReadonlyArray<{ value: JobsSearch["stage"]; label: string }>;
 const STATE_OPTIONS = ["all", ...STAGE_STATES] as const;
+const APPLY_STATUS_OPTIONS = [
+  { value: "all", label: "all applications" },
+  { value: "applied", label: "applied" },
+] as const satisfies ReadonlyArray<{
+  value: JobsSearch["applyStatus"];
+  label: string;
+}>;
 const SCORE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 export interface JobFilterBarProps {
@@ -59,6 +66,19 @@ export function JobFilterBar({ search }: JobFilterBarProps) {
         {STATE_OPTIONS.map((item) => (
           <option key={item} value={item}>
             {item} states
+          </option>
+        ))}
+      </select>
+      <select
+        aria-label="Application status"
+        value={search.applyStatus}
+        onChange={(event) =>
+          apply({ applyStatus: event.target.value as JobsSearch["applyStatus"] })
+        }
+      >
+        {APPLY_STATUS_OPTIONS.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
           </option>
         ))}
       </select>

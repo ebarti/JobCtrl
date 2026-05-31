@@ -1062,6 +1062,20 @@ describe("local TypeScript API", () => {
         appliedAt: "2026-05-01T00:01:00+00:00",
       });
 
+      const appliedJobsRes = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?q=${encodeURIComponent("New Path Engineer")}&applyStatus=applied`,
+      });
+      expect(appliedJobsRes.statusCode, appliedJobsRes.body).toBe(200);
+      const appliedJobsBody = appliedJobsRes.json();
+      expect(appliedJobsBody.filter).toMatchObject({ applyStatus: "applied" });
+      expect(appliedJobsBody.items).toHaveLength(1);
+      expect(appliedJobsBody.items[0]).toMatchObject({
+        jobKey: newJobUrl,
+        applyStatus: "applied",
+        appliedAt: "2026-05-01T00:01:00+00:00",
+      });
+
       const summary = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
       expect(summary.statusCode, summary.body).toBe(200);
       const body = summary.json();

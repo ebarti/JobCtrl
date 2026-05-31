@@ -25,6 +25,7 @@ function buildRouter(initialPath = "/jobs?stage=all&state=all&deleted=active&sor
       return (
         <div>
           <span data-testid="stage-value">{search.stage}</span>
+          <span data-testid="apply-status-value">{search.applyStatus}</span>
           <span data-testid="min-score-value">{search.minFitScore ?? ""}</span>
           <JobFilterBar search={search} />
         </div>
@@ -78,5 +79,17 @@ describe("<JobFilterBar>", () => {
 
     await waitFor(() => expect(screen.getByTestId("min-score-value")).toHaveTextContent("1"));
     expect(router.state.location.search).toMatchObject({ minFitScore: 1 });
+  });
+
+  it("updates the application-status URL search-param", async () => {
+    const user = userEvent.setup();
+    const router = buildRouter();
+    render(<RouterProvider router={router} />);
+
+    await waitFor(() => expect(screen.getByTestId("apply-status-value")).toHaveTextContent("all"));
+    await user.selectOptions(screen.getByLabelText("Application status"), "applied");
+
+    await waitFor(() => expect(screen.getByTestId("apply-status-value")).toHaveTextContent("applied"));
+    expect(router.state.location.search).toMatchObject({ applyStatus: "applied" });
   });
 });

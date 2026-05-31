@@ -52,8 +52,10 @@ source registry id where the job was found and falls back to the discovery
 strategy/source pair for legacy rows. `postingSource` and `postingSourceUrl`
 come from canonical identity evidence when a broad-board result points at a
 known ATS or employer-owned posting. The jobs list accepts `minFitScore` and
-`maxFitScore` query parameters, and the same score bounds are accepted by
-all-matching bulk job mutations.
+`maxFitScore` query parameters, plus `applyStatus=applied` for jobs with an
+actual applied outcome (`applied_at` present or apply status `applied`). The
+same score and applied-outcome filters are accepted by all-matching bulk job
+mutations.
 `POST /v1/jobs/:key/score-correction` writes a new corrected `job_scores`
 version, records `ScoreCorrected`, and updates the versioned `scoring_policies`
 table with a correction-derived calibration anchor. It mirrors the Python
