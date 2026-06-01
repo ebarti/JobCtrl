@@ -163,6 +163,189 @@ export const ApplyJobRequestSchema = z
   .strict();
 export type ApplyJobRequest = z.infer<typeof ApplyJobRequestSchema>;
 
+export const APPLY_REVIEW_DECISION_VALUES = [
+  "approve_submit",
+  "approve_dry_run",
+  "defer",
+  "decline",
+  "reset",
+] as const;
+export type ApplyReviewDecisionValue = (typeof APPLY_REVIEW_DECISION_VALUES)[number];
+
+export const ApplyReviewDecisionRequestSchema = z
+  .object({
+    decision: z.enum(APPLY_REVIEW_DECISION_VALUES),
+    reason: z.string().trim().max(400).optional(),
+    decidedBy: z.string().trim().min(1).max(120).default("user"),
+  })
+  .strict();
+export type ApplyReviewDecisionRequest = z.infer<typeof ApplyReviewDecisionRequestSchema>;
+
+export interface ApplyReviewDecision {
+  decisionId: string;
+  jobKey: string;
+  decision: ApplyReviewDecisionValue;
+  reason: string | null;
+  decidedBy: string;
+  decidedAt: string;
+}
+
+export interface ApplyReviewDecisionResponse {
+  ok: true;
+  decision: ApplyReviewDecision;
+}
+
+export interface ApplyReviewQueueItem {
+  jobKey: string;
+  title: string;
+  company: string;
+  source: string;
+  fitScore: number | null;
+  applicationUrl: string | null;
+  currentStage: Stage;
+  currentState: StageState;
+  materials: {
+    hasResume: boolean;
+    hasCoverLetter: boolean;
+    hasPdf: boolean;
+    ready: boolean;
+  };
+  latestApplyRun: {
+    runId: string;
+    status: string;
+    result: string | null;
+    dryRun: boolean;
+    startedAt: string | null;
+    finishedAt: string | null;
+  } | null;
+  review: {
+    state: "pending" | "approved_submit" | "approved_dry_run" | "deferred" | "declined";
+    decision: ApplyReviewDecisionValue | null;
+    decidedAt: string | null;
+  };
+  blockers: string[];
+}
+
+export interface ApplyReviewQueueResponse {
+  ok: true;
+  items: ApplyReviewQueueItem[];
+}
+
+export const APPLICATION_OUTCOME_KINDS = [
+  "applied_confirmation",
+  "recruiter_reply",
+  "interview",
+  "assessment",
+  "rejection",
+  "offer",
+  "withdrawn",
+  "bounced",
+  "no_response",
+  "unknown",
+] as const;
+export type ApplicationOutcomeKind = (typeof APPLICATION_OUTCOME_KINDS)[number];
+
+export const APPLICATION_OUTCOME_SOURCES = ["manual", "email_suggestion"] as const;
+export type ApplicationOutcomeSource = (typeof APPLICATION_OUTCOME_SOURCES)[number];
+
+export const ManualApplicationOutcomeRequestSchema = z
+  .object({
+    kind: z.enum(APPLICATION_OUTCOME_KINDS),
+    occurredAt: z.string().trim().min(1).max(80).optional(),
+    note: z.string().trim().max(4000).optional(),
+  })
+  .strict();
+export type ManualApplicationOutcomeRequest = z.infer<typeof ManualApplicationOutcomeRequestSchema>;
+
+export interface ApplicationOutcome {
+  outcomeId: string;
+  jobKey: string;
+  kind: ApplicationOutcomeKind;
+  source: ApplicationOutcomeSource;
+  note: string | null;
+  occurredAt: string;
+  recordedAt: string;
+  suggestionId: string | null;
+  evidenceId: string | null;
+}
+
+export interface ApplicationOutcomeWriteResponse {
+  ok: true;
+  outcome: ApplicationOutcome;
+}
+
+export const OUTCOME_SUGGESTION_STATUSES = [
+  "pending",
+  "accepted",
+  "corrected",
+  "ignored",
+] as const;
+export type OutcomeSuggestionStatus = (typeof OUTCOME_SUGGESTION_STATUSES)[number];
+
+export interface ApplicationEmailEvidence {
+  evidenceId: string;
+  jobKey: string;
+  provider: "gmail";
+  providerMessageId: string;
+  providerThreadId: string | null;
+  fromAddress: string | null;
+  toAddresses: string[];
+  subject: string | null;
+  snippet: string | null;
+  receivedAt: string | null;
+  linkedAt: string;
+  linkConfidence: number;
+  bodySha256: string | null;
+  bodyStoredAt: string | null;
+}
+
+export interface OutcomeSuggestion {
+  suggestionId: string;
+  jobKey: string;
+  evidenceId: string | null;
+  suggestedKind: ApplicationOutcomeKind;
+  confidence: number;
+  rationale: string;
+  status: OutcomeSuggestionStatus;
+  createdAt: string;
+  decidedAt: string | null;
+  decisionReason: string | null;
+  decidedOutcomeId: string | null;
+}
+
+export const OutcomeSuggestionDecisionRequestSchema = z
+  .object({
+    decision: z.enum(["accept", "correct", "ignore"]),
+    outcomeKind: z.enum(APPLICATION_OUTCOME_KINDS).optional(),
+    occurredAt: z.string().trim().min(1).max(80).optional(),
+    note: z.string().trim().max(4000).optional(),
+    reason: z.string().trim().max(400).optional(),
+  })
+  .strict()
+  .refine((value) => value.decision !== "correct" || value.outcomeKind !== undefined, {
+    message: "outcomeKind is required when correcting a suggestion.",
+    path: ["outcomeKind"],
+  });
+export type OutcomeSuggestionDecisionRequest = z.infer<
+  typeof OutcomeSuggestionDecisionRequestSchema
+>;
+
+export interface OutcomeSuggestionDecisionResponse {
+  ok: true;
+  suggestion: OutcomeSuggestion;
+  outcome: ApplicationOutcome | null;
+}
+
+export interface ApplicationOutcomeListResponse {
+  ok: true;
+  outcomes: ApplicationOutcome[];
+  suggestions: OutcomeSuggestion[];
+}
+
+export interface JobApplicationOutcomeListResponse extends ApplicationOutcomeListResponse {
+  jobKey: string;
+}
+
 export const RunPipelineStagesRequestSchema = z
   .object({
     stages: z.array(z.enum(PIPELINE_RUN_STAGES)).min(1).max(PIPELINE_RUN_STAGES.length),
