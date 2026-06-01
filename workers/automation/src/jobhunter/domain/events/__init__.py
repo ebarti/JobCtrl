@@ -73,6 +73,8 @@ from jobhunter.domain.events.materials import (
     create_materials_exhausted,
 )
 from jobhunter.domain.events.apply import (
+    ApplicationEmailFeedbackIngestedPayload,
+    create_application_email_feedback_ingested,
     ApplicationSubmittedPayload,
     create_application_submitted,
     ApplicationFailedPayload,
@@ -147,6 +149,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "PreparationWorkItemFailed",
     "ApplyRunStarted",
     "ApplyRunEventRecorded",
+    "ApplicationEmailFeedbackIngested",
     "ApplicationSubmitted",
     "ApplicationFailed",
     "StageStarted",
@@ -243,6 +246,8 @@ __all__ = [
     "create_apply_run_started",
     "ApplyRunEventRecordedPayload",
     "create_apply_run_event_recorded",
+    "ApplicationEmailFeedbackIngestedPayload",
+    "create_application_email_feedback_ingested",
     # Orchestration
     "StageStartedPayload",
     "create_stage_started",
