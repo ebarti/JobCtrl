@@ -4,6 +4,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
+import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
@@ -89,6 +90,9 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
             </Section>
             <Section title="Apply history">
               <ApplyHistory jobId={detail.job.jobKey} />
+            </Section>
+            <Section title="Application outcomes">
+              <JobOutcomePanel jobId={detail.job.jobKey} />
             </Section>
             <Section title="Score breakdown">
               {detail.job.scoreStaleness.isStale ? (

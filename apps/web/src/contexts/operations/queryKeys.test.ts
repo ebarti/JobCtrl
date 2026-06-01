@@ -2,11 +2,13 @@ import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { describe, expect, it } from "vitest";
 
 import { applyRunsKeys } from "./applyRunsKeys.js";
+import { applyReviewKeys } from "./applyReviewKeys.js";
 import { activityKeys } from "./activityKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { healthKeys } from "./healthKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
+import { outcomesKeys } from "./outcomesKeys.js";
 
 describe("operations queryKeys", () => {
   it("scopes every jobs key under tenant + jobs prefix", () => {
@@ -83,6 +85,32 @@ describe("operations queryKeys", () => {
       "applyRuns",
       "detail",
       "run-abc",
+    ]);
+  });
+
+  it("scopes apply-review keys under tenant + apply-review prefix", () => {
+    expect(applyReviewKeys.queue(LOCAL_TENANT)).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "apply-review",
+      "queue",
+    ]);
+  });
+
+  it("scopes outcome keys under tenant + outcomes prefix", () => {
+    expect(outcomesKeys.list(LOCAL_TENANT)).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "outcomes",
+      "list",
+      "global",
+    ]);
+    expect(outcomesKeys.detail(LOCAL_TENANT, "job-1")).toEqual([
+      "tenant",
+      LOCAL_TENANT,
+      "outcomes",
+      "job",
+      "job-1",
     ]);
   });
 

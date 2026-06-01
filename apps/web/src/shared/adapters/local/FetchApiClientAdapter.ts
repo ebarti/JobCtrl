@@ -83,6 +83,33 @@ export class FetchApiClientAdapter implements ApiClientPort {
   ) {
     return this.client.decideRoleMatchFeedbackSuggestion(suggestionId, body);
   }
+  applyReviewQueue() {
+    return this.client.applyReviewQueue();
+  }
+  decideApplyReview(
+    jobKey: string,
+    body: Parameters<JobHunterApiClient["decideApplyReview"]>[1],
+  ) {
+    return this.client.decideApplyReview(jobKey, body);
+  }
+  applicationOutcomes() {
+    return this.client.applicationOutcomes();
+  }
+  jobApplicationOutcomes(jobKey: string) {
+    return this.client.jobApplicationOutcomes(jobKey);
+  }
+  recordManualApplicationOutcome(
+    jobKey: string,
+    body: Parameters<JobHunterApiClient["recordManualApplicationOutcome"]>[1],
+  ) {
+    return this.client.recordManualApplicationOutcome(jobKey, body);
+  }
+  decideOutcomeSuggestion(
+    suggestionId: string,
+    body: Parameters<JobHunterApiClient["decideOutcomeSuggestion"]>[1],
+  ) {
+    return this.client.decideOutcomeSuggestion(suggestionId, body);
+  }
   jobs(query: Parameters<JobHunterApiClient["jobs"]>[0] = {}) {
     return this.client.jobs(query);
   }

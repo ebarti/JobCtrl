@@ -3,7 +3,12 @@ import type {
   ActivityEventResponse,
   ActivityEventSummary,
   ActivityListQuery,
+  ApplicationOutcomeListResponse,
+  ApplicationOutcomeWriteResponse,
   ApplyJobRequest,
+  ApplyReviewDecisionRequest,
+  ApplyReviewDecisionResponse,
+  ApplyReviewQueueResponse,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactOpenResponse,
@@ -24,6 +29,7 @@ import type {
   DiscoveryPreviewResponse,
   GenerateMaterialsRequest,
   JobDetail,
+  JobApplicationOutcomeListResponse,
   JobListQuery,
   JobMutationResponse,
   JobSummary,
@@ -33,6 +39,9 @@ import type {
   ManualCaptureImportRequest,
   ManualCaptureImportResponse,
   ManualCaptureListResponse,
+  ManualApplicationOutcomeRequest,
+  OutcomeSuggestionDecisionRequest,
+  OutcomeSuggestionDecisionResponse,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -131,6 +140,21 @@ export interface ApiClientPort {
     suggestionId: string,
     body: RoleMatchFeedbackDecisionRequest,
   ): Promise<RoleMatchFeedbackDecisionResponse>;
+  applyReviewQueue(): Promise<ApplyReviewQueueResponse>;
+  decideApplyReview(
+    jobKey: string,
+    body: ApplyReviewDecisionRequest,
+  ): Promise<ApplyReviewDecisionResponse>;
+  applicationOutcomes(): Promise<ApplicationOutcomeListResponse>;
+  jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse>;
+  recordManualApplicationOutcome(
+    jobKey: string,
+    body: ManualApplicationOutcomeRequest,
+  ): Promise<ApplicationOutcomeWriteResponse>;
+  decideOutcomeSuggestion(
+    suggestionId: string,
+    body: OutcomeSuggestionDecisionRequest,
+  ): Promise<OutcomeSuggestionDecisionResponse>;
 
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
   job(jobKey: string): Promise<JobDetail>;

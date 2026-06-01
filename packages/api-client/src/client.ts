@@ -3,7 +3,12 @@ import type {
   ActivityEventResponse,
   ActivityEventSummary,
   ActivityListQuery,
+  ApplicationOutcomeListResponse,
+  ApplicationOutcomeWriteResponse,
   ApplyJobRequest,
+  ApplyReviewDecisionRequest,
+  ApplyReviewDecisionResponse,
+  ApplyReviewQueueResponse,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactOpenResponse,
@@ -24,6 +29,7 @@ import type {
   DiscoveryPreviewResponse,
   GenerateMaterialsRequest,
   JobDetail,
+  JobApplicationOutcomeListResponse,
   JobListQuery,
   JobMutationResponse,
   JobSummary,
@@ -33,6 +39,9 @@ import type {
   ManualCaptureImportRequest,
   ManualCaptureImportResponse,
   ManualCaptureListResponse,
+  ManualApplicationOutcomeRequest,
+  OutcomeSuggestionDecisionRequest,
+  OutcomeSuggestionDecisionResponse,
   PaginatedResponse,
   ProfileConfigResponse,
   ProfileImportRequest,
@@ -216,6 +225,39 @@ export class JobHunterApiClient {
       `/v1/discovery/role-match-feedback/${encodeURIComponent(suggestionId)}/decision`,
       body,
     );
+  }
+
+  applyReviewQueue(): Promise<ApplyReviewQueueResponse> {
+    return this.get("/v1/apply/review-queue");
+  }
+
+  decideApplyReview(
+    jobKey: string,
+    body: ApplyReviewDecisionRequest,
+  ): Promise<ApplyReviewDecisionResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/apply-review/decision`, body);
+  }
+
+  applicationOutcomes(): Promise<ApplicationOutcomeListResponse> {
+    return this.get("/v1/outcomes");
+  }
+
+  jobApplicationOutcomes(jobKey: string): Promise<JobApplicationOutcomeListResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/outcomes`);
+  }
+
+  recordManualApplicationOutcome(
+    jobKey: string,
+    body: ManualApplicationOutcomeRequest,
+  ): Promise<ApplicationOutcomeWriteResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/outcomes`, body);
+  }
+
+  decideOutcomeSuggestion(
+    suggestionId: string,
+    body: OutcomeSuggestionDecisionRequest,
+  ): Promise<OutcomeSuggestionDecisionResponse> {
+    return this.post(`/v1/outcome-suggestions/${encodeURIComponent(suggestionId)}/decision`, body);
   }
 
   jobs(query: Partial<JobListQuery> = {}): Promise<PaginatedResponse<JobSummary>> {

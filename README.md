@@ -277,8 +277,11 @@ agent needs to click through to the employer form. The default model is
 `default`, which lets Claude Code use its configured local model; pass
 `--model <name>` only when you want to override that local default.
 
-The local API also records apply-review decisions and application outcomes.
-`approve_submit` is an approval fact only in this foundation slice; it does not
+The local API and web app also record apply-review decisions and application
+outcomes. The web `/apply-review` queue shows active apply-stage jobs with
+materials readiness, latest apply-run context, blockers, review decisions, and
+pending outcome suggestions. Job details include a local outcome timeline and
+manual outcome form. `approve_submit` is an approval fact only; it does not
 start browser submission by itself. Manual outcomes can include local notes in
 SQLite, but event payloads contain only safe identifiers, outcome kinds, and
 presence flags.
