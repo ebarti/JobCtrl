@@ -370,6 +370,43 @@ export interface JobApplicationOutcomeListResponse extends ApplicationOutcomeLis
   jobKey: string;
 }
 
+export const GmailOutcomeScanRequestSchema = z
+  .object({
+    recipientEmail: z.string().trim().email().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    maxResultsPerAnchor: z.coerce.number().int().min(1).max(20).default(5),
+    windowDays: z.coerce.number().int().min(1).max(180).default(45),
+  })
+  .strict();
+export type GmailOutcomeScanRequest = z.input<typeof GmailOutcomeScanRequestSchema>;
+
+export interface GmailOutcomeScanEvidenceSummary {
+  evidenceId: string;
+  jobKey: string;
+  providerMessageId: string;
+  linkConfidence: number;
+}
+
+export interface GmailOutcomeScanSuggestionSummary {
+  suggestionId: string;
+  evidenceId: string;
+  jobKey: string;
+  kind: ApplicationOutcomeKind;
+  confidence: number;
+}
+
+export interface GmailOutcomeScanResponse {
+  ok: true;
+  scannedAnchorCount: number;
+  searchedMessageCount: number;
+  linkedEvidenceCount: number;
+  suggestionsCreatedCount: number;
+  duplicateMessageCount: number;
+  unlinkedCandidateCount: number;
+  evidence: GmailOutcomeScanEvidenceSummary[];
+  suggestions: GmailOutcomeScanSuggestionSummary[];
+}
+
 export const RunPipelineStagesRequestSchema = z
   .object({
     stages: z.array(z.enum(PIPELINE_RUN_STAGES)).min(1).max(PIPELINE_RUN_STAGES.length),

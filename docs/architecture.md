@@ -152,16 +152,32 @@ table creation and read/write helpers for:
 
 - `application_review_decisions`: append-only user decisions for apply review.
 - `application_outcomes`: reviewed manual or suggestion-derived outcomes.
-- `application_email_evidence`: future linked Gmail evidence, including body
-  storage columns for the Gmail slice.
+- `application_email_evidence`: linked Gmail evidence, including body storage
+  and body hash columns for confidently linked messages.
 - `application_outcome_suggestions`: pending and decided classifier
   suggestions.
 
 Apply-review approval is modeled as a recorded decision, not as an automatic
 worker dispatch. Manual outcome notes are stored only in the local outcome
-table. `job_events.payload_json` receives safe summaries with identifiers,
-kinds, sources, timestamps, and presence flags; raw notes and future raw email
-bodies are not copied into domain events, projections, logs, or telemetry.
+table.
+
+Gmail outcome feedback is implemented in
+`workers/automation/src/jobhunter/infrastructure/gmail/feedback.py`, separate
+from the verification-only Gmail MCP server. The scanner reuses the readonly
+Gmail OAuth/client support but searches only bounded post-application windows
+for known SQLite application anchors. Candidate queries combine the recipient
+email with employer/ATS hints, job title/company terms, application URL/domain
+tokens, and application timing. The worker reads a full Gmail body only after
+metadata reaches the link-confidence threshold, then stores body text,
+`body_sha256`, `linked_at`, confidence, safe link signals, and a unique provider
+message ID in `application_email_evidence`. Deterministic v1 classification
+writes pending `application_outcome_suggestions` for confirmations, recruiter
+replies, interviews, assessments, rejections, offers, bounces, and unknowns.
+
+`job_events.payload_json` receives safe summaries with identifiers, kinds,
+sources, timestamps, confidence values, link signals, and presence flags; raw
+notes and raw email bodies are not copied into domain events, projections,
+logs, telemetry, or Gmail scan API responses.
 
 ## Read-Model Projections (Phase 9)
 
