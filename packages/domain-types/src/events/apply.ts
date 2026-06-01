@@ -78,3 +78,28 @@ export function createApplyRunEventRecorded(
 ): ApplyRunEventRecorded {
   return createDomainEvent("ApplyRunEventRecorded", tenantId, payload);
 }
+
+// -- ApplicationEmailFeedbackIngested ---------------------------------------
+
+export interface ApplicationEmailFeedbackIngestedPayload {
+  readonly jobKey: string;
+  readonly evidenceId: string;
+  readonly suggestionId: string;
+  readonly provider: "gmail";
+  readonly suggestedKind: string;
+  readonly classificationConfidence: number;
+  readonly linkConfidence: number;
+  readonly linkSignals: readonly string[];
+}
+
+export type ApplicationEmailFeedbackIngested = DomainEvent<
+  "ApplicationEmailFeedbackIngested",
+  ApplicationEmailFeedbackIngestedPayload
+>;
+
+export function createApplicationEmailFeedbackIngested(
+  tenantId: TenantId,
+  payload: ApplicationEmailFeedbackIngestedPayload,
+): ApplicationEmailFeedbackIngested {
+  return createDomainEvent("ApplicationEmailFeedbackIngested", tenantId, payload);
+}

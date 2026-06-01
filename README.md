@@ -286,6 +286,16 @@ start browser submission by itself. Manual outcomes can include local notes in
 SQLite, but event payloads contain only safe identifiers, outcome kinds, and
 presence flags.
 
+Gmail outcome feedback is a separate read-only scan from the verification-code
+MCP server. `POST /v1/outcomes/gmail/scan` asks the worker to search bounded
+post-application windows for known application anchors only, using the
+candidate recipient email plus employer, ATS, title/company, and application
+URL/domain hints. JobHunter reads and stores a full Gmail body only after the
+metadata is confidently linked to one known application. Linked evidence stays
+in local SQLite with body text and a body hash; API responses, event payloads,
+logs, and broad projections expose only safe evidence/suggestion identifiers,
+kinds, confidence values, and link signals.
+
 Applications that send verification codes by email use JobHunter's first-party,
 read-only Gmail connector. Put a Google OAuth Desktop client file at
 `~/.jobhunter/gmail/oauth-client.json`, then authenticate once:

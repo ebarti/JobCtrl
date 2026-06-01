@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
+import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
 
@@ -177,6 +178,112 @@ describe("application feedback API", () => {
     ]);
 
     expect(eventPayloadText(options.dbPath)).not.toContain(note);
+    await app.close();
+  });
+
+  it("runs Gmail outcome scan through the worker and returns only safe summary fields", async () => {
+    const rawBody = "raw private Gmail body must not leave the worker boundary";
+    const gmailFeedbackScanner = vi.fn(async () => ({
+      ok: true,
+      scannedAnchorCount: 1,
+      searchedMessageCount: 2,
+      linkedEvidenceCount: 1,
+      suggestionsCreatedCount: 1,
+      duplicateMessageCount: 0,
+      unlinkedCandidateCount: 1,
+      evidence: [
+        {
+          evidenceId: "evidence-1",
+          jobKey: READY_JOB,
+          providerMessageId: "gmail-message-1",
+          linkConfidence: 0.94,
+          bodyText: rawBody,
+        },
+      ],
+      suggestions: [
+        {
+          suggestionId: "suggestion-1",
+          evidenceId: "evidence-1",
+          jobKey: READY_JOB,
+          kind: "interview",
+          confidence: 0.9,
+          bodyText: rawBody,
+        },
+      ],
+    })) as ReturnType<typeof vi.fn> & GmailFeedbackScanner;
+    const app = buildApp({ ...options, gmailFeedbackScanner });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/outcomes/gmail/scan",
+      payload: {
+        recipientEmail: "candidate@example.com",
+        limit: 2,
+        maxResultsPerAnchor: 3,
+        windowDays: 14,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(gmailFeedbackScanner).toHaveBeenCalledWith(
+      {
+        recipientEmail: "candidate@example.com",
+        limit: 2,
+        maxResultsPerAnchor: 3,
+        windowDays: 14,
+      },
+      { appDir: tempDir, dbPath: options.dbPath },
+    );
+    expect(response.json()).toEqual({
+      ok: true,
+      scannedAnchorCount: 1,
+      searchedMessageCount: 2,
+      linkedEvidenceCount: 1,
+      suggestionsCreatedCount: 1,
+      duplicateMessageCount: 0,
+      unlinkedCandidateCount: 1,
+      evidence: [
+        {
+          evidenceId: "evidence-1",
+          jobKey: READY_JOB,
+          providerMessageId: "gmail-message-1",
+          linkConfidence: 0.94,
+        },
+      ],
+      suggestions: [
+        {
+          suggestionId: "suggestion-1",
+          evidenceId: "evidence-1",
+          jobKey: READY_JOB,
+          kind: "interview",
+          confidence: 0.9,
+        },
+      ],
+    });
+    expect(response.body).not.toContain(rawBody);
+
+    await app.close();
+  });
+
+  it("maps Gmail outcome worker errors without exposing raw body fields", async () => {
+    const gmailFeedbackScanner = vi.fn(async () => {
+      throw new GmailFeedbackScanError("missing Gmail token at local auth path", 503);
+    }) as ReturnType<typeof vi.fn> & GmailFeedbackScanner;
+    const app = buildApp({ ...options, gmailFeedbackScanner });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/outcomes/gmail/scan",
+      payload: { limit: 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "gmail_feedback_scan_failed",
+      message: "missing Gmail token at local auth path",
+    });
+
     await app.close();
   });
 

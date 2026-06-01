@@ -58,3 +58,22 @@ class ApplyRunEventRecordedPayload:
 
 def create_apply_run_event_recorded(tenant_id: TenantId, payload: ApplyRunEventRecordedPayload) -> DomainEvent:
     return create_domain_event("ApplyRunEventRecorded", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class ApplicationEmailFeedbackIngestedPayload:
+    job_key: str
+    evidence_id: str
+    suggestion_id: str
+    provider: str = "gmail"
+    suggested_kind: str = "unknown"
+    classification_confidence: float = 0.0
+    link_confidence: float = 0.0
+    link_signals: list[str] = field(default_factory=list)
+
+
+def create_application_email_feedback_ingested(
+    tenant_id: TenantId,
+    payload: ApplicationEmailFeedbackIngestedPayload,
+) -> DomainEvent:
+    return create_domain_event("ApplicationEmailFeedbackIngested", tenant_id, asdict(payload))

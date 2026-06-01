@@ -183,8 +183,9 @@ future linked email bodies may live in `application_email_evidence`, but
 note/body presence flags.
 
 Apply review and outcome feedback endpoints power the local web
-`/apply-review` queue and the job-detail outcome timeline. Gmail ingestion is
-not implemented in this slice:
+`/apply-review` queue and the job-detail outcome timeline. Gmail feedback
+ingestion is Gmail-only and runs through the Python worker, not through the
+verification-code MCP server:
 
 - `GET /v1/apply/review-queue` returns active apply-stage jobs that are ready
   or close enough for human review, plus materials readiness, latest apply-run
@@ -199,6 +200,11 @@ not implemented in this slice:
 - `POST /v1/outcome-suggestions/:suggestionId/decision` accepts, corrects, or
   ignores a pending suggestion and writes a reviewed outcome for accepted or
   corrected suggestions.
+- `POST /v1/outcomes/gmail/scan` runs a bounded Gmail feedback scan over known
+  application anchors. The request accepts optional `recipientEmail`, `limit`,
+  `maxResultsPerAnchor`, and `windowDays` values. The response returns counts
+  plus evidence/suggestion IDs, job keys, kinds, and confidence values only; it
+  never returns raw Gmail body text.
 
 The web review queue records approval facts only. `approve_submit` does not
 dispatch browser submission, and `approve_dry_run` does not start a dry run.
@@ -207,10 +213,13 @@ Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 
 These routes create `application_review_decisions`, `application_outcomes`,
 `application_email_evidence`, and `application_outcome_suggestions`
-idempotently in SQLite. Gmail scanning and body ingestion are not implemented
-by this API slice. Outcome notes may be stored in `application_outcomes`, and
-future linked email bodies may live in `application_email_evidence`, but
-`job_events.payload_json` stores only safe IDs, kinds, sources, timestamps, and
+idempotently in SQLite. Gmail scanning searches only bounded post-application
+windows for anchors already known locally, using recipient, employer/ATS,
+title/company, application URL/domain, and application timing signals. Full
+Gmail bodies are read and stored only after metadata confidently links to a
+known application, with provider message ID dedupe. Outcome notes and linked
+email bodies may be stored locally, but `job_events.payload_json` stores only
+safe IDs, kinds, sources, timestamps, confidence values, link signals, and
 note/body presence flags.
 
 `POST /v1/pipeline/actions/run-stage` starts global/batch pipeline stage runs

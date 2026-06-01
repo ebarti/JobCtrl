@@ -1,10 +1,11 @@
-"""Read-only Gmail API client for application verification codes."""
+"""Read-only Gmail API client for application verification and feedback."""
 
 from __future__ import annotations
 
 import base64
 import re
 import time
+from datetime import datetime
 from html import unescape
 from typing import Any
 
@@ -19,6 +20,11 @@ _HINT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,48}")
 _VERIFICATION_TERMS = (
     '(verification OR "verification code" OR code OR confirm OR confirmation '
     'OR OTP OR "one-time" OR security OR login)'
+)
+_FEEDBACK_TERMS = (
+    '("application received" OR "thank you for applying" OR application OR applied '
+    'OR recruiter OR interview OR assessment OR "coding challenge" OR rejection '
+    'OR offer OR undeliverable OR bounced)'
 )
 
 
@@ -77,6 +83,43 @@ class GmailClient:
             "body_text": _extract_body_text(payload.get("payload", {}))[:12000],
         }
 
+    def search_feedback_emails(
+        self,
+        *,
+        query: str,
+        to_email: str,
+        after: datetime,
+        before: datetime,
+        max_results: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search bounded application-feedback candidates and return metadata only."""
+
+        max_results = max(1, min(int(max_results or 10), 20))
+        after_ms = int(after.timestamp() * 1000)
+        before_ms = int(before.timestamp() * 1000)
+        q = _build_feedback_query(
+            query=query,
+            to_email=to_email,
+            after=after,
+            before=before,
+        )
+        with self._client() as http:
+            response = http.get(
+                f"{GMAIL_API_ROOT}/messages",
+                headers=self._headers(),
+                params={"q": q, "maxResults": max_results},
+            )
+            response.raise_for_status()
+            messages = response.json().get("messages") or []
+            results: list[dict[str, Any]] = []
+            for item in messages[:max_results]:
+                msg = self._get_message_metadata(http, str(item["id"]), include_snippet=False)
+                internal_ms = int(msg.get("internalDate") or 0)
+                if internal_ms < after_ms or internal_ms > before_ms:
+                    continue
+                results.append(msg)
+            return results
+
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {get_access_token()}"}
 
@@ -85,7 +128,13 @@ class GmailClient:
             return _NullContext(self._http)
         return httpx.Client(timeout=20)
 
-    def _get_message_metadata(self, http: httpx.Client, message_id: str) -> dict[str, Any]:
+    def _get_message_metadata(
+        self,
+        http: httpx.Client,
+        message_id: str,
+        *,
+        include_snippet: bool = True,
+    ) -> dict[str, Any]:
         response = http.get(
             f"{GMAIL_API_ROOT}/messages/{message_id}",
             headers=self._headers(),
@@ -94,16 +143,19 @@ class GmailClient:
         response.raise_for_status()
         payload = response.json()
         headers = _headers_to_dict(payload.get("payload", {}).get("headers") or [])
-        return {
+        metadata = {
             "id": payload.get("id", ""),
             "threadId": payload.get("threadId", ""),
             "subject": headers.get("subject", ""),
             "from": headers.get("from", ""),
             "to": headers.get("to", ""),
             "date": headers.get("date", ""),
-            "snippet": payload.get("snippet", ""),
+            "snippet": "",
             "internalDate": payload.get("internalDate", "0"),
         }
+        if include_snippet:
+            metadata["snippet"] = payload.get("snippet", "")
+        return metadata
 
 
 class _NullContext:
@@ -126,6 +178,29 @@ def _build_query(*, query: str, to_email: str) -> str:
     if hints:
         terms.append("(" + " OR ".join(hints) + ")")
     terms.append("newer_than:1d")
+    return " ".join(terms)
+
+
+def _build_feedback_query(
+    *,
+    query: str,
+    to_email: str,
+    after: datetime,
+    before: datetime,
+) -> str:
+    recipient = to_email.strip()
+    if not recipient or not _EMAIL_RE.match(recipient):
+        raise ValueError("Gmail feedback search requires a recipient email")
+    hints = _safe_query_hints(query)
+    if not hints:
+        raise ValueError("Gmail feedback search requires application hints")
+    terms = [
+        _FEEDBACK_TERMS,
+        f"to:{recipient}",
+        "(" + " OR ".join(hints) + ")",
+        f"after:{after.strftime('%Y/%m/%d')}",
+        f"before:{before.strftime('%Y/%m/%d')}",
+    ]
     return " ".join(terms)
 
 

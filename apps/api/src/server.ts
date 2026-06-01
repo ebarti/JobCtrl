@@ -23,6 +23,7 @@ import {
   DeleteJobRequestSchema,
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
+  GmailOutcomeScanRequestSchema,
   JobListQuerySchema,
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
@@ -92,6 +93,12 @@ import {
   type ManualCaptureImporter,
 } from "./manual-capture-worker.js";
 import {
+  createWorkerGmailFeedbackScanner,
+  GmailFeedbackScanError,
+  sanitizeGmailFeedbackScanResponse,
+  type GmailFeedbackScanner,
+} from "./gmail-feedback-worker.js";
+import {
   buildDashboardSummary,
   getActivityEvent,
   getArtifactDetail,
@@ -154,6 +161,7 @@ export interface BuildAppOptions {
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
   manualCaptureImporter?: ManualCaptureImporter;
+  gmailFeedbackScanner?: GmailFeedbackScanner;
   placeValidator?: PlaceValidator;
   profileImporter?: ProfileImporter;
   profilePreviewRenderer?: ProfilePreviewRenderer;
@@ -168,6 +176,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
   const manualCaptureImporter = options.manualCaptureImporter ?? createWorkerManualCaptureImporter();
+  const gmailFeedbackScanner = options.gmailFeedbackScanner ?? createWorkerGmailFeedbackScanner();
   const profileImporter = options.profileImporter ?? defaultProfileImporter;
   const profilePreviewRenderer = options.profilePreviewRenderer ?? defaultProfilePreviewRenderer;
   const actionContext = { appDir, dbPath: options.dbPath };
@@ -448,6 +457,34 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/outcomes", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
   );
+
+  app.post("/v1/outcomes/gmail/scan", async (request, reply) => {
+    const body = parseBody(reply, GmailOutcomeScanRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobHunter database found at ${options.dbPath}` };
+    }
+    try {
+      const output = await gmailFeedbackScanner(body, { appDir, dbPath: options.dbPath });
+      return sanitizeGmailFeedbackScanResponse(output);
+    } catch (error) {
+      if (error instanceof GmailFeedbackScanError) {
+        void reply.code(error.statusCode);
+        return {
+          ok: false,
+          error:
+            error.statusCode === 400
+              ? "invalid_gmail_feedback_scan"
+              : "gmail_feedback_scan_failed",
+          message: error.message,
+        };
+      }
+      throw error;
+    }
+  });
 
   app.post("/v1/jobs/bulk-delete", async (request, reply) => {
     const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});

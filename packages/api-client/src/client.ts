@@ -28,6 +28,8 @@ import type {
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
   GenerateMaterialsRequest,
+  GmailOutcomeScanRequest,
+  GmailOutcomeScanResponse,
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
@@ -258,6 +260,12 @@ export class JobHunterApiClient {
     body: OutcomeSuggestionDecisionRequest,
   ): Promise<OutcomeSuggestionDecisionResponse> {
     return this.post(`/v1/outcome-suggestions/${encodeURIComponent(suggestionId)}/decision`, body);
+  }
+
+  scanGmailApplicationOutcomes(
+    body: GmailOutcomeScanRequest = {},
+  ): Promise<GmailOutcomeScanResponse> {
+    return this.post("/v1/outcomes/gmail/scan", body);
   }
 
   jobs(query: Partial<JobListQuery> = {}): Promise<PaginatedResponse<JobSummary>> {

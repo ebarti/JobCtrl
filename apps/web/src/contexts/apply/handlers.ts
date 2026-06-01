@@ -1,4 +1,5 @@
 import type {
+  ApplicationEmailFeedbackIngested,
   ApplicationFailed,
   ApplicationSubmitted,
   ApplyRunEventRecorded,
@@ -6,6 +7,7 @@ import type {
 } from "@jobhunter/domain-types";
 
 import { applyRunsKeys } from "../operations/applyRunsKeys.js";
+import { applyReviewKeys } from "../operations/applyReviewKeys.js";
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import {
   invalidate,
@@ -13,6 +15,7 @@ import {
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { outcomesKeys } from "../operations/outcomesKeys.js";
 import { workflowRunsKeys } from "../operations/workflowRunsKeys.js";
 
 export const applyRunStartedHandler = (
@@ -33,6 +36,14 @@ export const applyRunEventRecordedHandler = (
   event: ApplyRunEventRecorded,
 ): readonly InvalidationItem[] => [
   patchApplyRunEvent(event.tenantId, event.payload.runId, event),
+];
+
+export const applicationEmailFeedbackIngestedHandler = (
+  event: ApplicationEmailFeedbackIngested,
+): readonly InvalidationItem[] => [
+  invalidate(outcomesKeys.lists(event.tenantId)),
+  invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobKey)),
+  invalidate(applyReviewKeys.queue(event.tenantId)),
 ];
 
 export const applicationSubmittedHandler = (
