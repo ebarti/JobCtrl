@@ -144,6 +144,25 @@ used to rank people for hiring decisions, the architecture needs a separate
 governance layer for validation, bias audits, notices, adverse-impact review,
 and human-review procedures before production use.
 
+## Apply Review And Outcome Feedback
+
+The Apply Automation context now has a local feedback foundation in the
+TypeScript API. `apps/api/src/application-feedback.ts` owns idempotent SQLite
+table creation and read/write helpers for:
+
+- `application_review_decisions`: append-only user decisions for apply review.
+- `application_outcomes`: reviewed manual or suggestion-derived outcomes.
+- `application_email_evidence`: future linked Gmail evidence, including body
+  storage columns for the Gmail slice.
+- `application_outcome_suggestions`: pending and decided classifier
+  suggestions.
+
+Apply-review approval is modeled as a recorded decision, not as an automatic
+worker dispatch. Manual outcome notes are stored only in the local outcome
+table. `job_events.payload_json` receives safe summaries with identifiers,
+kinds, sources, timestamps, and presence flags; raw notes and future raw email
+bodies are not copied into domain events, projections, logs, or telemetry.
+
 ## Read-Model Projections (Phase 9)
 
 The Operations / Read-Side context maintains denormalised projection
@@ -510,9 +529,10 @@ distributed-trace propagation across the TS↔Python JSON-RPC boundary
 
 SQLite in `~/.jobhunter/jobhunter.db` is the local source of truth for jobs,
 stage states, events, artifacts, normalized Candidate Profile data, profile
-rendering settings/template text, and run visibility. The five projection
-tables (above) are also stored here. Dashboard settings remain file-backed
-until their own storage migration.
+rendering settings/template text, run visibility, apply-review decisions,
+application outcomes, linked email evidence, and outcome suggestions. The
+projection tables (above) are also stored here. Dashboard settings remain
+file-backed until their own storage migration.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and

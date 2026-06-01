@@ -277,6 +277,12 @@ agent needs to click through to the employer form. The default model is
 `default`, which lets Claude Code use its configured local model; pass
 `--model <name>` only when you want to override that local default.
 
+The local API also records apply-review decisions and application outcomes.
+`approve_submit` is an approval fact only in this foundation slice; it does not
+start browser submission by itself. Manual outcomes can include local notes in
+SQLite, but event payloads contain only safe identifiers, outcome kinds, and
+presence flags.
+
 Applications that send verification codes by email use JobHunter's first-party,
 read-only Gmail connector. Put a Google OAuth Desktop client file at
 `~/.jobhunter/gmail/oauth-client.json`, then authenticate once:

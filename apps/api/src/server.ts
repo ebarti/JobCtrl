@@ -8,6 +8,7 @@ import {
   type ActionCommandPayload,
   type ActionRunResponse,
   ActivityListQuerySchema,
+  ApplyReviewDecisionRequestSchema,
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
@@ -26,8 +27,10 @@ import {
   JsonRpcErrorCodes,
   JsonRpcRequestSchema,
   MarkJobActionRequestSchema,
+  ManualApplicationOutcomeRequestSchema,
   ManualCaptureDismissSchema,
   ManualCaptureImportSchema,
+  OutcomeSuggestionDecisionRequestSchema,
   ProfileImportRequestSchema,
   type ProfileConfigResponse,
   ProfileUpdateRequestSchema,
@@ -45,6 +48,14 @@ import {
   type Stage,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
+import {
+  decideOutcomeSuggestion,
+  listApplicationOutcomes,
+  listApplyReviewQueue,
+  listJobApplicationOutcomes,
+  recordApplyReviewDecision,
+  recordManualApplicationOutcome,
+} from "./application-feedback.js";
 import { databaseExists, openDatabase } from "./db.js";
 import {
   decideQuarantineEntry,
@@ -430,6 +441,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listJobs(db, JobListQuerySchema.parse(request.query))),
   );
 
+  app.get("/v1/apply/review-queue", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listApplyReviewQueue(db)),
+  );
+
+  app.get("/v1/outcomes", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => listApplicationOutcomes(db)),
+  );
+
   app.post("/v1/jobs/bulk-delete", async (request, reply) => {
     const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
     if (!body) {
@@ -487,6 +506,53 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       }
       return detail;
     }),
+  );
+
+  app.post<{ Params: { jobKey: string } }>(
+    "/v1/jobs/:jobKey/apply-review/decision",
+    async (request, reply) => {
+      const body = parseBody(reply, ApplyReviewDecisionRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        recordApplyReviewDecision(db, decodeRouteParam(request.params.jobKey), body),
+      );
+    },
+  );
+
+  app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/outcomes", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const outcomes = listJobApplicationOutcomes(db, decodeRouteParam(request.params.jobKey));
+      if (!outcomes) {
+        void reply.code(404);
+        return { ok: false, error: "job_not_found" };
+      }
+      return outcomes;
+    }),
+  );
+
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/outcomes", async (request, reply) => {
+    const body = parseBody(reply, ManualApplicationOutcomeRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) =>
+      recordManualApplicationOutcome(db, decodeRouteParam(request.params.jobKey), body),
+    );
+  });
+
+  app.post<{ Params: { suggestionId: string } }>(
+    "/v1/outcome-suggestions/:suggestionId/decision",
+    async (request, reply) => {
+      const body = parseBody(reply, OutcomeSuggestionDecisionRequestSchema, request.body ?? {});
+      if (!body) {
+        return undefined;
+      }
+      return withWritableDb(reply, options.dbPath, (db) =>
+        decideOutcomeSuggestion(db, decodeRouteParam(request.params.suggestionId), body),
+      );
+    },
   );
 
   app.post<{ Params: { jobKey: string } }>(
