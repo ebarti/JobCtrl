@@ -30,7 +30,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Protocol
+from typing import Iterable, Literal, Protocol
 
 from jobhunter.domain.discovery.aggregate import Job
 from jobhunter.domain.discovery.identity import (
@@ -45,12 +45,16 @@ from jobhunter.domain.events import (
     CanonicalJobIdentityResolvedPayload,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,
+    JobDeletedPayload,
     JobDiscoveredPayload,
+    JobRestoredPayload,
     JobSourceObservedPayload,
     create_canonical_job_identity_resolved,
     create_duplicate_job_link_rejected,
     create_duplicate_job_linked,
+    create_job_deleted,
     create_job_discovered,
+    create_job_restored,
     create_job_source_observed,
 )
 from jobhunter.domain.identifiers import JobId
@@ -116,6 +120,42 @@ class CanonicalIdentityResolver(Protocol):
 
 
 @dataclass(frozen=True)
+class PostingAcceptance:
+    """Current discovery-policy verdict for one scraped posting."""
+
+    accepted: bool
+    reason: str = ""
+    rejection_reasons: tuple[str, ...] = ()
+
+    @classmethod
+    def accept(cls) -> "PostingAcceptance":
+        return cls(accepted=True)
+
+    @classmethod
+    def reject(
+        cls,
+        *,
+        reason: str,
+        rejection_reasons: Iterable[str] = (),
+    ) -> "PostingAcceptance":
+        return cls(
+            accepted=False,
+            reason=reason,
+            rejection_reasons=tuple(str(item) for item in rejection_reasons),
+        )
+
+
+class PostingAcceptancePolicy(Protocol):
+    """Function signature for current discovery-policy acceptance."""
+
+    def __call__(self, posting: ScrapedJobPosting) -> PostingAcceptance: ...
+
+
+def accept_all_postings(_posting: ScrapedJobPosting) -> PostingAcceptance:
+    return PostingAcceptance.accept()
+
+
+@dataclass(frozen=True)
 class DiscoveryDecision:
     """Outcome of a single ``ScrapedJobPosting`` ingest."""
 
@@ -124,6 +164,7 @@ class DiscoveryDecision:
     observation_id: str
     duplicate_link_id: str | None
     rejected_reason: str | None
+    rejected_kind: Literal["duplicate", "policy"] | None
     confidence: float
 
 
@@ -160,12 +201,14 @@ class DiscoverJobsUseCase:
         repository: JobRepository,
         publisher: EventPublisher,
         resolver: CanonicalIdentityResolver | None = None,
+        acceptance_policy: PostingAcceptancePolicy | None = None,
         run_id_factory: object | None = None,
         clock: object | None = None,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
         self._resolver = resolver or default_canonical_identity
+        self._acceptance_policy = acceptance_policy or accept_all_postings
         self._run_id_factory = run_id_factory or (lambda: f"run:{uuid.uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
 
@@ -192,7 +235,7 @@ class DiscoverJobsUseCase:
             new_jobs=sum(1 for d in decisions if d.is_new_job),
             observed=sum(1 for d in decisions if not d.is_new_job and d.rejected_reason is None),
             duplicates_linked=sum(1 for d in decisions if d.duplicate_link_id is not None),
-            duplicates_rejected=sum(1 for d in decisions if d.rejected_reason is not None),
+            duplicates_rejected=sum(1 for d in decisions if d.rejected_kind == "duplicate"),
         )
 
     # ------------------------------------------------------------------
@@ -228,6 +271,14 @@ class DiscoverJobsUseCase:
         observation_id = f"obs:{uuid.uuid4().hex}"
 
         if owner_id is None:
+            acceptance = self._acceptance_policy(posting)
+            if not acceptance.accepted:
+                return self._policy_rejected_decision(
+                    job_id=JobId(identity.canonical_url or posting.posting_url.value),
+                    observation_id=observation_id,
+                    confidence=identity.confidence,
+                    acceptance=acceptance,
+                )
             return self._create_new_job(
                 tenant_id=tenant_id,
                 posting=posting,
@@ -335,6 +386,7 @@ class DiscoverJobsUseCase:
             observation_id=observation_id,
             duplicate_link_id=None,
             rejected_reason=None,
+            rejected_kind=None,
             confidence=identity.confidence,
         )
 
@@ -380,18 +432,57 @@ class DiscoverJobsUseCase:
                 observation_id=observation_id,
                 duplicate_link_id=None,
                 rejected_reason="confidence_below_threshold",
+                rejected_kind="duplicate",
                 confidence=identity.confidence,
             )
 
+        acceptance = self._acceptance_policy(posting)
         with dedupe_span(
             tenant_id=str(tenant_id),
             job_id=str(owner_id),
             stage="listing_ingest",
-            result="observed",
+            result="observed" if acceptance.accepted else "policy_rejected",
             confidence=identity.confidence,
         ):
             existing = self._repository.load(tenant_id, owner_id)
             if existing is not None:
+                if not acceptance.accepted:
+                    reason = _policy_rejection_reason(acceptance)
+                    if not existing.is_deleted:
+                        self._soft_delete_policy_rejected_job(
+                            tenant_id=tenant_id,
+                            job_id=owner_id,
+                            reason=reason,
+                            deleted_at=observed_at,
+                        )
+                    self._repository.attach_source_observation(
+                        tenant_id,
+                        owner_id,
+                        JobSourceObservation(
+                            source_observation_id=observation_id,
+                            source_id=posting.source_id,
+                            source_native_id=identity.source_native_id,
+                            observed_url=observed_url,
+                            run_id=run_id,
+                            observed_at=observed_at,
+                        ),
+                    )
+                    self._publish_source_observed(
+                        tenant_id=tenant_id,
+                        job_id=owner_id,
+                        observation_id=observation_id,
+                        posting=posting,
+                        identity=identity,
+                        observed_url=observed_url,
+                        run_id=run_id,
+                        observed_at=observed_at,
+                    )
+                    return self._policy_rejected_decision(
+                        job_id=owner_id,
+                        observation_id=observation_id,
+                        confidence=identity.confidence,
+                        acceptance=acceptance,
+                    )
                 refreshed = existing.with_metadata(posting.metadata)
                 if refreshed.is_deleted:
                     restored = self._repository.restore(
@@ -401,6 +492,15 @@ class DiscoverJobsUseCase:
                     )
                     if restored is not None:
                         refreshed = restored.with_metadata(posting.metadata)
+                        self._publisher.publish(
+                            create_job_restored(
+                                tenant_id,
+                                JobRestoredPayload(
+                                    job_id=str(owner_id),
+                                    restored_at=observed_at,
+                                ),
+                            )
+                        )
                 if refreshed != existing:
                     self._repository.save(refreshed)
             self._repository.attach_source_observation(
@@ -415,19 +515,15 @@ class DiscoverJobsUseCase:
                     observed_at=observed_at,
                 ),
             )
-        self._publisher.publish(
-            create_job_source_observed(
-                tenant_id,
-                JobSourceObservedPayload(
-                    job_id=str(owner_id),
-                    source_observation_id=observation_id,
-                    source_id=posting.source_id,
-                    source_native_id=identity.source_native_id,
-                    observed_url=observed_url,
-                    run_id=run_id,
-                    observed_at=observed_at,
-                ),
-            )
+        self._publish_source_observed(
+            tenant_id=tenant_id,
+            job_id=owner_id,
+            observation_id=observation_id,
+            posting=posting,
+            identity=identity,
+            observed_url=observed_url,
+            run_id=run_id,
+            observed_at=observed_at,
         )
 
         duplicate_link_id: str | None = None
@@ -461,8 +557,87 @@ class DiscoverJobsUseCase:
             observation_id=observation_id,
             duplicate_link_id=duplicate_link_id,
             rejected_reason=None,
+            rejected_kind=None,
             confidence=identity.confidence,
         )
+
+    def _publish_source_observed(
+        self,
+        *,
+        tenant_id: TenantId,
+        job_id: JobId,
+        observation_id: str,
+        posting: ScrapedJobPosting,
+        identity: CanonicalJobIdentity,
+        observed_url: str,
+        run_id: str,
+        observed_at: str,
+    ) -> None:
+        self._publisher.publish(
+            create_job_source_observed(
+                tenant_id,
+                JobSourceObservedPayload(
+                    job_id=str(job_id),
+                    source_observation_id=observation_id,
+                    source_id=posting.source_id,
+                    source_native_id=identity.source_native_id,
+                    observed_url=observed_url,
+                    run_id=run_id,
+                    observed_at=observed_at,
+                ),
+            )
+        )
+
+    def _soft_delete_policy_rejected_job(
+        self,
+        *,
+        tenant_id: TenantId,
+        job_id: JobId,
+        reason: str,
+        deleted_at: str,
+    ) -> None:
+        deleted = self._repository.soft_delete(
+            tenant_id,
+            job_id,
+            reason=reason,
+            deleted_at=deleted_at,
+        )
+        if deleted is None:
+            return
+        self._publisher.publish(
+            create_job_deleted(
+                tenant_id,
+                JobDeletedPayload(
+                    job_id=str(job_id),
+                    reason=reason,
+                    deleted_at=deleted_at,
+                ),
+            )
+        )
+
+    def _policy_rejected_decision(
+        self,
+        *,
+        job_id: JobId,
+        observation_id: str,
+        confidence: float,
+        acceptance: PostingAcceptance,
+    ) -> DiscoveryDecision:
+        return DiscoveryDecision(
+            job_id=job_id,
+            is_new_job=False,
+            observation_id=observation_id,
+            duplicate_link_id=None,
+            rejected_reason=_policy_rejection_reason(acceptance),
+            rejected_kind="policy",
+            confidence=confidence,
+        )
+
+
+def _policy_rejection_reason(acceptance: PostingAcceptance) -> str:
+    if acceptance.rejection_reasons:
+        return f"{acceptance.reason}: {', '.join(acceptance.rejection_reasons)}"
+    return acceptance.reason or "policy_rejected"
 
 
 __all__ = [
@@ -471,5 +646,8 @@ __all__ = [
     "DiscoveryDecision",
     "DiscoveryRunSummary",
     "MIN_AUTO_MERGE_CONFIDENCE",
+    "PostingAcceptance",
+    "PostingAcceptancePolicy",
+    "accept_all_postings",
     "default_canonical_identity",
 ]
