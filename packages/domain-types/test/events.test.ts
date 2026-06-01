@@ -41,7 +41,11 @@ import {
   createPreparationWorkItemQueued,
   createPreparationWorkItemStarted,
 } from "../src/events/preparation.js";
-import { createApplicationSubmitted, createApplyRunStarted } from "../src/events/apply.js";
+import {
+  createApplicationEmailFeedbackIngested,
+  createApplicationSubmitted,
+  createApplyRunStarted,
+} from "../src/events/apply.js";
 import { createStageStarted, createStageCompleted } from "../src/events/orchestration.js";
 import { createProfileUpdated, createProfileImported, createTailoringPolicyUpdated } from "../src/events/profile.js";
 
@@ -629,6 +633,17 @@ describe("All events carry tenantId", () => {
         queuedAt: "t",
       }),
     () =>
+      createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
+        jobKey: "j1",
+        evidenceId: "e1",
+        suggestionId: "s1",
+        provider: "gmail",
+        suggestedKind: "interview",
+        classificationConfidence: 0.9,
+        linkConfidence: 0.8,
+        linkSignals: ["recipient"],
+      }),
+    () =>
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j1",
         runId: "r1",
@@ -659,7 +674,7 @@ describe("All events carry tenantId", () => {
 
 describe("DOMAIN_EVENT_TYPES enumeration", () => {
   it("lists every variant of DomainEventUnion exactly once", () => {
-    expect(DOMAIN_EVENT_TYPES).toHaveLength(52);
+    expect(DOMAIN_EVENT_TYPES).toHaveLength(53);
     expect(new Set(DOMAIN_EVENT_TYPES).size).toBe(DOMAIN_EVENT_TYPES.length);
   });
 
@@ -901,6 +916,16 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         runId: "r",
         appliedAt: "t",
         verificationConfidence: 0.5,
+      }).eventType,
+      createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
+        jobKey: "j",
+        evidenceId: "e",
+        suggestionId: "s",
+        provider: "gmail",
+        suggestedKind: "interview",
+        classificationConfidence: 0.9,
+        linkConfidence: 0.8,
+        linkSignals: ["recipient"],
       }).eventType,
       createApplyRunStarted(LOCAL_TENANT, {
         jobId: "j",
