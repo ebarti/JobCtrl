@@ -1,11 +1,27 @@
 export { applyKeys } from "./queryKeys.js";
 
 export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
+export {
+  useApplyReviewDecisionMutation,
+  useOutcomeSuggestionDecisionMutation,
+  useRecordManualApplicationOutcomeMutation,
+} from "./hooks/useApplyReviewMutations.js";
 export { useCancelApplyMutation } from "./hooks/useCancelApplyMutation.js";
 export { useDryRunApplyMutation } from "./hooks/useDryRunApplyMutation.js";
 
 export { ApplyButton, type ApplyButtonProps } from "./components/ApplyButton.js";
 export { ApplyHistory, type ApplyHistoryProps } from "./components/ApplyHistory.js";
+export {
+  JobOutcomePanel,
+  ManualOutcomeForm,
+  OutcomeSuggestionsPanel,
+  OutcomeTimeline,
+  outcomeLabel,
+} from "./components/ApplicationOutcomes.js";
+export {
+  ApplyReviewDecisionControls,
+  type ApplyReviewDecisionControlsProps,
+} from "./components/ApplyReviewDecisionControls.js";
 export { ApplyRunBadge, type ApplyRunBadgeProps } from "./components/ApplyRunBadge.js";
 export { ApplyRunTimeline, type ApplyRunTimelineProps } from "./components/ApplyRunTimeline.js";
 export { CancelApplyButton, type CancelApplyButtonProps } from "./components/CancelApplyButton.js";

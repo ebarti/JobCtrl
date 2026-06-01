@@ -3,6 +3,8 @@ export { activityKeys } from "./activityKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
 export { applyRunsKeys } from "./applyRunsKeys.js";
+export { applyReviewKeys } from "./applyReviewKeys.js";
+export { outcomesKeys } from "./outcomesKeys.js";
 export { workflowRunsKeys } from "./workflowRunsKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { profileKeys } from "../profile/queryKeys.js";

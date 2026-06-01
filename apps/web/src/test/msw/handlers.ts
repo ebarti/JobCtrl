@@ -3,6 +3,8 @@ import { http, HttpResponse } from "msw";
 import {
   makeArtifactDetail,
   makeActivityPage,
+  sampleApplicationOutcomes,
+  sampleApplyReviewQueue,
   makeArtifactsPage,
   makeJobDetail,
   makeJobsPage,
@@ -269,6 +271,100 @@ export const handlers = [
         decidedAt: "2026-05-12T10:01:00+00:00",
         decisionReason: body.reason ?? null,
       },
+    });
+  }),
+
+  http.get("*/v1/apply/review-queue", () => HttpResponse.json(sampleApplyReviewQueue)),
+  http.post("*/v1/jobs/:jobKey/apply-review/decision", async ({ params, request }) => {
+    const body = (await request.json()) as {
+      decision: "approve_submit" | "approve_dry_run" | "defer" | "decline" | "reset";
+      reason?: string;
+      decidedBy?: string;
+    };
+    return HttpResponse.json({
+      ok: true,
+      decision: {
+        decisionId: `decision-${String(params["jobKey"])}`,
+        jobKey: String(params["jobKey"]),
+        decision: body.decision,
+        reason: body.reason ?? null,
+        decidedBy: body.decidedBy ?? "user",
+        decidedAt: "2026-05-06T08:30:00Z",
+      },
+    });
+  }),
+  http.get("*/v1/outcomes", () => HttpResponse.json(sampleApplicationOutcomes)),
+  http.get("*/v1/jobs/:jobKey/outcomes", ({ params }) =>
+    HttpResponse.json({
+      ...sampleApplicationOutcomes,
+      jobKey: String(params["jobKey"]),
+      outcomes: sampleApplicationOutcomes.outcomes.filter(
+        (outcome) => outcome.jobKey === String(params["jobKey"]),
+      ),
+      suggestions: sampleApplicationOutcomes.suggestions.filter(
+        (suggestion) => suggestion.jobKey === String(params["jobKey"]),
+      ),
+    }),
+  ),
+  http.post("*/v1/jobs/:jobKey/outcomes", async ({ params, request }) => {
+    const body = (await request.json()) as {
+      kind: string;
+      occurredAt?: string;
+      note?: string;
+    };
+    return HttpResponse.json({
+      ok: true,
+      outcome: {
+        outcomeId: `outcome-${String(params["jobKey"])}`,
+        jobKey: String(params["jobKey"]),
+        kind: body.kind,
+        source: "manual",
+        note: body.note ?? null,
+        occurredAt: body.occurredAt ?? "2026-05-06T08:35:00Z",
+        recordedAt: "2026-05-06T08:35:00Z",
+        suggestionId: null,
+        evidenceId: null,
+      },
+    });
+  }),
+  http.post("*/v1/outcome-suggestions/:suggestionId/decision", async ({ params, request }) => {
+    const body = (await request.json()) as {
+      decision: "accept" | "correct" | "ignore";
+      outcomeKind?: string;
+      occurredAt?: string;
+      note?: string;
+      reason?: string;
+    };
+    const baseSuggestion =
+      sampleApplicationOutcomes.suggestions.find(
+        (suggestion) => suggestion.suggestionId === String(params["suggestionId"]),
+      ) ?? sampleApplicationOutcomes.suggestions[0]!;
+    const status =
+      body.decision === "accept" ? "accepted" : body.decision === "correct" ? "corrected" : "ignored";
+    const outcome =
+      body.decision === "ignore"
+        ? null
+        : {
+            outcomeId: `outcome-${String(params["suggestionId"])}`,
+            jobKey: baseSuggestion.jobKey,
+            kind: body.decision === "correct" ? body.outcomeKind : baseSuggestion.suggestedKind,
+            source: "email_suggestion",
+            note: body.note ?? null,
+            occurredAt: body.occurredAt ?? "2026-05-06T08:40:00Z",
+            recordedAt: "2026-05-06T08:40:00Z",
+            suggestionId: String(params["suggestionId"]),
+            evidenceId: baseSuggestion.evidenceId,
+          };
+    return HttpResponse.json({
+      ok: true,
+      suggestion: {
+        ...baseSuggestion,
+        status,
+        decidedAt: "2026-05-06T08:40:00Z",
+        decisionReason: body.reason ?? null,
+        decidedOutcomeId: outcome?.outcomeId ?? null,
+      },
+      outcome,
     });
   }),
 

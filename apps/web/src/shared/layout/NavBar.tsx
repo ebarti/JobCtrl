@@ -4,6 +4,7 @@ const NAV_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly to:
     | "/dashboard"
+    | "/apply-review"
     | "/jobs"
     | "/pipelines"
     | "/discovery"
@@ -15,6 +16,7 @@ const NAV_ITEMS: ReadonlyArray<{
     | "/settings";
 }> = [
   { label: "Dashboard", to: "/dashboard" },
+  { label: "Apply review", to: "/apply-review" },
   { label: "Jobs", to: "/jobs" },
   { label: "Pipelines", to: "/pipelines" },
   { label: "Discovery", to: "/discovery" },

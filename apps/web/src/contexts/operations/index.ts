@@ -1,4 +1,15 @@
 export type {
+  ApplicationOutcome,
+  ApplicationOutcomeKind,
+  ApplicationOutcomeListResponse,
+  ApplicationOutcomeSource,
+  ApplicationOutcomeWriteResponse,
+  ApplyReviewDecision,
+  ApplyReviewDecisionRequest,
+  ApplyReviewDecisionResponse,
+  ApplyReviewDecisionValue,
+  ApplyReviewQueueItem,
+  ApplyReviewQueueResponse,
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
@@ -11,6 +22,7 @@ export type {
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
   JobDetail,
+  JobApplicationOutcomeListResponse,
   JobId,
   JobListQuery,
   JobSortField,
@@ -18,8 +30,13 @@ export type {
   JobsListInput,
   KnownDomainEvent,
   KnownDomainEventType,
+  ManualApplicationOutcomeRequest,
   ManualCaptureImportRequest,
   ManualCaptureListResponse,
+  OutcomeSuggestion,
+  OutcomeSuggestionDecisionRequest,
+  OutcomeSuggestionDecisionResponse,
+  OutcomeSuggestionStatus,
   PaginatedResponse,
   ProfileConfigResponse,
   QuarantineDecision,
@@ -43,10 +60,12 @@ export type {
 } from "./types.js";
 
 export { applyRunsKeys } from "./applyRunsKeys.js";
+export { applyReviewKeys } from "./applyReviewKeys.js";
 export { artifactsKeys } from "./artifactsKeys.js";
 export { dashboardKeys } from "./dashboardKeys.js";
 export { healthKeys } from "./healthKeys.js";
 export { jobsKeys } from "./jobsKeys.js";
+export { outcomesKeys } from "./outcomesKeys.js";
 export { workflowRunsKeys } from "./workflowRunsKeys.js";
 
 export {
@@ -62,6 +81,8 @@ export { useInvalidationRouter } from "./hooks/useInvalidationRouter.js";
 export { useActivityEventQuery } from "./hooks/useActivityEventQuery.js";
 export { useApplyRunQuery } from "./hooks/useApplyRunQuery.js";
 export { useApplyRunsListQuery } from "./hooks/useApplyRunsListQuery.js";
+export { useApplyReviewQueueQuery } from "./hooks/useApplyReviewQueueQuery.js";
+export { useApplicationOutcomesQuery } from "./hooks/useApplicationOutcomesQuery.js";
 export { useArtifactDetailQuery } from "./hooks/useArtifactDetailQuery.js";
 export { useArtifactsListQuery } from "./hooks/useArtifactsListQuery.js";
 export { useDashboardSummaryQuery } from "./hooks/useDashboardSummaryQuery.js";
@@ -72,6 +93,7 @@ export {
   useSourceRegistryQuery,
 } from "./hooks/useDiscoveryProductControlsQuery.js";
 export { useHealthQuery } from "./hooks/useHealthQuery.js";
+export { useJobApplicationOutcomesQuery } from "./hooks/useJobApplicationOutcomesQuery.js";
 export { useJobDetailQuery } from "./hooks/useJobDetailQuery.js";
 export { useJobsListQuery } from "./hooks/useJobsListQuery.js";
 export { useWorkflowRunsListQuery } from "./hooks/useWorkflowRunsListQuery.js";

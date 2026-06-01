@@ -2,6 +2,8 @@ import type {
   ArtifactDetail,
   ArtifactSummary,
   ActivityEventSummary,
+  ApplicationOutcomeListResponse,
+  ApplyReviewQueueResponse,
   CredentialsResponse,
   DashboardSummary,
   JobDetail,
@@ -128,6 +130,97 @@ export const sampleSecondaryJob: JobSummary = {
   artifactCount: 2,
   applyStatus: "applied",
   appliedAt: "2026-05-04T10:00:00Z",
+};
+
+export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
+  ok: true,
+  items: [
+    {
+      jobKey: sampleSecondaryJob.jobKey,
+      title: sampleSecondaryJob.title,
+      company: sampleSecondaryJob.company,
+      source: sampleSecondaryJob.source,
+      fitScore: sampleSecondaryJob.fitScore,
+      applicationUrl: sampleSecondaryJob.applicationUrl,
+      currentStage: "apply",
+      currentState: "succeeded",
+      materials: {
+        hasResume: true,
+        hasCoverLetter: true,
+        hasPdf: true,
+        ready: true,
+      },
+      latestApplyRun: {
+        runId: "apply-run-2",
+        status: "succeeded",
+        result: "dry_run",
+        dryRun: true,
+        startedAt: "2026-05-06T06:30:00Z",
+        finishedAt: "2026-05-06T06:35:00Z",
+      },
+      review: {
+        state: "pending",
+        decision: null,
+        decidedAt: null,
+      },
+      blockers: [],
+    },
+    {
+      jobKey: sampleJob.jobKey,
+      title: sampleJob.title,
+      company: sampleJob.company,
+      source: sampleJob.source,
+      fitScore: sampleJob.fitScore,
+      applicationUrl: sampleJob.applicationUrl,
+      currentStage: "apply",
+      currentState: "pending",
+      materials: {
+        hasResume: true,
+        hasCoverLetter: false,
+        hasPdf: true,
+        ready: false,
+      },
+      latestApplyRun: null,
+      review: {
+        state: "pending",
+        decision: null,
+        decidedAt: null,
+      },
+      blockers: ["cover letter missing"],
+    },
+  ],
+};
+
+export const sampleApplicationOutcomes: ApplicationOutcomeListResponse = {
+  ok: true,
+  outcomes: [
+    {
+      outcomeId: "outcome-1",
+      jobKey: sampleSecondaryJob.jobKey,
+      kind: "applied_confirmation",
+      source: "manual",
+      note: "Confirmed in the ATS portal.",
+      occurredAt: "2026-05-06T07:10:00Z",
+      recordedAt: "2026-05-06T07:12:00Z",
+      suggestionId: null,
+      evidenceId: null,
+    },
+  ],
+  suggestions: [
+    {
+      suggestionId: "suggestion-1",
+      jobKey: sampleSecondaryJob.jobKey,
+      evidenceId: "evidence-1",
+      suggestedKind: "interview",
+      confidence: 0.84,
+      rationale: "Recruiter reply indicates an interview request.",
+      status: "pending",
+      createdAt: "2026-05-06T08:00:00Z",
+      decidedAt: null,
+      decisionReason: null,
+      decidedOutcomeId: null,
+    },
+  ],
 };
 
 export function makeJobsPage(items: readonly JobSummary[] = [sampleJob, sampleSecondaryJob]):

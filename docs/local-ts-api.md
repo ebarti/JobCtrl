@@ -151,8 +151,9 @@ uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `/runs` deep-links each row to the local Temporal Web UI
 (`http://127.0.0.1:8233`).
 
-Apply review and outcome feedback endpoints are local-first API foundations for
-later UI and Gmail ingestion work:
+Apply review and outcome feedback endpoints power the local web
+`/apply-review` queue and the job-detail outcome timeline. Gmail ingestion is
+not implemented in this slice:
 
 - `GET /v1/apply/review-queue` returns active apply-stage jobs that are ready
   or close enough for human review, plus materials readiness, latest apply-run
@@ -167,6 +168,11 @@ later UI and Gmail ingestion work:
 - `POST /v1/outcome-suggestions/:suggestionId/decision` accepts, corrects, or
   ignores a pending suggestion and writes a reviewed outcome for accepted or
   corrected suggestions.
+
+The web review queue records approval facts only. `approve_submit` does not
+dispatch browser submission, and `approve_dry_run` does not start a dry run.
+Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
+`occurredAt` timestamps when the field is supplied.
 
 These routes create `application_review_decisions`, `application_outcomes`,
 `application_email_evidence`, and `application_outcome_suggestions`
