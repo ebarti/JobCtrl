@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { eventByType } from "../../test/fixtures/events.js";
 import { activityKeys } from "./activityKeys.js";
+import { applyReviewKeys } from "./applyReviewKeys.js";
 import { applyRunsKeys } from "./applyRunsKeys.js";
 import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { invalidationRouter } from "./invalidation-router.js";
 import { jobsKeys } from "./jobsKeys.js";
+import { outcomesKeys } from "./outcomesKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
 import { discoveryKeys } from "../discovery/queryKeys.js";
 import { profileKeys } from "../profile/queryKeys.js";
@@ -213,6 +215,11 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ApplyRunEventRecorded: [],
+  ApplicationEmailFeedbackIngested: [
+    outcomesKeys.lists(LOCAL_TENANT),
+    outcomesKeys.detail(LOCAL_TENANT, JOB_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
+  ],
   ApplicationSubmitted: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),

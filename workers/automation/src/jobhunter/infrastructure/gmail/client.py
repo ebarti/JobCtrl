@@ -113,7 +113,7 @@ class GmailClient:
             messages = response.json().get("messages") or []
             results: list[dict[str, Any]] = []
             for item in messages[:max_results]:
-                msg = self._get_message_metadata(http, str(item["id"]))
+                msg = self._get_message_metadata(http, str(item["id"]), include_snippet=False)
                 internal_ms = int(msg.get("internalDate") or 0)
                 if internal_ms < after_ms or internal_ms > before_ms:
                     continue
@@ -128,7 +128,13 @@ class GmailClient:
             return _NullContext(self._http)
         return httpx.Client(timeout=20)
 
-    def _get_message_metadata(self, http: httpx.Client, message_id: str) -> dict[str, Any]:
+    def _get_message_metadata(
+        self,
+        http: httpx.Client,
+        message_id: str,
+        *,
+        include_snippet: bool = True,
+    ) -> dict[str, Any]:
         response = http.get(
             f"{GMAIL_API_ROOT}/messages/{message_id}",
             headers=self._headers(),
@@ -137,16 +143,19 @@ class GmailClient:
         response.raise_for_status()
         payload = response.json()
         headers = _headers_to_dict(payload.get("payload", {}).get("headers") or [])
-        return {
+        metadata = {
             "id": payload.get("id", ""),
             "threadId": payload.get("threadId", ""),
             "subject": headers.get("subject", ""),
             "from": headers.get("from", ""),
             "to": headers.get("to", ""),
             "date": headers.get("date", ""),
-            "snippet": payload.get("snippet", ""),
+            "snippet": "",
             "internalDate": payload.get("internalDate", "0"),
         }
+        if include_snippet:
+            metadata["snippet"] = payload.get("snippet", "")
+        return metadata
 
 
 class _NullContext:

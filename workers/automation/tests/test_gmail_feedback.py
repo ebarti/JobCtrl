@@ -99,6 +99,43 @@ def test_unlinked_metadata_does_not_read_email_body(tmp_path: Path) -> None:
     assert summary["unlinkedCandidateCount"] == 1
 
 
+def test_body_snippet_does_not_contribute_to_pre_link_decision(tmp_path: Path) -> None:
+    db_path = seed_feedback_db(tmp_path)
+    client = FakeGmailClient(
+        [
+            {
+                "id": "snippet-only-match",
+                "threadId": "thread-snippet",
+                "subject": "Weekly engineering newsletter",
+                "from": "newsletter@other.example",
+                "to": RECIPIENT,
+                "date": "Mon, 01 Jun 2026 11:00:00 +0000",
+                "snippet": "ExampleCo Platform Engineer application received via greenhouse.",
+                "internalDate": str(epoch_ms("2026-06-01T11:00:00+00:00")),
+            }
+        ],
+        {
+            "snippet-only-match": {
+                "id": "snippet-only-match",
+                "body_text": "This body must not be fetched from a snippet-only match.",
+            }
+        },
+    )
+
+    summary = scan_gmail_feedback(
+        db_path=db_path,
+        client=client,
+        recipient_email=RECIPIENT,
+        limit=1,
+        max_results_per_anchor=5,
+        window_days=7,
+    )
+
+    assert client.read_calls == []
+    assert summary["linkedEvidenceCount"] == 0
+    assert summary["unlinkedCandidateCount"] == 1
+
+
 def test_linked_body_is_ingested_and_suggested(tmp_path: Path) -> None:
     db_path = seed_feedback_db(tmp_path)
     body_text = "Private application confirmation body for the candidate."

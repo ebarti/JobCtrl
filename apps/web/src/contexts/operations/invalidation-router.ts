@@ -4,6 +4,7 @@ import type { ApplyRunEventRecorded, TenantId } from "@jobhunter/domain-types";
 
 import { appendApplyRunEvent } from "../apply/selectors/applyRunSelectors.js";
 import {
+  applicationEmailFeedbackIngestedHandler,
   applicationFailedHandler,
   applicationSubmittedHandler,
   applyRunEventRecordedHandler,
@@ -149,6 +150,7 @@ export const handlers: HandlerMap = {
   PreparationWorkItemFailed: preparationWorkItemFailedHandler,
   ApplyRunStarted: applyRunStartedHandler,
   ApplyRunEventRecorded: applyRunEventRecordedHandler,
+  ApplicationEmailFeedbackIngested: applicationEmailFeedbackIngestedHandler,
   ApplicationSubmitted: applicationSubmittedHandler,
   ApplicationFailed: applicationFailedHandler,
   StageStarted: stageStartedHandler,

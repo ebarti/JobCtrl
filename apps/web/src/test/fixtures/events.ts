@@ -1,4 +1,5 @@
 import {
+  createApplicationEmailFeedbackIngested,
   createApplicationFailed,
   createApplicationSubmitted,
   createApplyRunEventRecorded,
@@ -340,6 +341,16 @@ export const eventByType = {
   ApplyRunEventRecorded: createApplyRunEventRecorded(LOCAL_TENANT, {
     runId: RUN_ID,
     event: { at: NOW, type: "navigation", url: "https://example.com/apply/1" },
+  }),
+  ApplicationEmailFeedbackIngested: createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
+    jobKey: JOB_ID,
+    evidenceId: "evidence-1",
+    suggestionId: "suggestion-1",
+    provider: "gmail",
+    suggestedKind: "interview",
+    classificationConfidence: 0.9,
+    linkConfidence: 0.84,
+    linkSignals: ["recipient", "time_window", "company"],
   }),
   ApplicationSubmitted: createApplicationSubmitted(LOCAL_TENANT, {
     jobId: JOB_ID,

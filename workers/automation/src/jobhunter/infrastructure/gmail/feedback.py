@@ -544,7 +544,6 @@ def _link_metadata(
     text = " ".join(
         [
             _text(metadata.get("subject")),
-            _text(metadata.get("snippet")),
             _text(metadata.get("from")),
             _text(metadata.get("to")),
         ]

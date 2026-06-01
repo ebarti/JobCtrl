@@ -141,6 +141,9 @@ export {
 } from "./preparation.js";
 
 export {
+  type ApplicationEmailFeedbackIngestedPayload,
+  type ApplicationEmailFeedbackIngested,
+  createApplicationEmailFeedbackIngested,
   type ApplicationSubmittedPayload,
   type ApplicationSubmitted,
   createApplicationSubmitted,
@@ -237,7 +240,13 @@ import type {
   PreparationWorkItemQueued,
   PreparationWorkItemStarted,
 } from "./preparation.js";
-import type { ApplicationFailed, ApplicationSubmitted, ApplyRunEventRecorded, ApplyRunStarted } from "./apply.js";
+import type {
+  ApplicationEmailFeedbackIngested,
+  ApplicationFailed,
+  ApplicationSubmitted,
+  ApplyRunEventRecorded,
+  ApplyRunStarted,
+} from "./apply.js";
 import type {
   StageBlocked,
   StageCanceled,
@@ -290,6 +299,7 @@ export type DomainEventUnion =
   | PreparationWorkItemFailed
   | ApplyRunStarted
   | ApplyRunEventRecorded
+  | ApplicationEmailFeedbackIngested
   | ApplicationSubmitted
   | ApplicationFailed
   | StageStarted
@@ -346,6 +356,7 @@ export const DOMAIN_EVENT_TYPES = [
   "PreparationWorkItemFailed",
   "ApplyRunStarted",
   "ApplyRunEventRecorded",
+  "ApplicationEmailFeedbackIngested",
   "ApplicationSubmitted",
   "ApplicationFailed",
   "StageStarted",
