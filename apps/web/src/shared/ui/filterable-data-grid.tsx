@@ -95,6 +95,7 @@ export interface FilterableDataGridProps<TData> {
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
+  onPageRowsChange?: (rows: readonly TData[]) => void;
 }
 
 function emptyFilter(): DataGridTextFilter {
@@ -128,10 +129,14 @@ function sortButtonLabel(
   return `Sort by ${columnLabel}`;
 }
 
-function isActiveFilter(
+export function isActiveDataGridFilter(
   filter: DataGridTextFilter | undefined,
 ): filter is DataGridTextFilter {
   return Boolean(filter?.text.trim() || filter?.selectedValues.length);
+}
+
+export function hasActiveDataGridFilters(filters: DataGridFilterState): boolean {
+  return Object.values(filters).some(isActiveDataGridFilter);
 }
 
 function operatorLabel(operator: DataGridTextOperator): string {
@@ -298,6 +303,7 @@ export function FilterableDataGrid<TData>({
   rowClassName,
   rowAriaSelected,
   onRowActivate,
+  onPageRowsChange,
 }: FilterableDataGridProps<TData>) {
   const [localSort, setLocalSort] = useState<DataGridSortState>(initialSort);
   const [localFilters, setLocalFilters] =
@@ -332,7 +338,7 @@ export function FilterableDataGrid<TData>({
           filterableColumns.every((column) => {
             if (!column.getFilterValue) return true;
             const filter = filters[column.id];
-            if (!isActiveFilter(filter)) return true;
+            if (!isActiveDataGridFilter(filter)) return true;
             const value = column.getFilterValue(row);
             const searchValue = column.getFilterSearchValue?.(row) ?? value;
             const normalizedValue = normalize(searchValue);
@@ -397,7 +403,11 @@ export function FilterableDataGrid<TData>({
 
   const activeFilters = filterableColumns
     .map((column) => ({ column, filter: filters[column.id] }))
-    .filter(({ filter }) => isActiveFilter(filter));
+    .filter(({ filter }) => isActiveDataGridFilter(filter));
+
+  useEffect(() => {
+    onPageRowsChange?.(pageRows);
+  }, [onPageRowsChange, pageRows]);
 
   const setFilters = (
     updater: (current: DataGridFilterState) => DataGridFilterState,
@@ -529,7 +539,7 @@ export function FilterableDataGrid<TData>({
                   column.sortable ?? Boolean(column.getSortValue);
                 const filterable = Boolean(column.getFilterValue);
                 const filter = filters[column.id] ?? emptyFilter();
-                const filterActive = isActiveFilter(filter);
+                const filterActive = isActiveDataGridFilter(filter);
                 const header =
                   typeof column.header === "function"
                     ? column.header(headerContext)

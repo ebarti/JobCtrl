@@ -7,9 +7,14 @@ import type {
 } from "../../contexts/operations/types.js";
 import {
   FilterableDataGrid,
+  type DataGridFilterState,
   type DataGridSortState,
 } from "../../shared/ui/filterable-data-grid.js";
 import { jobColumns } from "./columns.js";
+
+const EMPTY_FILTERS: DataGridFilterState = {};
+const noopFiltersChange = () => {};
+const noopVisiblePageRowsChange = () => {};
 
 export interface JobsTableProps {
   data: PaginatedResponse<JobSummary> | null;
@@ -24,6 +29,9 @@ export interface JobsTableProps {
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
   onOpenJob: (jobKey: string) => void;
+  filters?: DataGridFilterState;
+  onFiltersChange?: (next: DataGridFilterState) => void;
+  onVisiblePageRowsChange?: (rows: readonly JobSummary[]) => void;
 }
 
 export function JobsTable({
@@ -39,6 +47,9 @@ export function JobsTable({
   onPageChange,
   onPageSizeChange,
   onOpenJob,
+  filters = EMPTY_FILTERS,
+  onFiltersChange = noopFiltersChange,
+  onVisiblePageRowsChange = noopVisiblePageRowsChange,
 }: JobsTableProps) {
   const [selectionAnchorJobKey, setSelectionAnchorJobKey] = useState<
     string | null
@@ -92,11 +103,14 @@ export function JobsTable({
       sort={gridSort}
       onSortChange={handleSortChange}
       manualSorting
+      filters={filters}
+      onFiltersChange={onFiltersChange}
       tableClassName="jobs-data-grid-table"
       rowAriaSelected={(row) =>
         allMatchingSelected || Boolean(rowSelection[row.jobKey])
       }
       onRowActivate={(row) => onOpenJob(row.jobKey)}
+      onPageRowsChange={onVisiblePageRowsChange}
       pagination={{
         page,
         pageSize,
