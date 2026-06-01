@@ -180,6 +180,38 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("rejects non-timestamp outcome dates before they reach event payloads", async () => {
+    seedOutcomeSuggestion(options.dbPath);
+    const app = buildApp(options);
+    const privateTimestampText = "confidential recruiter feedback in a timestamp field";
+
+    const manual = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
+      payload: {
+        kind: "interview",
+        occurredAt: privateTimestampText,
+        note: "manual note",
+      },
+    });
+    expect(manual.statusCode, manual.body).toBe(400);
+
+    const suggestion = await app.inject({
+      method: "POST",
+      url: "/v1/outcome-suggestions/suggestion-1/decision",
+      payload: {
+        decision: "accept",
+        occurredAt: privateTimestampText,
+      },
+    });
+    expect(suggestion.statusCode, suggestion.body).toBe(400);
+
+    expect(eventPayloadText(options.dbPath)).not.toContain(privateTimestampText);
+    expect(eventPayloadText(options.dbPath)).not.toContain("manual note");
+
+    await app.close();
+  });
+
   it("returns not found for outcome reads on missing jobs", async () => {
     const app = buildApp(options);
 

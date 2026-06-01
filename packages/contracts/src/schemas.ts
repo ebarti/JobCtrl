@@ -71,6 +71,28 @@ const optionalText = z
   .transform((value) => value ?? "");
 
 const optionalNumber = z.coerce.number().int().optional().catch(undefined);
+const IsoTimestampSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/,
+    "Expected an ISO-8601 UTC timestamp.",
+  )
+  .refine((value) => isCanonicalizableUtcTimestamp(value), "Expected a valid UTC timestamp.")
+  .transform((value) => new Date(value).toISOString());
+
+function isCanonicalizableUtcTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+  const normalized = value.replace(/(?:\.(\d{1,3}))?Z$/, (_match, millis: string | undefined) => {
+    return `.${(millis ?? "").padEnd(3, "0")}Z`;
+  });
+  return new Date(timestamp).toISOString() === normalized;
+}
 
 export const RetryStageRequestSchema = z
   .object({
@@ -251,7 +273,7 @@ export type ApplicationOutcomeSource = (typeof APPLICATION_OUTCOME_SOURCES)[numb
 export const ManualApplicationOutcomeRequestSchema = z
   .object({
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
-    occurredAt: z.string().trim().min(1).max(80).optional(),
+    occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
   })
   .strict();
@@ -317,7 +339,7 @@ export const OutcomeSuggestionDecisionRequestSchema = z
   .object({
     decision: z.enum(["accept", "correct", "ignore"]),
     outcomeKind: z.enum(APPLICATION_OUTCOME_KINDS).optional(),
-    occurredAt: z.string().trim().min(1).max(80).optional(),
+    occurredAt: IsoTimestampSchema.optional(),
     note: z.string().trim().max(4000).optional(),
     reason: z.string().trim().max(400).optional(),
   })
