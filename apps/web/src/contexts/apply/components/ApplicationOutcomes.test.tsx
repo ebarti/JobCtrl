@@ -96,6 +96,34 @@ describe("application outcome components", () => {
     );
   });
 
+  it("names repeated suggestion actions with the suggestion and job context", () => {
+    renderWithProviders(
+      <OutcomeSuggestionsPanel
+        suggestions={[
+          sampleApplicationOutcomes.suggestions[0]!,
+          {
+            ...sampleApplicationOutcomes.suggestions[0]!,
+            suggestionId: "suggestion-2",
+            jobKey: "job-7",
+            evidenceId: "evidence-2",
+            suggestedKind: "rejection",
+            rationale: "Employer reply indicates a rejection.",
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /accept suggestion suggestion-1 \(interview\) for job-2/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /ignore suggestion suggestion-2 \(rejection\) for job-7/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /correct suggestion suggestion-2 \(rejection\) for job-7/i }),
+    ).toBeInTheDocument();
+  });
+
   it("corrects pending outcome suggestions with a selected outcome kind", async () => {
     const user = userEvent.setup();
     const decideOutcomeSuggestion = vi.fn(async () => ({

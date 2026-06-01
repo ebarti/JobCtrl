@@ -266,6 +266,10 @@ export function OutcomeSuggestionsPanel({ suggestions }: OutcomeSuggestionsPanel
 function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSuggestion }) {
   const decideSuggestion = useOutcomeSuggestionDecisionMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  const suggestionTitleId = `outcome-suggestion-${suggestion.suggestionId}-title`;
+  const suggestionContext = `suggestion ${suggestion.suggestionId} (${outcomeLabel(
+    suggestion.suggestedKind,
+  )}) for ${suggestion.jobKey}`;
   const form = useForm({
     defaultValues: {
       outcomeKind: suggestion.suggestedKind,
@@ -316,10 +320,10 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
   };
 
   return (
-    <article className="outcome-suggestion-card">
+    <article className="outcome-suggestion-card" aria-labelledby={suggestionTitleId}>
       <header className="outcome-suggestion-head">
         <span>
-          <b>{outcomeLabel(suggestion.suggestedKind)}</b>
+          <b id={suggestionTitleId}>{outcomeLabel(suggestion.suggestedKind)} suggestion</b>
           <span className="meta">
             {Math.round(suggestion.confidence * 100)}% confidence · {formatDateTime(suggestion.createdAt)}
           </span>
@@ -333,6 +337,7 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
           type="button"
           size="sm"
           disabled={decideSuggestion.isPending}
+          aria-label={`Accept ${suggestionContext}`}
           onClick={() => decide({ decision: "accept", reason: "Accepted from review UI." })}
         >
           Accept
@@ -342,6 +347,7 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
           size="sm"
           variant="outline"
           disabled={decideSuggestion.isPending}
+          aria-label={`Ignore ${suggestionContext}`}
           onClick={() => decide({ decision: "ignore", reason: "Ignored from review UI." })}
         >
           Ignore
@@ -355,76 +361,80 @@ function OutcomeSuggestionCard({ suggestion }: { readonly suggestion: OutcomeSug
           void form.handleSubmit();
         }}
       >
-        <form.Field name="outcomeKind">
-          {(field) => (
-            <label className="field">
-              <span>Correct to</span>
-              <select
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value as ApplicationOutcomeKind)}
+        <fieldset className="outcome-correction-fieldset">
+          <legend>Correct {suggestionContext}</legend>
+          <form.Field name="outcomeKind">
+            {(field) => (
+              <label className="field">
+                <span>Correct to</span>
+                <select
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value as ApplicationOutcomeKind)}
+                >
+                  {APPLICATION_OUTCOME_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {outcomeLabel(kind)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </form.Field>
+          <form.Field name="occurredAt">
+            {(field) => (
+              <label className="field">
+                <span>Occurred at</span>
+                <input
+                  type="datetime-local"
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                />
+              </label>
+            )}
+          </form.Field>
+          <form.Field name="reason">
+            {(field) => (
+              <label className="field">
+                <span>Reason</span>
+                <input
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                />
+              </label>
+            )}
+          </form.Field>
+          <form.Field name="note">
+            {(field) => (
+              <label className="field wide">
+                <span>Local note</span>
+                <textarea
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(event) => field.handleChange(event.target.value)}
+                />
+              </label>
+            )}
+          </form.Field>
+          {decideSuggestion.isError ? <div className="danger">Suggestion decision failed</div> : null}
+          {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+          <form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
+            {({ canSubmit, isSubmitting }) => (
+              <Button
+                className="outcome-submit"
+                type="submit"
+                size="sm"
+                variant="secondary"
+                disabled={!canSubmit || isSubmitting || decideSuggestion.isPending}
+                aria-label={`Correct ${suggestionContext}`}
               >
-                {APPLICATION_OUTCOME_KINDS.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {outcomeLabel(kind)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </form.Field>
-        <form.Field name="occurredAt">
-          {(field) => (
-            <label className="field">
-              <span>Occurred at</span>
-              <input
-                type="datetime-local"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-            </label>
-          )}
-        </form.Field>
-        <form.Field name="reason">
-          {(field) => (
-            <label className="field">
-              <span>Reason</span>
-              <input
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-            </label>
-          )}
-        </form.Field>
-        <form.Field name="note">
-          {(field) => (
-            <label className="field wide">
-              <span>Local note</span>
-              <textarea
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(event) => field.handleChange(event.target.value)}
-              />
-            </label>
-          )}
-        </form.Field>
-        {decideSuggestion.isError ? <div className="danger">Suggestion decision failed</div> : null}
-        {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
-        <form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
-          {({ canSubmit, isSubmitting }) => (
-            <Button
-              className="outcome-submit"
-              type="submit"
-              size="sm"
-              variant="secondary"
-              disabled={!canSubmit || isSubmitting || decideSuggestion.isPending}
-            >
-              {isSubmitting || decideSuggestion.isPending ? "Saving" : "Correct"}
-            </Button>
-          )}
-        </form.Subscribe>
+                {isSubmitting || decideSuggestion.isPending ? "Saving" : "Correct"}
+              </Button>
+            )}
+          </form.Subscribe>
+        </fieldset>
       </form>
     </article>
   );

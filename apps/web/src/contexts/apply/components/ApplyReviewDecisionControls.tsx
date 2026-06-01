@@ -9,7 +9,7 @@ export interface ApplyReviewDecisionControlsProps {
 
 const DECISION_LABELS: Record<ApplyReviewDecisionValue, string> = {
   approve_submit: "Approve submit",
-  approve_dry_run: "Dry run",
+  approve_dry_run: "Approve dry run",
   defer: "Defer",
   decline: "Decline",
   reset: "Reset",

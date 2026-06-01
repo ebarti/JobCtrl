@@ -1,12 +1,15 @@
-import { screen, waitFor } from "@testing-library/react";
+import { LOCAL_TENANT } from "@jobhunter/domain-types";
+import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
+import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { routeTree } from "../../routeTree.gen.js";
 import {
   sampleApplicationOutcomes,
   sampleApplyReviewQueue,
 } from "../../test/fixtures/projections.js";
-import { renderWithProviders } from "../../test/render.js";
+import { buildProviderHarness, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
 
@@ -55,5 +58,27 @@ describe("<ApplyReviewView>", () => {
       expect.objectContaining({ decision: "approve_submit" }),
     );
     expect(applyJob).not.toHaveBeenCalled();
+  });
+
+  it("renders the queue route when outcome prefetch fails", async () => {
+    const ports = buildTestPorts({
+      api: {
+        applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        applicationOutcomes: vi.fn(async () => {
+          throw new Error("outcomes unavailable");
+        }),
+      },
+    });
+    const harness = buildProviderHarness({ ports, withEventStream: true });
+    const router = createRouter({
+      routeTree,
+      history: createMemoryHistory({ initialEntries: ["/apply-review"] }),
+      context: { ports, queryClient: harness.queryClient, tenantId: LOCAL_TENANT },
+    });
+
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    expect(await screen.findByText("Principal Platform Engineer")).toBeInTheDocument();
+    expect(await screen.findByText("outcomes unavailable")).toBeInTheDocument();
   });
 });

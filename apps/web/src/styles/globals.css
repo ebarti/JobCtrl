@@ -689,6 +689,24 @@ textarea {
   padding: 10px;
 }
 
+.outcome-correction-fieldset {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 12px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.outcome-correction-fieldset legend {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .outcome-submit,
 .outcome-form .status-line,
 .outcome-correction-form .status-line {
@@ -2725,6 +2743,7 @@ textarea {
   .config-form,
   .outcome-form,
   .outcome-correction-form,
+  .outcome-correction-fieldset,
   .import-panel,
   .credential-row,
   .credential-row-form {
