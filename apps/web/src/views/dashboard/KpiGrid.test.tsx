@@ -39,7 +39,7 @@ describe("kpiSearchFor", () => {
 
     render(<RouterProvider router={router} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /blocked/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("link", { name: /blocked/i })).toBeInTheDocument());
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.queryByText("upstream missing")).not.toBeInTheDocument();
   });
@@ -66,6 +66,21 @@ describe("kpiSearchFor", () => {
       q: "",
       stage: "all",
       state: "failed",
+      applyStatus: "all",
+      deleted: "active",
+      sort: "discovered_at",
+      dir: "desc",
+      page: 1,
+      pageSize: 50,
+    });
+  });
+
+  it("builds a complete applied-jobs search for the applied KPI", () => {
+    expect(kpiSearchFor("applied")).toEqual({
+      q: "",
+      stage: "all",
+      state: "all",
+      applyStatus: "applied",
       deleted: "active",
       sort: "discovered_at",
       dir: "desc",
@@ -79,12 +94,30 @@ describe("kpiSearchFor", () => {
     const router = buildRouter();
 
     render(<RouterProvider router={router} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: /failures/i })).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /failures/i }));
+    await waitFor(() => expect(screen.getByRole("link", { name: /failures/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("link", { name: /failures/i }));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
     expect(router.state.location.search).toMatchObject({
       state: "failed",
+      applyStatus: "all",
+      deleted: "active",
+      page: 1,
+      pageSize: 50,
+    });
+  });
+
+  it("routes the applied KPI to the applied jobs list", async () => {
+    const user = userEvent.setup();
+    const router = buildRouter();
+
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(screen.getByRole("link", { name: /applied/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("link", { name: /applied/i }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
+    expect(router.state.location.search).toMatchObject({
+      applyStatus: "applied",
       deleted: "active",
       page: 1,
       pageSize: 50,

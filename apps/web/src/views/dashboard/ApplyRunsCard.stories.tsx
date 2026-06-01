@@ -33,6 +33,7 @@ export const MixedStatuses: Story = {
           status: "running",
           dryRun: false,
           startedAt: "2026-05-06T07:00:00Z",
+          events: [],
         },
         {
           runId: "run-2",
@@ -42,6 +43,7 @@ export const MixedStatuses: Story = {
           status: "succeeded",
           dryRun: false,
           startedAt: "2026-05-06T06:00:00Z",
+          events: [],
         },
         {
           runId: "run-3",
@@ -51,6 +53,7 @@ export const MixedStatuses: Story = {
           status: "failed",
           dryRun: true,
           startedAt: "2026-05-05T22:30:00Z",
+          events: [],
         },
       ],
     },

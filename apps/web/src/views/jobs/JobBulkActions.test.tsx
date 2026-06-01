@@ -13,6 +13,7 @@ const baseSearch = {
   q: "",
   stage: "all" as const,
   state: "all" as const,
+  applyStatus: "all" as const,
   deleted: "active" as const,
   sort: "discovered_at" as const,
   dir: "desc" as const,

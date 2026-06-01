@@ -18,7 +18,7 @@ from jobhunter.domain.discovery import (
     SearchStrategy,
     Source,
 )
-from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
@@ -410,6 +410,7 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
         reason="not relevant right now",
         deleted_at="2026-05-13T00:00:00Z",
     )
+    publisher.events.clear()
     current_time = "2026-05-14T00:00:00Z"
 
     summary = use_case.execute(
@@ -441,6 +442,169 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     ).fetchone()
     assert tombstone is not None
     assert tombstone["restored_at"] == "2026-05-14T00:00:00Z"
+    assert [event.event_type for event in publisher.events] == [
+        "JobRestored",
+        "JobSourceObserved",
+    ]
+
+
+def test_discover_jobs_use_case_rejects_new_policy_mismatches_without_creating_job(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        acceptance_policy=lambda _posting: PostingAcceptance.reject(
+            reason="current_policy_mismatch",
+            rejection_reasons=("location_mismatch",),
+        ),
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+
+    summary = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                canonical_url="https://jobs.ashbyhq.com/acai/india",
+                source_native_id="india",
+                source_id="ashby:acai",
+                ats_kind=AtsKind.ASHBY,
+                metadata=JobMetadata(
+                    title="Senior Software Engineer (India)",
+                    description="Build distributed systems.",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-1",
+    )
+
+    assert summary.total == 1
+    assert summary.new_jobs == 0
+    assert summary.observed == 0
+    assert summary.duplicates_rejected == 0
+    assert repo.load(LOCAL_TENANT, JobId("https://jobs.ashbyhq.com/acai/india")) is None
+    assert publisher.events == []
+
+
+def test_discover_jobs_use_case_soft_deletes_active_job_rejected_by_current_policy(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    publisher.events.clear()
+    policy_use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        acceptance_policy=lambda _posting: PostingAcceptance.reject(
+            reason="current_policy_mismatch",
+            rejection_reasons=("location_mismatch",),
+        ),
+        clock=lambda: "2026-05-15T00:00:00Z",
+    )
+
+    summary = policy_use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                metadata=JobMetadata(
+                    title="Senior Software Engineer (India)",
+                    description="Build distributed systems.",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-2",
+    )
+
+    assert summary.total == 1
+    assert summary.new_jobs == 0
+    assert summary.observed == 0
+    assert summary.duplicates_rejected == 0
+    job = repo.load(LOCAL_TENANT, JobId("https://boards.greenhouse.io/acme/jobs/123"))
+    assert job is not None
+    assert job.is_deleted is True
+    assert "location_mismatch" in (job.delete_reason or "")
+    assert job.metadata.title == "Platform Engineer"
+    observations = repo.list_observations(
+        LOCAL_TENANT,
+        JobId("https://boards.greenhouse.io/acme/jobs/123"),
+    )
+    assert [observation.run_id for observation in observations] == ["run-2"]
+    assert [event.event_type for event in publisher.events] == [
+        "JobDeleted",
+        "JobSourceObserved",
+    ]
+
+
+def test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = SqliteJobRepository(conn)
+    publisher = RecordingPublisher()
+    use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        clock=lambda: "2026-05-12T00:00:00Z",
+    )
+    job_id = JobId("https://boards.greenhouse.io/acme/jobs/123")
+    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
+    repo.soft_delete(
+        LOCAL_TENANT,
+        job_id,
+        reason="discovery hygiene rejected ashby:acai: location_mismatch",
+        deleted_at="2026-05-13T00:00:00Z",
+    )
+    publisher.events.clear()
+    policy_use_case = DiscoverJobsUseCase(
+        repository=repo,
+        publisher=publisher,
+        acceptance_policy=lambda _posting: PostingAcceptance.reject(
+            reason="current_policy_mismatch",
+            rejection_reasons=("location_mismatch",),
+        ),
+        clock=lambda: "2026-05-15T00:00:00Z",
+    )
+
+    summary = policy_use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        postings=[
+            _posting(
+                metadata=JobMetadata(
+                    title="Senior Software Engineer (India)",
+                    description="Build distributed systems.",
+                    location="Remote",
+                ),
+            )
+        ],
+        run_id="run-2",
+    )
+
+    assert summary.total == 1
+    assert summary.new_jobs == 0
+    assert summary.observed == 0
+    assert summary.duplicates_rejected == 0
+    hidden = repo.load(LOCAL_TENANT, job_id)
+    assert hidden is not None
+    assert hidden.is_deleted is True
+    assert hidden.metadata.title == "Platform Engineer"
+    tombstone = conn.execute(
+        "SELECT restored_at FROM jobhunter_deleted_jobs WHERE job_url = ?",
+        (str(job_id),),
+    ).fetchone()
+    assert tombstone is not None
+    assert tombstone["restored_at"] is None
+    observations = repo.list_observations(LOCAL_TENANT, job_id)
+    assert [observation.run_id for observation in observations] == ["run-2"]
+    assert [event.event_type for event in publisher.events] == ["JobSourceObserved"]
 
 
 def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_blank(

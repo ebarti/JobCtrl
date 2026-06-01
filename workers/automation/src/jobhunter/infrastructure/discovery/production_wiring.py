@@ -36,7 +36,7 @@ from jobhunter.domain.discovery.source_registry import (
     SourceRegistryEntry,
     validate_locator_candidate,
 )
-from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
 from jobhunter.domain.discovery.value_objects import (
     JobMetadata,
     PostingUrl,
@@ -476,6 +476,7 @@ def run_scheduled_ats_sources(
     use_case = DiscoverJobsUseCase(
         repository=SqliteJobRepository(conn),
         publisher=DurableJobEventPublisher(conn, stage="discover"),
+        acceptance_policy=_posting_acceptance_policy(search_cfg),
     )
     total = 0
     new_jobs = 0
@@ -551,24 +552,7 @@ def retire_invalid_source_jobs(
     ensure_source_observation_tables(conn)
     ensure_enrichment_tables(conn)
     _ensure_deleted_jobs_table(conn)
-    query_specs_by_family = {
-        "ats_api": tuple(_ats_query_specs(search_cfg)),
-        "jobspy": tuple(query_specs_for_source(search_cfg.get("queries", []), "jobspy")),
-        "smartextract": tuple(
-            query_specs_for_source(search_cfg.get("queries", []), "smartextract")
-        ),
-        "workday": tuple(
-            query_specs_for_source(
-                search_cfg.get("queries", []),
-                "workday",
-                max_tier=int(search_cfg.get("workday_max_tier") or 2),
-            )
-        ),
-    }
-    if not query_specs_by_family["workday"]:
-        query_specs_by_family["workday"] = tuple(
-            query_specs_for_source(search_cfg.get("queries", []), "workday")
-        )
+    query_specs_by_family = _query_specs_by_family(search_cfg)
     accept_locs, reject_locs = configured_location_filters(search_cfg)
     locations = tuple(_location_values(search_cfg))
     now = utc_now()
@@ -662,6 +646,63 @@ def retire_invalid_source_jobs(
     return {"retired_jobs": len(retired), "jobs": retired}
 
 
+def _query_specs_by_family(search_cfg: Mapping[str, Any]) -> dict[str, tuple[dict[str, object], ...]]:
+    query_specs_by_family = {
+        "ats_api": tuple(_ats_query_specs(search_cfg)),
+        "jobspy": tuple(query_specs_for_source(search_cfg.get("queries", []), "jobspy")),
+        "smartextract": tuple(
+            query_specs_for_source(search_cfg.get("queries", []), "smartextract")
+        ),
+        "workday": tuple(
+            query_specs_for_source(
+                search_cfg.get("queries", []),
+                "workday",
+                max_tier=int(search_cfg.get("workday_max_tier") or 2),
+            )
+        ),
+    }
+    if not query_specs_by_family["workday"]:
+        query_specs_by_family["workday"] = tuple(
+            query_specs_for_source(search_cfg.get("queries", []), "workday")
+        )
+    return query_specs_by_family
+
+
+def _posting_acceptance_policy(search_cfg: Mapping[str, Any]):
+    query_specs_by_family = _query_specs_by_family(search_cfg)
+    accept_locs, reject_locs = configured_location_filters(search_cfg)
+    locations = tuple(_location_values(search_cfg))
+
+    def policy(posting: ScrapedJobPosting) -> PostingAcceptance:
+        strategy = str(getattr(posting.strategy, "value", posting.strategy) or "")
+        ats_kind = str(getattr(posting.ats_kind, "value", posting.ats_kind) or "")
+        family = _source_family(
+            source_id=str(posting.source_id or ""),
+            strategy=strategy,
+            ats_kind=ats_kind,
+        )
+        if family is None:
+            return PostingAcceptance.accept()
+        reasons = _source_rejection_reasons(
+            title=str(posting.metadata.title or ""),
+            location=str(posting.metadata.location or ""),
+            description=str(posting.metadata.description or ""),
+            query_specs=query_specs_by_family.get(family, ()),
+            accept_locs=accept_locs,
+            reject_locs=reject_locs,
+            locations=locations,
+        )
+        if not reasons:
+            return PostingAcceptance.accept()
+        source_id = str(posting.source_id or ats_kind or family)
+        return PostingAcceptance.reject(
+            reason=f"discovery policy rejected {source_id}",
+            rejection_reasons=reasons,
+        )
+
+    return policy
+
+
 def retire_invalid_canonical_ats_jobs(
     conn: sqlite3.Connection,
     *,
@@ -725,13 +766,16 @@ def _source_rejection_reasons(
 ) -> list[str]:
     reasons: list[str] = []
     effective_accept_locs = accept_locs or [location for location in locations if location]
+    location_evidence = " ".join(
+        str(part).strip() for part in (location, title) if str(part or "").strip()
+    )
     if not _usable_description_text(description):
         reasons.append("missing_description")
     if query_specs and not title_matches_any_query(title, query_specs):
         reasons.append("title_mismatch")
     if not any(
         location_matches_target(
-            location,
+            location_evidence,
             accept=effective_accept_locs,
             reject=reject_locs,
             search_location=target_location,

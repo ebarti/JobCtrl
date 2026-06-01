@@ -12,11 +12,20 @@ import pytest
 from jobhunter import config
 from jobhunter.discovery import manual_capture_import as manual_capture_import_cli
 from jobhunter.database import close_connection, init_db
+from jobhunter.domain.discovery import (
+    AtsKind,
+    JobMetadata,
+    PostingUrl,
+    SearchStrategy,
+    Source,
+)
 from jobhunter.domain.discovery.scheduler import DiscoveryScheduler
 from jobhunter.domain.discovery.source_registry import SourceKind
+from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobhunter.infrastructure.discovery.production_wiring import (
     ManualCaptureImport,
+    _posting_acceptance_policy,
     build_discovery_acceptance_report,
     import_manual_capture_item,
     retire_invalid_canonical_ats_jobs,
@@ -147,6 +156,55 @@ def _fake_ats_http_with_lever_failure(url: str, **kwargs: Any) -> Any:
     if "lever" in url:
         raise TimeoutError("lever unavailable")
     return _fake_ats_http(url, **kwargs)
+
+
+def test_posting_acceptance_policy_uses_title_location_evidence_for_remote_roles() -> None:
+    policy = _posting_acceptance_policy(
+        {
+            "queries": [{"query": "Software Engineer", "tier": 1}],
+            "locations": [{"location": "Remote"}],
+            "location_accept": ["Remote", "Spain", "European Union", "EU", "EMEA"],
+            "location_reject_non_remote": ["India", "Poland", "United States"],
+            "ats_max_tier": 1,
+        }
+    )
+
+    rejected = policy(
+        ScrapedJobPosting(
+            posting_url=PostingUrl(value="https://jobs.ashbyhq.com/acai/india"),
+            source=Source(board="ashby"),
+            metadata=JobMetadata(
+                title="Senior Software Engineer (India)",
+                description="Build distributed systems.",
+                location="Remote",
+            ),
+            strategy=SearchStrategy.WORKDAY_API,
+            source_id="ashby:acai",
+            source_native_id="india",
+            canonical_url="https://jobs.ashbyhq.com/acai/india",
+            ats_kind=AtsKind.ASHBY,
+        )
+    )
+    accepted = policy(
+        ScrapedJobPosting(
+            posting_url=PostingUrl(value="https://jobs.ashbyhq.com/acai/spain"),
+            source=Source(board="ashby"),
+            metadata=JobMetadata(
+                title="Senior Software Engineer",
+                description="Build distributed systems.",
+                location="Spain (Remote)",
+            ),
+            strategy=SearchStrategy.WORKDAY_API,
+            source_id="ashby:acai",
+            source_native_id="spain",
+            canonical_url="https://jobs.ashbyhq.com/acai/spain",
+            ats_kind=AtsKind.ASHBY,
+        )
+    )
+
+    assert rejected.accepted is False
+    assert "location_mismatch" in rejected.rejection_reasons
+    assert accepted.accepted is True
 
 
 def _manual_capture_html() -> str:

@@ -36,6 +36,8 @@ export const ACTIVE_STATES = [
 export type ActiveState = (typeof ACTIVE_STATES)[number];
 export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "all"] as const;
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
+export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
+export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
 
 export const JOB_SORT_FIELDS = [
   "discovered_at",
@@ -420,6 +422,7 @@ export const BulkJobMutationFilterSchema = z
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
     minFitScore: optionalNumber,
@@ -676,6 +679,7 @@ export const JobListQuerySchema = z
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
     minFitScore: optionalNumber,
@@ -984,6 +988,13 @@ export interface PipelineProgressSummary {
   updatedAt: string | null;
 }
 
+export interface ApplyRunTimelineEventSummary {
+  at: string | null;
+  type: string;
+  level: string;
+  message: string | null;
+}
+
 export interface DashboardSummary {
   ok: true;
   generatedAt: string;
@@ -1019,6 +1030,7 @@ export interface DashboardSummary {
     status: string;
     dryRun: boolean;
     startedAt: string | null;
+    events: ApplyRunTimelineEventSummary[];
   }>;
 }
 

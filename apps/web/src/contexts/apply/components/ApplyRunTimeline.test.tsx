@@ -10,6 +10,39 @@ import { FakeEventStreamPort, buildTestPorts } from "../../../test/testPorts.js"
 import { ApplyRunTimeline } from "./ApplyRunTimeline.js";
 
 describe("<ApplyRunTimeline> + EventStream", () => {
+  it("renders persisted timeline events without roadmap placeholder copy", () => {
+    const harness = buildProviderHarness();
+
+    render(
+      <ApplyRunTimeline
+        runId="run-1"
+        events={[
+          {
+            at: "2026-05-06T08:00:00Z",
+            type: "ApplyRunStarted",
+            level: "info",
+            message: "Apply agent acquired job",
+            data: {},
+          },
+        ]}
+      />,
+      { wrapper: harness.Wrapper },
+    );
+
+    expect(screen.getByText("Apply Run Started")).toBeInTheDocument();
+    expect(screen.getByText("Apply agent acquired job")).toBeInTheDocument();
+    expect(screen.queryByText(/Phase 5|SSE consumer|landing/i)).not.toBeInTheDocument();
+  });
+
+  it("renders an operator-safe empty state when no timeline events exist", () => {
+    const harness = buildProviderHarness();
+
+    render(<ApplyRunTimeline runId="run-empty" />, { wrapper: harness.Wrapper });
+
+    expect(screen.getByText("No timeline events recorded for this run.")).toBeInTheDocument();
+    expect(screen.queryByText(/Phase 5|SSE consumer|landing/i)).not.toBeInTheDocument();
+  });
+
   it("appends each ApplyRunEventRecorded into the cached apply-run detail", async () => {
     const eventStream = new FakeEventStreamPort();
     const ports = buildTestPorts({ eventStream });
@@ -26,7 +59,7 @@ describe("<ApplyRunTimeline> + EventStream", () => {
     );
 
     await waitFor(() => expect(eventStream.subscriptions.length).toBe(1));
-    expect(screen.getByText(/Timeline streams from the SSE consumer/)).toBeInTheDocument();
+    expect(screen.getByText("No timeline events recorded for this run.")).toBeInTheDocument();
 
     for (let i = 0; i < 5; i += 1) {
       await act(async () => {
@@ -45,6 +78,9 @@ describe("<ApplyRunTimeline> + EventStream", () => {
         });
       });
     }
+
+    await waitFor(() => expect(screen.getAllByText("navigation")).toHaveLength(5));
+    expect(screen.queryByText("No timeline events recorded for this run.")).not.toBeInTheDocument();
 
     const cached = harness.queryClient.getQueryData<{ events: unknown[] }>(
       applyRunsKeys.detail(LOCAL_TENANT, "run-1"),

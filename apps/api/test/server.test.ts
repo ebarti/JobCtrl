@@ -520,7 +520,18 @@ describe("local TypeScript API", () => {
       stage: "score",
       level: "error",
     });
-    expect(body.applyRuns[0]).toMatchObject({ runId: "run-1", dryRun: true });
+    expect(body.applyRuns[0]).toMatchObject({
+      runId: "run-1",
+      dryRun: true,
+      events: [
+        {
+          at: "2026-04-29T10:15:00+00:00",
+          type: "ApplyRunStarted",
+          level: "info",
+          message: "Apply agent acquired job",
+        },
+      ],
+    });
 
     await app.close();
   });
@@ -1057,6 +1068,20 @@ describe("local TypeScript API", () => {
       // through the upstream stages — the apply-derivation contract
       // is what M2 is locking in.)
       expect(job).toMatchObject({
+        jobKey: newJobUrl,
+        applyStatus: "applied",
+        appliedAt: "2026-05-01T00:01:00+00:00",
+      });
+
+      const appliedJobsRes = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?q=${encodeURIComponent("New Path Engineer")}&applyStatus=applied`,
+      });
+      expect(appliedJobsRes.statusCode, appliedJobsRes.body).toBe(200);
+      const appliedJobsBody = appliedJobsRes.json();
+      expect(appliedJobsBody.filter).toMatchObject({ applyStatus: "applied" });
+      expect(appliedJobsBody.items).toHaveLength(1);
+      expect(appliedJobsBody.items[0]).toMatchObject({
         jobKey: newJobUrl,
         applyStatus: "applied",
         appliedAt: "2026-05-01T00:01:00+00:00",
@@ -3509,7 +3534,7 @@ function seedDatabase(dbPath: string): void {
     "2026-04-29T10:10:00+00:00",
   );
   db.prepare(
-    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO apply_run_projections (run_id, job_id, job_title, job_employer, status, result, dry_run, started_at, events_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).run(
     "run-1",
     "https://example.com/jobs/ready",
@@ -3519,6 +3544,15 @@ function seedDatabase(dbPath: string): void {
     "succeeded",
     1,
     "2026-04-29T10:15:00+00:00",
+    JSON.stringify([
+      {
+        event_type: "ApplyRunStarted",
+        level: "info",
+        occurred_at: "2026-04-29T10:15:00+00:00",
+        message: "Apply agent acquired job",
+        payload: { run_id: "run-1" },
+      },
+    ]),
   );
   db.close();
 }

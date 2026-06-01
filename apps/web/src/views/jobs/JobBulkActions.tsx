@@ -11,6 +11,7 @@ export interface JobBulkActionsProps {
   selectedStaleKeys?: readonly string[];
   hasItems: boolean;
   hasAnyMatching: boolean;
+  hasLocalFilters?: boolean;
   loading: boolean;
   onSetDeleted: (deleted: JobsSearch["deleted"]) => void;
   onSelectPage: () => void;
@@ -33,6 +34,7 @@ export function JobBulkActions({
   selectedStaleKeys = [],
   hasItems,
   hasAnyMatching,
+  hasLocalFilters = false,
   loading,
   onSetDeleted,
   onSelectPage,
@@ -49,8 +51,13 @@ export function JobBulkActions({
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
   const closed = search.deleted === "closed";
-  const retryableFailures = search.deleted === "active" && search.state === "failed";
-  const primaryLabel = hidden ? "unhide selected" : restoring ? "restore selected" : "delete selected";
+  const retryableFailures =
+    search.deleted === "active" && search.state === "failed";
+  const primaryLabel = hidden
+    ? "unhide selected"
+    : restoring
+      ? "restore selected"
+      : "delete selected";
   return (
     <div className="bulk-bar">
       <div className="tabs">
@@ -86,20 +93,39 @@ export function JobBulkActions({
       <span className="meta">
         {selectedCount ? `${selectedCount} selected` : "select jobs to manage"}
       </span>
-      <button className="tab" type="button" disabled={!hasItems} onClick={onSelectPage}>
+      <button
+        className="tab"
+        type="button"
+        disabled={!hasItems}
+        onClick={onSelectPage}
+      >
         select page
       </button>
-      <button className="tab" type="button" disabled={!hasAnyMatching} onClick={onSelectAllMatching}>
+      <button
+        className="tab"
+        type="button"
+        disabled={!hasAnyMatching || hasLocalFilters}
+        onClick={onSelectAllMatching}
+      >
         select all matching
       </button>
-      <button className="tab" type="button" disabled={!selectedCount} onClick={onClearSelection}>
+      <button
+        className="tab"
+        type="button"
+        disabled={!selectedCount}
+        onClick={onClearSelection}
+      >
         clear selected
       </button>
       {staleCount || selectedStaleKeys.length ? (
         <ResetStaleScoresButton
           jobKeys={selectedStaleKeys}
           staleCount={selectedStaleKeys.length || staleCount}
-          label={selectedStaleKeys.length ? "reset stale selected" : "reset all stale scores"}
+          label={
+            selectedStaleKeys.length
+              ? "reset stale selected"
+              : "reset all stale scores"
+          }
           onSuccess={onResetStaleSuccess}
         />
       ) : null}
@@ -136,7 +162,7 @@ export function JobBulkActions({
           <button
             className="tab"
             type="button"
-            disabled={!hasAnyMatching || loading}
+            disabled={!hasAnyMatching || hasLocalFilters || loading}
             onClick={onRetryAllFailed}
           >
             retry all failed

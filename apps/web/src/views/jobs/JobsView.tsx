@@ -2,11 +2,12 @@ import {
   type BulkJobMutationRequest,
   type JobMutationResponse,
   type JobSortField,
+  type JobSummary,
 } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
 import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
@@ -17,6 +18,10 @@ import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQue
 import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
+import {
+  hasActiveDataGridFilters,
+  type DataGridFilterState,
+} from "../../shared/ui/filterable-data-grid.js";
 import { JobBulkActions } from "./JobBulkActions.js";
 import { JobFilterBar } from "./JobFilterBar.js";
 import { JobsTable } from "./JobsTable.js";
@@ -42,6 +47,16 @@ function isJobSortField(value: string): value is JobSortField {
   return SORTABLE_JOB_FIELDS.has(value as JobSortField);
 }
 
+function sameKeys(
+  current: readonly string[],
+  next: readonly string[],
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((jobKey, index) => jobKey === next[index])
+  );
+}
+
 export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
@@ -57,6 +72,9 @@ export function JobsView() {
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+  const [tableFilters, setTableFilters] = useState<DataGridFilterState>({});
+  const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
+  const hasLocalFilters = hasActiveDataGridFilters(tableFilters);
 
   useEffect(() => {
     setRowSelection({});
@@ -70,9 +88,14 @@ export function JobsView() {
     search.sort,
     search.stage,
     search.state,
+    search.applyStatus,
     search.minFitScore,
     search.maxFitScore,
   ]);
+  useEffect(() => {
+    setRowSelection({});
+    setAllMatchingSelected(false);
+  }, [tableFilters]);
 
   const setSearch = (next: Partial<JobsSearch>) => {
     void navigate({ search: (prev: JobsSearch) => ({ ...prev, ...next }) });
@@ -134,13 +157,21 @@ export function JobsView() {
 
   const selectPage = () => {
     setAllMatchingSelected(false);
-    const items = data?.items ?? [];
     const next: RowSelectionState = {};
-    for (const job of items) {
-      next[job.jobKey] = true;
+    for (const jobKey of visiblePageKeys) {
+      next[jobKey] = true;
     }
     setRowSelection(next);
   };
+  const handleVisiblePageRowsChange = useCallback(
+    (rows: readonly JobSummary[]) => {
+      const next = rows.map((row) => row.jobKey);
+      setVisiblePageKeys((current) =>
+        sameKeys(current, next) ? current : next,
+      );
+    },
+    [],
+  );
 
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
@@ -266,8 +297,9 @@ export function JobsView() {
           selectedJobKeys={allMatchingSelected ? [] : selectedKeys}
           staleCount={staleKeysOnPage.length}
           selectedStaleKeys={selectedStaleKeys}
-          hasItems={Boolean(data?.items.length)}
+          hasItems={visiblePageKeys.length > 0}
           hasAnyMatching={Boolean(data?.pagination.total)}
+          hasLocalFilters={hasLocalFilters}
           loading={mutateBusy || isFetching}
           onSetDeleted={(deleted) => setSearch({ deleted, page: 1 })}
           onSelectPage={selectPage}
@@ -294,6 +326,9 @@ export function JobsView() {
           onPageChange={(page) => setSearch({ page })}
           onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
           onOpenJob={openJob}
+          filters={tableFilters}
+          onFiltersChange={setTableFilters}
+          onVisiblePageRowsChange={handleVisiblePageRowsChange}
         />
       </section>
       <Outlet />

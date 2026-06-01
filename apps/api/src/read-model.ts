@@ -315,6 +315,7 @@ function dashboardTodayMetrics(
     sort: "discovered_at",
     dir: "desc",
     deleted: "active",
+    applyStatus: "all",
     source: "",
     company: "",
   });
@@ -491,6 +492,7 @@ function activeJobUrlSet(db: SqliteDatabase): Set<string> {
     sort: "discovered_at",
     dir: "desc",
     deleted: "active",
+    applyStatus: "all",
     source: "",
     company: "",
   });
@@ -1277,6 +1279,7 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     stage: filter.stage,
     state: filter.state,
     deleted: filter.deleted ?? "active",
+    applyStatus: filter.applyStatus ?? "all",
     source: filter.source ?? "",
     company: filter.company ?? "",
     minFitScore: filter.minFitScore,
@@ -1332,6 +1335,9 @@ function jobSqlFilter(db: SqliteDatabase, query: JobListQuery): { where: string;
   if (query.state) {
     clauses.push("current_state = ?");
     params.push(query.state);
+  }
+  if (query.applyStatus === "applied") {
+    clauses.push("(applied_at IS NOT NULL OR LOWER(COALESCE(apply_status, '')) = 'applied')");
   }
   if (query.source) {
     const postingSourceUrlSql = postingSourceUrlSqlExpression(db);
@@ -1521,6 +1527,7 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     state: query.state ?? "",
     source: query.source,
     company: query.company,
+    applyStatus: query.applyStatus,
     minFitScore: query.minFitScore ?? null,
     maxFitScore: query.maxFitScore ?? null,
     deleted: query.deleted,
@@ -1543,6 +1550,13 @@ function countRows(db: SqliteDatabase, sql: string, params: SqliteValue[]): numb
 function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
   if (query.stage && job.currentStage !== query.stage) return false;
   if (query.state && job.currentState !== query.state) return false;
+  if (
+    query.applyStatus === "applied"
+    && !job.appliedAt
+    && job.applyStatus?.toLowerCase() !== "applied"
+  ) {
+    return false;
+  }
   if (
     query.source &&
     ![job.source, job.discoverySource, job.postingSource, job.postingSourceUrl ?? ""].some((source) =>
@@ -2187,7 +2201,25 @@ function recentApplyRuns(db: SqliteDatabase): DashboardSummary["applyRuns"] {
     status: normalizeWorkflowRunStatus(row.status),
     dryRun: Boolean(row.dry_run),
     startedAt: row.started_at,
+    events: parseApplyRunTimelineEvents(row.events_json),
   }));
+}
+
+function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["applyRuns"][number]["events"] {
+  let parsed: unknown = [];
+  try {
+    parsed = value ? JSON.parse(value) : [];
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isRecord).map((event) => {
+    const type = stringField(event.event_type ?? event.eventType ?? event.type) || "event";
+    const at = nullableString(event.occurred_at ?? event.occurredAt ?? event.at);
+    const level = stringField(event.level) || "info";
+    const message = nullableString(event.message);
+    return { at, type, level, message };
+  });
 }
 
 // ================================================================ helpers

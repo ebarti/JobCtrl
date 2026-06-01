@@ -18,7 +18,11 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
-import { makeJobsPage, sampleJob } from "../../test/fixtures/projections.js";
+import {
+  makeJobsPage,
+  sampleJob,
+  sampleSecondaryJob,
+} from "../../test/fixtures/projections.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
@@ -144,6 +148,34 @@ describe("<JobsView> bulk delete integration", () => {
     expect(jobs.mock.calls[0]?.[0]).toMatchObject({ stage: "apply" });
   });
 
+  it("passes the applied application filter through the jobs query", async () => {
+    const appliedJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-applied",
+      url: "https://example.com/jobs/job-applied",
+      title: "Applied candidate",
+      applyStatus: "applied",
+      appliedAt: "2026-05-30T10:00:00Z",
+    };
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(query?.applyStatus === "applied" ? [appliedJob] : []),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      `${SEARCH}&applyStatus=applied`,
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(appliedJob.title)).toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledWith(
+      expect.objectContaining({ applyStatus: "applied" }),
+    );
+  });
+
   it("fans out all-matching Discover bulk filters across preparation stages", async () => {
     const user = userEvent.setup();
     const jobsByStage = Object.fromEntries(
@@ -242,6 +274,70 @@ describe("<JobsView> bulk delete integration", () => {
     for (const checkbox of rowCheckboxes) {
       expect(checkbox).toBeChecked();
     }
+  });
+
+  it("does not let page-local table filters drive unbounded bulk deletes", async () => {
+    const user = userEvent.setup();
+    const vonageJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "vonage-1",
+      title: "Engineering Manager",
+      company: "Vonage",
+      source: "Greenhouse",
+      discoverySource: "greenhouse:vonage",
+      postingSource: "greenhouse:vonage",
+    };
+    const acaiJob: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "acai-1",
+      title: "Software Engineer (India)",
+      company: "Acai",
+      source: "Ashby",
+      discoverySource: "ashby:acai",
+      postingSource: "ashby:acai",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([vonageJob, acaiJob]));
+    const deleteJobs = vi.fn(async (body: BulkJobMutationRequest) => ({
+      ok: true as const,
+      count: body.jobKeys.length,
+      jobKeys: body.jobKeys,
+    }));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, deleteJobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Engineering Manager")).toBeInTheDocument();
+    expect(screen.getByText("Software Engineer (India)")).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: /filter sources column/i }),
+    );
+    await user.type(screen.getByLabelText("Sources filter text"), "vonage");
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Software Engineer (India)"),
+      ).not.toBeInTheDocument(),
+    );
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: /select all matching/i }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: /select page/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/1 selected/i)).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /delete selected/i }));
+
+    await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
+    expect(deleteJobs.mock.calls[0]?.[0]).toMatchObject({
+      allMatching: false,
+      jobKeys: ["vonage-1"],
+    });
   });
 
   it("selects rows via checkbox, clicks delete, confirms, and posts to /v1/jobs/bulk-delete", async () => {
