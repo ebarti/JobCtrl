@@ -238,9 +238,11 @@ uv --project workers/automation run jobhunter retry tailor https://example.com/j
 `retry --run` can process other eligible pending work for some stages. Use it
 deliberately.
 
-In the local web UI, the dashboard Failures KPI opens the failed-jobs filter.
-From that Jobs view you can retry selected failed jobs or retry all currently
-matching failed jobs after confirmation.
+In the local web UI, dashboard KPIs open matching Jobs filters. Failures opens
+failed jobs so you can retry selected failures or retry all currently matching
+failed jobs after confirmation. Applied opens the jobs with an actual applied
+outcome (`applied_at` present or apply status `applied`), not a synthetic
+pipeline state.
 
 ## Auto-Apply
 

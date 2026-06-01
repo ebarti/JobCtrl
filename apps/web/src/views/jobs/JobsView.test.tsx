@@ -144,6 +144,34 @@ describe("<JobsView> bulk delete integration", () => {
     expect(jobs.mock.calls[0]?.[0]).toMatchObject({ stage: "apply" });
   });
 
+  it("passes the applied application filter through the jobs query", async () => {
+    const appliedJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-applied",
+      url: "https://example.com/jobs/job-applied",
+      title: "Applied candidate",
+      applyStatus: "applied",
+      appliedAt: "2026-05-30T10:00:00Z",
+    };
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(query?.applyStatus === "applied" ? [appliedJob] : []),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      `${SEARCH}&applyStatus=applied`,
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(appliedJob.title)).toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledWith(
+      expect.objectContaining({ applyStatus: "applied" }),
+    );
+  });
+
   it("fans out all-matching Discover bulk filters across preparation stages", async () => {
     const user = userEvent.setup();
     const jobsByStage = Object.fromEntries(
