@@ -29,27 +29,27 @@ logs, broad projections, or public PR content.
 
 ### Terms
 
-**ApplyReviewItem**  
+**ApplyReviewItem**
 Read-side queue item for a job whose apply prerequisites are ready or nearly
 ready. It summarizes materials readiness, score, source/apply URL confidence,
 latest dry-run result, blockers, and review state.
 
-**ApplyReviewDecision**  
+**ApplyReviewDecision**
 User decision on a review item: approve submit, approve dry-run, defer, decline,
 or reset review. Decisions are recorded as local events and projected back into
 the queue.
 
-**ApplicationOutcome**  
+**ApplicationOutcome**
 Reviewed job-search outcome for a submitted or externally handled application:
 applied confirmation, recruiter reply, interview, assessment, rejection, offer,
 withdrawn, bounced, no response, or unknown.
 
-**ApplicationEmailEvidence**  
+**ApplicationEmailEvidence**
 Sensitive local evidence captured from Gmail after linking a message to a known
 application. It stores message identifiers, headers/snippet, received time,
 linking signals, confidence, body text, and body hash.
 
-**OutcomeSuggestion**  
+**OutcomeSuggestion**
 Unreviewed classifier result derived from email evidence. Suggestions never
 silently overwrite a reviewed outcome in v1.
 

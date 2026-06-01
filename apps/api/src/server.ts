@@ -522,9 +522,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   );
 
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/outcomes", async (request, reply) =>
-    withDb(reply, options.dbPath, (db) =>
-      listJobApplicationOutcomes(db, decodeRouteParam(request.params.jobKey)),
-    ),
+    withDb(reply, options.dbPath, (db) => {
+      const outcomes = listJobApplicationOutcomes(db, decodeRouteParam(request.params.jobKey));
+      if (!outcomes) {
+        void reply.code(404);
+        return { ok: false, error: "job_not_found" };
+      }
+      return outcomes;
+    }),
   );
 
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/outcomes", async (request, reply) => {

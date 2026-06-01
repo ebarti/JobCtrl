@@ -317,9 +317,12 @@ export function listApplicationOutcomes(
 export function listJobApplicationOutcomes(
   db: SqliteDatabase,
   jobKey: string,
-): JobApplicationOutcomeListResponse {
+): JobApplicationOutcomeListResponse | null {
   ensureApplicationFeedbackTables(db);
-  const jobUrl = existingJobUrl(db, jobKey);
+  const jobUrl = resolveJobUrl(db, jobKey);
+  if (!jobUrl) {
+    return null;
+  }
   return {
     ok: true,
     jobKey: jobUrl,
@@ -356,6 +359,13 @@ export function decideOutcomeSuggestion(
   const existing = getSuggestionRow(db, suggestionId);
   if (!existing) {
     throw new InputError("Outcome suggestion not found.");
+  }
+  if (existing.status !== "pending") {
+    return {
+      ok: true,
+      suggestion: suggestionFromRow(existing),
+      outcome: existing.decided_outcome_id ? readOutcome(db, existing.decided_outcome_id) : null,
+    };
   }
   const decidedAt = new Date().toISOString();
   let outcome: ApplicationOutcome | null = null;
@@ -503,6 +513,18 @@ function readOutcomes(db: SqliteDatabase, jobKey?: string): ApplicationOutcome[]
      ORDER BY occurred_at DESC, recorded_at DESC, outcome_id DESC`,
     params,
   ).map(outcomeFromRow);
+}
+
+function readOutcome(db: SqliteDatabase, outcomeId: string): ApplicationOutcome | null {
+  const row = getRow<OutcomeRow>(
+    db,
+    `SELECT outcome_id, job_key, kind, source, note, occurred_at,
+            recorded_at, suggestion_id, evidence_id
+     FROM application_outcomes
+     WHERE tenant_id = ? AND outcome_id = ?`,
+    [DEFAULT_TENANT, outcomeId],
+  );
+  return row ? outcomeFromRow(row) : null;
 }
 
 function readSuggestions(db: SqliteDatabase, jobKey?: string): OutcomeSuggestion[] {

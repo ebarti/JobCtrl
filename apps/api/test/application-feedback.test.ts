@@ -180,6 +180,20 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("returns not found for outcome reads on missing jobs", async () => {
+    const app = buildApp(options);
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/missing")}/outcomes`,
+    });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toEqual({ ok: false, error: "job_not_found" });
+
+    await app.close();
+  });
+
   it("accepts outcome suggestions without copying raw note or email body text into events", async () => {
     seedOutcomeSuggestion(options.dbPath);
     const app = buildApp(options);
@@ -197,6 +211,7 @@ describe("application feedback API", () => {
     });
 
     expect(response.statusCode, response.body).toBe(200);
+    const acceptedOutcomeId = response.json().outcome.outcomeId;
     expect(response.json()).toMatchObject({
       ok: true,
       suggestion: {
@@ -212,10 +227,33 @@ describe("application feedback API", () => {
       },
     });
 
+    const repeated = await app.inject({
+      method: "POST",
+      url: "/v1/outcome-suggestions/suggestion-1/decision",
+      payload: {
+        decision: "accept",
+        note: "second private note must not create a second outcome",
+      },
+    });
+
+    expect(repeated.statusCode, repeated.body).toBe(200);
+    expect(repeated.json()).toMatchObject({
+      ok: true,
+      suggestion: {
+        suggestionId: "suggestion-1",
+        status: "accepted",
+        decidedOutcomeId: acceptedOutcomeId,
+      },
+      outcome: {
+        outcomeId: acceptedOutcomeId,
+      },
+    });
+
     const jobOutcomes = await app.inject({
       method: "GET",
       url: `/v1/jobs/${encodeURIComponent(READY_JOB)}/outcomes`,
     });
+    expect(jobOutcomes.json().outcomes).toHaveLength(1);
     expect(jobOutcomes.json().suggestions).toEqual([
       expect.objectContaining({ suggestionId: "suggestion-1", status: "accepted" }),
     ]);
