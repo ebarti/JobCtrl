@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 import type {
   ApplicationOutcome,
@@ -18,6 +19,7 @@ import type {
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
   OutcomeSuggestionStatus,
+  ScoreBreakdown,
   Stage,
   StageState,
 } from "./contracts.js";
@@ -34,6 +36,11 @@ import { InputError, resolveJobUrl } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
+const POSITION_PREVIEW_CHAR_LIMIT = 6000;
+const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
+const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
+const EVIDENCE_LIST_LIMIT = 12;
+const EVIDENCE_TEXT_LIMIT = 180;
 
 interface ReviewQueueRow extends Record<string, unknown> {
   job_id: string;
@@ -42,6 +49,10 @@ interface ReviewQueueRow extends Record<string, unknown> {
   source: string;
   application_url: string | null;
   fit_score: number | null;
+  description: string;
+  full_description: string;
+  score_breakdown_json: string | null;
+  score_keywords_json: string | null;
   current_stage: string;
   current_state: string;
   current_error_code: string | null;
@@ -213,7 +224,9 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       WHERE row_num = 1
     )
     SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source, jlp.application_url,
-           jlp.fit_score, jlp.current_stage, jlp.current_state,
+           jlp.fit_score, jlp.description, jlp.full_description,
+           jlp.score_breakdown_json, jlp.score_keywords_json,
+           jlp.current_stage, jlp.current_state,
            jlp.current_error_code, jlp.current_error_message,
            jlp.has_resume, jlp.has_cover_letter, jlp.has_pdf,
            latest_decision.decision_id, latest_decision.decision,
@@ -251,7 +264,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
 
   return {
     ok: true,
-    items: rows.map(reviewQueueItemFromRow),
+    items: rows.map((row) => reviewQueueItemFromRow(db, row)),
   };
 }
 
@@ -554,9 +567,10 @@ function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionR
   );
 }
 
-function reviewQueueItemFromRow(row: ReviewQueueRow): ApplyReviewQueueItem {
+function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyReviewQueueItem {
   const currentState = stageState(row.current_state);
   const blockers = queueBlockers(row, currentState);
+  const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   return {
     jobKey: row.job_id,
     title: row.title || "Untitled",
@@ -572,6 +586,22 @@ function reviewQueueItemFromRow(row: ReviewQueueRow): ApplyReviewQueueItem {
       hasPdf: Boolean(row.has_pdf),
       ready: Boolean(row.has_resume),
     },
+    position: {
+      descriptionPreview: previewText(
+        row.full_description || row.description,
+        POSITION_PREVIEW_CHAR_LIMIT,
+      ),
+      requirements: boundedEvidenceList([
+        ...(scoreBreakdown?.matchedSignals ?? []),
+        ...(scoreBreakdown?.missingSignals ?? []),
+        ...(scoreBreakdown?.transferableSignals ?? []),
+      ]),
+      matched: boundedEvidenceList(scoreBreakdown?.matchedSignals ?? []),
+      missing: boundedEvidenceList(scoreBreakdown?.missingSignals ?? []),
+      transferable: boundedEvidenceList(scoreBreakdown?.transferableSignals ?? []),
+      keywords: boundedEvidenceList(parseStringListJson(row.score_keywords_json)),
+    },
+    materialsPreview: materialPreviewsForJob(db, row.job_id),
     latestApplyRun: row.run_id
       ? {
           runId: row.run_id,
@@ -599,6 +629,231 @@ function queueBlockers(row: ReviewQueueRow, currentState: StageState): string[] 
     blockers.push(row.current_error_code || row.current_error_message || `apply_${currentState}`);
   }
   return blockers;
+}
+
+function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as Partial<ScoreBreakdown> | null;
+    if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).legacy === true) {
+      return null;
+    }
+    return {
+      technicalFit: scoreDimension(parsed.technicalFit),
+      experienceFit: scoreDimension(parsed.experienceFit),
+      roleFit: scoreDimension(parsed.roleFit),
+      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+      fitBand: parsed.fitBand ?? "plausible",
+      confidence: parsed.confidence ?? "medium",
+      eligibility: {
+        status: parsed.eligibility?.status ?? "unknown",
+        hardBlockers: boundedEvidenceList(parsed.eligibility?.hardBlockers ?? []),
+        warnings: boundedEvidenceList(parsed.eligibility?.warnings ?? []),
+      },
+      matchedSignals: boundedEvidenceList(parsed.matchedSignals ?? []),
+      missingSignals: boundedEvidenceList(parsed.missingSignals ?? []),
+      transferableSignals: boundedEvidenceList(parsed.transferableSignals ?? []),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function scoreDimension(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.max(0, Math.min(10, numeric)) : 0;
+}
+
+function parseStringListJson(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    return parseStringList(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
+
+function parseStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return boundedEvidenceList(value);
+}
+
+function boundedEvidenceList(values: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const text = String(value ?? "").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    const bounded = text.length > EVIDENCE_TEXT_LIMIT ? `${text.slice(0, EVIDENCE_TEXT_LIMIT).trim()}...` : text;
+    const key = bounded.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(bounded);
+    if (out.length >= EVIDENCE_LIST_LIMIT) break;
+  }
+  return out;
+}
+
+function previewText(value: string | null | undefined, limit: number): string {
+  const text = String(value ?? "").replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+  if (!text) {
+    return "";
+  }
+  return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
+}
+
+function materialPreviewsForJob(
+  db: SqliteDatabase,
+  jobKey: string,
+): ApplyReviewQueueItem["materialsPreview"] {
+  return {
+    resumeText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "resume")),
+    resumePdfArtifactId: latestMaterialPdfArtifactId(db, jobKey, "resume"),
+    coverLetterText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "cover")),
+  };
+}
+
+function latestMaterialPdfArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
+  const artifactTypes =
+    kind === "resume" ? ["tailored_resume_pdf", "resume_pdf"] : ["cover_letter_pdf"];
+  if (!tableExists(db, "artifact_list_projections")) {
+    return null;
+  }
+  const placeholders = artifactTypes.map(() => "?").join(", ");
+  const rows = allRows<{ artifact_id: string; local_path: string }>(
+    db,
+    `SELECT artifact_id, local_path
+     FROM artifact_list_projections
+     WHERE job_id = ?
+       AND artifact_type IN (${placeholders})
+       AND COALESCE(status, 'active') IN ('approved', 'active')
+       AND local_path IS NOT NULL
+       AND local_path != ''
+     ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
+     LIMIT 8`,
+    [jobKey, ...artifactTypes],
+  );
+  for (const row of rows) {
+    try {
+      if (fs.existsSync(row.local_path) && fs.statSync(row.local_path).isFile()) {
+        return row.artifact_id;
+      }
+    } catch {
+      // Artifact files can disappear while the local projection still exists.
+      // In that case the review UI should fall back to text evidence.
+    }
+  }
+  return null;
+}
+
+function materialPreviewPaths(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string[] {
+  const paths: string[] = [];
+  const artifactTypes =
+    kind === "resume"
+      ? ["tailored_resume", "tailored_resume_txt", "resume_txt"]
+      : ["cover_letter", "cover_letter_txt"];
+
+  if (tableExists(db, "job_materials_artifacts")) {
+    const placeholders = artifactTypes.map(() => "?").join(", ");
+    paths.push(
+      ...allRows<{ path: string }>(
+        db,
+        `SELECT path
+         FROM job_materials_artifacts
+         WHERE job_url = ?
+           AND artifact_type IN (${placeholders})
+           AND COALESCE(status, 'approved') IN ('approved', 'active')
+           AND path IS NOT NULL
+           AND path != ''
+         ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC`,
+        [jobKey, ...artifactTypes],
+      ).map((row) => row.path),
+    );
+  }
+
+  if (tableExists(db, "job_artifacts")) {
+    const placeholders = artifactTypes.map(() => "?").join(", ");
+    paths.push(
+      ...allRows<{ path: string }>(
+        db,
+        `SELECT path
+         FROM job_artifacts
+         WHERE job_url = ?
+           AND artifact_type IN (${placeholders})
+           AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
+           AND path IS NOT NULL
+           AND path != ''
+         ORDER BY COALESCE(created_at, '') DESC, rowid DESC`,
+        [jobKey, ...artifactTypes],
+      ).map((row) => row.path),
+    );
+  }
+
+  if (tableExists(db, "jobs")) {
+    const legacyColumn = kind === "resume" ? "tailored_resume_path" : "cover_letter_path";
+    const legacyRow = getRow<{ path: string | null }>(
+      db,
+      `SELECT ${legacyColumn} AS path FROM jobs WHERE url = ?`,
+      [jobKey],
+    );
+    if (legacyRow?.path) {
+      paths.push(legacyRow.path);
+    }
+  }
+
+  return paths;
+}
+
+function firstReadableTextPreview(paths: readonly string[]): string | null {
+  const seen = new Set<string>();
+  for (const artifactPath of paths) {
+    const path = artifactPath.trim();
+    if (!path || seen.has(path) || isBinaryPreviewPath(path)) continue;
+    seen.add(path);
+    const preview = readTextPreview(path);
+    if (preview) {
+      return preview;
+    }
+  }
+  return null;
+}
+
+function isBinaryPreviewPath(artifactPath: string): boolean {
+  return /\.(pdf|docx?|png|jpe?g|webp|gif|zip)$/i.test(artifactPath);
+}
+
+function readTextPreview(artifactPath: string): string | null {
+  let fd: number | null = null;
+  try {
+    const stats = fs.statSync(artifactPath);
+    if (!stats.isFile()) {
+      return null;
+    }
+    const byteCount = Math.min(stats.size, MATERIAL_PREVIEW_BYTE_LIMIT);
+    if (byteCount <= 0) {
+      return null;
+    }
+    const buffer = Buffer.alloc(byteCount);
+    fd = fs.openSync(artifactPath, "r");
+    const bytesRead = fs.readSync(fd, buffer, 0, byteCount, 0);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    if (!text.trim() || text.includes("\u0000")) {
+      return null;
+    }
+    return previewText(text, MATERIAL_PREVIEW_CHAR_LIMIT);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      fs.closeSync(fd);
+    }
+  }
 }
 
 function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {

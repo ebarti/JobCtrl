@@ -150,6 +150,22 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         hasPdf: true,
         ready: true,
       },
+      position: {
+        descriptionPreview:
+          "Globex needs a principal engineer to lead platform reliability, incident response, and developer experience improvements.",
+        requirements: ["platform reliability", "SRE leadership", "incident response"],
+        matched: ["platform reliability", "SRE leadership"],
+        missing: ["public company scale"],
+        transferable: ["incident leadership"],
+        keywords: ["platform reliability", "sre"],
+      },
+      materialsPreview: {
+        resumeText:
+          "Principal Platform Engineer\n\nLed platform reliability programs and incident response improvements for distributed systems teams.",
+        resumePdfArtifactId: "resume-pdf-2",
+        coverLetterText:
+          "Dear Hiring Manager,\n\nI am excited to bring platform reliability leadership to Globex.",
+      },
       latestApplyRun: {
         runId: "apply-run-2",
         status: "succeeded",
@@ -179,6 +195,21 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         hasCoverLetter: false,
         hasPdf: true,
         ready: false,
+      },
+      position: {
+        descriptionPreview:
+          "Acme is hiring a staff software engineer to own platform reliability and product engineering workflows.",
+        requirements: ["platform reliability", "team leadership"],
+        matched: ["platform reliability"],
+        missing: ["team leadership"],
+        transferable: [],
+        keywords: ["platform", "typescript"],
+      },
+      materialsPreview: {
+        resumeText:
+          "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
+        resumePdfArtifactId: "resume-pdf-1",
+        coverLetterText: null,
       },
       latestApplyRun: null,
       review: {
