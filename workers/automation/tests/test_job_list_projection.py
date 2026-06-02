@@ -133,7 +133,7 @@ def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
     assert _row_value(row, "current_state") == "pending"
 
 
-def test_pipeline_progress_advances_current_stage(conn: sqlite3.Connection) -> None:
+def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/2"
     _seed_job(conn, url, title="Platform Engineer")
     builder = ProjectionBuilder(conn_factory=lambda: conn)
@@ -152,8 +152,16 @@ def test_pipeline_progress_advances_current_stage(conn: sqlite3.Connection) -> N
         "SELECT current_stage, current_state FROM job_list_projections WHERE job_id = ?",
         (url,),
     ).fetchone()
-    assert _row_value(row, "current_stage") == "score"
+    assert _row_value(row, "current_stage") == "discover"
     assert _row_value(row, "current_state") == "pending"
+
+    detail = conn.execute(
+        "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    stages = json.loads(_row_value(detail, "stages_json", "[]"))
+    score_stage = next(stage for stage in stages if stage["stage"] == "score")
+    assert score_stage["state"] == "pending"
 
 
 def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:

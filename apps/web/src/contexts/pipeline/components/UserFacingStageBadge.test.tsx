@@ -11,11 +11,12 @@ describe("<UserFacingStageBadge>", () => {
     expect(screen.getByLabelText("apply")).toBeInTheDocument();
   });
 
-  it("presents internal preparation stages as Discover with diagnostic labeling", () => {
+  it("presents internal preparation stages as the single product Discover stage", () => {
     render(<UserFacingStageBadge stage="tailor" />);
 
     expect(screen.getByText("discover")).toBeInTheDocument();
-    expect(screen.getByLabelText("discover; internal tailor substatus")).toBeInTheDocument();
+    expect(screen.getByLabelText("discover")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/substatus/i)).not.toBeInTheDocument();
     expect(userFacingStage("score")).toBe("discover");
   });
 });

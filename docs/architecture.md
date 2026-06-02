@@ -101,6 +101,9 @@ Discovery owns source and enrichment facts, then durable
 `suppress_tailored_artifacts` to the Scoring and Materials contexts. The user
 sees one preparation stage (`Discover`), while policy versions, score rows,
 materials rows, and suppression state stay owned by their bounded contexts.
+Operations list projections keep that product contract by exposing only
+`discover` or `apply`; internal stage rows remain available in detail and
+diagnostic surfaces.
 
 ## Retrieval Before Scoring
 

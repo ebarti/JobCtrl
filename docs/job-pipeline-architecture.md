@@ -36,9 +36,9 @@ discover -> enrich -> score -> tailor -> cover -> apply
 ```
 
 Those names remain in stage rows, low-level contracts, CLI maintenance paths,
-and diagnostics. The product UI maps `enrich`, `score`, `tailor`, and `cover`
-back to `Discover` while still exposing their detail in job timelines and
-operational views.
+and diagnostics. Job list projections and the product UI map `enrich`, `score`,
+`tailor`, and `cover` back to `Discover` while still exposing their detail in
+job timelines and operational views.
 
 Discovery preparation runs these internal steps:
 
@@ -1053,6 +1053,12 @@ transition for marking a stage canceled.
 
 The UI does not read directly from stage internals. It reads projection-backed
 API endpoints owned by Operations:
+
+`job_list_projections.current_stage` is a product-stage field. Projection
+builders write only `discover` or `apply` there, even when the first actionable
+internal row is `enrich`, `score`, `tailor`, or `cover`. The full internal
+stage list remains in `job_detail_projections.stages_json` for review,
+diagnostics, and repair decisions.
 
 ```mermaid
 flowchart LR

@@ -51,15 +51,18 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
     conn = init_db(db_path)
     old_score_url = "https://example.com/jobs/orphaned-score"
     fresh_score_url = "https://example.com/jobs/fresh-score"
+    current_worker_score_url = "https://example.com/jobs/current-worker-score"
     apply_url = "https://example.com/jobs/apply-run"
     missing_job_url = "https://example.com/jobs/missing-parent"
 
     try:
         _insert_job(conn, old_score_url)
         _insert_job(conn, fresh_score_url)
+        _insert_job(conn, current_worker_score_url)
         _insert_job(conn, apply_url)
         _mark_running_at(conn, old_score_url, "score", "2026-05-21T20:00:00+00:00")
         _mark_running_at(conn, fresh_score_url, "score", "2026-05-21T20:09:00+00:00")
+        _mark_running_at(conn, current_worker_score_url, "score", "2026-05-21T20:03:00+00:00")
         _mark_running_at(conn, apply_url, "apply", "2026-05-21T20:00:00+00:00")
         conn.execute(
             """
@@ -74,6 +77,7 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
             conn,
             now=datetime(2026, 5, 21, 20, 10, 0, tzinfo=timezone.utc),
             stale_after_seconds=150,
+            started_before=datetime(2026, 5, 21, 20, 2, 0, tzinfo=timezone.utc),
         )
 
         assert recovered == 1
@@ -97,6 +101,12 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
             (fresh_score_url,),
         ).fetchone()
         assert fresh_row["state"] == "running"
+
+        current_worker_row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+            (current_worker_score_url,),
+        ).fetchone()
+        assert current_worker_row["state"] == "running"
 
         apply_row = conn.execute(
             "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'",

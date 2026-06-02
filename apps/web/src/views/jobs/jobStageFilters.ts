@@ -1,15 +1,7 @@
-import type { BulkJobMutationRequest, Stage } from "@jobhunter/contracts";
+import type { BulkJobMutationRequest } from "@jobhunter/contracts";
 
 import type { JobsListInput } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
-
-export const PREPARATION_STAGES = [
-  "discover",
-  "enrich",
-  "score",
-  "tailor",
-  "cover",
-] as const satisfies readonly Stage[];
 
 export function jobsListInput(search: JobsSearch): JobsListInput {
   const input: JobsListInput = {
@@ -45,9 +37,6 @@ export function bulkJobFilters(
   if (search.stage === "all") {
     return [filter];
   }
-  if (search.stage === "discover") {
-    return PREPARATION_STAGES.map((stage) => ({ ...filter, stage }));
-  }
   return [{ ...filter, stage: search.stage }];
 }
 
@@ -57,9 +46,6 @@ function applyStageFilter(
 ): JobsListInput {
   if (stage === "all") {
     return input;
-  }
-  if (stage === "discover") {
-    return { ...input, stages: PREPARATION_STAGES };
   }
   return { ...input, stage };
 }

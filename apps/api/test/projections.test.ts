@@ -365,6 +365,71 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects internal preparation progress as the single discover list stage", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      const insertStage = db.prepare(
+        "INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at) VALUES (?, ?, ?, ?, ?)",
+      );
+      insertStage.run(
+        "https://example.com/jobs/event-driven",
+        "discover",
+        "succeeded",
+        "2026-05-04T13:00:00+00:00",
+        "2026-05-04T13:00:00+00:00",
+      );
+      insertStage.run(
+        "https://example.com/jobs/event-driven",
+        "enrich",
+        "succeeded",
+        "2026-05-04T13:05:00+00:00",
+        "2026-05-04T13:05:00+00:00",
+      );
+      insertStage.run(
+        "https://example.com/jobs/event-driven",
+        "score",
+        "pending",
+        "2026-05-04T13:10:00+00:00",
+        null,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+        const item = listRes
+          .json()
+          .items.find((job: { jobKey: string }) => job.jobKey === "https://example.com/jobs/event-driven");
+        expect(item).toMatchObject({
+          currentStage: "discover",
+          currentState: "pending",
+        });
+
+        const detailRes = await app.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/event-driven")}`,
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+        expect(detailRes.json().stages).toEqual(
+          expect.arrayContaining([expect.objectContaining({ stage: "score", state: "pending" })]),
+        );
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("backfills legacy jobs inserted after the first projection refresh", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
