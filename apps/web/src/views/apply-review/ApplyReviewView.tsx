@@ -7,6 +7,7 @@ import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
+import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
 
 type MaterialStatus = {
@@ -344,7 +345,12 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             <section className="apply-review-preview-block">
               <h3>Verbatim job post</h3>
               {item.position.descriptionPreview ? (
-                <div className="apply-review-document preformatted">{item.position.descriptionPreview}</div>
+                <div className="apply-review-document">
+                  <MarkdownDocument
+                    emptyTitle="No captured job post text."
+                    text={item.position.descriptionPreview}
+                  />
+                </div>
               ) : (
                 <Empty title="No captured job post text." />
               )}

@@ -65,6 +65,51 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
+  it("renders the verbatim job post markdown without injecting raw html", async () => {
+    const markdownQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              position: {
+                ...item.position,
+                descriptionPreview: [
+                  "**Welcome to the good side of tech 👋**",
+                  "Build [patient workflows](https://example.com) with `SDLC` discipline.",
+                  "",
+                  "- Lead engineering teams",
+                  "- Improve platform reliability",
+                  "",
+                  "<script>alert('xss')</script>",
+                ].join("\n"),
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => markdownQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "Welcome to the good side of tech 👋" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "patient workflows" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+    expect(screen.getByText("SDLC")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("<script>alert('xss')</script>")).toBeInTheDocument();
+    expect(document.querySelector("script")).toBeNull();
+  });
+
   it("explains repair status with the latest apply failure reason", async () => {
     const repairQueue = {
       ...sampleApplyReviewQueue,
