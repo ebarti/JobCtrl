@@ -36,14 +36,18 @@ from jobhunter.domain.discovery.source_registry import (
     SourceRegistryEntry,
     validate_locator_candidate,
 )
-from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
+from jobhunter.domain.discovery.use_cases import (
+    DiscoverJobsUseCase,
+    PostingAcceptance,
+    default_canonical_identity,
+)
 from jobhunter.domain.discovery.value_objects import (
     JobMetadata,
     PostingUrl,
     SearchStrategy,
     Source,
 )
-from jobhunter.domain.enrichment import DetailPage, ExtractionTier
+from jobhunter.domain.enrichment import DetailPage, ExtractionTier, FullDescription, JobEnrichment
 from jobhunter.domain.enrichment.services import CssSelectorExtractor, JsonLdExtractor
 from jobhunter.domain.enrichment.snapshot_services import (
     ContentAcquisitionService,
@@ -71,7 +75,7 @@ from jobhunter.infrastructure.enrichment import (
     SqliteEnrichmentRepository,
     SqlitePostingSnapshotSetRepository,
 )
-from jobhunter.state import record_job_event
+from jobhunter.state import ensure_job_stage_rows, record_job_event, set_stage_state
 
 
 def utc_now() -> str:
@@ -473,8 +477,10 @@ def run_scheduled_ats_sources(
     if not adapters:
         return ScheduledAtsSummary().to_result_dict()
 
+    job_repository = SqliteJobRepository(conn)
+    enrichment_repository = SqliteEnrichmentRepository(conn)
     use_case = DiscoverJobsUseCase(
-        repository=SqliteJobRepository(conn),
+        repository=job_repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
         acceptance_policy=_posting_acceptance_policy(search_cfg),
     )
@@ -517,6 +523,14 @@ def run_scheduled_ats_sources(
                         postings=[posting],
                         run_id=run_id,
                     )
+                    if summary.new_jobs > 0 or summary.observed > 0:
+                        _promote_ats_source_description_to_enrichment(
+                            conn,
+                            job_repository=job_repository,
+                            enrichment_repository=enrichment_repository,
+                            posting=posting,
+                            observed_at=utc_now(),
+                        )
                     total += summary.total
                     new_jobs += summary.new_jobs
                     observed_jobs += summary.observed
@@ -539,6 +553,106 @@ def run_scheduled_ats_sources(
         sources_run=tuple(sources_run),
         failed_sources=tuple(failed_sources),
     ).to_result_dict()
+
+
+def _promote_ats_source_description_to_enrichment(
+    conn: sqlite3.Connection,
+    *,
+    job_repository: SqliteJobRepository,
+    enrichment_repository: SqliteEnrichmentRepository,
+    posting: ScrapedJobPosting,
+    observed_at: str,
+) -> bool:
+    description = str(posting.metadata.description or "").strip()
+    if not description:
+        return False
+
+    identity = default_canonical_identity(posting)
+    job_id = job_repository.find_canonical_owner(
+        LOCAL_TENANT,
+        source_id=posting.source_id,
+        source_native_id=identity.source_native_id,
+        canonical_url=identity.canonical_url,
+    ) or JobId(identity.canonical_url or posting.posting_url.value)
+    if job_repository.load(LOCAL_TENANT, job_id) is None:
+        return False
+
+    existing = enrichment_repository.load(LOCAL_TENANT, job_id)
+    if existing is not None and (existing.is_enriched or existing.is_running):
+        return False
+
+    base = existing or JobEnrichment.empty(
+        tenant_id=LOCAL_TENANT,
+        job_id=job_id,
+        updated_at=observed_at,
+    )
+    succeeded = base.start_attempt(
+        extraction_tier=ExtractionTier.CSS_SELECTORS,
+        started_at=observed_at,
+    ).succeed_attempt(
+        full_description=FullDescription(text=description),
+        application_url=None,
+        extraction_tier=ExtractionTier.CSS_SELECTORS,
+        finished_at=observed_at,
+    )
+    enrichment_repository.save(succeeded)
+
+    job_url = str(job_id)
+    ensure_job_stage_rows(conn, job_url, discovered_at=observed_at)
+    stage_row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'",
+        (job_url,),
+    ).fetchone()
+    stage_state = str(stage_row["state"] or "") if stage_row is not None else ""
+    if stage_state != "succeeded":
+        if stage_state != "running":
+            try:
+                set_stage_state(
+                    conn,
+                    job_url,
+                    "enrich",
+                    "running",
+                    attempt_count=succeeded.attempt_count,
+                    started_at=observed_at,
+                )
+            except ValueError:
+                set_stage_state(
+                    conn,
+                    job_url,
+                    "enrich",
+                    "running",
+                    attempt_count=succeeded.attempt_count,
+                    started_at=observed_at,
+                    validate_transition=False,
+                )
+        set_stage_state(
+            conn,
+            job_url,
+            "enrich",
+            "succeeded",
+            attempt_count=succeeded.attempt_count,
+            started_at=observed_at,
+            finished_at=observed_at,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            "enrich",
+            "StageCompleted",
+            message=(
+                "ATS source description promoted to enrichment: "
+                f"{len(description)} description chars"
+            ),
+            payload={
+                "source_id": posting.source_id,
+                "source_native_id": identity.source_native_id,
+                "extraction_tier": ExtractionTier.CSS_SELECTORS.value,
+                "description_length": len(description),
+            },
+            occurred_at=observed_at,
+        )
+    conn.commit()
+    return True
 
 
 def retire_invalid_source_jobs(
