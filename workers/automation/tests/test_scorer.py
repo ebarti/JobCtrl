@@ -16,6 +16,7 @@ import pytest
 from jobhunter.database import init_db
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring import (
+    EligibilityAssessment,
     FitScore,
     JobScore,
     MatchedKeywords,
@@ -307,6 +308,60 @@ def test_score_job_by_url_repairs_existing_score_stage_state(
         (url,),
     ).fetchall()
     assert [row["event_type"] for row in events] == ["StageCompleted"]
+
+
+def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/existing-score-blocked"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    repo.save(
+        JobScore.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            fit_score=FitScore.create(9),
+            breakdown=ScoreBreakdown(
+                reasoning="persisted blocked score",
+                eligibility=EligibilityAssessment(
+                    status="blocked",
+                    hard_blockers=("candidate requires sponsorship",),
+                ),
+            ),
+            matched_keywords=MatchedKeywords.from_iterable(["python"]),
+            scored_at="2026-05-26T00:00:00+00:00",
+        )
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    outcome = scorer_module.score_job_by_url(
+        url,
+        profile_snapshot=profile_snapshot,
+        resume_text="Engineer with Python.",
+        criteria=ScoringCriteria(),
+        repository=repo,
+        llm_port=_ScriptedLlm(),
+    )
+
+    assert outcome.ok is True
+    rows = conn.execute(
+        """
+        SELECT stage, state, error_code, error_message
+        FROM job_stage_states
+        WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
+        ORDER BY stage
+        """,
+        (url,),
+    ).fetchall()
+    assert {row["stage"]: row["state"] for row in rows} == {
+        "apply": "blocked",
+        "cover": "blocked",
+        "tailor": "blocked",
+    }
+    assert {row["error_code"] for row in rows} == {"SCORE_ELIGIBILITY_BLOCKED"}
+    assert all("candidate requires sponsorship" in row["error_message"] for row in rows)
 
 
 def test_score_job_prompt_uses_company_not_source(

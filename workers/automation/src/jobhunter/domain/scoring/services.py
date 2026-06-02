@@ -281,6 +281,17 @@ def _choice_or_default(
 class ConstraintChecker:
     """Deterministic eligibility checks over local criteria and job text."""
 
+    _COMPENSATION_CONTEXT = re.compile(
+        r"\b(?:salary|compensation|base\s+pay|base\s+salary|pay\s+range|"
+        r"remuneration|wage|ote|on-target\s+earnings|annual\s+package)\b",
+        re.IGNORECASE,
+    )
+    _SALARY_AMOUNT = re.compile(
+        r"(?P<currency>[$\u20ac\u00a3])?\s*"
+        r"(?P<number>\d+(?:[,.]\d+)?)\s*"
+        r"(?P<suffix>k|thousand|m|million)?",
+        re.IGNORECASE,
+    )
     _ONSITE_TERMS = ("on-site", "onsite", "office-based", "office based")
     _REMOTE_TERMS = ("remote", "work from home", "distributed")
     _NO_SPONSORSHIP_TERMS = (
@@ -414,13 +425,70 @@ def _first_number(value: Any) -> int | None:
 
 
 def _salary_max(job: dict[str, Any]) -> int | None:
-    text = " ".join(str(job.get(key) or "") for key in ("salary", "description", "full_description"))
-    numbers = [int(match.replace(",", "")) for match in re.findall(r"\d[\d,]*", text)]
-    if not numbers:
+    salary = str(job.get("salary") or "").strip()
+    posted = _salary_amounts(salary, explicit_salary_field=True)
+    if posted:
+        return max(posted)
+
+    description = "\n".join(str(job.get(key) or "") for key in ("description", "full_description"))
+    posted = []
+    for window in _compensation_windows(description):
+        posted.extend(_salary_amounts(window, explicit_salary_field=False))
+    return max(posted) if posted else None
+
+
+def _compensation_windows(text: str) -> list[str]:
+    windows: list[str] = []
+    for segment in re.split(r"[\n.;]", text):
+        if ConstraintChecker._COMPENSATION_CONTEXT.search(segment):
+            windows.append(segment)
+    return windows
+
+
+def _salary_amounts(text: str, *, explicit_salary_field: bool) -> list[int]:
+    if not text:
+        return []
+    matches = list(ConstraintChecker._SALARY_AMOUNT.finditer(text))
+    if not matches:
+        return []
+    window_uses_short_scale = any(
+        str(match.group("suffix") or "").lower() in {"k", "thousand"}
+        for match in matches
+    )
+    amounts: list[int] = []
+    for match in matches:
+        amount = _parse_amount(match.group("number"))
+        if amount is None:
+            continue
+        suffix = str(match.group("suffix") or "").lower()
+        if suffix in {"m", "million"}:
+            amount *= 1_000_000
+        elif suffix in {"k", "thousand"} or (window_uses_short_scale and amount < 1000):
+            amount *= 1000
+        elif explicit_salary_field and amount < 1000:
+            amount *= 1000
+        elif amount < 10_000:
+            continue
+        amounts.append(int(amount))
+    return amounts
+
+
+def _parse_amount(value: str) -> float | None:
+    raw = str(value or "").strip().replace(" ", "")
+    if not raw:
         return None
-    # Normalize common shorthand such as "120k".
-    normalized = [n * 1000 if n < 1000 else n for n in numbers]
-    return max(normalized)
+    if "," in raw and "." in raw:
+        raw = raw.replace(",", "")
+    elif "," in raw:
+        parts = raw.split(",")
+        raw = "".join(parts) if len(parts[-1]) == 3 else raw.replace(",", ".")
+    elif "." in raw:
+        parts = raw.split(".")
+        raw = "".join(parts) if len(parts[-1]) == 3 else raw
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def _explicit_exclusions(*texts: str) -> tuple[str, ...]:

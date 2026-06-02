@@ -53,7 +53,12 @@ from jobhunter.infrastructure.discovery.production_wiring import (
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.operational_metrics import record_operational_attempt_metric
 from jobhunter.infrastructure.observability.source_spans import discovery_run_span
-from jobhunter.state import record_job_event, utc_now
+from jobhunter.state import (
+    ensure_job_stage_rows,
+    reconcile_score_eligibility_blockers,
+    record_job_event,
+    utc_now,
+)
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -2572,6 +2577,14 @@ def run_single_job(
                 result["errors"].append(
                     f"Score eligibility blocks tailoring: {blockers}"
                 )
+                ensure_job_stage_rows(conn, url, discovered_at=job.get("discovered_at"))
+                reconcile_score_eligibility_blockers(
+                    conn,
+                    job_url=url,
+                    eligibility_status=eligibility.status,
+                    hard_blockers=list(eligibility.hard_blockers),
+                )
+                conn.commit()
                 console.print(
                     "  [yellow]Skipping tailoring and cover letter: "
                     f"score eligibility blocked ({blockers})[/yellow]"
