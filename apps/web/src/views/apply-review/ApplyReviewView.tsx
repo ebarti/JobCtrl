@@ -16,11 +16,13 @@ type MaterialStatus = {
   readonly summary: string;
 };
 
+type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
+
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
   if (!item.applicationUrl) {
     return {
       kind: "repair",
-      label: "needs repair",
+      label: "missing apply link",
       tone: "warn",
       summary: "The application link is missing, so submission cannot run yet.",
     };
@@ -42,18 +44,41 @@ function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
     };
   }
   if (item.currentState === "blocked" || item.currentState === "failed" || item.currentState === "stale") {
-    return {
-      kind: "repair",
-      label: "needs repair",
-      tone: "warn",
-      summary: "The apply workflow needs repair before submission; review evidence is still available.",
-    };
+    return repairStatus(item);
   }
   return {
     kind: "ready",
     label: "materials ready",
     tone: "ok",
     summary: "The tailored materials are ready to review before approval.",
+  };
+}
+
+function repairStatus(item: ApplyReviewQueueItem): MaterialStatus {
+  const run = item.latestApplyRun;
+  const reason = firstRepairReason(item);
+  if (run && isFailedApplyRun(run)) {
+    const mode = run.dryRun ? "dry run" : "submit";
+    return {
+      kind: "repair",
+      label: `${mode} failed`,
+      tone: "warn",
+      summary: `Last ${mode} failed${reason ? `: ${reason}` : ""}. Review evidence is still available.`,
+    };
+  }
+  if (reason) {
+    return {
+      kind: "repair",
+      label: repairReasonLabel(reason, item),
+      tone: "warn",
+      summary: `${stageLabel(item.currentStage)} is ${stateLabel(item.currentState)}: ${reason}. Review evidence is still available.`,
+    };
+  }
+  return {
+    kind: "repair",
+    label: `${stageLabel(item.currentStage)} ${stateLabel(item.currentState)}`,
+    tone: "warn",
+    summary: `${stageLabel(item.currentStage)} is ${stateLabel(item.currentState)}. Review evidence is still available.`,
   };
 }
 
@@ -64,10 +89,11 @@ function latestApplyContext(item: ApplyReviewQueueItem): string {
   }
   const mode = run.dryRun ? "Dry run" : "Submit";
   const timestamp = run.startedAt ? ` · ${formatDateTime(run.startedAt)}` : "";
-  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
-  if (status.includes("failed") || status.includes("skipped")) {
-    return `${mode} needs repair${timestamp}`;
+  const reason = cleanRepairReason(run.result);
+  if (isFailedApplyRun(run)) {
+    return `${mode} failed${reason ? `: ${reason}` : ""}${timestamp}`;
   }
+  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
   if (status.includes("running")) {
     return `${mode} running${timestamp}`;
   }
@@ -78,6 +104,59 @@ function latestApplyContext(item: ApplyReviewQueueItem): string {
     return `${mode} completed${timestamp}`;
   }
   return `${mode} recorded${timestamp}`;
+}
+
+function isFailedApplyRun(run: ApplyRun): boolean {
+  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
+  return status.includes("failed") || status.includes("skipped");
+}
+
+function firstRepairReason(item: ApplyReviewQueueItem): string | null {
+  const runReason = cleanRepairReason(item.latestApplyRun?.result);
+  if (runReason && item.latestApplyRun && isFailedApplyRun(item.latestApplyRun)) {
+    return runReason;
+  }
+  for (const blocker of item.blockers) {
+    const reason = cleanRepairReason(blocker);
+    if (reason) {
+      return reason;
+    }
+  }
+  return null;
+}
+
+function cleanRepairReason(value: string | null | undefined): string | null {
+  const text = String(value ?? "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(blocked|failed|skipped|error)\s*:\s*/i, "");
+  if (!text || /^(blocked|failed|stale|error)$/i.test(text)) {
+    return null;
+  }
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function repairReasonLabel(reason: string, item: ApplyReviewQueueItem): string {
+  const lower = reason.toLowerCase();
+  if (lower.includes("materials")) {
+    return "materials not ready";
+  }
+  if (lower.includes("application") && lower.includes("link")) {
+    return "missing apply link";
+  }
+  if (lower.includes("process killed")) {
+    return "process killed";
+  }
+  return `${stageLabel(item.currentStage)} ${stateLabel(item.currentState)}`;
+}
+
+function stageLabel(stage: string): string {
+  return stage.replace(/_/g, " ");
+}
+
+function stateLabel(state: string): string {
+  return state.replace(/_/g, " ");
 }
 
 function selectedItem(items: readonly ApplyReviewQueueItem[], selectedJobKey: string | null) {

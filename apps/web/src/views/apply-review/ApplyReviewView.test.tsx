@@ -65,6 +65,42 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
+  it("explains repair status with the latest apply failure reason", async () => {
+    const repairQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              currentState: "failed" as const,
+              latestApplyRun: {
+                runId: "submit-failed",
+                status: "failed",
+                result: "SKIPPED: process killed by signal",
+                dryRun: false,
+                startedAt: "2026-05-30T06:33:32Z",
+                finishedAt: "2026-05-30T06:40:29Z",
+              },
+              blockers: ["SKIPPED: process killed by signal"],
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => repairQueue),
+        },
+      }),
+    });
+
+    expect((await screen.findAllByText(/Submit failed: process killed by signal/i)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("submit failed").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Last submit failed: process killed by signal/i)).toBeInTheDocument();
+    expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
+  });
+
   it("records approval without dispatching apply automation", async () => {
     const user = userEvent.setup();
     const decideApplyReview = vi.fn(async () => ({
