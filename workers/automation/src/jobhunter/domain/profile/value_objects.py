@@ -40,6 +40,14 @@ def _bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def _float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, parsed))
+
+
 def _str_tuple(values: Any) -> tuple[str, ...]:
     if not isinstance(values, (list, tuple)):
         return ()
@@ -216,6 +224,58 @@ class ResumeBaseline:
 
 
 @dataclass(frozen=True)
+class AchievementEvidence:
+    id: str = ""
+    source_text: str = ""
+    scope: str = ""
+    action: str = ""
+    tools: tuple[str, ...] = ()
+    metrics: tuple[str, ...] = ()
+    outcome: str = ""
+    seniority_signal: str = ""
+    evidence_strength: str = "supported"
+    claim_confidence: float = 0.0
+    user_confirmed: bool = False
+    tags: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AchievementEvidence":
+        strength = _str(data.get("evidence_strength"), "supported")
+        if strength not in EVIDENCE_STRENGTHS:
+            strength = "supported"
+        return cls(
+            id=_str(data.get("id"), ""),
+            source_text=_str(data.get("source_text"), ""),
+            scope=_str(data.get("scope"), ""),
+            action=_str(data.get("action"), ""),
+            tools=_str_tuple(data.get("tools")),
+            metrics=_str_tuple(data.get("metrics")),
+            outcome=_str(data.get("outcome"), ""),
+            seniority_signal=_str(data.get("seniority_signal"), ""),
+            evidence_strength=strength,
+            claim_confidence=_float(data.get("claim_confidence"), 0.0),
+            user_confirmed=_bool(data.get("user_confirmed"), False),
+            tags=_str_tuple(data.get("tags")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "source_text": self.source_text,
+            "scope": self.scope,
+            "action": self.action,
+            "tools": list(self.tools),
+            "metrics": list(self.metrics),
+            "outcome": self.outcome,
+            "seniority_signal": self.seniority_signal,
+            "evidence_strength": self.evidence_strength,
+            "claim_confidence": self.claim_confidence,
+            "user_confirmed": self.user_confirmed,
+            "tags": list(self.tags),
+        }
+
+
+@dataclass(frozen=True)
 class ExperienceEntry:
     id: str
     title: str = ""
@@ -223,9 +283,16 @@ class ExperienceEntry:
     date_range: str = ""
     location: str = ""
     bullets: tuple[str, ...] = ()
+    achievement_evidence: tuple[AchievementEvidence, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExperienceEntry":
+        raw_evidence = data.get("achievement_evidence")
+        evidence = (
+            tuple(AchievementEvidence.from_dict(item) for item in raw_evidence if isinstance(item, dict))
+            if isinstance(raw_evidence, list)
+            else ()
+        )
         return cls(
             id=_str(data.get("id"), ""),
             title=_str(data.get("title"), ""),
@@ -233,6 +300,7 @@ class ExperienceEntry:
             date_range=_str(data.get("date_range"), ""),
             location=_str(data.get("location"), ""),
             bullets=_str_tuple(data.get("bullets")),
+            achievement_evidence=evidence,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -243,6 +311,7 @@ class ExperienceEntry:
             "company": self.company,
             "location": self.location,
             "bullets": list(self.bullets),
+            "achievement_evidence": [item.to_dict() for item in self.achievement_evidence],
         }
 
 
@@ -302,6 +371,9 @@ class SkillCategory:
 
 
 TAILORING_MODES = ("strict", "balanced", "aggressive")
+CLAIM_MODES = ("verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation")
+AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing")
+EVIDENCE_STRENGTHS = ("verified", "supported", "inferred", "draft")
 WRITING_TONES = ("direct", "executive", "technical", "confident", "warm")
 BULLET_STYLES = ("balanced", "impact", "technical_depth", "leadership")
 VERBOSITY_LEVELS = ("concise", "balanced", "detailed")
@@ -316,6 +388,9 @@ class TailoringPolicy:
     allow_skill_reordering: bool = True
     allow_summary_rewrite: bool = True
     allow_minor_inference: bool = False
+    claim_mode: str = "evidence_reframing"
+    auto_approvable_claim_modes: tuple[str, ...] = AUTO_APPROVABLE_CLAIM_MODES
+    allow_adjacent_achievement_drafts: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TailoringPolicy":
@@ -323,6 +398,17 @@ class TailoringPolicy:
         mode = _str(data.get("mode"), "balanced")
         if mode not in TAILORING_MODES:
             mode = "balanced"
+        claim_mode = _str(data.get("claim_mode"), "evidence_reframing")
+        if claim_mode not in CLAIM_MODES:
+            claim_mode = "evidence_reframing"
+        auto_approvable = tuple(
+            claim_mode
+            for claim_mode in _str_tuple(data.get("auto_approvable_claim_modes"))
+            if claim_mode in AUTO_APPROVABLE_CLAIM_MODES
+        ) or AUTO_APPROVABLE_CLAIM_MODES
+        allow_adjacent_drafts = mode == "aggressive" and _bool(
+            data.get("allow_adjacent_achievement_drafts"), False
+        )
 
         policy = cls(
             mode=mode,
@@ -331,6 +417,9 @@ class TailoringPolicy:
             allow_skill_reordering=_bool(data.get("allow_skill_reordering"), True),
             allow_summary_rewrite=_bool(data.get("allow_summary_rewrite"), True),
             allow_minor_inference=_bool(data.get("allow_minor_inference"), False),
+            claim_mode=claim_mode,
+            auto_approvable_claim_modes=auto_approvable,
+            allow_adjacent_achievement_drafts=allow_adjacent_drafts,
         )
         # Strict mode forces every flag to False — the policy makes the
         # forbidden options unrepresentable rather than relying on consumers
@@ -343,11 +432,24 @@ class TailoringPolicy:
                 allow_skill_reordering=False,
                 allow_summary_rewrite=False,
                 allow_minor_inference=False,
+                claim_mode="verified_only",
+                auto_approvable_claim_modes=("verified_only",),
+                allow_adjacent_achievement_drafts=False,
             )
         return policy
 
     def to_dict(self) -> dict[str, Any]:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
+        return {
+            "mode": self.mode,
+            "allow_title_reframing": self.allow_title_reframing,
+            "allow_achievement_rewriting": self.allow_achievement_rewriting,
+            "allow_skill_reordering": self.allow_skill_reordering,
+            "allow_summary_rewrite": self.allow_summary_rewrite,
+            "allow_minor_inference": self.allow_minor_inference,
+            "claim_mode": self.claim_mode,
+            "auto_approvable_claim_modes": list(self.auto_approvable_claim_modes),
+            "allow_adjacent_achievement_drafts": self.allow_adjacent_achievement_drafts,
+        }
 
 
 @dataclass(frozen=True)

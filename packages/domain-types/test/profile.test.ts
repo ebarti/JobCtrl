@@ -11,6 +11,9 @@ import { describe, it, expect } from "vitest";
 import { LOCAL_TENANT } from "../src/tenant.js";
 import {
   TAILORING_MODES,
+  CLAIM_MODES,
+  AUTO_APPROVABLE_CLAIM_MODES,
+  EVIDENCE_STRENGTHS,
   WRITING_TONES,
   BULLET_STYLES,
   VERBOSITY_LEVELS,
@@ -24,6 +27,17 @@ import {
 describe("Profile types", () => {
   it("exposes the canonical TailoringMode enum", () => {
     expect(TAILORING_MODES).toEqual(["strict", "balanced", "aggressive"]);
+  });
+
+  it("exposes claim mode and evidence-strength enums", () => {
+    expect(CLAIM_MODES).toEqual([
+      "verified_only",
+      "evidence_reframing",
+      "adjacent_translation",
+      "draft_requires_confirmation",
+    ]);
+    expect(AUTO_APPROVABLE_CLAIM_MODES).toEqual(["verified_only", "evidence_reframing"]);
+    expect(EVIDENCE_STRENGTHS).toEqual(["verified", "supported", "inferred", "draft"]);
   });
 
   it("exposes the canonical WritingTone enum", () => {
@@ -48,6 +62,22 @@ describe("Profile types", () => {
       dateRange: "2022 -- Present",
       location: "Remote",
       bullets: ["Shipped APIs."],
+      achievementEvidence: [
+        {
+          id: "ev_role_1_latency",
+          sourceText: "Reduced API latency 35%.",
+          scope: "owned service",
+          action: "replaced synchronous calls",
+          tools: ["Python"],
+          metrics: ["35% latency reduction"],
+          outcome: "faster API responses",
+          senioritySignal: "technical ownership",
+          evidenceStrength: "verified",
+          claimConfidence: 0.95,
+          userConfirmed: true,
+          tags: ["latency"],
+        },
+      ],
     };
 
     const profile: Profile = {
@@ -123,6 +153,9 @@ describe("Profile types", () => {
           allowSkillReordering: true,
           allowSummaryRewrite: true,
           allowMinorInference: false,
+          claimMode: "evidence_reframing",
+          autoApprovableClaimModes: ["verified_only", "evidence_reframing"],
+          allowAdjacentAchievementDrafts: false,
         },
         writingStyle: {
           tone: "direct",
@@ -136,6 +169,7 @@ describe("Profile types", () => {
     };
 
     expect(profile.experienceEntries[0]?.id).toBe("role_1");
+    expect(profile.experienceEntries[0]?.achievementEvidence[0]?.id).toBe("ev_role_1_latency");
     expect(profile.tailoringRules.tailoringPolicy.mode).toBe("balanced");
   });
 
@@ -214,6 +248,9 @@ describe("Profile types", () => {
           allowSkillReordering: true,
           allowSummaryRewrite: true,
           allowMinorInference: false,
+          claimMode: "evidence_reframing",
+          autoApprovableClaimModes: ["verified_only", "evidence_reframing"],
+          allowAdjacentAchievementDrafts: false,
         },
         writingStyle: {
           tone: "direct",

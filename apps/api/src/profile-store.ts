@@ -17,6 +17,7 @@ export interface ProfilePaths {
 
 const CHILD_TABLES = [
   "candidate_profile_experience_bullets",
+  "candidate_profile_achievement_evidence",
   "candidate_profile_experience_entries",
   "candidate_profile_education_entries",
   "candidate_profile_skill_items",
@@ -139,6 +140,9 @@ const ROOT_COLUMNS = [
   "tailoring_allow_skill_reordering",
   "tailoring_allow_summary_rewrite",
   "tailoring_allow_minor_inference",
+  "tailoring_claim_mode",
+  "tailoring_auto_approvable_claim_modes_json",
+  "tailoring_allow_adjacent_achievement_drafts",
   "writing_tone",
   "writing_bullet_style",
   "writing_verbosity",
@@ -214,6 +218,9 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       tailoring_allow_skill_reordering INTEGER NOT NULL DEFAULT 1,
       tailoring_allow_summary_rewrite INTEGER NOT NULL DEFAULT 1,
       tailoring_allow_minor_inference INTEGER NOT NULL DEFAULT 0,
+      tailoring_claim_mode TEXT NOT NULL DEFAULT 'evidence_reframing',
+      tailoring_auto_approvable_claim_modes_json TEXT NOT NULL DEFAULT '["verified_only","evidence_reframing"]',
+      tailoring_allow_adjacent_achievement_drafts INTEGER NOT NULL DEFAULT 0,
       writing_tone TEXT NOT NULL DEFAULT 'direct',
       writing_bullet_style TEXT NOT NULL DEFAULT 'balanced',
       writing_verbosity TEXT NOT NULL DEFAULT 'balanced',
@@ -252,6 +259,25 @@ export function ensureProfileTables(db: SqliteDatabase): void {
       bullet_index INTEGER NOT NULL,
       bullet_text TEXT NOT NULL,
       PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+    );
+    CREATE TABLE IF NOT EXISTS candidate_profile_achievement_evidence (
+      tenant_id TEXT NOT NULL,
+      profile_id TEXT NOT NULL,
+      entry_id TEXT NOT NULL,
+      evidence_index INTEGER NOT NULL,
+      evidence_id TEXT NOT NULL DEFAULT '',
+      source_text TEXT NOT NULL DEFAULT '',
+      scope TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL DEFAULT '',
+      tools_json TEXT NOT NULL DEFAULT '[]',
+      metrics_json TEXT NOT NULL DEFAULT '[]',
+      outcome TEXT NOT NULL DEFAULT '',
+      seniority_signal TEXT NOT NULL DEFAULT '',
+      evidence_strength TEXT NOT NULL DEFAULT 'supported',
+      claim_confidence REAL NOT NULL DEFAULT 0,
+      user_confirmed INTEGER NOT NULL DEFAULT 0,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
     );
     CREATE TABLE IF NOT EXISTS candidate_profile_education_entries (
       tenant_id TEXT NOT NULL,
@@ -341,6 +367,9 @@ const CANDIDATE_PROFILE_COLUMN_MIGRATIONS: Record<string, string> = {
   experience_target_specializations: "TEXT NOT NULL DEFAULT ''",
   experience_target_locations: "TEXT NOT NULL DEFAULT ''",
   experience_target_work_models: "TEXT NOT NULL DEFAULT ''",
+  tailoring_claim_mode: "TEXT NOT NULL DEFAULT 'evidence_reframing'",
+  tailoring_auto_approvable_claim_modes_json: "TEXT NOT NULL DEFAULT '[\"verified_only\",\"evidence_reframing\"]'",
+  tailoring_allow_adjacent_achievement_drafts: "INTEGER NOT NULL DEFAULT 0",
 };
 
 function ensureCandidateProfileColumns(db: SqliteDatabase): void {
@@ -480,6 +509,14 @@ function insertChildren(db: SqliteDatabase, profile: ProfileShape): void {
       tenant_id, profile_id, entry_id, bullet_index, bullet_text
     ) VALUES (?, ?, ?, ?, ?)
   `);
+  const insertEvidence = db.prepare(`
+    INSERT INTO candidate_profile_achievement_evidence (
+      tenant_id, profile_id, entry_id, evidence_index,
+      evidence_id, source_text, scope, action, tools_json,
+      metrics_json, outcome, seniority_signal, evidence_strength,
+      claim_confidence, user_confirmed, tags_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
   experienceEntries.forEach((entry, index) => {
     const entryId = text(entry.id);
     insertExperience.run(
@@ -494,6 +531,26 @@ function insertChildren(db: SqliteDatabase, profile: ProfileShape): void {
     );
     asTextArray(entry.bullets).forEach((bullet, bulletIndex) => {
       insertBullet.run(TENANT_ID, PROFILE_ID, entryId, bulletIndex, bullet);
+    });
+    asRecordArray(entry.achievement_evidence).forEach((evidence, evidenceIndex) => {
+      insertEvidence.run(
+        TENANT_ID,
+        PROFILE_ID,
+        entryId,
+        evidenceIndex,
+        text(evidence.id),
+        text(evidence.source_text),
+        text(evidence.scope),
+        text(evidence.action),
+        jsonTextArray(evidence.tools),
+        jsonTextArray(evidence.metrics),
+        text(evidence.outcome),
+        text(evidence.seniority_signal),
+        text(evidence.evidence_strength, "supported"),
+        confidenceNumber(evidence.claim_confidence),
+        boolInt(evidence.user_confirmed, false),
+        jsonTextArray(evidence.tags),
+      );
     });
   });
 
@@ -656,6 +713,32 @@ function experienceRows(db: SqliteDatabase): Array<Record<string, unknown>> {
     company: text(row.company),
     location: text(row.location),
     bullets: orderedValues(db, "candidate_profile_experience_bullets", "bullet_text", "bullet_index", "entry_id = ?", [text(row.entry_id)]),
+    achievement_evidence: achievementEvidenceRows(db, text(row.entry_id)),
+  }));
+}
+
+function achievementEvidenceRows(db: SqliteDatabase, entryId: string): Array<Record<string, unknown>> {
+  const rows = db.prepare(`
+    SELECT evidence_id, source_text, scope, action, tools_json, metrics_json,
+           outcome, seniority_signal, evidence_strength, claim_confidence,
+           user_confirmed, tags_json
+    FROM candidate_profile_achievement_evidence
+    WHERE tenant_id = ? AND profile_id = ? AND entry_id = ?
+    ORDER BY evidence_index
+  `).all(TENANT_ID, PROFILE_ID, entryId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: text(row.evidence_id),
+    source_text: text(row.source_text),
+    scope: text(row.scope),
+    action: text(row.action),
+    tools: parseTextArray(row.tools_json),
+    metrics: parseTextArray(row.metrics_json),
+    outcome: text(row.outcome),
+    seniority_signal: text(row.seniority_signal),
+    evidence_strength: text(row.evidence_strength, "supported"),
+    claim_confidence: confidenceNumber(row.claim_confidence),
+    user_confirmed: Boolean(Number(row.user_confirmed ?? 0)),
+    tags: parseTextArray(row.tags_json),
   }));
 }
 
@@ -704,6 +787,9 @@ function tailoringRules(db: SqliteDatabase, row: ProfileRow): Record<string, unk
       allow_skill_reordering: Boolean(Number(row.tailoring_allow_skill_reordering ?? 1)),
       allow_summary_rewrite: Boolean(Number(row.tailoring_allow_summary_rewrite ?? 1)),
       allow_minor_inference: Boolean(Number(row.tailoring_allow_minor_inference ?? 0)),
+      claim_mode: stringColumn(row.tailoring_claim_mode, "evidence_reframing"),
+      auto_approvable_claim_modes: parseTextArray(row.tailoring_auto_approvable_claim_modes_json),
+      allow_adjacent_achievement_drafts: Boolean(Number(row.tailoring_allow_adjacent_achievement_drafts ?? 0)),
     },
     writing_style: {
       tone: stringColumn(row.writing_tone, "direct"),
@@ -823,6 +909,9 @@ function rootValues(
     boolInt(policy.allow_skill_reordering, true),
     boolInt(policy.allow_summary_rewrite, true),
     boolInt(policy.allow_minor_inference, false),
+    text(policy.claim_mode, "evidence_reframing"),
+    jsonTextArray(policy.auto_approvable_claim_modes),
+    boolInt(policy.allow_adjacent_achievement_drafts, false),
     text(writing.tone, "direct"),
     text(writing.bullet_style, "balanced"),
     text(writing.verbosity, "balanced"),
@@ -948,8 +1037,32 @@ function asTextArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
 }
 
+function jsonTextArray(value: unknown): string {
+  return JSON.stringify(asTextArray(value));
+}
+
+function parseTextArray(value: unknown): string[] {
+  let candidate: unknown = value;
+  if (typeof value === "string") {
+    try {
+      candidate = JSON.parse(value);
+    } catch {
+      candidate = [];
+    }
+  }
+  return asTextArray(candidate);
+}
+
 function text(value: unknown, fallback = ""): string {
   return value === undefined || value === null ? fallback : String(value);
+}
+
+function confidenceNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, parsed));
 }
 
 function stringColumn(value: string | number | null, fallback = ""): string {

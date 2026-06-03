@@ -93,6 +93,7 @@ def test_profile_schema_is_normalized_without_profile_json_escape_hatch(tmp_path
         "candidate_profiles",
         "candidate_profile_experience_entries",
         "candidate_profile_experience_bullets",
+        "candidate_profile_achievement_evidence",
         "candidate_profile_education_entries",
         "candidate_profile_skill_categories",
         "candidate_profile_skill_items",
@@ -131,6 +132,52 @@ def test_save_and_load_round_trips_profile_through_relational_rows(tmp_path):
     assert loaded is not None
     assert loaded.to_dict() == Profile.from_dict(LOCAL_TENANT, _valid_profile()).to_dict()
     assert [event.event_type for event in events] == ["ProfileUpdated"]
+
+
+def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp_path):
+    repo, conn, _ = _new_repo(tmp_path)
+    raw = _valid_profile()
+    raw["resume"]["experience_entries"][0]["achievement_evidence"] = [
+        {
+            "id": "ev_role_1_latency",
+            "source_text": "Reduced API latency 35% by replacing synchronous enrichment calls.",
+            "scope": "owned service",
+            "action": "replaced synchronous enrichment calls",
+            "tools": ["Python", "PostgreSQL"],
+            "metrics": ["35% latency reduction"],
+            "outcome": "faster API responses",
+            "seniority_signal": "technical ownership",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.95,
+            "user_confirmed": True,
+            "tags": ["latency", "backend", "performance"],
+        }
+    ]
+    raw["resume"]["tailoring_rules"]["tailoring_policy"] = {
+        "mode": "aggressive",
+        "claim_mode": "draft_requires_confirmation",
+        "auto_approvable_claim_modes": ["verified_only", "draft_requires_confirmation"],
+        "allow_adjacent_achievement_drafts": True,
+    }
+
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
+
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 1
+    root = conn.execute(
+        "SELECT tailoring_claim_mode, tailoring_auto_approvable_claim_modes_json, "
+        "tailoring_allow_adjacent_achievement_drafts FROM candidate_profiles"
+    ).fetchone()
+    assert root["tailoring_claim_mode"] == "draft_requires_confirmation"
+    assert json.loads(root["tailoring_auto_approvable_claim_modes_json"]) == ["verified_only"]
+    assert root["tailoring_allow_adjacent_achievement_drafts"] == 1
+
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    loaded_entry = loaded.to_dict()["resume"]["experience_entries"][0]
+    assert loaded_entry["achievement_evidence"] == raw["resume"]["experience_entries"][0]["achievement_evidence"]
+    assert loaded.to_dict()["resume"]["tailoring_rules"]["tailoring_policy"][
+        "auto_approvable_claim_modes"
+    ] == ["verified_only"]
 
 
 def test_legacy_profile_json_seeds_sqlite_once_and_writes_stay_in_sqlite(tmp_path):

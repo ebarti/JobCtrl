@@ -17,6 +17,15 @@ import type { TenantId } from "../tenant.js";
 export const TAILORING_MODES = ["strict", "balanced", "aggressive"] as const;
 export type TailoringMode = (typeof TAILORING_MODES)[number];
 
+export const CLAIM_MODES = ["verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation"] as const;
+export type ClaimMode = (typeof CLAIM_MODES)[number];
+
+export const AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
+export type AutoApprovableClaimMode = (typeof AUTO_APPROVABLE_CLAIM_MODES)[number];
+
+export const EVIDENCE_STRENGTHS = ["verified", "supported", "inferred", "draft"] as const;
+export type EvidenceStrength = (typeof EVIDENCE_STRENGTHS)[number];
+
 export const WRITING_TONES = ["direct", "executive", "technical", "confident", "warm"] as const;
 export type WritingTone = (typeof WRITING_TONES)[number];
 
@@ -102,6 +111,21 @@ export interface ResumeBaseline {
   readonly baselineText: string;
 }
 
+export interface AchievementEvidence {
+  readonly id: string;
+  readonly sourceText: string;
+  readonly scope: string;
+  readonly action: string;
+  readonly tools: readonly string[];
+  readonly metrics: readonly string[];
+  readonly outcome: string;
+  readonly senioritySignal: string;
+  readonly evidenceStrength: EvidenceStrength;
+  readonly claimConfidence: number;
+  readonly userConfirmed: boolean;
+  readonly tags: readonly string[];
+}
+
 export interface ExperienceEntry {
   readonly id: string;
   readonly title: string;
@@ -109,6 +133,7 @@ export interface ExperienceEntry {
   readonly dateRange: string;
   readonly location: string;
   readonly bullets: readonly string[];
+  readonly achievementEvidence: readonly AchievementEvidence[];
 }
 
 export interface EducationEntry {
@@ -136,6 +161,9 @@ export interface TailoringPolicy {
   readonly allowSkillReordering: boolean;
   readonly allowSummaryRewrite: boolean;
   readonly allowMinorInference: boolean;
+  readonly claimMode: ClaimMode;
+  readonly autoApprovableClaimModes: readonly AutoApprovableClaimMode[];
+  readonly allowAdjacentAchievementDrafts: boolean;
 }
 
 export interface WritingStyle {

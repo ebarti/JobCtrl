@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 _CHILD_TABLES = (
     "candidate_profile_experience_bullets",
+    "candidate_profile_achievement_evidence",
     "candidate_profile_experience_entries",
     "candidate_profile_education_entries",
     "candidate_profile_skill_items",
@@ -236,8 +237,9 @@ class SqliteProfileRepository:
                     (str(tenant_id), profile_id),
                 )
 
+            root_values = _root_values(str(tenant_id), profile_id, profile_dict, style, template_text, version, now)
             self._conn.execute(
-                """
+                f"""
                 INSERT INTO candidate_profiles (
                     tenant_id, profile_id,
                     personal_full_name, personal_preferred_name, personal_email,
@@ -265,6 +267,8 @@ class SqliteProfileRepository:
                     tailoring_allow_achievement_rewriting,
                     tailoring_allow_skill_reordering, tailoring_allow_summary_rewrite,
                     tailoring_allow_minor_inference,
+                    tailoring_claim_mode, tailoring_auto_approvable_claim_modes_json,
+                    tailoring_allow_adjacent_achievement_drafts,
                     writing_tone, writing_bullet_style, writing_verbosity,
                     writing_keyword_density, writing_avoid_first_person,
                     max_experience_bullets, custom_tailoring_prompt,
@@ -273,12 +277,7 @@ class SqliteProfileRepository:
                     resume_style_moderncv_color, resume_style_page_scale,
                     resume_style_hints_column_width_cm, resume_style_body_alignment,
                     resume_template_text, version, updated_at
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
+                ) VALUES ({", ".join("?" for _ in root_values)})
                 ON CONFLICT(tenant_id, profile_id) DO UPDATE SET
                     personal_full_name = excluded.personal_full_name,
                     personal_preferred_name = excluded.personal_preferred_name,
@@ -327,6 +326,9 @@ class SqliteProfileRepository:
                     tailoring_allow_skill_reordering = excluded.tailoring_allow_skill_reordering,
                     tailoring_allow_summary_rewrite = excluded.tailoring_allow_summary_rewrite,
                     tailoring_allow_minor_inference = excluded.tailoring_allow_minor_inference,
+                    tailoring_claim_mode = excluded.tailoring_claim_mode,
+                    tailoring_auto_approvable_claim_modes_json = excluded.tailoring_auto_approvable_claim_modes_json,
+                    tailoring_allow_adjacent_achievement_drafts = excluded.tailoring_allow_adjacent_achievement_drafts,
                     writing_tone = excluded.writing_tone,
                     writing_bullet_style = excluded.writing_bullet_style,
                     writing_verbosity = excluded.writing_verbosity,
@@ -346,7 +348,7 @@ class SqliteProfileRepository:
                     version = excluded.version,
                     updated_at = excluded.updated_at
                 """,
-                _root_values(str(tenant_id), profile_id, profile_dict, style, template_text, version, now),
+                root_values,
             )
 
             self._insert_children(str(tenant_id), profile_id, profile)
@@ -370,6 +372,35 @@ class SqliteProfileRepository:
                     ) VALUES (?, ?, ?, ?, ?)
                     """,
                     (tenant_id, profile_id, entry.id, bullet_index, bullet),
+                )
+            for evidence_index, evidence in enumerate(entry.achievement_evidence):
+                self._conn.execute(
+                    """
+                    INSERT INTO candidate_profile_achievement_evidence (
+                        tenant_id, profile_id, entry_id, evidence_index,
+                        evidence_id, source_text, scope, action, tools_json,
+                        metrics_json, outcome, seniority_signal, evidence_strength,
+                        claim_confidence, user_confirmed, tags_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tenant_id,
+                        profile_id,
+                        entry.id,
+                        evidence_index,
+                        evidence.id,
+                        evidence.source_text,
+                        evidence.scope,
+                        evidence.action,
+                        _json_array(evidence.tools),
+                        _json_array(evidence.metrics),
+                        evidence.outcome,
+                        evidence.seniority_signal,
+                        evidence.evidence_strength,
+                        evidence.claim_confidence,
+                        1 if evidence.user_confirmed else 0,
+                        _json_array(evidence.tags),
+                    ),
                 )
 
         for index, entry in enumerate(profile.education_entries):
@@ -573,6 +604,11 @@ class SqliteProfileRepository:
                         where="entry_id = ?",
                         params=(row["entry_id"],),
                     ),
+                    "achievement_evidence": self._achievement_evidence(
+                        tenant_id,
+                        profile_id,
+                        row["entry_id"],
+                    ),
                 }
             )
         return entries
@@ -673,6 +709,13 @@ class SqliteProfileRepository:
                 "allow_skill_reordering": _as_bool(row["tailoring_allow_skill_reordering"]),
                 "allow_summary_rewrite": _as_bool(row["tailoring_allow_summary_rewrite"]),
                 "allow_minor_inference": _as_bool(row["tailoring_allow_minor_inference"]),
+                "claim_mode": row["tailoring_claim_mode"],
+                "auto_approvable_claim_modes": _json_str_list(
+                    row["tailoring_auto_approvable_claim_modes_json"]
+                ),
+                "allow_adjacent_achievement_drafts": _as_bool(
+                    row["tailoring_allow_adjacent_achievement_drafts"]
+                ),
             },
             "writing_style": {
                 "tone": row["writing_tone"],
@@ -682,6 +725,41 @@ class SqliteProfileRepository:
                 "avoid_first_person": _as_bool(row["writing_avoid_first_person"]),
             },
         }
+
+    def _achievement_evidence(
+        self,
+        tenant_id: str,
+        profile_id: str,
+        entry_id: str,
+    ) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT evidence_id, source_text, scope, action, tools_json, metrics_json,
+                   outcome, seniority_signal, evidence_strength, claim_confidence,
+                   user_confirmed, tags_json
+            FROM candidate_profile_achievement_evidence
+            WHERE tenant_id = ? AND profile_id = ? AND entry_id = ?
+            ORDER BY evidence_index
+            """,
+            (tenant_id, profile_id, entry_id),
+        ).fetchall()
+        return [
+            {
+                "id": row["evidence_id"],
+                "source_text": row["source_text"],
+                "scope": row["scope"],
+                "action": row["action"],
+                "tools": _json_str_list(row["tools_json"]),
+                "metrics": _json_str_list(row["metrics_json"]),
+                "outcome": row["outcome"],
+                "seniority_signal": row["seniority_signal"],
+                "evidence_strength": row["evidence_strength"],
+                "claim_confidence": float(row["claim_confidence"] or 0.0),
+                "user_confirmed": _as_bool(row["user_confirmed"]),
+                "tags": _json_str_list(row["tags_json"]),
+            }
+            for row in rows
+        ]
 
     def _ordered_values(
         self,
@@ -828,6 +906,9 @@ def _root_values(
         _bool_int(policy.get("allow_skill_reordering"), True),
         _bool_int(policy.get("allow_summary_rewrite"), True),
         _bool_int(policy.get("allow_minor_inference"), False),
+        _text(policy.get("claim_mode"), "evidence_reframing"),
+        _json_array(_claim_modes(policy.get("auto_approvable_claim_modes"))),
+        _bool_int(policy.get("allow_adjacent_achievement_drafts"), False),
         _text(writing.get("tone"), "direct"),
         _text(writing.get("bullet_style"), "balanced"),
         _text(writing.get("verbosity"), "balanced"),
@@ -898,6 +979,28 @@ def _bool_int(value: Any, default: bool) -> int:
 
 def _as_bool(value: Any) -> bool:
     return bool(int(value or 0))
+
+
+def _json_array(values: tuple[str, ...] | list[str]) -> str:
+    return json.dumps([str(value) for value in values if str(value)])
+
+
+def _json_str_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        try:
+            raw = json.loads(str(value or "[]"))
+        except json.JSONDecodeError:
+            raw = []
+    if not isinstance(raw, list):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _claim_modes(value: Any) -> list[str]:
+    modes = _json_str_list(value)
+    return modes or ["verified_only", "evidence_reframing"]
 
 
 def _diff_top_level_sections(previous: dict[str, Any], current: dict[str, Any]) -> tuple[str, ...]:
