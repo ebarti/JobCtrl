@@ -30,6 +30,7 @@ from jobhunter.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
+from jobhunter.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_SCHEMA
 from jobhunter.domain.materials.aggregate import MaterialsLifecycle
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
@@ -124,7 +125,7 @@ def job() -> dict:
         "title": "Backend Engineer",
         "site": "Acme",
         "full_description": "Build a Python service.",
-        "fit_score": 9,
+        "fit_score": 7,
     }
 
 
@@ -301,6 +302,50 @@ def _judge_with_score(score: float, verdict: str = "PASS") -> str:
     )
 
 
+def _adversarial_pass(*, warnings: list[str] | None = None) -> str:
+    return json.dumps(
+        {
+            "verdict": "PASS",
+            "score": 0.91,
+            "personas": [
+                {
+                    "persona": "evidence_auditor",
+                    "verdict": "PASS",
+                    "score": 0.92,
+                    "blockers": [],
+                    "warnings": warnings or [],
+                    "repair_instructions": [],
+                }
+            ],
+            "blockers": [],
+            "warnings": warnings or [],
+            "repair_instructions": [],
+        }
+    )
+
+
+def _adversarial_fail() -> str:
+    return json.dumps(
+        {
+            "verdict": "FAIL",
+            "score": 0.31,
+            "personas": [
+                {
+                    "persona": "interview_defensibility_critic",
+                    "verdict": "FAIL",
+                    "score": 0.25,
+                    "blockers": ["Claim cannot be defended in interview."],
+                    "warnings": [],
+                    "repair_instructions": ["Replace the unsupported claim with verified evidence."],
+                }
+            ],
+            "blockers": ["Unsupported high-fit resume claim."],
+            "warnings": [],
+            "repair_instructions": ["Use only verified evidence from ev_latency."],
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # TailorResumeUseCase
 # ---------------------------------------------------------------------------
@@ -340,7 +385,11 @@ def _assert_openai_strict_schema(schema: dict[str, Any], path: str = "$") -> Non
 
 @pytest.mark.parametrize(
     "schema",
-    [TAILORED_RESUME_RESPONSE_SCHEMA, TAILORING_JUDGE_RESPONSE_SCHEMA],
+    [
+        TAILORED_RESUME_RESPONSE_SCHEMA,
+        TAILORING_JUDGE_RESPONSE_SCHEMA,
+        ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
+    ],
 )
 def test_tailoring_structured_output_schemas_are_openai_strict_compatible(
     schema: dict[str, Any],
@@ -416,6 +465,135 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert metadata["quality_plan"]["required_evidence_ids"] == ["ev_latency"]
     assert metadata["quality_checks"]["passed"] is True
     assert outcome.report["tailoring_quality"]["quality_checks"]["passed"] is True
+
+
+def test_tailor_use_case_skips_adversarial_review_below_high_fit_threshold(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_good_json_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 2
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    review = outcome.materials.tailored_resume.metadata["adversarial_review"]
+    assert review["ran"] is False
+    assert review["skipped_reason"] == "below_high_fit_threshold"
+
+
+def test_tailor_use_case_runs_adversarial_review_for_high_fit_jobs(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    high_fit_job = {
+        **job,
+        "fit_score": 9,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "PostgreSQL", "API performance"],
+        "responsibilities": ["Own backend latency improvements"],
+        "full_description": "Own Python services and improve API latency.",
+    }
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_quality_json_payload(), _judge_pass(), _adversarial_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 3
+    assert "adversarial resume review" in llm.calls[2][0].content
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    review = outcome.materials.tailored_resume.metadata["adversarial_review"]
+    assert review["ran"] is True
+    assert review["passed"] is True
+    assert review["normalized_fit_score"] == 0.9
+
+
+def test_tailor_use_case_persists_adversarial_warnings_without_blocking(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    high_fit_job = {**job, "fit_score": 9, "title": "Senior Backend Engineer"}
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([
+        _quality_json_payload(),
+        _judge_pass(),
+        _adversarial_pass(warnings=["Bullet could be more concise."]),
+    ])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    review = outcome.materials.tailored_resume.metadata["adversarial_review"]
+    assert review["warnings"] == ["Bullet could be more concise."]
+
+
+def test_tailor_use_case_adversarial_blocker_fails_and_feeds_retry_notes(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    high_fit_job = {
+        **job,
+        "fit_score": 9,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "PostgreSQL", "API performance"],
+        "responsibilities": ["Own backend latency improvements"],
+        "full_description": "Own Python services and improve API latency.",
+    }
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([
+        _quality_json_payload(),
+        _judge_pass(),
+        _adversarial_fail(),
+        _quality_json_payload(),
+        _judge_pass(),
+        _adversarial_pass(),
+    ])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=1,
+    )
+
+    outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 6
+    assert "Unsupported high-fit resume claim" in llm.calls[3][0].content
+    first_candidate = outcome.report["attempt_history"][0]["candidates"][0]
+    assert first_candidate["status"] == "adversarial_rejected"
+    assert first_candidate["adversarial_review"]["passed"] is False
 
 
 def test_tailor_use_case_quality_failure_feeds_retry_notes(
