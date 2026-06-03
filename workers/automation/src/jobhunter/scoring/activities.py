@@ -25,6 +25,7 @@ class ScoreActivityInput:
     job_urls: tuple[str, ...] = ()
     current_policy_only: bool = False
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    workflow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ async def score_activity(payload: ScoreActivityInput) -> ScoreActivityOutput:
             dry_run=payload.dry_run,
             rescore=payload.rescore,
             llm_model=payload.llm_model,
+            workflow_id=payload.workflow_id,
         )
 
     result = await run_blocking_with_heartbeat(

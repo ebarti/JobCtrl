@@ -64,6 +64,7 @@ log = logging.getLogger(__name__)
 console = Console()
 
 _PIPELINE_JOB_ID = "pipeline"
+_PIPELINE_RUN_CONTEXT = threading.local()
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +102,11 @@ _UPSTREAMS: dict[str, tuple[str, ...]] = {
 
 def _pipeline_tracer():
     return trace.get_tracer("jobhunter.pipeline")
+
+
+def _current_workflow_id() -> str | None:
+    value = getattr(_PIPELINE_RUN_CONTEXT, "workflow_id", None)
+    return value if isinstance(value, str) and value else None
 
 
 def _record_pipeline_event(
@@ -186,6 +192,10 @@ def _pipeline_event_payload(
         "component": "pipeline",
         **(payload or {}),
     }
+    workflow_id = _current_workflow_id()
+    if workflow_id:
+        enriched.setdefault("workflowId", workflow_id)
+        enriched.setdefault("workflow_id", workflow_id)
     if event_type == "StageStarted":
         enriched.setdefault("attemptNumber", int(enriched.get("passNumber") or 1))
         enriched.setdefault("startedAt", occurred_at)
@@ -2231,6 +2241,7 @@ def run_pipeline(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    workflow_id: str | None = None,
 ) -> dict:
     """Run pipeline stages.
 
@@ -2253,6 +2264,49 @@ def run_pipeline(
     Returns:
         Dict with keys: stages (list of result dicts), errors (dict), elapsed (float).
     """
+    previous_workflow_id = getattr(_PIPELINE_RUN_CONTEXT, "workflow_id", None)
+    if workflow_id:
+        _PIPELINE_RUN_CONTEXT.workflow_id = workflow_id
+    elif hasattr(_PIPELINE_RUN_CONTEXT, "workflow_id"):
+        delattr(_PIPELINE_RUN_CONTEXT, "workflow_id")
+    try:
+        return _run_pipeline_inner(
+            stages=stages,
+            min_score=min_score,
+            dry_run=dry_run,
+            stream=stream,
+            workers=workers,
+            validation_mode=validation_mode,
+            limit=limit,
+            rescore=rescore,
+            retailor=retailor,
+            llm_model=llm_model,
+            tailor_models=tailor_models,
+            tailor_judge_model=tailor_judge_model,
+            tailor_judge_min_score=tailor_judge_min_score,
+        )
+    finally:
+        if isinstance(previous_workflow_id, str) and previous_workflow_id:
+            _PIPELINE_RUN_CONTEXT.workflow_id = previous_workflow_id
+        elif hasattr(_PIPELINE_RUN_CONTEXT, "workflow_id"):
+            delattr(_PIPELINE_RUN_CONTEXT, "workflow_id")
+
+
+def _run_pipeline_inner(
+    stages: list[str] | None = None,
+    min_score: int = 7,
+    dry_run: bool = False,
+    stream: bool = False,
+    workers: int = 1,
+    validation_mode: str = "normal",
+    limit: int = 0,
+    rescore: bool = False,
+    retailor: bool = False,
+    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
+    tailor_models: tuple[str, ...] = (),
+    tailor_judge_model: str | None = None,
+    tailor_judge_min_score: float | None = None,
+) -> dict:
     # Bootstrap
     load_env()
     ensure_dirs()

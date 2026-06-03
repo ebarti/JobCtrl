@@ -65,6 +65,41 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
+  it("shows a stop control for the selected in-flight apply run", async () => {
+    const runningQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              latestApplyRun: {
+                runId: "apply-running-1",
+                status: "in_progress" as const,
+                result: null,
+                dryRun: false,
+                startedAt: "2026-05-30T06:33:32Z",
+                finishedAt: null,
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => runningQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: /Stop apply run for Principal Platform Engineer/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("renders the verbatim job post markdown without injecting raw html", async () => {
     const markdownQueue = {
       ...sampleApplyReviewQueue,

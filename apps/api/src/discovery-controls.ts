@@ -73,6 +73,8 @@ const AMERICA_ONLY_SOURCE_MARKERS = [
   "wellfound.com/role/l/software-engineer/canada",
 ];
 
+const WORKDAY_HOST_ALIAS_SOURCE_RE = /^workday:(?<employer>.+)-wd\d+-myworkdayjobs-com$/;
+
 interface SourceRegistryRow extends Record<string, unknown> {
   tenant_id: string;
   source_id: string;
@@ -298,9 +300,13 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
     [DEFAULT_TENANT],
   );
   const quality = sourceQualityById(db);
+  const sourceIds = new Set(rows.map((row) => row.source_id));
   const summaries = new Map<string, SourceRegistryEntrySummary>();
   for (const row of rows) {
     if (filterAmericaOnlySources && isAmericaOnlySource(row.source_id, row.display_name, row.seed_url)) {
+      continue;
+    }
+    if (isKnownWorkdayHostAlias(row.source_id, sourceIds)) {
       continue;
     }
     summaries.set(row.source_id, rowToSourceSummary(row, quality.get(row.source_id)));
@@ -309,11 +315,25 @@ export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListRespon
     if (filterAmericaOnlySources && isAmericaOnlySource(sourceId, sourceId, null)) {
       continue;
     }
+    if (isKnownWorkdayHostAlias(sourceId, sourceIds)) {
+      continue;
+    }
     if (!summaries.has(sourceId)) {
       summaries.set(sourceId, qualityOnlySourceSummary(sourceId, stats));
     }
   }
   return { ok: true, sources: [...summaries.values()] };
+}
+
+function isKnownWorkdayHostAlias(sourceId: string, sourceIds: Set<string>): boolean {
+  const canonicalId = canonicalWorkdaySourceIdForAlias(sourceId);
+  return Boolean(canonicalId && sourceIds.has(canonicalId));
+}
+
+function canonicalWorkdaySourceIdForAlias(sourceId: string): string | null {
+  const match = WORKDAY_HOST_ALIAS_SOURCE_RE.exec(sourceId);
+  const employer = match?.groups?.employer;
+  return employer ? `workday:${employer}` : null;
 }
 
 function targetSearchPrefersEurope(db: SqliteDatabase): boolean {

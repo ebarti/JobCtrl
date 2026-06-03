@@ -247,6 +247,73 @@ describe("discovery product controls API", () => {
     }
   });
 
+  it("coalesces known Workday host aliases in the source registry list", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+      const db = new Database(dbPath);
+      const now = "2026-05-15T10:00:00+00:00";
+      const insert = db.prepare(
+        `INSERT INTO source_registry_entries (
+           tenant_id, source_id, kind, display_name, owner, priority, state,
+           policy_id, seed_url, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insert.run(
+        "local",
+        "workday:acme",
+        "ats_api",
+        "Acme",
+        "system",
+        "canonical",
+        "active",
+        "workday_api_canonical",
+        "https://acme.wd3.myworkdayjobs.com",
+        now,
+        now,
+      );
+      insert.run(
+        "local",
+        "workday:acme-wd3-myworkdayjobs-com",
+        "ats_api",
+        "acme.wd3.myworkdayjobs.com",
+        "user",
+        "canonical",
+        "active",
+        "workday_api_canonical",
+        "https://acme.wd3.myworkdayjobs.com",
+        now,
+        now,
+      );
+      insert.run(
+        "local",
+        "workday:unknown-wd3-myworkdayjobs-com",
+        "ats_api",
+        "unknown.wd3.myworkdayjobs.com",
+        "user",
+        "canonical",
+        "active",
+        "workday_api_canonical",
+        "https://unknown.wd3.myworkdayjobs.com",
+        now,
+        now,
+      );
+      db.close();
+
+      const list = await app.inject({ method: "GET", url: "/v1/discovery/sources" });
+
+      expect(list.statusCode, list.body).toBe(200);
+      const sourceIds = list.json().sources.map((source: { sourceId: string }) => source.sourceId);
+      expect(sourceIds).toContain("workday:acme");
+      expect(sourceIds).not.toContain("workday:acme-wd3-myworkdayjobs-com");
+      expect(sourceIds).toContain("workday:unknown-wd3-myworkdayjobs-com");
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("records discovery feedback without copying the free-form note into domain events", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));

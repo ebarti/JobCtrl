@@ -136,6 +136,7 @@ class JobPipelineWorkflow:
 
 async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
     """Dispatch one stage to its Temporal activity."""
+    workflow_id = workflow.info().workflow_id
     if stage == "discover":
         return await workflow.execute_activity(
             discover_activity,
@@ -152,6 +153,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
+                workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -167,6 +169,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
+                workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -186,6 +189,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 job_urls=_selected_job_urls(payload),
                 current_policy_only=payload.score_current_policy_only,
                 llm_model=payload.llm_model,
+                workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -211,6 +215,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
+                workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -228,6 +233,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
                 llm_model=payload.llm_model,
+                workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,

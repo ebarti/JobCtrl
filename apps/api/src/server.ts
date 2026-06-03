@@ -46,6 +46,7 @@ import {
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
+  STAGES,
   type Stage,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
@@ -432,6 +433,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       return undefined;
     }
     const dispatch = await actionDispatcher(command, actionContext);
+    if (dispatch.workflowId) {
+      recordPipelineWorkflowStarted(options.dbPath, firstStage, dispatch.workflowId, dispatch.runId);
+    }
     actions.push(buildActionResponse(command, dispatch));
     const status = stageRunStatus(actions);
     void reply.code(dispatch.status === "queued" && status !== "failed" ? 202 : 200);
@@ -967,6 +971,24 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     ),
   );
 
+  app.post<{ Params: { runId: string } }>("/v1/workflow-runs/:runId/actions/cancel", async (request, reply) => {
+    const runId = decodeRouteParam(request.params.runId);
+    const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+    if (!workerReady) {
+      return undefined;
+    }
+    const command: ActionCommandPayload = {
+      action: "cancel" as const,
+      jobKey: PIPELINE_ACTION_JOB_KEY,
+      runId,
+    };
+    const dispatch = await actionDispatcher(command, actionContext);
+    if (dispatch.status !== "failed") {
+      recordPipelineWorkflowCancelRequested(options.dbPath, runId);
+    }
+    return buildActionResponse(command, dispatch);
+  });
+
   app.get("/v1/artifacts", async (request, reply) =>
     withDb(reply, options.dbPath, (db) => listArtifacts(db, ArtifactListQuerySchema.parse(request.query))),
   );
@@ -1319,6 +1341,230 @@ async function withWritableDb<T>(
   } finally {
     db?.close();
   }
+}
+
+type ApiDb = ReturnType<typeof openDatabase>;
+
+function recordPipelineWorkflowStarted(
+  dbPath: string,
+  stage: Stage,
+  workflowId: string,
+  runId: string | undefined,
+): void {
+  recordPipelineWorkflowEvent(dbPath, {
+    stage,
+    eventType: "StageStarted",
+    level: "info",
+    message: `${labelForStage(stage)} workflow started`,
+    workflowId,
+    runId,
+    progressStatus: "running",
+  });
+}
+
+function recordPipelineWorkflowCancelRequested(dbPath: string, workflowId: string): void {
+  if (!databaseExists(dbPath)) return;
+  let db: ApiDb | null = null;
+  try {
+    db = openDatabase(dbPath);
+    const latest = latestPipelineWorkflowEvent(db, workflowId);
+    if (!latest) return;
+    const payload = parseJsonRecord(latest.payload_json);
+    const progress = isRecord(payload.progress) ? payload.progress : {};
+    const stage = isStage(latest.stage) ? latest.stage : isStage(payload.stage) ? payload.stage : null;
+    if (!stage) return;
+    const sourceRunId = textValue(payload.runId ?? payload.run_id);
+    const message = `${labelForStage(stage)} canceled`;
+    insertJobEvent(db, {
+      jobUrl: null,
+      stage,
+      eventType: "StageFailed",
+      level: "warn",
+      message,
+      payload: {
+        tenantId: "local",
+        jobId: PIPELINE_ACTION_JOB_KEY,
+        stage,
+        workflowId,
+        workflow_id: workflowId,
+        ...(sourceRunId ? { runId: sourceRunId, run_id: sourceRunId } : {}),
+        errorCode: "pipeline_stage_canceled",
+        errorMessage: message,
+        retryable: true,
+        progress: {
+          completed: numberValue(progress.completed ?? progress.progressCompleted) ?? 0,
+          total: numberValue(progress.total ?? progress.progressTotal) ?? 1,
+          percent: numberValue(progress.percent ?? progress.progressPercent) ?? 0,
+          currentStep: textValue(progress.currentStep ?? progress.current_step) || null,
+          status: "failed",
+          message,
+        },
+      },
+    });
+    if (stage === "discover" && sourceRunId) {
+      const now = new Date().toISOString();
+      insertJobEvent(db, {
+        jobUrl: null,
+        stage,
+        eventType: "DiscoveryRunFailed",
+        level: "warn",
+        message: `Discovery run ${sourceRunId} canceled`,
+        payload: {
+          tenantId: "local",
+          runId: sourceRunId,
+          run_id: sourceRunId,
+          errorClass: "canceled",
+          error_class: "canceled",
+          failedAt: now,
+          failed_at: now,
+          retryable: true,
+        },
+      });
+    }
+  } catch {
+    // Cancellation should still reach Temporal even if local projection repair fails.
+  } finally {
+    db?.close();
+  }
+}
+
+function recordPipelineWorkflowEvent(
+  dbPath: string,
+  event: {
+    stage: Stage;
+    eventType: string;
+    level: string;
+    message: string;
+    workflowId: string;
+    runId: string | undefined;
+    progressStatus: "running" | "failed";
+  },
+): void {
+  if (!databaseExists(dbPath)) return;
+  let db: ApiDb | null = null;
+  try {
+    db = openDatabase(dbPath);
+    insertJobEvent(db, {
+      jobUrl: null,
+      stage: event.stage,
+      eventType: event.eventType,
+      level: event.level,
+      message: event.message,
+      payload: {
+        tenantId: "local",
+        jobId: PIPELINE_ACTION_JOB_KEY,
+        stage: event.stage,
+        workflowId: event.workflowId,
+        workflow_id: event.workflowId,
+        ...(event.runId ? { runId: event.runId, run_id: event.runId } : {}),
+        progress: {
+          completed: 0,
+          total: 1,
+          percent: 0,
+          currentStep: null,
+          status: event.progressStatus,
+          message: event.message,
+        },
+      },
+    });
+  } catch {
+    // Best-effort projection hint; the worker still emits canonical progress events.
+  } finally {
+    db?.close();
+  }
+}
+
+function latestPipelineWorkflowEvent(
+  db: ApiDb,
+  workflowId: string,
+): { stage: string | null; payload_json: string | null } | null {
+  if (!tableExists(db, "job_events")) return null;
+  const row = db.prepare(
+    `SELECT stage, payload_json
+       FROM job_events
+      WHERE COALESCE(job_url, '') IN ('', ?)
+        AND payload_json IS NOT NULL
+        AND json_valid(payload_json)
+        AND (
+          JSON_EXTRACT(payload_json, '$.workflowId') = ?
+          OR JSON_EXTRACT(payload_json, '$.workflow_id') = ?
+        )
+      ORDER BY event_id DESC
+      LIMIT 1`,
+  ).get(PIPELINE_ACTION_JOB_KEY, workflowId, workflowId) as
+    | { stage: string | null; payload_json: string | null }
+    | undefined;
+  return row ?? null;
+}
+
+function insertJobEvent(
+  db: ApiDb,
+  event: {
+    jobUrl: string | null;
+    stage: Stage;
+    eventType: string;
+    level: string;
+    message: string;
+    payload: Record<string, unknown>;
+  },
+): void {
+  if (!tableExists(db, "job_events")) return;
+  const columns = columnNames(db, "job_events");
+  const values = {
+    job_url: event.jobUrl,
+    stage: event.stage,
+    event_type: event.eventType,
+    level: event.level,
+    message: event.message,
+    occurred_at: new Date().toISOString(),
+    payload_json: JSON.stringify(event.payload),
+  };
+  const entries = Object.entries(values).filter(([name]) => columns.has(name));
+  db.prepare(
+    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
+  ).run(...entries.map(([, value]) => value));
+}
+
+function tableExists(db: ApiDb, tableName: string): boolean {
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(tableName);
+  return Boolean(row);
+}
+
+function columnNames(db: ApiDb, tableName: string): Set<string> {
+  return new Set(
+    (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name),
+  );
+}
+
+function parseJsonRecord(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStage(value: unknown): value is Stage {
+  return typeof value === "string" && STAGES.includes(value as Stage);
+}
+
+function textValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : Number.parseInt(textValue(value), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function labelForStage(stage: Stage): string {
+  return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
 }
 
 function parseBody<T>(reply: { code: (statusCode: number) => unknown }, schema: ZodType<T>, body: unknown): T | null {

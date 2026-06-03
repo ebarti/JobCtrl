@@ -18,6 +18,7 @@ class EnrichActivityInput:
     limit: int = 0
     workers: int = 1
     dry_run: bool = False
+    workflow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
             workers=payload.workers,
             limit=payload.limit,
             dry_run=payload.dry_run,
+            workflow_id=payload.workflow_id,
         )
 
     result = await run_blocking_with_heartbeat(

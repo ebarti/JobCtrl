@@ -15,6 +15,7 @@ from jobhunter.domain.discovery.source_registry import (
     SourceDiscoveryEvidence,
     SourceKind,
     SourceLocationCandidate,
+    SourcePriority,
     SourcePolicy,
     SourcePolicyMethod,
     SourceState,
@@ -297,6 +298,89 @@ def test_load_source_registry_applies_local_product_control_overrides(tmp_path, 
     assert by_id["smart_extract:remoteok"].adapter_config["url"] == "https://remoteok.example/jobs"
     assert by_id["custom-careers"].kind is SourceKind.EMPLOYER_CAREERS_PAGE
     assert by_id["custom-careers"].adapter_config["url"] == "https://example.com/careers"
+
+
+def test_load_source_registry_coalesces_known_workday_host_aliases(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE source_registry_entries (
+          tenant_id TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          owner TEXT NOT NULL,
+          priority TEXT NOT NULL,
+          state TEXT NOT NULL,
+          policy_id TEXT NOT NULL,
+          seed_url TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (tenant_id, source_id)
+        )
+        """
+    )
+    now = "2026-05-13T00:00:00Z"
+    conn.executemany(
+        """
+        INSERT INTO source_registry_entries (
+          tenant_id, source_id, kind, display_name, owner, priority,
+          state, policy_id, seed_url, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                str(LOCAL_TENANT),
+                "workday:acme-wd3-myworkdayjobs-com",
+                "ats_api",
+                "acme.wd3.myworkdayjobs.com",
+                "user",
+                SourcePriority.CANONICAL.value,
+                SourceState.ACTIVE.value,
+                "workday_api_canonical",
+                "https://acme.wd3.myworkdayjobs.com",
+                now,
+                now,
+            ),
+            (
+                str(LOCAL_TENANT),
+                "workday:unknown-wd3-myworkdayjobs-com",
+                "ats_api",
+                "unknown.wd3.myworkdayjobs.com",
+                "user",
+                SourcePriority.CANONICAL.value,
+                SourceState.ACTIVE.value,
+                "workday_api_canonical",
+                "https://unknown.wd3.myworkdayjobs.com",
+                now,
+                now,
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+
+    registry = config.load_source_registry(
+        search_cfg={"boards": []},
+        sites_cfg={"sites": []},
+        employers_cfg={
+            "employers": {
+                "acme": {
+                    "name": "Acme",
+                    "tenant": "acme",
+                    "site_id": "External",
+                    "base_url": "https://acme.wd3.myworkdayjobs.com",
+                }
+            }
+        },
+    )
+
+    by_id = {entry.source_id: entry for entry in registry}
+    assert "workday:acme" in by_id
+    assert "workday:acme-wd3-myworkdayjobs-com" not in by_id
+    assert "workday:unknown-wd3-myworkdayjobs-com" in by_id
 
 
 def test_system_source_registry_rows_keep_packaged_seed_url_updates(tmp_path, monkeypatch) -> None:

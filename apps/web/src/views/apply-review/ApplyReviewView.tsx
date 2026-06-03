@@ -1,6 +1,7 @@
 import type { ApplyReviewQueueItem } from "@jobhunter/contracts";
 import { useEffect, useState } from "react";
 
+import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
@@ -183,6 +184,14 @@ function reviewStateLabel(item: ApplyReviewQueueItem): string | null {
   }
 }
 
+function activeApplyRun(item: ApplyReviewQueueItem): ApplyRun | null {
+  const run = item.latestApplyRun;
+  if (!run || !ACTIVE_APPLY_RUN_STATUSES.has(run.status)) {
+    return null;
+  }
+  return run;
+}
+
 function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; values: readonly string[] }> {
   return [
     { label: "Matched", values: item.position.matched },
@@ -306,6 +315,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const status = materialStatus(item);
   const evidenceGroups = evidenceValues(item).length;
   const reviewState = reviewStateLabel(item);
+  const activeRun = activeApplyRun(item);
   return (
     <main className="apply-review-selected">
       <header className="apply-review-selected-head">
@@ -318,6 +328,15 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         </div>
         <div className="apply-review-selected-actions">
           <span className={`tag ${status.tone}`}>{status.label}</span>
+          {activeRun ? (
+            <CancelApplyButton
+              jobId={item.jobKey}
+              runId={activeRun.runId}
+              className="tab danger-action"
+              label="stop apply"
+              ariaLabel={`Stop apply run for ${item.title}`}
+            />
+          ) : null}
           <ApplyReviewDecisionControls item={item} />
         </div>
       </header>

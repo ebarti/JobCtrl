@@ -181,6 +181,7 @@ export interface ApiClientPort {
   retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;
+  cancelWorkflowRun(runId: string): Promise<ActionRunResponse>;
 
   artifacts(query?: Partial<ArtifactListQuery>): Promise<PaginatedResponse<ArtifactSummary>>;
   artifact(artifactId: string): Promise<ArtifactDetail>;

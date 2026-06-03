@@ -20,7 +20,13 @@ from jobhunter.domain.discovery import (
     Source,
 )
 from jobhunter.domain.discovery.scheduler import DiscoveryScheduler
-from jobhunter.domain.discovery.source_registry import SourceKind
+from jobhunter.domain.discovery.source_registry import (
+    SourceKind,
+    SourcePriority,
+    SourceRegistryEntry,
+    SourceState,
+    WORKDAY_API_POLICY,
+)
 from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.enrichment.detail import _record_posting_snapshot_from_cascade
 from jobhunter.infrastructure.discovery.production_wiring import (
@@ -30,8 +36,10 @@ from jobhunter.infrastructure.discovery.production_wiring import (
     import_manual_capture_item,
     retire_invalid_canonical_ats_jobs,
     retire_invalid_source_jobs,
+    run_deterministic_source_locator,
     run_scheduled_ats_sources,
     seed_discovery_control_queues,
+    seed_source_registry_controls,
 )
 from jobhunter.infrastructure.projections.projection_builder import ProjectionBuilder
 from jobhunter.state import record_job_event
@@ -109,6 +117,49 @@ def _search_cfg() -> dict[str, Any]:
         ],
         "locations": [{"location": "Spain"}],
     }
+
+
+def test_workday_locator_candidate_uses_packaged_source_id(conn: sqlite3.Connection) -> None:
+    canonical = SourceRegistryEntry(
+        tenant_id=config.LOCAL_TENANT,
+        source_id="workday:acme",
+        kind=SourceKind.ATS_API,
+        display_name="Acme",
+        owner="system",
+        priority=SourcePriority.CANONICAL,
+        state=SourceState.ACTIVE,
+        policy=WORKDAY_API_POLICY,
+        adapter_config={
+            "employer_key": "acme",
+            "tenant": "acme",
+            "site_id": "External",
+            "base_url": "https://acme.wd3.myworkdayjobs.com",
+        },
+    )
+    host_alias = SourceRegistryEntry(
+        tenant_id=config.LOCAL_TENANT,
+        source_id="workday:acme-wd3-myworkdayjobs-com",
+        kind=SourceKind.ATS_API,
+        display_name="acme.wd3.myworkdayjobs.com",
+        owner="user",
+        priority=SourcePriority.CANONICAL,
+        state=SourceState.ACTIVE,
+        policy=WORKDAY_API_POLICY,
+        adapter_config={"base_url": "https://acme.wd3.myworkdayjobs.com"},
+    )
+
+    seed_source_registry_controls(conn, (canonical,))
+    run_deterministic_source_locator(conn, (host_alias,))
+
+    rows = conn.execute(
+        """
+        SELECT source_id
+        FROM source_registry_entries
+        WHERE source_id LIKE 'workday:acme%'
+        ORDER BY source_id
+        """
+    ).fetchall()
+    assert [str(row["source_id"]) for row in rows] == ["workday:acme"]
 
 
 def _fake_ats_http(url: str, **_kwargs: Any) -> Any:
