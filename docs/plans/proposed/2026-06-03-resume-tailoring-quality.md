@@ -291,6 +291,75 @@ Acceptance criteria:
 - [ ] No fixture contains a real user's resume, profile, job application, or
   generated artifact.
 
+### Spike PR: Resume Tailoring Feedback Loop
+
+This deserves its own spike because it changes the product loop, not only the
+tailoring algorithm. Feedback can improve future resumes, but it can also teach
+the system the wrong lesson, silently mutate profile truth, or capture sensitive
+career data without clear consent.
+
+Questions to answer:
+
+- [ ] Where should users give feedback?
+  Candidate surfaces: artifact detail preview, tailored resume diff/review,
+  Profile evidence editor, apply-review readiness, post-interview/job outcome,
+  and failed-tailoring repair screens.
+- [ ] What feedback taxonomy is useful?
+  Candidate signals: `claim_false`, `claim_true_but_worded_badly`,
+  `sounds_ai_generated`, `too_generic`, `too_senior`, `too_junior`,
+  `missing_keyword`, `keyword_stuffed`, `ats_parse_issue`,
+  `interview_defensible`, `helped_in_interview`, `hurt_in_interview`,
+  `user_edited_text`, and `accepted_suggestion`.
+- [ ] What implicit signals are safe to collect?
+  Candidate signals: user edits to a generated bullet, regeneration count,
+  discarded artifact, manual approval, suppression, apply readiness override,
+  and later outcome. The spike must decide which signals require explicit
+  consent or user confirmation before use.
+- [ ] Which bounded context owns the feedback?
+  Candidate options: a new Feedback/Evaluation context, Materials-owned
+  artifact feedback, or Profile-owned evidence corrections. The likely shape is
+  separate feedback events owned outside Profile, with explicit promotion into
+  Profile evidence only after user confirmation.
+- [ ] How does feedback enter the tailoring system?
+  Candidate outputs: profile evidence proposals, writing-style adjustments,
+  tailoring policy changes, eval fixture candidates, judge/adversarial prompt
+  improvements, and score-to-tailor threshold learnings. The spike must specify
+  which changes can be automatic, suggested, or never automatic.
+- [ ] How do we prevent degenerate learning?
+  The spike must account for sparse/biased feedback, angry-user skew, position
+  bias in comparisons, sycophancy, overfitting to one user's phrasing, and
+  treating every regeneration as negative.
+- [ ] What retention and privacy model applies?
+  Feedback is user data. The spike must define what is stored, whether
+  surrounding resume/job context is stored, how consent is captured, how users
+  can inspect/delete it, and what must never enter committed fixtures or logs.
+
+Deliverables:
+
+- [ ] A proposed domain model for feedback events and promotion candidates.
+- [ ] A UI capture map showing exact feedback entry points and nonintrusive
+  controls for each surface.
+- [ ] A learning policy matrix:
+  `signal -> storage -> confidence -> automatic/suggested/manual -> consumer`.
+- [ ] A privacy/consent policy for context capture and retention.
+- [ ] A minimum implementation plan broken into stacked PRs.
+- [ ] A QA/evaluation strategy covering explicit feedback, implicit edits,
+  promotion into profile evidence, bias checks, and deletion/export behavior.
+
+Acceptance criteria:
+
+- [ ] The spike distinguishes artifact feedback from profile truth. No feedback
+  event can silently become a verified achievement.
+- [ ] Users can report bad output without a blocking modal.
+- [ ] Positive feedback is mostly passive or sampled, not forced after every
+  resume.
+- [ ] Any context capture beyond the feedback label has explicit consent or a
+  clear local-only product contract.
+- [ ] The proposed design explains how feedback updates evals and prompts
+  without leaking real resumes, job URLs, generated PDFs, or local profile data.
+- [ ] The design includes at least one guard against biased or degenerate
+  feedback loops before feedback affects generation.
+
 ## Verification Matrix
 
 Run the smallest relevant command set per PR, and the broader set before the
