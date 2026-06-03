@@ -173,6 +173,9 @@ class DiscoveryAcceptanceReport:
         }
 
 
+_WORKDAY_HOST_ALIAS_SOURCE_RE = re.compile(r"^workday:(?P<employer>.+)-wd\d+-myworkdayjobs-com$")
+
+
 class DurableJobEventPublisher:
     """Persist domain events to ``job_events`` while still fanning out locally."""
 
@@ -1602,24 +1605,48 @@ def _source_id_from_locator_candidate(
     conn: sqlite3.Connection,
     candidate: SourceLocationCandidate,
 ) -> str:
+    slug = _source_slug_from_locator_url(
+        candidate.candidate_url,
+        candidate.evidence.detected_ats_kind,
+    )
+    if candidate.evidence.detected_ats_kind == AtsKind.WORKDAY.value:
+        canonical_workday_id = _canonical_workday_source_id_for_alias(f"{AtsKind.WORKDAY.value}:{slug}")
+        if canonical_workday_id:
+            existing_canonical = conn.execute(
+                """
+                SELECT source_id
+                FROM source_registry_entries
+                WHERE tenant_id = ? AND source_id = ?
+                LIMIT 1
+                """,
+                (str(candidate.tenant_id), canonical_workday_id),
+            ).fetchone()
+            if existing_canonical is not None:
+                return str(existing_canonical["source_id"])
     existing = conn.execute(
         """
         SELECT source_id
         FROM source_registry_entries
         WHERE tenant_id = ? AND seed_url = ?
+        ORDER BY CASE WHEN owner = 'system' THEN 0 ELSE 1 END,
+                 LENGTH(source_id) ASC,
+                 source_id ASC
         LIMIT 1
         """,
         (str(candidate.tenant_id), candidate.candidate_url),
     ).fetchone()
     if existing is not None:
         return str(existing["source_id"])
-    slug = _source_slug_from_locator_url(
-        candidate.candidate_url,
-        candidate.evidence.detected_ats_kind,
-    )
     if candidate.evidence.detected_ats_kind:
         return f"{candidate.evidence.detected_ats_kind}:{slug}"
     return f"{candidate.source_kind.value}:{slug}"
+
+
+def _canonical_workday_source_id_for_alias(source_id: str) -> str | None:
+    match = _WORKDAY_HOST_ALIAS_SOURCE_RE.match(source_id)
+    if not match:
+        return None
+    return f"workday:{match.group('employer')}"
 
 
 def _source_slug_from_locator_url(url: str, ats_kind: str | None) -> str:

@@ -71,6 +71,8 @@ _REMOTE_EUROPE_LOCATION_ACCEPTS = (
     "EMEA",
 )
 
+_WORKDAY_HOST_ALIAS_SOURCE_RE = re.compile(r"^workday:(?P<employer>.+)-wd\d+-myworkdayjobs-com$")
+
 _SPAIN_LOCATION_ACCEPTS = (
     "Spain",
     "España",
@@ -839,6 +841,9 @@ def _merge_local_source_registry(
         source_id = str(row["source_id"] or "").strip()
         if not source_id:
             continue
+        canonical_workday_id = _canonical_workday_source_id_for_alias(source_id)
+        if canonical_workday_id and canonical_workday_id in merged:
+            continue
         existing = merged.get(source_id)
         kind = _enum_value(SourceKind, row["kind"], existing.kind if existing else SourceKind.EMPLOYER_CAREERS_PAGE)
         priority = _enum_value(
@@ -873,6 +878,13 @@ def _merge_local_source_registry(
         if source_id not in ordered_ids:
             ordered_ids.append(source_id)
     return [merged[source_id] for source_id in ordered_ids]
+
+
+def _canonical_workday_source_id_for_alias(source_id: str) -> str | None:
+    match = _WORKDAY_HOST_ALIAS_SOURCE_RE.match(source_id)
+    if not match:
+        return None
+    return f"workday:{match.group('employer')}"
 
 
 def _filter_sources_for_target_region(
