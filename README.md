@@ -399,7 +399,10 @@ local config and only shows controls that the selected stage actually consumes.
 Running a tab submits that stage through the local API. The panel reports when
 the request is waiting on the local worker, whether the start was queued,
 completed, dry-run, or failed, and the returned run/action id when one is
-available. Longer-running progress appears in the dashboard pipeline and
+available. Queued or running Discover and Apply workflows expose stop controls
+from the Pipelines and Workflow Runs views, and active per-job apply runs can be
+stopped from Apply review when a latest apply run is attached to the job.
+Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;
 Discover also emits source-step events and scheduled discovery-run events for

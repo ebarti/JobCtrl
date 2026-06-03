@@ -1,0 +1,207 @@
+{
+  "scenario": "resume_tailoring_quality_regression",
+  "profile": {
+    "personal": {
+      "full_name": "Jane Doe",
+      "email": "jane@example.com"
+    },
+    "resume_constraints": {
+      "real_metrics": ["35% latency reduction"]
+    },
+    "resume": {
+      "executive_profile": {
+        "baseline_text": "Senior backend engineer focused on reliable Python services."
+      },
+      "experience_entries": [
+        {
+          "id": "acme_swe",
+          "date_range": "2020-Present",
+          "title": "Senior Software Engineer",
+          "company": "Acme Corp",
+          "location": "Remote",
+          "bullets": ["Reduced API latency 35% by replacing synchronous enrichment calls."],
+          "achievement_evidence": [
+            {
+              "id": "ev_latency",
+              "source_text": "Reduced API latency 35% by replacing synchronous enrichment calls with PostgreSQL-backed queues.",
+              "scope": "owned backend service",
+              "action": "replaced synchronous enrichment calls",
+              "tools": ["Python", "PostgreSQL"],
+              "metrics": ["35% latency reduction"],
+              "outcome": "faster API responses",
+              "seniority_signal": "technical ownership",
+              "evidence_strength": "verified",
+              "claim_confidence": 0.95,
+              "user_confirmed": true,
+              "tags": ["latency", "backend", "performance"]
+            },
+            {
+              "id": "ev_incident",
+              "source_text": "Coordinated incident response playbook rollout across the on-call rotation using PagerDuty.",
+              "scope": "on-call escalation program",
+              "action": "created incident response playbooks",
+              "tools": ["PagerDuty"],
+              "metrics": [],
+              "outcome": "clearer escalation paths",
+              "seniority_signal": "",
+              "evidence_strength": "supported",
+              "claim_confidence": 0.8,
+              "user_confirmed": true,
+              "tags": ["incident", "on-call", "pagerduty"]
+            }
+          ]
+        }
+      ],
+      "education_entries": [
+        {
+          "id": "edu_state",
+          "date": "2015",
+          "degree": "BSc Computer Science",
+          "institution": "State University",
+          "location": "City"
+        }
+      ],
+      "skill_categories": [
+        {
+          "id": "languages",
+          "label": "Languages",
+          "items": ["Python", "Go"]
+        }
+      ],
+      "tailoring_rules": {
+        "required_experience_entry_ids": ["acme_swe"],
+        "required_skill_category_ids": ["languages"],
+        "max_experience_bullets": 4,
+        "tailoring_policy": {
+          "mode": "aggressive",
+          "claim_mode": "adjacent_translation",
+          "auto_approvable_claim_modes": ["verified_only", "evidence_reframing"],
+          "allow_adjacent_achievement_drafts": true
+        },
+        "writing_style": {
+          "tone": "direct",
+          "bullet_style": "leadership",
+          "verbosity": "concise",
+          "keyword_density": "natural"
+        }
+      }
+    }
+  },
+  "jobs": {
+    "high_fit_senior_backend": {
+      "url": "https://example.com/high-fit-senior-backend",
+      "title": "Senior Backend Engineer",
+      "fit_score": 9,
+      "skills": ["Python", "PostgreSQL", "API performance"],
+      "responsibilities": ["Own latency improvements for backend services"],
+      "full_description": "Own Python backend services, improve API latency, and influence service reliability."
+    },
+    "mid_fit_backend": {
+      "url": "https://example.com/mid-fit-backend",
+      "title": "Backend Engineer",
+      "fit_score": 7,
+      "skills": ["Python"],
+      "full_description": "Build Python backend services."
+    },
+    "high_fit_incident_response": {
+      "url": "https://example.com/high-fit-incident-response",
+      "title": "Senior Incident Response Engineer",
+      "fit_score": 9,
+      "skills": ["PagerDuty", "incident response", "on-call"],
+      "responsibilities": ["Lead incident response playbooks and on-call escalation work"],
+      "full_description": "Lead incident response, PagerDuty escalation, and on-call operations."
+    }
+  },
+  "quality_cases": [
+    {
+      "id": "supported_high_fit_resume_passes",
+      "job": "high_fit_senior_backend",
+      "bullet": "Owned Python backend latency work and reduced API latency 35% by replacing synchronous enrichment calls with PostgreSQL queues.",
+      "expected": {
+        "passed": true,
+        "represented_evidence_ids": ["ev_latency"],
+        "covered_keywords": ["python", "latency"]
+      }
+    },
+    {
+      "id": "unsupported_metric_blocks",
+      "job": "high_fit_senior_backend",
+      "bullet": "Owned Python backend latency work and reduced API latency 80% with PostgreSQL queues.",
+      "expected": {
+        "passed": false,
+        "errors_contain": ["Unknown metric", "80%"]
+      }
+    },
+    {
+      "id": "seniority_mismatch_blocks_senior_role",
+      "job": "high_fit_senior_backend",
+      "bullet": "Improved Python API behavior and reduced latency 35%.",
+      "expected": {
+        "passed": false,
+        "errors_contain": ["Seniority mismatch"]
+      }
+    },
+    {
+      "id": "keyword_stuffing_blocks",
+      "job": "high_fit_senior_backend",
+      "bullet": "Owned Python Python Python Python Python Python Python Python Python backend latency work and reduced API latency 35%.",
+      "expected": {
+        "passed": false,
+        "errors_contain": ["Keyword stuffing"]
+      }
+    },
+    {
+      "id": "ai_voice_blocks",
+      "job": "high_fit_senior_backend",
+      "bullet": "Owned results-driven backend initiatives, leveraged dynamic professional impactful solutions to drive value while reducing API latency 35% with Python.",
+      "expected": {
+        "passed": false,
+        "errors_contain": ["AI-sounding voice"]
+      }
+    },
+    {
+      "id": "missing_evidence_blocks",
+      "job": "high_fit_incident_response",
+      "bullet": "Owned Go release automation for compliance reporting.",
+      "expected": {
+        "passed": false,
+        "errors_contain": ["Missing required evidence support"]
+      }
+    }
+  ],
+  "adversarial_cases": [
+    {
+      "id": "high_fit_persona_blocker_fails",
+      "job": "high_fit_senior_backend",
+      "response": {
+        "verdict": "PASS",
+        "score": 0.9,
+        "personas": [
+          {
+            "persona": "evidence_auditor",
+            "verdict": "FAIL",
+            "score": 0.2,
+            "blockers": ["The 80% latency claim is unsupported by profile evidence."],
+            "warnings": ["Metric wording is too specific for the available evidence."],
+            "repair_instructions": ["Use the verified 35% latency reduction claim or remove the metric."]
+          }
+        ],
+        "blockers": [],
+        "warnings": [],
+        "repair_instructions": []
+      },
+      "expected": {
+        "should_run": true,
+        "passed": false,
+        "blockers_contain": ["80% latency claim"]
+      }
+    },
+    {
+      "id": "mid_fit_skips_adversarial_review",
+      "job": "mid_fit_backend",
+      "expected": {
+        "should_run": false
+      }
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tab
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
 import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
 import type { DashboardSummary } from "../../operations/types.js";
+import { CancelWorkflowRunButton } from "./CancelWorkflowRunButton.js";
 import { useRunPipelineStagesMutation } from "../hooks/useRunPipelineStagesMutation.js";
 import { useStageTriggerStore, type StageTriggerConfig } from "../stores/stage-trigger-store.js";
 
@@ -57,6 +58,15 @@ function stageActionCountLabel(count: number): string {
 
 function actionReference(action: ActionRunResponse | undefined): string | null {
   return action?.runId ?? action?.actionId ?? null;
+}
+
+function latestWorkflowRunId(response: PipelineStageRunResponse | undefined): string | null {
+  const action = response?.actions.find((item) => item.workflowId || item.runId) ?? response?.actions[0];
+  return action?.workflowId ?? action?.runId ?? null;
+}
+
+function progressWorkflowRunId(progress: StageProgress | null): string | null {
+  return progress?.status === "running" ? (progress.workflowId ?? null) : null;
 }
 
 function statusLabel(status: string): string {
@@ -305,6 +315,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const visibleStageActivity = relevantPendingActivity ?? (!runStages.isPending ? stageActivity : null);
   const visibleStageProgress =
     stageProgress && isProgressAfter(stageProgress, submittedAt) ? stageProgress : null;
+  const cancelableRunId = latestWorkflowRunId(runStages.data) ?? progressWorkflowRunId(visibleStageProgress);
   const headerMeta = runStages.isPending ? "starting" : (runStages.data?.status ?? (runStages.error ? "failed" : "ready"));
   const activeStagePanel = stagePanels[activeStage] ?? null;
   const workerUnhealthy =
@@ -515,6 +526,18 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
               ? `Starting ${labelForStage(statusStage)}`
               : `Run ${labelForStage(activeStage)}`}
         </Button>
+        {cancelableRunId && (
+          runStages.data?.status === "queued"
+          || runStages.data?.status === "accepted"
+          || visibleStageProgress?.status === "running"
+        ) ? (
+          <CancelWorkflowRunButton
+            runId={cancelableRunId}
+            className="tab danger-action"
+            label={`Stop ${labelForStage(statusStage)}`}
+            ariaLabel={`Stop ${labelForStage(statusStage)} run`}
+          />
+        ) : null}
         {workerUnhealthy ? (
           <span className="status-line danger-action" role="alert">
             {workerHealthMessage}

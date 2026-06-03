@@ -483,6 +483,17 @@ export const handlers = [
   }),
 
   http.get("*/v1/workflow-runs", () => HttpResponse.json(makeWorkflowRunsPage())),
+  http.post("*/v1/workflow-runs/:runId/actions/cancel", ({ params }) =>
+    HttpResponse.json({
+      ...actionRunResponse("pipeline", "cancel"),
+      runId: String(params["runId"]),
+      command: {
+        action: "cancel",
+        jobKey: "pipeline",
+        runId: String(params["runId"]),
+      },
+    }),
+  ),
 
   http.get("*/v1/artifacts", () => HttpResponse.json(makeArtifactsPage())),
   http.get("*/v1/artifacts/:artifactId", ({ params }) =>

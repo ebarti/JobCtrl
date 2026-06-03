@@ -1,5 +1,6 @@
 import { RunStatusBadge } from "../../contexts/apply/components/RunStatusBadge.js";
 import type { WorkflowRunSummary } from "../../contexts/operations/types.js";
+import { CancelWorkflowRunButton } from "../../contexts/pipeline/components/CancelWorkflowRunButton.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
@@ -19,6 +20,8 @@ function formatDurationMs(value: number | null): string {
   const minRemainder = minutes % 60;
   return minRemainder ? `${hours}h ${minRemainder}m` : `${hours}h`;
 }
+
+const ACTIVE_WORKFLOW_RUN_STATUSES = new Set(["starting", "in_progress"]);
 
 export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
   {
@@ -108,5 +111,20 @@ export const workflowRunColumns: Array<DataGridColumn<WorkflowRunSummary>> = [
         Open in Temporal
       </a>
     ),
+  },
+  {
+    id: "actions",
+    label: "Actions",
+    render: (row) =>
+      ACTIVE_WORKFLOW_RUN_STATUSES.has(row.status) ? (
+        <CancelWorkflowRunButton
+          runId={row.runId}
+          className="btn ghost danger-action"
+          label="Stop"
+          ariaLabel={`Stop workflow run for ${row.title}`}
+        />
+      ) : (
+        <span className="muted">-</span>
+      ),
   },
 ];

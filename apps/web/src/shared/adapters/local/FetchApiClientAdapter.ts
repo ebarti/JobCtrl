@@ -172,6 +172,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   workflowRuns(query: Parameters<JobHunterApiClient["workflowRuns"]>[0] = {}) {
     return this.client.workflowRuns(query);
   }
+  cancelWorkflowRun(runId: string) {
+    return this.client.cancelWorkflowRun(runId);
+  }
   artifacts(query: Parameters<JobHunterApiClient["artifacts"]>[0] = {}) {
     return this.client.artifacts(query);
   }

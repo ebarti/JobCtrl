@@ -1104,6 +1104,8 @@ export interface ActivityEventResponse {
 export interface PipelineProgressSummary {
   stage: Stage;
   status: "running" | "succeeded" | "failed" | "partial";
+  runId?: string;
+  workflowId?: string;
   percent: number | null;
   completed: number;
   total: number;

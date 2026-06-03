@@ -354,6 +354,10 @@ export class JobHunterApiClient {
     return this.get("/v1/workflow-runs", query);
   }
 
+  cancelWorkflowRun(runId: string): Promise<ActionRunResponse> {
+    return this.post(`/v1/workflow-runs/${encodeURIComponent(runId)}/actions/cancel`);
+  }
+
   artifacts(query: Partial<ArtifactListQuery> = {}): Promise<PaginatedResponse<ArtifactSummary>> {
     return this.get("/v1/artifacts", query);
   }

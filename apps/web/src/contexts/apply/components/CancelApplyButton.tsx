@@ -3,6 +3,8 @@ import type { JSX } from "react";
 import { useApplyRunsListQuery } from "../../operations/hooks/useApplyRunsListQuery.js";
 import { useCancelApplyMutation } from "../hooks/useCancelApplyMutation.js";
 
+export const ACTIVE_APPLY_RUN_STATUSES = new Set(["starting", "in_progress", "queued", "running"]);
+
 export interface CancelApplyButtonProps {
   jobId: string;
   /** Override the auto-detected active run id. If omitted, the button looks
@@ -12,15 +14,15 @@ export interface CancelApplyButtonProps {
   runId?: string;
   className?: string;
   label?: string;
+  ariaLabel?: string;
 }
-
-const _ACTIVE_STATUSES = new Set(["starting", "in_progress", "queued", "running"]);
 
 export function CancelApplyButton({
   jobId,
   runId,
   className = "tab",
   label = "cancel apply",
+  ariaLabel,
 }: CancelApplyButtonProps): JSX.Element {
   const cancelApply = useCancelApplyMutation();
   const isPending = cancelApply.isPending;
@@ -31,13 +33,14 @@ export function CancelApplyButton({
   const { data: runs } = useApplyRunsListQuery();
   const detectedRunId = runId
     ?? runs?.find(
-      (run) => run.jobKey === jobId && _ACTIVE_STATUSES.has(run.status),
+      (run) => run.jobKey === jobId && ACTIVE_APPLY_RUN_STATUSES.has(run.status),
     )?.runId;
   return (
     <button
       type="button"
       className={className}
       disabled={isPending}
+      aria-label={ariaLabel}
       onClick={() =>
         cancelApply.mutate(detectedRunId ? { jobId, runId: detectedRunId } : { jobId })
       }
