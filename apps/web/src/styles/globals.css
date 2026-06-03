@@ -2587,6 +2587,42 @@ textarea {
   gap: 8px;
 }
 
+.achievement-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.achievement-evidence-list > legend {
+  margin: 0 0 2px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.achievement-evidence-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  padding: 10px;
+}
+
+.achievement-evidence-card .field-grid {
+  padding: 0;
+}
+
+.claim-mode-group {
+  align-self: start;
+}
+
 .bullet-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

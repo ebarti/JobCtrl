@@ -253,6 +253,9 @@ policies, and writing style preferences.
 - **Profile** — the complete candidate data document.
 - **ResumeBaseline** — the canonical master resume content (experience, education, skills).
 - **ExperienceEntry** — one role in the candidate's work history.
+- **AchievementEvidence** — source-backed proof for one experience achievement,
+  including the source text, action, scope, tools, metrics, outcome, seniority
+  signal, evidence strength, confidence, and user confirmation.
 - **EducationEntry** — one degree or certification.
 - **SkillCategory** — a named group of skills (e.g., "Programming Languages").
 - **TailoringPolicy** — rules governing what the LLM may modify during tailoring.
@@ -339,6 +342,11 @@ PDFs) for jobs that pass the scoring threshold.
 - **ArtifactStatus** — lifecycle of a generated artifact: `candidate` | `approved` | `rejected` | `superseded`.
 - **ValidationResult** — output of structural and content validation (banned words, fabrication check).
 - **JudgeVerdict** — LLM-as-judge evaluation of a tailored resume's quality.
+- **TailoringPlan** — deterministic tailoring constraints derived from the
+  profile evidence, tailoring policy, job text, and fit score.
+- **AdversarialReview** — high-fit resume critique from separate reviewer
+  personas that looks for fabrication, seniority mismatch, ATS weakness, and
+  generic AI-sounding writing before approval.
 - **RenderFormat** — the output format for a document: `latex_pdf` | `html_pdf` | `text`.
 
 **Upstream/Downstream:**
@@ -351,6 +359,9 @@ PDFs) for jobs that pass the scoring threshold.
 - Generate tailored resumes from profile + job description via LLM
 - Validate tailored content (banned words, fabrication, structural integrity)
 - Optionally run LLM-as-judge for quality assessment
+- Run deterministic tailoring quality checks for unsupported metrics, keyword
+  stuffing, AI-sounding phrasing, weak seniority alignment, and missing evidence
+- Run adversarial review for high-fit jobs after normal validation and judge pass
 - Generate cover letters
 - Render documents to PDF (resume via LaTeX, cover letter via HTML/Playwright)
 - Register generated artifacts with provenance metadata
@@ -627,13 +638,14 @@ Identity: (TenantId, ProfileId)
 3. Never deleted (but can be reset).
 
 **Entities (non-root):**
-- `ExperienceEntry { id, dateRange, title, company, location, bullets[] }`
+- `ExperienceEntry { id, dateRange, title, company, location, bullets[], achievementEvidence[] }`
 - `EducationEntry { id, date, degree, institution, location }`
 - `SkillCategory { id, label, items[] }`
 
 **Value Objects:**
 - `ExecutiveProfile(baselineText: string)`
-- `TailoringPolicy { mode, allowSummaryRewrite, allowTitleReframing, allowAchievementRewriting, allowSkillReordering, allowMinorInference }`
+- `AchievementEvidence { sourceText, scope, action, tools[], metrics[], outcome, senioritySignal, evidenceStrength, claimConfidence, userConfirmed }`
+- `TailoringPolicy { mode, claimMode, autoApprovableClaimModes[], allowSummaryRewrite, allowTitleReframing, allowAchievementRewriting, allowSkillReordering, allowMinorInference, allowAdjacentAchievementDrafts }`
 - `WritingStyle { tone, bulletStyle, verbosity, keywordDensity, avoidFirstPerson }`
 - `ApplicationDefaults { ... }` — default form field values.
 - `ResumeConstraints { realMetrics[], maxExperienceBullets, ... }`
@@ -712,10 +724,16 @@ application.
 
 **Invariants:**
 - A `TailoredResume` must pass structural validation before being `approved`.
+- A `TailoredResume` must pass deterministic tailoring quality checks before
+  being eligible for `approved`.
+- High-fit resumes (`fitScore >= 8`) must not be `approved` while adversarial
+  review reports blocker findings.
 - A `CoverLetter` can only be generated after a `TailoredResume` is `approved`.
 - PDFs can only be rendered after their source documents exist.
 - Banned words must not appear in any generated text.
 - Generated content must not fabricate experience entries, companies, or credentials.
+- Unsupported metrics and adjacent or draft achievements cannot be auto-approved
+  unless profile evidence or the tailoring policy explicitly supports them.
 - Every artifact must be registered with provenance (source job, generation params, timestamp).
 
 **Lifecycle:**
@@ -745,6 +763,8 @@ stateDiagram-v2
 - `CoverLetter { text: string }`
 - `ValidationResult { valid: bool, errors: ValidationError[] }`
 - `JudgeVerdict { approved: bool, feedback: string, confidence: float }`
+- `TailoringPlan { claimMode, allowedMetrics[], allowedKeywordPhrases[], requiredEvidenceIds[], highFit, seniorityLevel }`
+- `AdversarialReview { required: bool, approved: bool, blockers[], repairInstructions[], reviewerFindings[] }`
 - `ArtifactType` — enum: `tailored_resume | cover_letter | resume_pdf | cover_letter_pdf`
 - `ArtifactStatus` — enum: `candidate | approved | rejected | superseded`
 - `RenderFormat` — enum: `latex_pdf | html_pdf | text`
@@ -769,6 +789,10 @@ stateDiagram-v2
   master resume. Pure function.
 - `ContentValidator` — checks for banned words, fabrication, structural integrity.
   Pure function.
+- `TailoringQualityEvaluator` — evaluates generated resumes against the
+  `TailoringPlan` before judge approval. Pure function.
+- `AdversarialResumeReviewer` — prompts reviewer personas for high-fit jobs and
+  converts blocker findings into retry feedback.
 
 **Generation lifecycle:** When the user re-tailors a job, a **new
 `MaterialsSet`** is created with `generation` incremented. The previous
@@ -2065,9 +2089,10 @@ single-user system.
 | **StageState** | Pipeline Orchestration | The current status of a job within a stage. The domain model represents each variant as a typed value (PascalCase: `Pending`, `Queued`, `Running`, `Succeeded`, `Failed`, `Blocked`, `Skipped`, `Exhausted`, `Stale`, `Canceled` — see §4.7). The lowercase forms (`pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `stale`, `canceled`) are the serialized representation written to `job_stage_states.state`, emitted in event payloads, and exposed through the API DTOs. |
 | **SubmissionResult** | Apply Automation | The outcome of an apply attempt: `applied`, `failed`, `captcha`, `login_issue`, `expired`, `manual`, `dry_run`. |
 | **TailoredResume** | Materials Generation | A resume customized for a specific job, derived from the master baseline via LLM. |
+| **TailoringPlan** | Materials Generation | Deterministic constraints derived from profile evidence, tailoring policy, job text, and fit score before resume generation and validation. |
 | **TenantContext** | Platform (Identity) | A request-scoped value object containing `tenantId`, `userId`, and `roles`, injected by the API gateway / auth middleware into every use case call. |
 | **TenantId** | Platform (Identity) | A globally unique identifier for a tenant (organization or individual account). First-class domain concept threaded through all aggregates, events, and port calls. In local mode, a singleton constant. |
-| **TailoringPolicy** | Candidate Profile | Rules governing what the LLM may modify during resume tailoring (rewrite titles, reorder skills, etc.). |
+| **TailoringPolicy** | Candidate Profile | Rules governing what the LLM may modify during resume tailoring, including claim mode, auto-approval boundaries, adjacent achievement drafts, rewrite permissions, and writing controls. |
 | **TokenUsage** | Apply Automation | LLM token consumption and cost tracking for an apply run. |
 | **TransactionalOutbox** | Platform (Events) | A Postgres table (`outbox`) where domain events are written in the same transaction as the aggregate mutation, guaranteeing crash-consistent event delivery. |
 | **ValidationResult** | Materials Generation | Output of content validation: banned words check, fabrication check, structural integrity check. |
