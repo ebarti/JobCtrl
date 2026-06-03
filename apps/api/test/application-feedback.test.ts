@@ -86,6 +86,33 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("uses stage error messages instead of generic blocker codes in the review queue", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'failed',
+             error_code = 'FAILED',
+             error_message = 'SKIPPED: process killed by signal'
+       WHERE job_url = ?
+         AND stage = 'apply'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "apply",
+      currentState: "failed",
+      blockers: ["SKIPPED: process killed by signal"],
+    });
+
+    await app.close();
+  });
+
   it("records approve, defer, reset, and decline review decisions without dispatching apply", async () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);

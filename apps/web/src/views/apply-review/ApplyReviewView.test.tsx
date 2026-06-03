@@ -65,6 +65,87 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
+  it("renders the verbatim job post markdown without injecting raw html", async () => {
+    const markdownQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              position: {
+                ...item.position,
+                descriptionPreview: [
+                  "**Welcome to the good side of tech 👋**",
+                  "Build [patient workflows](https://example.com) with `SDLC` discipline.",
+                  "",
+                  "- Lead engineering teams",
+                  "- Improve platform reliability",
+                  "",
+                  "<script>alert('xss')</script>",
+                ].join("\n"),
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => markdownQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "Welcome to the good side of tech 👋" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "patient workflows" })).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+    expect(screen.getByText("SDLC")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("<script>alert('xss')</script>")).toBeInTheDocument();
+    expect(document.querySelector("script")).toBeNull();
+  });
+
+  it("explains repair status with the latest apply failure reason", async () => {
+    const repairQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              currentState: "failed" as const,
+              latestApplyRun: {
+                runId: "submit-failed",
+                status: "failed",
+                result: "SKIPPED: process killed by signal",
+                dryRun: false,
+                startedAt: "2026-05-30T06:33:32Z",
+                finishedAt: "2026-05-30T06:40:29Z",
+              },
+              blockers: ["SKIPPED: process killed by signal"],
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => repairQueue),
+        },
+      }),
+    });
+
+    expect((await screen.findAllByText(/Submit failed: process killed by signal/i)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("submit failed").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Last submit failed: process killed by signal/i)).toBeInTheDocument();
+    expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
+  });
+
   it("records approval without dispatching apply automation", async () => {
     const user = userEvent.setup();
     const decideApplyReview = vi.fn(async () => ({

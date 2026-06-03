@@ -626,9 +626,29 @@ function queueBlockers(row: ReviewQueueRow, currentState: StageState): string[] 
   if (!row.has_resume) blockers.push("missing_resume");
   if (!row.application_url) blockers.push("missing_application_url");
   if (currentState !== "pending") {
-    blockers.push(row.current_error_code || row.current_error_message || `apply_${currentState}`);
+    blockers.push(stageBlockerReason(row, currentState));
   }
   return blockers;
+}
+
+function stageBlockerReason(row: ReviewQueueRow, currentState: StageState): string {
+  const message = cleanBlockerText(row.current_error_message);
+  if (message) {
+    return message;
+  }
+  const code = cleanBlockerText(row.current_error_code);
+  if (code && !isGenericStageCode(code)) {
+    return code;
+  }
+  return `${stage(row.current_stage)}_${currentState}`;
+}
+
+function cleanBlockerText(value: string | null): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isGenericStageCode(value: string): boolean {
+  return ["BLOCKED", "FAILED", "STALE", "ERROR"].includes(value.trim().toUpperCase());
 }
 
 function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
