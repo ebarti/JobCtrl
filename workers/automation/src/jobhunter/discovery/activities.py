@@ -30,6 +30,7 @@ class DiscoverActivityInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    workflow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
             llm_model=payload.llm_model,
+            workflow_id=payload.workflow_id,
         )
 
     result = await run_blocking_with_heartbeat(

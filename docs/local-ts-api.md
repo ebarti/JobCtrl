@@ -152,6 +152,9 @@ workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`
 uses `info.workflow_id` as the timeline key). The web Workflow Runs view at
 `/runs` deep-links each row to the local Temporal Web UI
 (`http://127.0.0.1:8233`).
+`POST /v1/workflow-runs/:runId/actions/cancel` dispatches a worker-backed
+`cancel_run` request for in-flight workflow IDs that are not tied to a concrete
+job row, such as global Discover or Apply runs started from the Pipelines tab.
 `GET /v1/dashboard/summary` also carries recent apply-run timeline summaries
 from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
@@ -248,6 +251,8 @@ this global/batch run-stage route. The route uses the command key `pipeline`
 only as the local action response handle, not as a fake job URL. Successful
 workflow starts return `202` with the queued workflow ID. Workflow-start
 failures return `200` with the dispatcher-derived failed action.
+Queued or accepted starts expose that workflow ID to the Pipelines tab so the
+user can stop the in-flight run without resolving a fake `pipeline` job row.
 `dryRun` defaults to `true`, preserving apply safety. The apply model defaults
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.

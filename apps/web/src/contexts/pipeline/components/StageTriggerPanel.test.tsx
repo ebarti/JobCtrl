@@ -212,6 +212,74 @@ describe("StageTriggerPanel", () => {
     expect(request).not.toHaveProperty("tailorJudgeMinScore");
   });
 
+  it("shows a stop control for queued pipeline stage runs", async () => {
+    const user = userEvent.setup();
+    const cancelWorkflowRun = vi.fn(async (runId: string) => ({
+      ok: true as const,
+      runId,
+      actionId: runId,
+      action: "cancel" as const,
+      status: "cancel_requested",
+      jobKey: "pipeline",
+      command: { action: "cancel" as const, jobKey: "pipeline", runId },
+    }));
+    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
+      ok: true as const,
+      action: "run_stage" as const,
+      status: "queued",
+      jobKey: "pipeline",
+      count: 1,
+      command: {
+        stages: ["discover"],
+        limit: 25,
+        workers: 1,
+        minScore: 7,
+        validationMode: "normal" as const,
+        dryRun: true,
+        rescore: false,
+        retailor: false,
+        headless: false,
+        model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+        tailorModels: [],
+        continuous: false,
+      },
+      actions: [
+        {
+          ok: true as const,
+          runId: "discover-run-1",
+          workflowId: "discover-run-1",
+          actionId: "discover-run-1",
+          action: "run_stage" as const,
+          status: "queued",
+          jobKey: "pipeline",
+          command: {
+            action: "run_stage" as const,
+            jobKey: "pipeline",
+            stage: "discover",
+            limit: 25,
+            workers: 1,
+            minScore: 7,
+            validationMode: "normal",
+            dryRun: true,
+            rescore: false,
+            retailor: false,
+            headless: false,
+            continuous: false,
+          },
+        },
+      ],
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({ api: { cancelWorkflowRun, runPipelineStages } }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Run Discover" }));
+    await user.click(await screen.findByRole("button", { name: "Stop Discover run" }));
+
+    await waitFor(() => expect(cancelWorkflowRun).toHaveBeenCalledWith("discover-run-1"));
+  });
+
   it("submits the active stage and its persisted options through the pipeline mutation", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
@@ -401,6 +469,47 @@ describe("StageTriggerPanel", () => {
       "Discover 60% complete (3/5): Workday scraper complete.",
     );
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
+  });
+
+  it("shows a stop control for backend running discovery progress", async () => {
+    const user = userEvent.setup();
+    const cancelWorkflowRun = vi.fn(async (runId: string) => ({
+      ok: true as const,
+      runId,
+      actionId: runId,
+      action: "cancel" as const,
+      status: "cancel_requested",
+      jobKey: "pipeline",
+      command: { action: "cancel" as const, jobKey: "pipeline", runId },
+    }));
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          cancelWorkflowRun,
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            progress: [
+              {
+                stage: "discover" as const,
+                status: "running" as const,
+                runId: "discovery:jobspy:run-1",
+                workflowId: "workflow-run-1",
+                percent: 0,
+                completed: 0,
+                total: 5,
+                currentStep: "JobSpy",
+                message: "JobSpy started",
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Stop Discover run" }));
+
+    await waitFor(() => expect(cancelWorkflowRun).toHaveBeenCalledWith("workflow-run-1"));
   });
 
   it("describes failed backend discovery progress as not running and runnable again", async () => {

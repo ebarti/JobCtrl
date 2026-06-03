@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -7,13 +7,14 @@ import {
   sampleWorkflowRun,
   sampleWorkflowRunCompleted,
 } from "../../test/fixtures/projections.js";
+import { renderWithProviders } from "../../test/render.js";
 import { RunsTable } from "./RunsTable.js";
 
 describe("<RunsTable>", () => {
   function renderTable(
     overrides: Partial<React.ComponentProps<typeof RunsTable>> = {},
   ) {
-    return render(
+    return renderWithProviders(
       <RunsTable
         data={makeWorkflowRunsPage()}
         loading={false}
@@ -48,6 +49,16 @@ describe("<RunsTable>", () => {
     );
     expect(links[0]?.getAttribute("target")).toBe("_blank");
     expect(links[0]?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(
+      screen.getByRole("button", {
+        name: `Stop workflow run for ${sampleWorkflowRun.title}`,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: `Stop workflow run for ${sampleWorkflowRunCompleted.title}`,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("invokes onOpenRun with the workflow id when a row is activated", async () => {

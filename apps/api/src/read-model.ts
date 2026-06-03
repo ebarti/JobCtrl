@@ -1810,9 +1810,18 @@ function parseProgressPayload(
   const percent = rawPercent === null
     ? Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
     : Math.max(0, Math.min(100, Math.round(rawPercent)));
+  const runId = stringField(source.runId ?? source.run_id ?? payload.runId ?? payload.run_id);
+  const workflowId = stringField(
+    source.workflowId
+      ?? source.workflow_id
+      ?? payload.workflowId
+      ?? payload.workflow_id,
+  );
   return {
     stage: row.stage,
     status: progressStatus(source.status ?? source.progressStatus, row.event_type),
+    ...(runId ? { runId } : {}),
+    ...(workflowId ? { workflowId } : {}),
     percent,
     completed,
     total,

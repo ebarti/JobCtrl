@@ -36,6 +36,7 @@ class TailorActivityInput:
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    workflow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,
             llm_model=payload.llm_model,
+            workflow_id=payload.workflow_id,
         )
 
     result = await run_blocking_with_heartbeat(
@@ -224,6 +226,7 @@ class CoverActivityInput:
     validation_mode: str = "normal"
     dry_run: bool = False
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    workflow_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -256,6 +259,7 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
             limit=payload.limit,
             dry_run=payload.dry_run,
             llm_model=payload.llm_model,
+            workflow_id=payload.workflow_id,
         )
 
     result = await run_blocking_with_heartbeat(

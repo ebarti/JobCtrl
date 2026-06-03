@@ -552,6 +552,8 @@ describe("local TypeScript API", () => {
           tenantId: "local",
           jobId: "pipeline",
           stage: "discover",
+          runId: "discovery:workday:run-1",
+          workflowId: "workflow-run-1",
           progress: {
             completed: 3,
             total: 5,
@@ -574,6 +576,8 @@ describe("local TypeScript API", () => {
       {
         stage: "discover",
         status: "running",
+        runId: "discovery:workday:run-1",
+        workflowId: "workflow-run-1",
         percent: 60,
         completed: 3,
         total: 5,
@@ -2526,6 +2530,85 @@ describe("local TypeScript API", () => {
         jobKey: "pipeline",
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("cancels an in-flight workflow run by run id", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageStarted",
+        "info",
+        "Discover workflow started",
+        "2026-04-29T10:20:00+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discovery:jobspy:run-1",
+          workflowId: "workflow-run-1",
+          progress: {
+            completed: 0,
+            total: 6,
+            percent: 0,
+            currentStep: "JobSpy",
+            status: "running",
+            message: "JobSpy started",
+          },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+    const dispatch = vi.fn(async () => ({
+      runId: "workflow-run-1",
+      status: "cancel_requested",
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/workflow-runs/workflow-run-1/actions/cancel",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "cancel",
+      status: "cancel_requested",
+      jobKey: "pipeline",
+      runId: "workflow-run-1",
+      command: {
+        action: "cancel",
+        jobKey: "pipeline",
+        runId: "workflow-run-1",
+      },
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "cancel",
+        jobKey: "pipeline",
+        runId: "workflow-run-1",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    const summaryResponse = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+    expect(summaryResponse.statusCode, summaryResponse.body).toBe(200);
+    expect(summaryResponse.json().progress).toContainEqual(
+      expect.objectContaining({
+        stage: "discover",
+        status: "failed",
+        runId: "discovery:jobspy:run-1",
+        workflowId: "workflow-run-1",
+        message: "Discover canceled",
+      }),
     );
 
     await app.close();

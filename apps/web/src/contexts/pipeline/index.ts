@@ -1,6 +1,7 @@
 export { pipelineKeys } from "./queryKeys.js";
 
 export { useCancelStageMutation } from "./hooks/useCancelStageMutation.js";
+export { useCancelWorkflowRunMutation } from "./hooks/useCancelWorkflowRunMutation.js";
 export { useMarkAppliedMutation } from "./hooks/useMarkAppliedMutation.js";
 export { useMarkSkippedMutation } from "./hooks/useMarkSkippedMutation.js";
 export { useRetryStageMutation } from "./hooks/useRetryStageMutation.js";
@@ -8,6 +9,7 @@ export { useRetryFailedJobsMutation } from "./hooks/useRetryFailedJobsMutation.j
 export { useRunPipelineStagesMutation } from "./hooks/useRunPipelineStagesMutation.js";
 
 export { CancelStageButton, type CancelStageButtonProps } from "./components/CancelStageButton.js";
+export { CancelWorkflowRunButton, type CancelWorkflowRunButtonProps } from "./components/CancelWorkflowRunButton.js";
 export { JobActions, type JobActionsProps } from "./components/JobActions.js";
 export { MarkAppliedButton, type MarkAppliedButtonProps } from "./components/MarkAppliedButton.js";
 export { MarkSkippedButton, type MarkSkippedButtonProps } from "./components/MarkSkippedButton.js";
