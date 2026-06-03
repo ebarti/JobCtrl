@@ -39,7 +39,7 @@ describe("Operations projection types", () => {
       scoreReasoning: "Latest structured score evidence.",
       scoreVersion: 2,
       scoredAt: "2026-05-05T09:30:00+00:00",
-      currentStage: "score",
+      currentStage: "discover",
       currentState: "succeeded",
       currentErrorCode: null,
       currentErrorMessage: null,

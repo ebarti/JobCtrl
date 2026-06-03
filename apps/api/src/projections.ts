@@ -1026,6 +1026,10 @@ function loadStages(db: SqliteDatabase, jobUrl: string): NormalizedStage[] {
   });
 }
 
+function jobListStage(stage: string | null | undefined): "discover" | "apply" {
+  return stage === "apply" ? "apply" : "discover";
+}
+
 function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: string): void {
   const job = getRow<Record<string, unknown>>(db, "SELECT * FROM jobs WHERE url = ?", [jobUrl]);
   if (!job) {
@@ -1148,7 +1152,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     score.criteriaJson,
     score.traceJson,
     score.correctionJson,
-    firstActionable?.stage ?? "discover",
+    jobListStage(firstActionable?.stage),
     firstActionable?.state ?? "pending",
     firstActionable?.error_code ?? null,
     firstActionable?.error_message ?? null,

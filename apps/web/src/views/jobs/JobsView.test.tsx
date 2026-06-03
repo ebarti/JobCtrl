@@ -27,7 +27,6 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { JobsView } from "./JobsView.js";
-import { PREPARATION_STAGES } from "./jobStageFilters.js";
 
 const SEARCH =
   "?stage=all&state=all&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
@@ -91,19 +90,10 @@ function jobWithStage(
 }
 
 describe("<JobsView> bulk delete integration", () => {
-  it("maps the product Discover filter to every preparation-stage jobs query", async () => {
-    const jobsByStage = {
-      discover: jobWithStage("job-discover", "Discovery candidate", "discover"),
-      enrich: jobWithStage("job-enrich", "Enrichment candidate", "enrich"),
-      score: jobWithStage("job-score", "Scoring candidate", "score"),
-      tailor: jobWithStage("job-tailor", "Tailoring candidate", "tailor"),
-      cover: jobWithStage("job-cover", "Cover letter candidate", "cover"),
-      apply: jobWithStage("job-apply", "Apply candidate", "apply"),
-    } satisfies Record<Stage, JobSummary>;
+  it("keeps the product Discover filter as a single discover-stage jobs query", async () => {
+    const discoverJob = jobWithStage("job-discover", "Discovery candidate", "discover");
     const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
-      makeJobsPage(
-        query?.stage ? [jobsByStage[query.stage]] : Object.values(jobsByStage),
-      ),
+      makeJobsPage(query?.stage === "discover" ? [discoverJob] : []),
     );
     const harness = buildProviderHarness({
       ports: buildTestPorts({ api: { jobs } }),
@@ -115,17 +105,11 @@ describe("<JobsView> bulk delete integration", () => {
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    for (const stage of PREPARATION_STAGES) {
-      expect(
-        await screen.findByText(jobsByStage[stage].title),
-      ).toBeInTheDocument();
-    }
-    expect(screen.queryByText(jobsByStage.apply.title)).not.toBeInTheDocument();
-    const requestedStages = jobs.mock.calls.map(([query]) => query?.stage);
-    expect(requestedStages).toEqual(
-      expect.arrayContaining([...PREPARATION_STAGES]),
-    );
-    expect(requestedStages).not.toContain("apply");
+    expect(await screen.findByText(discoverJob.title)).toBeInTheDocument();
+    expect(screen.getByLabelText("discover")).toBeInTheDocument();
+    expect(screen.queryByText(/substatus/i)).not.toBeInTheDocument();
+    expect(jobs).toHaveBeenCalledTimes(1);
+    expect(jobs.mock.calls[0]?.[0]).toMatchObject({ stage: "discover" });
   });
 
   it("keeps the product Apply filter as an exact apply-stage jobs query", async () => {
@@ -176,20 +160,12 @@ describe("<JobsView> bulk delete integration", () => {
     );
   });
 
-  it("fans out all-matching Discover bulk filters across preparation stages", async () => {
+  it("uses the product Discover stage for all-matching bulk filters", async () => {
     const user = userEvent.setup();
-    const jobsByStage = Object.fromEntries(
-      PREPARATION_STAGES.map((stage) => [
-        stage,
-        jobWithStage(`job-${stage}`, `${stage} candidate`, stage),
-      ]),
-    ) as Record<(typeof PREPARATION_STAGES)[number], JobSummary>;
-    const jobs = vi.fn(async (query?: Partial<JobListQuery>) => {
-      const job = query?.stage
-        ? jobsByStage[query.stage as keyof typeof jobsByStage]
-        : undefined;
-      return makeJobsPage(job ? [job] : []);
-    });
+    const discoverJob = jobWithStage("job-discover", "discover candidate", "discover");
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(query?.stage === "discover" ? [discoverJob] : []),
+    );
     const deleteJobs = vi.fn(async (body: BulkJobMutationRequest) => ({
       ok: true as const,
       count: body.jobKeys.length,
@@ -205,35 +181,21 @@ describe("<JobsView> bulk delete integration", () => {
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    expect(await screen.findByText("score candidate")).toBeInTheDocument();
+    expect(await screen.findByText("discover candidate")).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /select all matching/i }),
     );
     await waitFor(() =>
-      expect(
-        screen.getByText(`${PREPARATION_STAGES.length} selected`),
-      ).toBeInTheDocument(),
+      expect(screen.getByText("1 selected")).toBeInTheDocument(),
     );
     await user.click(screen.getByRole("button", { name: /delete selected/i }));
 
-    await waitFor(() =>
-      expect(deleteJobs).toHaveBeenCalledTimes(PREPARATION_STAGES.length),
-    );
-    const payloads = deleteJobs.mock.calls.map(([body]) => body);
-    expect(payloads.map((payload) => payload.filter?.stage)).toEqual(
-      expect.arrayContaining([...PREPARATION_STAGES]),
-    );
-    expect(payloads).toEqual(
-      expect.arrayContaining(
-        PREPARATION_STAGES.map((stage) =>
-          expect.objectContaining({
-            allMatching: true,
-            filter: expect.objectContaining({ stage }),
-            jobKeys: [],
-          }),
-        ),
-      ),
-    );
+    await waitFor(() => expect(deleteJobs).toHaveBeenCalledTimes(1));
+    expect(deleteJobs.mock.calls[0]?.[0]).toMatchObject({
+      allMatching: true,
+      filter: expect.objectContaining({ stage: "discover" }),
+      jobKeys: [],
+    });
   });
 
   it("checks visible row checkboxes after selecting all matching jobs", async () => {
@@ -603,7 +565,7 @@ describe("<JobsView> bulk delete integration", () => {
     const staleJob = {
       ...sampleJob,
       jobKey: "job-stale",
-      currentStage: "score" as const,
+      currentStage: "discover" as const,
       currentState: "stale" as const,
       scoreStaleness: {
         isStale: true,

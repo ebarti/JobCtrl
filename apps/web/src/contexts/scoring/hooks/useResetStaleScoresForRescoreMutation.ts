@@ -107,9 +107,7 @@ function patchJobSummary(
   return {
     ...job,
     scoreStaleness: freshScoreStaleness,
-    currentStage: job.currentStage === "score" ? "score" : job.currentStage,
-    currentState:
-      job.currentStage === "score" && job.currentState === "stale" ? "pending" : job.currentState,
+    currentState: job.currentState === "stale" ? "pending" : job.currentState,
   };
 }
 

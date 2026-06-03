@@ -15,17 +15,9 @@ export interface UserFacingStageBadgeProps {
 
 export function UserFacingStageBadge({ stage }: UserFacingStageBadgeProps): JSX.Element {
   const visibleStage = userFacingStage(stage);
-  const label =
-    visibleStage === stage
-      ? visibleStage
-      : `${visibleStage}; internal ${stage} substatus`;
 
   return (
-    <span
-      aria-label={label}
-      className={`stage-pill ${stageTone(visibleStage)}`}
-      title={visibleStage === stage ? undefined : `Internal ${stage} substatus`}
-    >
+    <span aria-label={visibleStage} className={`stage-pill ${stageTone(visibleStage)}`}>
       {visibleStage}
     </span>
   );

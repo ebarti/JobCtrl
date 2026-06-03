@@ -627,6 +627,7 @@ def recover_orphaned_running_stages(
     stages: tuple[str, ...] | None = None,
     stale_after_seconds: int = ORPHANED_RUNNING_STAGE_GRACE_SECONDS,
     now: datetime | None = None,
+    started_before: datetime | None = None,
 ) -> int:
     """Fail stale non-apply stage rows left ``running`` by a dead worker.
 
@@ -634,6 +635,8 @@ def recover_orphaned_running_stages(
     If the process dies before final state writes, those rows otherwise stay
     visually active forever. The next worker startup owns this reconciliation.
     ``apply`` is intentionally excluded because it has its own run-lock rescue.
+    ``started_before`` lets a live worker sweep rows inherited from a prior
+    runtime without failing long-running work started by the current worker.
     """
 
     recovery_stages = tuple(stages or ORPHAN_RECOVERY_STAGES)
@@ -659,10 +662,17 @@ def recover_orphaned_running_stages(
 
     recovered = 0
     recovered_at_iso = recovered_at.isoformat()
+    started_before_utc = (
+        started_before.astimezone(timezone.utc) if started_before is not None else None
+    )
     for row in rows:
         updated_at = _parse_timestamp(row["updated_at"])
         started_at = _parse_timestamp(row["started_at"])
         last_seen = updated_at or started_at
+        if started_before_utc is not None:
+            current_worker_marker = started_at or last_seen
+            if current_worker_marker is not None and current_worker_marker >= started_before_utc:
+                continue
         if last_seen is not None and last_seen > cutoff:
             continue
 

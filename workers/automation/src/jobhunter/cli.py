@@ -1290,7 +1290,10 @@ def worker(
         worker_started_at = datetime.now(timezone.utc)
         identity = current_runtime_identity()
         conn = get_connection()
-        recovered = recover_orphaned_running_stages(conn)
+        recovered = recover_orphaned_running_stages(
+            conn,
+            started_before=worker_started_at,
+        )
         recovered_discovery_runs = recover_orphaned_discovery_runs(
             conn,
             started_before=worker_started_at,
@@ -1344,7 +1347,7 @@ async def _worker_heartbeat_loop(
 ) -> None:
     from jobhunter.database import get_connection
     from jobhunter.infrastructure.runtime_identity import write_worker_heartbeat
-    from jobhunter.state import recover_orphaned_discovery_runs
+    from jobhunter.state import recover_orphaned_discovery_runs, recover_orphaned_running_stages
 
     while True:
         await asyncio.sleep(15)
@@ -1352,13 +1355,23 @@ async def _worker_heartbeat_loop(
         if worker_started_at is None:
             continue
         try:
+            conn = get_connection()
+            recovered_stages = recover_orphaned_running_stages(
+                conn,
+                started_before=worker_started_at,
+            )
             recovered_discovery_runs = recover_orphaned_discovery_runs(
-                get_connection(),
+                conn,
                 started_before=worker_started_at,
             )
         except Exception:
-            log.warning("Discovery run orphan recovery sweep failed", exc_info=True)
+            log.warning("Worker orphan recovery sweep failed", exc_info=True)
             continue
+        if recovered_stages:
+            console.print(
+                f"[yellow]Recovered {recovered_stages} orphaned pipeline stage run(s) "
+                "from prior worker shutdown.[/yellow]"
+            )
         if recovered_discovery_runs:
             console.print(
                 f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "

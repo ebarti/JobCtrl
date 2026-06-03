@@ -89,6 +89,10 @@ DEFAULT_MAX_ATTEMPTS: dict[str, int] = {
     "apply": 3,
 }
 
+
+def _job_list_stage(stage: str | None) -> str:
+    return "apply" if stage == "apply" else "discover"
+
 _SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
 
 
@@ -378,7 +382,9 @@ class ProjectionBuilder:
         )
         employer = _row_str(job_row, "company") or _company_name(site, application_url or job_url)
 
-        # currentStage/State: first non-succeeded/non-skipped stage.
+        # currentStage/State: the list view exposes only product stages.
+        # The full internal preparation state remains available in
+        # JobDetailProjection.stages for operational diagnostics.
         current_stage = "discover"
         current_state = "pending"
         current_error_code: str | None = None
@@ -389,7 +395,7 @@ class ProjectionBuilder:
             stages[-1] if stages else None,
         )
         if first_actionable is not None:
-            current_stage = first_actionable.stage
+            current_stage = _job_list_stage(first_actionable.stage)
             current_state = first_actionable.state
             current_error_code = first_actionable.error_code
             current_error_message = first_actionable.error_message

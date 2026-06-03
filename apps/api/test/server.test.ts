@@ -704,7 +704,7 @@ describe("local TypeScript API", () => {
     expect(body.items[0]).toMatchObject({
       jobKey: "https://example.com/jobs/failed-score",
       title: "Backend Engineer",
-      currentStage: "score",
+      currentStage: "discover",
       currentState: "failed",
       fitScore: 8,
       discoverySource: "test",
@@ -1126,7 +1126,7 @@ describe("local TypeScript API", () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0]).toMatchObject({
       jobKey: "https://example.com/jobs/unscored",
-      currentStage: "score",
+      currentStage: "discover",
       currentState: "pending",
       fitScore: null,
     });
