@@ -202,6 +202,12 @@ def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
         "experienceFit": 7,
         "roleFit": 8,
         "reasoning": "Strong fit",
+        "fitBand": "plausible",
+        "confidence": "medium",
+        "eligibility": {"status": "unknown", "hardBlockers": [], "warnings": []},
+        "matchedSignals": [],
+        "missingSignals": [],
+        "transferableSignals": [],
     }
     assert json.loads(_row_value(row, "score_keywords_json")) == ["python", "fastapi"]
     assert _row_value(row, "score_version") == 1
@@ -242,6 +248,16 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
                     "experience_fit": 9,
                     "role_fit": 10,
                     "reasoning": "Evidence should be projected",
+                    "fit_band": "excellent",
+                    "confidence": "high",
+                    "eligibility": {
+                        "status": "blocked",
+                        "hard_blockers": ["candidate requires sponsorship"],
+                        "warnings": ["location needs review"],
+                    },
+                    "matched_signals": ["python"],
+                    "missing_signals": ["scale"],
+                    "transferable_signals": ["platform ownership"],
                 }
             ),
             json.dumps(["python", "sqlite"]),
@@ -290,6 +306,16 @@ def test_score_evidence_schema_migration_backfills_existing_projection(
         "experienceFit": 9,
         "roleFit": 10,
         "reasoning": "Evidence should be projected",
+        "fitBand": "excellent",
+        "confidence": "high",
+        "eligibility": {
+            "status": "blocked",
+            "hardBlockers": ["candidate requires sponsorship"],
+            "warnings": ["location needs review"],
+        },
+        "matchedSignals": ["python"],
+        "missingSignals": ["scale"],
+        "transferableSignals": ["platform ownership"],
     }
     assert json.loads(_row_value(row, "score_keywords_json")) == ["python", "sqlite"]
     assert _row_value(row, "score_version") == 1

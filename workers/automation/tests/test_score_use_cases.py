@@ -198,6 +198,23 @@ def _job(url: str = "https://example.com/job/1") -> dict[str, Any]:
     }
 
 
+def _strong_llm_response() -> dict[str, Any]:
+    return {
+        "score": 9,
+        "technical_fit": 9,
+        "experience_fit": 9,
+        "role_fit": 9,
+        "fit_band": "excellent",
+        "confidence": "high",
+        "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+        "matched_signals": ["Python"],
+        "missing_signals": [],
+        "transferable_signals": [],
+        "keywords": ["python"],
+        "reasoning": "The role otherwise looks excellent.",
+    }
+
+
 # ---------------------------------------------------------------------------
 # ScoreParser
 # ---------------------------------------------------------------------------
@@ -377,22 +394,7 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
 
 def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:
     repo = _MemoryRepo()
-    llm = _ScriptedLlm(
-        {
-            "score": 9,
-            "technical_fit": 9,
-            "experience_fit": 9,
-            "role_fit": 9,
-            "fit_band": "excellent",
-            "confidence": "high",
-            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
-            "matched_signals": ["Python"],
-            "missing_signals": [],
-            "transferable_signals": [],
-            "keywords": ["python"],
-            "reasoning": "The role otherwise looks excellent.",
-        }
-    )
+    llm = _ScriptedLlm(_strong_llm_response())
     criteria = ScoringCriteria(
         min_fit_score=8,
         target_criteria="Remote only.",
@@ -424,6 +426,73 @@ def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot
     assert any(
         "remote" in blocker
         for blocker in outcome.score.breakdown.eligibility.hard_blockers
+    )
+
+
+def test_score_job_does_not_treat_numeric_prose_as_posted_compensation(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+    criteria = ScoringCriteria(
+        min_fit_score=8,
+        profile_preferences={
+            "compensation": {
+                "salary_range_min": "120,000",
+                "salary_expectation": "140,000",
+            },
+        },
+    )
+    job = {
+        **_job("https://example.com/job/no-posted-pay"),
+        "salary": "",
+        "full_description": (
+            "Lead 30+ engineers across 5 teams in an AI-first delivery model. "
+            "Own 202 platform services and mentor 12 staff engineers."
+        ),
+    }
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=job,
+        profile_snapshot=profile_snapshot,
+        criteria=criteria,
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.breakdown.eligibility.status == "eligible"
+    assert "posted compensation appears below profile minimum" not in (
+        outcome.score.breakdown.eligibility.hard_blockers
+    )
+
+
+def test_score_job_blocks_when_explicit_posted_compensation_is_below_minimum(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+    criteria = ScoringCriteria(
+        min_fit_score=8,
+        profile_preferences={
+            "compensation": {
+                "salary_range_min": "120,000",
+                "salary_expectation": "120,000",
+            },
+        },
+    )
+    job = {
+        **_job("https://example.com/job/posted-pay"),
+        "salary": "$80k-$95k",
+        "full_description": "Senior engineering role.",
+    }
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=job,
+        profile_snapshot=profile_snapshot,
+        criteria=criteria,
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.breakdown.eligibility.status == "blocked"
+    assert "posted compensation appears below profile minimum" in (
+        outcome.score.breakdown.eligibility.hard_blockers
     )
 
 

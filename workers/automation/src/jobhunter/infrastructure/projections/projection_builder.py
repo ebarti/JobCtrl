@@ -1312,6 +1312,23 @@ def _camel_score_breakdown(value) -> dict:
         "experienceFit": _score_dimension(data.get("experience_fit", data.get("experienceFit"))),
         "roleFit": _score_dimension(data.get("role_fit", data.get("roleFit"))),
         "reasoning": data.get("reasoning") if isinstance(data.get("reasoning"), str) else "",
+        "fitBand": _string_choice(data.get("fit_band", data.get("fitBand")), "plausible"),
+        "confidence": _string_choice(data.get("confidence"), "medium"),
+        "eligibility": _camel_score_eligibility(data.get("eligibility")),
+        "matchedSignals": _string_list(data.get("matched_signals", data.get("matchedSignals"))),
+        "missingSignals": _string_list(data.get("missing_signals", data.get("missingSignals"))),
+        "transferableSignals": _string_list(
+            data.get("transferable_signals", data.get("transferableSignals"))
+        ),
+    }
+
+
+def _camel_score_eligibility(value) -> dict:
+    data = value if isinstance(value, dict) else {}
+    return {
+        "status": _string_choice(data.get("status"), "unknown"),
+        "hardBlockers": _string_list(data.get("hard_blockers", data.get("hardBlockers"))),
+        "warnings": _string_list(data.get("warnings")),
     }
 
 
@@ -1325,6 +1342,26 @@ def _score_dimension(value) -> int:
     if number > 10:
         return 10
     return number
+
+
+def _string_choice(value, default: str) -> str:
+    candidate = str(value or "").strip()
+    return candidate or default
+
+
+def _string_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in value:
+        text = str(raw or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
 
 
 def _normalize_keywords(value) -> list[str]:

@@ -1,5 +1,6 @@
 """Tests for re-tailoring selection and CLI flag wiring."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -45,6 +46,34 @@ def _insert_job(conn, *, url: str, fit_score: int = 9, tailored_resume_path=None
             fit_score,
             tailored_resume_path,
             tailor_attempts,
+        ),
+    )
+    conn.commit()
+
+
+def _insert_blocked_score(conn, *, url: str, blocker: str = "No sponsorship.") -> None:
+    conn.execute(
+        """
+        INSERT INTO job_scores (
+            job_url, version, tenant_id, fit_score, breakdown_json,
+            keywords_json, scored_at, correction_json, criteria_json, trace_json
+        ) VALUES (?, 1, 'local', 10, ?, '[]', ?, NULL, '{}', '{}')
+        """,
+        (
+            url,
+            json.dumps(
+                {
+                    "reasoning": "Strong match but blocked.",
+                    "fit_band": "excellent",
+                    "eligibility": {
+                        "status": "blocked",
+                        "hard_blockers": [blocker],
+                        "warnings": [],
+                    },
+                },
+                sort_keys=True,
+            ),
+            "2026-06-02T00:00:00+00:00",
         ),
     )
     conn.commit()
@@ -154,6 +183,56 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
             (unrelated_url,),
         ).fetchone()
         assert unrelated_stage is None
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    target_url = "https://example.com/blocked"
+
+    try:
+        _insert_job(conn, url=target_url, fit_score=10)
+        _insert_blocked_score(conn, url=target_url)
+
+        def fail_tailor_one_job(*_args, **_kwargs):
+            raise AssertionError("blocked score must not tailor")
+
+        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fail_tailor_one_job)
+
+        result = tailor_job_by_url(
+            target_url,
+            min_score=7,
+            retailor=True,
+            snapshot=SimpleNamespace(),
+            llm_model=None,
+        )
+
+        assert result == {
+            "url": target_url,
+            "status": "skipped",
+            "reason": "score_eligibility_blocked",
+        }
+        rows = conn.execute(
+            """
+            SELECT stage, state, error_code, error_message, blocked_by_json, next_action
+            FROM job_stage_states
+            WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
+            ORDER BY stage
+            """,
+            (target_url,),
+        ).fetchall()
+        assert {row["stage"]: row["state"] for row in rows} == {
+            "apply": "blocked",
+            "cover": "blocked",
+            "tailor": "blocked",
+        }
+        assert {row["error_code"] for row in rows} == {"SCORE_ELIGIBILITY_BLOCKED"}
+        assert all("No sponsorship." in row["error_message"] for row in rows)
+        assert {row["blocked_by_json"] for row in rows} == {'["score"]'}
+        assert {row["next_action"] for row in rows} == {"review score hard blockers"}
     finally:
         close_connection(db_path)
 

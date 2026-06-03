@@ -34,6 +34,7 @@ from jobhunter import database as db_module
 from jobhunter import config
 from jobhunter.config import TAILORED_DIR
 from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials import ValidationResult
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
@@ -57,9 +58,11 @@ from jobhunter.infrastructure.materials import (
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
 )
+from jobhunter.infrastructure.scoring import SqliteScoreRepository
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.state import (
     ensure_job_stage_rows,
+    reconcile_score_eligibility_blockers,
     record_job_event,
     set_stage_state,
     utc_now,
@@ -595,6 +598,17 @@ def tailor_job_by_url(
         retailor=retailor,
     )
     if job is None:
+        if _reconcile_score_eligibility_skip(
+            conn,
+            job_url=job_url,
+            tenant_id=tenant_id,
+        ):
+            conn.commit()
+            return {
+                "url": job_url,
+                "status": "skipped",
+                "reason": "score_eligibility_blocked",
+            }
         return {"url": job_url, "status": "skipped", "reason": "not_eligible"}
 
     worker_count = max(1, workers)
@@ -688,6 +702,33 @@ def tailor_job_by_url(
         )
     conn.commit()
     return result
+
+
+def _reconcile_score_eligibility_skip(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    tenant_id: TenantId,
+) -> bool:
+    score = SqliteScoreRepository(conn).load(tenant_id, JobId(job_url))
+    if score is None:
+        return False
+    eligibility = score.breakdown.eligibility
+    if eligibility.status != "blocked" and not eligibility.hard_blockers:
+        return False
+    row = conn.execute(
+        "SELECT discovered_at FROM jobs WHERE url = ?",
+        (job_url,),
+    ).fetchone()
+    discovered_at = row["discovered_at"] if row is not None else None
+    ensure_job_stage_rows(conn, job_url, discovered_at=discovered_at)
+    reconcile_score_eligibility_blockers(
+        conn,
+        job_url=job_url,
+        eligibility_status=eligibility.status,
+        hard_blockers=list(eligibility.hard_blockers),
+    )
+    return True
 
 
 def _load_tailor_eligible_job_by_url(

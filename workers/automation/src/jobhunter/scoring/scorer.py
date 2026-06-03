@@ -53,6 +53,7 @@ from jobhunter.infrastructure.scoring import (
 )
 from jobhunter.state import (
     ensure_job_stage_rows,
+    reconcile_score_eligibility_blockers,
     record_job_event,
     set_stage_state,
     utc_now,
@@ -381,6 +382,7 @@ def run_scoring(
                 message=f"Fit score {outcome.score.fit_score.value}/10",
                 payload={"keywords": list(outcome.score.matched_keywords)},
             )
+            _sync_score_eligibility_stage_state(conn, url, outcome.score, now=finished_at)
         else:
             set_stage_state(
                 conn,
@@ -518,6 +520,7 @@ def score_job_by_url(
             message=f"Fit score {outcome.score.fit_score.value}/10",
             payload={"keywords": list(outcome.score.matched_keywords)},
         )
+        _sync_score_eligibility_stage_state(conn, job_url, outcome.score, now=finished_at)
     else:
         set_stage_state(
             conn,
@@ -564,6 +567,8 @@ def _ensure_existing_score_stage_succeeded(
     ).fetchone()
     state = _row_value(row, "state", 0)
     if state == "succeeded":
+        _sync_score_eligibility_stage_state(conn, job_url, score)
+        conn.commit()
         return
 
     finished_at = utc_now()
@@ -587,7 +592,25 @@ def _ensure_existing_score_stage_succeeded(
         message=f"Fit score {score.fit_score.value}/10",
         payload={"keywords": list(score.matched_keywords)},
     )
+    _sync_score_eligibility_stage_state(conn, job_url, score, now=finished_at)
     conn.commit()
+
+
+def _sync_score_eligibility_stage_state(
+    conn: sqlite3.Connection,
+    job_url: str,
+    score: JobScore,
+    *,
+    now: str | None = None,
+) -> None:
+    eligibility = score.breakdown.eligibility
+    reconcile_score_eligibility_blockers(
+        conn,
+        job_url=job_url,
+        eligibility_status=eligibility.status,
+        hard_blockers=list(eligibility.hard_blockers),
+        now=now,
+    )
 
 
 def _has_unresolved_score_staleness(

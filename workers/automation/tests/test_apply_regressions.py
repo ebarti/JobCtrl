@@ -369,6 +369,27 @@ def test_single_job_tailor_rejects_blocked_candidate(tmp_path, monkeypatch):
         ).fetchone()
         assert row["tailored_resume_path"] is None
         assert row["cover_letter_path"] is None
+        stage_rows = conn.execute(
+            """
+            SELECT stage, state, error_code, blocked_by_json, next_action
+            FROM job_stage_states
+            WHERE job_url = ? AND stage IN ('tailor', 'cover', 'apply')
+            ORDER BY stage
+            """,
+            (url,),
+        ).fetchall()
+        assert {stage["stage"]: stage["state"] for stage in stage_rows} == {
+            "apply": "blocked",
+            "cover": "blocked",
+            "tailor": "blocked",
+        }
+        assert {stage["error_code"] for stage in stage_rows} == {
+            "SCORE_ELIGIBILITY_BLOCKED"
+        }
+        assert {stage["blocked_by_json"] for stage in stage_rows} == {'["score"]'}
+        assert {stage["next_action"] for stage in stage_rows} == {
+            "review score hard blockers"
+        }
     finally:
         close_connection(db_path)
 

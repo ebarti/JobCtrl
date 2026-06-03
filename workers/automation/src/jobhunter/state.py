@@ -66,6 +66,12 @@ _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]]
         ("cover", ("tailor has not completed.",)),
     ),
 }
+SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE = "SCORE_ELIGIBILITY_BLOCKED"
+SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX = "Score eligibility blocks tailoring"
+_SCORE_ELIGIBILITY_DOWNSTREAM_STAGES: tuple[str, ...] = ("tailor", "cover", "apply")
+_TERMINAL_DOWNSTREAM_STATES: frozenset[str] = frozenset(
+    {"succeeded", "skipped", "exhausted", "canceled"}
+)
 
 
 def utc_now() -> str:
@@ -460,6 +466,159 @@ def reconcile_dependency_blockers(
                 )
                 repaired += 1
     return repaired
+
+
+def reconcile_score_eligibility_blockers(
+    conn,
+    *,
+    job_url: str,
+    eligibility_status: str | None,
+    hard_blockers: list[str] | tuple[str, ...] | None = None,
+    now: str | None = None,
+) -> int:
+    """Keep downstream stage rows aligned with score hard-blocker eligibility."""
+    blockers = _clean_blocker_reasons(hard_blockers)
+    blocked = str(eligibility_status or "").strip().lower() == "blocked" or bool(blockers)
+    updated_at = now or utc_now()
+
+    if not blocked:
+        return _clear_score_eligibility_blockers(conn, job_url=job_url, now=updated_at)
+
+    reason = ", ".join(blockers) if blockers else str(eligibility_status or "blocked")
+    message = f"{SCORE_ELIGIBILITY_BLOCKED_MESSAGE_PREFIX}: {reason}"
+    changed = 0
+    rows = conn.execute(
+        f"""
+        SELECT stage, state, attempt_count
+          FROM job_stage_states
+         WHERE job_url = ?
+           AND stage IN ({", ".join("?" for _ in _SCORE_ELIGIBILITY_DOWNSTREAM_STAGES)})
+        """,
+        (job_url, *_SCORE_ELIGIBILITY_DOWNSTREAM_STAGES),
+    ).fetchall()
+    for row in rows:
+        stage = str(row["stage"])
+        state = str(row["state"])
+        if state in _TERMINAL_DOWNSTREAM_STATES:
+            continue
+        attempt_count = int(row["attempt_count"] or 0)
+        set_stage_state(
+            conn,
+            job_url,
+            stage,
+            "blocked",
+            attempt_count=attempt_count,
+            error_code=SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE,
+            error_message=message,
+            retryable=False,
+            blocked_by=["score"],
+            next_action="review score hard blockers",
+            metadata={
+                "reason": "score_eligibility_blocked",
+                "hard_blockers": blockers,
+            },
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            job_url,
+            stage,
+            "StageBlocked",
+            level="warning",
+            message=message,
+            occurred_at=updated_at,
+            payload={
+                "reason": "score_eligibility_blocked",
+                "hard_blockers": blockers,
+                "upstreamStage": "score",
+                "downstreamStage": stage,
+            },
+        )
+        changed += 1
+    return changed
+
+
+def _clear_score_eligibility_blockers(conn, *, job_url: str, now: str) -> int:
+    rows = conn.execute(
+        """
+        SELECT stage, attempt_count
+          FROM job_stage_states
+         WHERE job_url = ?
+           AND state = 'blocked'
+           AND error_code = ?
+        """,
+        (job_url, SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE),
+    ).fetchall()
+    cleared = 0
+    for row in rows:
+        stage = str(row["stage"])
+        attempt_count = int(row["attempt_count"] or 0)
+        restored = _restored_state_after_score_eligibility_cleared(conn, job_url=job_url, stage=stage)
+        set_stage_state(conn, job_url, stage, attempt_count=attempt_count, validate_transition=False, **restored)
+        record_job_event(
+            conn,
+            job_url,
+            stage,
+            "StageReset",
+            message=f"{stage} unblocked after score eligibility cleared.",
+            occurred_at=now,
+            payload={
+                "reason": "score_eligibility_cleared",
+                "upstreamStage": "score",
+                "downstreamStage": stage,
+            },
+        )
+        cleared += 1
+    return cleared
+
+
+def _restored_state_after_score_eligibility_cleared(conn, *, job_url: str, stage: str) -> dict[str, Any]:
+    if stage == "tailor":
+        return {"state": "pending"}
+    if stage == "cover":
+        return (
+            {"state": "pending"}
+            if _stage_is_succeeded(conn, job_url=job_url, stage="tailor")
+            else {
+                "state": "blocked",
+                "error_code": "BLOCKED",
+                "error_message": "tailor has not completed.",
+            }
+        )
+    if stage == "apply":
+        return (
+            {"state": "pending"}
+            if _stage_is_succeeded(conn, job_url=job_url, stage="tailor")
+            else {
+                "state": "blocked",
+                "error_code": "BLOCKED",
+                "error_message": "Materials are not ready.",
+            }
+        )
+    return {"state": "pending"}
+
+
+def _stage_is_succeeded(conn, *, job_url: str, stage: str) -> bool:
+    row = conn.execute(
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
+        (job_url, stage),
+    ).fetchone()
+    return bool(row and str(row["state"]) == "succeeded")
+
+
+def _clean_blocker_reasons(value: list[str] | tuple[str, ...] | None) -> list[str]:
+    if not value:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in value:
+        text = str(raw or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
 
 
 def recover_orphaned_running_stages(
