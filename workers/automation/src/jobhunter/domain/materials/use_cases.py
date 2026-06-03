@@ -55,6 +55,11 @@ from jobhunter.domain.materials.aggregate import (
 )
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.policy import TailoringPolicy
+from jobhunter.domain.materials.quality import (
+    TailoringPlan,
+    build_tailoring_plan,
+    evaluate_tailoring_quality,
+)
 from jobhunter.domain.materials.services import (
     BANNED_WORDS,
     ContentValidator,
@@ -371,7 +376,11 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_master_tailor_prompt(snapshot: ProfileSnapshot) -> str:
+def build_master_tailor_prompt(
+    snapshot: ProfileSnapshot,
+    *,
+    tailoring_plan: TailoringPlan | None = None,
+) -> str:
     """Build the master-resume tailoring prompt from the snapshot."""
     profile = snapshot.as_dict()
     require_resume_master(profile)
@@ -449,6 +458,11 @@ def build_master_tailor_prompt(snapshot: ProfileSnapshot) -> str:
         if custom_tailoring_prompt
         else ""
     )
+    quality_plan_block = (
+        "\n" + tailoring_plan.to_prompt_context() + "\n"
+        if tailoring_plan is not None
+        else ""
+    )
 
     return f"""You are tailoring a resume that is backed by a canonical LaTeX master file.
 
@@ -495,6 +509,7 @@ TAILORING POLICY:
 WRITING STYLE:
 {chr(10).join(style_lines)}
 {custom_prompt_block}
+{quality_plan_block}
 REQUIRED EXPERIENCE IDS:
 {json.dumps(required_experience_ids, ensure_ascii=False)}
 
@@ -516,7 +531,11 @@ OUTPUT ONLY VALID JSON:
 }}"""
 
 
-def build_judge_prompt(snapshot: ProfileSnapshot) -> str:
+def build_judge_prompt(
+    snapshot: ProfileSnapshot,
+    *,
+    tailoring_plan: TailoringPlan | None = None,
+) -> str:
     """Build the LLM judge prompt from the snapshot."""
     profile = snapshot.as_dict()
     boundary = profile.get("skills_boundary", {})
@@ -536,6 +555,11 @@ def build_judge_prompt(snapshot: ProfileSnapshot) -> str:
 
     real_metrics = normalize_profile_list(resume_facts.get("real_metrics", []))
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
+    quality_plan_block = (
+        "\n" + tailoring_plan.to_prompt_context() + "\n"
+        if tailoring_plan is not None
+        else ""
+    )
 
     return f"""You are the final resume quality judge for JobHunter.
 
@@ -572,6 +596,8 @@ ALLOWED SKILLS:
 
 REAL METRICS:
 {metrics_str}
+
+{quality_plan_block}
 
 REQUIRED BULLETS BY EXPERIENCE ID:
 {json.dumps(required_bullets, indent=2, ensure_ascii=False)}
@@ -822,6 +848,8 @@ class TailorResumeUseCase:
             "selected_candidate": report.get("selected_candidate"),
             "judge_model": report.get("judge_model"),
             "judge_min_score": report.get("judge_min_score"),
+            "quality_plan": report.get("quality_plan") or {},
+            "quality_checks": report.get("quality_checks") or {},
             "candidate_summaries": report.get("candidate_summaries") or [],
             "judge": judge_record,
         }
@@ -913,7 +941,11 @@ class TailorResumeUseCase:
         payload (or ``None`` if every attempt failed to parse) + the last
         :class:`ValidationResult` and :class:`JudgeVerdict`.
         """
-        tailor_prompt_base = build_master_tailor_prompt(profile_snapshot)
+        tailoring_plan = build_tailoring_plan(profile_snapshot.as_dict(), job)
+        tailor_prompt_base = build_master_tailor_prompt(
+            profile_snapshot,
+            tailoring_plan=tailoring_plan,
+        )
         model_policy = self._llm_policy
         report: dict = {
             "attempts": 0,
@@ -929,6 +961,8 @@ class TailorResumeUseCase:
             "judge_min_score": model_policy.judge_min_score,
             "system_prompt": tailor_prompt_base,
             "job_text": _build_job_blob(job),
+            "quality_plan": tailoring_plan.to_metadata(),
+            "quality_checks": None,
             "attempt_history": [],
             "candidate_summaries": [],
         }
@@ -973,6 +1007,7 @@ class TailorResumeUseCase:
                     messages=messages,
                     model=model,
                     profile_snapshot=profile_snapshot,
+                    tailoring_plan=tailoring_plan,
                     validation_mode=validation_mode,
                     job=job,
                 )
@@ -995,6 +1030,7 @@ class TailorResumeUseCase:
                 report["status"] = "approved"
                 report["validator"] = selected.validation.to_dict()
                 report["judge"] = selected.record.get("judge")
+                report["quality_checks"] = selected.record.get("quality_checks")
                 report["selected_candidate"] = selected.record.get("candidate_id")
                 report["selected_model"] = selected.model
                 attempt_record["status"] = "approved"
@@ -1021,6 +1057,7 @@ class TailorResumeUseCase:
             report["status"] = "failed_judge"
             report["validator"] = best_rejected.validation.to_dict()
             report["judge"] = best_rejected.record.get("judge")
+            report["quality_checks"] = best_rejected.record.get("quality_checks")
             report["selected_candidate"] = best_rejected.record.get("candidate_id")
             report["selected_model"] = best_rejected.model
             return report, best_rejected.payload, best_rejected.validation, best_rejected.verdict
@@ -1071,6 +1108,7 @@ class TailorResumeUseCase:
         messages: list[LlmMessage],
         model: str,
         profile_snapshot: ProfileSnapshot,
+        tailoring_plan: TailoringPlan,
         validation_mode: str,
         job: dict,
     ) -> _TailorCandidate:
@@ -1121,6 +1159,21 @@ class TailorResumeUseCase:
                 validation = ValidationResult.success(
                     warnings=tuple(validation.warnings) + tuple(rendered_validation.warnings)
                 )
+            quality_result = evaluate_tailoring_quality(
+                payload,
+                tailored_text,
+                tailoring_plan,
+            )
+            record["quality_checks"] = quality_result.to_dict()
+            if quality_result.errors:
+                validation = ValidationResult.failure(
+                    tuple(validation.errors) + tuple(quality_result.errors),
+                    warnings=tuple(validation.warnings) + tuple(quality_result.warnings),
+                )
+            elif quality_result.warnings:
+                validation = ValidationResult.success(
+                    warnings=tuple(validation.warnings) + tuple(quality_result.warnings)
+                )
         record["validator"] = validation.to_dict()
 
         if not validation.passed:
@@ -1142,6 +1195,7 @@ class TailorResumeUseCase:
 
         verdict = self._judge_resume(
             profile_snapshot=profile_snapshot,
+            tailoring_plan=tailoring_plan,
             tailored_payload=payload,
             tailored_text=tailored_text,
             job=job,
@@ -1187,11 +1241,15 @@ class TailorResumeUseCase:
         self,
         *,
         profile_snapshot: ProfileSnapshot,
+        tailoring_plan: TailoringPlan,
         tailored_payload: dict,
         tailored_text: str,
         job: dict,
     ) -> JudgeVerdict:
-        judge_prompt = build_judge_prompt(profile_snapshot)
+        judge_prompt = build_judge_prompt(
+            profile_snapshot,
+            tailoring_plan=tailoring_plan,
+        )
         messages = [
             LlmMessage(role="system", content=judge_prompt),
             LlmMessage(

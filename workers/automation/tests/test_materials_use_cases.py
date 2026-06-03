@@ -56,6 +56,7 @@ from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 def _profile_dict() -> dict:
     return {
         "personal": {"full_name": "Jane Doe", "email": "jane@example.com"},
+        "resume_constraints": {"real_metrics": ["40%"]},
         "resume": {
             "executive_profile": {"baseline_text": "Senior engineer."},
             "experience_entries": [
@@ -87,6 +88,28 @@ def _profile_dict() -> dict:
             },
         },
     }
+
+
+def _profile_with_evidence_dict() -> dict:
+    profile = _profile_dict()
+    profile["resume_constraints"] = {"real_metrics": ["35% latency reduction"]}
+    profile["resume"]["experience_entries"][0]["achievement_evidence"] = [
+        {
+            "id": "ev_latency",
+            "source_text": "Reduced API latency 35% by replacing synchronous calls.",
+            "scope": "owned backend service",
+            "action": "replaced synchronous enrichment calls",
+            "tools": ["Python", "PostgreSQL"],
+            "metrics": ["35% latency reduction"],
+            "outcome": "faster API responses",
+            "seniority_signal": "technical ownership",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.95,
+            "user_confirmed": True,
+            "tags": ["latency", "backend", "performance"],
+        }
+    ]
+    return profile
 
 
 @pytest.fixture()
@@ -184,6 +207,26 @@ def _good_json_payload() -> str:
             "executive_profile": "Senior engineer focused on systems.",
             "experience_updates": [
                 {"id": "acme_swe", "title": "", "bullets": ["Cut latency 40%."]},
+            ],
+            "skill_category_updates": [
+                {"id": "languages", "items": ["Python", "Go"]},
+            ],
+        }
+    )
+
+
+def _quality_json_payload(*, metric: str = "35%") -> str:
+    return json.dumps(
+        {
+            "executive_profile": "Senior backend engineer focused on Python API reliability.",
+            "experience_updates": [
+                {
+                    "id": "acme_swe",
+                    "title": "",
+                    "bullets": [
+                        f"Owned API latency improvements and reduced latency {metric} with Python."
+                    ],
+                },
             ],
             "skill_category_updates": [
                 {"id": "languages", "items": ["Python", "Go"]},
@@ -336,6 +379,79 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
     assert outcome.materials.last_verdict.criterion_scores["fabrication_safety"] == 1.0
     assert outcome.text_path is not None and Path(outcome.text_path).exists()
     assert any(getattr(e, "event_type", "") == "ResumeApproved" for e in publisher.events)
+
+
+def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "PostgreSQL", "API performance"],
+        "responsibilities": ["Own backend latency improvements"],
+        "full_description": "Own Python services and improve API latency.",
+    }
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([_quality_json_payload(), _judge_pass()])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert "TAILORING QUALITY PLAN" in llm.calls[0][0].content
+    assert "ev_latency" in llm.calls[0][0].content
+    assert "TAILORING QUALITY PLAN" in llm.calls[1][0].content
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    metadata = outcome.materials.tailored_resume.metadata
+    assert metadata["quality_plan"]["target_seniority"] == "senior"
+    assert metadata["quality_plan"]["required_evidence_ids"] == ["ev_latency"]
+    assert metadata["quality_checks"]["passed"] is True
+    assert outcome.report["tailoring_quality"]["quality_checks"]["passed"] is True
+
+
+def test_tailor_use_case_quality_failure_feeds_retry_notes(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    job = {
+        **job,
+        "title": "Senior Backend Engineer",
+        "skills": ["Python", "PostgreSQL", "API performance"],
+        "responsibilities": ["Own backend latency improvements"],
+        "full_description": "Own Python services and improve API latency.",
+    }
+    repo = _FakeRepository()
+    llm = _ScriptedLlm([
+        _quality_json_payload(metric="80%"),
+        _quality_json_payload(metric="35%"),
+        _judge_pass(),
+    ])
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+
+    outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 3
+    assert "Unknown metric" in llm.calls[1][0].content
+    first_candidate = outcome.report["attempt_history"][0]["candidates"][0]
+    assert first_candidate["status"] == "failed_validation"
+    assert any("Unknown metric" in error for error in first_candidate["validator"]["errors"])
 
 
 def test_tailor_use_case_judge_rejected_fails_quality_gate(
