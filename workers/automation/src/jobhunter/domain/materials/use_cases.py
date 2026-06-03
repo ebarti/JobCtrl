@@ -53,6 +53,14 @@ from jobhunter.domain.materials.aggregate import (
     MaterialsSet,
     MaterialsSetFactory,
 )
+from jobhunter.domain.materials.adversarial import (
+    ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
+    ADVERSARIAL_REVIEW_THRESHOLD,
+    AdversarialReviewResult,
+    build_adversarial_review_prompt,
+    normalized_job_fit_score,
+    should_run_adversarial_review,
+)
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.quality import (
@@ -850,6 +858,7 @@ class TailorResumeUseCase:
             "judge_min_score": report.get("judge_min_score"),
             "quality_plan": report.get("quality_plan") or {},
             "quality_checks": report.get("quality_checks") or {},
+            "adversarial_review": report.get("adversarial_review") or {},
             "candidate_summaries": report.get("candidate_summaries") or [],
             "judge": judge_record,
         }
@@ -963,6 +972,7 @@ class TailorResumeUseCase:
             "job_text": _build_job_blob(job),
             "quality_plan": tailoring_plan.to_metadata(),
             "quality_checks": None,
+            "adversarial_review": None,
             "attempt_history": [],
             "candidate_summaries": [],
         }
@@ -1031,6 +1041,7 @@ class TailorResumeUseCase:
                 report["validator"] = selected.validation.to_dict()
                 report["judge"] = selected.record.get("judge")
                 report["quality_checks"] = selected.record.get("quality_checks")
+                report["adversarial_review"] = selected.record.get("adversarial_review")
                 report["selected_candidate"] = selected.record.get("candidate_id")
                 report["selected_model"] = selected.model
                 attempt_record["status"] = "approved"
@@ -1048,16 +1059,26 @@ class TailorResumeUseCase:
                 elif status == "judge_rejected":
                     judge = candidate_record.get("judge") or {}
                     avoid_notes.append(f"Judge rejected: {judge.get('issues') or 'quality gate failed'}")
+                elif status == "adversarial_rejected":
+                    review = candidate_record.get("adversarial_review") or {}
+                    blockers = review.get("blockers") or []
+                    repairs = review.get("repair_instructions") or []
+                    avoid_notes.extend(str(item) for item in [*blockers, *repairs] if str(item))
 
             attempt_record["status"] = "failed_quality_gate"
             report["attempt_history"].append(attempt_record)
 
         report["status"] = "exhausted_retries"
         if best_rejected is not None:
-            report["status"] = "failed_judge"
+            report["status"] = (
+                "failed_adversarial_review"
+                if best_rejected.record.get("status") == "adversarial_rejected"
+                else "failed_judge"
+            )
             report["validator"] = best_rejected.validation.to_dict()
             report["judge"] = best_rejected.record.get("judge")
             report["quality_checks"] = best_rejected.record.get("quality_checks")
+            report["adversarial_review"] = best_rejected.record.get("adversarial_review")
             report["selected_candidate"] = best_rejected.record.get("candidate_id")
             report["selected_model"] = best_rejected.model
             return report, best_rejected.payload, best_rejected.validation, best_rejected.verdict
@@ -1200,9 +1221,23 @@ class TailorResumeUseCase:
             tailored_text=tailored_text,
             job=job,
         )
+        if verdict.approved:
+            adversarial_review = self._adversarial_review(
+                profile_snapshot=profile_snapshot,
+                tailoring_plan=tailoring_plan,
+                tailored_payload=payload,
+                tailored_text=tailored_text,
+                job=job,
+                validation_mode=validation_mode,
+            )
+            record["adversarial_review"] = adversarial_review.to_dict()
+            if not adversarial_review.passed:
+                verdict = self._adversarial_failed_verdict(verdict, adversarial_review)
         record["judge"] = self._judge_record(verdict)
         if verdict.approved:
             record["status"] = "approved"
+        elif record.get("adversarial_review", {}).get("ran"):
+            record["status"] = "adversarial_rejected"
         else:
             record["status"] = "judge_rejected"
         return _TailorCandidate(payload, validation, verdict, tailored_text, model, record)
@@ -1321,6 +1356,91 @@ class TailorResumeUseCase:
             issues=tuple(issues + blockers),
         )
 
+    def _adversarial_review(
+        self,
+        *,
+        profile_snapshot: ProfileSnapshot,
+        tailoring_plan: TailoringPlan,
+        tailored_payload: dict,
+        tailored_text: str,
+        job: dict,
+        validation_mode: str,
+    ) -> AdversarialReviewResult:
+        normalized_fit = normalized_job_fit_score(job)
+        if validation_mode == "lenient":
+            return AdversarialReviewResult.skipped(
+                threshold=ADVERSARIAL_REVIEW_THRESHOLD,
+                normalized_fit_score=normalized_fit,
+                reason="lenient_validation_mode",
+            )
+        if not should_run_adversarial_review(job):
+            return AdversarialReviewResult.skipped(
+                threshold=ADVERSARIAL_REVIEW_THRESHOLD,
+                normalized_fit_score=normalized_fit,
+                reason="below_high_fit_threshold",
+            )
+
+        messages = [
+            LlmMessage(
+                role="system",
+                content=build_adversarial_review_prompt(
+                    profile_snapshot=profile_snapshot,
+                    tailoring_plan=tailoring_plan,
+                ),
+            ),
+            LlmMessage(
+                role="user",
+                content=(
+                    f"TARGET JOB:\n{_build_job_blob(job)}\n\n"
+                    f"TAILORED JSON:\n{json.dumps(tailored_payload, indent=2, ensure_ascii=False)}\n\n"
+                    f"TAILORED RESUME:\n{tailored_text}\n\n"
+                    "Run the adversarial review and return JSON:"
+                ),
+            ),
+        ]
+        try:
+            response = self._chat_json_payload(
+                messages,
+                schema=ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
+                model=self._llm_policy.effective_judge_model,
+                temperature=self._llm_policy.judge_temperature,
+                max_tokens=self._llm_policy.judge_max_tokens,
+                thinking_budget=self._llm_policy.thinking_budget,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("Adversarial review LLM error: %s", exc)
+            return AdversarialReviewResult.failed_error(
+                threshold=ADVERSARIAL_REVIEW_THRESHOLD,
+                normalized_fit_score=normalized_fit,
+                error=str(exc),
+            )
+        return AdversarialReviewResult.from_response(
+            response,
+            threshold=ADVERSARIAL_REVIEW_THRESHOLD,
+            normalized_fit_score=normalized_fit,
+        )
+
+    def _adversarial_failed_verdict(
+        self,
+        base: JudgeVerdict,
+        review: AdversarialReviewResult,
+    ) -> JudgeVerdict:
+        try:
+            notes_payload = json.loads(base.notes) if base.notes else {}
+        except json.JSONDecodeError:
+            notes_payload = {"issues": [base.notes] if base.notes else []}
+        notes_payload["adversarial_review"] = review.to_dict()
+        criterion_scores = dict(base.criterion_scores)
+        criterion_scores["adversarial_review"] = review.score
+        issues = tuple(dict.fromkeys([*base.issues, *review.blockers]))
+        return JudgeVerdict(
+            approved=False,
+            score=min(base.score, review.score),
+            notes=json.dumps(notes_payload, ensure_ascii=False, sort_keys=True),
+            criterion_scores=criterion_scores,
+            issues=issues,
+        )
+
     def _judge_record(self, verdict: JudgeVerdict | None) -> dict[str, Any] | None:
         if verdict is None:
             return None
@@ -1350,6 +1470,8 @@ class TailorResumeUseCase:
     ) -> str:
         status = report.get("status", "pending")
         if status == "approved":
+            return status
+        if status == "failed_adversarial_review":
             return status
         if validation.passed and verdict is not None and not verdict.approved:
             return "failed_judge"
