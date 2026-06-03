@@ -47,6 +47,12 @@ unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
 reset. `scoreReasoning` remains on the wire as a compatibility summary during
 the scoring evidence migration.
+`/v1/jobs/:key` also returns `auditHistory[]`, a user-facing timeline assembled
+from allow-listed `job_events` milestones plus append-only apply review and
+outcome feedback records. The timeline summarizes discovery, enrichment,
+scoring, materials, pipeline, apply, outcome, and job visibility changes without
+returning raw event payloads, debug messages, local paths, raw notes, or email
+body text.
 Job summaries also include source provenance. `discoverySource` is the observed
 source registry id where the job was found and falls back to the discovery
 strategy/source pair for legacy rows. `postingSource` and `postingSourceUrl`

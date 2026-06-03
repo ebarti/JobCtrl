@@ -7,6 +7,7 @@ import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
+import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
@@ -68,6 +69,9 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
               currentStage={detail.job.currentStage}
               nextAction={detail.job.nextAction}
             />
+            <Section title="Audit history">
+              <JobAuditHistory entries={detail.auditHistory} />
+            </Section>
             <Section title="Preparation diagnostics">
               <StageTimeline stages={preparationStages(detail.stages)} />
             </Section>

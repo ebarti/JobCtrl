@@ -6,6 +6,7 @@ import type {
   ApplyReviewQueueResponse,
   CredentialsResponse,
   DashboardSummary,
+  JobAuditEntry,
   JobDetail,
   JobSummary,
   PaginatedResponse,
@@ -270,6 +271,45 @@ export function makeJobsPage(items: readonly JobSummary[] = [sampleJob, sampleSe
   };
 }
 
+export const sampleJobAuditHistory: JobAuditEntry[] = [
+  {
+    id: "event-1",
+    category: "discovery",
+    tone: "success",
+    title: "Job discovered",
+    description: "Found via lever:acme.",
+    occurredAt: "2026-05-01T12:00:00Z",
+    actor: "system",
+    details: [
+      { label: "Source", value: "lever:acme" },
+      { label: "Employer", value: "Acme Corp" },
+    ],
+  },
+  {
+    id: "event-2",
+    category: "scoring",
+    tone: "success",
+    title: "Job scored",
+    description: "Fit score 8.",
+    occurredAt: "2026-05-05T09:30:00Z",
+    actor: "system",
+    details: [
+      { label: "Fit score", value: "8" },
+      { label: "Fit band", value: "Strong" },
+    ],
+  },
+  {
+    id: "event-3",
+    category: "apply",
+    tone: "info",
+    title: "Apply review decision recorded",
+    description: "Human review approved a dry-run application.",
+    occurredAt: "2026-05-06T06:20:00Z",
+    actor: "user",
+    details: [{ label: "Decision", value: "Approve Dry Run" }],
+  },
+];
+
 export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
   return {
     ok: true,
@@ -311,6 +351,7 @@ export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
       },
     ],
     artifacts: [],
+    auditHistory: sampleJobAuditHistory,
   };
 }
 

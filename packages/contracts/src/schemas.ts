@@ -1096,6 +1096,37 @@ export interface ActivityEventSummary {
   at: string | null;
 }
 
+export const JOB_AUDIT_CATEGORIES = [
+  "discovery",
+  "enrichment",
+  "scoring",
+  "materials",
+  "apply",
+  "outcome",
+  "pipeline",
+  "job",
+] as const;
+export type JobAuditCategory = (typeof JOB_AUDIT_CATEGORIES)[number];
+
+export const JOB_AUDIT_TONES = ["info", "success", "warning", "danger", "muted"] as const;
+export type JobAuditTone = (typeof JOB_AUDIT_TONES)[number];
+
+export interface JobAuditDetail {
+  label: string;
+  value: string;
+}
+
+export interface JobAuditEntry {
+  id: string;
+  category: JobAuditCategory;
+  tone: JobAuditTone;
+  title: string;
+  description: string | null;
+  occurredAt: string | null;
+  actor: string | null;
+  details: JobAuditDetail[];
+}
+
 export interface ActivityEventResponse {
   ok: true;
   event: ActivityEventSummary;
@@ -1234,6 +1265,7 @@ export interface JobDetail {
   };
   stages: StageSummary[];
   artifacts: ArtifactSummary[];
+  auditHistory: JobAuditEntry[];
 }
 
 export interface ArtifactDetail {
