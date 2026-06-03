@@ -11,7 +11,7 @@ import pytest
 
 from jobhunter import config
 from jobhunter.discovery import manual_capture_import as manual_capture_import_cli
-from jobhunter.database import close_connection, init_db
+from jobhunter.database import close_connection, get_jobs_by_stage, init_db
 from jobhunter.domain.discovery import (
     AtsKind,
     JobMetadata,
@@ -421,6 +421,33 @@ def test_canonical_ats_scheduler_routes_postings_through_discovery_use_case(
         ).fetchall()
     }
     assert ats_kinds == {"greenhouse", "lever", "ashby"}
+    expected_urls = {
+        "https://boards.greenhouse.io/barcelonatech/jobs/101",
+        "https://jobs.lever.co/leadershipco/202",
+        "https://jobs.ashbyhq.com/platformops/303",
+    }
+    enrichments = conn.execute(
+        """
+        SELECT job_url, current_status, full_description, extraction_tier
+        FROM job_enrichments
+        """
+    ).fetchall()
+    assert {row["job_url"] for row in enrichments} == expected_urls
+    assert {row["current_status"] for row in enrichments} == {"enriched"}
+    assert {row["extraction_tier"] for row in enrichments} == {"css_selectors"}
+    assert all(str(row["full_description"] or "").strip() for row in enrichments)
+    stage_rows = conn.execute(
+        """
+        SELECT job_url, state
+        FROM job_stage_states
+        WHERE stage = 'enrich'
+        """
+    ).fetchall()
+    assert {row["job_url"] for row in stage_rows} == expected_urls
+    assert {row["state"] for row in stage_rows} == {"succeeded"}
+    assert {
+        row["url"] for row in get_jobs_by_stage(conn, "pending_score", limit=0)
+    } == expected_urls
 
 
 def test_canonical_ats_scheduler_fetches_each_source_once_then_filters_queries(

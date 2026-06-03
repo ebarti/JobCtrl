@@ -5,7 +5,9 @@ const SPAIN_REGION_LABELS: Record<string, string> = {
 };
 
 const REMOTE_PATTERN = /\b(?:remote|en remoto|remoto|teletrabajo|work from home|wfh)\b/i;
+const REMOTE_TOKEN_PATTERN = /\b(?:remote|en remoto|remoto|teletrabajo|work from home|wfh)\b/gi;
 const REMOTE_MARKER_PATTERN = /\s*\((?:remote|en remoto|remoto)\)\s*/gi;
+const REMOTE_SEPARATOR_PATTERN = /^\s*[-:|]+\s*|\s*[-:|]+\s*$/g;
 
 export function normalizeJobLocation(location: string | null | undefined): string {
   const raw = String(location ?? "").trim();
@@ -17,8 +19,8 @@ export function normalizeJobLocation(location: string | null | undefined): strin
   const cleaned = raw
     .replace(REMOTE_MARKER_PATTERN, " ")
     .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part && !REMOTE_PATTERN.test(part));
+    .map(stripRemoteMarkers)
+    .filter(Boolean);
 
   const hasSpainCountry = cleaned.some(isSpainCountryToken);
   const parts = cleaned
@@ -28,6 +30,15 @@ export function normalizeJobLocation(location: string | null | undefined): strin
   const base = deduped.length ? deduped.join(", ") : isRemote ? "Remote" : raw;
 
   return isRemote && !/\bremote\b/i.test(base) ? `${base} (Remote)` : base;
+}
+
+function stripRemoteMarkers(part: string): string {
+  return part
+    .replace(REMOTE_MARKER_PATTERN, " ")
+    .replace(REMOTE_TOKEN_PATTERN, " ")
+    .replace(REMOTE_SEPARATOR_PATTERN, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function normalizeLocationPart(part: string, hasSpainCountry: boolean): string {
