@@ -219,6 +219,21 @@ export interface ApplyReviewDecisionResponse {
   decision: ApplyReviewDecision;
 }
 
+export interface ApplyReviewPositionEvidence {
+  descriptionPreview: string;
+  requirements: string[];
+  matched: string[];
+  missing: string[];
+  transferable: string[];
+  keywords: string[];
+}
+
+export interface ApplyReviewMaterialsPreview {
+  resumeText: string | null;
+  resumePdfArtifactId: string | null;
+  coverLetterText: string | null;
+}
+
 export interface ApplyReviewQueueItem {
   jobKey: string;
   title: string;
@@ -234,6 +249,8 @@ export interface ApplyReviewQueueItem {
     hasPdf: boolean;
     ready: boolean;
   };
+  position: ApplyReviewPositionEvidence;
+  materialsPreview: ApplyReviewMaterialsPreview;
   latestApplyRun: {
     runId: string;
     status: string;

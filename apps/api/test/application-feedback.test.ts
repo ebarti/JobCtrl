@@ -60,6 +60,19 @@ describe("application feedback API", () => {
         hasResume: true,
         ready: true,
       },
+      position: {
+        descriptionPreview: "Full description",
+        requirements: ["platform leadership", "public company scale", "incident leadership"],
+        matched: ["platform leadership"],
+        missing: ["public company scale"],
+        transferable: ["incident leadership"],
+        keywords: ["platform", "leadership"],
+      },
+      materialsPreview: {
+        resumeText: "tailored resume",
+        resumePdfArtifactId: "apply-ready-resume-pdf",
+        coverLetterText: null,
+      },
       latestApplyRun: {
         runId: "dry-run-ready",
         dryRun: true,
@@ -412,7 +425,11 @@ function queueItem(body: unknown, jobKey: string): unknown {
 
 function seedDatabase(dbPath: string): void {
   const resumePath = path.join(path.dirname(dbPath), "resume.txt");
+  const resumePdfPath = path.join(path.dirname(dbPath), "resume.pdf");
+  const rejectedResumePdfPath = path.join(path.dirname(dbPath), "rejected-resume.pdf");
   fs.writeFileSync(resumePath, "tailored resume");
+  fs.writeFileSync(resumePdfPath, "%PDF-1.4\n% test\n");
+  fs.writeFileSync(rejectedResumePdfPath, "%PDF-1.4\n% rejected test\n");
   const db = new Database(dbPath);
   db.exec(`
     CREATE TABLE jobs (
@@ -483,6 +500,33 @@ function seedDatabase(dbPath: string): void {
       duration_ms INTEGER,
       events_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE job_scores (
+      job_url TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      fit_score INTEGER NOT NULL,
+      breakdown_json TEXT NOT NULL,
+      keywords_json TEXT NOT NULL,
+      scored_at TEXT,
+      correction_json TEXT NOT NULL DEFAULT '{}',
+      criteria_json TEXT NOT NULL DEFAULT '{}',
+      trace_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (job_url, version)
+    );
+    CREATE TABLE job_materials (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL
+    );
+    CREATE TABLE job_materials_artifacts (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      artifact_id TEXT,
+      artifact_type TEXT,
+      status TEXT,
+      path TEXT,
+      created_at TEXT,
+      size_bytes INTEGER
+    );
   `);
 
   insertJob(db, {
@@ -491,6 +535,8 @@ function seedDatabase(dbPath: string): void {
     site: "ExampleCo",
     fitScore: 9,
     resumePath,
+    resumePdfPath,
+    rejectedResumePdfPath,
     applyState: "pending",
   });
   insertJob(db, {
@@ -499,6 +545,8 @@ function seedDatabase(dbPath: string): void {
     site: "ExampleCo",
     fitScore: 8,
     resumePath,
+    resumePdfPath,
+    rejectedResumePdfPath,
     applyState: "pending",
   });
   insertJob(db, {
@@ -507,6 +555,8 @@ function seedDatabase(dbPath: string): void {
     site: "ExampleCo",
     fitScore: 8,
     resumePath,
+    resumePdfPath,
+    rejectedResumePdfPath,
     applyState: "succeeded",
     appliedAt: "2026-05-31T10:00:00.000Z",
   });
@@ -536,6 +586,8 @@ function insertJob(
     site: string;
     fitScore: number;
     resumePath: string;
+    resumePdfPath: string;
+    rejectedResumePdfPath: string;
     applyState: string;
     appliedAt?: string;
   },
@@ -570,6 +622,75 @@ function insertJob(
     insertStage(db, job.url, stage, "succeeded");
   }
   insertStage(db, job.url, "apply", job.applyState);
+  insertScore(db, job.url, job.fitScore);
+  insertMaterials(db, job.url, job.resumePath, job.resumePdfPath, job.rejectedResumePdfPath);
+}
+
+function insertMaterials(
+  db: Database.Database,
+  jobUrl: string,
+  resumePath: string,
+  resumePdfPath: string,
+  rejectedResumePdfPath: string,
+): void {
+  const artifactPrefix =
+    jobUrl === READY_JOB ? "apply-ready" : jobUrl === DRY_RUN_JOB ? "dry-run" : "already-applied";
+  db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(jobUrl, 1);
+  db.prepare(
+    `INSERT INTO job_materials_artifacts (
+       job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(jobUrl, 1, `${artifactPrefix}-resume-text`, "tailored_resume", "approved", resumePath, NOW, 15);
+  db.prepare(
+    `INSERT INTO job_materials_artifacts (
+       job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(jobUrl, 1, `${artifactPrefix}-resume-pdf`, "resume_pdf", "approved", resumePdfPath, NOW, 15);
+  db.prepare(
+    `INSERT INTO job_materials_artifacts (
+       job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    jobUrl,
+    1,
+    `${artifactPrefix}-rejected-resume-pdf`,
+    "resume_pdf",
+    "rejected",
+    rejectedResumePdfPath,
+    "2026-06-01T11:00:00.000Z",
+    22,
+  );
+}
+
+function insertScore(db: Database.Database, jobUrl: string, fitScore: number): void {
+  db.prepare(
+    `INSERT INTO job_scores (
+       job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+       scored_at, correction_json, criteria_json, trace_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    jobUrl,
+    1,
+    "local",
+    fitScore,
+    JSON.stringify({
+      reasoning: "Strong platform leadership fit.",
+      technical_fit: 9,
+      experience_fit: 8,
+      role_fit: 8,
+      fit_band: "strong",
+      confidence: "high",
+      eligibility: { status: "eligible", hard_blockers: [], warnings: [] },
+      matched_signals: ["platform leadership"],
+      missing_signals: ["public company scale"],
+      transferable_signals: ["incident leadership"],
+    }),
+    JSON.stringify(["platform", "leadership"]),
+    NOW,
+    "{}",
+    "{}",
+    "{}",
+  );
 }
 
 function insertStage(db: Database.Database, jobUrl: string, stage: string, state: string): void {
