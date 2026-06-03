@@ -97,6 +97,18 @@ const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
   },
 ];
 
+const CLAIM_MODE_OPTIONS: Array<[string, string]> = [
+  ["verified_only", "Verified facts only"],
+  ["evidence_reframing", "Evidence reframing"],
+  ["adjacent_translation", "Adjacent expertise translation"],
+  ["draft_requires_confirmation", "Draft requires confirmation"],
+];
+
+const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
+  ["verified_only", "Verified facts only"],
+  ["evidence_reframing", "Evidence reframing"],
+];
+
 export interface StructuredProfileEditorProps {
   mode?: "profile" | "preferences" | "target-search";
   profileText: string;
@@ -218,10 +230,58 @@ export function StructuredProfileEditor({
     });
   };
 
+  const setTextArrayChoice = (path: string, value: string, checked: boolean) => {
+    updateProfileDraft((draft) => {
+      const values = new Set(textArrayAt(draft, path));
+      if (checked) {
+        values.add(value);
+      } else {
+        values.delete(value);
+      }
+      setPathValue(draft, path, Array.from(values));
+    });
+  };
+
   const addRepeatItem = (path: string) => {
     updateProfileDraft((draft) => {
       const items = recordArrayAt(draft, path);
       setPathValue(draft, path, [...items, defaultRepeatItem(path)]);
+    });
+  };
+
+  const addAchievementEvidence = (entryIndex: number, entryId: string) => {
+    updateProfileDraft((draft) => {
+      const path = `resume.experience_entries.${entryIndex}.achievement_evidence`;
+      const items = recordArrayAt(draft, path);
+      const defaultId = entryId ? `ev_${entryId}_${items.length + 1}` : "";
+      setPathValue(draft, path, [
+        ...items,
+        {
+          id: defaultId,
+          source_text: "",
+          scope: "",
+          action: "",
+          tools: [],
+          metrics: [],
+          outcome: "",
+          seniority_signal: "",
+          evidence_strength: "supported",
+          claim_confidence: 0,
+          user_confirmed: false,
+          tags: [],
+        },
+      ]);
+    });
+  };
+
+  const removeAchievementEvidence = (entryIndex: number, evidenceIndex: number) => {
+    updateProfileDraft((draft) => {
+      const path = `resume.experience_entries.${entryIndex}.achievement_evidence`;
+      setPathValue(
+        draft,
+        path,
+        recordArrayAt(draft, path).filter((_, index) => index !== evidenceIndex),
+      );
     });
   };
 
@@ -731,6 +791,28 @@ export function StructuredProfileEditor({
     );
   };
 
+  const autoApprovableClaimModesField = () => {
+    const path = "resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes";
+    const selected = new Set(textArrayAt(profile, path));
+    return (
+      <fieldset className="field wide checkbox-group-field claim-mode-group">
+        <legend>Auto-approvable claim modes</legend>
+        <div className="checkbox-options">
+          {AUTO_APPROVABLE_CLAIM_MODE_OPTIONS.map(([value, label]) => (
+            <label className="choice target-choice" key={value}>
+              <input
+                type="checkbox"
+                checked={selected.has(value)}
+                onChange={(event) => setTextArrayChoice(path, value, event.target.checked)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    );
+  };
+
   const targetSearchSection = () => (
     <section className="form-section">
       <h3>Target search</h3>
@@ -847,6 +929,10 @@ export function StructuredProfileEditor({
           {experienceEntries.map((entry, index) => {
             const entryId = textFrom(entry["id"]);
             const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
+            const evidenceItems = recordArrayAt(
+              profile,
+              `resume.experience_entries.${index}.achievement_evidence`,
+            );
             const requiredBullets = new Set(
               asTextArray(
                 recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
@@ -930,6 +1016,96 @@ export function StructuredProfileEditor({
                     add bullet
                   </button>
                 </div>
+                <fieldset className="achievement-evidence-list">
+                  <legend>Achievement evidence</legend>
+                  {evidenceItems.map((_, evidenceIndex) => (
+                    <div
+                      className="achievement-evidence-card"
+                      key={`${entryId || "experience"}-evidence-${evidenceIndex}`}
+                    >
+                      <div className="repeat-hd">
+                        <b>Evidence {evidenceIndex + 1}</b>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label={`Remove achievement evidence ${evidenceIndex + 1}`}
+                          title="Remove achievement evidence"
+                          onClick={() => removeAchievementEvidence(index, evidenceIndex)}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                      <div className="field-grid">
+                        {textField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.id`,
+                          "Evidence ID",
+                        )}
+                        {selectField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.evidence_strength`,
+                          "Evidence strength",
+                          [
+                            ["verified", "Verified"],
+                            ["supported", "Supported"],
+                            ["inferred", "Inferred"],
+                            ["draft", "Draft"],
+                          ],
+                        )}
+                        {textField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.scope`,
+                          "Scope",
+                        )}
+                        {textField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.action`,
+                          "Action",
+                        )}
+                        {textField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.outcome`,
+                          "Outcome",
+                        )}
+                        {textField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.seniority_signal`,
+                          "Seniority signal",
+                        )}
+                        {textField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.claim_confidence`,
+                          "Claim confidence",
+                          "number",
+                          { min: 0, max: 1, step: 0.05 },
+                        )}
+                        {checkboxField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.user_confirmed`,
+                          "User confirmed",
+                        )}
+                      </div>
+                      <div className="field-grid one">
+                        {textareaField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.source_text`,
+                          "Source text",
+                        )}
+                        {listField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.tools`,
+                          "Tools",
+                        )}
+                        {listField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.metrics`,
+                          "Metrics",
+                        )}
+                        {listField(
+                          `resume.experience_entries.${index}.achievement_evidence.${evidenceIndex}.tags`,
+                          "Tags",
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    className="tab add-bullet"
+                    type="button"
+                    onClick={() => addAchievementEvidence(index, entryId)}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                    add evidence
+                  </button>
+                </fieldset>
               </div>
             );
           })}
@@ -1151,6 +1327,7 @@ export function StructuredProfileEditor({
                 ["balanced", "Balanced"],
                 ["aggressive", "Aggressive"],
               ])}
+              {selectField("resume.tailoring_rules.tailoring_policy.claim_mode", "Claim mode", CLAIM_MODE_OPTIONS)}
               {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
                 ["direct", "Direct"],
                 ["executive", "Executive"],
@@ -1198,6 +1375,11 @@ export function StructuredProfileEditor({
                 "resume.tailoring_rules.tailoring_policy.allow_minor_inference",
                 "AI may make minor inferred phrasing",
               )}
+              {checkboxField(
+                "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts",
+                "Allow adjacent achievement drafts",
+              )}
+              {autoApprovableClaimModesField()}
             </div>
             <div className="field-grid one">
               {textareaField(

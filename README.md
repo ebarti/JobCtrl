@@ -210,6 +210,11 @@ Useful options:
 - `--tailor-judge-min-score`: minimum structured judge score for approval
   (`0.82` by default). `--validation lenient` skips the judge.
 
+For high-fit jobs (fit score `8+`), a resume that passes deterministic
+validation and the structured judge is also checked by adversarial reviewer
+personas. Blocker findings keep the resume unapproved and feed the retry loop
+instead of being hidden as a successful tailoring run.
+
 The same tailoring controls can be provided through
 `TAILORING_GENERATOR_MODELS`, `TAILORING_JUDGE_MODEL`, and
 `TAILORING_JUDGE_MIN_SCORE`. The shorter aliases `TAILOR_LLM_MODELS`,
@@ -461,6 +466,14 @@ Profile, Preferences, Discovery target search, and Settings forms autosave five
 seconds after the last edit through the same local API mutations as the Save
 buttons. Checkbox, select, and other non-text setting controls keep an
 in-session undo history for Ctrl+Z / Cmd+Z.
+
+Preferences includes resume tailoring controls for claim mode, auto-approvable
+claim modes, adjacent achievement drafts, writing style, and custom tailoring
+instructions. Profile experience entries include achievement evidence fields
+for source text, scope, action, tools, metrics, outcome, seniority signal,
+evidence strength, claim confidence, and user confirmation. Only verified facts
+and evidence reframing can be auto-approved; adjacent translations and draft
+claims remain review material.
 - `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
 - `workers/automation/src/jobhunter/config/searches.example.yaml`: example search file.
 
