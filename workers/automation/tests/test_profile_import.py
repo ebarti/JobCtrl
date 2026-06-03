@@ -110,6 +110,9 @@ def test_profile_from_resume_text_builds_structured_profile_and_preserves_applic
     assert rules["required_education_entry_ids"] == ["state_university_master_of_science_in_computer_science_2018"]
     assert rules["required_bullets_by_experience_id"] == {}
     assert rules["tailoring_policy"]["mode"] == "strict"
+    assert rules["tailoring_policy"]["claim_mode"] == "verified_only"
+    assert rules["tailoring_policy"]["auto_approvable_claim_modes"] == ["verified_only"]
+    assert rules["tailoring_policy"]["allow_adjacent_achievement_drafts"] is False
     assert rules["writing_style"]["tone"] == "technical"
     assert rules["custom_tailoring_prompt"] == "Keep platform impact visible."
     assert profile["resume_constraints"]["real_metrics"] == ["2M events", "35%", "20 teams"]

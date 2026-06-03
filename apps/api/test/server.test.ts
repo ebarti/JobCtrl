@@ -2858,6 +2858,79 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("preserves profile achievement evidence and tailoring quality controls", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Evidence Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.achievement_evidence = [
+      {
+        id: "ev_role_1_latency",
+        source_text: "Reduced API latency 35% by replacing synchronous enrichment calls.",
+        scope: "owned service",
+        action: "replaced synchronous enrichment calls",
+        tools: ["Python", "PostgreSQL"],
+        metrics: ["35% latency reduction"],
+        outcome: "faster API responses",
+        seniority_signal: "technical ownership",
+        evidence_strength: "verified",
+        claim_confidence: 0.95,
+        user_confirmed: true,
+        tags: ["latency", "backend", "performance"],
+      },
+    ];
+    resume.tailoring_rules = {
+      tailoring_policy: {
+        mode: "aggressive",
+        claim_mode: "draft_requires_confirmation",
+        auto_approvable_claim_modes: ["verified_only", "draft_requires_confirmation"],
+        allow_adjacent_achievement_drafts: true,
+      },
+    };
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body.profile.resume.experience_entries[0].achievement_evidence[0]).toMatchObject({
+      id: "ev_role_1_latency",
+      metrics: ["35% latency reduction"],
+      claim_confidence: 0.95,
+      user_confirmed: true,
+    });
+    expect(body.profile.resume.tailoring_rules.tailoring_policy).toMatchObject({
+      mode: "aggressive",
+      claim_mode: "draft_requires_confirmation",
+      auto_approvable_claim_modes: ["verified_only"],
+      allow_adjacent_achievement_drafts: true,
+    });
+
+    const db = new Database(options.dbPath);
+    try {
+      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_achievement_evidence").get()).toMatchObject({
+        count: 1,
+      });
+      expect(
+        db.prepare(
+          "SELECT tailoring_claim_mode, tailoring_auto_approvable_claim_modes_json, "
+            + "tailoring_allow_adjacent_achievement_drafts FROM candidate_profiles",
+        ).get(),
+      ).toMatchObject({
+        tailoring_claim_mode: "draft_requires_confirmation",
+        tailoring_auto_approvable_claim_modes_json: '["verified_only"]',
+        tailoring_allow_adjacent_achievement_drafts: 1,
+      });
+    } finally {
+      db.close();
+    }
+
+    await app.close();
+  });
+
   it("validates target-search locations before saving profile preferences", async () => {
     const placeValidator = vi.fn(async (place: string) => place === "Barcelona, Spain");
     const app = buildApp({ ...options, placeValidator });

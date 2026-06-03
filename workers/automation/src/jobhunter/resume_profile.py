@@ -122,6 +122,9 @@ DEFAULT_TAILORING_POLICY = {
     "allow_skill_reordering": True,
     "allow_summary_rewrite": True,
     "allow_minor_inference": False,
+    "claim_mode": "evidence_reframing",
+    "auto_approvable_claim_modes": ["verified_only", "evidence_reframing"],
+    "allow_adjacent_achievement_drafts": False,
 }
 
 DEFAULT_WRITING_STYLE = {
@@ -131,6 +134,10 @@ DEFAULT_WRITING_STYLE = {
     "keyword_density": "natural",
     "avoid_first_person": True,
 }
+
+CLAIM_MODES = {"verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation"}
+AUTO_APPROVABLE_CLAIM_MODES = {"verified_only", "evidence_reframing"}
+EVIDENCE_STRENGTHS = {"verified", "supported", "inferred", "draft"}
 
 
 def get_tailoring_policy(profile: dict) -> dict:
@@ -145,6 +152,17 @@ def get_tailoring_policy(profile: dict) -> dict:
     for key, default in DEFAULT_TAILORING_POLICY.items():
         if isinstance(default, bool):
             policy[key] = bool(policy.get(key, default))
+    if policy.get("claim_mode") not in CLAIM_MODES:
+        policy["claim_mode"] = DEFAULT_TAILORING_POLICY["claim_mode"]
+    raw_auto = policy.get("auto_approvable_claim_modes")
+    if isinstance(raw_auto, list):
+        policy["auto_approvable_claim_modes"] = [
+            str(mode)
+            for mode in raw_auto
+            if str(mode) in AUTO_APPROVABLE_CLAIM_MODES
+        ] or list(DEFAULT_TAILORING_POLICY["auto_approvable_claim_modes"])
+    else:
+        policy["auto_approvable_claim_modes"] = list(DEFAULT_TAILORING_POLICY["auto_approvable_claim_modes"])
     if policy["mode"] == "strict":
         policy.update(
             {
@@ -153,13 +171,60 @@ def get_tailoring_policy(profile: dict) -> dict:
                 "allow_skill_reordering": False,
                 "allow_summary_rewrite": False,
                 "allow_minor_inference": False,
+                "claim_mode": "verified_only",
+                "auto_approvable_claim_modes": ["verified_only"],
+                "allow_adjacent_achievement_drafts": False,
             }
         )
     elif policy["mode"] == "aggressive":
         policy.setdefault("allow_achievement_rewriting", True)
         policy.setdefault("allow_skill_reordering", True)
         policy.setdefault("allow_summary_rewrite", True)
+        policy["allow_adjacent_achievement_drafts"] = bool(
+            policy.get("allow_adjacent_achievement_drafts", False)
+        )
+    else:
+        policy["allow_adjacent_achievement_drafts"] = False
     return policy
+
+
+def get_claim_mode(profile: dict) -> str:
+    """Return the normalized claim mode used for resume tailoring."""
+    return str(get_tailoring_policy(profile)["claim_mode"])
+
+
+def get_auto_approvable_claim_modes(profile: dict) -> list[str]:
+    """Return claim modes that can be approved without extra user confirmation."""
+    return list(get_tailoring_policy(profile)["auto_approvable_claim_modes"])
+
+
+def get_tailoring_quality_controls(profile: dict) -> dict:
+    """Return normalized evidence/claim controls used by quality checks."""
+    policy = get_tailoring_policy(profile)
+    return {
+        "claim_mode": policy["claim_mode"],
+        "auto_approvable_claim_modes": list(policy["auto_approvable_claim_modes"]),
+        "allow_adjacent_achievement_drafts": policy["allow_adjacent_achievement_drafts"],
+    }
+
+
+def get_achievement_evidence(profile: dict) -> list[dict]:
+    """Return normalized achievement evidence flattened across experience entries."""
+    evidence: list[dict] = []
+    for entry in get_experience_entries(profile):
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id", "")).strip()
+        raw_items = entry.get("achievement_evidence")
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            normalized = _normalize_achievement_evidence(item)
+            normalized["experience_entry_id"] = entry_id
+            evidence.append(normalized)
+    return evidence
 
 
 def get_writing_style(profile: dict) -> dict:
@@ -200,6 +265,38 @@ def get_max_experience_bullets(profile: dict, default: int = 4) -> int:
 
 def _normalize_text(value: object) -> str:
     return " ".join(str(value or "").lower().split())
+
+
+def _normalize_achievement_evidence(item: dict) -> dict:
+    strength = str(item.get("evidence_strength") or "supported").strip()
+    if strength not in EVIDENCE_STRENGTHS:
+        strength = "supported"
+    try:
+        confidence = float(item.get("claim_confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    return {
+        "id": str(item.get("id", "")).strip(),
+        "source_text": str(item.get("source_text", "")).strip(),
+        "scope": str(item.get("scope", "")).strip(),
+        "action": str(item.get("action", "")).strip(),
+        "tools": _text_list(item.get("tools")),
+        "metrics": _text_list(item.get("metrics")),
+        "outcome": str(item.get("outcome", "")).strip(),
+        "seniority_signal": str(item.get("seniority_signal", "")).strip(),
+        "evidence_strength": strength,
+        "claim_confidence": confidence,
+        "user_confirmed": bool(item.get("user_confirmed", False)),
+        "tags": _text_list(item.get("tags")),
+    }
+
+
+def _text_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def tailored_experience_title(entry: dict, update: dict, profile: dict) -> str:
@@ -252,4 +349,3 @@ def tailored_skill_items(category: dict, update: dict, profile: dict) -> list[st
             items.append(item)
             seen.add(normalized)
     return items
-

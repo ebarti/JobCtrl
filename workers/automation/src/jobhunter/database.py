@@ -528,6 +528,9 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             tailoring_allow_skill_reordering  INTEGER NOT NULL DEFAULT 1,
             tailoring_allow_summary_rewrite   INTEGER NOT NULL DEFAULT 1,
             tailoring_allow_minor_inference   INTEGER NOT NULL DEFAULT 0,
+            tailoring_claim_mode              TEXT NOT NULL DEFAULT 'evidence_reframing',
+            tailoring_auto_approvable_claim_modes_json TEXT NOT NULL DEFAULT '["verified_only","evidence_reframing"]',
+            tailoring_allow_adjacent_achievement_drafts INTEGER NOT NULL DEFAULT 0,
             writing_tone                      TEXT NOT NULL DEFAULT 'direct',
             writing_bullet_style              TEXT NOT NULL DEFAULT 'balanced',
             writing_verbosity                 TEXT NOT NULL DEFAULT 'balanced',
@@ -574,6 +577,29 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
             bullet_index    INTEGER NOT NULL,
             bullet_text     TEXT NOT NULL,
             PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS candidate_profile_achievement_evidence (
+            tenant_id       TEXT NOT NULL,
+            profile_id      TEXT NOT NULL,
+            entry_id        TEXT NOT NULL,
+            evidence_index  INTEGER NOT NULL,
+            evidence_id     TEXT NOT NULL DEFAULT '',
+            source_text     TEXT NOT NULL DEFAULT '',
+            scope           TEXT NOT NULL DEFAULT '',
+            action          TEXT NOT NULL DEFAULT '',
+            tools_json      TEXT NOT NULL DEFAULT '[]',
+            metrics_json    TEXT NOT NULL DEFAULT '[]',
+            outcome         TEXT NOT NULL DEFAULT '',
+            seniority_signal TEXT NOT NULL DEFAULT '',
+            evidence_strength TEXT NOT NULL DEFAULT 'supported',
+            claim_confidence REAL NOT NULL DEFAULT 0,
+            user_confirmed  INTEGER NOT NULL DEFAULT 0,
+            tags_json       TEXT NOT NULL DEFAULT '[]',
+            PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
         )
         """
     )
@@ -693,6 +719,7 @@ def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
         "candidate_profiles",
         "candidate_profile_experience_entries",
         "candidate_profile_experience_bullets",
+        "candidate_profile_achievement_evidence",
         "candidate_profile_education_entries",
         "candidate_profile_skill_categories",
         "candidate_profile_skill_items",
@@ -712,6 +739,9 @@ _PROFILE_COLUMN_MIGRATIONS: dict[str, str] = {
     "experience_target_specializations": "TEXT NOT NULL DEFAULT ''",
     "experience_target_locations": "TEXT NOT NULL DEFAULT ''",
     "experience_target_work_models": "TEXT NOT NULL DEFAULT ''",
+    "tailoring_claim_mode": "TEXT NOT NULL DEFAULT 'evidence_reframing'",
+    "tailoring_auto_approvable_claim_modes_json": "TEXT NOT NULL DEFAULT '[\"verified_only\",\"evidence_reframing\"]'",
+    "tailoring_allow_adjacent_achievement_drafts": "INTEGER NOT NULL DEFAULT 0",
 }
 
 

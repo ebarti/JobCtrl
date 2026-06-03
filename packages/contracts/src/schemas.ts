@@ -508,6 +508,9 @@ export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema
 // ---------------------------------------------------------------------------
 
 export const TAILORING_MODES = ["strict", "balanced", "aggressive"] as const;
+export const CLAIM_MODES = ["verified_only", "evidence_reframing", "adjacent_translation", "draft_requires_confirmation"] as const;
+export const AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
+export const EVIDENCE_STRENGTHS = ["verified", "supported", "inferred", "draft"] as const;
 export const WRITING_TONES = ["direct", "executive", "technical", "confident", "warm"] as const;
 export const BULLET_STYLES = ["balanced", "impact", "technical_depth", "leadership"] as const;
 export const VERBOSITY_LEVELS = ["concise", "balanced", "detailed"] as const;
@@ -583,6 +586,21 @@ const ProfileEeoSchema = z
   })
   .partial();
 
+const ProfileAchievementEvidenceSchema = z.object({
+  id: z.string().default(""),
+  source_text: z.string().default(""),
+  scope: z.string().default(""),
+  action: z.string().default(""),
+  tools: z.array(z.string()).default([]),
+  metrics: z.array(z.string()).default([]),
+  outcome: z.string().default(""),
+  seniority_signal: z.string().default(""),
+  evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("supported"),
+  claim_confidence: z.number().min(0).max(1).default(0),
+  user_confirmed: z.boolean().default(false),
+  tags: z.array(z.string()).default([]),
+});
+
 const ProfileExperienceEntrySchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -590,6 +608,7 @@ const ProfileExperienceEntrySchema = z.object({
   date_range: z.string().default(""),
   location: z.string().default(""),
   bullets: z.array(z.string()).default([]),
+  achievement_evidence: z.array(ProfileAchievementEvidenceSchema).default([]),
 });
 
 const ProfileEducationEntrySchema = z.object({
@@ -614,8 +633,59 @@ const ProfileTailoringPolicySchema = z
     allow_skill_reordering: z.boolean().default(true),
     allow_summary_rewrite: z.boolean().default(true),
     allow_minor_inference: z.boolean().default(false),
+    claim_mode: z.enum(CLAIM_MODES).default("evidence_reframing"),
+    auto_approvable_claim_modes: z.array(z.enum(CLAIM_MODES)).default(["verified_only", "evidence_reframing"]),
+    allow_adjacent_achievement_drafts: z.boolean().default(false),
   })
-  .partial();
+  .partial()
+  .default({})
+  .transform((policy) => normalizeProfileTailoringPolicy(policy));
+
+function normalizeProfileTailoringPolicy(policy: {
+  mode?: (typeof TAILORING_MODES)[number] | undefined;
+  allow_title_reframing?: boolean | undefined;
+  allow_achievement_rewriting?: boolean | undefined;
+  allow_skill_reordering?: boolean | undefined;
+  allow_summary_rewrite?: boolean | undefined;
+  allow_minor_inference?: boolean | undefined;
+  claim_mode?: (typeof CLAIM_MODES)[number] | undefined;
+  auto_approvable_claim_modes?: Array<(typeof CLAIM_MODES)[number]> | undefined;
+  allow_adjacent_achievement_drafts?: boolean | undefined;
+}) {
+  const mode = policy.mode ?? "balanced";
+  const autoApprovable = (policy.auto_approvable_claim_modes ?? ["verified_only", "evidence_reframing"]).filter(
+    (claimMode): claimMode is (typeof AUTO_APPROVABLE_CLAIM_MODES)[number] =>
+      (AUTO_APPROVABLE_CLAIM_MODES as readonly string[]).includes(claimMode),
+  );
+  const normalized = {
+    mode,
+    allow_title_reframing: policy.allow_title_reframing ?? false,
+    allow_achievement_rewriting: policy.allow_achievement_rewriting ?? true,
+    allow_skill_reordering: policy.allow_skill_reordering ?? true,
+    allow_summary_rewrite: policy.allow_summary_rewrite ?? true,
+    allow_minor_inference: policy.allow_minor_inference ?? false,
+    claim_mode: policy.claim_mode ?? "evidence_reframing",
+    auto_approvable_claim_modes: autoApprovable.length
+      ? autoApprovable
+      : (["verified_only", "evidence_reframing"] as const),
+    allow_adjacent_achievement_drafts:
+      mode === "aggressive" && (policy.allow_adjacent_achievement_drafts ?? false),
+  };
+  if (mode !== "strict") {
+    return normalized;
+  }
+  return {
+    ...normalized,
+    allow_title_reframing: false,
+    allow_achievement_rewriting: false,
+    allow_skill_reordering: false,
+    allow_summary_rewrite: false,
+    allow_minor_inference: false,
+    claim_mode: "verified_only" as const,
+    auto_approvable_claim_modes: ["verified_only"] as const,
+    allow_adjacent_achievement_drafts: false,
+  };
+}
 
 const ProfileWritingStyleSchema = z
   .object({
@@ -636,7 +706,7 @@ const ProfileTailoringRulesSchema = z
     required_skills_by_category_id: z.record(z.string(), z.array(z.string())).default({}),
     max_experience_bullets: z.number().int().positive().default(4),
     custom_tailoring_prompt: z.string().default(""),
-    tailoring_policy: ProfileTailoringPolicySchema.default({}),
+    tailoring_policy: ProfileTailoringPolicySchema,
     writing_style: ProfileWritingStyleSchema.default({}),
   })
   .partial();

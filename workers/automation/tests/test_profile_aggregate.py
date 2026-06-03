@@ -25,6 +25,12 @@ from jobhunter.domain.profile.value_objects import (
     WritingStyle,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.resume_profile import (
+    get_achievement_evidence,
+    get_auto_approvable_claim_modes,
+    get_claim_mode,
+    get_tailoring_quality_controls,
+)
 
 
 def _valid_profile_dict() -> dict:
@@ -81,6 +87,7 @@ def test_from_dict_parses_valid_profile():
     assert profile.experience_metadata.years_of_experience_total == "5"
     assert len(profile.experience_entries) == 1
     assert profile.experience_entries[0].bullets == ("Built APIs.", "Reduced incidents 40%.")
+    assert profile.experience_entries[0].achievement_evidence == ()
     assert profile.tailoring_rules.max_experience_bullets == 3
     assert profile.resume_constraints.real_metrics == ("40%",)
 
@@ -132,6 +139,45 @@ def test_to_dict_round_trips_canonical_fields():
     assert "resume_facts" not in out
 
 
+def test_to_dict_round_trips_achievement_evidence_and_claim_controls():
+    original = _valid_profile_dict()
+    original["resume"]["experience_entries"][0]["achievement_evidence"] = [
+        {
+            "id": "ev_role_1_latency",
+            "source_text": "Reduced API latency 35% by replacing synchronous enrichment calls.",
+            "scope": "owned service",
+            "action": "replaced synchronous enrichment calls",
+            "tools": ["Python", "PostgreSQL"],
+            "metrics": ["35% latency reduction"],
+            "outcome": "faster API responses",
+            "seniority_signal": "technical ownership",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.95,
+            "user_confirmed": True,
+            "tags": ["latency", "backend", "performance"],
+        }
+    ]
+    original["resume"]["tailoring_rules"]["tailoring_policy"] = {
+        "mode": "aggressive",
+        "claim_mode": "adjacent_translation",
+        "auto_approvable_claim_modes": [
+            "verified_only",
+            "evidence_reframing",
+            "draft_requires_confirmation",
+        ],
+        "allow_adjacent_achievement_drafts": True,
+    }
+
+    out = Profile.from_dict(LOCAL_TENANT, original).to_dict()
+
+    evidence = out["resume"]["experience_entries"][0]["achievement_evidence"][0]
+    assert evidence == original["resume"]["experience_entries"][0]["achievement_evidence"][0]
+    policy = out["resume"]["tailoring_rules"]["tailoring_policy"]
+    assert policy["claim_mode"] == "adjacent_translation"
+    assert policy["auto_approvable_claim_modes"] == ["verified_only", "evidence_reframing"]
+    assert policy["allow_adjacent_achievement_drafts"] is True
+
+
 def test_to_dict_preserves_unknown_top_level_keys_for_forward_compat():
     raw = _valid_profile_dict()
     raw["custom_section"] = {"future": "thing"}
@@ -152,6 +198,9 @@ def test_tailoring_policy_strict_mode_disables_every_flag():
             "allow_achievement_rewriting": True,
             "allow_skill_reordering": True,
             "allow_minor_inference": True,
+            "claim_mode": "draft_requires_confirmation",
+            "auto_approvable_claim_modes": ["verified_only", "draft_requires_confirmation"],
+            "allow_adjacent_achievement_drafts": True,
         }
     )
     assert policy.mode == "strict"
@@ -160,6 +209,68 @@ def test_tailoring_policy_strict_mode_disables_every_flag():
     assert not policy.allow_achievement_rewriting
     assert not policy.allow_skill_reordering
     assert not policy.allow_minor_inference
+    assert policy.claim_mode == "verified_only"
+    assert policy.auto_approvable_claim_modes == ("verified_only",)
+    assert policy.allow_adjacent_achievement_drafts is False
+
+
+def test_tailoring_policy_filters_draft_claims_from_auto_approval():
+    policy = TailoringPolicy.from_dict(
+        {
+            "mode": "aggressive",
+            "claim_mode": "draft_requires_confirmation",
+            "auto_approvable_claim_modes": ["draft_requires_confirmation"],
+            "allow_adjacent_achievement_drafts": True,
+        }
+    )
+
+    assert policy.claim_mode == "draft_requires_confirmation"
+    assert policy.auto_approvable_claim_modes == ("verified_only", "evidence_reframing")
+    assert policy.allow_adjacent_achievement_drafts is True
+
+
+def test_resume_profile_helpers_return_normalized_evidence_controls():
+    profile = _valid_profile_dict()
+    profile["resume"]["experience_entries"][0]["achievement_evidence"] = [
+        {
+            "id": "ev_role_1_latency",
+            "source_text": "Reduced latency.",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.9,
+            "user_confirmed": True,
+        }
+    ]
+    profile["resume"]["tailoring_rules"]["tailoring_policy"] = {
+        "mode": "strict",
+        "claim_mode": "draft_requires_confirmation",
+        "auto_approvable_claim_modes": ["verified_only", "draft_requires_confirmation"],
+        "allow_adjacent_achievement_drafts": True,
+    }
+
+    assert get_claim_mode(profile) == "verified_only"
+    assert get_auto_approvable_claim_modes(profile) == ["verified_only"]
+    assert get_tailoring_quality_controls(profile) == {
+        "claim_mode": "verified_only",
+        "auto_approvable_claim_modes": ["verified_only"],
+        "allow_adjacent_achievement_drafts": False,
+    }
+    assert get_achievement_evidence(profile) == [
+        {
+            "id": "ev_role_1_latency",
+            "source_text": "Reduced latency.",
+            "scope": "",
+            "action": "",
+            "tools": [],
+            "metrics": [],
+            "outcome": "",
+            "seniority_signal": "",
+            "evidence_strength": "verified",
+            "claim_confidence": 0.9,
+            "user_confirmed": True,
+            "tags": [],
+            "experience_entry_id": "role_1",
+        }
+    ]
 
 
 def test_writing_style_clamps_unknown_enum_values():

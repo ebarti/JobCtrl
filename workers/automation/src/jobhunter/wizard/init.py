@@ -198,6 +198,9 @@ def _setup_structured_resume(profile: dict) -> None:
                 "allow_skill_reordering": True,
                 "allow_summary_rewrite": True,
                 "allow_minor_inference": False,
+                "claim_mode": "evidence_reframing",
+                "auto_approvable_claim_modes": ["verified_only", "evidence_reframing"],
+                "allow_adjacent_achievement_drafts": False,
             },
             "writing_style": {
                 "tone": "direct",
