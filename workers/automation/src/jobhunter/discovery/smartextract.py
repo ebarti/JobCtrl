@@ -1340,8 +1340,8 @@ def run_smart_extract(
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
-    Loads sites from config/sites.yaml and search queries from the user's
-    search config, then runs the extraction pipeline on all targets.
+    Loads sites from config/sites.yaml and search queries from database-backed
+    discovery settings, then runs the extraction pipeline on all targets.
 
     Args:
         sites: Override the site list. If None, loads from YAML.
@@ -1356,7 +1356,7 @@ def run_smart_extract(
     targets = build_scrape_targets(sites=sites, search_cfg=search_cfg)
 
     if not targets:
-        log.warning("No scrape targets configured. Create config/sites.yaml and searches.yaml.")
+        log.warning("No scrape targets configured. Configure sources and Discovery settings in the local UI.")
         return {"total_new": 0, "total_existing": 0, "passed": 0, "total": 0}
 
     search_sites = sum(1 for s in (sites or load_sites()) if s.get("type") == "search")

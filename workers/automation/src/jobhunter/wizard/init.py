@@ -3,14 +3,16 @@
 Interactive flow that creates ~/.jobhunter/ with:
   - resume.txt (and optionally resume.pdf)
   - candidate profile in jobhunter.db
-  - searches.yaml
+  - discovery settings in jobhunter.db
   - .env (LLM API key)
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -23,9 +25,9 @@ from jobhunter.config import (
     ENV_PATH,
     RESUME_PATH,
     RESUME_PDF_PATH,
-    SEARCH_CONFIG_PATH,
     ensure_dirs,
 )
+from jobhunter.database import init_db
 from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.profile import get_profile_repository
@@ -331,7 +333,7 @@ def _setup_profile() -> dict:
 # ---------------------------------------------------------------------------
 
 def _setup_searches() -> None:
-    """Generate a searches.yaml from user input."""
+    """Save discovery search settings from user input."""
     console.print(Panel("[bold]Step 3: Job Search Config[/bold]\nDefine what you're looking for."))
 
     location = Prompt.ask("Target location (e.g. 'Remote', 'Canada', 'New York, NY')", default="Remote")
@@ -350,29 +352,37 @@ def _setup_searches() -> None:
         console.print("[yellow]No roles provided. Using a default set.[/yellow]")
         roles = ["Software Engineer"]
 
-    # Build YAML content
-    lines = [
-        "# JobHunter search configuration",
-        "# Edit this file to refine your job search queries.",
-        "",
-        "defaults:",
-        f'  location: "{location}"',
-        f"  distance: {distance}",
-        "  hours_old: 72",
-        "  results_per_site: 50",
-        "",
-        "locations:",
-        f'  - location: "{location}"',
-        f"    remote: {str(distance == 0).lower()}",
-        "",
-        "queries:",
-    ]
-    for i, role in enumerate(roles):
-        lines.append(f'  - query: "{role}"')
-        lines.append(f"    tier: {min(i + 1, 3)}")
-
-    SEARCH_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    console.print(f"[green]Search config saved to {SEARCH_CONFIG_PATH}[/green]")
+    search_cfg = {
+        "boards": ["indeed", "linkedin", "zip_recruiter"],
+        "defaults": {
+            "location": location,
+            "distance": distance,
+            "hours_old": 72,
+            "results_per_site": 50,
+        },
+        "locations": [
+            {
+                "location": location,
+                "remote": distance == 0,
+            }
+        ],
+        "queries": [{"query": role, "tier": min(index + 1, 3)} for index, role in enumerate(roles)],
+    }
+    conn = init_db(DB_PATH)
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO discovery_settings (
+            tenant_id, search_config_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(tenant_id) DO UPDATE SET
+            search_config_json = excluded.search_config_json,
+            updated_at = excluded.updated_at
+        """,
+        (str(LOCAL_TENANT), json.dumps(search_cfg, sort_keys=True), now, now),
+    )
+    conn.commit()
+    console.print(f"[green]Discovery settings saved to SQLite at {DB_PATH}[/green]")
 
 
 # ---------------------------------------------------------------------------

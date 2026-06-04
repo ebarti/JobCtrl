@@ -467,7 +467,7 @@ def build_prompt(job: dict, tailored_resume: str,
                   flow; the legacy ``None`` default loads via the repository
                   for backward compatibility with single-call CLI invocations.
         search_config: Caller-supplied search config dict; defaults to the
-                  on-disk ``searches.yaml``.
+                  database-backed discovery settings.
 
     Returns:
         Complete prompt string for the AI agent.

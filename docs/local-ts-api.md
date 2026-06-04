@@ -112,6 +112,10 @@ quarantine-review, role-matching, and manual-capture surfaces; the
 source registry renders as a paginated, filterable, sortable table so source
 type and policy metadata are visible as columns instead of compact badges:
 
+- `GET /v1/discovery/settings` returns the SQLite-backed runtime discovery
+  settings used by board discovery.
+- `PATCH /v1/discovery/settings` updates those runtime settings without
+  dropping the worker search-contract fields stored in the same row.
 - `GET /v1/discovery/sources` lists source registry entries merged with
   `source_quality_stats`.
 - `POST /v1/discovery/sources` upserts a local source registry entry and emits
@@ -309,7 +313,10 @@ the same search tier as exact queries because relevance is determined after
 discovery by scoring, not by query generation. Recall matching enforces both
 track and seniority: IC targets stay IC, management targets stay management,
 executive targets stay executive, and a candidate who configures multiple
-tracks can receive each selected track. JobSpy uses
+tracks gets per-track recall. Board discovery settings live in SQLite
+`discovery_settings`; source adapters normalize scraped postings into the
+shared discovery intake and apply query/location acceptance before a job row or
+delete tombstone can be persisted. JobSpy uses
 exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
 Workday, and source-first Smart Extract sources enumerate
 their known board/source and apply that same title intent internally, avoiding

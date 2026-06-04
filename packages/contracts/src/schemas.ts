@@ -1417,6 +1417,27 @@ export interface SettingsResponse {
   };
 }
 
+export const DiscoverySettingsUpdateRequestSchema = z
+  .object({
+    boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])).min(1).optional(),
+    resultsPerSite: z.coerce.number().int().min(1).max(1000).optional(),
+    hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
+  })
+  .strict();
+export type DiscoverySettingsUpdateRequest = z.infer<typeof DiscoverySettingsUpdateRequestSchema>;
+
+export interface DiscoverySettings {
+  boards: Array<"indeed" | "linkedin" | "zip_recruiter" | "glassdoor">;
+  resultsPerSite: number;
+  hoursOld: number;
+  source: "database";
+}
+
+export interface DiscoverySettingsResponse {
+  ok: true;
+  settings: DiscoverySettings;
+}
+
 export interface CredentialsResponse {
   ok: true;
   credentials: Array<{

@@ -57,8 +57,7 @@ By default, JobHunter writes user data under:
 Important local files include:
 
 - `jobhunter.db`: local SQLite database, including normalized candidate profile,
-  jobs, events, projections, and artifact metadata.
-- `searches.yaml`: search targets and discovery configuration.
+  jobs, discovery settings, events, projections, and artifact metadata.
 - `.env`: API keys and local runtime settings.
 - `profile.json`, `resume_template.tex`, and `resume_style.json`: legacy
   profile/rendering seed files imported into SQLite when no profile row exists.
@@ -457,11 +456,10 @@ edits.
 JobHunter uses local user configuration plus package-shipped registries:
 
 - `~/.jobhunter/jobhunter.db`: candidate profile source of truth, application
-  defaults, resume baseline, tailoring controls, rendering settings, jobs,
-  events, and projections.
+  defaults, discovery settings, resume baseline, tailoring controls, rendering
+  settings, jobs, events, and projections.
 - `~/.jobhunter/profile.json`: legacy seed path for first-time import when the
   profile tables are empty.
-- `~/.jobhunter/searches.yaml`: searches and source settings.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
 - `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
 
@@ -478,16 +476,11 @@ evidence strength, claim confidence, and user confirmation. Only verified facts
 and evidence reframing can be auto-approved; adjacent translations and draft
 claims remain review material.
 - `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
-- `workers/automation/src/jobhunter/config/searches.example.yaml`: example search file.
 
-JobSpy board selection uses `boards` in `searches.yaml`:
-
-```yaml
-boards:
-  - indeed
-  - linkedin
-  - zip_recruiter
-```
+Discovery runtime settings are edited on the Discovery page and stored in the
+SQLite `discovery_settings` table. JobSpy board selection uses the `boards`
+field in that row, and target roles/locations from the Discovery target-search
+form are overlaid by the worker before any source persists jobs.
 
 The legacy `sites` key is still accepted for the compatibility window and logs
 a warning instead of failing. When both keys are present, `boards` wins. The

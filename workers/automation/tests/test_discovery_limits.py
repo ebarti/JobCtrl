@@ -362,6 +362,69 @@ def test_jobspy_store_filters_rows_without_descriptions_before_limit(tmp_path):
         close_connection(db_path)
 
 
+def test_jobspy_rejects_location_mismatches_before_discovery_persistence(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    search_cfg = {
+        "queries": [{"query": "Software Engineer", "tier": 1}],
+        "locations": [{"location": "Spain"}],
+        "location_accept": ["Spain", "Europe", "European Union", "EU", "EMEA"],
+        "location_reject_non_remote": [
+            "India",
+            "Poland",
+            "United Kingdom",
+            "UK",
+            "United States",
+        ],
+        "location": {
+            "accept_patterns": ["Spain", "Europe", "European Union", "EU", "EMEA"],
+            "reject_patterns": [
+                "India",
+                "Poland",
+                "United Kingdom",
+                "UK",
+                "United States",
+            ],
+        },
+    }
+    results = _jobspy_frame(
+        [
+            {
+                "job_url": "https://www.linkedin.com/jobs/view/india",
+                "title": "Software Engineer (India)",
+                "company": "Acai",
+                "location": "Remote",
+                "site": "linkedin",
+                "is_remote": True,
+            },
+            {
+                "job_url": "https://www.linkedin.com/jobs/view/spain",
+                "title": "Software Engineer",
+                "company": "Barcelona Tech",
+                "location": "Spain",
+                "site": "linkedin",
+                "is_remote": True,
+            },
+        ]
+    )
+
+    try:
+        assert jobspy.store_jobspy_results(
+            conn,
+            results,
+            "Software Engineer",
+            limit=10,
+            search_cfg=search_cfg,
+        ) == (1, 0)
+        rows = conn.execute("SELECT url, title, location FROM jobs ORDER BY url").fetchall()
+        assert [(row["url"], row["title"], row["location"]) for row in rows] == [
+            ("https://www.linkedin.com/jobs/view/spain", "Software Engineer", "Spain (Remote)")
+        ]
+        assert conn.execute("SELECT COUNT(*) FROM jobhunter_deleted_jobs").fetchone()[0] == 0
+    finally:
+        close_connection(db_path)
+
+
 def test_jobspy_store_filters_null_description_sentinels(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
@@ -874,7 +937,7 @@ def test_jobspy_ignores_missing_direct_url_for_source_learning(tmp_path):
             ("https://www.linkedin.com/jobs/view/10",),
         ).fetchone()
         assert job["application_url"] is None
-        assert conn.execute("SELECT COUNT(*) FROM job_canonical_identities").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM job_canonical_identities").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM source_locator_candidates").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM manual_capture_queue").fetchone()[0] == 0
     finally:

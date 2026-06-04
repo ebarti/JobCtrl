@@ -385,6 +385,19 @@ class SqliteJobRepository:
         if canonical_url:
             row = self._conn.execute(
                 """
+                SELECT url FROM jobs
+                WHERE url = ?
+                LIMIT 1
+                """,
+                (canonical_url,),
+            ).fetchone()
+            if row is not None:
+                job_url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
+                if job_url:
+                    return JobId(str(job_url))
+
+            row = self._conn.execute(
+                """
                 SELECT job_url FROM job_canonical_identities
                 WHERE tenant_id = ? AND canonical_url = ?
                 LIMIT 1

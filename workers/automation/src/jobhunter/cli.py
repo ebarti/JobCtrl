@@ -1385,7 +1385,7 @@ def doctor() -> None:
     import shutil
     from jobhunter.config import (
         load_env, DB_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        RESUME_TEMPLATE_PATH, SEARCH_CONFIG_PATH, get_chrome_path,
+        RESUME_TEMPLATE_PATH, get_chrome_path, load_search_config,
         gmail_mcp_auth_status,
     )
     from jobhunter.domain.tenant import LOCAL_TENANT
@@ -1433,11 +1433,12 @@ def doctor() -> None:
     else:
         results.append(("resume_template.tex", warn_mark, "Use the local UI profile view to create/edit"))
 
-    # Search config
-    if SEARCH_CONFIG_PATH.exists():
-        results.append(("searches.yaml", ok_mark, str(SEARCH_CONFIG_PATH)))
-    else:
-        results.append(("searches.yaml", warn_mark, "Will use example config — run 'jobhunter init'"))
+    try:
+        search_cfg = load_search_config()
+        boards = ", ".join(str(board) for board in search_cfg.get("boards", [])) or "default boards"
+        results.append(("discovery_settings", ok_mark, f"SQLite-backed search settings ({boards})"))
+    except Exception as exc:  # noqa: BLE001 - doctor should report setup issues, not crash.
+        results.append(("discovery_settings", warn_mark, f"Unable to load search settings: {exc}"))
 
     # jobspy (discovery dep installed separately)
     # The package is intentionally NOT in pyproject.toml so the worker venv

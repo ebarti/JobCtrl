@@ -21,6 +21,7 @@ import {
   CredentialKeys,
   CredentialUpdateRequestSchema,
   DeleteJobRequestSchema,
+  DiscoverySettingsUpdateRequestSchema,
   DiscoveryFeedbackRequestSchema,
   GenerateMaterialsRequestSchema,
   GmailOutcomeScanRequestSchema,
@@ -66,6 +67,7 @@ import {
   listManualCaptureQueue,
   listQuarantine,
   listRoleMatchFeedbackSuggestions,
+  readDiscoverySettings,
   listSourceLocatorCandidates,
   listSourceRegistry,
   patchSourceState,
@@ -74,6 +76,7 @@ import {
   recordDiscoveryFeedback,
   rejectSourceLocatorCandidate,
   upsertSourceRegistryEntry,
+  writeDiscoverySettings,
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
 import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
@@ -236,6 +239,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.get("/v1/discovery/sources", async (_request, reply) =>
     withDb(reply, options.dbPath, (db) => listSourceRegistry(db)),
   );
+
+  app.get("/v1/discovery/settings", async (_request, reply) =>
+    withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
+  );
+
+  app.patch("/v1/discovery/settings", async (request, reply) => {
+    const body = parseBody(reply, DiscoverySettingsUpdateRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, (db) => writeDiscoverySettings(db, body));
+  });
 
   app.post("/v1/discovery/sources", async (request, reply) => {
     const body = parseBody(reply, SourceUpsertRequestSchema, request.body ?? {});

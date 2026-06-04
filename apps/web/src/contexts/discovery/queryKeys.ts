@@ -2,6 +2,8 @@ import type { TenantId } from "@jobhunter/domain-types";
 
 export const discoveryKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "discovery"] as const,
+  settings: (tenantId: TenantId) =>
+    ["tenant", tenantId, "discovery", "settings"] as const,
   sourceLocator: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "source-locator"] as const,
   sourceRegistry: (tenantId: TenantId) =>

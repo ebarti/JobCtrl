@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
 
 import type {
+  DiscoverySettings,
+  DiscoverySettingsResponse,
+  DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackResponse,
   RoleMatchFeedbackDecisionRequest,
   RoleMatchFeedbackDecisionResponse,
@@ -42,6 +45,12 @@ import { refreshProjections } from "./projections.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
+const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
+  boards: ["indeed", "linkedin", "zip_recruiter"],
+  resultsPerSite: 50,
+  hoursOld: 72,
+  source: "database",
+};
 
 const EUROPE_TARGET_MARKERS = [
   "barcelona",
@@ -190,6 +199,12 @@ type CandidateProfileTargetColumn = "experience_target_locations" | "personal_ci
 
 export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS discovery_settings (
+      tenant_id          TEXT PRIMARY KEY,
+      search_config_json TEXT NOT NULL,
+      created_at         TEXT NOT NULL,
+      updated_at         TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS source_registry_entries (
       tenant_id     TEXT NOT NULL DEFAULT 'local',
       source_id     TEXT NOT NULL,
@@ -283,6 +298,111 @@ export function ensureDiscoveryControlTables(db: SqliteDatabase): void {
       PRIMARY KEY (tenant_id, suggestion_id)
     );
   `);
+}
+
+export function readDiscoverySettings(db: SqliteDatabase): DiscoverySettingsResponse {
+  ensureDiscoveryControlTables(db);
+  return { ok: true, settings: discoverySettingsFromConfig(readDiscoverySearchConfig(db)) };
+}
+
+export function writeDiscoverySettings(
+  db: SqliteDatabase,
+  request: DiscoverySettingsUpdateRequest,
+): DiscoverySettingsResponse {
+  ensureDiscoveryControlTables(db);
+  const current = discoverySettingsFromConfig(readDiscoverySearchConfig(db));
+  const currentConfig = readDiscoverySearchConfig(db);
+  const next: DiscoverySettings = {
+    ...current,
+    boards: request.boards ?? current.boards,
+    resultsPerSite: request.resultsPerSite ?? current.resultsPerSite,
+    hoursOld: request.hoursOld ?? current.hoursOld,
+  };
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO discovery_settings (
+      tenant_id, search_config_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?)
+    ON CONFLICT(tenant_id) DO UPDATE SET
+      search_config_json = excluded.search_config_json,
+      updated_at = excluded.updated_at
+  `).run(DEFAULT_TENANT, JSON.stringify(configFromDiscoverySettings(next, currentConfig)), now, now);
+  return { ok: true, settings: next };
+}
+
+function readDiscoverySearchConfig(db: SqliteDatabase): Record<string, unknown> {
+  const row = getRow<{ search_config_json: string }>(
+    db,
+    "SELECT search_config_json FROM discovery_settings WHERE tenant_id = ?",
+    [DEFAULT_TENANT],
+  );
+  if (!row?.search_config_json) {
+    return configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS);
+  }
+  try {
+    const parsed = JSON.parse(row.search_config_json) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS);
+  } catch {
+    return configFromDiscoverySettings(DEFAULT_DISCOVERY_SETTINGS);
+  }
+}
+
+function discoverySettingsFromConfig(config: Record<string, unknown>): DiscoverySettings {
+  const defaults = recordValue(config.defaults);
+  return {
+    boards: boardList(config.boards),
+    resultsPerSite: positiveInt(defaults.results_per_site, DEFAULT_DISCOVERY_SETTINGS.resultsPerSite),
+    hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
+    source: "database",
+  };
+}
+
+function configFromDiscoverySettings(
+  settings: DiscoverySettings,
+  base: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const defaults = recordValue(base.defaults);
+  return {
+    ...base,
+    boards: settings.boards,
+    defaults: {
+      ...defaults,
+      hours_old: settings.hoursOld,
+      results_per_site: settings.resultsPerSite,
+    },
+    queries: Array.isArray(base.queries) && base.queries.length > 0
+      ? base.queries
+      : [{ query: "Software Engineer", tier: 1 }],
+    locations: Array.isArray(base.locations) && base.locations.length > 0
+      ? base.locations
+      : [{ label: "remote", location: "Remote", remote: true }],
+    location_accept: Array.isArray(base.location_accept) && base.location_accept.length > 0
+      ? base.location_accept
+      : ["Remote"],
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function boardList(value: unknown): DiscoverySettings["boards"] {
+  const allowed = new Set(["indeed", "linkedin", "zip_recruiter", "glassdoor"]);
+  const values = Array.isArray(value)
+    ? value.map((item) => String(item)).filter((item) => allowed.has(item))
+    : [];
+  return values.length > 0
+    ? values as DiscoverySettings["boards"]
+    : DEFAULT_DISCOVERY_SETTINGS.boards;
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function listSourceRegistry(db: SqliteDatabase): SourceRegistryListResponse {

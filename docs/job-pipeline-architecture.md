@@ -382,13 +382,14 @@ classDiagram
 - Reads source registry data from packaged YAML plus local
   `source_registry_entries`.
 - Reads source-quality snapshots to schedule and budget sources.
-- Reads target search from `candidate_profiles` and overlays it onto discovery
-  search config. Target roles remain exact role guidance. Target tracks,
-  seniority floors, functions, and specializations add structured intent for
-  deterministic recall expansion. Discovery settings store normalized track values
-  (`ic`, `management`, `executive`) and normalized engineering seniority-floor
-  values before the worker expands them. Resume import may suggest those
-  structured fields, but existing user-entered profile values win.
+- Reads board/runtime discovery settings from SQLite `discovery_settings`, then
+  overlays target search from `candidate_profiles`. Target roles remain exact
+  role guidance. Target tracks, seniority floors, functions, and
+  specializations add structured intent for deterministic recall expansion.
+  Discovery settings store normalized track values (`ic`, `management`,
+  `executive`) and normalized engineering seniority-floor values before the
+  worker expands them. Resume import may suggest those structured fields, but
+  existing user-entered profile values win.
 - Compiles target roles into two query kinds:
   - exact queries, copied from the saved profile role text after note stripping;
   - recall queries, generated from the same target-role intent and marked with
@@ -403,6 +404,8 @@ classDiagram
   provider, so exact and recall queries are sent as external search probes.
   Direct ATS, Workday, and source-first Smart Extract sources are known
   boards/employers/pages, so they enumerate the source once per location and run
+  normalized query/location acceptance through the shared discovery intake
+  before any job row or delete tombstone is persisted.
   exact-plus-recall title matching internally instead of multiplying
   `queries x sources`. Smart Extract search-only sources still fan out by query
   when the source has no useful browse/all-jobs page.

@@ -154,6 +154,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_operational_metric_tables(conn)
     ensure_source_observation_tables(conn)
     ensure_discovery_control_tables(conn)
+    ensure_discovery_settings_tables(conn)
     ensure_projection_tables_in_db(conn)
     drop_legacy_apply_runs_tables(conn)
 
@@ -1621,6 +1622,25 @@ def ensure_discovery_control_tables(conn: sqlite3.Connection | None = None) -> l
         "manual_capture_queue",
         "discovery_feedback",
     ]
+
+
+def ensure_discovery_settings_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create database-backed user discovery runtime settings."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_settings (
+            tenant_id          TEXT PRIMARY KEY,
+            search_config_json TEXT NOT NULL,
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    return ["discovery_settings"]
 
 
 def _backfill_one_enrichment_row(

@@ -24,6 +24,8 @@ import type {
   CredentialUpdateRequest,
   DashboardSummary,
   DeleteJobRequest,
+  DiscoverySettingsResponse,
+  DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
@@ -141,6 +143,14 @@ export class JobHunterApiClient {
 
   discoverySources(): Promise<SourceRegistryListResponse> {
     return this.get("/v1/discovery/sources");
+  }
+
+  discoverySettings(): Promise<DiscoverySettingsResponse> {
+    return this.get("/v1/discovery/settings");
+  }
+
+  updateDiscoverySettings(body: DiscoverySettingsUpdateRequest): Promise<DiscoverySettingsResponse> {
+    return this.patch("/v1/discovery/settings", body);
   }
 
   upsertDiscoverySource(body: SourceUpsertRequest): Promise<SourceRegistryMutationResponse> {

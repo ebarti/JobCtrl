@@ -20,6 +20,12 @@ export class FetchApiClientAdapter implements ApiClientPort {
   activityEvent(eventId: string) {
     return this.client.activityEvent(eventId);
   }
+  discoverySettings() {
+    return this.client.discoverySettings();
+  }
+  updateDiscoverySettings(body: Parameters<JobHunterApiClient["updateDiscoverySettings"]>[0]) {
+    return this.client.updateDiscoverySettings(body);
+  }
   discoverySources() {
     return this.client.discoverySources();
   }

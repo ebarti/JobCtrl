@@ -24,6 +24,8 @@ import type {
   CredentialUpdateRequest,
   DashboardSummary,
   DeleteJobRequest,
+  DiscoverySettingsResponse,
+  DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
   DiscoveryPreviewResponse,
@@ -104,6 +106,8 @@ export interface ApiClientPort {
   dashboardSummary(): Promise<DashboardSummary>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
+  discoverySettings(): Promise<DiscoverySettingsResponse>;
+  updateDiscoverySettings(body: DiscoverySettingsUpdateRequest): Promise<DiscoverySettingsResponse>;
   discoverySources(): Promise<SourceRegistryListResponse>;
   upsertDiscoverySource(body: SourceUpsertRequest): Promise<SourceRegistryMutationResponse>;
   patchDiscoverySourceState(
