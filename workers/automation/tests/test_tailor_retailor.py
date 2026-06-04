@@ -187,6 +187,32 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
         close_connection(db_path)
 
 
+def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    target_url = "https://example.com/low-fit"
+
+    try:
+        _insert_job(conn, url=target_url, fit_score=5)
+
+        def fail_tailor_one_job(*_args, **_kwargs):
+            raise AssertionError("score-five jobs must not tailor by default")
+
+        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fail_tailor_one_job)
+
+        result = tailor_job_by_url(
+            target_url,
+            min_score=5,
+            snapshot=SimpleNamespace(),
+            llm_model=None,
+        )
+
+        assert result == {"url": target_url, "status": "skipped", "reason": "not_eligible"}
+    finally:
+        close_connection(db_path)
+
+
 def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)

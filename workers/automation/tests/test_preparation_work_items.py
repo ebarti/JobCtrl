@@ -210,6 +210,54 @@ def test_retry_requires_failed_item(conn: sqlite3.Connection) -> None:
     assert _item_state(conn, claimed.item_id) == PreparationWorkItemState.COMPLETED.value
 
 
+def test_recover_running_requeues_only_running_items(conn: sqlite3.Connection) -> None:
+    repo = SqlitePreparationWorkItemRepository(conn)
+    queued = repo.enqueue(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("https://example.com/job/recover-running"),
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        target_version=1,
+        now="2026-05-26T00:00:00+00:00",
+    )
+
+    assert (
+        repo.recover_running(
+            tenant_id=LOCAL_TENANT,
+            item_id=queued.item_id,
+            recovered_at="2026-05-26T00:01:00+00:00",
+        )
+        is None
+    )
+
+    claimed = repo.claim_next(
+        tenant_id=LOCAL_TENANT,
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        now="2026-05-26T00:02:00+00:00",
+    )
+    assert claimed is not None
+
+    recovered = repo.recover_running(
+        tenant_id=LOCAL_TENANT,
+        item_id=claimed.item_id,
+        available_at="2026-05-26T00:03:00+00:00",
+        recovered_at="2026-05-26T00:03:00+00:00",
+        reason="worker restarted",
+    )
+
+    assert recovered is not None
+    assert recovered.state is PreparationWorkItemState.QUEUED
+    assert recovered.attempts == 1
+    assert recovered.last_error == "worker restarted"
+
+    claimed_again = repo.claim_next(
+        tenant_id=LOCAL_TENANT,
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        now="2026-05-26T00:03:00+00:00",
+    )
+    assert claimed_again is not None
+    assert claimed_again.attempts == 2
+
+
 def test_claim_respects_kind_and_available_time(conn: sqlite3.Connection) -> None:
     repo = SqlitePreparationWorkItemRepository(conn)
     repo.enqueue(

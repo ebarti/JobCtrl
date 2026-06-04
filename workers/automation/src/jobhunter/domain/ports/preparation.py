@@ -72,5 +72,17 @@ class PreparationWorkItemRepository(Protocol):
         """Move a failed item back to the queued state."""
         ...
 
+    def recover_running(
+        self,
+        *,
+        tenant_id: TenantId,
+        item_id: str,
+        available_at: str | None = None,
+        recovered_at: str | None = None,
+        reason: str = "",
+    ) -> PreparationWorkItem | None:
+        """Move an orphaned running item back to the queued state."""
+        ...
+
 
 __all__ = ["PreparationWorkItemRepository"]

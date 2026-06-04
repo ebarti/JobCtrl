@@ -1,5 +1,6 @@
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  MIN_TAILORING_FIT_SCORE,
   PIPELINE_RUN_STAGES,
   PIPELINE_VALIDATION_MODES,
   type ActionRunResponse,
@@ -43,6 +44,11 @@ function numberValue(value: string, fallback: number): number {
 function decimalValue(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function stageMinScore(stage: PipelineRunStage, value: string): number {
+  const parsed = numberValue(value, 7);
+  return stage === "tailor" ? Math.max(MIN_TAILORING_FIT_SCORE, parsed) : parsed;
 }
 
 function modelSpecList(value: string): string[] {
@@ -171,7 +177,18 @@ function discoverySourceLabel(source: string): string {
     .join(" ");
 }
 
-function userFacingProgressDetail(detail: string): string {
+function userFacingProgressDetail(stage: Stage, progress: StageProgress): string {
+  const detail = progress.message || progress.currentStep || "stage progress updated";
+  if (
+    progress.status === "partial"
+    && stage === "discover"
+    && /^(?:discover\s+)?stage partial$|^preparation complete$|^stage completed with warnings$/i.test(detail.trim())
+  ) {
+    return (
+      "Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; "
+      + "items that exhaust retry attempts need attention in Tailor."
+    );
+  }
   const orphanedDiscoveryMatch = detail.match(
     /^Discovery source\s+(\S+)\s+was left running by a prior worker(?:\s+and has been marked failed for retry)?\.?$/i,
   );
@@ -188,7 +205,7 @@ function stageProgressStatusLine(stage: Stage, progress: StageProgress): string 
   const stageLabel = labelForStage(stage);
   const percent = progress.percent === null ? null : `${progress.percent}%`;
   const count = `${progress.completed}/${progress.total}`;
-  const detail = userFacingProgressDetail(progress.message || progress.currentStep || "stage progress updated");
+  const detail = userFacingProgressDetail(stage, progress);
   const detailSentence = sentenceDetail(detail);
 
   if (progress.status === "failed") {
@@ -228,7 +245,7 @@ function StageProgressLine({ stage, progress }: { readonly stage: Stage; readonl
 }
 
 const APPLY_MODEL_OPTIONS = ["default", "opus", "sonnet"] as const;
-const USER_FACING_PIPELINE_STAGES = ["discover", "apply"] as const satisfies readonly PipelineRunStage[];
+const USER_FACING_PIPELINE_STAGES = ["discover", "tailor", "apply"] as const satisfies readonly PipelineRunStage[];
 const USER_FACING_PIPELINE_STAGE_SET: ReadonlySet<PipelineRunStage> = new Set(USER_FACING_PIPELINE_STAGES);
 
 interface StageControlSet {
@@ -344,7 +361,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
       workers: controls.workers ? numberValue(config.workers, 1) : 1,
-      minScore: controls.minScore ? numberValue(config.minScore, 7) : 7,
+      minScore: controls.minScore ? stageMinScore(activeStage, config.minScore) : 7,
       validationMode: controls.validationMode ? config.validationMode : "normal",
       dryRun: config.dryRun,
       rescore: controls.rescore ? config.rescore : false,
@@ -395,7 +412,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
           <label className="field">
             <span>Minimum score</span>
             <input
-              min={0}
+              min={activeStage === "tailor" ? MIN_TAILORING_FIT_SCORE : 0}
               max={10}
               type="number"
               value={config.minScore}

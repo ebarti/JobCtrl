@@ -704,9 +704,12 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     current_url = "https://example.com/job/current-tailor"
     outdated_url = "https://example.com/job/outdated-tailor"
     missing_url = "https://example.com/job/missing-tailor"
+    low_fit_url = "https://example.com/job/low-fit-tailor"
     for url in (current_url, outdated_url, missing_url):
         _seed_enriched_job(conn, url)
         _seed_score(conn, url, policy_version=2, fit_score=9)
+    _seed_enriched_job(conn, low_fit_url)
+    _seed_score(conn, low_fit_url, policy_version=2, fit_score=5)
     _seed_tailored_artifact(conn, current_url, policy_version=2)
     _seed_tailored_artifact(conn, outdated_url, policy_version=1)
 
@@ -722,7 +725,7 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     result = materials_activities_mod._run_current_policy_tailoring(
         TailorActivityInput(
             tenant_id="local",
-            min_score=7,
+            min_score=5,
             limit=10,
             retailor=True,
             current_policy_only=True,

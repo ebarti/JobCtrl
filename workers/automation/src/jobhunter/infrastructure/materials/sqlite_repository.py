@@ -22,7 +22,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from jobhunter.database import ensure_tailoring_policy_tables
+from jobhunter.database import effective_tailoring_min_score, ensure_tailoring_policy_tables
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.aggregate import MaterialsSet
 from jobhunter.domain.materials.entities import Artifact
@@ -133,6 +133,7 @@ class SqliteMaterialsRepository:
         generation already has an approved tailored resume — the use case
         will mint a new generation when it picks them up.
         """
+        min_score = effective_tailoring_min_score(min_score)
         params: list[Any] = [str(tenant_id)]
         # Reuse the score subquery shape used elsewhere; keep it inline so
         # this adapter stays self-contained.
@@ -207,6 +208,7 @@ class SqliteMaterialsRepository:
     ) -> list[JobId]:
         """Return job URLs whose latest generation has an approved
         tailored resume PDF but no approved cover letter."""
+        min_score = effective_tailoring_min_score(min_score)
         params: list[Any] = [str(tenant_id)]
         score_join = (
             "LEFT JOIN ("

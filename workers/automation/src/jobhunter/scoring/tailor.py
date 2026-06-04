@@ -375,6 +375,7 @@ def run_tailoring(
     # into worker-thread tasks — sqlite connections are thread-bound.
     if repository is None:
         repository = SqliteMaterialsRepository(conn)
+    min_score = db_module.effective_tailoring_min_score(min_score)
 
     jobs = get_jobs_by_stage(
         conn=conn,
@@ -738,6 +739,7 @@ def _load_tailor_eligible_job_by_url(
     min_score: int,
     retailor: bool,
 ) -> dict | None:
+    min_score = db_module.effective_tailoring_min_score(min_score)
     if retailor:
         where = (
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "

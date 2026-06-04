@@ -178,6 +178,23 @@ def test_pending_tailor_includes_jobs_scored_through_repository(
     assert url in urls
 
 
+def test_pending_tailor_excludes_score_five_even_when_threshold_is_lowered(
+    conn: sqlite3.Connection,
+) -> None:
+    low_url = "https://example.com/job/low-fit-tailor"
+    ok_url = "https://example.com/job/minimum-fit-tailor"
+    _seed_enriched_job(conn, low_url)
+    _seed_enriched_job(conn, ok_url)
+    _save_score(conn, low_url, fit=5)
+    _save_score(conn, ok_url, fit=6)
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=5)
+    urls = {row["url"] for row in pending}
+
+    assert low_url not in urls
+    assert ok_url in urls
+
+
 def test_pending_tailor_excludes_high_score_blocked_jobs(
     conn: sqlite3.Connection,
 ) -> None:

@@ -3263,7 +3263,7 @@ describe("local TypeScript API", () => {
         stages: ["tailor"],
         dryRun: false,
         limit: 0,
-        minScore: 0,
+        minScore: 6,
         retailor: true,
       }),
       { appDir: tempDir, dbPath: options.dbPath },

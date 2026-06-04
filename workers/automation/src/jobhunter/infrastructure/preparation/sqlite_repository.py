@@ -226,6 +226,40 @@ class SqlitePreparationWorkItemRepository:
             return None
         return self._get_by_item_id(tenant_id, item_id)
 
+    def recover_running(
+        self,
+        *,
+        tenant_id: TenantId,
+        item_id: str,
+        available_at: str | None = None,
+        recovered_at: str | None = None,
+        reason: str = "",
+    ) -> PreparationWorkItem | None:
+        now = recovered_at or _utc_now()
+        updated = self._conn.execute(
+            """
+            UPDATE preparation_work_items
+               SET state = ?,
+                   updated_at = ?,
+                   available_at = ?,
+                   last_error = ?
+             WHERE item_id = ? AND tenant_id = ? AND state = ?
+            """,
+            (
+                PreparationWorkItemState.QUEUED.value,
+                now,
+                available_at or now,
+                str(reason or ""),
+                item_id,
+                str(tenant_id),
+                PreparationWorkItemState.RUNNING.value,
+            ),
+        )
+        self._conn.commit()
+        if updated.rowcount <= 0:
+            return None
+        return self._get_by_item_id(tenant_id, item_id)
+
     def _get_by_idempotency_key(
         self,
         tenant_id: TenantId,

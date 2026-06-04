@@ -2152,6 +2152,15 @@ _EFFECTIVE_APPLY_STATUS: str = (
 
 
 _FEEDBACK_ORDERED_STAGES = frozenset({"scored", "pending_tailor", "pending_cover", "pending_apply"})
+LOW_FIT_TAILORING_MAX_SCORE = 5
+MIN_TAILORING_FIT_SCORE = LOW_FIT_TAILORING_MAX_SCORE + 1
+
+
+def effective_tailoring_min_score(min_score: int | None = None) -> int:
+    """Return the default-safe floor for material-generation eligibility."""
+    if min_score is None:
+        return 7
+    return max(MIN_TAILORING_FIT_SCORE, int(min_score))
 
 
 def _order_rows_by_feedback(
@@ -2598,6 +2607,8 @@ def get_jobs_by_stage(
     """
     if conn is None:
         conn = get_connection()
+    if stage in ("pending_tailor", "pending_cover"):
+        min_score = effective_tailoring_min_score(min_score)
 
     # Round-1 review B1: every predicate that historically read bare
     # ``fit_score`` now reads through ``_EFFECTIVE_FIT_SCORE`` (COALESCE

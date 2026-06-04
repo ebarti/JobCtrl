@@ -6,6 +6,7 @@ export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "app
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "gemini:gemini-3.5-flash" as const;
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
+export const MIN_TAILORING_FIT_SCORE = 6 as const;
 
 export const MATERIAL_STAGES = ["tailor", "cover"] as const;
 export type MaterialStage = (typeof MATERIAL_STAGES)[number];
