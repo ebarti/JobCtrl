@@ -799,11 +799,13 @@ def recover_orphaned_discovery_runs(
             UPDATE discovery_runs
             SET status = 'failed',
                 error_classes_json = ?,
+                updated_at = ?,
                 failed_at = ?
             WHERE tenant_id = ? AND run_id = ?
             """,
             (
                 json.dumps(list(error_classes)),
+                recovered_at_iso,
                 recovered_at_iso,
                 row["tenant_id"],
                 run_id,

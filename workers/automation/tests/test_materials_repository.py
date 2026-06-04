@@ -247,6 +247,17 @@ def test_list_pending_tailor_returns_jobs_without_materials(conn: sqlite3.Connec
     assert pending == [JobId(url_pending)]
 
 
+def test_list_pending_tailor_excludes_score_five_by_default(conn: sqlite3.Connection) -> None:
+    url_low = _seed_with_score(conn, "https://example.com/low-fit", fit_score=5)
+    url_ok = _seed_with_score(conn, "https://example.com/min-fit", fit_score=6)
+    repo = SqliteMaterialsRepository(conn)
+
+    pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=5)
+
+    assert JobId(url_low) not in pending
+    assert JobId(url_ok) in pending
+
+
 def test_list_pending_tailor_excludes_blocked_scores(conn: sqlite3.Connection) -> None:
     url_allowed = _seed_with_score(conn, "https://example.com/allowed")
     url_blocked = _seed_with_score(conn, "https://example.com/blocked")
@@ -286,6 +297,19 @@ def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
     assert pending == [JobId(url_resume_only)]
+
+
+def test_list_pending_cover_excludes_score_five_by_default(conn: sqlite3.Connection) -> None:
+    url_low = _seed_with_score(conn, "https://example.com/cover-low", fit_score=5)
+    url_ok = _seed_with_score(conn, "https://example.com/cover-ok", fit_score=6)
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(_approved_with_pdf(url_low))
+    repo.save(_approved_with_pdf(url_ok))
+
+    pending = repo.list_pending_cover(LOCAL_TENANT, min_score=5)
+
+    assert JobId(url_low) not in pending
+    assert JobId(url_ok) in pending
 
 
 def test_list_pending_cover_excludes_blocked_scores(conn: sqlite3.Connection) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pandas as pd
@@ -50,6 +51,87 @@ def test_jobspy_limit_stops_after_one_new_job(monkeypatch):
 
     assert calls == [("platform engineer", "Remote", ["indeed", "linkedin"], 100, 1)]
     assert result["queries"] == 1
+
+
+def test_jobspy_emits_source_progress(monkeypatch):
+    snapshots: list[dict[str, object]] = []
+
+    def fake_run_one_search(
+        search: dict,
+        _sites: list[str],
+        _results_per_site: int,
+        *_args,
+        **_kwargs,
+    ) -> dict:
+        if search["query"] == "platform engineer":
+            return {"new": 0, "existing": 1, "errors": 0, "filtered": 2, "total": 3}
+        return {"new": 1, "existing": 0, "errors": 0, "filtered": 0, "total": 1}
+
+    monkeypatch.setattr(jobspy, "init_db", lambda: None)
+    monkeypatch.setattr(
+        jobspy,
+        "get_connection",
+        lambda: SimpleNamespace(execute=lambda *_args, **_kwargs: SimpleNamespace(fetchone=lambda: [2])),
+    )
+    monkeypatch.setattr(jobspy, "_run_one_search", fake_run_one_search)
+
+    result = jobspy._full_crawl(
+        {
+            "queries": [{"query": "platform engineer"}, {"query": "product engineer"}],
+            "locations": [{"label": "barcelona", "location": "Barcelona, Spain"}],
+            "defaults": {"results_per_site": 100},
+        },
+        sites=["indeed"],
+        limit=10,
+        progress_callback=snapshots.append,
+    )
+
+    assert result["new"] == 1
+    assert result["existing"] == 1
+    assert snapshots[0] == {
+        "completed": 0,
+        "total": 2,
+        "unit": "searches",
+        "new_jobs": 0,
+        "existing_jobs": 0,
+        "filtered_jobs": 0,
+        "errors": 0,
+        "raw_total": 0,
+        "message": "JobSpy search started",
+        "current_query": "platform engineer",
+        "current_location": "Barcelona, Spain",
+    }
+    assert snapshots[-1] == {
+        "completed": 2,
+        "total": 2,
+        "unit": "searches",
+        "new_jobs": 1,
+        "existing_jobs": 1,
+        "filtered_jobs": 2,
+        "errors": 0,
+        "raw_total": 4,
+        "message": "JobSpy search completed",
+        "current_query": "product engineer",
+        "current_location": "Barcelona, Spain",
+    }
+
+
+def test_jobspy_cooperatively_cancels_before_next_search(monkeypatch):
+    cancel_event = threading.Event()
+    cancel_event.set()
+    monkeypatch.setattr(jobspy, "init_db", lambda: None)
+    monkeypatch.setattr(jobspy, "_run_one_search", lambda *_args, **_kwargs: pytest.fail("search should not start"))
+
+    with pytest.raises(jobspy.DiscoveryCancelled):
+        jobspy._full_crawl(
+            {
+                "queries": [{"query": "platform engineer"}],
+                "locations": [{"label": "barcelona", "location": "Barcelona, Spain"}],
+                "defaults": {"results_per_site": 100},
+            },
+            sites=["indeed"],
+            cancel_event=cancel_event,
+        )
 
 
 def test_jobspy_limit_does_not_let_existing_jobs_starve_later_queries(monkeypatch):

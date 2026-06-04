@@ -54,6 +54,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_list_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_list_projections", "score_version", "INTEGER"),
     ("job_list_projections", "scored_at", "TEXT"),
+    ("job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'"),
     ("job_detail_projections", "score_breakdown_json", "TEXT"),
     ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_detail_projections", "score_version", "INTEGER"),
@@ -86,6 +87,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             score_version          INTEGER,
             scored_at              TEXT,
             current_stage          TEXT NOT NULL DEFAULT 'discover',
+            current_substage       TEXT NOT NULL DEFAULT 'discover',
             current_state          TEXT NOT NULL DEFAULT 'pending',
             current_error_code     TEXT,
             current_error_message  TEXT,
@@ -329,14 +331,14 @@ class SqliteProjectionStore:
                 salary, application_url, discovered_at, description,
                 full_description, fit_score, score_breakdown_json,
                 score_keywords_json, score_reasoning, score_version, scored_at,
-                current_stage, current_state, current_error_code,
+                current_stage, current_substage, current_state, current_error_code,
                 current_error_message, current_next_action, has_resume,
                 has_cover_letter, has_pdf, apply_status, applied_at,
                 artifact_count, deleted_at,
                 last_updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 title                 = excluded.title,
@@ -356,6 +358,7 @@ class SqliteProjectionStore:
                 score_version         = excluded.score_version,
                 scored_at             = excluded.scored_at,
                 current_stage         = excluded.current_stage,
+                current_substage      = excluded.current_substage,
                 current_state         = excluded.current_state,
                 current_error_code    = excluded.current_error_code,
                 current_error_message = excluded.current_error_message,
@@ -389,6 +392,7 @@ class SqliteProjectionStore:
                 projection.score_version,
                 projection.scored_at,
                 projection.current_stage,
+                projection.current_substage,
                 projection.current_state,
                 projection.current_error_code,
                 projection.current_error_message,

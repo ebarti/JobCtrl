@@ -89,7 +89,8 @@ Core pipeline:
 - A TeX distribution with `pdflatex` for PDF output.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
   workflow engine the Python worker runs against. The local dev launcher starts
-  it for you; see `docs/local-development.md`.
+  it for you with persistent local workflow history; see
+  `docs/local-development.md`.
 
 Local API and web UI:
 
@@ -363,10 +364,14 @@ Temporal worker heartbeat. The web topbar alerts when the worker is missing or
 stale, and pipeline stage buttons stay disabled until the worker is
 heartbeating against the same local database.
 
+Temporal workflow history is persisted under `.dev/temporal/temporal.db` by
+default so local debugging can survive launcher restarts. Override
+`JOBHUNTER_TEMPORAL_DB` when a separate Temporal dev store is needed.
+
 For troubleshooting, run individual components in separate terminals:
 
 ```bash
-temporal server start-dev
+temporal server start-dev --db-filename .dev/temporal/temporal.db
 pnpm api:dev
 pnpm web:dev
 uv --project workers/automation run jobhunter worker
@@ -401,12 +406,21 @@ completed, dry-run, or failed, and the returned run/action id when one is
 available. Queued or running Discover and Apply workflows expose stop controls
 from the Pipelines and Workflow Runs views, and active per-job apply runs can be
 stopped from Apply review when a latest apply run is attached to the job.
+Jobs whose first-time tailoring is skipped by the default low-fit gate can still
+be tailored explicitly from the job detail tailor stage. Re-tailor controls are
+reserved for jobs that already have tailored artifacts and need current-policy
+regeneration.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;
 Discover also emits source-step events and scheduled discovery-run events for
 JobSpy, Workday, and Smart Extract so a stuck or low-quality source is visible
-before the request finishes. The dashboard source-health card summarizes the
+before the request finishes. Long JobSpy crawls also persist source-level
+progress, including completed search combinations, current query/location, new
+rows, duplicates, filtered rows, errors, and raw observed rows. Stopping a
+running Discover workflow marks the matching source run terminal so the
+dashboard does not keep reporting an old crawl as active. The dashboard
+source-health card summarizes the
 local source-quality projection used to budget and demote future crawls. The
 Discovery page owns the local source registry, source locator candidates,
 observed-source preview, quarantined leads, and manual-capture queue. Its source
@@ -494,7 +508,7 @@ The Discovery page's Target search settings are discovery inputs. Target roles
 stay as explicit guidance and replace the active discovery query list with exact
 role queries. Target tracks are normalized to IC, management, and executive;
 seniority floors use the engineering ladder choices shown in Discovery settings.
-Target tracks, seniority floors, functions, and specializations add structured intent;
+Target tracks, seniority floors, role areas, and specializations add structured intent;
 resume import can suggest these fields conservatively but does not overwrite
 existing user choices. The worker expands that intent into deterministic recall
 queries. Recall queries keep the same search tier as exact queries because

@@ -10,9 +10,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from jobhunter import database as db_module
+from jobhunter import config, database as db_module
 from jobhunter.database import get_connection, get_jobs_by_stage
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.use_cases import SuppressTailoredArtifactsUseCase
@@ -27,6 +28,13 @@ from jobhunter.state import record_job_event, utc_now
 log = logging.getLogger(__name__)
 
 WorkItemProcessor = Callable[[PreparationWorkItem], dict[str, Any]]
+
+PREPARATION_STALE_RUNNING_SECONDS = 150
+PREPARATION_MAX_ATTEMPTS: dict[PreparationWorkItemKind, int] = {
+    PreparationWorkItemKind.SCORE_JOB: 3,
+    PreparationWorkItemKind.TAILOR_RESUME: int(config.DEFAULTS["max_tailor_attempts"]),
+    PreparationWorkItemKind.SUPPRESS_TAILORED_ARTIFACTS: 3,
+}
 
 
 def drain_discovery_preparation(
@@ -50,6 +58,8 @@ def drain_discovery_preparation(
     conn = get_connection()
     repo = SqlitePreparationWorkItemRepository(conn)
     stats = _new_stats()
+    _recover_stale_running_items(conn=conn, repo=repo, stats=stats, tenant_id=tenant_id)
+    tailoring_min_score = db_module.effective_tailoring_min_score(min_score)
 
     score_target_version = _current_scoring_policy_version(conn, tenant_id)
     _enqueue_pending_scores(
@@ -79,7 +89,7 @@ def drain_discovery_preparation(
         repo=repo,
         stats=stats,
         tenant_id=tenant_id,
-        min_score=min_score,
+        min_score=tailoring_min_score,
         target_version=tailoring_target_version,
     )
     _drain_kind(
@@ -100,7 +110,7 @@ def drain_discovery_preparation(
         limit=limit,
         processor=lambda item: _tailor_item(
             item,
-            min_score=min_score,
+            min_score=tailoring_min_score,
             validation_mode=validation_mode,
             workers=workers,
             llm_model=llm_model,
@@ -120,6 +130,8 @@ def _new_stats() -> dict[str, Any]:
         "started": defaultdict(int),
         "completed": defaultdict(int),
         "failed": defaultdict(int),
+        "retried": defaultdict(int),
+        "recovered": defaultdict(int),
         "skipped": defaultdict(int),
         "errors": {},
     }
@@ -133,7 +145,7 @@ def _finalize_stats(stats: dict[str, Any]) -> dict[str, Any]:
     failed = sum(materialized["failed"].values())
     total = sum(
         sum(materialized[key].values())
-        for key in ("queued", "started", "completed", "failed", "skipped")
+        for key in ("queued", "started", "completed", "failed", "retried", "recovered", "skipped")
     )
     materialized["status"] = "partial" if failed else "ok"
     materialized["has_work"] = total > 0
@@ -287,7 +299,22 @@ def _drain_kind(
             result = processor(item)
         except Exception as exc:  # noqa: BLE001 - failed work item must stay durable
             log.exception("Preparation work item %s failed", item.item_id)
-            repo.fail(tenant_id=tenant_id, item_id=item.item_id, error=str(exc))
+            retryable = item.attempts < _max_attempts(kind)
+            repo.fail(tenant_id=tenant_id, item_id=item.item_id, error=str(exc), retry_at=utc_now())
+            if retryable:
+                retried = repo.retry(tenant_id=tenant_id, item_id=item.item_id)
+                if retried is not None:
+                    stats["retried"][kind.value] += 1
+                    stats["queued"][kind.value] += 1
+                    _record_work_item_event(
+                        conn,
+                        retried,
+                        "PreparationWorkItemQueued",
+                        f"{kind.value} work item auto-requeued",
+                        payload={"retry": True, "attempt": item.attempts, "maxAttempts": _max_attempts(kind)},
+                    )
+                    continue
+
             stats["failed"][kind.value] += 1
             stats["errors"][item.item_id] = str(exc)
             _record_work_item_event(
@@ -296,7 +323,7 @@ def _drain_kind(
                 "PreparationWorkItemFailed",
                 f"{kind.value} work item failed",
                 level="error",
-                payload={"error": str(exc)},
+                payload={"error": str(exc), "retryExhausted": True, "maxAttempts": _max_attempts(kind)},
             )
             continue
 
@@ -417,6 +444,72 @@ def _has_incomplete_item(
     return row is not None
 
 
+def _recover_stale_running_items(
+    *,
+    conn: sqlite3.Connection,
+    repo: SqlitePreparationWorkItemRepository,
+    stats: dict[str, Any],
+    tenant_id: TenantId,
+) -> None:
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=PREPARATION_STALE_RUNNING_SECONDS)
+    rows = conn.execute(
+        """
+        SELECT item_id, tenant_id, job_id, kind, target_version, source_event_id,
+               state, idempotency_key, attempts, last_error, created_at,
+               updated_at, available_at
+        FROM preparation_work_items
+        WHERE tenant_id = ?
+          AND state = 'running'
+        """,
+        (str(tenant_id),),
+    ).fetchall()
+    for row in rows:
+        item = _row_to_preparation_item(row)
+        updated_at = _parse_iso_datetime(item.updated_at) or _parse_iso_datetime(item.available_at)
+        if updated_at is not None and updated_at > cutoff:
+            continue
+        message = "Preparation work was left running by a prior worker."
+        if item.attempts >= _max_attempts(item.kind):
+            repo.fail(
+                tenant_id=tenant_id,
+                item_id=item.item_id,
+                error=f"{message} Retry budget exhausted.",
+                failed_at=now.isoformat(),
+                retry_at=now.isoformat(),
+            )
+            stats["failed"][item.kind.value] += 1
+            stats["errors"][item.item_id] = message
+            _record_work_item_event(
+                conn,
+                item,
+                "PreparationWorkItemFailed",
+                f"{item.kind.value} work item failed after stale recovery",
+                level="error",
+                payload={"error": message, "recovered": True, "retryExhausted": True},
+            )
+            continue
+
+        recovered = repo.recover_running(
+            tenant_id=tenant_id,
+            item_id=item.item_id,
+            available_at=now.isoformat(),
+            recovered_at=now.isoformat(),
+            reason=message,
+        )
+        if recovered is None:
+            continue
+        stats["recovered"][recovered.kind.value] += 1
+        stats["queued"][recovered.kind.value] += 1
+        _record_work_item_event(
+            conn,
+            recovered,
+            "PreparationWorkItemQueued",
+            f"{recovered.kind.value} work item recovered and requeued",
+            payload={"recovered": True, "previousUpdatedAt": item.updated_at},
+        )
+
+
 def _retry_failed_item(
     conn: sqlite3.Connection,
     repo: SqlitePreparationWorkItemRepository,
@@ -430,7 +523,7 @@ def _retry_failed_item(
     now = utc_now()
     row = conn.execute(
         """
-        SELECT item_id
+        SELECT item_id, attempts
         FROM preparation_work_items
         WHERE tenant_id = ?
           AND job_id = ?
@@ -446,6 +539,11 @@ def _retry_failed_item(
     if row is None:
         return False
     item_id = str(row["item_id"] if isinstance(row, sqlite3.Row) else row[0])
+    attempts = int(row["attempts"] if isinstance(row, sqlite3.Row) else row[1])
+    if attempts >= _max_attempts(kind):
+        stats["failed"][kind.value] += 1
+        stats["errors"][item_id] = "Retry budget exhausted"
+        return True
     item = repo.retry(tenant_id=tenant_id, item_id=item_id, available_at=now, retried_at=now)
     if item is None:
         return False
@@ -458,6 +556,54 @@ def _retry_failed_item(
         payload={"retry": True},
     )
     return True
+
+
+def _max_attempts(kind: PreparationWorkItemKind) -> int:
+    return max(1, int(PREPARATION_MAX_ATTEMPTS[PreparationWorkItemKind(kind)]))
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _row_to_preparation_item(row: sqlite3.Row | tuple[Any, ...]) -> PreparationWorkItem:
+    if isinstance(row, sqlite3.Row):
+        return PreparationWorkItem(
+            item_id=str(row["item_id"]),
+            tenant_id=TenantId(str(row["tenant_id"])),
+            job_id=JobId(str(row["job_id"])),
+            kind=PreparationWorkItemKind(str(row["kind"])),
+            target_version=int(row["target_version"]),
+            source_event_id=str(row["source_event_id"] or ""),
+            state=str(row["state"]),
+            idempotency_key=str(row["idempotency_key"]),
+            attempts=int(row["attempts"] or 0),
+            last_error=str(row["last_error"] or ""),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]),
+            available_at=str(row["available_at"]),
+        )
+    return PreparationWorkItem(
+        item_id=str(row[0]),
+        tenant_id=TenantId(str(row[1])),
+        job_id=JobId(str(row[2])),
+        kind=PreparationWorkItemKind(str(row[3])),
+        target_version=int(row[4]),
+        source_event_id=str(row[5] or ""),
+        state=str(row[6]),
+        idempotency_key=str(row[7]),
+        attempts=int(row[8] or 0),
+        last_error=str(row[9] or ""),
+        created_at=str(row[10]),
+        updated_at=str(row[11]),
+        available_at=str(row[12]),
+    )
 
 
 def _latest_source_event_id(conn: sqlite3.Connection, job_url: str) -> str:

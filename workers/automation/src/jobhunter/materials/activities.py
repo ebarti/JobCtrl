@@ -32,6 +32,7 @@ class TailorActivityInput:
     job_urls: tuple[str, ...] = ()
     current_policy_only: bool = False
     suppress_existing_artifacts: bool = False
+    allow_low_fit_override: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
     tailor_judge_min_score: float | None = None
@@ -169,6 +170,7 @@ def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
             tenant_id=TenantId(payload.tenant_id),
             llm_model=payload.llm_model,
             suppress_existing_artifacts=payload.suppress_existing_artifacts,
+            allow_low_fit_override=payload.allow_low_fit_override,
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
             tailor_judge_min_score=payload.tailor_judge_min_score,

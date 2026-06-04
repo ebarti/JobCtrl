@@ -60,6 +60,7 @@ import type {
   RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
+  TailorJobRequest,
   RetryStageRequest,
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
@@ -352,6 +353,10 @@ export class JobHunterApiClient {
 
   retailorJob(jobKey: string, body: Partial<RetailorJobRequest> = {}): Promise<ActionRunResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/retailor-current-policy`, body);
+  }
+
+  tailorJob(jobKey: string, body: Partial<TailorJobRequest> = {}): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/tailor`, body);
   }
 
   retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse> {

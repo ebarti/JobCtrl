@@ -281,6 +281,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       score_trace_json       TEXT,
       score_correction_json  TEXT,
       current_stage          TEXT NOT NULL DEFAULT 'discover',
+      current_substage       TEXT NOT NULL DEFAULT 'discover',
       current_state          TEXT NOT NULL DEFAULT 'pending',
       current_error_code     TEXT,
       current_error_message  TEXT,
@@ -436,6 +437,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_criteria_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_trace_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_list_projections", "score_correction_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_list_projections", "current_substage", "TEXT NOT NULL DEFAULT 'discover'") ||
+    schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "score_breakdown_json", "TEXT") || schemaChanged;
   schemaChanged =
@@ -1092,11 +1096,11 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
      salary, application_url, discovered_at, description, full_description,
        fit_score, score_breakdown_json, score_keywords_json, score_reasoning,
        score_version, scored_at, score_criteria_json, score_trace_json,
-       score_correction_json, current_stage, current_state,
+       score_correction_json, current_stage, current_substage, current_state,
        current_error_code, current_error_message, current_next_action,
        has_resume, has_cover_letter, has_pdf, apply_status, applied_at,
        artifact_count, deleted_at, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        title                 = excluded.title,
        employer              = excluded.employer,
@@ -1118,6 +1122,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        score_trace_json      = excluded.score_trace_json,
        score_correction_json = excluded.score_correction_json,
        current_stage         = excluded.current_stage,
+       current_substage      = excluded.current_substage,
        current_state         = excluded.current_state,
        current_error_code    = excluded.current_error_code,
        current_error_message = excluded.current_error_message,
@@ -1153,6 +1158,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     score.traceJson,
     score.correctionJson,
     jobListStage(firstActionable?.stage),
+    firstActionable?.stage ?? "discover",
     firstActionable?.state ?? "pending",
     firstActionable?.error_code ?? null,
     firstActionable?.error_message ?? null,

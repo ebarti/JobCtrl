@@ -157,7 +157,7 @@ def test_discovery_preparation_drains_score_then_tailor_work_items(
     }
 
 
-def test_discovery_preparation_retries_failed_work_item_on_later_drain(
+def test_discovery_preparation_auto_retries_failed_work_item_in_same_drain(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -185,15 +185,57 @@ def test_discovery_preparation_retries_failed_work_item_on_later_drain(
 
     first_stats = preparation.drain_discovery_preparation(min_score=7)
 
-    assert first_stats["status"] == "partial"
-    assert first_stats["failed"]["score_job"] == 1
+    assert first_stats["status"] == "ok"
+    assert first_stats["retried"]["score_job"] == 1
+    assert first_stats["completed"]["score_job"] == 1
+    assert first_stats["completed"]["tailor_resume"] == 1
+    assert score_calls == 2
+    assert tailor_calls == 1
+    rows = conn.execute(
+        "SELECT kind, state, attempts, last_error FROM preparation_work_items ORDER BY kind"
+    ).fetchall()
+    assert [(row["kind"], row["state"], row["attempts"], row["last_error"]) for row in rows] == [
+        ("score_job", "completed", 2, ""),
+        ("tailor_resume", "completed", 1, ""),
+    ]
+
+
+def test_discovery_preparation_retries_limited_failed_work_item_on_later_drain(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/job/limited-score-failure"
+    _seed_enriched_job(conn, url)
+    score_calls = 0
+    tailor_calls = 0
+
+    def fail_once_score(item, **_kwargs):
+        nonlocal score_calls
+        score_calls += 1
+        if score_calls == 1:
+            raise RuntimeError("temporary scoring outage")
+        _save_score(conn, str(item.job_id), 8)
+        return {"scoreVersion": 1}
+
+    def fake_tailor(item, **_kwargs):
+        nonlocal tailor_calls
+        tailor_calls += 1
+        return {"status": "approved", "materialsGeneration": 1}
+
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "_score_item", fail_once_score)
+    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
+
+    first_stats = preparation.drain_discovery_preparation(min_score=7, limit=1)
+
+    assert first_stats["status"] == "ok"
+    assert first_stats["retried"]["score_job"] == 1
     assert score_calls == 1
     assert tailor_calls == 0
 
     second_stats = preparation.drain_discovery_preparation(min_score=7)
 
     assert second_stats["status"] == "ok"
-    assert second_stats["queued"]["score_job"] == 1
     assert second_stats["completed"]["score_job"] == 1
     assert second_stats["completed"]["tailor_resume"] == 1
     assert score_calls == 2
@@ -205,6 +247,84 @@ def test_discovery_preparation_retries_failed_work_item_on_later_drain(
         ("score_job", "completed", 2, ""),
         ("tailor_resume", "completed", 1, ""),
     ]
+
+
+def test_discovery_preparation_recovers_stale_running_work_item(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/job/stale-running-tailor"
+    _seed_enriched_job(conn, url)
+    _save_score(conn, url, 8)
+    repo = SqlitePreparationWorkItemRepository(conn)
+    queued = repo.enqueue(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        target_version=1,
+        source_event_id="",
+        now="2026-05-26T00:00:00+00:00",
+    )
+    claimed = repo.claim_next(
+        tenant_id=LOCAL_TENANT,
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        now="2026-05-26T00:01:00+00:00",
+    )
+    assert claimed is not None
+    conn.execute(
+        "UPDATE preparation_work_items SET updated_at = ? WHERE item_id = ?",
+        ("2026-05-26T00:01:00+00:00", queued.item_id),
+    )
+    conn.commit()
+
+    def fake_tailor(item, **_kwargs):
+        return {"status": "approved", "materialsGeneration": 1}
+
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "_tailor_item", fake_tailor)
+
+    stats = preparation.drain_discovery_preparation(min_score=7)
+
+    assert stats["status"] == "ok"
+    assert stats["recovered"]["tailor_resume"] == 1
+    assert stats["completed"]["tailor_resume"] == 1
+    row = conn.execute(
+        "SELECT state, attempts, last_error FROM preparation_work_items WHERE item_id = ?",
+        (queued.item_id,),
+    ).fetchone()
+    assert row["state"] == "completed"
+    assert row["attempts"] == 2
+    assert row["last_error"] == ""
+
+
+def test_discovery_preparation_exhausts_retry_budget(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/job/permanent-score-failure"
+    _seed_enriched_job(conn, url)
+    score_calls = 0
+
+    def fail_score(item, **_kwargs):
+        nonlocal score_calls
+        score_calls += 1
+        raise RuntimeError("permanent scoring outage")
+
+    monkeypatch.setattr(preparation, "get_connection", lambda: conn)
+    monkeypatch.setattr(preparation, "_score_item", fail_score)
+
+    stats = preparation.drain_discovery_preparation(min_score=7)
+
+    assert stats["status"] == "partial"
+    assert stats["retried"]["score_job"] == 2
+    assert stats["failed"]["score_job"] == 1
+    assert score_calls == 3
+    row = conn.execute(
+        "SELECT state, attempts, last_error FROM preparation_work_items WHERE kind = 'score_job'"
+    ).fetchone()
+    assert row["state"] == "failed"
+    assert row["attempts"] == 3
+    assert row["last_error"] == "permanent scoring outage"
 
 
 def test_threshold_recompute_suppresses_now_ineligible_artifacts(

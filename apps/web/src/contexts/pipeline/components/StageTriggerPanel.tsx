@@ -1,5 +1,6 @@
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
+  MIN_TAILORING_FIT_SCORE,
   PIPELINE_RUN_STAGES,
   PIPELINE_VALIDATION_MODES,
   type ActionRunResponse,
@@ -43,6 +44,11 @@ function numberValue(value: string, fallback: number): number {
 function decimalValue(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function stageMinScore(stage: PipelineRunStage, value: string): number {
+  const parsed = numberValue(value, 7);
+  return stage === "tailor" ? Math.max(MIN_TAILORING_FIT_SCORE, parsed) : parsed;
 }
 
 function modelSpecList(value: string): string[] {
@@ -154,6 +160,10 @@ function sentenceDetail(detail: string): string {
   return /[.!?]$/.test(detail) ? detail : `${detail}.`;
 }
 
+function formatProgressNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
 const DISCOVERY_SOURCE_LABELS: Record<string, string> = {
   jobspy: "JobSpy",
   workday: "Workday",
@@ -171,7 +181,18 @@ function discoverySourceLabel(source: string): string {
     .join(" ");
 }
 
-function userFacingProgressDetail(detail: string): string {
+function userFacingProgressDetail(stage: Stage, progress: StageProgress): string {
+  const detail = progress.message || progress.currentStep || "stage progress updated";
+  if (
+    progress.status === "partial"
+    && stage === "discover"
+    && /^(?:discover\s+)?stage partial$|^preparation complete$|^stage completed with warnings$/i.test(detail.trim())
+  ) {
+    return (
+      "Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; "
+      + "items that exhaust retry attempts need attention from the job details."
+    );
+  }
   const orphanedDiscoveryMatch = detail.match(
     /^Discovery source\s+(\S+)\s+was left running by a prior worker(?:\s+and has been marked failed for retry)?\.?$/i,
   );
@@ -184,25 +205,65 @@ function userFacingProgressDetail(detail: string): string {
   return detail;
 }
 
+function sourceProgressStatusDetail(progress: StageProgress): string | null {
+  const source = progress.sourceProgress;
+  if (!source) return null;
+  const unit = source.unit || "items";
+  const currentStep = progress.currentStep ? `${progress.currentStep} ` : "";
+  const count = `${formatProgressNumber(source.completed)}/${formatProgressNumber(source.total)}`;
+  const searchLabel = source.currentQuery && source.currentLocation
+    ? `: ${source.currentQuery} in ${source.currentLocation}`
+    : source.currentQuery
+      ? `: ${source.currentQuery}`
+      : "";
+  const counters: string[] = [];
+  if (source.newJobs != null) counters.push(`${formatProgressNumber(source.newJobs)} new`);
+  if (source.existingJobs != null) counters.push(`${formatProgressNumber(source.existingJobs)} dupes`);
+  if (source.filteredJobs != null) counters.push(`${formatProgressNumber(source.filteredJobs)} filtered`);
+  if (source.errorCount != null) counters.push(`${formatProgressNumber(source.errorCount)} errors`);
+  if (source.rawTotal != null) counters.push(`${formatProgressNumber(source.rawTotal)} found`);
+  const counterText = counters.length > 0 ? `; ${counters.join(", ")}` : "";
+  return `${currentStep}${count} ${unit} done${searchLabel}${counterText}`;
+}
+
 function stageProgressStatusLine(stage: Stage, progress: StageProgress): string {
   const stageLabel = labelForStage(stage);
   const percent = progress.percent === null ? null : `${progress.percent}%`;
   const count = `${progress.completed}/${progress.total}`;
-  const detail = userFacingProgressDetail(progress.message || progress.currentStep || "stage progress updated");
+  const detail = sourceProgressStatusDetail(progress) ?? userFacingProgressDetail(stage, progress);
   const detailSentence = sentenceDetail(detail);
+  const showStageCount = progress.sourceProgress === undefined;
 
   if (progress.status === "failed") {
+    if (!showStageCount) {
+      return percent
+        ? `${stageLabel} not running. Last progress ${percent}: ${detailSentence}`
+        : `${stageLabel} not running. Last progress: ${detailSentence}`;
+    }
     return percent
       ? `${stageLabel} not running. Last progress ${percent} (${count}): ${detailSentence}`
       : `${stageLabel} not running. Last progress ${count}: ${detailSentence}`;
   }
   if (progress.status === "partial") {
+    if (!showStageCount) {
+      return percent
+        ? `${stageLabel} ${percent} complete with warnings: ${detailSentence}`
+        : `${stageLabel} progress with warnings: ${detailSentence}`;
+    }
     return percent
       ? `${stageLabel} ${percent} complete with warnings (${count}): ${detailSentence}`
       : `${stageLabel} progress with warnings (${count}): ${detailSentence}`;
   }
   if (progress.status === "succeeded" || progress.percent === 100) {
+    if (!showStageCount) {
+      return `${stageLabel} 100% complete: ${detailSentence}`;
+    }
     return `${stageLabel} 100% complete (${count}): ${detailSentence}`;
+  }
+  if (!showStageCount) {
+    return percent
+      ? `${stageLabel} ${percent} complete: ${detailSentence}`
+      : `${stageLabel} progress: ${detailSentence}`;
   }
   return percent
     ? `${stageLabel} ${percent} complete (${count}): ${detailSentence}`
@@ -344,7 +405,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
       stages: [activeStage],
       limit: controls.limit ? numberValue(config.limit, 25) : 25,
       workers: controls.workers ? numberValue(config.workers, 1) : 1,
-      minScore: controls.minScore ? numberValue(config.minScore, 7) : 7,
+      minScore: controls.minScore ? stageMinScore(activeStage, config.minScore) : 7,
       validationMode: controls.validationMode ? config.validationMode : "normal",
       dryRun: config.dryRun,
       rescore: controls.rescore ? config.rescore : false,
@@ -395,7 +456,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
           <label className="field">
             <span>Minimum score</span>
             <input
-              min={0}
+              min={activeStage === "tailor" ? MIN_TAILORING_FIT_SCORE : 0}
               max={10}
               type="number"
               value={config.minScore}

@@ -561,6 +561,18 @@ describe("local TypeScript API", () => {
             currentStep: "Workday scraper",
             status: "running",
             message: "Workday scraper complete",
+            sourceProgress: {
+              completed: 35,
+              total: 72,
+              unit: "searches",
+              currentQuery: "Head of Platform",
+              currentLocation: "Spain (remote)",
+              newJobs: 13,
+              existingJobs: 46,
+              filteredJobs: 412,
+              errorCount: 0,
+              rawTotal: 1000,
+            },
           },
         }),
       );
@@ -583,9 +595,84 @@ describe("local TypeScript API", () => {
         total: 5,
         currentStep: "Workday scraper",
         message: "Workday scraper complete",
+        sourceProgress: {
+          completed: 35,
+          total: 72,
+          unit: "searches",
+          currentQuery: "Head of Platform",
+          currentLocation: "Spain (remote)",
+          newJobs: 13,
+          existingJobs: 46,
+          filteredJobs: 412,
+          errorCount: 0,
+          rawTotal: 1000,
+        },
         updatedAt: "2026-04-29T10:20:00+00:00",
       },
     ]);
+
+    await app.close();
+  });
+
+  it("normalizes source progress to a visible nonzero percentage", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageProgress",
+        "info",
+        "JobSpy search completed",
+        "2026-04-29T10:21:00+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          runId: "discovery:jobspy:run-1",
+          workflowId: "workflow-run-1",
+          progress: {
+            completed: 0,
+            total: 6,
+            percent: 0,
+            currentStep: "JobSpy",
+            status: "running",
+            message: "JobSpy search completed",
+            sourceProgress: {
+              completed: 2,
+              total: 72,
+              unit: "searches",
+              currentQuery: "Director of Engineering",
+              currentLocation: "European Union",
+              newJobs: 0,
+              existingJobs: 12,
+              filteredJobs: 242,
+              errorCount: 0,
+              rawTotal: 254,
+            },
+          },
+        }),
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress[0]).toMatchObject({
+      stage: "discover",
+      status: "running",
+      percent: 1,
+      sourceProgress: {
+        completed: 2,
+        total: 72,
+        currentQuery: "Director of Engineering",
+        currentLocation: "European Union",
+      },
+    });
 
     await app.close();
   });
@@ -763,6 +850,28 @@ describe("local TypeScript API", () => {
     });
     expect(scoreFiltered.statusCode, scoreFiltered.body).toBe(200);
     expect(scoreFiltered.json().items.map((job: { fitScore: number | null }) => job.fitScore)).toEqual([9]);
+
+    const stateSorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=current_state&dir=asc",
+    });
+    expect(stateSorted.statusCode, stateSorted.body).toBe(200);
+    expect(stateSorted.json().items.map((job: { currentState: string }) => job.currentState)).toEqual([
+      "failed",
+      "blocked",
+      "pending",
+    ]);
+
+    const stageSorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=current_stage&dir=asc",
+    });
+    expect(stageSorted.statusCode, stageSorted.body).toBe(200);
+    expect(stageSorted.json().items.map((job: { currentStage: string }) => job.currentStage)).toEqual([
+      "apply",
+      "discover",
+      "discover",
+    ]);
 
     await app.close();
   });
@@ -2547,6 +2656,11 @@ describe("local TypeScript API", () => {
       url: "/v1/scoring/actions/rescore-current-policy",
       payload: { jobKeys: ["https://example.com/jobs/failed-score"], limit: 10, dryRun: true },
     });
+    const tailorJob = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/tailor`,
+      payload: { dryRun: true, reason: "manual low-fit override" },
+    });
     const retailorJob = await app.inject({
       method: "POST",
       url: `/v1/jobs/${jobKey}/actions/retailor-current-policy`,
@@ -2570,11 +2684,11 @@ describe("local TypeScript API", () => {
       },
     });
 
-    for (const response of [rescoreJob, rescoreBulk, retailorJob, retailorBulk]) {
+    for (const response of [rescoreJob, rescoreBulk, tailorJob, retailorJob, retailorBulk]) {
       expect(response.statusCode, response.body).toBe(202);
       expect(response.json()).toMatchObject({ ok: true, status: "queued" });
     }
-    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(dispatch).toHaveBeenCalledTimes(5);
     expect(dispatch).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -2599,6 +2713,16 @@ describe("local TypeScript API", () => {
     expect(dispatch).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({
+        action: "tailor_job",
+        jobKey: "https://example.com/jobs/ready",
+        dryRun: true,
+        reason: "manual low-fit override",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
         action: "retailor_job",
         jobKey: "https://example.com/jobs/ready",
         dryRun: true,
@@ -2610,7 +2734,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
     expect(dispatch).toHaveBeenNthCalledWith(
-      4,
+      5,
       expect.objectContaining({
         action: "retailor_current_policy",
         jobKey: "pipeline",
@@ -2621,6 +2745,17 @@ describe("local TypeScript API", () => {
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
+    const db = new Database(options.dbPath);
+    try {
+      const events = db
+        .prepare("SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC")
+        .all("https://example.com/jobs/ready")
+        .map((row) => (row as { event_type: string }).event_type);
+      expect(events).toContain("TailorRequested");
+      expect(events).toContain("RetailorRequested");
+    } finally {
+      db.close();
+    }
 
     await app.close();
   });
@@ -2729,6 +2864,41 @@ describe("local TypeScript API", () => {
           },
         }),
       );
+      db.exec(`
+        CREATE TABLE discovery_runs (
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          run_id TEXT NOT NULL,
+          source_ids_json TEXT NOT NULL DEFAULT '[]',
+          profile_snapshot_id TEXT,
+          status TEXT NOT NULL,
+          counts_json TEXT NOT NULL DEFAULT '{}',
+          progress_json TEXT NOT NULL DEFAULT '{}',
+          error_classes_json TEXT NOT NULL DEFAULT '[]',
+          started_at TEXT NOT NULL,
+          updated_at TEXT,
+          completed_at TEXT,
+          failed_at TEXT,
+          workflow_id TEXT,
+          PRIMARY KEY (tenant_id, run_id)
+        );
+      `);
+      db.prepare(
+        `INSERT INTO discovery_runs (
+          tenant_id, run_id, source_ids_json, status, counts_json, progress_json,
+          error_classes_json, started_at, updated_at, workflow_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "local",
+        "discovery:jobspy:run-1",
+        JSON.stringify(["jobspy:indeed"]),
+        "running",
+        JSON.stringify({ total: 0, new_jobs: 0, existing_jobs: 0 }),
+        JSON.stringify({ completed: 0, total: 72, unit: "searches" }),
+        JSON.stringify([]),
+        "2026-04-29T10:20:00+00:00",
+        "2026-04-29T10:20:00+00:00",
+        "workflow-run-1",
+      );
     } finally {
       db.close();
     }
@@ -2776,6 +2946,35 @@ describe("local TypeScript API", () => {
         message: "Discover canceled",
       }),
     );
+    const verifyDb = new Database(options.dbPath);
+    try {
+      const row = verifyDb
+        .prepare(
+          "SELECT status, error_classes_json, failed_at, updated_at, progress_json FROM discovery_runs WHERE run_id = ?",
+        )
+        .get("discovery:jobspy:run-1") as
+        | {
+            status: string;
+            error_classes_json: string;
+            failed_at: string;
+            updated_at: string;
+            progress_json: string;
+          }
+        | undefined;
+      expect(row).toBeDefined();
+      expect(row).toMatchObject({
+        status: "failed",
+        failed_at: expect.any(String),
+        updated_at: expect.any(String),
+      });
+      expect(JSON.parse(row?.error_classes_json ?? "[]")).toEqual(["canceled"]);
+      expect(JSON.parse(row?.progress_json ?? "{}")).toMatchObject({
+        status: "failed",
+        message: "Discover canceled",
+      });
+    } finally {
+      verifyDb.close();
+    }
 
     await app.close();
   });
@@ -3263,7 +3462,7 @@ describe("local TypeScript API", () => {
         stages: ["tailor"],
         dryRun: false,
         limit: 0,
-        minScore: 0,
+        minScore: 6,
         retailor: true,
       }),
       { appDir: tempDir, dbPath: options.dbPath },

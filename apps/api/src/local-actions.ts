@@ -329,6 +329,12 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
       },
     };
   }
+  if (command.action === "tailor_job") {
+    return {
+      method: "tailor_job",
+      params: tailorRpcParams(command, context, command.jobKey),
+    };
+  }
   if (command.action === "retailor_job") {
     return {
       method: "retailor_job",
@@ -396,6 +402,34 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   }
   if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
     params.jobUrl = command.jobKey;
+  }
+  return params;
+}
+
+function tailorRpcParams(
+  command: ActionCommandPayload,
+  context: ActionDispatchContext,
+  jobUrl: string,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    tenantId: "local",
+    expectedAppDir: context.appDir,
+    expectedDbPath: context.dbPath,
+    jobUrl,
+    dryRun: Boolean(command.dryRun),
+    allowLowFitOverride: true,
+  };
+  if (command.reason) {
+    params.reason = command.reason;
+  }
+  if (command.tailorModels && command.tailorModels.length > 0) {
+    params.tailorModels = command.tailorModels;
+  }
+  if (command.tailorJudgeModel) {
+    params.tailorJudgeModel = command.tailorJudgeModel;
+  }
+  if (command.tailorJudgeMinScore !== undefined) {
+    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
   }
   return params;
 }

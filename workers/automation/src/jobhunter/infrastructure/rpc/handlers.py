@@ -259,6 +259,20 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     )
 
 
+def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
+    job_url = str(_require(params, "jobUrl"))
+    return _pipeline_workflow_spec(
+        params,
+        stages=["tailor"],
+        limit=1,
+        retailor=False,
+        job_url=job_url,
+        allow_low_fit_override=_bool_param(
+            params, "allowLowFitOverride", default=True
+        ),
+    )
+
+
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
     return _pipeline_workflow_spec(
         params,
@@ -285,6 +299,7 @@ def _pipeline_workflow_spec(
     score_current_policy_only: bool = False,
     tailor_current_policy_only: bool = False,
     suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
 ) -> WorkflowStartSpec:
     tenant_id = _tenant_id(params)
     raw_judge_min_score = params.get("tailorJudgeMinScore")
@@ -314,6 +329,7 @@ def _pipeline_workflow_spec(
         score_current_policy_only=score_current_policy_only,
         tailor_current_policy_only=tailor_current_policy_only,
         suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
     )
     return WorkflowStartSpec(workflow=JobPipelineWorkflow, args=(payload,))
@@ -395,6 +411,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
         rescore_jobs_not_on_current_scoring_policy,
         mode="workflow",
     )
+    server.register("tailor_job", tailor_job, mode="workflow")
     server.register("retailor_job", retailor_job, mode="workflow")
     server.register("retailor_current_policy", retailor_current_policy, mode="workflow")
     server.register("apply", apply_action, mode="workflow")

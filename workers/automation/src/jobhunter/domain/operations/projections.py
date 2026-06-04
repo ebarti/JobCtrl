@@ -81,6 +81,7 @@ class JobListProjection:
     score_version: int | None = None
     scored_at: str | None = None
     current_stage: str = "discover"
+    current_substage: str = "discover"
     current_state: str = "pending"
     current_error_code: str | None = None
     current_error_message: str | None = None

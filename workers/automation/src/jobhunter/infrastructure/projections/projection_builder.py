@@ -386,6 +386,7 @@ class ProjectionBuilder:
         # The full internal preparation state remains available in
         # JobDetailProjection.stages for operational diagnostics.
         current_stage = "discover"
+        current_substage = "discover"
         current_state = "pending"
         current_error_code: str | None = None
         current_error_message: str | None = None
@@ -396,6 +397,7 @@ class ProjectionBuilder:
         )
         if first_actionable is not None:
             current_stage = _job_list_stage(first_actionable.stage)
+            current_substage = first_actionable.stage
             current_state = first_actionable.state
             current_error_code = first_actionable.error_code
             current_error_message = first_actionable.error_message
@@ -466,6 +468,7 @@ class ProjectionBuilder:
             score_version=score_version,
             scored_at=scored_at,
             current_stage=current_stage,
+            current_substage=current_substage,
             current_state=current_state,
             current_error_code=current_error_code,
             current_error_message=current_error_message,

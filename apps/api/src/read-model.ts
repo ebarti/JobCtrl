@@ -73,6 +73,13 @@ const STATE_RANK: Record<StageState, number> = {
   succeeded: 9,
 };
 
+function sqlRankCase(column: string, ranks: Record<string, number>, fallback: number): string {
+  const arms = Object.entries(ranks)
+    .map(([value, rank]) => `WHEN '${value}' THEN ${rank}`)
+    .join(" ");
+  return `(CASE ${column} ${arms} ELSE ${fallback} END)`;
+}
+
 const DEFAULT_SETTINGS: DashboardSettings = {
   targetRole: "",
   locationFilter: "",
@@ -113,6 +120,7 @@ interface JobListProjectionRow extends Record<string, unknown> {
   score_stale_new_policy_version: number | null;
   score_stale_marked_at: string | null;
   current_stage: string;
+  current_substage: string;
   current_state: string;
   current_error_code: string | null;
   current_error_message: string | null;
@@ -253,6 +261,8 @@ const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   company: "LOWER(employer)",
   location: "LOWER(location)",
   fit_score: "COALESCE(fit_score, -1)",
+  current_stage: "LOWER(current_stage)",
+  current_state: `(${sqlRankCase("current_state", STATE_RANK, 999)} || ':' || LOWER(COALESCE(current_substage, current_stage)))`,
 };
 
 const SQL_ACTIVITY_SORT_COLUMNS: Partial<Record<string, string>> = {
@@ -1162,6 +1172,32 @@ function jobEventToAuditEntry(
           ["Current policy", payloadText(payload, "currentPolicyVersion", "current_policy_version")],
         ),
       });
+    case "TailorRequested":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "info",
+        title: "Tailoring requested",
+        description: "Resume tailoring was manually requested for this job.",
+        actor: "user",
+        details: auditDetails(
+          ["Reason", safeAuditText(payloadText(payload, "reason"))],
+          ["Low-fit override", payloadBoolean(payload, "allowLowFitOverride", "allow_low_fit_override") ? "yes" : null],
+        ),
+      });
+    case "RetailorRequested":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "info",
+        title: "Re-tailoring requested",
+        description: "Current-policy resume re-tailoring was requested for this job.",
+        actor: "user",
+        details: auditDetails(
+          ["Reason", safeAuditText(payloadText(payload, "reason"))],
+          ["Suppress existing artifacts", payloadBoolean(payload, "suppressExistingArtifacts", "suppress_existing_artifacts") ? "yes" : "no"],
+        ),
+      });
     case "TailoredArtifactsSuppressed":
       return makeAuditEntry({
         ...base,
@@ -1718,6 +1754,7 @@ function rowToJobSummary(row: JobListProjectionRow): JobSummary {
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
     scoreStaleness: parseScoreStaleness(row),
     currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
+    currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
     currentState: (isStageState(row.current_state) ? row.current_state : "pending") as StageState,
     errorCode: row.current_error_code,
     errorMessage: row.current_error_message,
@@ -2592,6 +2629,7 @@ function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string
     job.postingSourceUrl ?? "",
     job.strategy,
     job.currentStage,
+    job.currentSubstage,
     job.currentState,
   ].some((value) => value.toLowerCase().includes(normalizedQuery));
 }
@@ -2653,7 +2691,10 @@ function compareJobs(left: JobSummary, right: JobSummary, field: string, directi
     location: [left.location, right.location],
     fit_score: [left.fitScore ?? -1, right.fitScore ?? -1],
     current_stage: [left.currentStage, right.currentStage],
-    current_state: [STATE_RANK[left.currentState], STATE_RANK[right.currentState]],
+    current_state: [
+      `${STATE_RANK[left.currentState] ?? 999}:${left.currentSubstage}`,
+      `${STATE_RANK[right.currentState] ?? 999}:${right.currentSubstage}`,
+    ],
   };
   const [leftValue, rightValue] = values[field] ?? values.discovered_at!;
   return compareValues(leftValue, rightValue) * multiplier;
@@ -2819,7 +2860,7 @@ function parseProgressPayload(
     return parseFallbackProgressPayload(row, source.status ?? source.progressStatus);
   }
   const rawPercent = nullableNumber(source.percent ?? source.progressPercent);
-  const percent = rawPercent === null
+  const basePercent = rawPercent === null
     ? Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
     : Math.max(0, Math.min(100, Math.round(rawPercent)));
   const runId = stringField(source.runId ?? source.run_id ?? payload.runId ?? payload.run_id);
@@ -2829,17 +2870,59 @@ function parseProgressPayload(
       ?? payload.workflowId
       ?? payload.workflow_id,
   );
+  const sourceDetail = progressSourceDetail(source);
   return {
     stage: row.stage,
     status: progressStatus(source.status ?? source.progressStatus, row.event_type),
     ...(runId ? { runId } : {}),
     ...(workflowId ? { workflowId } : {}),
-    percent,
+    percent: progressPercentWithSource(basePercent, sourceDetail.sourceProgress),
     completed,
     total,
     currentStep: nullableString(source.currentStep ?? source.current_step),
     message: stringField(source.message) || stringField(row.message),
+    ...sourceDetail,
     updatedAt: nullableString(row.occurred_at),
+  };
+}
+
+function progressPercentWithSource(
+  percent: number,
+  sourceProgress: DashboardSummary["progress"][number]["sourceProgress"],
+): number {
+  if (percent !== 0 || !sourceProgress) {
+    return percent;
+  }
+  return sourceProgress.completed > 0 && sourceProgress.total > 0 ? 1 : percent;
+}
+
+function progressSourceDetail(source: Record<string, unknown>): Pick<DashboardSummary["progress"][number], "sourceProgress"> {
+  const detail = isRecord(source.sourceProgress)
+    ? source.sourceProgress
+    : isRecord(source.source_progress)
+      ? source.source_progress
+      : null;
+  if (!detail) {
+    return {};
+  }
+  const completed = nullableNumber(detail.completed ?? detail.sourceCompleted);
+  const total = nullableNumber(detail.total ?? detail.sourceTotal);
+  if (completed === null || total === null || total <= 0) {
+    return {};
+  }
+  return {
+    sourceProgress: {
+      completed,
+      total,
+      unit: nullableString(detail.unit),
+      currentQuery: nullableString(detail.currentQuery ?? detail.current_query),
+      currentLocation: nullableString(detail.currentLocation ?? detail.current_location),
+      newJobs: nullableNumber(detail.newJobs ?? detail.new_jobs),
+      existingJobs: nullableNumber(detail.existingJobs ?? detail.existing_jobs),
+      filteredJobs: nullableNumber(detail.filteredJobs ?? detail.filtered_jobs),
+      errorCount: nullableNumber(detail.errorCount ?? detail.error_count ?? detail.errors),
+      rawTotal: nullableNumber(detail.rawTotal ?? detail.raw_total),
+    },
   };
 }
 

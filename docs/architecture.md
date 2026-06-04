@@ -438,9 +438,11 @@ server (`jobhunter rpc`) is the API-facing driving adapter.
 
 ### Workflow Orchestration (Local Temporal)
 
-A local Temporal dev server (`temporal server start-dev`) is the workflow
-engine for the Python worker. The infrastructure split lives under
-`workers/automation/src/jobhunter/infrastructure/temporal/`:
+A local Temporal dev server (`temporal server start-dev --db-filename
+"$JOBHUNTER_TEMPORAL_DB"`) is the workflow engine for the Python worker. The dev
+launcher defaults `JOBHUNTER_TEMPORAL_DB` to `.dev/temporal/temporal.db` so
+workflow execution history persists across local restarts. The infrastructure
+split lives under `workers/automation/src/jobhunter/infrastructure/temporal/`:
 
 - `client.py` — `get_temporal_client()` connects to `TEMPORAL_ADDRESS`
   (default `localhost:7233`) and `TEMPORAL_NAMESPACE` (default `default`).

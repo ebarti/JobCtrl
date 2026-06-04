@@ -375,6 +375,7 @@ def run_tailoring(
     # into worker-thread tasks — sqlite connections are thread-bound.
     if repository is None:
         repository = SqliteMaterialsRepository(conn)
+    min_score = db_module.effective_tailoring_min_score(min_score)
 
     jobs = get_jobs_by_stage(
         conn=conn,
@@ -578,6 +579,7 @@ def tailor_job_by_url(
     tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
 ) -> dict:
     """Tailor exactly one eligible job by URL.
 
@@ -596,6 +598,7 @@ def tailor_job_by_url(
         job_url,
         min_score=min_score,
         retailor=retailor,
+        allow_low_fit_override=allow_low_fit_override,
     )
     if job is None:
         if _reconcile_score_eligibility_skip(
@@ -609,6 +612,13 @@ def tailor_job_by_url(
                 "status": "skipped",
                 "reason": "score_eligibility_blocked",
             }
+        _record_tailor_skip(
+            conn,
+            job_url=job_url,
+            reason="not_eligible",
+            message="Tailoring skipped because the job is not currently eligible.",
+        )
+        conn.commit()
         return {"url": job_url, "status": "skipped", "reason": "not_eligible"}
 
     worker_count = max(1, workers)
@@ -731,13 +741,39 @@ def _reconcile_score_eligibility_skip(
     return True
 
 
+def _record_tailor_skip(
+    conn: sqlite3.Connection,
+    *,
+    job_url: str,
+    reason: str,
+    message: str,
+) -> None:
+    row = conn.execute(
+        "SELECT discovered_at FROM jobs WHERE url = ?",
+        (job_url,),
+    ).fetchone()
+    discovered_at = row["discovered_at"] if row is not None else None
+    ensure_job_stage_rows(conn, job_url, discovered_at=discovered_at)
+    record_job_event(
+        conn,
+        job_url,
+        "tailor",
+        "StageSkipped",
+        level="warning",
+        message=message,
+        payload={"reason": reason},
+    )
+
+
 def _load_tailor_eligible_job_by_url(
     conn: sqlite3.Connection,
     job_url: str,
     *,
     min_score: int,
     retailor: bool,
+    allow_low_fit_override: bool = False,
 ) -> dict | None:
+    min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
     if retailor:
         where = (
             f"{db_module._EFFECTIVE_FIT_SCORE} >= ? "

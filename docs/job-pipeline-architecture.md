@@ -209,7 +209,25 @@ Non-apply stages run under `_run_stage_observed()` in
 
 Discover source steps use `_run_discovery_source()`, a source-level variant that
 also emits `DiscoveryRunStarted`, `DiscoveryRunCompleted`, and
-`DiscoveryRunFailed` rows for source-quality aggregation.
+`DiscoveryRunFailed` rows for source-quality aggregation. Long-running sources
+own durable progress through the same discovery-run aggregate. For example,
+JobSpy reports completed search combinations, current query/location, observed
+raw rows, accepted new rows, duplicates, filtered rows, and source errors while
+the crawl is still running. The dashboard progress read model renders that
+source-level detail instead of only showing the coarse stage count.
+
+Discover has a no-overlap Temporal policy. The source stage is allowed to run
+longer than the default 30-minute activity window, and the workflow does not
+retry the whole Discover activity after timeout/cancellation. Source adapters
+are responsible for idempotency, source-quality retry, progress, and
+cooperative cancellation. This prevents a still-running external crawl from
+being duplicated by an automatic activity retry.
+
+When a user stops a running Discover workflow, the API emits a failed progress
+event and terminalizes the matching `discovery_runs` row so the UI, audit log,
+and source-quality projections agree that the source is no longer active.
+Worker startup recovery applies the same terminal state to stale source runs
+left running by a prior worker process.
 
 ### Dry Run
 
@@ -384,7 +402,7 @@ classDiagram
 - Reads source-quality snapshots to schedule and budget sources.
 - Reads board/runtime discovery settings from SQLite `discovery_settings`, then
   overlays target search from `candidate_profiles`. Target roles remain exact
-  role guidance. Target tracks, seniority floors, functions, and
+  role guidance. Target tracks, seniority floors, role areas, and
   specializations add structured intent for deterministic recall expansion.
   Discovery settings store normalized track values (`ic`, `management`,
   `executive`) and normalized engineering seniority-floor values before the
@@ -728,7 +746,10 @@ pins stale-score exclusion until explicit reset/rescore.
 Tailor creates job-specific resume materials for high-fit jobs. It owns resume
 generation, validation mode, retry/retailor decisions, and resume artifact
 registration. It does not submit applications. In the product flow this is
-Discover subwork; explicit re-tailor actions are maintenance controls.
+Discover subwork. First-time manual tailoring is exposed on the job detail
+tailor stage for the selected job; explicit re-tailor actions remain
+current-policy regeneration controls for jobs that already have tailored
+artifacts.
 
 ### Weaknesses Addressed
 
@@ -772,7 +793,7 @@ sequenceDiagram
     participant Files as Local files
     participant DB as SQLite
 
-    Api->>Rpc: retailor_job or retailor_current_policy
+    Api->>Rpc: tailor_job, retailor_job, or retailor_current_policy
     Prep->>Runner: tailor_resume work item during Discover
     Rpc->>Runner: run_pipeline(stages=["tailor"]) for low-level maintenance
     Runner->>Tailor: run_tailoring(...)
@@ -828,7 +849,8 @@ classDiagram
 
 ### Data And Events
 
-- Reads jobs with score >= `minScore`.
+- Reads jobs with score >= `minScore`; a per-job `tailor_job` user action can
+  override that floor only for the selected job.
 - Reads profile resume baseline, skills, writing style, and tailoring rules.
 - Writes tailored resume records and local artifacts under the JobHunter app
   directory.
@@ -842,8 +864,10 @@ classDiagram
 ### Failure And Limits
 
 `validationMode` controls strictness of generated-material validation.
-`retailor=true` allows existing tailored materials to be regenerated. `workers`
-controls parallel tailoring work. `tailorModels` can fan out candidate
+`retailor=true` allows existing tailored materials to be regenerated. First-time
+manual tailoring uses `retailor=false` and records an audit event before worker
+dispatch so the user's intent is visible even if the worker later skips or fails.
+`workers` controls parallel tailoring work. `tailorModels` can fan out candidate
 generation across provider/model specs, and `tailorJudgeModel` selects the
 structured judge independently from apply's browser-action model. By default,
 validator-passing resumes still fail the tailor stage unless the structured

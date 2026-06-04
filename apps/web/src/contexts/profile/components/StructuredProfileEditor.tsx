@@ -109,6 +109,10 @@ const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
   ["evidence_reframing", "Evidence reframing"],
 ];
 
+const ROLE_AREA_LABEL = "Role areas";
+const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
+const TARGET_LOCATION_LABEL = "Locations and work models";
+
 export interface StructuredProfileEditorProps {
   mode?: "profile" | "preferences" | "target-search";
   profileText: string;
@@ -545,7 +549,7 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     addLabel: string,
-    options: { compact?: boolean } = {},
+    options: { compact?: boolean; placeholder?: string } = {},
   ) => {
     const values = delimitedListAt(textAt(profile, path));
     const focusKey = (index: number) => `${path}:${index}`;
@@ -572,6 +576,7 @@ export function StructuredProfileEditor({
             <div className="inline-list-row" key={`${path}-${index}`}>
               <input
                 aria-label={`${label} ${index + 1}`}
+                placeholder={options.placeholder}
                 ref={registerFocusTarget(focusKey(index))}
                 value={value}
                 onChange={(event) => {
@@ -729,7 +734,7 @@ export function StructuredProfileEditor({
 
     return (
       <div className="field wide target-location-model-field">
-        <span>Target location: target work model</span>
+        <span>{TARGET_LOCATION_LABEL}</span>
         <div className="target-location-model-list">
           {rows.map((row, index) => (
             <div className="target-location-model-row" key={`${locationPath}-${index}`}>
@@ -823,7 +828,10 @@ export function StructuredProfileEditor({
           "Seniority floors",
           TARGET_SENIORITY_GROUPS,
         )}
-        {delimitedListField("experience.target_functions", "Target functions", "add function", { compact: true })}
+        {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "add role area", {
+          compact: true,
+          placeholder: ROLE_AREA_PLACEHOLDER,
+        })}
         {delimitedListField("experience.target_specializations", "Specializations", "add specialization", {
           compact: true,
         })}

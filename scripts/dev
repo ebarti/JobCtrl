@@ -31,7 +31,7 @@ process_names() { echo "temporal api web worker"; }
 
 process_command() {
   case "$1" in
-    temporal) echo "temporal server start-dev" ;;
+    temporal) echo 'temporal server start-dev --db-filename "$JOBHUNTER_TEMPORAL_DB"' ;;
     api)      echo "pnpm --filter @jobhunter/api dev" ;;
     web)      echo 'pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port "$JOBHUNTER_WEB_PORT"' ;;
     worker)   echo "uv --project workers/automation run jobhunter worker" ;;
@@ -155,6 +155,8 @@ set_default_env() {
   export JOBHUNTER_API_PORT="${JOBHUNTER_API_PORT:-8766}"
   export VITE_JOBHUNTER_API_BASE_URL="${VITE_JOBHUNTER_API_BASE_URL:-http://${JOBHUNTER_API_HOST}:${JOBHUNTER_API_PORT}}"
   export JOBHUNTER_WEB_PORT="${JOBHUNTER_WEB_PORT:-5173}"
+  export JOBHUNTER_TEMPORAL_DB="${JOBHUNTER_TEMPORAL_DB:-$DEV_DIR/temporal/temporal.db}"
+  mkdir -p "$(dirname "$JOBHUNTER_TEMPORAL_DB")"
 }
 
 start_one() {

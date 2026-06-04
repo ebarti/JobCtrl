@@ -6,6 +6,7 @@ export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "app
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "gemini:gemini-3.5-flash" as const;
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
+export const MIN_TAILORING_FIT_SCORE = 6 as const;
 
 export const MATERIAL_STAGES = ["tailor", "cover"] as const;
 export type MaterialStage = (typeof MATERIAL_STAGES)[number];
@@ -153,6 +154,17 @@ export const RetailorJobRequestSchema = z
   })
   .strict();
 export type RetailorJobRequest = z.infer<typeof RetailorJobRequestSchema>;
+
+export const TailorJobRequestSchema = z
+  .object({
+    dryRun: z.boolean().default(false),
+    reason: z.string().trim().max(400).optional(),
+    tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
+    tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
+    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type TailorJobRequest = z.infer<typeof TailorJobRequestSchema>;
 
 export const BulkRetailorCurrentPolicyRequestSchema = z
   .object({
@@ -1043,6 +1055,7 @@ export interface JobSummary {
   scoreCorrection: ScoreCorrection | null;
   scoreStaleness: ScoreStaleness;
   currentStage: Stage;
+  currentSubstage: Stage;
   currentState: StageState;
   errorCode: string | null;
   errorMessage: string | null;
@@ -1142,6 +1155,18 @@ export interface PipelineProgressSummary {
   total: number;
   currentStep: string | null;
   message: string;
+  sourceProgress?: {
+    completed: number;
+    total: number;
+    unit: string | null;
+    currentQuery: string | null;
+    currentLocation: string | null;
+    newJobs: number | null;
+    existingJobs: number | null;
+    filteredJobs: number | null;
+    errorCount: number | null;
+    rawTotal: number | null;
+  };
   updatedAt: string | null;
 }
 
@@ -1307,6 +1332,7 @@ export interface ActionCommandPayload {
     | "retry_stage"
     | "rescore_job"
     | "rescore_jobs_not_on_current_scoring_policy"
+    | "tailor_job"
     | "retailor_job"
     | "retailor_current_policy"
     | "generate_materials"

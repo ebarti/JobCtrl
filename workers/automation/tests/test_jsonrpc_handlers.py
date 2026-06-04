@@ -82,6 +82,7 @@ def test_default_handlers_are_registered() -> None:
         "run_stage",
         "rescore_job",
         "rescore_jobs_not_on_current_scoring_policy",
+        "tailor_job",
         "retailor_job",
         "retailor_current_policy",
         "apply",
@@ -388,6 +389,32 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 ),
                 "score_current_policy_only": True,
                 "dry_run": False,
+            },
+        ),
+        (
+            "tailor_job",
+            {
+                "tenantId": "local",
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "jobUrl": "https://example.com/job/tailor",
+                "dryRun": True,
+                "allowLowFitOverride": True,
+                "tailorModels": ["local:draft-a"],
+                "tailorJudgeModel": "gemini:judge-c",
+                "tailorJudgeMinScore": 0.9,
+            },
+            {
+                "stages": ["tailor"],
+                "limit": 1,
+                "rescore": False,
+                "retailor": False,
+                "job_url": "https://example.com/job/tailor",
+                "dry_run": True,
+                "allow_low_fit_override": True,
+                "tailor_models": ("local:draft-a",),
+                "tailor_judge_model": "gemini:judge-c",
+                "tailor_judge_min_score": 0.9,
             },
         ),
         (
@@ -704,9 +731,12 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     current_url = "https://example.com/job/current-tailor"
     outdated_url = "https://example.com/job/outdated-tailor"
     missing_url = "https://example.com/job/missing-tailor"
+    low_fit_url = "https://example.com/job/low-fit-tailor"
     for url in (current_url, outdated_url, missing_url):
         _seed_enriched_job(conn, url)
         _seed_score(conn, url, policy_version=2, fit_score=9)
+    _seed_enriched_job(conn, low_fit_url)
+    _seed_score(conn, low_fit_url, policy_version=2, fit_score=5)
     _seed_tailored_artifact(conn, current_url, policy_version=2)
     _seed_tailored_artifact(conn, outdated_url, policy_version=1)
 
@@ -722,7 +752,7 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     result = materials_activities_mod._run_current_policy_tailoring(
         TailorActivityInput(
             tenant_id="local",
-            min_score=7,
+            min_score=5,
             limit=10,
             retailor=True,
             current_policy_only=True,

@@ -12,7 +12,9 @@ import re
 import sqlite3
 import time
 import hashlib
+import threading
 from datetime import datetime, timezone
+from typing import Any, Callable
 
 from jobhunter import config
 from jobhunter.database import ensure_source_observation_tables, get_connection, init_db, resurface_deleted_job
@@ -48,6 +50,10 @@ from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
 _SOURCE_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+class DiscoveryCancelled(RuntimeError):
+    """Raised when a cooperative discovery cancel request stops JobSpy."""
 
 
 # -- Retry wrapper -----------------------------------------------------------
@@ -1032,6 +1038,8 @@ def _full_crawl(
     max_retries: int = 2,
     limit: int = 0,
     run_id: str = "jobspy",
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run all search queries from search config across all locations."""
     if sites is None:
@@ -1080,10 +1088,32 @@ def _full_crawl(
     total_filtered = 0
     completed = 0
 
+    def emit_progress(search: dict | None, message: str) -> None:
+        if progress_callback is None:
+            return
+        snapshot: dict[str, Any] = {
+            "completed": completed,
+            "total": len(searches),
+            "unit": "searches",
+            "new_jobs": total_new,
+            "existing_jobs": total_existing,
+            "filtered_jobs": total_filtered,
+            "errors": total_errors,
+            "raw_total": total_found,
+            "message": message,
+        }
+        if search is not None:
+            snapshot["current_query"] = str(search.get("query") or "")
+            snapshot["current_location"] = str(search.get("location") or "")
+        progress_callback(snapshot)
+
     for s in searches:
+        if cancel_event is not None and cancel_event.is_set():
+            raise DiscoveryCancelled("JobSpy discovery canceled")
         remaining = max(limit - total_new, 0) if limit > 0 else 0
         if limit > 0 and remaining <= 0:
             break
+        emit_progress(s, "JobSpy search started")
         result = _run_one_search(
             s,
             sites,
@@ -1106,6 +1136,7 @@ def _full_crawl(
         total_errors += result["errors"]
         total_found += result.get("total", 0)
         total_filtered += result.get("filtered", 0)
+        emit_progress(s, "JobSpy search completed")
 
         if completed % 5 == 0 or completed == len(searches):
             log.info(
@@ -1116,6 +1147,8 @@ def _full_crawl(
                 total_existing,
                 total_errors,
             )
+        if cancel_event is not None and cancel_event.is_set():
+            raise DiscoveryCancelled("JobSpy discovery canceled")
 
     # Final stats
     conn = get_connection()
@@ -1146,7 +1179,13 @@ def _full_crawl(
 # -- Public entry point ------------------------------------------------------
 
 
-def run_discovery(cfg: dict | None = None, limit: int = 0, run_id: str | None = None) -> dict:
+def run_discovery(
+    cfg: dict | None = None,
+    limit: int = 0,
+    run_id: str | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
     Loads search queries and locations from database-backed discovery settings
@@ -1184,4 +1223,6 @@ def run_discovery(cfg: dict | None = None, limit: int = 0, run_id: str | None = 
         proxy=proxy,
         limit=limit,
         run_id=run_id or "jobspy",
+        progress_callback=progress_callback,
+        cancel_event=cancel_event,
     )

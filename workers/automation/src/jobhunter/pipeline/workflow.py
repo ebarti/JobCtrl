@@ -67,6 +67,7 @@ class JobPipelineWorkflowInput:
     score_current_policy_only: bool = False
     tailor_current_policy_only: bool = False
     suppress_existing_artifacts: bool = False
+    allow_low_fit_override: bool = False
     headless: bool = False
     model: str = "default"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -88,6 +89,12 @@ _DEFAULT_RETRY = RetryPolicy(
     maximum_attempts=3,
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=30)
+# Discovery does long-running external crawls and owns source-level retry,
+# dedupe, and progress persistence below the workflow boundary. Retrying the
+# entire activity can overlap with a still-running adapter thread after timeout
+# cancellation, which creates duplicate in-flight crawls.
+_DISCOVER_TIMEOUT = timedelta(hours=6)
+_DISCOVER_RETRY = RetryPolicy(maximum_attempts=1)
 # 2 minutes gives the activity ~8 cycles of the 15s heartbeat poll inside
 # ``run_blocking_with_heartbeat`` before Temporal would consider the
 # activity dead. Without this knob Temporal never times out a stuck
@@ -155,9 +162,9 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 llm_model=payload.llm_model,
                 workflow_id=workflow_id,
             ),
-            start_to_close_timeout=_DEFAULT_TIMEOUT,
+            start_to_close_timeout=_DISCOVER_TIMEOUT,
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_DEFAULT_RETRY,
+            retry_policy=_DISCOVER_RETRY,
         )
     if stage == "enrich":
         return await workflow.execute_activity(
@@ -211,6 +218,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 job_urls=_selected_job_urls(payload),
                 current_policy_only=payload.tailor_current_policy_only,
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
+                allow_low_fit_override=payload.allow_low_fit_override,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,

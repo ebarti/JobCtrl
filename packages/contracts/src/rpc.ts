@@ -67,6 +67,7 @@ export const RpcMethods = {
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
   RescoreJobsNotOnCurrentScoringPolicy: "rescore_jobs_not_on_current_scoring_policy",
+  TailorJob: "tailor_job",
   RetailorJob: "retailor_job",
   RetailorCurrentPolicy: "retailor_current_policy",
   Apply: "apply",
@@ -206,6 +207,22 @@ export type RescoreJobsNotOnCurrentScoringPolicyParams = z.infer<
   typeof RescoreJobsNotOnCurrentScoringPolicyParamsSchema
 >;
 
+export const TailorJobParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    jobUrl: z.string().min(1),
+    dryRun: z.boolean().default(false),
+    allowLowFitOverride: z.boolean().default(true),
+    reason: z.string().trim().max(400).optional(),
+    tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
+    tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
+    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type TailorJobParams = z.infer<typeof TailorJobParamsSchema>;
+
 export const RetailorJobParamsSchema = z
   .object({
     tenantId: TenantParam,
@@ -308,6 +325,18 @@ export const RetailorJobResultSchema = z
   })
   .strict();
 export type RetailorJobResult = z.infer<typeof RetailorJobResultSchema>;
+
+export const TailorJobResultSchema = z
+  .object({
+    ok: z.literal(true),
+    status: z.string(),
+    jobUrl: z.string(),
+    currentPolicyVersion: z.number().int().nullable(),
+    actionId: z.string().optional(),
+    eventCursor: z.string().nullable().optional(),
+  })
+  .strict();
+export type TailorJobResult = z.infer<typeof TailorJobResultSchema>;
 
 export const RetailorCurrentPolicyResultSchema = z
   .object({

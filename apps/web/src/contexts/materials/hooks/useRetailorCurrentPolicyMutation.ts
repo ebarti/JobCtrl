@@ -2,6 +2,7 @@ import type {
   ActionRunResponse,
   BulkRetailorCurrentPolicyRequest,
   RetailorJobRequest,
+  TailorJobRequest,
 } from "@jobhunter/contracts";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
@@ -19,12 +20,40 @@ export interface RetailorJobVariables {
   readonly reason?: string;
 }
 
+export interface TailorJobVariables {
+  readonly jobId: JobId;
+  readonly dryRun?: boolean;
+  readonly reason?: string;
+}
+
 export interface RetailorCurrentPolicyVariables {
   readonly jobKeys?: readonly JobId[];
   readonly limit?: number;
   readonly dryRun?: boolean;
   readonly suppressExistingArtifacts?: boolean;
   readonly reason?: string;
+}
+
+export function useTailorJobMutation(): UseMutationResult<
+  ActionRunResponse,
+  Error,
+  TailorJobVariables
+> {
+  const tenantId = useTenantId();
+  const { api } = usePorts();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (variables) => api.tailorJob(variables.jobId, toTailorJobRequest(variables)),
+    onSettled: async (_data, _error, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: jobsKeys.detail(tenantId, variables.jobId) }),
+        queryClient.invalidateQueries({ queryKey: jobsKeys.lists(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: artifactsKeys.lists(tenantId) }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.summary(tenantId) }),
+      ]);
+    },
+  });
 }
 
 export function useRetailorJobMutation(): UseMutationResult<
@@ -72,6 +101,17 @@ export function useRetailorCurrentPolicyMutation(): UseMutationResult<
       ]);
     },
   });
+}
+
+function toTailorJobRequest(variables: TailorJobVariables): Partial<TailorJobRequest> {
+  const request: Partial<TailorJobRequest> = {
+    dryRun: variables.dryRun ?? false,
+    tailorModels: [],
+  };
+  if (variables.reason) {
+    request.reason = variables.reason;
+  }
+  return request;
 }
 
 function toJobRequest(variables: RetailorJobVariables): Partial<RetailorJobRequest> {

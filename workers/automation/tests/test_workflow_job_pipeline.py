@@ -28,6 +28,10 @@ from jobhunter.materials.activities import (
     tailor_activity,
 )
 from jobhunter.pipeline.workflow import (
+    _DEFAULT_RETRY,
+    _DEFAULT_TIMEOUT,
+    _DISCOVER_RETRY,
+    _DISCOVER_TIMEOUT,
     JobPipelineWorkflow,
     JobPipelineWorkflowInput,
 )
@@ -39,6 +43,12 @@ _OK_RESULT = {
     "errors": {},
     "elapsed": 0.0,
 }
+
+
+def test_discover_uses_no_overlap_activity_policy():
+    assert _DISCOVER_TIMEOUT > _DEFAULT_TIMEOUT
+    assert _DISCOVER_RETRY.maximum_attempts == 1
+    assert _DEFAULT_RETRY.maximum_attempts > _DISCOVER_RETRY.maximum_attempts
 
 
 def _all_activities():

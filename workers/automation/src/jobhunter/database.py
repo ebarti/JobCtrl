@@ -192,18 +192,34 @@ def ensure_discovery_run_tables(conn: sqlite3.Connection | None = None) -> list[
             profile_snapshot_id    TEXT,
             status                 TEXT NOT NULL,
             counts_json            TEXT NOT NULL DEFAULT '{}',
+            progress_json          TEXT NOT NULL DEFAULT '{}',
             error_classes_json     TEXT NOT NULL DEFAULT '[]',
             started_at             TEXT NOT NULL,
+            updated_at             TEXT,
             completed_at           TEXT,
             failed_at              TEXT,
+            workflow_id            TEXT,
             PRIMARY KEY (tenant_id, run_id)
         )
         """
     )
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(discovery_runs)").fetchall()}
+    if "progress_json" not in existing_cols:
+        conn.execute("ALTER TABLE discovery_runs ADD COLUMN progress_json TEXT NOT NULL DEFAULT '{}'")
+    if "updated_at" not in existing_cols:
+        conn.execute("ALTER TABLE discovery_runs ADD COLUMN updated_at TEXT")
+    if "workflow_id" not in existing_cols:
+        conn.execute("ALTER TABLE discovery_runs ADD COLUMN workflow_id TEXT")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_discovery_runs_started
         ON discovery_runs(tenant_id, started_at DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_discovery_runs_status
+        ON discovery_runs(tenant_id, status, started_at DESC)
         """
     )
     conn.commit()
@@ -2152,6 +2168,15 @@ _EFFECTIVE_APPLY_STATUS: str = (
 
 
 _FEEDBACK_ORDERED_STAGES = frozenset({"scored", "pending_tailor", "pending_cover", "pending_apply"})
+LOW_FIT_TAILORING_MAX_SCORE = 5
+MIN_TAILORING_FIT_SCORE = LOW_FIT_TAILORING_MAX_SCORE + 1
+
+
+def effective_tailoring_min_score(min_score: int | None = None) -> int:
+    """Return the default-safe floor for material-generation eligibility."""
+    if min_score is None:
+        return 7
+    return max(MIN_TAILORING_FIT_SCORE, int(min_score))
 
 
 def _order_rows_by_feedback(
@@ -2598,6 +2623,8 @@ def get_jobs_by_stage(
     """
     if conn is None:
         conn = get_connection()
+    if stage in ("pending_tailor", "pending_cover"):
+        min_score = effective_tailoring_min_score(min_score)
 
     # Round-1 review B1: every predicate that historically read bare
     # ``fit_score`` now reads through ``_EFFECTIVE_FIT_SCORE`` (COALESCE

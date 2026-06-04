@@ -566,27 +566,6 @@ textarea {
   margin: 0 0 18px;
 }
 
-.discovery-stage-panel {
-  margin: 0 0 18px;
-}
-
-.stage-discovery-link {
-  display: flex;
-  align-items: center;
-  padding: 12px;
-}
-
-.stage-discovery-link a {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--ink);
-  padding: 8px 12px;
-  color: var(--paper);
-  font-weight: 650;
-}
-
 .discovery-controls {
   margin: 0 0 18px;
 }
@@ -2240,6 +2219,11 @@ textarea {
   gap: 6px;
 }
 
+.timeline-action {
+  width: 100%;
+  justify-content: center;
+}
+
 .status-dot {
   width: 14px;
   height: 14px;
@@ -2270,6 +2254,23 @@ textarea {
 .section h3 {
   margin: 0 0 10px;
   font-size: 13px;
+}
+
+.job-audit-disclosure > summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  cursor: pointer;
+}
+
+.job-audit-disclosure[open] > summary {
+  margin-bottom: 10px;
+}
+
+.job-audit-summary-title {
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .detail-list {

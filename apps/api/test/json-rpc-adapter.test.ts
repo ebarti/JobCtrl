@@ -186,6 +186,18 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     );
     await dispatcher(
       {
+        action: "tailor_job",
+        jobKey: "https://example.com/jobs/current",
+        dryRun: true,
+        reason: "manual_tailor",
+        tailorModels: ["gemini:test"],
+        tailorJudgeModel: "judge:test",
+        tailorJudgeMinScore: 0.82,
+      },
+      context,
+    );
+    await dispatcher(
+      {
         action: "retailor_job",
         jobKey: "https://example.com/jobs/current",
         dryRun: true,
@@ -228,6 +240,21 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           limit: 10,
           jobUrls: ["https://example.com/jobs/stale"],
           dryRun: true,
+        },
+      },
+      {
+        method: "tailor_job",
+        params: {
+          tenantId: "local",
+          expectedAppDir: "/tmp",
+          expectedDbPath: "/tmp/jobhunter.db",
+          jobUrl: "https://example.com/jobs/current",
+          dryRun: true,
+          allowLowFitOverride: true,
+          reason: "manual_tailor",
+          tailorModels: ["gemini:test"],
+          tailorJudgeModel: "judge:test",
+          tailorJudgeMinScore: 0.82,
         },
       },
       {

@@ -5,6 +5,7 @@ import {
 } from "@jobhunter/domain-types";
 
 import {
+  MIN_TAILORING_FIT_SCORE,
   PIPELINE_ACTION_JOB_KEY,
   type ActionCommandPayload,
   type ProfileUpdateRequest,
@@ -108,7 +109,7 @@ export async function handleProfileUpdatedEvent(
     dryRun: false,
     limit: 0,
     workers: 1,
-    minScore: 0,
+    minScore: MIN_TAILORING_FIT_SCORE,
     validationMode: "normal",
     retailor: true,
   };

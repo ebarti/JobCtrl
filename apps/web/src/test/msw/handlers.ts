@@ -458,6 +458,9 @@ export const handlers = [
   http.post("*/v1/jobs/:jobKey/actions/generate-materials", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "generate_materials")),
   ),
+  http.post("*/v1/jobs/:jobKey/actions/tailor", ({ params }) =>
+    HttpResponse.json(actionRunResponse(String(params["jobKey"]), "tailor_job")),
+  ),
   http.post("*/v1/jobs/:jobKey/actions/retailor-current-policy", ({ params }) =>
     HttpResponse.json(actionRunResponse(String(params["jobKey"]), "retailor_job")),
   ),

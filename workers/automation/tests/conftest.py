@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
+
+
+_TEST_APP_DIR = Path(tempfile.mkdtemp(prefix="jobhunter-pytest-"))
+os.environ["JOBHUNTER_DIR"] = str(_TEST_APP_DIR)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Remove the session-scoped user-data sandbox after pytest exits."""
+    if os.environ.get("JOBHUNTER_DIR") == str(_TEST_APP_DIR):
+        shutil.rmtree(_TEST_APP_DIR, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

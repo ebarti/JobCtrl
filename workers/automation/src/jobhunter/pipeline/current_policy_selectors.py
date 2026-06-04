@@ -5,7 +5,11 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from jobhunter.database import ensure_scoring_policy_tables, ensure_tailoring_policy_tables
+from jobhunter.database import (
+    effective_tailoring_min_score,
+    ensure_scoring_policy_tables,
+    ensure_tailoring_policy_tables,
+)
 
 
 def scoring_current_policy_job_urls(
@@ -68,6 +72,7 @@ def tailoring_current_policy_job_urls(
 ) -> tuple[str, ...]:
     """Return active eligible jobs missing a current-policy tailored artifact."""
 
+    min_score = effective_tailoring_min_score(min_score)
     current_version = _current_tailoring_policy_version(conn, tenant_id)
     requested = _clean_job_urls(job_urls)
     requested_sql, requested_params = _requested_filter("j.url", requested)

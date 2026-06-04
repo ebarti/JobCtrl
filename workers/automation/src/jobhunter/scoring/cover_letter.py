@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from jobhunter.config import COVER_LETTER_DIR
-from jobhunter.database import get_connection, get_jobs_by_stage
+from jobhunter.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
 from jobhunter.domain.materials.services import ContentValidator
 from jobhunter.domain.materials.use_cases import (
     CoverLetterOutcome,
@@ -166,6 +166,7 @@ def run_cover_letters(
     conn = get_connection()
     if repository is None:
         repository = SqliteMaterialsRepository(conn)
+    min_score = effective_tailoring_min_score(min_score)
 
     jobs = get_jobs_by_stage(
         conn=conn,

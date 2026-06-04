@@ -365,6 +365,17 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
   });
 
+  it("does not expose Tailor as a product pipeline stage", () => {
+    renderWithProviders(<StageTriggerPanel />);
+
+    expect(screen.queryByRole("tab", { name: "Tailor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run Tailor" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Judge model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Minimum judge score")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
+  });
+
   it("shows a live starting status while the worker request is pending", async () => {
     const user = userEvent.setup();
     const runPipelineStages = vi.fn(() => new Promise<PipelineStageRunResponse>(() => undefined));
@@ -471,7 +482,50 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
   });
 
-  it("describes fully completed partial backend progress as warnings", async () => {
+  it("shows source-level discovery progress instead of opaque stage counts", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            progress: [
+              {
+                stage: "discover" as const,
+                status: "running" as const,
+                percent: 8,
+                completed: 0,
+                total: 6,
+                currentStep: "JobSpy",
+                message: "JobSpy search completed",
+                updatedAt: new Date().toISOString(),
+                sourceProgress: {
+                  completed: 35,
+                  total: 72,
+                  unit: "searches",
+                  currentQuery: "Head of Platform",
+                  currentLocation: "Spain (remote)",
+                  newJobs: 13,
+                  existingJobs: 46,
+                  filteredJobs: 412,
+                  errorCount: 0,
+                  rawTotal: 1000,
+                },
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(
+      "Discover 8% complete: JobSpy 35/72 searches done: Head of Platform in Spain (remote); 13 new, 46 dupes, 412 filtered, 0 errors, 1000 found.",
+    );
+    expect(status).not.toHaveTextContent("(0/6)");
+    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "8");
+  });
+
+  it("describes partial preparation progress as automatically retried and actionable", async () => {
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({
         api: {
@@ -482,10 +536,10 @@ describe("StageTriggerPanel", () => {
                 stage: "discover" as const,
                 status: "partial" as const,
                 percent: 100,
-                completed: 6,
-                total: 6,
-                currentStep: "Preparation",
-                message: "Preparation complete",
+                completed: 1,
+                total: 1,
+                currentStep: null,
+                message: "Stage completed with warnings",
                 updatedAt: new Date().toISOString(),
               },
             ],
@@ -495,7 +549,7 @@ describe("StageTriggerPanel", () => {
     });
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Discover 100% complete with warnings (6/6): Preparation complete.",
+      "Discover 100% complete with warnings (1/1): Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; items that exhaust retry attempts need attention from the job details.",
     );
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "100");
   });
