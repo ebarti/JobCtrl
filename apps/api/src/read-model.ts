@@ -2816,7 +2816,7 @@ function parseProgressPayload(
   const completed = nullableNumber(source.completed ?? source.progressCompleted);
   const total = nullableNumber(source.total ?? source.progressTotal);
   if (completed === null || total === null || total <= 0) {
-    return parseFallbackProgressPayload(row);
+    return parseFallbackProgressPayload(row, source.status ?? source.progressStatus);
   }
   const rawPercent = nullableNumber(source.percent ?? source.progressPercent);
   const percent = rawPercent === null
@@ -2843,16 +2843,19 @@ function parseProgressPayload(
   };
 }
 
-function parseFallbackProgressPayload(row: {
-  stage: string | null;
-  event_type: string | null;
-  message: string | null;
-  occurred_at: string | null;
-}): DashboardSummary["progress"][number] | null {
+function parseFallbackProgressPayload(
+  row: {
+    stage: string | null;
+    event_type: string | null;
+    message: string | null;
+    occurred_at: string | null;
+  },
+  statusValue: unknown = null,
+): DashboardSummary["progress"][number] | null {
   if (!isStage(row.stage)) {
     return null;
   }
-  const status = progressStatus(null, row.event_type);
+  const status = progressStatus(statusValue, row.event_type);
   const message = stringField(row.message);
   const discoverySourceProgress = row.stage === "discover"
     ? parseDiscoverySourceProgress(row, status, message)
@@ -2866,15 +2869,23 @@ function parseFallbackProgressPayload(row: {
   if (row.event_type === "StageCompleted" && !isWholeStageCompletion) {
     return null;
   }
-  const percent = status === "succeeded" ? 100 : status === "failed" ? 0 : 0;
+  const completedStage = row.event_type === "StageCompleted" && (status === "succeeded" || status === "partial");
+  const percent = completedStage ? 100 : status === "failed" ? 0 : 0;
+  const fallbackMessage = normalizedMessage === "stage partial"
+    ? "Stage completed with warnings"
+    : normalizedMessage === "stage ok"
+      ? "Stage complete"
+      : normalizedMessage === "stage skipped"
+        ? "Stage skipped"
+        : message || (completedStage ? "Stage complete" : status === "failed" ? "Stage failed" : "Stage started");
   return {
     stage: row.stage,
     status,
     percent,
-    completed: status === "succeeded" ? 1 : 0,
+    completed: completedStage ? 1 : 0,
     total: 1,
     currentStep: null,
-    message: message || (status === "succeeded" ? "Stage complete" : "Stage started"),
+    message: fallbackMessage,
     updatedAt: nullableString(row.occurred_at),
   };
 }

@@ -196,13 +196,13 @@ function stageProgressStatusLine(stage: Stage, progress: StageProgress): string 
       ? `${stageLabel} not running. Last progress ${percent} (${count}): ${detailSentence}`
       : `${stageLabel} not running. Last progress ${count}: ${detailSentence}`;
   }
-  if (progress.status === "succeeded" || progress.percent === 100) {
-    return `${stageLabel} 100% complete (${count}): ${detailSentence}`;
-  }
   if (progress.status === "partial") {
     return percent
       ? `${stageLabel} ${percent} complete with warnings (${count}): ${detailSentence}`
       : `${stageLabel} progress with warnings (${count}): ${detailSentence}`;
+  }
+  if (progress.status === "succeeded" || progress.percent === 100) {
+    return `${stageLabel} 100% complete (${count}): ${detailSentence}`;
   }
   return percent
     ? `${stageLabel} ${percent} complete (${count}): ${detailSentence}`
