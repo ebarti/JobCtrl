@@ -81,6 +81,7 @@ def _replace_score_evidence_projection_schema_with_legacy_shape(
             fit_score              INTEGER,
             score_reasoning        TEXT NOT NULL DEFAULT '',
             current_stage          TEXT NOT NULL DEFAULT 'discover',
+            current_substage       TEXT NOT NULL DEFAULT 'discover',
             current_state          TEXT NOT NULL DEFAULT 'pending',
             current_error_code     TEXT,
             current_error_message  TEXT,
@@ -130,6 +131,7 @@ def test_discovered_job_appears_in_projection(conn: sqlite3.Connection) -> None:
     assert _row_value(row, "title") == "Engineer"
     assert _row_value(row, "source") == "ExampleCo"
     assert _row_value(row, "current_stage") == "discover"
+    assert _row_value(row, "current_substage") == "discover"
     assert _row_value(row, "current_state") == "pending"
 
 
@@ -149,10 +151,11 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
     builder.refresh()
 
     row = conn.execute(
-        "SELECT current_stage, current_state FROM job_list_projections WHERE job_id = ?",
+        "SELECT current_stage, current_substage, current_state FROM job_list_projections WHERE job_id = ?",
         (url,),
     ).fetchone()
     assert _row_value(row, "current_stage") == "discover"
+    assert _row_value(row, "current_substage") == "score"
     assert _row_value(row, "current_state") == "pending"
 
     detail = conn.execute(

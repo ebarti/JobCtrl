@@ -298,6 +298,13 @@ Current-version preparation maintenance actions are separate endpoints:
   `retailor_current_policy` for selected or bounded eligible jobs and can
   suppress prior active artifacts.
 
+First-time manual tailoring is not a re-tailor action. The job detail stage
+timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal
+`tailor` stage, dispatching JSON-RPC `tailor_job` for the selected job only.
+That explicit user action records a `TailorRequested` audit-history event and
+overrides the default low-fit auto-tailoring gate for the selected job without
+changing the batch `minScore` behavior.
+
 The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for
 `tailor_resume`; raising it can make active artifacts ineligible and enqueue

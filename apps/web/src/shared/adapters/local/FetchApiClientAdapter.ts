@@ -172,6 +172,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   retailorJob(jobKey: string, body: Parameters<JobHunterApiClient["retailorJob"]>[1] = {}) {
     return this.client.retailorJob(jobKey, body);
   }
+  tailorJob(jobKey: string, body: Parameters<JobHunterApiClient["tailorJob"]>[1] = {}) {
+    return this.client.tailorJob(jobKey, body);
+  }
   retailorCurrentPolicy(body: Parameters<JobHunterApiClient["retailorCurrentPolicy"]>[0]) {
     return this.client.retailorCurrentPolicy(body);
   }

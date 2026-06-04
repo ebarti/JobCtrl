@@ -67,6 +67,7 @@ class JobPipelineWorkflowInput:
     score_current_policy_only: bool = False
     tailor_current_policy_only: bool = False
     suppress_existing_artifacts: bool = False
+    allow_low_fit_override: bool = False
     headless: bool = False
     model: str = "default"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -211,6 +212,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 job_urls=_selected_job_urls(payload),
                 current_policy_only=payload.tailor_current_policy_only,
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
+                allow_low_fit_override=payload.allow_low_fit_override,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
                 tailor_judge_min_score=payload.tailor_judge_min_score,

@@ -5,8 +5,10 @@ export { useOpenArtifactMutation } from "./hooks/useOpenArtifactMutation.js";
 export {
   useRetailorCurrentPolicyMutation,
   useRetailorJobMutation,
+  useTailorJobMutation,
   type RetailorCurrentPolicyVariables,
   type RetailorJobVariables,
+  type TailorJobVariables,
 } from "./hooks/useRetailorCurrentPolicyMutation.js";
 
 export {
@@ -28,8 +30,10 @@ export {
 export {
   RetailorCurrentPolicyButton,
   RetailorJobButton,
+  TailorJobButton,
   type RetailorCurrentPolicyButtonProps,
   type RetailorJobButtonProps,
+  type TailorJobButtonProps,
 } from "./components/RetailorCurrentPolicyButton.js";
 export {
   artifactKindLabel,

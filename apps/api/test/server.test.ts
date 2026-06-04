@@ -2569,6 +2569,11 @@ describe("local TypeScript API", () => {
       url: "/v1/scoring/actions/rescore-current-policy",
       payload: { jobKeys: ["https://example.com/jobs/failed-score"], limit: 10, dryRun: true },
     });
+    const tailorJob = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/tailor`,
+      payload: { dryRun: true, reason: "manual low-fit override" },
+    });
     const retailorJob = await app.inject({
       method: "POST",
       url: `/v1/jobs/${jobKey}/actions/retailor-current-policy`,
@@ -2592,11 +2597,11 @@ describe("local TypeScript API", () => {
       },
     });
 
-    for (const response of [rescoreJob, rescoreBulk, retailorJob, retailorBulk]) {
+    for (const response of [rescoreJob, rescoreBulk, tailorJob, retailorJob, retailorBulk]) {
       expect(response.statusCode, response.body).toBe(202);
       expect(response.json()).toMatchObject({ ok: true, status: "queued" });
     }
-    expect(dispatch).toHaveBeenCalledTimes(4);
+    expect(dispatch).toHaveBeenCalledTimes(5);
     expect(dispatch).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -2621,6 +2626,16 @@ describe("local TypeScript API", () => {
     expect(dispatch).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({
+        action: "tailor_job",
+        jobKey: "https://example.com/jobs/ready",
+        dryRun: true,
+        reason: "manual low-fit override",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
         action: "retailor_job",
         jobKey: "https://example.com/jobs/ready",
         dryRun: true,
@@ -2632,7 +2647,7 @@ describe("local TypeScript API", () => {
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
     expect(dispatch).toHaveBeenNthCalledWith(
-      4,
+      5,
       expect.objectContaining({
         action: "retailor_current_policy",
         jobKey: "pipeline",
@@ -2643,6 +2658,17 @@ describe("local TypeScript API", () => {
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
+    const db = new Database(options.dbPath);
+    try {
+      const events = db
+        .prepare("SELECT event_type FROM job_events WHERE job_url = ? ORDER BY event_id DESC")
+        .all("https://example.com/jobs/ready")
+        .map((row) => (row as { event_type: string }).event_type);
+      expect(events).toContain("TailorRequested");
+      expect(events).toContain("RetailorRequested");
+    } finally {
+      db.close();
+    }
 
     await app.close();
   });

@@ -85,10 +85,14 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
             <JobActions
               jobId={detail.job.jobKey}
               currentStage={detail.job.currentStage}
+              canRetailor={detail.artifacts.length > 0}
               nextAction={detail.job.nextAction}
             />
             <Section title="Preparation diagnostics">
-              <StageTimeline stages={preparationStages(detail.stages)} />
+              <StageTimeline
+                jobId={detail.job.jobKey}
+                stages={preparationStages(detail.stages)}
+              />
             </Section>
             <Section title="Active artifacts">
               {detail.artifacts.length ? (

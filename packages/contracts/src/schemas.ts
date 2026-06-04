@@ -155,6 +155,17 @@ export const RetailorJobRequestSchema = z
   .strict();
 export type RetailorJobRequest = z.infer<typeof RetailorJobRequestSchema>;
 
+export const TailorJobRequestSchema = z
+  .object({
+    dryRun: z.boolean().default(false),
+    reason: z.string().trim().max(400).optional(),
+    tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
+    tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
+    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
+  })
+  .strict();
+export type TailorJobRequest = z.infer<typeof TailorJobRequestSchema>;
+
 export const BulkRetailorCurrentPolicyRequestSchema = z
   .object({
     limit: z.coerce.number().int().min(1).max(1000).default(100),
@@ -1044,6 +1055,7 @@ export interface JobSummary {
   scoreCorrection: ScoreCorrection | null;
   scoreStaleness: ScoreStaleness;
   currentStage: Stage;
+  currentSubstage: Stage;
   currentState: StageState;
   errorCode: string | null;
   errorMessage: string | null;
@@ -1308,6 +1320,7 @@ export interface ActionCommandPayload {
     | "retry_stage"
     | "rescore_job"
     | "rescore_jobs_not_on_current_scoring_policy"
+    | "tailor_job"
     | "retailor_job"
     | "retailor_current_policy"
     | "generate_materials"

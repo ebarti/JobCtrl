@@ -48,6 +48,7 @@ import {
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
   STAGES,
+  TailorJobRequestSchema,
   type Stage,
   WorkflowRunsListQuerySchema,
 } from "./contracts.js";
@@ -768,6 +769,52 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     });
   });
 
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/tailor", async (request, reply) => {
+    const body = parseBody(reply, TailorJobRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    const outcome = await withWritableDb(reply, options.dbPath, async (db) => {
+      const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
+      if (!jobUrl) {
+        return { ok: false, error: "job_not_found" };
+      }
+      const command: ActionCommandPayload = {
+        action: "tailor_job",
+        jobKey: jobUrl,
+        dryRun: body.dryRun,
+        tailorModels: body.tailorModels,
+      };
+      if (body.reason) command.reason = body.reason;
+      if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
+      if (body.tailorJudgeMinScore !== undefined) {
+        command.tailorJudgeMinScore = body.tailorJudgeMinScore;
+      }
+      insertJobEvent(db, {
+        jobUrl,
+        stage: "tailor",
+        eventType: "TailorRequested",
+        level: "info",
+        message: "Tailoring requested by user",
+        payload: {
+          tenantId: "local",
+          jobId: jobUrl,
+          dryRun: body.dryRun,
+          reason: body.reason ?? "manual_tailor",
+          allowLowFitOverride: true,
+        },
+      });
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const dispatch = await actionDispatcher(command, actionContext);
+      void reply.code(202);
+      return buildActionResponse(command, dispatch);
+    });
+    return outcome;
+  });
+
   app.post<{ Params: { jobKey: string } }>(
     "/v1/jobs/:jobKey/actions/retailor-current-policy",
     async (request, reply) => {
@@ -792,6 +839,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         if (body.tailorJudgeMinScore !== undefined) {
           command.tailorJudgeMinScore = body.tailorJudgeMinScore;
         }
+        insertJobEvent(db, {
+          jobUrl,
+          stage: "tailor",
+          eventType: "RetailorRequested",
+          level: "info",
+          message: "Current-policy re-tailoring requested by user",
+          payload: {
+            tenantId: "local",
+            jobId: jobUrl,
+            dryRun: body.dryRun,
+            reason: body.reason ?? "current_policy_retailor",
+            suppressExistingArtifacts: body.suppressExistingArtifacts,
+          },
+        });
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
         if (!workerReady) {
           return undefined;

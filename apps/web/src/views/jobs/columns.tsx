@@ -243,8 +243,13 @@ export function jobColumns(
       id: "current_state",
       label: "State",
       sortable: true,
-      getFilterValue: (row) => row.currentState,
-      render: (row) => <StageBadge state={row.currentState} />,
+      getFilterValue: (row) => `${row.currentSubstage} ${row.currentState}`,
+      render: (row) => (
+        <TitleStack
+          primary={<StageBadge state={row.currentState} />}
+          secondary={`${row.currentSubstage} stage`}
+        />
+      ),
     },
     {
       id: "discovered_at",

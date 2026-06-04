@@ -9,7 +9,11 @@ import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import { renderHookWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
-import { useRetailorCurrentPolicyMutation, useRetailorJobMutation } from "./useRetailorCurrentPolicyMutation.js";
+import {
+  useRetailorCurrentPolicyMutation,
+  useRetailorJobMutation,
+  useTailorJobMutation,
+} from "./useRetailorCurrentPolicyMutation.js";
 
 function actionResponse(action: ActionRunResponse["action"], jobKey: string): ActionRunResponse {
   return {
@@ -24,6 +28,31 @@ function actionResponse(action: ActionRunResponse["action"], jobKey: string): Ac
 }
 
 describe("re-tailor current-policy mutations", () => {
+  it("tailors one job through the API port and invalidates materials reads", async () => {
+    const response = actionResponse("tailor_job", "job-1");
+    const tailorJob = vi.fn(async () => response);
+    const { result, queryClient } = renderHookWithProviders(() => useTailorJobMutation(), {
+      ports: buildTestPorts({ api: { tailorJob } }),
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    await act(async () => {
+      await expect(result.current.mutateAsync({ jobId: "job-1", reason: "manual_tailor" })).resolves.toBe(response);
+    });
+
+    expect(tailorJob).toHaveBeenCalledWith("job-1", {
+      dryRun: false,
+      reason: "manual_tailor",
+      tailorModels: [],
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: jobsKeys.detail(LOCAL_TENANT, "job-1") });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: jobsKeys.lists(LOCAL_TENANT) });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: artifactsKeys.lists(LOCAL_TENANT) });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: dashboardKeys.summary(LOCAL_TENANT) });
+    });
+  });
+
   it("re-tailors one job through the API port and invalidates materials reads", async () => {
     const response = actionResponse("retailor_job", "job-1");
     const retailorJob = vi.fn(async () => response);

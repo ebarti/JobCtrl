@@ -401,6 +401,10 @@ completed, dry-run, or failed, and the returned run/action id when one is
 available. Queued or running Discover and Apply workflows expose stop controls
 from the Pipelines and Workflow Runs views, and active per-job apply runs can be
 stopped from Apply review when a latest apply run is attached to the job.
+Jobs whose first-time tailoring is skipped by the default low-fit gate can still
+be tailored explicitly from the job detail tailor stage. Re-tailor controls are
+reserved for jobs that already have tailored artifacts and need current-policy
+regeneration.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;

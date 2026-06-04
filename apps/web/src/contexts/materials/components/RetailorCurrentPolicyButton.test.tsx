@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
-import { RetailorCurrentPolicyButton, RetailorJobButton } from "./RetailorCurrentPolicyButton.js";
+import {
+  RetailorCurrentPolicyButton,
+  RetailorJobButton,
+  TailorJobButton,
+} from "./RetailorCurrentPolicyButton.js";
 
 const originalConfirm = globalThis.window?.confirm;
 
@@ -28,6 +32,26 @@ afterEach(() => {
 });
 
 describe("re-tailor current-policy buttons", () => {
+  it("posts a per-job tailor request after confirmation", async () => {
+    const user = userEvent.setup();
+    const tailorJob = vi.fn(async () => queued("tailor_job", "job-1"));
+    Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: () => true });
+
+    renderWithProviders(<TailorJobButton jobId="job-1" />, {
+      ports: buildTestPorts({ api: { tailorJob } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "tailor this job" }));
+
+    await waitFor(() =>
+      expect(tailorJob).toHaveBeenCalledWith("job-1", {
+        dryRun: false,
+        reason: "manual_tailor",
+        tailorModels: [],
+      }),
+    );
+  });
+
   it("posts a per-job re-tailor request after confirmation", async () => {
     const user = userEvent.setup();
     const retailorJob = vi.fn(async () => queued("retailor_job", "job-1"));

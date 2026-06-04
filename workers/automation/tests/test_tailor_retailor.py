@@ -213,6 +213,46 @@ def test_tailor_job_by_url_skips_score_five_by_default(tmp_path, monkeypatch):
         close_connection(db_path)
 
 
+def test_tailor_job_by_url_allows_low_fit_manual_override(tmp_path, monkeypatch):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    target_url = "https://example.com/manual-low-fit"
+    calls: list[str] = []
+
+    try:
+        _insert_job(conn, url=target_url, fit_score=5)
+
+        def fake_tailor_one_job(job, *_args, **_kwargs):
+            calls.append(job["url"])
+            return {
+                "url": job["url"],
+                "title": job["title"],
+                "site": job.get("site"),
+                "status": "approved",
+                "attempts": 1,
+                "path": "/tmp/manual-low-fit.txt",
+                "pdf_path": None,
+                "materials": SimpleNamespace(generation=1),
+            }
+
+        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobhunter.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fake_tailor_one_job)
+
+        result = tailor_job_by_url(
+            target_url,
+            min_score=7,
+            allow_low_fit_override=True,
+            snapshot=SimpleNamespace(),
+            llm_model=None,
+        )
+
+        assert result["status"] == "approved"
+        assert calls == [target_url]
+    finally:
+        close_connection(db_path)
+
+
 def test_tailor_job_by_url_surfaces_blocked_score_eligibility(tmp_path, monkeypatch):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)

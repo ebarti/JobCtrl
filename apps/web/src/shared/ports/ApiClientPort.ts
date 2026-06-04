@@ -58,6 +58,7 @@ import type {
   RoleMatchFeedbackListResponse,
   RescoreJobRequest,
   RetailorJobRequest,
+  TailorJobRequest,
   RetryStageRequest,
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
@@ -182,6 +183,7 @@ export interface ApiClientPort {
     body: BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   ): Promise<ActionRunResponse>;
   retailorJob(jobKey: string, body?: Partial<RetailorJobRequest>): Promise<ActionRunResponse>;
+  tailorJob(jobKey: string, body?: Partial<TailorJobRequest>): Promise<ActionRunResponse>;
   retailorCurrentPolicy(body: BulkRetailorCurrentPolicyRequest): Promise<ActionRunResponse>;
 
   workflowRuns(query?: Partial<WorkflowRunsListQuery>): Promise<PaginatedResponse<WorkflowRunSummary>>;

@@ -2,13 +2,55 @@ import { WandSparkles } from "lucide-react";
 import type { JSX } from "react";
 
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
-import { useRetailorCurrentPolicyMutation, useRetailorJobMutation } from "../hooks/useRetailorCurrentPolicyMutation.js";
+import {
+  useRetailorCurrentPolicyMutation,
+  useRetailorJobMutation,
+  useTailorJobMutation,
+} from "../hooks/useRetailorCurrentPolicyMutation.js";
 
 export interface RetailorJobButtonProps {
   readonly jobId: string;
   readonly className?: string;
   readonly label?: string;
   readonly disabled?: boolean;
+}
+
+export interface TailorJobButtonProps {
+  readonly jobId: string;
+  readonly className?: string;
+  readonly label?: string;
+  readonly disabled?: boolean;
+}
+
+export function TailorJobButton({
+  jobId,
+  className = "tab",
+  label = "tailor this job",
+  disabled = false,
+}: TailorJobButtonProps): JSX.Element {
+  const mutation = useTailorJobMutation();
+  const blocked = disabled || mutation.isPending;
+
+  return (
+    <button
+      aria-label={label}
+      className={className}
+      disabled={blocked}
+      type="button"
+      onClick={() => {
+        if (
+          blocked ||
+          !window.confirm("Tailor this job now? This manually overrides the default low-fit auto-tailoring gate.")
+        ) {
+          return;
+        }
+        mutation.mutate({ jobId, reason: "manual_tailor" });
+      }}
+    >
+      <WandSparkles aria-hidden="true" size={14} />
+      <span>{mutation.isPending ? "tailoring" : label}</span>
+    </button>
+  );
 }
 
 export function RetailorJobButton({

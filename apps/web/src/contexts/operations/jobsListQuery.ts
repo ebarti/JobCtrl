@@ -155,7 +155,7 @@ function sortValue(job: JobSummary, field: JobSortField): unknown {
     case "current_stage":
       return job.currentStage;
     case "current_state":
-      return STATE_RANK[job.currentState];
+      return `${STATE_RANK[job.currentState] ?? 999}:${job.currentSubstage}`;
     case "discovered_at":
     default:
       return job.discoveredAt;

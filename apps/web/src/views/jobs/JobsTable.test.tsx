@@ -118,6 +118,20 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("discovered via jobspy:linkedin")).toBeInTheDocument();
   });
 
+  it("renders state with internal stage context", () => {
+    renderJobsTable([
+      {
+        ...sampleJob,
+        currentStage: "discover",
+        currentSubstage: "tailor",
+        currentState: "pending",
+      },
+    ]);
+
+    expect(screen.getByText("pending")).toBeInTheDocument();
+    expect(screen.getByText("tailor stage")).toBeInTheDocument();
+  });
+
   it("selects a row when clicking the checkbox cell hit area", async () => {
     const user = userEvent.setup();
     const openCalls: string[] = [];

@@ -17,6 +17,8 @@ import {
   RetailorJobParamsSchema,
   RetailorJobResultSchema,
   RpcMethods,
+  TailorJobParamsSchema,
+  TailorJobResultSchema,
 } from "../src/contracts.js";
 
 describe("cancel_run RPC contract", () => {
@@ -68,6 +70,7 @@ describe("preparation RPC contracts", () => {
     expect(RpcMethods.RescoreJobsNotOnCurrentScoringPolicy).toBe(
       "rescore_jobs_not_on_current_scoring_policy",
     );
+    expect(RpcMethods.TailorJob).toBe("tailor_job");
     expect(RpcMethods.RetailorJob).toBe("retailor_job");
     expect(RpcMethods.RetailorCurrentPolicy).toBe("retailor_current_policy");
   });
@@ -172,6 +175,53 @@ describe("preparation RPC contracts", () => {
       suppressExistingArtifacts: true,
       tailorModels: [],
     });
+  });
+
+  it("parses and defaults tailor_job request payloads", () => {
+    const parsed = TailorJobParamsSchema.parse({
+      jobUrl: "https://example.test/job/1",
+    });
+
+    expect(parsed).toEqual({
+      tenantId: "local",
+      jobUrl: "https://example.test/job/1",
+      dryRun: false,
+      allowLowFitOverride: true,
+      tailorModels: [],
+    });
+  });
+
+  it("rejects invalid tailor_job request payloads", () => {
+    expect(() => TailorJobParamsSchema.parse({})).toThrow();
+    expect(() =>
+      TailorJobParamsSchema.parse({
+        jobUrl: "https://example.test/job/1",
+        tailorJudgeMinScore: 1.1,
+      }),
+    ).toThrow();
+  });
+
+  it("parses and rejects tailor_job result payloads", () => {
+    expect(
+      TailorJobResultSchema.parse({
+        ok: true,
+        status: "queued",
+        jobUrl: "https://example.test/job/1",
+        currentPolicyVersion: 4,
+      }),
+    ).toEqual({
+      ok: true,
+      status: "queued",
+      jobUrl: "https://example.test/job/1",
+      currentPolicyVersion: 4,
+    });
+    expect(() =>
+      TailorJobResultSchema.parse({
+        ok: true,
+        status: "queued",
+        currentPolicyVersion: 4,
+      }),
+    ).toThrow();
   });
 
   it("rejects invalid retailor_job request payloads", () => {

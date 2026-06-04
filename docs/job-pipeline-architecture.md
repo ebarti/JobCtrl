@@ -728,7 +728,10 @@ pins stale-score exclusion until explicit reset/rescore.
 Tailor creates job-specific resume materials for high-fit jobs. It owns resume
 generation, validation mode, retry/retailor decisions, and resume artifact
 registration. It does not submit applications. In the product flow this is
-Discover subwork; explicit re-tailor actions are maintenance controls.
+Discover subwork. First-time manual tailoring is exposed on the job detail
+tailor stage for the selected job; explicit re-tailor actions remain
+current-policy regeneration controls for jobs that already have tailored
+artifacts.
 
 ### Weaknesses Addressed
 
@@ -772,7 +775,7 @@ sequenceDiagram
     participant Files as Local files
     participant DB as SQLite
 
-    Api->>Rpc: retailor_job or retailor_current_policy
+    Api->>Rpc: tailor_job, retailor_job, or retailor_current_policy
     Prep->>Runner: tailor_resume work item during Discover
     Rpc->>Runner: run_pipeline(stages=["tailor"]) for low-level maintenance
     Runner->>Tailor: run_tailoring(...)
@@ -828,7 +831,8 @@ classDiagram
 
 ### Data And Events
 
-- Reads jobs with score >= `minScore`.
+- Reads jobs with score >= `minScore`; a per-job `tailor_job` user action can
+  override that floor only for the selected job.
 - Reads profile resume baseline, skills, writing style, and tailoring rules.
 - Writes tailored resume records and local artifacts under the JobHunter app
   directory.
@@ -842,8 +846,10 @@ classDiagram
 ### Failure And Limits
 
 `validationMode` controls strictness of generated-material validation.
-`retailor=true` allows existing tailored materials to be regenerated. `workers`
-controls parallel tailoring work. `tailorModels` can fan out candidate
+`retailor=true` allows existing tailored materials to be regenerated. First-time
+manual tailoring uses `retailor=false` and records an audit event before worker
+dispatch so the user's intent is visible even if the worker later skips or fails.
+`workers` controls parallel tailoring work. `tailorModels` can fan out candidate
 generation across provider/model specs, and `tailorJudgeModel` selects the
 structured judge independently from apply's browser-action model. By default,
 validator-passing resumes still fail the tailor stage unless the structured
