@@ -1,10 +1,10 @@
 """JobSpy-based job discovery: searches Indeed, LinkedIn, Glassdoor, ZipRecruiter.
 
 Uses python-jobspy to scrape multiple job boards, deduplicates results,
-parses salary ranges, and stores everything in the JobHunter database.
+parses salary ranges, and stores accepted postings in the JobHunter database.
 
-Search queries, locations, and filtering rules are loaded from the user's
-search configuration YAML (searches.yaml) rather than being hardcoded.
+Search queries, locations, and filtering rules are loaded from database-backed
+discovery settings plus the profile target-search fields.
 """
 
 import logging
@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 
 from jobhunter import config
 from jobhunter.database import ensure_source_observation_tables, get_connection, init_db, resurface_deleted_job
+from jobhunter.domain.discovery import JobMetadata, PostingUrl, SearchStrategy, Source
 from jobhunter.domain.discovery.identity import normalize_observed_url
+from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.job_content_identity import (
     descriptions_substantially_match,
     job_content_fingerprint,
@@ -34,7 +36,14 @@ from jobhunter.infrastructure.discovery.location_filter import (
     location_matches_target,
     normalize_location_display,
 )
+from jobhunter.infrastructure.discovery.production_wiring import (
+    DurableJobEventPublisher,
+    _posting_acceptance_policy,
+)
+from jobhunter.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobhunter.discovery.title_filter import title_matches_query
+from jobhunter.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.network.proxy import parse_proxy
 
 log = logging.getLogger(__name__)
@@ -159,11 +168,20 @@ def store_jobspy_results(
     source_label: str,
     limit: int = 0,
     run_id: str = "jobspy",
+    search_cfg: dict | None = None,
 ) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
+    active_search_cfg = search_cfg if search_cfg is not None else _fallback_store_search_cfg(df, source_label)
+    acceptance_policy = _posting_acceptance_policy(active_search_cfg)
+    repository = SqliteJobRepository(conn)
+    use_case = DiscoverJobsUseCase(
+        repository=repository,
+        publisher=DurableJobEventPublisher(conn, stage="discover"),
+        acceptance_policy=acceptance_policy,
+    )
 
     for _, row in df.iterrows():
         if limit > 0 and new >= limit:
@@ -213,6 +231,19 @@ def store_jobspy_results(
         # posting for future direct discovery.
         apply_url = _nullable_str(row.get("job_url_direct"))
         source_id = _jobspy_source_id(site_label)
+        posting = _jobspy_posting_from_row(
+            url=url,
+            source_id=source_id,
+            source_native_id=_jobspy_source_native_id(row, url),
+            site_label=site_label,
+            title=title,
+            salary=salary,
+            description=description,
+            location=location_str,
+        )
+        acceptance = acceptance_policy(posting)
+        if not acceptance.accepted:
+            continue
 
         duplicate_url = _find_existing_content_duplicate(
             conn,
@@ -263,29 +294,18 @@ def store_jobspy_results(
             existing += 1
             continue
 
-        try:
-            conn.execute(
-                "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at, "
-                "full_description, application_url, detail_scraped_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    url,
-                    title,
-                    company,
-                    salary,
-                    description,
-                    location_str,
-                    site_label,
-                    strategy,
-                    now,
-                    full_description,
-                    apply_url,
-                    detail_scraped_at,
-                ),
+        stored_duplicate_url = _find_stored_content_duplicate_survivor(conn, url=url)
+        if stored_duplicate_url and stored_duplicate_url != url:
+            _record_content_duplicate_link(
+                conn,
+                surviving_url=stored_duplicate_url,
+                duplicate_url=url,
+                source=source_id,
+                observed_at=now,
             )
             _record_jobspy_source_observation(
                 conn,
-                job_url=url,
+                job_url=stored_duplicate_url,
                 observed_url=url,
                 source_id=source_id,
                 run_id=run_id,
@@ -293,55 +313,36 @@ def store_jobspy_results(
             )
             _learn_posting_source(
                 conn,
-                job_url=url,
+                job_url=stored_duplicate_url,
                 posting_url=apply_url,
                 discovered_via_source_id=source_id,
                 observed_at=now,
             )
-            new += 1
-        except sqlite3.IntegrityError:
-            duplicate_url = _find_stored_content_duplicate_survivor(conn, url=url)
-            if duplicate_url and duplicate_url != url:
-                _record_content_duplicate_link(
-                    conn,
-                    surviving_url=duplicate_url,
-                    duplicate_url=url,
-                    source=source_id,
-                    observed_at=now,
-                )
-                _record_jobspy_source_observation(
-                    conn,
-                    job_url=duplicate_url,
-                    observed_url=url,
-                    source_id=source_id,
-                    run_id=run_id,
-                    observed_at=now,
-                )
-                _learn_posting_source(
-                    conn,
-                    job_url=duplicate_url,
-                    posting_url=apply_url,
-                    discovered_via_source_id=source_id,
-                    observed_at=now,
-                )
-                _refresh_existing_jobspy_job(
-                    conn,
-                    job_url=duplicate_url,
-                    title=title,
-                    company=company,
-                    salary=salary,
-                    description=description,
-                    location=location_str,
-                    site=site_label,
-                    strategy=strategy,
-                    full_description=full_description,
-                    application_url=apply_url,
-                    detail_scraped_at=detail_scraped_at,
-                    updated_at=now,
-                )
-                resurface_deleted_job(conn, duplicate_url, resurfaced_at=now)
-                existing += 1
-                continue
+            _refresh_existing_jobspy_job(
+                conn,
+                job_url=stored_duplicate_url,
+                title=title,
+                company=company,
+                salary=salary,
+                description=description,
+                location=location_str,
+                site=site_label,
+                strategy=strategy,
+                full_description=full_description,
+                application_url=apply_url,
+                detail_scraped_at=detail_scraped_at,
+                updated_at=now,
+            )
+            resurface_deleted_job(conn, stored_duplicate_url, resurfaced_at=now)
+            existing += 1
+            continue
+
+        summary = use_case.execute(
+            tenant_id=LOCAL_TENANT,
+            postings=(posting,),
+            run_id=run_id,
+        )
+        if summary.new_jobs > 0 or summary.observed > 0 or summary.duplicates_linked > 0:
             _refresh_existing_jobspy_job(
                 conn,
                 job_url=url,
@@ -357,14 +358,6 @@ def store_jobspy_results(
                 detail_scraped_at=detail_scraped_at,
                 updated_at=now,
             )
-            _record_jobspy_source_observation(
-                conn,
-                job_url=url,
-                observed_url=url,
-                source_id=source_id,
-                run_id=run_id,
-                observed_at=now,
-            )
             _learn_posting_source(
                 conn,
                 job_url=url,
@@ -372,11 +365,76 @@ def store_jobspy_results(
                 discovered_via_source_id=source_id,
                 observed_at=now,
             )
+        if summary.new_jobs > 0:
+            new += 1
+        elif summary.observed > 0 or summary.duplicates_linked > 0:
             resurface_deleted_job(conn, url, resurfaced_at=now)
             existing += 1
 
     conn.commit()
     return new, existing
+
+
+def _jobspy_posting_from_row(
+    *,
+    url: str,
+    source_id: str,
+    source_native_id: str,
+    site_label: str,
+    title: str | None,
+    salary: str | None,
+    description: str | None,
+    location: str | None,
+) -> ScrapedJobPosting:
+    return ScrapedJobPosting(
+        posting_url=PostingUrl(value=url),
+        source=Source(board=site_label),
+        metadata=JobMetadata(
+            title=title or "",
+            salary=salary or "",
+            description=description or "",
+            location=location or "",
+        ),
+        strategy=SearchStrategy.JOBSPY,
+        source_id=source_id,
+        source_native_id=source_native_id,
+        canonical_url=url,
+    )
+
+
+def _jobspy_source_native_id(row, url: str) -> str:
+    for key in ("id", "job_id", "job_url"):
+        value = _nullable_str(row.get(key))
+        if value:
+            return value
+    return normalize_observed_url(url) or url
+
+
+def _fallback_store_search_cfg(df, source_label: str) -> dict:
+    """Build a scoped policy for legacy direct storage callers."""
+    locations: list[str] = []
+    accepts: list[str] = []
+    try:
+        iterable = df.iterrows()
+    except AttributeError:
+        iterable = ()
+    for _, row in iterable:
+        location = normalize_location_display(
+            _nullable_str(row.get("location")),
+            is_remote=_truthy_remote(row.get("is_remote", False)),
+        )
+        if location:
+            locations.append(location)
+            accepts.append(location)
+    if not locations:
+        locations = ["Remote"]
+        accepts = ["Remote"]
+    return {
+        "queries": [],
+        "locations": [{"location": location} for location in dict.fromkeys(locations)],
+        "location_accept": list(dict.fromkeys(accepts)),
+        "location": {"accept_patterns": list(dict.fromkeys(accepts)), "reject_patterns": []},
+    }
 
 
 def _refresh_existing_jobspy_job(
@@ -763,6 +821,7 @@ def _run_one_search(
     glassdoor_map: dict,
     limit: int = 0,
     run_id: str = "jobspy",
+    search_cfg: dict | None = None,
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -875,7 +934,10 @@ def _run_one_search(
     filtered = location_filtered + title_filtered
 
     conn = get_connection()
-    new, existing = store_jobspy_results(conn, df, s["query"], limit=limit, run_id=run_id)
+    store_kwargs: dict[str, object] = {"limit": limit, "run_id": run_id}
+    if search_cfg is not None:
+        store_kwargs["search_cfg"] = search_cfg
+    new, existing = store_jobspy_results(conn, df, s["query"], **store_kwargs)
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
     if location_filtered:
@@ -1036,6 +1098,7 @@ def _full_crawl(
             glassdoor_map,
             limit=remaining if limit > 0 else 0,
             run_id=run_id,
+            search_cfg=search_cfg,
         )
         completed += 1
         total_new += result["new"]
@@ -1086,12 +1149,13 @@ def _full_crawl(
 def run_discovery(cfg: dict | None = None, limit: int = 0, run_id: str | None = None) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
-    Loads search queries and locations from the user's search config YAML,
-    then runs a full crawl across all configured job boards.
+    Loads search queries and locations from database-backed discovery settings
+    plus profile target-search fields, then runs a full crawl across all
+    configured job boards.
 
     Args:
         cfg: Override the search configuration dict. If None, loads from
-             the user's searches.yaml file.
+             the database-backed discovery settings.
 
     Returns:
         Dict with stats: new, existing, errors, db_total, queries.

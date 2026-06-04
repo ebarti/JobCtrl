@@ -111,6 +111,79 @@ function manualCaptureHtml(): string {
 }
 
 describe("discovery product controls API", () => {
+  it("stores runtime discovery settings in SQLite without dropping search contract fields", async () => {
+    const { dbPath, dir, cleanup } = withTempDb();
+    const app = buildApp(options(dbPath, dir));
+    try {
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE discovery_settings (
+          tenant_id TEXT PRIMARY KEY,
+          search_config_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `);
+      db.prepare(
+        `INSERT INTO discovery_settings (
+           tenant_id, search_config_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?)`,
+      ).run(
+        "local",
+        JSON.stringify({
+          boards: ["indeed"],
+          defaults: { results_per_site: 25, hours_old: 48, country_indeed: "spain" },
+          queries: [{ query: "Director of Engineering", tier: 1 }],
+          locations: [{ label: "barcelona", location: "Barcelona, Spain", remote: false }],
+        }),
+        "2026-06-04T00:00:00+00:00",
+        "2026-06-04T00:00:00+00:00",
+      );
+      db.close();
+
+      const read = await app.inject({ method: "GET", url: "/v1/discovery/settings" });
+      expect(read.statusCode, read.body).toBe(200);
+      expect(read.json().settings).toMatchObject({
+        boards: ["indeed"],
+        resultsPerSite: 25,
+        hoursOld: 48,
+        source: "database",
+      });
+
+      const update = await app.inject({
+        method: "PATCH",
+        url: "/v1/discovery/settings",
+        payload: {
+          boards: ["linkedin", "zip_recruiter"],
+          resultsPerSite: 100,
+          hoursOld: 96,
+        },
+      });
+      expect(update.statusCode, update.body).toBe(200);
+      expect(update.json().settings).toMatchObject({
+        boards: ["linkedin", "zip_recruiter"],
+        resultsPerSite: 100,
+        hoursOld: 96,
+      });
+
+      const after = new Database(dbPath);
+      const row = after
+        .prepare("SELECT search_config_json FROM discovery_settings WHERE tenant_id = ?")
+        .get("local") as { search_config_json: string };
+      after.close();
+      const stored = JSON.parse(row.search_config_json);
+      expect(stored).toMatchObject({
+        boards: ["linkedin", "zip_recruiter"],
+        defaults: { results_per_site: 100, hours_old: 96, country_indeed: "spain" },
+        queries: [{ query: "Director of Engineering", tier: 1 }],
+        locations: [{ label: "barcelona", location: "Barcelona, Spain", remote: false }],
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("upserts source registry entries and emits source registry events", async () => {
     const { dbPath, dir, cleanup } = withTempDb();
     const app = buildApp(options(dbPath, dir));

@@ -11,6 +11,7 @@ import {
   makeWorkflowRunsPage,
   sampleCredentialsResponse,
   sampleDashboardSummary,
+  sampleDiscoverySettingsResponse,
   sampleHealthResponse,
   sampleProfileResponse,
   sampleSettingsResponse,
@@ -70,6 +71,14 @@ export const handlers = [
   http.get("*/v1/discovery/sources", () =>
     HttpResponse.json({ ok: true, sources: [sampleDiscoverySource] }),
   ),
+  http.get("*/v1/discovery/settings", () => HttpResponse.json(sampleDiscoverySettingsResponse)),
+  http.patch("*/v1/discovery/settings", async ({ request }) => {
+    const body = (await request.json()) as Partial<typeof sampleDiscoverySettingsResponse.settings>;
+    return HttpResponse.json({
+      ok: true,
+      settings: { ...sampleDiscoverySettingsResponse.settings, ...body },
+    });
+  }),
   http.post("*/v1/discovery/sources", async ({ request }) => {
     const body = (await request.json()) as { sourceId: string; displayName: string; kind: string };
     return HttpResponse.json({

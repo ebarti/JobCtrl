@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from jobhunter import config
@@ -308,22 +309,7 @@ def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkey
     conn.commit()
     conn.close()
 
-    search_path = tmp_path / "searches.yaml"
-    search_path.write_text(
-        """
-queries:
-  - query: software engineer
-    tier: 1
-locations:
-  - label: remote
-    location: Remote
-defaults:
-  results_per_site: 25
-""",
-        encoding="utf-8",
-    )
     monkeypatch.setattr(config, "DB_PATH", db_path)
-    monkeypatch.setattr(config, "SEARCH_CONFIG_PATH", search_path)
 
     loaded = config.load_search_config()
 
@@ -342,6 +328,52 @@ defaults:
     )
     assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
     assert loaded["target_region"] == "europe"
+
+
+def test_load_search_config_prefers_database_discovery_settings(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE discovery_settings (
+          tenant_id TEXT PRIMARY KEY,
+          search_config_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO discovery_settings (
+          tenant_id, search_config_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (
+            "local",
+            json.dumps(
+                {
+                    "boards": ["linkedin"],
+                    "defaults": {"results_per_site": 17, "hours_old": 96},
+                    "queries": [{"query": "Database Role", "tier": 1}],
+                    "locations": [{"label": "database", "location": "Barcelona, Spain", "remote": False}],
+                }
+            ),
+            "2026-06-04T00:00:00+00:00",
+            "2026-06-04T00:00:00+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+
+    loaded = config.load_search_config()
+
+    assert loaded["boards"] == ["linkedin"]
+    assert loaded["defaults"]["results_per_site"] == 17
+    assert loaded["queries"][0]["query"] == "Database Role"
+    assert loaded["locations"] == [{"label": "database", "location": "Barcelona, Spain", "remote": False}]
 
 
 def test_structured_profile_target_search_builds_track_and_seniority_aware_queries() -> None:

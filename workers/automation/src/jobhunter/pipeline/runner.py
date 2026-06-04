@@ -1353,7 +1353,7 @@ def _run_discover(
 
     def run_jobspy(run_id: str | None = None) -> dict:
         if search_cfg.get("disable_jobspy", False):
-            console.print("  [dim]JobSpy disabled in searches.yaml[/dim]")
+            console.print("  [dim]JobSpy disabled in discovery settings[/dim]")
             result = {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             source_results["jobspy"] = result
             return result

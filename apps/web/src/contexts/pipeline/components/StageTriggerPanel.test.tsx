@@ -471,6 +471,35 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
   });
 
+  it("describes fully completed partial backend progress as warnings", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            progress: [
+              {
+                stage: "discover" as const,
+                status: "partial" as const,
+                percent: 100,
+                completed: 6,
+                total: 6,
+                currentStep: "Preparation",
+                message: "Preparation complete",
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Discover 100% complete with warnings (6/6): Preparation complete.",
+    );
+    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "100");
+  });
+
   it("shows a stop control for backend running discovery progress", async () => {
     const user = userEvent.setup();
     const cancelWorkflowRun = vi.fn(async (runId: string) => ({

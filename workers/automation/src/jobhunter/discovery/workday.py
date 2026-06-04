@@ -726,8 +726,8 @@ def run_workday_discovery(
     """Main entry point for Workday-based corporate job discovery.
 
     Loads employer registry from config/employers.yaml (or uses the provided
-    dict), then loads search queries from the user's search config to run
-    a full crawl across all employers.
+    dict), then loads search queries from database-backed discovery settings
+    to run a full crawl across all employers.
 
     Args:
         employers: Override the employer registry. If None, loads from YAML.
@@ -756,7 +756,7 @@ def run_workday_discovery(
         query_specs = query_specs_for_source(queries_cfg, "workday")
 
     if not query_specs and queries_cfg:
-        log.warning("No search queries configured in searches.yaml.")
+        log.warning("No search queries configured in Discovery settings.")
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
 
     proxy = search_cfg.get("proxy")

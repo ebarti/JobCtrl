@@ -36,7 +36,6 @@ RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 RESUME_TEMPLATE_PATH = APP_DIR / "resume_template.tex"
 RESUME_STYLE_PATH = APP_DIR / "resume_style.json"
-SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
 ENV_PATH = APP_DIR / ".env"
 
 # Generated output
@@ -54,6 +53,19 @@ CONFIG_DIR = PACKAGE_DIR / "config"
 
 DEFAULT_JOBSPY_BOARDS = ("indeed", "linkedin", "zip_recruiter")
 TARGET_SEARCH_MIN_HOURS_OLD = 24 * 30
+DISCOVERY_SETTINGS_TABLE = "discovery_settings"
+
+DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
+    "boards": list(DEFAULT_JOBSPY_BOARDS),
+    "defaults": {
+        "hours_old": 72,
+        "results_per_site": 50,
+    },
+    "queries": [{"query": "Software Engineer", "tier": 1}],
+    "locations": [{"label": "remote", "location": "Remote", "remote": True}],
+    "location_accept": ["Remote"],
+    "location": {"accept_patterns": ["Remote"], "reject_patterns": []},
+}
 
 _EUROPE_TARGET_MARKERS = (
     "spain",
@@ -227,16 +239,97 @@ def ensure_dirs():
 
 
 def load_search_config() -> dict:
-    """Load search configuration, honoring the profile target-search fields."""
-    import yaml
+    """Load discovery search configuration from SQLite, then overlay target search."""
+    search_cfg = _load_discovery_search_config_from_db()
+    if search_cfg is None:
+        search_cfg = _default_discovery_search_config()
+    return _apply_profile_target_search(search_cfg)
 
-    if not SEARCH_CONFIG_PATH.exists():
-        # Fall back to package-shipped example
-        example = CONFIG_DIR / "searches.example.yaml"
-        if example.exists():
-            return _apply_profile_target_search(yaml.safe_load(example.read_text(encoding="utf-8")) or {})
-        return {}
-    return _apply_profile_target_search(yaml.safe_load(SEARCH_CONFIG_PATH.read_text(encoding="utf-8")) or {})
+
+def _default_discovery_search_config() -> dict:
+    return json.loads(json.dumps(DEFAULT_DISCOVERY_SEARCH_CONFIG))
+
+
+def _ensure_discovery_settings_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {DISCOVERY_SETTINGS_TABLE} (
+            tenant_id          TEXT PRIMARY KEY,
+            search_config_json TEXT NOT NULL,
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _load_discovery_search_config_from_db() -> dict | None:
+    if not DB_PATH.exists():
+        return None
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        _ensure_discovery_settings_table(conn)
+        row = conn.execute(
+            f"""
+            SELECT search_config_json
+            FROM {DISCOVERY_SETTINGS_TABLE}
+            WHERE tenant_id = ?
+            """,
+            (str(LOCAL_TENANT),),
+        ).fetchone()
+        if row is None:
+            conn.commit()
+            return None
+        loaded = json.loads(str(row["search_config_json"] or "{}"))
+        if isinstance(loaded, dict):
+            conn.commit()
+            return loaded
+    except Exception:
+        log.debug("Failed to load discovery settings from SQLite", exc_info=True)
+    finally:
+        if conn is not None:
+            conn.close()
+    return None
+
+
+def _save_discovery_search_config_to_db(search_cfg: dict) -> None:
+    if not DB_PATH.exists():
+        return
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        _ensure_discovery_settings_table(conn)
+        now = datetime_utc_now()
+        conn.execute(
+            f"""
+            INSERT INTO {DISCOVERY_SETTINGS_TABLE} (
+                tenant_id, search_config_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(tenant_id) DO UPDATE SET
+                search_config_json = excluded.search_config_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(LOCAL_TENANT),
+                json.dumps(search_cfg, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        log.debug("Failed to save discovery settings to SQLite", exc_info=True)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def datetime_utc_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -> dict:
@@ -588,7 +681,7 @@ def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) 
         return boards
     if legacy_sites:
         if warn:
-            log.warning("searches.yaml key 'sites' is deprecated for JobSpy board selection; use 'boards'.")
+            log.warning("Discovery settings key 'sites' is deprecated for JobSpy board selection; use 'boards'.")
         return legacy_sites
     return list(DEFAULT_JOBSPY_BOARDS)
 

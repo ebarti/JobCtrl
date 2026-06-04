@@ -14,6 +14,9 @@ describe("DiscoveryView", () => {
     expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Director of Engineering" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Runtime settings" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Indeed" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Results per board")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Discovery controls" }),
     ).toBeInTheDocument();

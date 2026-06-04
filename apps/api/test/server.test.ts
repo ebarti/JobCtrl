@@ -590,6 +590,49 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("preserves partial terminal pipeline progress from durable event payloads", async () => {
+    const db = new Database(options.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        null,
+        "discover",
+        "StageCompleted",
+        "warn",
+        "discover stage partial",
+        "2026-04-29T10:25:00+00:00",
+        JSON.stringify({
+          tenantId: "local",
+          jobId: "pipeline",
+          stage: "discover",
+          status: "partial",
+        }),
+      );
+    } finally {
+      db.close();
+    }
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/dashboard/summary" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().progress).toEqual([
+      {
+        stage: "discover",
+        status: "partial",
+        percent: 100,
+        completed: 1,
+        total: 1,
+        currentStep: null,
+        message: "Stage completed with warnings",
+        updatedAt: "2026-04-29T10:25:00+00:00",
+      },
+    ]);
+
+    await app.close();
+  });
+
   it("returns local-day dashboard deltas for active jobs and applications", async () => {
     const now = new Date().toISOString();
     const db = new Database(options.dbPath);

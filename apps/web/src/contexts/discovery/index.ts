@@ -1,6 +1,7 @@
 export { discoveryKeys } from "./queryKeys.js";
 
 export { DiscoveryProductControls } from "./components/DiscoveryProductControls.js";
+export { DiscoveryRuntimeSettingsPanel } from "./components/DiscoveryRuntimeSettingsPanel.js";
 
 export {
   useDiscoveryFeedbackMutation,
@@ -10,6 +11,8 @@ export {
   usePatchDiscoverySourceStateMutation,
   useUpsertDiscoverySourceMutation,
 } from "./hooks/useDiscoveryProductControlMutations.js";
+export { useDiscoverySettingsQuery } from "./hooks/useDiscoverySettingsQuery.js";
+export { useUpdateDiscoverySettingsMutation } from "./hooks/useUpdateDiscoverySettingsMutation.js";
 
 export { useDeleteJobMutation } from "./hooks/useDeleteJobMutation.js";
 export { useDeleteJobsBulkMutation } from "./hooks/useDeleteJobsBulkMutation.js";

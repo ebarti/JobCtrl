@@ -600,6 +600,16 @@ export const sampleSettingsResponse: SettingsResponse = {
   paths: { settingsPath: "/tmp/jobhunter-test/settings.json" },
 };
 
+export const sampleDiscoverySettingsResponse = {
+  ok: true as const,
+  settings: {
+    boards: ["indeed", "linkedin", "zip_recruiter"] as const,
+    resultsPerSite: 50,
+    hoursOld: 72,
+    source: "database" as const,
+  },
+};
+
 export const sampleWorkflowRun: WorkflowRunSummary = {
   workflowId: "apply-run-1",
   runId: "apply-run-1",
