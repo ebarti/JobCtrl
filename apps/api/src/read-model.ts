@@ -27,6 +27,7 @@ import type {
   DashboardSettings,
   DashboardSummary,
   JobDeletedFilter,
+  JobAuditEntry,
   JobDetail,
   JobListQuery,
   JobSummary,
@@ -575,6 +576,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   );
   const stages = parseStages(detailRow?.stages_json);
   const artifacts = artifactsForJob(db, listRow.job_id);
+  const auditHistory = buildJobAuditHistory(db, listRow.job_id);
   return {
     ok: true,
     job: {
@@ -584,7 +586,1017 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     },
     stages,
     artifacts,
+    auditHistory,
   };
+}
+
+interface JobAuditEventRow extends Record<string, unknown> {
+  event_id: number | string;
+  event_type: string | null;
+  job_url: string | null;
+  stage: string | null;
+  level: string | null;
+  message: string | null;
+  occurred_at: string | null;
+  payload_json: string | null;
+}
+
+interface ApplicationReviewDecisionAuditRow extends Record<string, unknown> {
+  decision_id: string;
+  decision: string;
+  reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+}
+
+interface ApplicationOutcomeAuditRow extends Record<string, unknown> {
+  outcome_id: string;
+  kind: string;
+  source: string;
+  note: string | null;
+  occurred_at: string | null;
+  recorded_at: string | null;
+  suggestion_id: string | null;
+  evidence_id: string | null;
+}
+
+interface OutcomeSuggestionAuditRow extends Record<string, unknown> {
+  suggestion_id: string;
+  suggested_kind: string;
+  confidence: number | null;
+  status: string;
+  created_at: string | null;
+  decided_at: string | null;
+  decision: string | null;
+  decision_reason: string | null;
+  decided_outcome_id: string | null;
+}
+
+function buildJobAuditHistory(db: SqliteDatabase, jobId: string): JobAuditEntry[] {
+  const entries: JobAuditEntry[] = [];
+  const seenReferences = new Set<string>();
+
+  if (tableExists(db, "job_events")) {
+    const rows = allRows<JobAuditEventRow>(
+      db,
+      `SELECT event_id, event_type, job_url, stage, level, message, occurred_at, payload_json
+         FROM job_events
+        WHERE job_url = ?
+           OR (
+             payload_json IS NOT NULL
+             AND json_valid(payload_json)
+             AND (
+               JSON_EXTRACT(payload_json, '$.jobId') = ?
+               OR JSON_EXTRACT(payload_json, '$.job_id') = ?
+               OR JSON_EXTRACT(payload_json, '$.jobKey') = ?
+               OR JSON_EXTRACT(payload_json, '$.job_key') = ?
+             )
+           )
+        ORDER BY occurred_at ASC, event_id ASC`,
+      [jobId, jobId, jobId, jobId, jobId],
+    );
+    for (const row of rows) {
+      const payload = parseJsonRecord(row.payload_json) ?? {};
+      rememberAuditReferences(seenReferences, payload);
+      const entry = jobEventToAuditEntry(row, payload);
+      if (entry) entries.push(entry);
+    }
+  }
+
+  appendReviewDecisionAuditEntries(db, jobId, entries, seenReferences);
+  appendApplicationOutcomeAuditEntries(db, jobId, entries, seenReferences);
+  appendOutcomeSuggestionAuditEntries(db, jobId, entries, seenReferences);
+
+  entries.sort((left, right) => {
+    const leftAt = left.occurredAt ?? "";
+    const rightAt = right.occurredAt ?? "";
+    if (leftAt !== rightAt) return leftAt.localeCompare(rightAt);
+    return left.id.localeCompare(right.id);
+  });
+  return entries;
+}
+
+function rememberAuditReferences(seenReferences: Set<string>, payload: Record<string, unknown>): void {
+  for (const [prefix, keys] of [
+    ["review", ["decisionId", "decision_id"]],
+    ["outcome", ["outcomeId", "outcome_id"]],
+    ["suggestion", ["suggestionId", "suggestion_id"]],
+  ] as const) {
+    const id = payloadText(payload, ...keys);
+    if (id) seenReferences.add(`${prefix}:${id}`);
+  }
+}
+
+function appendReviewDecisionAuditEntries(
+  db: SqliteDatabase,
+  jobId: string,
+  entries: JobAuditEntry[],
+  seenReferences: Set<string>,
+): void {
+  if (!tableExists(db, "application_review_decisions")) return;
+  const rows = allRows<ApplicationReviewDecisionAuditRow>(
+    db,
+    `SELECT decision_id, decision, reason, decided_by, decided_at
+       FROM application_review_decisions
+      WHERE tenant_id = ? AND job_key = ?
+      ORDER BY decided_at ASC, decision_id ASC`,
+    [DEFAULT_TENANT, jobId],
+  );
+  for (const row of rows) {
+    if (seenReferences.has(`review:${row.decision_id}`)) continue;
+    entries.push(
+      makeAuditEntry({
+        id: `review:${row.decision_id}`,
+        category: "apply",
+        tone: "info",
+        title: "Apply review decision recorded",
+        description: applyReviewDecisionDescription(row.decision),
+        occurredAt: row.decided_at,
+        actor: row.decided_by || "user",
+        details: auditDetails(
+          ["Decision", humanizeToken(row.decision)],
+          ["Reason", row.reason ? "Provided" : ""],
+        ),
+      }),
+    );
+  }
+}
+
+function appendApplicationOutcomeAuditEntries(
+  db: SqliteDatabase,
+  jobId: string,
+  entries: JobAuditEntry[],
+  seenReferences: Set<string>,
+): void {
+  if (!tableExists(db, "application_outcomes")) return;
+  const rows = allRows<ApplicationOutcomeAuditRow>(
+    db,
+    `SELECT outcome_id, kind, source, note, occurred_at, recorded_at, suggestion_id, evidence_id
+       FROM application_outcomes
+      WHERE tenant_id = ? AND job_key = ?
+      ORDER BY occurred_at ASC, recorded_at ASC, outcome_id ASC`,
+    [DEFAULT_TENANT, jobId],
+  );
+  for (const row of rows) {
+    if (seenReferences.has(`outcome:${row.outcome_id}`)) continue;
+    entries.push(
+      makeAuditEntry({
+        id: `outcome:${row.outcome_id}`,
+        category: "outcome",
+        tone: outcomeTone(row.kind),
+        title: "Application outcome recorded",
+        description: `Outcome: ${humanizeToken(row.kind)}.`,
+        occurredAt: row.occurred_at ?? row.recorded_at,
+        actor: row.source === "manual" ? "user" : row.source,
+        details: auditDetails(
+          ["Outcome", humanizeToken(row.kind)],
+          ["Source", humanizeToken(row.source)],
+          ["Suggestion", row.suggestion_id],
+          ["Evidence", row.evidence_id],
+          ["Note", row.note ? "Provided" : ""],
+        ),
+      }),
+    );
+  }
+}
+
+function appendOutcomeSuggestionAuditEntries(
+  db: SqliteDatabase,
+  jobId: string,
+  entries: JobAuditEntry[],
+  seenReferences: Set<string>,
+): void {
+  if (!tableExists(db, "application_outcome_suggestions")) return;
+  const rows = allRows<OutcomeSuggestionAuditRow>(
+    db,
+    `SELECT suggestion_id, suggested_kind, confidence, status, created_at, decided_at,
+            decision, decision_reason, decided_outcome_id
+       FROM application_outcome_suggestions
+      WHERE tenant_id = ? AND job_key = ?
+      ORDER BY created_at ASC, suggestion_id ASC`,
+    [DEFAULT_TENANT, jobId],
+  );
+  for (const row of rows) {
+    if (seenReferences.has(`suggestion:${row.suggestion_id}`)) continue;
+    entries.push(
+      makeAuditEntry({
+        id: `suggestion:${row.suggestion_id}`,
+        category: "outcome",
+        tone: row.status === "pending" ? "warning" : "info",
+        title: row.status === "pending" ? "Application outcome suggested" : "Outcome suggestion decided",
+        description:
+          row.status === "pending"
+            ? `Suggested outcome: ${humanizeToken(row.suggested_kind)}.`
+            : `Suggestion ${humanizeToken(row.status)}.`,
+        occurredAt: row.decided_at ?? row.created_at,
+        actor: "system",
+        details: auditDetails(
+          ["Suggested outcome", humanizeToken(row.suggested_kind)],
+          ["Confidence", formatPercent(row.confidence)],
+          ["Decision", humanizeToken(row.decision)],
+          ["Reason", row.decision_reason ? "Provided" : ""],
+          ["Outcome", row.decided_outcome_id],
+        ),
+      }),
+    );
+  }
+}
+
+function jobEventToAuditEntry(
+  row: JobAuditEventRow,
+  payload: Record<string, unknown>,
+): JobAuditEntry | null {
+  const eventId = stringField(row.event_id);
+  const stage = payloadText(payload, "stage") || stringField(row.stage);
+  const base = {
+    id: `event:${eventId}`,
+    occurredAt: stringField(row.occurred_at) || null,
+  };
+
+  switch (row.event_type) {
+    case "JobDiscovered":
+      return makeAuditEntry({
+        ...base,
+        category: "discovery",
+        tone: "success",
+        title: "Job discovered",
+        description: `Found via ${payloadText(payload, "source") || "a configured source"}.`,
+        actor: "system",
+        details: auditDetails(
+          ["Source", payloadText(payload, "source")],
+          ["Employer", payloadText(payload, "employer")],
+          ["Posting URL", payloadText(payload, "postingUrl", "posting_url")],
+        ),
+      });
+    case "JobSourceObserved":
+      return makeAuditEntry({
+        ...base,
+        category: "discovery",
+        tone: "info",
+        title: "Source observed the job",
+        description: `Seen in ${payloadText(payload, "sourceId", "source_id") || "a source run"}.`,
+        actor: "system",
+        details: auditDetails(
+          ["Source", payloadText(payload, "sourceId", "source_id")],
+          ["Observed URL", payloadText(payload, "observedUrl", "observed_url")],
+          ["Run", payloadText(payload, "runId", "run_id")],
+        ),
+      });
+    case "CanonicalJobIdentityResolved":
+      return makeAuditEntry({
+        ...base,
+        category: "discovery",
+        tone: "info",
+        title: "Canonical posting resolved",
+        description: "The posting was linked to its canonical ATS identity.",
+        actor: "system",
+        details: auditDetails(
+          ["ATS", humanizeToken(payloadText(payload, "atsKind", "ats_kind"))],
+          ["Canonical URL", payloadText(payload, "canonicalUrl", "canonical_url")],
+          ["Confidence", formatPercent(payloadNumber(payload, "confidence"))],
+        ),
+      });
+    case "DuplicateJobLinked":
+      return makeAuditEntry({
+        ...base,
+        category: "discovery",
+        tone: "muted",
+        title: "Duplicate linked",
+        description: "A duplicate observation was linked to this job.",
+        actor: "system",
+        details: auditDetails(
+          ["Reason", humanizeToken(payloadText(payload, "reason"))],
+          ["Confidence", formatPercent(payloadNumber(payload, "confidence"))],
+        ),
+      });
+    case "DuplicateJobLinkRejected":
+      return makeAuditEntry({
+        ...base,
+        category: "discovery",
+        tone: "info",
+        title: "Duplicate link rejected",
+        description: "A possible duplicate was reviewed and kept separate.",
+        actor: "system",
+        details: auditDetails(
+          ["Reason", humanizeToken(payloadText(payload, "reason"))],
+          ["Confidence", formatPercent(payloadNumber(payload, "confidence"))],
+          ["Candidate", payloadText(payload, "candidateJobId", "candidate_job_id")],
+        ),
+      });
+    case "DiscoveryFeedbackRecorded":
+      return makeAuditEntry({
+        ...base,
+        category: "discovery",
+        tone: "info",
+        title: "Discovery feedback recorded",
+        description: `Feedback marked this job as ${humanizeToken(payloadText(payload, "kind"))}.`,
+        actor: "user",
+        details: auditDetails(
+          ["Feedback", humanizeToken(payloadText(payload, "kind"))],
+          ["Source", payloadText(payload, "sourceId", "source_id")],
+        ),
+      });
+    case "JobUpdated":
+    case "JobMetadataUpdated":
+      return makeAuditEntry({
+        ...base,
+        category: "job",
+        tone: "info",
+        title: row.event_type === "JobMetadataUpdated" ? "Job metadata refreshed" : "Job details updated",
+        description:
+          row.event_type === "JobMetadataUpdated"
+            ? "Stored job metadata was refreshed from its source."
+            : "Stored job metadata changed.",
+        actor: "system",
+        details: auditDetails(
+          ["Changed fields", changedFieldList(payload)],
+          ["Source", payloadText(payload, "source")],
+        ),
+      });
+    case "JobDeleted":
+      return makeAuditEntry({
+        ...base,
+        category: "job",
+        tone: "warning",
+        title: "Job deleted",
+        description: "The job was removed from active lists.",
+        actor: "user",
+        details: auditDetails(["Reason", humanizeToken(payloadText(payload, "reason"))]),
+      });
+    case "JobRestored":
+      return makeAuditEntry({
+        ...base,
+        category: "job",
+        tone: "success",
+        title: "Job restored",
+        description: "The job was restored to active lists.",
+        actor: "user",
+        details: [],
+      });
+    case "JobHidden":
+      return makeAuditEntry({
+        ...base,
+        category: "job",
+        tone: "muted",
+        title: "Job hidden",
+        description: "The job was hidden from active views.",
+        actor: "user",
+        details: auditDetails(["Reason", humanizeToken(payloadText(payload, "reason"))]),
+      });
+    case "JobUnhidden":
+      return makeAuditEntry({
+        ...base,
+        category: "job",
+        tone: "success",
+        title: "Job unhidden",
+        description: "The job was restored from hidden views.",
+        actor: "user",
+        details: [],
+      });
+    case "JobEnriched":
+      return makeAuditEntry({
+        ...base,
+        category: "enrichment",
+        tone: "success",
+        title: "Posting enriched",
+        description: "Full posting details were captured.",
+        actor: "system",
+        details: auditDetails(
+          ["Extraction tier", humanizeToken(payloadText(payload, "extractionTier", "extraction_tier"))],
+          ["Application URL", payloadText(payload, "applicationUrl", "application_url")],
+        ),
+      });
+    case "EnrichmentFailed":
+      return makeAuditEntry({
+        ...base,
+        category: "enrichment",
+        tone: "danger",
+        title: "Enrichment failed",
+        description: safeAuditText(payloadText(payload, "error")) || "Posting enrichment failed.",
+        actor: "system",
+        details: auditDetails(["Attempt", payloadText(payload, "attemptNumber", "attempt_number")]),
+      });
+    case "PostingContentSnapshotCaptured":
+      return makeAuditEntry({
+        ...base,
+        category: "enrichment",
+        tone: "success",
+        title: "Content snapshot captured",
+        description: "A posting content snapshot was stored for future comparisons.",
+        actor: "system",
+        details: auditDetails(
+          ["Source", payloadText(payload, "sourceId", "source_id")],
+          ["Version", payloadText(payload, "snapshotVersion", "snapshot_version")],
+          ["Extraction tier", humanizeToken(payloadText(payload, "extractionTier", "extraction_tier"))],
+        ),
+      });
+    case "PostingContentSnapshotFailed":
+      return makeAuditEntry({
+        ...base,
+        category: "enrichment",
+        tone: "warning",
+        title: "Content snapshot failed",
+        description: "The system could not capture a posting content snapshot.",
+        actor: "system",
+        details: auditDetails(
+          ["Source", payloadText(payload, "sourceId", "source_id")],
+          ["Failure", humanizeToken(payloadText(payload, "errorClass", "error_class"))],
+          ["Retryable", yesNo(payloadBoolean(payload, "retryable"))],
+        ),
+      });
+    case "JobActiveStateChanged":
+      return makeAuditEntry({
+        ...base,
+        category: "enrichment",
+        tone: payloadText(payload, "activeState", "active_state") === "active" ? "success" : "warning",
+        title: "Posting availability changed",
+        description: `Availability is ${humanizeToken(payloadText(payload, "activeState", "active_state"))}.`,
+        actor: "system",
+        details: auditDetails(
+          ["Previous", humanizeToken(payloadText(payload, "previousState", "previous_state"))],
+          ["Current", humanizeToken(payloadText(payload, "activeState", "active_state"))],
+          ["Verification", humanizeToken(payloadText(payload, "verificationMethod", "verification_method"))],
+        ),
+      });
+    case "ContentDuplicateCandidateDetected":
+      return makeAuditEntry({
+        ...base,
+        category: "enrichment",
+        tone: "warning",
+        title: "Possible content duplicate detected",
+        description: "The posting content looked similar to another job.",
+        actor: "system",
+        details: auditDetails(
+          ["Candidate", payloadText(payload, "candidateJobId", "candidate_job_id")],
+          ["Confidence", formatPercent(payloadNumber(payload, "confidence"))],
+        ),
+      });
+    case "JobScored":
+      return makeAuditEntry({
+        ...base,
+        category: "scoring",
+        tone: scoreTone(payloadNumber(payload, "fitScore", "fit_score")),
+        title: "Job scored",
+        description: `Fit score ${payloadText(payload, "fitScore", "fit_score") || "recorded"}.`,
+        actor: "system",
+        details: auditDetails(
+          ["Fit score", payloadText(payload, "fitScore", "fit_score")],
+          ["Fit band", humanizeToken(payloadText(payload, "fitBand", "fit_band"))],
+          ["Confidence", humanizeToken(payloadText(payload, "confidence"))],
+          ["Eligibility", eligibilityStatus(payload)],
+          ["Keywords", payloadList(payload, "keywords").join(", ")],
+        ),
+      });
+    case "ScoreCorrected":
+      return makeAuditEntry({
+        ...base,
+        category: "scoring",
+        tone: "info",
+        title: "Score corrected",
+        description: `Fit score changed from ${payloadText(payload, "originalScore", "original_score")} to ${payloadText(payload, "correctedScore", "corrected_score")}.`,
+        actor: "user",
+        details: auditDetails(
+          ["Original", payloadText(payload, "originalScore", "original_score")],
+          ["Corrected", payloadText(payload, "correctedScore", "corrected_score")],
+          ["Reason", safeAuditText(payloadText(payload, "reason"))],
+        ),
+      });
+    case "ScoreMarkedStale":
+      return makeAuditEntry({
+        ...base,
+        category: "scoring",
+        tone: "warning",
+        title: "Score marked stale",
+        description: "The score needs review because the scoring policy changed.",
+        actor: "system",
+        details: auditDetails(
+          ["Reason", humanizeToken(payloadText(payload, "staleReason", "stale_reason"))],
+          ["Old policy", payloadText(payload, "oldPolicyVersion", "old_policy_version")],
+          ["New policy", payloadText(payload, "newPolicyVersion", "new_policy_version")],
+        ),
+      });
+    case "ScoreRescoreRequested":
+      return makeAuditEntry({
+        ...base,
+        category: "scoring",
+        tone: "warning",
+        title: "Rescore requested",
+        description: "The score was marked stale and queued for rescoring.",
+        actor: "system",
+        details: auditDetails(
+          ["Reason", humanizeToken(payloadText(payload, "staleReason", "stale_reason"))],
+          ["Old policy", payloadText(payload, "oldPolicyVersion", "old_policy_version")],
+          ["New policy", payloadText(payload, "newPolicyVersion", "new_policy_version")],
+        ),
+      });
+    case "ResumeApproved":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "success",
+        title: "Resume approved",
+        description: "A tailored resume became apply-ready.",
+        actor: "system",
+        details: auditDetails(
+          ["Artifact", payloadText(payload, "artifactId", "artifact_id")],
+          ["Generation", payloadText(payload, "generation")],
+        ),
+      });
+    case "ResumeFailed":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "danger",
+        title: "Resume generation failed",
+        description: "The tailored resume did not pass validation.",
+        actor: "system",
+        details: auditDetails(
+          ["Attempt", payloadText(payload, "attemptNumber", "attempt_number")],
+          ["Validation", payloadList(payload, "validationErrors", "validation_errors").join(", ")],
+        ),
+      });
+    case "CoverLetterGenerated":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "success",
+        title: "Cover letter generated",
+        description: "A tailored cover letter was created.",
+        actor: "system",
+        details: auditDetails(["Artifact", payloadText(payload, "artifactId", "artifact_id")]),
+      });
+    case "PdfRendered":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "success",
+        title: "PDF rendered",
+        description: `${humanizeToken(payloadText(payload, "artifactType", "artifact_type")) || "Material"} PDF was rendered.`,
+        actor: "system",
+        details: auditDetails(["Artifact", payloadText(payload, "artifactId", "artifact_id")]),
+      });
+    case "MaterialsExhausted":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "warning",
+        title: "Materials attempts exhausted",
+        description: "The material generation retry limit was reached.",
+        actor: "system",
+        details: auditDetails(
+          ["Stage", humanizeToken(payloadText(payload, "stage"))],
+          ["Attempts", `${payloadText(payload, "attemptCount", "attempt_count")}/${payloadText(payload, "maxAttempts", "max_attempts")}`],
+        ),
+      });
+    case "TailorRetailorRequested":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "info",
+        title: "Re-tailoring requested",
+        description: "Resume tailoring was requested for this job.",
+        actor: requestActor(payloadText(payload, "requestKind", "request_kind")),
+        details: auditDetails(
+          ["Request", humanizeToken(payloadText(payload, "requestKind", "request_kind"))],
+          ["Reason", safeAuditText(payloadText(payload, "reason"))],
+          ["Current policy", payloadText(payload, "currentPolicyVersion", "current_policy_version")],
+        ),
+      });
+    case "TailoredArtifactsSuppressed":
+      return makeAuditEntry({
+        ...base,
+        category: "materials",
+        tone: "warning",
+        title: "Artifacts retained for audit",
+        description: "Previously active materials were suppressed and kept as historical audit material.",
+        actor: "system",
+        details: auditDetails(
+          ["Reason", humanizeToken(payloadText(payload, "suppressionReason", "suppression_reason"))],
+          ["Artifacts", payloadList(payload, "artifactIds", "artifact_ids").join(", ")],
+          ["Fit score", payloadText(payload, "currentFitScore", "current_fit_score")],
+          ["Threshold", payloadText(payload, "scoreThreshold", "score_threshold")],
+        ),
+      });
+    case "StageStarted":
+      return stageAuditEntry(base, "info", stage, payload, "Stage started", "Work started for this stage.");
+    case "StageCompleted":
+      return stageAuditEntry(base, "success", stage, payload, "Stage completed", "Work completed for this stage.");
+    case "StageFailed":
+      return stageAuditEntry(
+        base,
+        "danger",
+        stage,
+        payload,
+        "Stage failed",
+        safeAuditText(payloadText(payload, "errorMessage", "error_message")) || "This stage failed.",
+      );
+    case "StageExhausted":
+      return stageAuditEntry(base, "warning", stage, payload, "Stage exhausted", "Retry attempts were exhausted.");
+    case "StageReset":
+      return stageAuditEntry(base, "info", stage, payload, "Stage reset", "This stage was reset for another run.");
+    case "StageBlocked":
+      return stageAuditEntry(base, "warning", stage, payload, "Stage blocked", "This stage is blocked by prerequisites.");
+    case "StageSkipped":
+      return stageAuditEntry(
+        base,
+        "muted",
+        stage,
+        payload,
+        "Stage skipped",
+        safeAuditText(payloadText(payload, "reason")) || "This stage was skipped.",
+      );
+    case "StageCanceled":
+      return stageAuditEntry(
+        base,
+        "warning",
+        stage,
+        payload,
+        "Stage canceled",
+        safeAuditText(payloadText(payload, "reason")) || "This stage was canceled.",
+      );
+    case "PreparationWorkItemQueued":
+    case "PreparationWorkItemStarted":
+    case "PreparationWorkItemCompleted":
+    case "PreparationWorkItemFailed":
+      return preparationWorkItemAuditEntry(base, row.event_type, payload);
+    case "ApplyRunStarted":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: payloadBoolean(payload, "dryRun", "dry_run") ? "info" : "warning",
+        title: payloadBoolean(payload, "dryRun", "dry_run") ? "Dry-run apply started" : "Apply run started",
+        description: payloadBoolean(payload, "dryRun", "dry_run")
+          ? "A dry-run application attempt started."
+          : "An application submission attempt started.",
+        actor: "system",
+        details: auditDetails(
+          ["Run", payloadText(payload, "runId", "run_id")],
+          ["Model", payloadText(payload, "model")],
+          ["Dry run", yesNo(payloadBoolean(payload, "dryRun", "dry_run"))],
+        ),
+      });
+    case "ApplicationSubmitted":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "success",
+        title: "Application submitted",
+        description: "The application was marked submitted.",
+        actor: "system",
+        details: auditDetails(
+          ["Run", payloadText(payload, "runId", "run_id")],
+          ["Confidence", formatPercent(payloadNumber(payload, "verificationConfidence", "verification_confidence"))],
+        ),
+      });
+    case "ApplicationManuallyMarked":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "success",
+        title: "Application marked applied",
+        description: "The job was manually marked as applied.",
+        actor: "user",
+        details: auditDetails(["Reason", safeAuditText(payloadText(payload, "reason"))]),
+      });
+    case "ApplicationFailed":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "danger",
+        title: "Application attempt failed",
+        description: "The apply run did not complete successfully.",
+        actor: "system",
+        details: auditDetails(
+          ["Run", payloadText(payload, "runId", "run_id")],
+          ["Attempt", payloadText(payload, "attemptNumber", "attempt_number")],
+        ),
+      });
+    case "ApplicationEmailFeedbackIngested":
+      return makeAuditEntry({
+        ...base,
+        category: "outcome",
+        tone: "info",
+        title: "Application email feedback ingested",
+        description: `Suggested outcome: ${humanizeToken(payloadText(payload, "suggestedKind", "suggested_kind"))}.`,
+        actor: "system",
+        details: auditDetails(
+          ["Provider", humanizeToken(payloadText(payload, "provider"))],
+          ["Classification confidence", formatPercent(payloadNumber(payload, "classificationConfidence", "classification_confidence"))],
+          ["Link confidence", formatPercent(payloadNumber(payload, "linkConfidence", "link_confidence"))],
+        ),
+      });
+    case "ApplyReviewDecisionRecorded":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "info",
+        title: "Apply review decision recorded",
+        description: applyReviewDecisionDescription(payloadText(payload, "decision")),
+        actor: "user",
+        details: auditDetails(
+          ["Decision", humanizeToken(payloadText(payload, "decision"))],
+          ["Reason", payloadBoolean(payload, "reasonPresent", "reason_present") ? "Provided" : ""],
+        ),
+      });
+    case "ApplicationOutcomeRecorded":
+      return makeAuditEntry({
+        ...base,
+        category: "outcome",
+        tone: outcomeTone(payloadText(payload, "kind")),
+        title: "Application outcome recorded",
+        description: `Outcome: ${humanizeToken(payloadText(payload, "kind"))}.`,
+        actor: payloadText(payload, "source") === "manual" ? "user" : payloadText(payload, "source"),
+        details: auditDetails(
+          ["Outcome", humanizeToken(payloadText(payload, "kind"))],
+          ["Source", humanizeToken(payloadText(payload, "source"))],
+          ["Evidence", payloadText(payload, "evidenceId", "evidence_id")],
+          ["Note", payloadBoolean(payload, "notePresent", "note_present") ? "Provided" : ""],
+        ),
+      });
+    case "OutcomeSuggestionDecided":
+      return makeAuditEntry({
+        ...base,
+        category: "outcome",
+        tone: "info",
+        title: "Outcome suggestion decided",
+        description: `Suggestion ${humanizeToken(payloadText(payload, "decision"))}.`,
+        actor: "user",
+        details: auditDetails(
+          ["Decision", humanizeToken(payloadText(payload, "decision"))],
+          ["Outcome", payloadText(payload, "outcomeId", "outcome_id")],
+          ["Reason", payloadBoolean(payload, "reasonPresent", "reason_present") ? "Provided" : ""],
+        ),
+      });
+    case "ActionStarted":
+      return legacyActionAuditEntry(base, "info", stage, payload, "Action started", "A local job action started.");
+    case "ActionSucceeded":
+      return legacyActionAuditEntry(base, "success", stage, payload, "Action completed", "A local job action completed.");
+    case "ActionFailed":
+      return legacyActionAuditEntry(
+        base,
+        "danger",
+        stage,
+        payload,
+        "Action failed",
+        safeAuditText(payloadText(payload, "error")) || "A local job action failed.",
+      );
+    default:
+      return null;
+  }
+}
+
+function legacyActionAuditEntry(
+  base: Pick<JobAuditEntry, "id" | "occurredAt">,
+  tone: JobAuditEntry["tone"],
+  stage: string,
+  payload: Record<string, unknown>,
+  title: string,
+  description: string,
+): JobAuditEntry {
+  return makeAuditEntry({
+    ...base,
+    category: "pipeline",
+    tone,
+    title: `${title}: ${stageLabel(stage)}`,
+    description,
+    actor: "system",
+    details: auditDetails(
+      ["Stage", stageLabel(stage)],
+      ["Action", payloadText(payload, "action_id", "actionId")],
+      ["Duration", durationLabel(payloadNumber(payload, "duration_ms", "durationMs"))],
+      ["Dry run", yesNo(payloadBoolean(payload, "dry_run", "dryRun"))],
+    ),
+  });
+}
+
+function stageAuditEntry(
+  base: Pick<JobAuditEntry, "id" | "occurredAt">,
+  tone: JobAuditEntry["tone"],
+  stage: string,
+  payload: Record<string, unknown>,
+  title: string,
+  description: string,
+): JobAuditEntry {
+  return makeAuditEntry({
+    ...base,
+    category: "pipeline",
+    tone,
+    title: `${title}: ${stageLabel(stage)}`,
+    description,
+    actor: "system",
+    details: auditDetails(
+      ["Stage", stageLabel(stage)],
+      ["Attempt", payloadText(payload, "attemptNumber", "attempt_number")],
+      ["Duration", durationLabel(payloadNumber(payload, "durationMs", "duration_ms"))],
+      ["Blocked by", payloadList(payload, "blockedBy", "blocked_by").map(stageLabel).join(", ")],
+      ["Retryable", yesNo(payloadBoolean(payload, "retryable"))],
+    ),
+  });
+}
+
+function preparationWorkItemAuditEntry(
+  base: Pick<JobAuditEntry, "id" | "occurredAt">,
+  eventType: string,
+  payload: Record<string, unknown>,
+): JobAuditEntry {
+  const kind = payloadText(payload, "kind");
+  const status =
+    eventType === "PreparationWorkItemQueued"
+      ? "queued"
+      : eventType === "PreparationWorkItemStarted"
+        ? "started"
+        : eventType === "PreparationWorkItemCompleted"
+          ? "completed"
+          : "failed";
+  return makeAuditEntry({
+    ...base,
+    category: "pipeline",
+    tone: status === "failed" ? "danger" : status === "completed" ? "success" : "info",
+    title: `Preparation ${status}: ${preparationKindLabel(kind)}`,
+    description:
+      status === "failed"
+        ? safeAuditText(payloadText(payload, "error", "errorMessage", "error_message")) ||
+          "Preparation work failed."
+        : "Preparation work moved through the queue.",
+    actor: "system",
+    details: auditDetails(
+      ["Work item", preparationKindLabel(kind)],
+      ["Attempt", payloadText(payload, "attemptNumber", "attempt_number")],
+      ["Reason", humanizeToken(payloadText(payload, "reason"))],
+    ),
+  });
+}
+
+function makeAuditEntry(entry: JobAuditEntry): JobAuditEntry {
+  return {
+    ...entry,
+    title: safeAuditText(entry.title, 120) || "Activity recorded",
+    description: entry.description ? safeAuditText(entry.description, 220) : null,
+    actor: entry.actor ? safeAuditText(entry.actor, 80) : null,
+    details: entry.details.slice(0, 8),
+  };
+}
+
+function auditDetails(
+  ...items: Array<readonly [label: string, value: unknown]>
+): JobAuditEntry["details"] {
+  return items.flatMap(([label, value]) => {
+    const safeValue = safeAuditText(value);
+    return safeValue ? [{ label, value: safeValue }] : [];
+  });
+}
+
+function safeAuditText(value: unknown, maxLength = 180): string {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    return safeAuditText(value.map((item) => safeAuditText(item, 60)).filter(Boolean).join(", "), maxLength);
+  }
+  if (typeof value === "object") return "";
+  const normalized = String(value).replace(/\s+/g, " ").trim();
+  if (!normalized || normalized === "null" || normalized === "undefined") return "";
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
+}
+
+function payloadText(payload: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = payload[key];
+    const text = safeAuditText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function payloadNumber(payload: Record<string, unknown>, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const value = nullableNumber(payload[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function payloadBoolean(payload: Record<string, unknown>, ...keys: string[]): boolean | null {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes"].includes(normalized)) return true;
+      if (["false", "0", "no"].includes(normalized)) return false;
+    }
+  }
+  return null;
+}
+
+function payloadList(payload: Record<string, unknown>, ...keys: string[]): string[] {
+  for (const key of keys) {
+    const value = payload[key];
+    if (Array.isArray(value)) {
+      return value.map((item) => safeAuditText(item, 80)).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function changedFieldList(payload: Record<string, unknown>): string {
+  const changedFields = payload.changedFields ?? payload.changed_fields;
+  if (!isRecord(changedFields)) return "";
+  return Object.keys(changedFields).map(humanizeToken).join(", ");
+}
+
+function eligibilityStatus(payload: Record<string, unknown>): string {
+  const eligibility = payload.eligibility;
+  if (!isRecord(eligibility)) return "";
+  return humanizeToken(safeAuditText(eligibility.status));
+}
+
+function applyReviewDecisionDescription(decision: string): string {
+  switch (decision) {
+    case "approve_submit":
+      return "Human review approved a real application submission.";
+    case "approve_dry_run":
+      return "Human review approved a dry-run application.";
+    case "defer":
+      return "Human review deferred this application.";
+    case "decline":
+      return "Human review declined this application.";
+    case "reset":
+      return "Human review reset the application decision.";
+    default:
+      return "Human review recorded an application decision.";
+  }
+}
+
+function outcomeTone(kind: unknown): JobAuditEntry["tone"] {
+  const normalized = safeAuditText(kind).toLowerCase();
+  if (["offer", "interview", "assessment", "recruiter_reply", "applied_confirmation"].includes(normalized)) {
+    return "success";
+  }
+  if (["rejection", "bounced", "withdrawn"].includes(normalized)) return "warning";
+  return "info";
+}
+
+function scoreTone(score: number | null): JobAuditEntry["tone"] {
+  if (score === null) return "info";
+  if (score >= 8) return "success";
+  if (score >= 6) return "info";
+  return "warning";
+}
+
+function requestActor(kind: string): string {
+  return kind === "single_job" || kind === "repair" ? "user" : "system";
+}
+
+function stageLabel(stage: string): string {
+  const normalized = stage.trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "discover") return "Discover";
+  if (normalized === "enrich") return "Enrich";
+  if (normalized === "score") return "Score";
+  if (normalized === "tailor") return "Tailor resume";
+  if (normalized === "cover") return "Cover letter";
+  if (normalized === "apply") return "Apply";
+  return humanizeToken(stage);
+}
+
+function preparationKindLabel(kind: string): string {
+  switch (kind) {
+    case "score_job":
+      return "Score job";
+    case "tailor_resume":
+      return "Tailor resume";
+    case "suppress_tailored_artifacts":
+      return "Suppress old materials";
+    default:
+      return humanizeToken(kind) || "Preparation work";
+  }
+}
+
+function humanizeToken(value: unknown): string {
+  const text = safeAuditText(value);
+  if (!text) return "";
+  return text
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null) return "";
+  const percent = value <= 1 ? value * 100 : value;
+  return `${Math.round(percent)}%`;
+}
+
+function durationLabel(value: number | null): string {
+  if (value === null) return "";
+  if (value < 1000) return `${value} ms`;
+  return `${Math.round(value / 1000)} s`;
+}
+
+function yesNo(value: boolean | null): string {
+  if (value === null) return "";
+  return value ? "Yes" : "No";
 }
 
 function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRow | null {

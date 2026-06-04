@@ -496,6 +496,7 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         }
 
     monkeypatch.setattr(workflow_mod.workflow, "execute_activity", fake_execute_activity)
+    monkeypatch.setattr(workflow_mod.workflow, "info", lambda: SimpleNamespace(workflow_id="unit-test-workflow"))
 
     await workflow_mod._execute_stage(
         "score",

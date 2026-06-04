@@ -59,6 +59,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Dashboard KPI drilldowns stop matching their Jobs list filters | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/KpiGrid.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Apply-run drawers show roadmap placeholder copy instead of persisted timeline events | `apps/api/test/server.test.ts`; `apps/web/src/contexts/apply/components/ApplyRunTimeline.test.tsx` |
 | Activity events overload Dashboard or stop being inspectable from the Debug tab | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/DashboardView.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx`; `apps/web/src/views/debug/DebugView.test.tsx` |
+| Job detail audit history misses user-relevant lifecycle milestones, duplicates raw event payloads, or exposes debug messages, raw notes, email bodies, or local paths | `apps/api/test/server.test.ts`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx` |
 | Jobs delete/hide lifecycle regresses, causing temporary deletes not to resurface, hidden jobs to leak into active/deleted views, or permanent deletes to leave suppressing tombstones behind | `apps/api/test/server.test.ts`; `workers/automation/tests/test_discovery_identity.py`; `apps/web/src/views/jobs/JobBulkActions.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Destructive UI workflows touch real user data | `apps/api/test/qa-workflow.test.ts` with `pnpm qa:seed` |
 | Source registry compatibility drops legacy discovery config | `workers/automation/tests/test_source_registry.py` covers packaged `sites.yaml` migration, `employers.yaml` migration, JobSpy `boards` selection, and the one-release legacy `sites` alias warning |
@@ -137,8 +138,9 @@ records `approve_submit`, dry-run approval, defer, decline, and reset decisions
 without starting apply/browser automation, and refreshes the queue after each
 decision. Open a job detail drawer and verify manual outcomes save with a
 canonical timestamp, local notes render only in the outcome timeline, pending
-outcome suggestions can be accepted, corrected, or ignored, and no raw email
-body text appears in event/activity payloads.
+outcome suggestions can be accepted, corrected, or ignored, and the job audit
+history shows review/outcome milestones without raw notes, email body text,
+debug statements, or raw event names.
 
 For Gmail feedback changes, use fake Gmail clients or seeded worker fixtures.
 Do not scan a real mailbox for QA automation. Verify that the scan is bounded

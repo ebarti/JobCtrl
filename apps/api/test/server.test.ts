@@ -724,6 +724,129 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns a curated per-job audit history without raw debug events", async () => {
+    const jobUrl = "https://example.com/jobs/ready";
+    const db = new Database(options.dbPath);
+    const insertAuditEvent = db.prepare(
+      "INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    insertAuditEvent.run(
+      jobUrl,
+      "discover",
+      "JobDiscovered",
+      "info",
+      "raw discovery message",
+      "2026-04-29T10:00:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        jobId: jobUrl,
+        postingUrl: jobUrl,
+        source: "workday:example",
+        employer: "ExampleCo",
+        discoveredAt: "2026-04-29T10:00:00+00:00",
+      }),
+    );
+    insertAuditEvent.run(
+      jobUrl,
+      "score",
+      "JobScored",
+      "info",
+      "raw score message",
+      "2026-04-29T10:02:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        jobId: jobUrl,
+        fitScore: 9,
+        fitBand: "excellent",
+        confidence: "high",
+        eligibility: { status: "eligible" },
+        keywords: ["platform reliability"],
+      }),
+    );
+    insertAuditEvent.run(
+      jobUrl,
+      "apply",
+      "ApplyReviewDecisionRecorded",
+      "info",
+      "debug apply review event",
+      "2026-04-29T10:03:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        jobKey: jobUrl,
+        decisionId: "decision-1",
+        decision: "approve_dry_run",
+        reasonPresent: true,
+      }),
+    );
+    insertAuditEvent.run(
+      jobUrl,
+      "apply",
+      "ApplicationOutcomeRecorded",
+      "info",
+      "debug outcome event",
+      "2026-04-29T10:04:00+00:00",
+      JSON.stringify({
+        tenantId: "local",
+        jobKey: jobUrl,
+        outcomeId: "outcome-1",
+        kind: "interview",
+        source: "manual",
+        notePresent: true,
+      }),
+    );
+    insertAuditEvent.run(
+      jobUrl,
+      "apply",
+      "RawDebugEvent",
+      "debug",
+      "raw debug statement that should not render",
+      "2026-04-29T10:05:00+00:00",
+      JSON.stringify({ tenantId: "local", jobKey: jobUrl, secret: "payload_json" }),
+    );
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const body = response.json();
+    expect(body.auditHistory.map((entry: { title: string }) => entry.title)).toEqual([
+      "Job discovered",
+      "Job scored",
+      "Apply review decision recorded",
+      "Application outcome recorded",
+    ]);
+    expect(body.auditHistory[0]).toMatchObject({
+      category: "discovery",
+      tone: "success",
+      description: "Found via workday:example.",
+      actor: "system",
+      details: expect.arrayContaining([
+        { label: "Source", value: "workday:example" },
+        { label: "Employer", value: "ExampleCo" },
+      ]),
+    });
+    expect(body.auditHistory[2]).toMatchObject({
+      category: "apply",
+      description: "Human review approved a dry-run application.",
+      actor: "user",
+    });
+    expect(body.auditHistory[3]).toMatchObject({
+      category: "outcome",
+      tone: "success",
+      description: "Outcome: Interview.",
+      actor: "user",
+    });
+    expect(JSON.stringify(body.auditHistory)).not.toContain("RawDebugEvent");
+    expect(JSON.stringify(body.auditHistory)).not.toContain("raw debug statement");
+    expect(JSON.stringify(body.auditHistory)).not.toContain("payload_json");
+
+    await app.close();
+  });
+
   it("soft-deletes jobs, hides them from active lists, and restores them", async () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent("https://example.com/jobs/ready");

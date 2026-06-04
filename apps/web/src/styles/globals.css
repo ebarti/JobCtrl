@@ -2353,6 +2353,97 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.job-audit-timeline {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job-audit-entry {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.job-audit-marker {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--info);
+}
+
+.job-audit-entry.tone-success .job-audit-marker {
+  background: var(--ok);
+}
+
+.job-audit-entry.tone-warning .job-audit-marker {
+  background: var(--warn);
+}
+
+.job-audit-entry.tone-danger .job-audit-marker {
+  background: var(--danger);
+}
+
+.job-audit-entry.tone-muted .job-audit-marker {
+  background: var(--muted);
+}
+
+.job-audit-body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.job-audit-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+
+.job-audit-head strong {
+  overflow-wrap: anywhere;
+}
+
+.job-audit-head time,
+.job-audit-actor {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.job-audit-description {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.job-audit-details {
+  display: grid;
+  gap: 4px 12px;
+  margin: 2px 0 0;
+}
+
+.job-audit-details div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.job-audit-details dt {
+  color: var(--muted);
+}
+
+.job-audit-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .preformatted {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

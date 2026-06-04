@@ -73,4 +73,16 @@ describe("<JobDetailDrawer>", () => {
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
   });
+
+  it("renders user-facing audit history without raw debug event copy", async () => {
+    renderJobDetailDrawer("job-1");
+
+    const history = await screen.findByLabelText("Job audit history");
+    expect(history).toHaveTextContent("Job discovered");
+    expect(history).toHaveTextContent("Found via lever:acme.");
+    expect(history).toHaveTextContent("Job scored");
+    expect(history).toHaveTextContent("Apply review decision recorded");
+    expect(history).not.toHaveTextContent("payload_json");
+    expect(history).not.toHaveTextContent("ApplyReviewDecisionRecorded");
+  });
 });

@@ -191,7 +191,7 @@ tables that back every read-model endpoint:
 |------------------------------|-------------------------------------------------------------------|
 | `job_list_projections`       | One row per job — title, employer, current stage/state, fit score, materials presence, apply status. |
 | `dashboard_projections`      | Singleton aggregates: counts, funnel per stage, source breakdown, score distribution. |
-| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array. |
+| `job_detail_projections`     | Per-job description preview, score reasoning, full stages array, and curated audit history assembled from job events plus append-only apply feedback records. |
 | `artifact_list_projections`  | All generated artifacts (resume txt/pdf, cover txt/pdf) with provenance. |
 | `apply_run_projections`      | Apply-run telemetry with denormalised job context and event timeline. |
 | `discovery_run_projections`  | Scheduled discovery-run status, source ids, counts, and retry metadata. |
@@ -205,6 +205,11 @@ projections from canonical aggregate state, and advance the watermark in the
 same transaction. Both processes write to the same tables; SQLite handles the
 concurrent advances. This kills the per-stage `LEFT JOIN ... COALESCE` soup
 that the read-model used to assemble at request time.
+
+Job detail audit history is assembled at read time from allow-listed lifecycle
+events and append-only apply review/outcome records. It is a user-facing audit
+timeline, not a debug log: raw event payloads, debug messages, local paths, raw
+outcome notes, and email body text stay out of the response.
 
 ## Runtime Boundaries
 
