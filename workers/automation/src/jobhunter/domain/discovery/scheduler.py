@@ -88,6 +88,41 @@ class DiscoveryRunCounts:
 
 
 @dataclass(frozen=True)
+class DiscoveryRunProgress:
+    completed: int = 0
+    total: int = 0
+    unit: str = ""
+    current_query: str | None = None
+    current_location: str | None = None
+    new_jobs: int | None = None
+    existing_jobs: int | None = None
+    filtered_jobs: int | None = None
+    error_count: int | None = None
+    raw_total: int | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "completed": self.completed,
+            "total": self.total,
+            "unit": self.unit,
+            "current_query": self.current_query,
+            "currentQuery": self.current_query,
+            "current_location": self.current_location,
+            "currentLocation": self.current_location,
+            "new_jobs": self.new_jobs,
+            "newJobs": self.new_jobs,
+            "existing_jobs": self.existing_jobs,
+            "existingJobs": self.existing_jobs,
+            "filtered_jobs": self.filtered_jobs,
+            "filteredJobs": self.filtered_jobs,
+            "error_count": self.error_count,
+            "errorCount": self.error_count,
+            "raw_total": self.raw_total,
+            "rawTotal": self.raw_total,
+        }
+
+
+@dataclass(frozen=True)
 class DiscoveryRun:
     tenant_id: TenantId
     run_id: str
@@ -95,10 +130,13 @@ class DiscoveryRun:
     profile_snapshot_id: str | None
     status: DiscoveryRunStatus
     counts: DiscoveryRunCounts = field(default_factory=DiscoveryRunCounts)
+    progress: DiscoveryRunProgress = field(default_factory=DiscoveryRunProgress)
     error_classes: tuple[str, ...] = ()
     started_at: str = ""
+    updated_at: str | None = None
     completed_at: str | None = None
     failed_at: str | None = None
+    workflow_id: str | None = None
 
     @classmethod
     def start(
@@ -109,6 +147,7 @@ class DiscoveryRun:
         source_ids: Iterable[str],
         started_at: str,
         profile_snapshot_id: str | None = None,
+        workflow_id: str | None = None,
     ) -> "DiscoveryRun":
         materialized = tuple(dict.fromkeys(source_ids))
         if not run_id.strip():
@@ -122,6 +161,22 @@ class DiscoveryRun:
             profile_snapshot_id=profile_snapshot_id,
             status=DiscoveryRunStatus.RUNNING,
             started_at=started_at,
+            updated_at=started_at,
+            workflow_id=workflow_id,
+        )
+
+    def with_progress(
+        self,
+        *,
+        progress: DiscoveryRunProgress,
+        counts: DiscoveryRunCounts | None = None,
+        updated_at: str,
+    ) -> "DiscoveryRun":
+        return replace(
+            self,
+            counts=counts or self.counts,
+            progress=progress,
+            updated_at=updated_at,
         )
 
     def complete(
@@ -137,6 +192,7 @@ class DiscoveryRun:
             counts=counts,
             error_classes=tuple(dict.fromkeys(error_classes)),
             completed_at=completed_at,
+            updated_at=completed_at,
         )
 
     def fail(
@@ -150,6 +206,7 @@ class DiscoveryRun:
             status=DiscoveryRunStatus.FAILED,
             error_classes=(error_class,),
             failed_at=failed_at,
+            updated_at=failed_at,
         )
 
 

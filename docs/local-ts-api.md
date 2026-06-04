@@ -312,7 +312,7 @@ version. Lowering it can make existing persisted scores eligible for
 
 Discover honors the profile Target search saved from the Discovery page.
 Target roles replace the active discovery query list with exact role queries;
-target tracks, seniority floors, functions, and specializations add structured
+target tracks, seniority floors, role areas, and specializations add structured
 intent for deterministic recall expansion. The Discovery UI constrains target
 tracks to IC, management, and executive, and constrains seniority floors to the
 engineering IC, management, and executive ladder choices. Recall queries keep

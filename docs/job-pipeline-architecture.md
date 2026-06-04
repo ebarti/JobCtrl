@@ -209,7 +209,25 @@ Non-apply stages run under `_run_stage_observed()` in
 
 Discover source steps use `_run_discovery_source()`, a source-level variant that
 also emits `DiscoveryRunStarted`, `DiscoveryRunCompleted`, and
-`DiscoveryRunFailed` rows for source-quality aggregation.
+`DiscoveryRunFailed` rows for source-quality aggregation. Long-running sources
+own durable progress through the same discovery-run aggregate. For example,
+JobSpy reports completed search combinations, current query/location, observed
+raw rows, accepted new rows, duplicates, filtered rows, and source errors while
+the crawl is still running. The dashboard progress read model renders that
+source-level detail instead of only showing the coarse stage count.
+
+Discover has a no-overlap Temporal policy. The source stage is allowed to run
+longer than the default 30-minute activity window, and the workflow does not
+retry the whole Discover activity after timeout/cancellation. Source adapters
+are responsible for idempotency, source-quality retry, progress, and
+cooperative cancellation. This prevents a still-running external crawl from
+being duplicated by an automatic activity retry.
+
+When a user stops a running Discover workflow, the API emits a failed progress
+event and terminalizes the matching `discovery_runs` row so the UI, audit log,
+and source-quality projections agree that the source is no longer active.
+Worker startup recovery applies the same terminal state to stale source runs
+left running by a prior worker process.
 
 ### Dry Run
 
@@ -384,7 +402,7 @@ classDiagram
 - Reads source-quality snapshots to schedule and budget sources.
 - Reads board/runtime discovery settings from SQLite `discovery_settings`, then
   overlays target search from `candidate_profiles`. Target roles remain exact
-  role guidance. Target tracks, seniority floors, functions, and
+  role guidance. Target tracks, seniority floors, role areas, and
   specializations add structured intent for deterministic recall expansion.
   Discovery settings store normalized track values (`ic`, `management`,
   `executive`) and normalized engineering seniority-floor values before the

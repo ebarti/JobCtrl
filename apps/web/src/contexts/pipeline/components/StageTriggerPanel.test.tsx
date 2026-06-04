@@ -89,10 +89,10 @@ describe("StageTriggerPanel", () => {
   it("renders a matching tabpanel for every stage trigger", () => {
     renderWithProviders(<StageTriggerPanel />);
 
-    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(3);
+    expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(2);
     expect(screen.queryByRole("tab", { name: "Enrich" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Score" })).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Tailor" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Tailor" })).not.toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Cover" })).not.toBeInTheDocument();
 
     for (const tab of screen.getAllByRole("tab")) {
@@ -119,20 +119,6 @@ describe("StageTriggerPanel", () => {
     expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Rescore")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
-    expect(screen.getByLabelText("Limit")).toBeInTheDocument();
-    expect(screen.getByLabelText("Workers")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum score")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum score")).toHaveAttribute("min", "6");
-    expect(screen.getByLabelText("Validation mode")).toBeInTheDocument();
-    expect(screen.getByLabelText("Tailor models")).toBeInTheDocument();
-    expect(screen.getByLabelText("Judge model")).toBeInTheDocument();
-    expect(screen.getByLabelText("Minimum judge score")).toBeInTheDocument();
-    expect(screen.getByLabelText("Re-tailor")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Apply model")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Headless browser")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Continuous")).not.toBeInTheDocument();
 
@@ -379,41 +365,15 @@ describe("StageTriggerPanel", () => {
     expect(await screen.findByText("Apply queued successfully (run apply-run-123).")).toBeInTheDocument();
   });
 
-  it("blocks Tailor submissions below the default-safe score floor", async () => {
-    const user = userEvent.setup();
-    const runPipelineStages = vi.fn(async (_request: unknown): Promise<PipelineStageRunResponse> => ({
-      ok: true as const,
-      action: "run_stage" as const,
-      status: "queued",
-      jobKey: "pipeline",
-      count: 1,
-      command: {
-        stages: ["tailor"],
-        limit: 25,
-        workers: 1,
-        minScore: 6,
-        validationMode: "normal" as const,
-        dryRun: true,
-        rescore: false,
-        retailor: false,
-        headless: false,
-        model: "default",
-        llmModel: DEFAULT_PIPELINE_LLM_MODEL,
-        tailorModels: [],
-        continuous: false,
-      },
-      actions: [],
-    }));
-    renderWithProviders(<StageTriggerPanel />, {
-      ports: buildTestPorts({ api: { runPipelineStages } }),
-    });
+  it("does not expose Tailor as a product pipeline stage", () => {
+    renderWithProviders(<StageTriggerPanel />);
 
-    await user.click(screen.getByRole("tab", { name: "Tailor" }));
-    await user.clear(screen.getByLabelText("Minimum score"));
-    await user.type(screen.getByLabelText("Minimum score"), "5");
-    await user.click(screen.getByRole("button", { name: "Run Tailor" }));
-
-    expect(runPipelineStages).not.toHaveBeenCalled();
+    expect(screen.queryByRole("tab", { name: "Tailor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run Tailor" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tailor models")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Judge model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Minimum judge score")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Re-tailor")).not.toBeInTheDocument();
   });
 
   it("shows a live starting status while the worker request is pending", async () => {
@@ -522,6 +482,49 @@ describe("StageTriggerPanel", () => {
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "60");
   });
 
+  it("shows source-level discovery progress instead of opaque stage counts", async () => {
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          dashboardSummary: vi.fn(async () => ({
+            ...sampleDashboardSummary,
+            progress: [
+              {
+                stage: "discover" as const,
+                status: "running" as const,
+                percent: 8,
+                completed: 0,
+                total: 6,
+                currentStep: "JobSpy",
+                message: "JobSpy search completed",
+                updatedAt: new Date().toISOString(),
+                sourceProgress: {
+                  completed: 35,
+                  total: 72,
+                  unit: "searches",
+                  currentQuery: "Head of Platform",
+                  currentLocation: "Spain (remote)",
+                  newJobs: 13,
+                  existingJobs: 46,
+                  filteredJobs: 412,
+                  errorCount: 0,
+                  rawTotal: 1000,
+                },
+              },
+            ],
+          })),
+        },
+      }),
+    });
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(
+      "Discover 8% complete: JobSpy 35/72 searches done: Head of Platform in Spain (remote); 13 new, 46 dupes, 412 filtered, 0 errors, 1000 found.",
+    );
+    expect(status).not.toHaveTextContent("(0/6)");
+    expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "8");
+  });
+
   it("describes partial preparation progress as automatically retried and actionable", async () => {
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({
@@ -546,7 +549,7 @@ describe("StageTriggerPanel", () => {
     });
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Discover 100% complete with warnings (1/1): Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; items that exhaust retry attempts need attention in Tailor.",
+      "Discover 100% complete with warnings (1/1): Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; items that exhaust retry attempts need attention from the job details.",
     );
     expect(screen.getByRole("progressbar", { name: "Discover progress" })).toHaveAttribute("value", "100");
   });

@@ -236,6 +236,110 @@ def test_discover_emits_source_events(monkeypatch):
     ]
 
 
+def test_discover_persists_jobspy_source_progress(monkeypatch):
+    events: list[tuple[str, str, str, dict]] = []
+
+    def run_jobspy(
+        cfg=None,
+        limit=0,
+        run_id=None,
+        progress_callback=None,
+        cancel_event=None,
+    ):
+        assert run_id is not None
+        assert progress_callback is not None
+        assert cancel_event is not None
+        progress_callback(
+            {
+                "completed": 35,
+                "total": 72,
+                "unit": "searches",
+                "current_query": "Head of Platform",
+                "current_location": "Spain (remote)",
+                "new_jobs": 13,
+                "existing_jobs": 46,
+                "filtered_jobs": 412,
+                "errors": 0,
+                "raw_total": 1000,
+                "message": "JobSpy search completed",
+            }
+        )
+        return {"new": 13, "existing": 46, "errors": 0, "filtered": 412, "raw_total": 1000}
+
+    monkeypatch.setattr(
+        runner.config,
+        "load_search_config",
+        lambda: {
+            "queries": [{"query": "Head of Platform"}],
+            "locations": [{"label": "spain", "location": "Spain (remote)", "remote": True}],
+            "defaults": {"results_per_site": 100},
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_record_pipeline_event",
+        lambda stage, event_type, level, message, payload=None: events.append(
+            (stage, event_type, level, {**(payload or {}), "message": message})
+        ),
+        raising=False,
+    )
+    monkeypatch.setitem(sys.modules, "jobhunter.discovery.jobspy", SimpleNamespace(run_discovery=run_jobspy))
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.workday",
+        SimpleNamespace(run_workday_discovery=lambda employers=None, workers=1, limit=0, run_id=None: None),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "jobhunter.discovery.smartextract",
+        SimpleNamespace(run_smart_extract=lambda sites=None, workers=1, limit=0: None),
+    )
+
+    result = runner._run_discover(workers=2, limit=1000)
+
+    assert result["jobspy"] == "ok"
+    progress_events = [
+        payload for _stage, event_type, _level, payload in events if event_type == "StageProgress"
+    ]
+    assert progress_events
+    progress = progress_events[0]["progress"]
+    assert progress["percent"] > 0
+    assert progress["sourceProgress"] == {
+        "completed": 35,
+        "total": 72,
+        "unit": "searches",
+        "current_query": "Head of Platform",
+        "currentQuery": "Head of Platform",
+        "current_location": "Spain (remote)",
+        "currentLocation": "Spain (remote)",
+        "new_jobs": 13,
+        "newJobs": 13,
+        "existing_jobs": 46,
+        "existingJobs": 46,
+        "filtered_jobs": 412,
+        "filteredJobs": 412,
+        "error_count": 0,
+        "errorCount": 0,
+        "raw_total": 1000,
+        "rawTotal": 1000,
+    }
+
+
+def test_discover_source_progress_does_not_round_active_work_to_zero():
+    progress = runner._discovery_progress_payload(
+        completed=0,
+        total=6,
+        current_step="JobSpy",
+        source_progress=runner.DiscoveryRunProgress(
+            completed=2,
+            total=72,
+            unit="searches",
+        ),
+    )["progress"]
+
+    assert progress["percent"] == 1
+
+
 def test_discover_runs_hygiene_before_and_after_sources(monkeypatch):
     calls: list[str] = []
 

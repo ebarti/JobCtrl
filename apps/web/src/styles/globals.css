@@ -566,27 +566,6 @@ textarea {
   margin: 0 0 18px;
 }
 
-.discovery-stage-panel {
-  margin: 0 0 18px;
-}
-
-.stage-discovery-link {
-  display: flex;
-  align-items: center;
-  padding: 12px;
-}
-
-.stage-discovery-link a {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--ink);
-  padding: 8px 12px;
-  color: var(--paper);
-  font-weight: 650;
-}
-
 .discovery-controls {
   margin: 0 0 18px;
 }

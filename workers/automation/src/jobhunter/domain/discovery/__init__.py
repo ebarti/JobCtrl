@@ -48,6 +48,7 @@ from jobhunter.domain.discovery.source_registry import (
 from jobhunter.domain.discovery.scheduler import (
     DiscoveryRun,
     DiscoveryRunCounts,
+    DiscoveryRunProgress,
     DiscoveryRunStatus,
     DiscoverySchedule,
     DiscoveryScheduler,
@@ -90,6 +91,7 @@ __all__ = [
     "validate_locator_candidate",
     "DiscoveryRun",
     "DiscoveryRunCounts",
+    "DiscoveryRunProgress",
     "DiscoveryRunStatus",
     "DiscoverySchedule",
     "DiscoveryScheduler",

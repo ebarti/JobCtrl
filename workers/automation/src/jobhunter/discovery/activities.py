@@ -6,6 +6,7 @@ Temporal workflow consults the same stage runner the CLI uses.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +56,8 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
         expected_db_path=payload.expected_db_path,
     )
 
+    cancel_event = threading.Event()
+
     def _do() -> dict[str, Any]:
         return run_pipeline(
             stages=["discover"],
@@ -68,12 +71,14 @@ async def discover_activity(payload: DiscoverActivityInput) -> DiscoverActivityO
             tailor_judge_min_score=payload.tailor_judge_min_score,
             llm_model=payload.llm_model,
             workflow_id=payload.workflow_id,
+            cancel_event=cancel_event,
         )
 
     result = await run_blocking_with_heartbeat(
         _do,
         starting_message="discover starting",
         progress_message="discover still running",
+        on_cancel=cancel_event.set,
     )
     stages = list(result.get("stages") or [])
     errors = dict(result.get("errors") or {})

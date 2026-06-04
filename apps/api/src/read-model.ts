@@ -2860,7 +2860,7 @@ function parseProgressPayload(
     return parseFallbackProgressPayload(row, source.status ?? source.progressStatus);
   }
   const rawPercent = nullableNumber(source.percent ?? source.progressPercent);
-  const percent = rawPercent === null
+  const basePercent = rawPercent === null
     ? Math.max(0, Math.min(100, Math.round((completed / total) * 100)))
     : Math.max(0, Math.min(100, Math.round(rawPercent)));
   const runId = stringField(source.runId ?? source.run_id ?? payload.runId ?? payload.run_id);
@@ -2870,17 +2870,59 @@ function parseProgressPayload(
       ?? payload.workflowId
       ?? payload.workflow_id,
   );
+  const sourceDetail = progressSourceDetail(source);
   return {
     stage: row.stage,
     status: progressStatus(source.status ?? source.progressStatus, row.event_type),
     ...(runId ? { runId } : {}),
     ...(workflowId ? { workflowId } : {}),
-    percent,
+    percent: progressPercentWithSource(basePercent, sourceDetail.sourceProgress),
     completed,
     total,
     currentStep: nullableString(source.currentStep ?? source.current_step),
     message: stringField(source.message) || stringField(row.message),
+    ...sourceDetail,
     updatedAt: nullableString(row.occurred_at),
+  };
+}
+
+function progressPercentWithSource(
+  percent: number,
+  sourceProgress: DashboardSummary["progress"][number]["sourceProgress"],
+): number {
+  if (percent !== 0 || !sourceProgress) {
+    return percent;
+  }
+  return sourceProgress.completed > 0 && sourceProgress.total > 0 ? 1 : percent;
+}
+
+function progressSourceDetail(source: Record<string, unknown>): Pick<DashboardSummary["progress"][number], "sourceProgress"> {
+  const detail = isRecord(source.sourceProgress)
+    ? source.sourceProgress
+    : isRecord(source.source_progress)
+      ? source.source_progress
+      : null;
+  if (!detail) {
+    return {};
+  }
+  const completed = nullableNumber(detail.completed ?? detail.sourceCompleted);
+  const total = nullableNumber(detail.total ?? detail.sourceTotal);
+  if (completed === null || total === null || total <= 0) {
+    return {};
+  }
+  return {
+    sourceProgress: {
+      completed,
+      total,
+      unit: nullableString(detail.unit),
+      currentQuery: nullableString(detail.currentQuery ?? detail.current_query),
+      currentLocation: nullableString(detail.currentLocation ?? detail.current_location),
+      newJobs: nullableNumber(detail.newJobs ?? detail.new_jobs),
+      existingJobs: nullableNumber(detail.existingJobs ?? detail.existing_jobs),
+      filteredJobs: nullableNumber(detail.filteredJobs ?? detail.filtered_jobs),
+      errorCount: nullableNumber(detail.errorCount ?? detail.error_count ?? detail.errors),
+      rawTotal: nullableNumber(detail.rawTotal ?? detail.raw_total),
+    },
   };
 }
 

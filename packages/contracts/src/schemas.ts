@@ -1155,6 +1155,18 @@ export interface PipelineProgressSummary {
   total: number;
   currentStep: string | null;
   message: string;
+  sourceProgress?: {
+    completed: number;
+    total: number;
+    unit: string | null;
+    currentQuery: string | null;
+    currentLocation: string | null;
+    newJobs: number | null;
+    existingJobs: number | null;
+    filteredJobs: number | null;
+    errorCount: number | null;
+    rawTotal: number | null;
+  };
   updatedAt: string | null;
 }
 

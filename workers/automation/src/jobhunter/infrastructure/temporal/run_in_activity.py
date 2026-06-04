@@ -37,6 +37,8 @@ async def run_blocking_with_heartbeat(
     starting_message: str,
     progress_message: str = "still running",
     poll_interval: float = 15.0,
+    on_cancel: Callable[[], None] | None = None,
+    cancel_wait_seconds: float = 30.0,
 ) -> _T:
     """Execute ``fn()`` in a worker thread, heartbeating every ``poll_interval``.
 
@@ -52,6 +54,17 @@ async def run_blocking_with_heartbeat(
                 return await asyncio.wait_for(asyncio.shield(task), timeout=poll_interval)
             except asyncio.TimeoutError:
                 activity.heartbeat(progress_message)
+    except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
+        if cancel_wait_seconds > 0:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=cancel_wait_seconds)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:  # noqa: BLE001 - cancellation cleanup must not mask cancellation
+                pass
+        raise
     finally:
         # Final heartbeat so a future post-loop delay regression doesn't
         # surface as a phantom dead activity. Never raise from cleanup.

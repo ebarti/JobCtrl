@@ -34,6 +34,7 @@ from jobhunter.database import init_db, get_connection, get_stats
 from jobhunter.domain.discovery.scheduler import (
     DiscoveryRun,
     DiscoveryRunCounts,
+    DiscoveryRunProgress,
     DiscoverySchedule,
     DiscoveryScheduler,
     ScheduledSource,
@@ -217,18 +218,33 @@ def _discovery_progress_payload(
     current_step: str,
     status: str = "running",
     message: str | None = None,
+    source_progress: DiscoveryRunProgress | None = None,
 ) -> dict[str, Any]:
     bounded_total = max(1, total)
     bounded_completed = min(max(0, completed), bounded_total)
+    source_fraction = 0.0
+    if source_progress is not None and source_progress.total > 0:
+        source_fraction = min(max(0.0, source_progress.completed / source_progress.total), 1.0)
+    percent = round(((bounded_completed + source_fraction) / bounded_total) * 100)
+    if (
+        percent == 0
+        and status == "running"
+        and source_progress is not None
+        and source_progress.completed > 0
+        and source_progress.total > 0
+    ):
+        percent = 1
     progress: dict[str, Any] = {
         "completed": bounded_completed,
         "total": bounded_total,
-        "percent": round((bounded_completed / bounded_total) * 100),
+        "percent": percent,
         "currentStep": current_step,
         "status": status,
     }
     if message:
         progress["message"] = message
+    if source_progress is not None:
+        progress["sourceProgress"] = source_progress.to_dict()
     return {"progress": progress}
 
 
@@ -443,6 +459,7 @@ def _run_discovery_source(
     started_at = utc_now()
     conn = get_connection()
     run_repo = SqliteDiscoveryRunRepository(conn)
+    workflow_id = _current_workflow_id()
     _record_source_state_changes(conn, scheduled_sources)
     discovery_run = DiscoveryRun.start(
         tenant_id=LOCAL_TENANT,
@@ -450,6 +467,7 @@ def _run_discovery_source(
         source_ids=source_ids,
         profile_snapshot_id=None,
         started_at=started_at,
+        workflow_id=workflow_id,
     )
     run_repo.save(discovery_run)
     _record_discovery_run_event(
@@ -705,6 +723,58 @@ def _record_discovery_source_attempts(
                 **(metadata or {}),
             },
         )
+
+
+def _record_discovery_source_progress(
+    *,
+    source: str,
+    label: str,
+    run_id: str,
+    source_ids: tuple[str, ...],
+    progress_completed: int,
+    progress_total: int,
+    source_progress: DiscoveryRunProgress,
+    message: str,
+) -> None:
+    now = utc_now()
+    counts = DiscoveryRunCounts(
+        total=source_progress.raw_total if source_progress.raw_total is not None else 0,
+        new_jobs=source_progress.new_jobs if source_progress.new_jobs is not None else 0,
+        existing_jobs=source_progress.existing_jobs if source_progress.existing_jobs is not None else 0,
+    )
+    try:
+        conn = get_connection()
+        SqliteDiscoveryRunRepository(conn).save_progress(
+            tenant_id=LOCAL_TENANT,
+            run_id=run_id,
+            counts=counts,
+            progress=source_progress,
+            updated_at=now,
+            workflow_id=_current_workflow_id(),
+        )
+        conn.commit()
+    except Exception:
+        log.exception("Failed to persist discovery source progress for %s", run_id)
+
+    _record_pipeline_event(
+        "discover",
+        "StageProgress",
+        "info",
+        message,
+        {
+            "source": source,
+            "sourceLabel": label,
+            "runId": run_id,
+            "sourceIds": list(source_ids),
+            **_discovery_progress_payload(
+                completed=progress_completed,
+                total=progress_total,
+                current_step=label,
+                message=message,
+                source_progress=source_progress,
+            ),
+        },
+    )
 
 
 def _source_role(source: ScheduledSource) -> str:
@@ -1185,6 +1255,29 @@ def _optional_float(value: object) -> float | None:
         return None
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _first_present(*values: object) -> object:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _row_get(row: Any, key: str, index: int) -> Any:
     if hasattr(row, "keys") and key in row.keys():
         return row[key]
@@ -1204,10 +1297,12 @@ def _run_discover(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
     source_results: dict[str, Any] = {}
+    cancel_event = cancel_event or threading.Event()
     conn = init_db()
     try:
         seed_discovery_control_queues(conn, config.load_source_registry())
@@ -1376,6 +1471,8 @@ def _run_discover(
             signature = inspect.signature(run_discovery)
         except (TypeError, ValueError):
             accepts_run_id = False
+            accepts_progress_callback = False
+            accepts_cancel_event = False
         else:
             accepts_run_id = (
                 "run_id" in signature.parameters
@@ -1384,14 +1481,65 @@ def _run_discover(
                     for param in signature.parameters.values()
                 )
             )
-        if accepts_run_id:
-            source_results["jobspy"] = run_discovery(
-                cfg=jobspy_cfg,
-                limit=jobspy_limit,
-                run_id=run_id,
+            accepts_progress_callback = (
+                "progress_callback" in signature.parameters
+                or any(
+                    param.kind is inspect.Parameter.VAR_KEYWORD
+                    for param in signature.parameters.values()
+                )
             )
-        else:
-            source_results["jobspy"] = run_discovery(cfg=jobspy_cfg, limit=jobspy_limit)
+            accepts_cancel_event = (
+                "cancel_event" in signature.parameters
+                or any(
+                    param.kind is inspect.Parameter.VAR_KEYWORD
+                    for param in signature.parameters.values()
+                )
+            )
+
+        run_kwargs: dict[str, Any] = {"cfg": jobspy_cfg, "limit": jobspy_limit}
+        if accepts_run_id:
+            run_kwargs["run_id"] = run_id
+        if accepts_progress_callback and run_id:
+            def record_jobspy_progress(snapshot: dict[str, Any]) -> None:
+                error_count = _first_present(
+                    snapshot.get("errors"),
+                    snapshot.get("error_count"),
+                    snapshot.get("errorCount"),
+                )
+                _record_discovery_source_progress(
+                    source="jobspy",
+                    label="JobSpy",
+                    run_id=run_id,
+                    source_ids=tuple(item.source_id for item in jobspy_sources if item.should_run),
+                    progress_completed=progress_completed,
+                    progress_total=progress_total,
+                    source_progress=DiscoveryRunProgress(
+                        completed=int(snapshot.get("completed") or 0),
+                        total=int(snapshot.get("total") or 0),
+                        unit=str(snapshot.get("unit") or "searches"),
+                        current_query=_optional_text(
+                            _first_present(snapshot.get("current_query"), snapshot.get("currentQuery"))
+                        ),
+                        current_location=_optional_text(
+                            _first_present(snapshot.get("current_location"), snapshot.get("currentLocation"))
+                        ),
+                        new_jobs=_optional_int(_first_present(snapshot.get("new_jobs"), snapshot.get("newJobs"))),
+                        existing_jobs=_optional_int(
+                            _first_present(snapshot.get("existing_jobs"), snapshot.get("existingJobs"))
+                        ),
+                        filtered_jobs=_optional_int(
+                            _first_present(snapshot.get("filtered_jobs"), snapshot.get("filteredJobs"))
+                        ),
+                        error_count=_optional_int(error_count),
+                        raw_total=_optional_int(_first_present(snapshot.get("raw_total"), snapshot.get("rawTotal"))),
+                    ),
+                    message=str(snapshot.get("message") or "JobSpy progress updated"),
+                )
+
+            run_kwargs["progress_callback"] = record_jobspy_progress
+        if accepts_cancel_event:
+            run_kwargs["cancel_event"] = cancel_event
+        source_results["jobspy"] = run_discovery(**run_kwargs)
         return source_results["jobspy"]
 
     stats["jobspy"] = _run_discovery_source(
@@ -1659,6 +1807,7 @@ def _build_stage_kwargs(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Build the keyword arguments for a stage runner."""
     kwargs: dict = {}
@@ -1674,6 +1823,8 @@ def _build_stage_kwargs(
         kwargs["tailor_models"] = tailor_models
         kwargs["tailor_judge_model"] = tailor_judge_model
         kwargs["tailor_judge_min_score"] = tailor_judge_min_score
+        if cancel_event is not None:
+            kwargs["cancel_event"] = cancel_event
     elif stage == "score":
         kwargs["rescore"] = rescore
         kwargs["llm_model"] = llm_model
@@ -1996,6 +2147,7 @@ def _run_stage_streaming(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
+        cancel_event=stop_event,
     )
     upstreams = _UPSTREAMS[stage]
 
@@ -2093,7 +2245,8 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
                     tailor_models: tuple[str, ...] = (),
                     tailor_judge_model: str | None = None,
-                    tailor_judge_min_score: float | None = None) -> dict:
+                    tailor_judge_min_score: float | None = None,
+                    cancel_event: threading.Event | None = None) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -2130,6 +2283,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                 tailor_models=tailor_models,
                 tailor_judge_model=tailor_judge_model,
                 tailor_judge_min_score=tailor_judge_min_score,
+                cancel_event=cancel_event,
             )
             result, elapsed, status = _run_stage_observed(
                 name,
@@ -2161,10 +2315,11 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
                    tailor_models: tuple[str, ...] = (),
                    tailor_judge_model: str | None = None,
-                   tailor_judge_min_score: float | None = None) -> dict:
+                   tailor_judge_min_score: float | None = None,
+                   cancel_event: threading.Event | None = None) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
-    stop_event = threading.Event()
+    stop_event = cancel_event or threading.Event()
     pipeline_start = time.time()
 
     console.print("\n  [bold cyan]STREAMING MODE[/bold cyan] — stages run concurrently")
@@ -2184,9 +2339,9 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
         t = threading.Thread(
             target=_run_stage_streaming,
             args=(name, tracker, stop_event, min_score, workers,
-                  validation_mode, limit, rescore, retailor,
-                  llm_model, tailor_models, tailor_judge_model,
-                  tailor_judge_min_score),
+            validation_mode, limit, rescore, retailor,
+            llm_model, tailor_models, tailor_judge_model,
+            tailor_judge_min_score),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -2242,6 +2397,7 @@ def run_pipeline(
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
     workflow_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run pipeline stages.
 
@@ -2284,6 +2440,7 @@ def run_pipeline(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            cancel_event=cancel_event,
         )
     finally:
         if isinstance(previous_workflow_id, str) and previous_workflow_id:
@@ -2306,6 +2463,7 @@ def _run_pipeline_inner(
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     # Bootstrap
     load_env()
@@ -2379,6 +2537,7 @@ def _run_pipeline_inner(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            cancel_event=cancel_event,
         )
     else:
         result = _run_sequential(
@@ -2393,6 +2552,7 @@ def _run_pipeline_inner(
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
             tailor_judge_min_score=tailor_judge_min_score,
+            cancel_event=cancel_event,
         )
 
     # Summary table

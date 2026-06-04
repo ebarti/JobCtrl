@@ -160,6 +160,10 @@ function sentenceDetail(detail: string): string {
   return /[.!?]$/.test(detail) ? detail : `${detail}.`;
 }
 
+function formatProgressNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
 const DISCOVERY_SOURCE_LABELS: Record<string, string> = {
   jobspy: "JobSpy",
   workday: "Workday",
@@ -186,7 +190,7 @@ function userFacingProgressDetail(stage: Stage, progress: StageProgress): string
   ) {
     return (
       "Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; "
-      + "items that exhaust retry attempts need attention in Tailor."
+      + "items that exhaust retry attempts need attention from the job details."
     );
   }
   const orphanedDiscoveryMatch = detail.match(
@@ -201,25 +205,65 @@ function userFacingProgressDetail(stage: Stage, progress: StageProgress): string
   return detail;
 }
 
+function sourceProgressStatusDetail(progress: StageProgress): string | null {
+  const source = progress.sourceProgress;
+  if (!source) return null;
+  const unit = source.unit || "items";
+  const currentStep = progress.currentStep ? `${progress.currentStep} ` : "";
+  const count = `${formatProgressNumber(source.completed)}/${formatProgressNumber(source.total)}`;
+  const searchLabel = source.currentQuery && source.currentLocation
+    ? `: ${source.currentQuery} in ${source.currentLocation}`
+    : source.currentQuery
+      ? `: ${source.currentQuery}`
+      : "";
+  const counters: string[] = [];
+  if (source.newJobs != null) counters.push(`${formatProgressNumber(source.newJobs)} new`);
+  if (source.existingJobs != null) counters.push(`${formatProgressNumber(source.existingJobs)} dupes`);
+  if (source.filteredJobs != null) counters.push(`${formatProgressNumber(source.filteredJobs)} filtered`);
+  if (source.errorCount != null) counters.push(`${formatProgressNumber(source.errorCount)} errors`);
+  if (source.rawTotal != null) counters.push(`${formatProgressNumber(source.rawTotal)} found`);
+  const counterText = counters.length > 0 ? `; ${counters.join(", ")}` : "";
+  return `${currentStep}${count} ${unit} done${searchLabel}${counterText}`;
+}
+
 function stageProgressStatusLine(stage: Stage, progress: StageProgress): string {
   const stageLabel = labelForStage(stage);
   const percent = progress.percent === null ? null : `${progress.percent}%`;
   const count = `${progress.completed}/${progress.total}`;
-  const detail = userFacingProgressDetail(stage, progress);
+  const detail = sourceProgressStatusDetail(progress) ?? userFacingProgressDetail(stage, progress);
   const detailSentence = sentenceDetail(detail);
+  const showStageCount = progress.sourceProgress === undefined;
 
   if (progress.status === "failed") {
+    if (!showStageCount) {
+      return percent
+        ? `${stageLabel} not running. Last progress ${percent}: ${detailSentence}`
+        : `${stageLabel} not running. Last progress: ${detailSentence}`;
+    }
     return percent
       ? `${stageLabel} not running. Last progress ${percent} (${count}): ${detailSentence}`
       : `${stageLabel} not running. Last progress ${count}: ${detailSentence}`;
   }
   if (progress.status === "partial") {
+    if (!showStageCount) {
+      return percent
+        ? `${stageLabel} ${percent} complete with warnings: ${detailSentence}`
+        : `${stageLabel} progress with warnings: ${detailSentence}`;
+    }
     return percent
       ? `${stageLabel} ${percent} complete with warnings (${count}): ${detailSentence}`
       : `${stageLabel} progress with warnings (${count}): ${detailSentence}`;
   }
   if (progress.status === "succeeded" || progress.percent === 100) {
+    if (!showStageCount) {
+      return `${stageLabel} 100% complete: ${detailSentence}`;
+    }
     return `${stageLabel} 100% complete (${count}): ${detailSentence}`;
+  }
+  if (!showStageCount) {
+    return percent
+      ? `${stageLabel} ${percent} complete: ${detailSentence}`
+      : `${stageLabel} progress: ${detailSentence}`;
   }
   return percent
     ? `${stageLabel} ${percent} complete (${count}): ${detailSentence}`
@@ -245,7 +289,7 @@ function StageProgressLine({ stage, progress }: { readonly stage: Stage; readonl
 }
 
 const APPLY_MODEL_OPTIONS = ["default", "opus", "sonnet"] as const;
-const USER_FACING_PIPELINE_STAGES = ["discover", "tailor", "apply"] as const satisfies readonly PipelineRunStage[];
+const USER_FACING_PIPELINE_STAGES = ["discover", "apply"] as const satisfies readonly PipelineRunStage[];
 const USER_FACING_PIPELINE_STAGE_SET: ReadonlySet<PipelineRunStage> = new Set(USER_FACING_PIPELINE_STAGES);
 
 interface StageControlSet {

@@ -1451,6 +1451,20 @@ function recordPipelineWorkflowCancelRequested(dbPath: string, workflowId: strin
     if (!stage) return;
     const sourceRunId = textValue(payload.runId ?? payload.run_id);
     const message = `${labelForStage(stage)} canceled`;
+    const now = new Date().toISOString();
+    const progressPayload = {
+      completed: numberValue(progress.completed ?? progress.progressCompleted) ?? 0,
+      total: numberValue(progress.total ?? progress.progressTotal) ?? 1,
+      percent: numberValue(progress.percent ?? progress.progressPercent) ?? 0,
+      currentStep: textValue(progress.currentStep ?? progress.current_step) || null,
+      status: "failed",
+      message,
+      ...(isRecord(progress.sourceProgress)
+        ? { sourceProgress: progress.sourceProgress }
+        : isRecord(progress.source_progress)
+          ? { sourceProgress: progress.source_progress }
+          : {}),
+    };
     insertJobEvent(db, {
       jobUrl: null,
       stage,
@@ -1467,18 +1481,10 @@ function recordPipelineWorkflowCancelRequested(dbPath: string, workflowId: strin
         errorCode: "pipeline_stage_canceled",
         errorMessage: message,
         retryable: true,
-        progress: {
-          completed: numberValue(progress.completed ?? progress.progressCompleted) ?? 0,
-          total: numberValue(progress.total ?? progress.progressTotal) ?? 1,
-          percent: numberValue(progress.percent ?? progress.progressPercent) ?? 0,
-          currentStep: textValue(progress.currentStep ?? progress.current_step) || null,
-          status: "failed",
-          message,
-        },
+        progress: progressPayload,
       },
     });
     if (stage === "discover" && sourceRunId) {
-      const now = new Date().toISOString();
       insertJobEvent(db, {
         jobUrl: null,
         stage,
@@ -1496,12 +1502,51 @@ function recordPipelineWorkflowCancelRequested(dbPath: string, workflowId: strin
           retryable: true,
         },
       });
+      markDiscoveryRunCanceled(db, {
+        runId: sourceRunId,
+        workflowId,
+        failedAt: now,
+        progress: progressPayload,
+      });
     }
   } catch {
     // Cancellation should still reach Temporal even if local projection repair fails.
   } finally {
     db?.close();
   }
+}
+
+function markDiscoveryRunCanceled(
+  db: ApiDb,
+  cancellation: {
+    runId: string;
+    workflowId: string;
+    failedAt: string;
+    progress: Record<string, unknown>;
+  },
+): void {
+  if (!tableExists(db, "discovery_runs")) return;
+  const columns = columnNames(db, "discovery_runs");
+  const assignments: string[] = ["status = ?", "error_classes_json = ?", "failed_at = ?"];
+  const values: unknown[] = ["failed", JSON.stringify(["canceled"]), cancellation.failedAt];
+
+  if (columns.has("updated_at")) {
+    assignments.push("updated_at = ?");
+    values.push(cancellation.failedAt);
+  }
+  if (columns.has("progress_json")) {
+    assignments.push("progress_json = ?");
+    values.push(JSON.stringify(cancellation.progress));
+  }
+  if (columns.has("workflow_id")) {
+    assignments.push("workflow_id = COALESCE(workflow_id, ?)");
+    values.push(cancellation.workflowId);
+  }
+
+  values.push(cancellation.runId);
+  db.prepare(`UPDATE discovery_runs SET ${assignments.join(", ")} WHERE run_id = ? AND status = 'running'`).run(
+    ...values,
+  );
 }
 
 function recordPipelineWorkflowEvent(

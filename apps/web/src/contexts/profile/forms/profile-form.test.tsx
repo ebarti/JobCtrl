@@ -105,10 +105,12 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("checkbox", { name: "Junior Engineer" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Senior Engineering Manager / Head of Engineering" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "CTO" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Target functions 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Role areas 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Role areas 1")).toHaveAttribute("placeholder", "Engineering, security, platform");
     expect(screen.getByLabelText("Specializations 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Target location 1")).toBeInTheDocument();
+    expect(screen.getByText("Locations and work models")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
     expect(screen.getByLabelText("Remote")).toBeInTheDocument();
     expect(screen.getByLabelText("Hybrid")).toBeInTheDocument();

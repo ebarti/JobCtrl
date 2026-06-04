@@ -200,7 +200,7 @@ def test_recover_orphaned_discovery_runs_marks_stale_pipeline_progress_failed(tm
         assert recovered == 1
         old_row = conn.execute(
             """
-            SELECT status, failed_at, error_classes_json
+            SELECT status, failed_at, updated_at, error_classes_json
             FROM discovery_runs
             WHERE run_id = ?
             """,
@@ -208,6 +208,7 @@ def test_recover_orphaned_discovery_runs_marks_stale_pipeline_progress_failed(tm
         ).fetchone()
         assert old_row["status"] == "failed"
         assert old_row["failed_at"] == "2026-05-21T20:10:00+00:00"
+        assert old_row["updated_at"] == "2026-05-21T20:10:00+00:00"
         assert json.loads(old_row["error_classes_json"]) == ["ORPHANED_DISCOVERY_RUN"]
 
         fresh_row = conn.execute(
