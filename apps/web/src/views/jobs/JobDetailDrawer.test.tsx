@@ -7,7 +7,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -74,10 +74,25 @@ describe("<JobDetailDrawer>", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/jobs"));
   });
 
-  it("renders user-facing audit history without raw debug event copy", async () => {
+  it("renders user-facing audit history as the collapsed final drawer section", async () => {
+    const user = userEvent.setup();
     renderJobDetailDrawer("job-1");
 
-    const history = await screen.findByLabelText("Job audit history");
+    const auditSummary = await screen.findByText("Audit history");
+    const auditDisclosure = auditSummary.closest("details");
+    expect(auditDisclosure).not.toBeNull();
+    expect(auditDisclosure).not.toHaveAttribute("open");
+
+    const drawer = screen.getByLabelText("Job details");
+    const sections = Array.from(drawer.querySelectorAll("section.section"));
+    expect(sections.at(-1)).toContainElement(auditDisclosure);
+    expect(sections.at(-1)).toHaveTextContent("Audit history");
+    expect(sections.at(-2)).toHaveTextContent("Description");
+
+    await user.click(auditSummary);
+    expect(auditDisclosure).toHaveAttribute("open");
+
+    const history = within(auditDisclosure as HTMLElement).getByLabelText("Job audit history");
     expect(history).toHaveTextContent("Job discovered");
     expect(history).toHaveTextContent("Found via lever:acme.");
     expect(history).toHaveTextContent("Job scored");

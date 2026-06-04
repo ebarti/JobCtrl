@@ -1,5 +1,5 @@
 import { JobHunterApiError } from "@jobhunter/api-client";
-import type { StageSummary } from "@jobhunter/contracts";
+import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
@@ -37,6 +37,24 @@ function preparationStages(stages: readonly StageSummary[]): StageSummary[] {
   return stages.filter((stage) => stage.stage !== "apply");
 }
 
+function JobAuditHistorySection({
+  entries,
+}: {
+  readonly entries: readonly JobAuditEntry[];
+}) {
+  return (
+    <section className="section job-audit-section">
+      <details className="job-audit-disclosure">
+        <summary>
+          <span className="job-audit-summary-title">Audit history</span>
+          <span className="tag muted">{entries.length} events</span>
+        </summary>
+        <JobAuditHistory entries={entries} />
+      </details>
+    </section>
+  );
+}
+
 export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
   const navigate = useNavigate();
   const search = useSearch({ from: "/jobs" });
@@ -69,9 +87,6 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
               currentStage={detail.job.currentStage}
               nextAction={detail.job.nextAction}
             />
-            <Section title="Audit history">
-              <JobAuditHistory entries={detail.auditHistory} />
-            </Section>
             <Section title="Preparation diagnostics">
               <StageTimeline stages={preparationStages(detail.stages)} />
             </Section>
@@ -132,6 +147,7 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
             <Section title="Description">
               <JobDescription text={detail.job.descriptionPreview} />
             </Section>
+            <JobAuditHistorySection entries={detail.auditHistory} />
           </>
         ) : null}
       </div>

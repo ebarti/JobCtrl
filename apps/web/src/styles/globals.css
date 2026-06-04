@@ -2272,6 +2272,23 @@ textarea {
   font-size: 13px;
 }
 
+.job-audit-disclosure > summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  cursor: pointer;
+}
+
+.job-audit-disclosure[open] > summary {
+  margin-bottom: 10px;
+}
+
+.job-audit-summary-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .detail-list {
   display: grid;
   gap: 10px;
