@@ -73,6 +73,13 @@ const STATE_RANK: Record<StageState, number> = {
   succeeded: 9,
 };
 
+function sqlRankCase(column: string, ranks: Record<string, number>, fallback: number): string {
+  const arms = Object.entries(ranks)
+    .map(([value, rank]) => `WHEN '${value}' THEN ${rank}`)
+    .join(" ");
+  return `(CASE ${column} ${arms} ELSE ${fallback} END)`;
+}
+
 const DEFAULT_SETTINGS: DashboardSettings = {
   targetRole: "",
   locationFilter: "",
@@ -253,6 +260,8 @@ const SQL_JOB_SORT_COLUMNS: Partial<Record<string, string>> = {
   company: "LOWER(employer)",
   location: "LOWER(location)",
   fit_score: "COALESCE(fit_score, -1)",
+  current_stage: "LOWER(current_stage)",
+  current_state: sqlRankCase("current_state", STATE_RANK, 999),
 };
 
 const SQL_ACTIVITY_SORT_COLUMNS: Partial<Record<string, string>> = {

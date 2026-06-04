@@ -764,6 +764,28 @@ describe("local TypeScript API", () => {
     expect(scoreFiltered.statusCode, scoreFiltered.body).toBe(200);
     expect(scoreFiltered.json().items.map((job: { fitScore: number | null }) => job.fitScore)).toEqual([9]);
 
+    const stateSorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=current_state&dir=asc",
+    });
+    expect(stateSorted.statusCode, stateSorted.body).toBe(200);
+    expect(stateSorted.json().items.map((job: { currentState: string }) => job.currentState)).toEqual([
+      "failed",
+      "blocked",
+      "pending",
+    ]);
+
+    const stageSorted = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=current_stage&dir=asc",
+    });
+    expect(stageSorted.statusCode, stageSorted.body).toBe(200);
+    expect(stageSorted.json().items.map((job: { currentStage: string }) => job.currentStage)).toEqual([
+      "apply",
+      "discover",
+      "discover",
+    ]);
+
     await app.close();
   });
 
