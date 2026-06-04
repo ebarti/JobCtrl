@@ -36,9 +36,69 @@ def no_operational_metric_side_effects(monkeypatch):
     monkeypatch.setattr(runner, "_record_operational_attempt", lambda **_kwargs: None)
 
 
+def _scheduled_source(
+    source_id: str,
+    *,
+    kind: SourceKind,
+    adapter_config: dict[str, object],
+    crawl_budget: int = 100,
+) -> runner.ScheduledSource:
+    return runner.ScheduledSource(
+        source_id=source_id,
+        display_name=source_id,
+        source_kind=kind,
+        priority=SourcePriority.CANONICAL,
+        configured_state=SourceState.ACTIVE,
+        crawl_budget=crawl_budget,
+        decision="run",
+        reason="test",
+        recommended_state="normal",
+        adapter_config=adapter_config,
+    )
+
+
+def _standard_discovery_schedule(_limit: int) -> runner.DiscoverySchedule:
+    return runner.DiscoverySchedule(
+        (
+            _scheduled_source(
+                "jobspy:indeed",
+                kind=SourceKind.BROAD_BOARD,
+                adapter_config={"board": "indeed"},
+            ),
+            _scheduled_source(
+                "greenhouse:barcelona",
+                kind=SourceKind.ATS_API,
+                adapter_config={"ats_kind": "greenhouse", "board_token": "barcelona"},
+            ),
+            _scheduled_source(
+                "workday:acme",
+                kind=SourceKind.ATS_API,
+                adapter_config={"employer_key": "acme"},
+            ),
+            _scheduled_source(
+                "smart_extract:example",
+                kind=SourceKind.SMART_EXTRACT,
+                adapter_config={"name": "Example", "url": "https://example.test/jobs"},
+            ),
+        )
+    )
+
+
 @pytest.fixture(autouse=True)
 def no_discovery_detail_enrichment(monkeypatch):
     """Keep discovery-source tests scoped to source scheduling."""
+    monkeypatch.setattr(runner, "_plan_discovery_schedule", _standard_discovery_schedule)
+    monkeypatch.setattr(
+        runner,
+        "run_scheduled_ats_sources",
+        lambda *_args, **_kwargs: {
+            "total": 0,
+            "new_jobs": 0,
+            "existing_jobs": 0,
+            "observed_jobs": 0,
+            "duplicate_jobs": 0,
+        },
+    )
     monkeypatch.setattr(
         runner,
         "_start_discovery_enrichment_worker",

@@ -34,6 +34,8 @@ defaults to:
   `JOBHUNTER_API_PORT=8766`
 - Web API base URL: `VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766`
 - Web port: `5173` (`JOBHUNTER_WEB_PORT` can override it)
+- Temporal persistence: `.dev/temporal/temporal.db`
+  (`JOBHUNTER_TEMPORAL_DB` can override it)
 
 Inspect the foreground stack from another terminal:
 
@@ -53,7 +55,7 @@ pnpm dev:stop
 Run individual components only when troubleshooting a specific process:
 
 ```bash
-temporal server start-dev
+temporal server start-dev --db-filename .dev/temporal/temporal.db
 pnpm api:dev
 pnpm web:dev
 uv --project workers/automation run jobhunter worker
@@ -61,9 +63,11 @@ uv --project workers/automation run jobhunter doctor
 ```
 
 The Temporal dev server binds the frontend gRPC service on `127.0.0.1:7233` and
-the Web UI on `http://127.0.0.1:8233`. With it running, `jobhunter doctor`
-reports `Temporal: reachable`. The Vite web dev server proxies `/v1/*` to the
-local API by default.
+the Web UI on `http://127.0.0.1:8233`. The launcher passes
+`--db-filename "$JOBHUNTER_TEMPORAL_DB"` so workflow history persists across
+launcher restarts instead of disappearing when the process exits. With Temporal
+running, `jobhunter doctor` reports `Temporal: reachable`. The Vite web dev
+server proxies `/v1/*` to the local API by default.
 
 ## Verify
 

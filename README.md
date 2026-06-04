@@ -89,7 +89,8 @@ Core pipeline:
 - A TeX distribution with `pdflatex` for PDF output.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
   workflow engine the Python worker runs against. The local dev launcher starts
-  it for you; see `docs/local-development.md`.
+  it for you with persistent local workflow history; see
+  `docs/local-development.md`.
 
 Local API and web UI:
 
@@ -363,10 +364,14 @@ Temporal worker heartbeat. The web topbar alerts when the worker is missing or
 stale, and pipeline stage buttons stay disabled until the worker is
 heartbeating against the same local database.
 
+Temporal workflow history is persisted under `.dev/temporal/temporal.db` by
+default so local debugging can survive launcher restarts. Override
+`JOBHUNTER_TEMPORAL_DB` when a separate Temporal dev store is needed.
+
 For troubleshooting, run individual components in separate terminals:
 
 ```bash
-temporal server start-dev
+temporal server start-dev --db-filename .dev/temporal/temporal.db
 pnpm api:dev
 pnpm web:dev
 uv --project workers/automation run jobhunter worker

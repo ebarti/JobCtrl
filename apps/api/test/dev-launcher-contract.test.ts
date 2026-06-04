@@ -156,6 +156,7 @@ describe("dev launcher contract", () => {
       expect(help).toContain("scripts/dev run [name...]");
 
       const list = execFileSync(devScript, ["list"], { cwd: repoRoot, encoding: "utf8", env });
+      expect(list).toContain('temporal   temporal server start-dev --db-filename "$JOBHUNTER_TEMPORAL_DB"');
       expect(list).toContain(
         'web        pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port "$JOBHUNTER_WEB_PORT"',
       );
@@ -286,6 +287,54 @@ while true; do sleep 1; done
         process.kill(spawnedGrandchildPid, "SIGKILL");
       }
       rmSync(pidFile, { force: true });
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("starts Temporal with a persistent dev-store filename", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobhunter-dev-launcher-"));
+    const devDir = join(tempDir, "dev-state");
+    const callsLog = join(tempDir, "calls.log");
+    const pidFile = join(devDir, "pids/temporal.pid");
+    let temporalPid: number | undefined;
+    let env: NodeJS.ProcessEnv | undefined;
+
+    try {
+      writeFileSync(
+        join(tempDir, "temporal"),
+        `#!/usr/bin/env bash
+echo "fake temporal $*" >> "${callsLog}"
+trap 'echo "fake temporal terminated $$" >> "${callsLog}"; exit 0' TERM INT
+while true; do sleep 1; done
+`,
+      );
+      chmodSync(join(tempDir, "temporal"), 0o755);
+      env = devScriptEnv(devDir, {
+        PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+        JOBHUNTER_STOP_WAIT_TICKS: "10",
+        JOBHUNTER_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+      });
+
+      execFileSync(devScript, ["start", "temporal"], { cwd: repoRoot, env });
+      temporalPid = await waitForPidFile(pidFile);
+      await waitForFileText(
+        callsLog,
+        `fake temporal server start-dev --db-filename ${join(devDir, "temporal/temporal.db")}`,
+      );
+
+      expect(processExists(temporalPid)).toBe(true);
+    } finally {
+      try {
+        execFileSync(devScript, ["stop", "temporal"], {
+          cwd: repoRoot,
+          env: env ?? devScriptEnv(devDir),
+        });
+      } catch {
+        // The process may already be stopped if an assertion failed late.
+      }
+      if (temporalPid !== undefined && processExists(temporalPid)) {
+        process.kill(temporalPid, "SIGKILL");
+      }
       rmSync(tempDir, { force: true, recursive: true });
     }
   });
