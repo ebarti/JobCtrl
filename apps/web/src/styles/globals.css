@@ -668,6 +668,12 @@ textarea {
   gap: 8px;
 }
 
+.apply-review-selected-actions .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .apply-review-selected-actions .apply-review-actions {
   flex-direction: row;
   flex-wrap: wrap;

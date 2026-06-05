@@ -31,6 +31,12 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
+    const detailLink = screen.getByRole("link", {
+      name: /Open job detail for Principal Platform Engineer in a new tab/i,
+    });
+    expect(detailLink).toHaveAttribute("target", "_blank");
+    expect(detailLink).toHaveAttribute("rel", "noopener noreferrer");
+    expect(detailLink).toHaveAttribute("href", `/jobs/${encodeURIComponent(sampleApplyReviewQueue.items[0]!.jobKey)}`);
     const resumePdf = screen.getByRole("img", { name: "Tailored resume PDF" });
     expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();

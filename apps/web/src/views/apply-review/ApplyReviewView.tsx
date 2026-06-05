@@ -1,4 +1,5 @@
 import type { ApplyReviewQueueItem } from "@jobhunter/contracts";
+import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -192,6 +193,10 @@ function activeApplyRun(item: ApplyReviewQueueItem): ApplyRun | null {
   return run;
 }
 
+function jobDetailHref(jobKey: string): string {
+  return `/jobs/${encodeURIComponent(jobKey)}`;
+}
+
 function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; values: readonly string[] }> {
   return [
     { label: "Matched", values: item.position.matched },
@@ -328,6 +333,16 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         </div>
         <div className="apply-review-selected-actions">
           <span className={`tag ${status.tone}`}>{status.label}</span>
+          <a
+            aria-label={`Open job detail for ${item.title} in a new tab`}
+            className="tab"
+            href={jobDetailHref(item.jobKey)}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <ExternalLink size={14} aria-hidden="true" />
+            open job detail
+          </a>
           {activeRun ? (
             <CancelApplyButton
               jobId={item.jobKey}
