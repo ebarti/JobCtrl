@@ -724,15 +724,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    if (body.runAfter && body.stage !== "apply") {
+    const continuationStages = body.runAfter ? retryContinuationStages(body.stage) : [];
+    if (body.runAfter && continuationStages.length === 0) {
       void reply.code(400);
-      return unsupportedPerJobMaterialAction();
+      return { ok: false, error: "unsupported_retry_run_after_stage", stage: body.stage };
     }
     return withWritableDb(reply, options.dbPath, async (db) => {
       const reset = resetJobStage(db, decodeRouteParam(request.params.jobKey), body.stage, {
         resetAttempts: body.resetAttempts,
       });
-      const command = {
+      const command: ActionCommandPayload = {
         action: "retry_stage" as const,
         jobKey: reset.jobUrl,
         stage: body.stage,
@@ -741,6 +742,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         dryRun: body.dryRun,
         limit: 1,
       };
+      if (continuationStages.length > 0 && body.stage !== "apply") {
+        command.stages = continuationStages;
+      }
       if (body.runAfter) {
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
         if (!workerReady) {
@@ -1330,6 +1334,23 @@ function requireWorkerReady(reply: FastifyReply, dbPath: string, enabled: boolea
 
 function isPdfArtifact(artifactType: string, localPath: string): boolean {
   return artifactType.toLowerCase().endsWith("_pdf") || localPath.toLowerCase().endsWith(".pdf");
+}
+
+function retryContinuationStages(stage: Stage): Stage[] {
+  switch (stage) {
+    case "enrich":
+      return ["enrich", "score", "tailor", "cover"];
+    case "score":
+      return ["score", "tailor", "cover"];
+    case "tailor":
+      return ["tailor", "cover"];
+    case "cover":
+      return ["cover"];
+    case "apply":
+      return ["apply"];
+    default:
+      return [];
+  }
 }
 
 function unsupportedPerJobMaterialAction(jobKey?: string): {

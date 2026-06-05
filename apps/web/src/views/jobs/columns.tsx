@@ -1,5 +1,6 @@
 import { type ChangeEvent, type MouseEvent, useRef } from "react";
 import type { RowSelectionState } from "@tanstack/react-table";
+import { STAGE_STATES } from "@jobhunter/contracts";
 
 import { ApplyRunBadge } from "../../contexts/apply/components/ApplyRunBadge.js";
 import { isApplyRunStatus } from "../../contexts/apply/lib/apply-run-status.js";
@@ -22,6 +23,8 @@ interface JobColumnsOptions {
   selectionAnchorJobKey: string | null;
   onSelectionAnchorChange: (jobKey: string) => void;
 }
+
+const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
 
 function updateSelectedRows(
   rowSelection: RowSelectionState,
@@ -237,13 +240,16 @@ export function jobColumns(
       label: "Stage",
       sortable: true,
       getFilterValue: (row) => row.currentStage,
+      filterValues: JOB_TABLE_STAGE_FILTERS,
       render: (row) => <UserFacingStageBadge stage={row.currentStage} />,
     },
     {
       id: "current_state",
       label: "State",
       sortable: true,
-      getFilterValue: (row) => `${row.currentSubstage} ${row.currentState}`,
+      getFilterValue: (row) => row.currentState,
+      getFilterSearchValue: (row) => `${row.currentSubstage} ${row.currentState}`,
+      filterValues: STAGE_STATES,
       render: (row) => (
         <TitleStack
           primary={<StageBadge state={row.currentState} />}
@@ -262,6 +268,7 @@ export function jobColumns(
       id: "apply_status",
       label: "Apply",
       getFilterValue: (row) => row.applyStatus ?? "not applied",
+      filterValues: ["applied"],
       render: (row) => {
         const status = row.applyStatus;
         if (!status || !isApplyRunStatus(status)) {

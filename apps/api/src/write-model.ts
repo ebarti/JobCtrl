@@ -1425,17 +1425,51 @@ function currentFailedStage(db: SqliteDatabase, jobUrl: string): Stage | null {
   if (!tableExists(db, "job_stage_states")) {
     return null;
   }
-  const rows = allRows<{ stage: Stage; state: string }>(
+  const rows = allRows<{ stage: Stage; state: string; retryable: number | null }>(
     db,
-    "SELECT stage, state FROM job_stage_states WHERE job_url = ?",
+    "SELECT stage, state, retryable FROM job_stage_states WHERE job_url = ?",
     [jobUrl],
   );
   const failedStages = new Set(
     rows
-      .filter((row) => STAGES.includes(row.stage) && ["failed", "exhausted"].includes(row.state))
+      .filter(
+        (row) =>
+          STAGES.includes(row.stage) &&
+          ["failed", "exhausted"].includes(row.state) &&
+          (row.stage === "enrich" ||
+            (row.retryable !== 0 &&
+              latestStageRetryableOverride(db, jobUrl, row.stage) !== false)),
+      )
       .map((row) => row.stage),
   );
   return STAGES.find((stage) => failedStages.has(stage)) ?? null;
+}
+
+function latestStageRetryableOverride(
+  db: SqliteDatabase,
+  jobUrl: string,
+  stage: Stage,
+): boolean | null {
+  if (!tableExists(db, "job_events")) return null;
+  const rows = allRows<{ payload_json: string | null }>(
+    db,
+    `SELECT payload_json
+     FROM job_events
+     WHERE job_url = ?
+       AND stage = ?
+       AND payload_json IS NOT NULL
+     ORDER BY event_id ASC`,
+    [jobUrl, stage],
+  );
+  let latest: boolean | null = null;
+  for (const row of rows) {
+    const payload = parseJsonRecord(row.payload_json);
+    const retryable = payload?.["retryable"];
+    if (typeof retryable === "boolean") {
+      latest = retryable;
+    }
+  }
+  return latest;
 }
 
 function recordActionEvent(
@@ -1539,6 +1573,15 @@ function parseStringArray(value: string | null): string[] {
     return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
   } catch {
     return [];
+  }
+}
+
+function parseJsonRecord(value: string | null): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = value ? JSON.parse(value) : null;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 }
 

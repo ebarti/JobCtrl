@@ -5,8 +5,7 @@ import { ArtifactFilterBar } from "./ArtifactFilterBar.js";
 
 const baseSearch = artifactsSearchSchema.parse({});
 
-// Same bare <select> defect as JobFilterBar — production-code issue
-// from Phase 4. Deferred.
+// Bare <select> production-code issue from Phase 4. Deferred.
 const meta = {
   title: "Views/Artifacts/ArtifactFilterBar",
   component: ArtifactFilterBar,

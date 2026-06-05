@@ -18,16 +18,9 @@ import {
 } from "../../test/fixtures/projections.js";
 import { JobsView } from "./JobsView.js";
 
-// JobsView still mounts JobFilterBar, whose bare <select> controls are
-// tracked in docs/backlog.md. The table itself now uses the shared native
-// data grid.
 const meta = {
   title: "Views/Jobs/JobsView",
   component: JobsView,
-  parameters: {
-    // a11y deferred — JobFilterBar select-name defects; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof JobsView>;
 
 export default meta;

@@ -3,6 +3,7 @@ import {
   type JobMutationResponse,
   type JobSortField,
   type JobSummary,
+  STAGE_STATES,
 } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
@@ -21,9 +22,9 @@ import { CardHeader } from "../../shared/ui/card-header.js";
 import {
   hasActiveDataGridFilters,
   type DataGridFilterState,
+  type DataGridTextFilter,
 } from "../../shared/ui/filterable-data-grid.js";
 import { JobBulkActions } from "./JobBulkActions.js";
-import { JobFilterBar } from "./JobFilterBar.js";
 import { JobsTable } from "./JobsTable.js";
 import { bulkJobFilters, jobsListInput } from "./jobStageFilters.js";
 
@@ -42,6 +43,47 @@ type BulkJobMutation = UseMutationResult<
   Error,
   BulkJobMutationRequest
 >;
+
+const SEARCH_FILTER_COLUMNS = new Set([
+  "current_stage",
+  "current_state",
+  "apply_status",
+]);
+const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+
+function filterFor(value: string | undefined): DataGridTextFilter | undefined {
+  if (!value) return undefined;
+  return { operator: "contains", text: "", selectedValues: [value] };
+}
+
+function firstAllowedValue<T extends string>(
+  filter: DataGridTextFilter | undefined,
+  allowed: readonly T[],
+): T | undefined {
+  return filter?.selectedValues.find((value): value is T =>
+    allowed.includes(value as T),
+  );
+}
+
+function searchFilters(search: JobsSearch): DataGridFilterState {
+  return {
+    ...(search.stage !== "all"
+      ? { current_stage: filterFor(search.stage) }
+      : {}),
+    ...(search.state !== "all"
+      ? { current_state: filterFor(search.state) }
+      : {}),
+    ...(search.applyStatus !== "all"
+      ? { apply_status: filterFor(search.applyStatus) }
+      : {}),
+  };
+}
+
+function localFiltersOnly(filters: DataGridFilterState): DataGridFilterState {
+  return Object.fromEntries(
+    Object.entries(filters).filter(([columnId]) => !SEARCH_FILTER_COLUMNS.has(columnId)),
+  );
+}
 
 function isJobSortField(value: string): value is JobSortField {
   return SORTABLE_JOB_FIELDS.has(value as JobSortField);
@@ -72,9 +114,22 @@ export function JobsView() {
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [allMatchingSelected, setAllMatchingSelected] = useState(false);
-  const [tableFilters, setTableFilters] = useState<DataGridFilterState>({});
+  const [localTableFilters, setLocalTableFilters] =
+    useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
-  const hasLocalFilters = hasActiveDataGridFilters(tableFilters);
+  const tableFilters = useMemo<DataGridFilterState>(
+    () => ({
+      ...localTableFilters,
+      ...searchFilters(search),
+    }),
+    [
+      localTableFilters,
+      search.applyStatus,
+      search.stage,
+      search.state,
+    ],
+  );
+  const hasLocalFilters = hasActiveDataGridFilters(localTableFilters);
 
   useEffect(() => {
     setRowSelection({});
@@ -95,11 +150,39 @@ export function JobsView() {
   useEffect(() => {
     setRowSelection({});
     setAllMatchingSelected(false);
-  }, [tableFilters]);
+  }, [localTableFilters]);
 
-  const setSearch = (next: Partial<JobsSearch>) => {
-    void navigate({ search: (prev: JobsSearch) => ({ ...prev, ...next }) });
-  };
+  const setSearch = useCallback(
+    (next: Partial<JobsSearch>) => {
+      void navigate({ search: (prev: JobsSearch) => ({ ...prev, ...next }) });
+    },
+    [navigate],
+  );
+
+  const handleTableFiltersChange = useCallback(
+    (next: DataGridFilterState) => {
+      setLocalTableFilters(localFiltersOnly(next));
+      const nextStage =
+        firstAllowedValue(next.current_stage, JOB_TABLE_STAGE_FILTERS) ?? "all";
+      const nextState =
+        firstAllowedValue(next.current_state, STAGE_STATES) ?? "all";
+      const applyFilter = firstAllowedValue(next.apply_status, ["applied"] as const);
+      const nextApplyStatus = applyFilter ?? "all";
+      if (
+        nextStage !== search.stage ||
+        nextState !== search.state ||
+        nextApplyStatus !== search.applyStatus
+      ) {
+        setSearch({
+          stage: nextStage,
+          state: nextState,
+          applyStatus: nextApplyStatus,
+          page: 1,
+        });
+      }
+    },
+    [search.applyStatus, search.stage, search.state, setSearch],
+  );
 
   const sorting = useMemo<SortingState>(
     () => [{ id: search.sort, desc: search.dir === "desc" }],
@@ -290,7 +373,6 @@ export function JobsView() {
           meta={data ? `${data.pagination.total} total` : "loading"}
         />
         {message ? <div className="banner inline">{message}</div> : null}
-        <JobFilterBar search={search} />
         <JobBulkActions
           search={search}
           selectedCount={selectedCount}
@@ -327,7 +409,7 @@ export function JobsView() {
           onPageSizeChange={(pageSize) => setSearch({ pageSize, page: 1 })}
           onOpenJob={openJob}
           filters={tableFilters}
-          onFiltersChange={setTableFilters}
+          onFiltersChange={handleTableFiltersChange}
           onVisiblePageRowsChange={handleVisiblePageRowsChange}
         />
       </section>

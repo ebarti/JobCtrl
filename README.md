@@ -245,9 +245,12 @@ deliberately.
 
 In the local web UI, dashboard KPIs open matching Jobs filters. Failures opens
 failed jobs so you can retry selected failures or retry all currently matching
-failed jobs after confirmation. Applied opens the jobs with an actual applied
-outcome (`applied_at` present or apply status `applied`), not a synthetic
-pipeline state.
+failed jobs after confirmation. A retry from a job detail drawer resumes the
+remaining preparation pipeline for that job (`enrich` -> `score` -> `tailor` ->
+`cover`, starting at the retried stage); application submission remains a
+separate explicit action. Applied opens the jobs with an actual applied outcome
+(`applied_at` present or apply status `applied`), not a synthetic pipeline
+state.
 
 ## Auto-Apply
 

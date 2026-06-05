@@ -293,9 +293,7 @@ parameters.
 | --- | --- | --- |
 | `apps/web/src/shared/ui/data-table.tsx` | Missing `role="row"` on table rows; missing `aria-sort` on sortable column headers. | `data-table.stories.tsx` |
 | `apps/web/src/shared/ui/toast.tsx` | `ToastClose` icon-only button has no accessible name (`button-name` axe rule). | `toast.stories.tsx`, `toaster.stories.tsx` |
-| `apps/web/src/views/jobs/JobFilterBar.tsx` | Bare `<select>` element with no associated label (`select-name` axe rule). | `JobFilterBar.stories.tsx` |
 | `apps/web/src/views/artifacts/ArtifactFilterBar.tsx` | Bare `<select>` element with no associated label. | `ArtifactFilterBar.stories.tsx` |
-| `apps/web/src/views/jobs/JobsView.tsx` (composes the above) | Inherits `JobFilterBar` defects. | `JobsView.stories.tsx` |
 | `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
 | `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx` | Bare `<select>` elements with no labels; icon-only buttons missing accessible names. | `StructuredProfileEditor.stories.tsx`, `ProfileEditor.stories.tsx` (composes it) |
 | `apps/web/src/contexts/apply/components/ApplyHistory.tsx` | TanStack Router `<Link>` rendered as a button without an accessible name. | `ApplyHistory.stories.tsx` |
@@ -306,8 +304,8 @@ parameters.
 | `cmdk` initial mount | `aria-required-children` violation during initial mount of the command palette. | `command.stories.tsx` |
 
 Production fixes for the in-repo files (`data-table.tsx`, `toast.tsx`,
-`JobFilterBar.tsx`, `ArtifactFilterBar.tsx`, `StructuredProfileEditor.tsx`,
-`ApplyHistory.tsx`) unblock 10 of the 15 deferrals immediately. The five
+`ArtifactFilterBar.tsx`, `StructuredProfileEditor.tsx`, `ApplyHistory.tsx`)
+unblock the remaining in-repo deferrals immediately. The five
 remaining deferrals (Radix transient internals + cmdk) need either upstream
 fixes or local wrappers with the missing ARIA plumbing.
 

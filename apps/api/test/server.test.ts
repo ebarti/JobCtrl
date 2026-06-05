@@ -1443,6 +1443,44 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("reconciles stale retryable stage projections from latest failure events", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb
+      .prepare("UPDATE job_stage_states SET retryable = 1, next_action = ? WHERE job_url = ? AND stage = ?")
+      .run(
+        "jobhunter retry score https://example.com/jobs/failed-score",
+        "https://example.com/jobs/failed-score",
+        "score",
+      );
+    seedDb
+      .prepare(
+        `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "https://example.com/jobs/failed-score",
+        "score",
+        "StageFailed",
+        "error",
+        "score failed",
+        "2026-04-29T12:00:00+00:00",
+        JSON.stringify({ retryable: false }),
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const jobKey = encodeURIComponent("https://example.com/jobs/failed-score");
+    const response = await app.inject({ method: "GET", url: `/v1/jobs/${jobKey}` });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const scoreStage = response
+      .json()
+      .stages.find((stage: { stage: string }) => stage.stage === "score");
+    expect(scoreStage).toMatchObject({ state: "failed", retryable: false, nextAction: null });
+
+    await app.close();
+  });
+
   it("corrects a score through the API and records correction evidence", async () => {
     const legacyJobUrl = "https://example.com/jobs/private-legacy";
     const legacyReason = "Legacy correction mentioned a private resume detail.";
@@ -2393,6 +2431,111 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("skips non-retryable failed stages in the bulk retry action", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb
+      .prepare(
+        `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "https://example.com/jobs/failed-score",
+        "score",
+        "StageFailed",
+        "error",
+        "score failed",
+        "2026-04-29T12:00:00+00:00",
+        JSON.stringify({ retryable: false }),
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: false,
+        jobKeys: ["https://example.com/jobs/failed-score"],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      count: 0,
+      jobKeys: [],
+    });
+
+    const db = new Database(options.dbPath);
+    const failed = db
+      .prepare("SELECT state, retryable FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+      .get("https://example.com/jobs/failed-score") as { state: string; retryable: number };
+    db.close();
+
+    expect(failed).toMatchObject({ state: "failed", retryable: 1 });
+
+    await app.close();
+  });
+
+  it("retries enrich scrape failures even when prior diagnostics marked them non-retryable", async () => {
+    const jobUrl = "https://example.com/jobs/failed-enrich";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: jobUrl,
+      title: "Failed Enrich Engineer",
+      site: "ExampleCo",
+    });
+    insertStage(seedDb, jobUrl, "discover", "succeeded");
+    insertStage(seedDb, jobUrl, "enrich", "failed", "DETAIL_ERROR");
+    seedDb
+      .prepare(
+        "UPDATE job_stage_states SET retryable = 0 WHERE job_url = ? AND stage = 'enrich'",
+      )
+      .run(jobUrl);
+    seedDb
+      .prepare(
+        `INSERT INTO job_events (job_url, stage, event_type, level, message, occurred_at, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        jobUrl,
+        "enrich",
+        "StageFailed",
+        "error",
+        "no data extracted",
+        "2026-04-29T12:00:00+00:00",
+        JSON.stringify({ retryable: false, errorMessage: "no data extracted" }),
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: false,
+        jobKeys: [jobUrl],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [jobUrl],
+    });
+
+    const db = new Database(options.dbPath);
+    const enrich = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'enrich'")
+      .get(jobUrl) as { state: string };
+    db.close();
+
+    expect(enrich.state).toBe("pending");
+
+    await app.close();
+  });
+
   // Phase 7 (S-26 round-1 review B2 + round-2 L4): API-driven retry-enrich
   // MUST clear the ``job_enrichments`` aggregate's terminal-state fields,
   // otherwise the worker's ``_ENRICHMENT_PENDING`` queue predicate
@@ -2517,7 +2660,34 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects unsupported per-job material generation and run-after material retries without dispatching", async () => {
+  it("dispatches run-after preparation retry through the job-scoped pipeline path", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/failed-score");
+
+    const retryResponse = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, dryRun: true },
+    });
+
+    expect(retryResponse.statusCode, retryResponse.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "retry_stage",
+        jobKey: "https://example.com/jobs/failed-score",
+        stage: "enrich",
+        stages: ["enrich", "score", "tailor", "cover"],
+        runAfter: true,
+        dryRun: true,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("rejects unsupported per-job material generation but runs cover retry continuation", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
@@ -2540,20 +2710,25 @@ describe("local TypeScript API", () => {
       error: "unsupported_per_job_material_action",
       jobKey: "https://example.com/jobs/ready",
     });
-    expect(retryResponse.statusCode, retryResponse.body).toBe(400);
-    expect(retryResponse.json()).toMatchObject({
-      ok: false,
-      accepted: false,
-      error: "unsupported_per_job_material_action",
-    });
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(retryResponse.statusCode, retryResponse.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "retry_stage",
+        jobKey: "https://example.com/jobs/ready",
+        stage: "cover",
+        stages: ["cover"],
+        runAfter: true,
+        dryRun: true,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
 
     const db = new Database(options.dbPath);
     const coverStage = db
       .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?")
       .get("https://example.com/jobs/ready", "cover") as { state: string };
     db.close();
-    expect(coverStage.state).toBe("succeeded");
+    expect(coverStage.state).toBe("pending");
 
     await app.close();
   });
@@ -2565,22 +2740,6 @@ describe("local TypeScript API", () => {
           action: "generate_materials",
           jobKey: "https://example.com/jobs/ready",
           stages: ["tailor"],
-          limit: 1,
-          dryRun: true,
-        },
-        { appDir: tempDir, dbPath: options.dbPath },
-      ),
-    ).resolves.toMatchObject({
-      status: "unsupported",
-      message: "No job-scoped local command is available for this action.",
-    });
-    await expect(
-      defaultActionDispatcher(
-        {
-          action: "retry_stage",
-          jobKey: "https://example.com/jobs/ready",
-          stage: "tailor",
-          runAfter: true,
           limit: 1,
           dryRun: true,
         },

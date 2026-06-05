@@ -8,6 +8,7 @@ import pytest
 from jobhunter.database import close_connection, init_db
 from jobhunter.enrichment import detail
 from jobhunter.enrichment.detail import (
+    _detail_failure_retryable,
     _record_posting_snapshot_from_cascade,
     scrape_detail_page,
 )
@@ -32,6 +33,32 @@ class _FakePage:
 
 def _long_description() -> str:
     return "Build reliable distributed systems with Python, TypeScript, and Postgres. " * 8
+
+
+class _FakeBrowser:
+    def new_context(self, **_kwargs):
+        return self
+
+    def new_page(self):
+        return object()
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeChromium:
+    def launch(self, **_kwargs):
+        return _FakeBrowser()
+
+
+class _FakePlaywright:
+    chromium = _FakeChromium()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        return None
 
 
 def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,6 +102,166 @@ def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytes
     assert result["active_state"] == "closed"
     assert result["verification_method"] == "closed_marker"
     assert result["full_description"]
+
+
+def test_verified_no_data_extracted_detail_failure_stays_retryable() -> None:
+    assert _detail_failure_retryable(
+        {
+            "status": "error",
+            "error": "no data extracted",
+            "active_state": "active",
+            "verification_method": "default_body_present",
+        }
+    ) is True
+
+
+def test_page_load_detail_failure_stays_retryable() -> None:
+    assert _detail_failure_retryable({"status": "error", "error": "timeout"}) is True
+
+
+def test_verified_inactive_detail_failure_is_not_retryable() -> None:
+    assert _detail_failure_retryable(
+        {
+            "status": "inactive",
+            "error": "posting removed",
+            "active_state": "removed",
+            "verification_method": "http_status",
+        }
+    ) is False
+
+
+def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    job_url = "https://www.linkedin.com/jobs/view/4375576106"
+    description = _long_description()
+    try:
+        conn.execute(
+            """
+            INSERT INTO jobs (
+                url, title, description, full_description, location, site,
+                strategy, discovered_at, application_url, company
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_url,
+                "Director of Engineering",
+                description,
+                description,
+                "Barcelona, Catalonia, Spain",
+                "linkedin",
+                "jobspy",
+                "2026-06-04T15:55:20+00:00",
+                None,
+                "Checkatrade",
+            ),
+        )
+        conn.commit()
+
+        monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
+        monkeypatch.setattr(
+            detail,
+            "scrape_detail_page",
+            lambda _page, _url: {
+                "status": "error",
+                "tier_used": 3,
+                "full_description": None,
+                "application_url": None,
+                "error": "no data extracted",
+                "elapsed": 12.0,
+                "active_state": "active",
+                "verification_method": "default_body_present",
+                "http_status": 200,
+            },
+        )
+
+        stats = detail.scrape_site_batch(conn, "linkedin", [(job_url, "Director")], delay=0)
+
+        assert stats["processed"] == 1
+        assert stats["partial"] == 1
+        assert stats["error"] == 0
+
+        enrichment = conn.execute(
+            """
+            SELECT current_status, full_description, attempts_json
+            FROM job_enrichments
+            WHERE job_url = ?
+            """,
+            (job_url,),
+        ).fetchone()
+        assert enrichment["current_status"] == "enriched"
+        assert enrichment["full_description"] == description.strip()
+        attempts = json.loads(enrichment["attempts_json"])
+        assert attempts[-1]["status"] == "succeeded"
+
+        stage = conn.execute(
+            """
+            SELECT state, metadata_json
+            FROM job_stage_states
+            WHERE job_url = ? AND stage = 'enrich'
+            """,
+            (job_url,),
+        ).fetchone()
+        assert stage["state"] == "succeeded"
+        assert json.loads(stage["metadata_json"]) == {
+            "fallbackSource": "discovery",
+            "detailStatus": "error",
+            "detailError": "no data extracted",
+        }
+
+        event = conn.execute(
+            """
+            SELECT payload_json
+            FROM job_events
+            WHERE job_url = ? AND event_type = 'StageCompleted'
+            ORDER BY event_id DESC
+            LIMIT 1
+            """,
+            (job_url,),
+        ).fetchone()
+        payload = json.loads(event["payload_json"])
+        assert payload["fallbackSource"] == "discovery"
+        assert payload["detailError"] == "no data extracted"
+    finally:
+        close_connection(db_path)
+
+
+def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobhunter.enrichment.activities import EnrichActivityInput, _run_selected_enrichment
+
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(detail, "_run_detail_scraper", lambda *args, **kwargs: calls.append(kwargs) or {
+        "processed": 1,
+        "ok": 1,
+        "partial": 0,
+        "error": 0,
+        "tiers": {1: 1},
+    })
+    monkeypatch.setattr("jobhunter.database.get_connection", lambda: object())
+
+    result = _run_selected_enrichment(
+        EnrichActivityInput(
+            tenant_id="local",
+            job_urls=(
+                "https://example.com/jobs/selected",
+                "https://example.com/jobs/selected",
+                "",
+            ),
+            limit=1,
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert calls == [
+        {
+            "max_per_site": 1,
+            "workers": 1,
+            "job_urls": ("https://example.com/jobs/selected",),
+        }
+    ]
 
 
 def test_inactive_cascade_snapshot_persists_closed_state(tmp_path: Path) -> None:

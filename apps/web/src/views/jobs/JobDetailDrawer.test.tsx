@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
+import { makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
 function renderJobDetailDrawer(jobId: string) {
@@ -99,5 +100,102 @@ describe("<JobDetailDrawer>", () => {
     expect(history).toHaveTextContent("Apply review decision recorded");
     expect(history).not.toHaveTextContent("payload_json");
     expect(history).not.toHaveTextContent("ApplyReviewDecisionRecorded");
+  });
+
+  it("does not render raw next-action commands and keeps failed enrich retry visible", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        const detail = makeJobDetail({
+          ...sampleJob,
+          jobKey: String(params["jobKey"]),
+          currentStage: "discover",
+          currentSubstage: "enrich",
+          currentState: "failed",
+          nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+        });
+        return HttpResponse.json({
+          ...detail,
+          stages: [
+            detail.stages[0],
+            {
+              stage: "enrich",
+              state: "failed",
+              attemptCount: 1,
+              maxAttempts: 3,
+              startedAt: "2026-05-01T12:01:00Z",
+              updatedAt: "2026-05-01T12:01:20Z",
+              finishedAt: "2026-05-01T12:01:20Z",
+              durationMs: 20_000,
+              errorCode: "DETAIL_ERROR",
+              errorMessage: "no data extracted",
+              retryable: false,
+              blockedBy: [],
+              nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+            },
+          ],
+        });
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    await screen.findByText(sampleJob.title);
+    const drawer = screen.getByLabelText("Job details");
+    expect(drawer).not.toHaveTextContent("jobhunter retry enrich");
+    expect(screen.getByRole("button", { name: "retry" })).toBeInTheDocument();
+  });
+
+  it("retries the failed internal substage when that stage is retryable", async () => {
+    const user = userEvent.setup();
+    const calls: Array<{ stage?: string; runAfter?: boolean }> = [];
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        const detail = makeJobDetail({
+          ...sampleJob,
+          jobKey: String(params["jobKey"]),
+          currentStage: "discover",
+          currentSubstage: "enrich",
+          currentState: "failed",
+        });
+        return HttpResponse.json({
+          ...detail,
+          stages: [
+            detail.stages[0],
+            {
+              stage: "enrich",
+              state: "failed",
+              attemptCount: 1,
+              maxAttempts: 3,
+              startedAt: "2026-05-01T12:01:00Z",
+              updatedAt: "2026-05-01T12:01:20Z",
+              finishedAt: "2026-05-01T12:01:20Z",
+              durationMs: 20_000,
+              errorCode: "DETAIL_ERROR",
+              errorMessage: "no data extracted",
+              retryable: true,
+              blockedBy: [],
+              nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+            },
+          ],
+        });
+      }),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ request }) => {
+        calls.push((await request.json()) as { stage?: string; runAfter?: boolean });
+        return HttpResponse.json({
+          ok: true,
+          action: "retry_stage",
+          status: "reset",
+          command: { action: "retry_stage", jobKey: "https://example.com/jobs/1" },
+        });
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    await user.click(await screen.findByRole("button", { name: "retry" }));
+
+    await waitFor(() =>
+      expect(calls).toEqual([expect.objectContaining({ stage: "enrich", runAfter: true })]),
+    );
   });
 });

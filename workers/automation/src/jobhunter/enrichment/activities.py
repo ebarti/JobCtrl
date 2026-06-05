@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from typing import Any
 
 from temporalio import activity
@@ -18,6 +19,7 @@ class EnrichActivityInput:
     limit: int = 0
     workers: int = 1
     dry_run: bool = False
+    job_urls: tuple[str, ...] = ()
     workflow_id: str | None = None
 
 
@@ -43,6 +45,19 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
+    if payload.job_urls:
+        result = await run_blocking_with_heartbeat(
+            lambda: _run_selected_enrichment(payload),
+            starting_message="selected enrich starting",
+            progress_message="selected enrich still running",
+        )
+        return EnrichActivityOutput(
+            status=str(result["status"]),
+            elapsed=float(result["elapsed"]),
+            errors=dict(result["errors"]),
+            stages=list(result["stages"]),
+        )
+
     def _do() -> dict[str, Any]:
         return run_pipeline(
             stages=["enrich"],
@@ -66,3 +81,61 @@ async def enrich_activity(payload: EnrichActivityInput) -> EnrichActivityOutput:
         errors=errors,
         stages=stages,
     )
+
+
+def _run_selected_enrichment(payload: EnrichActivityInput) -> dict[str, Any]:
+    from jobhunter.database import get_connection
+    from jobhunter.enrichment.detail import _run_detail_scraper
+
+    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    if payload.dry_run:
+        return {
+            "status": "ok",
+            "elapsed": 0.0,
+            "errors": {},
+            "stages": [
+                {
+                    "stage": "enrich",
+                    "status": "ok",
+                    "elapsed": 0.0,
+                    "selected": len(urls),
+                    "dry_run": True,
+                }
+            ],
+        }
+
+    t0 = time.time()
+    stats = _run_detail_scraper(
+        get_connection(),
+        max_per_site=payload.limit or None,
+        workers=payload.workers,
+        job_urls=urls,
+    )
+    elapsed = time.time() - t0
+    errors = (
+        {"enrich": f"{stats.get('error', 0)} enrichment error(s)"}
+        if int(stats.get("error") or 0) > 0
+        else {}
+    )
+    status = "failed" if errors else "ok"
+    return {
+        "status": status,
+        "elapsed": elapsed,
+        "errors": errors,
+        "stages": [
+            {
+                "stage": "enrich",
+                "status": status,
+                "elapsed": elapsed,
+                "selected": len(urls),
+                **stats,
+            }
+        ],
+    }
+
+
+def _limited_job_urls(job_urls: tuple[str, ...], limit: int) -> tuple[str, ...]:
+    unique = tuple(dict.fromkeys(url for url in job_urls if url))
+    if limit > 0:
+        return unique[:limit]
+    return unique

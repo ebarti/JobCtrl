@@ -701,7 +701,7 @@ another view (cross-view navigation goes through the URL).
 |---|---|
 | `views/dashboard/` | `<KpiGrid>` (operations: `useDashboardSummaryQuery`), `<Funnel>` (operations + pipeline `<StageBadge>`), `<ApplyRunsCard>` (operations: `useApplyRunsListQuery`, apply `<ApplyRunBadge>`). |
 | `views/debug/` | `<DebugActivityTable>` (operations: `useActivityListQuery`), `<DebugFilterBar>` (binds to URL state), activity-detail navigation for event inspection. |
-| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`), `<JobFilterBar>` (binds to URL state), `<JobBulkActions>` (discovery: `useDeleteJobsBulkMutation` / `useRestoreJobsBulkMutation`), `<JobDetailDrawer>` (composes `<JobOverview>` + `<ScoreBreakdown>` + `<StageTimeline>` + `<ArtifactGroup>` + `<ApplyHistory>` + `<JobActions>`). |
+| `views/jobs/` | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters bind table header filters to URL state), `<JobBulkActions>` (discovery: `useDeleteJobsBulkMutation` / `useRestoreJobsBulkMutation`), `<JobDetailDrawer>` (composes `<JobOverview>` + `<ScoreBreakdown>` + `<StageTimeline>` + `<ArtifactGroup>` + `<ApplyHistory>` + `<JobActions>`). |
 | `views/artifacts/` | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`, materials: `useOpenArtifactMutation`). |
 
 **The view's only owned components are layout and view-local affordances**
@@ -960,7 +960,7 @@ separately in §4.5.
 |---|---|
 | Routes | None (component + mutation context). |
 | Queries | None — stage data is in `JobDetailProjection.stages` (Operations). |
-| Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array; SSE event reconciles. `useRetryStageMutation` with `runAfter: true` follows the async (202) pattern. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
+| Mutations | `useRunPipelineStagesMutation({ stages, limit, workers, minScore, validationMode, dryRun, ... })` for global/batch stage starts, `useRetryStageMutation({ jobId, stage, resetAttempts?, runAfter? })`, `useCancelStageMutation({ jobId, stage })`, `useMarkAppliedMutation({ jobId })` (`MarkAppliedUseCase` per backend §5.7), `useMarkSkippedMutation({ jobId })` (`SkipJobUseCase` per backend §5.7). Per-job stage mutations optimistically patch the `JobDetailProjection.stages` array; SSE event reconciles. `useRetryStageMutation` with `runAfter: true` follows the async (202) pattern; the job-detail action toolbar uses it for failed preparation stages so a retry resumes the selected job through the remaining preparation pipeline. Global/batch stage starts are hybrid: non-apply-only requests return synchronously with worker action results, while requests that queue apply return 202 and finish through SSE-driven invalidation. |
 | SSE keys consumed | All `Stage*` events (`StageStarted`, `StageCompleted`, `StageFailed`, `StageBlocked`, `StageSkipped`, `StageReset`, `StageCanceled`, `StageExhausted`). |
 | Components | `<StageTriggerPanel />` for dashboard-composed global starts with per-stage persisted tab config, stage-specific controls, and immediate start feedback (`starting`, `queued`, `succeeded`, `dry_run`, `failed`; run/action id when returned), `<StageBadge state={...} />` (exhaustive `switch` on `state.kind` per §2.4 data-orientation; covered by the `STAGE_STATE_KINDS` parity test in §10.2), `<StageTimeline stages={...} />`, `<RetryStageButton jobId={...} stage={...} />`, `<CancelStageButton jobId={...} stage={...} />`, `<MarkAppliedButton jobId={...} />`, `<MarkSkippedButton jobId={...} />`, `<JobActions jobId={...} />` (toolbar composer). |
 
@@ -980,7 +980,7 @@ do not own queries, mutations, or persistent stores. They own:
 |---|---|---|
 | `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `Funnel.tsx`, `ApplyRunsCard.tsx` | operations (`useDashboardSummaryQuery`, `useApplyRunsListQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`) |
 | `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `activity-columns.tsx` | operations (`useActivityListQuery`); URL-bound event search, sorting, and pagination |
-| `views/jobs/` | `JobsView.tsx` (assembles table + filter + bulk-actions toolbar), `JobsTable.tsx`, `JobFilterBar.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx` | operations (`useJobsListQuery`, `useJobDetailQuery`); discovery (`useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`); scoring (`<ScoreBadge>`, `<ScoreBreakdown>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<GenerateMaterialsButton>`); apply (`<ApplyButton>`, `<DryRunButton>`, `<ApplyHistory>`); artifacts grouping (`<ArtifactGroup>` from `views/artifacts/` since the grouping component is itself view-level) |
+| `views/jobs/` | `JobsView.tsx` (assembles table-owned URL filters + bulk-actions toolbar), `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx` | operations (`useJobsListQuery`, `useJobDetailQuery`); discovery (`useDeleteJobMutation`, `useDeleteJobsBulkMutation`, `useRestoreJobMutation`, `useRestoreJobsBulkMutation`); scoring (`<ScoreBadge>`, `<ScoreBreakdown>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<GenerateMaterialsButton>`); apply (`<ApplyButton>`, `<DryRunButton>`, `<ApplyHistory>`); artifacts grouping (`<ArtifactGroup>` from `views/artifacts/` since the grouping component is itself view-level) |
 | `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `ArtifactGroup.tsx` (grouping helper used by Jobs drawer) | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`) |
 
 ### 4.6 Forms Convention (TanStack Form)
@@ -2372,8 +2372,7 @@ apps/web/
 │   │   │   └── activity-columns.tsx
 │   │   ├── jobs/
 │   │   │   ├── JobsView.tsx
-│   │   │   ├── JobsTable.tsx              # shared data grid
-│   │   │   ├── JobFilterBar.tsx           # binds to URL via useSearch
+│   │   │   ├── JobsTable.tsx              # shared data grid with URL-backed product filters
 │   │   │   ├── JobBulkActions.tsx
 │   │   │   ├── JobDetailDrawer.tsx
 │   │   │   ├── JobOverview.tsx

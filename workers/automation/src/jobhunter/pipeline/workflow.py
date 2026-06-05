@@ -38,10 +38,9 @@ class JobPipelineWorkflowInput:
     """Input for ``JobPipelineWorkflow``.
 
     Drives the requested stage list in batch mode against eligible jobs in the
-    local DB. Each non-apply stage runner is batch-oriented today — it walks
-    the DB selectors itself — so this workflow does not currently address a
-    single ``(TenantId, JobId)`` for the discover/enrich/score/tailor/cover
-    stages.
+    local DB. Preparation stages can also be constrained to ``job_url`` /
+    ``job_urls`` for retry-continuation flows, while discovery remains a
+    batch/source-oriented stage.
 
     The apply step is delegated to ``ApplyWorkflow`` as a child workflow so
     mixed requests such as ``score -> tailor -> apply`` preserve request-order
@@ -176,6 +175,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
+                job_urls=_selected_job_urls(payload),
                 workflow_id=workflow_id,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,
@@ -240,6 +240,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 limit=payload.limit,
                 validation_mode=payload.validation_mode,
                 dry_run=payload.dry_run,
+                job_urls=_selected_job_urls(payload),
                 llm_model=payload.llm_model,
                 workflow_id=workflow_id,
             ),
