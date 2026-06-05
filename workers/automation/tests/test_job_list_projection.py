@@ -167,6 +167,29 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
     assert score_stage["state"] == "pending"
 
 
+def test_cover_progress_moves_product_stage_to_apply_when_resume_exists(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/jobs/cover-pending"
+    _seed_job(conn, url, title="Cover Pending Engineer")
+    conn.execute(
+        "UPDATE jobs SET tailored_resume_path = ?, tailored_at = ? WHERE url = ?",
+        ("/tmp/tailored-resume.txt", utc_now(), url),
+    )
+    for stage in ("discover", "enrich", "score", "tailor"):
+        set_stage_state(conn, url, stage, "succeeded", finished_at=utc_now())
+    set_stage_state(conn, url, "cover", "pending", validate_transition=False)
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT current_stage, current_substage, current_state FROM job_list_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    assert _row_value(row, "current_stage") == "apply"
+    assert _row_value(row, "current_substage") == "cover"
+    assert _row_value(row, "current_state") == "pending"
+
+
 def test_stage_projection_preserves_non_retryable_failures(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/non-retryable"
     _seed_job(conn, url, title="Closed Posting")

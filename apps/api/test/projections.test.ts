@@ -430,6 +430,63 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects cover preparation as apply-stage once a tailored resume exists", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.prepare("UPDATE jobs SET tailored_resume_path = ?, tailored_at = ? WHERE url = ?").run(
+        "/tmp/tailored-resume.txt",
+        "2026-05-04T13:12:00+00:00",
+        "https://example.com/jobs/event-driven",
+      );
+      const insertStage = db.prepare(
+        "INSERT INTO job_stage_states (job_url, stage, state, updated_at, finished_at) VALUES (?, ?, ?, ?, ?)",
+      );
+      for (const stage of ["discover", "enrich", "score", "tailor"]) {
+        insertStage.run(
+          "https://example.com/jobs/event-driven",
+          stage,
+          "succeeded",
+          "2026-05-04T13:00:00+00:00",
+          "2026-05-04T13:00:00+00:00",
+        );
+      }
+      insertStage.run(
+        "https://example.com/jobs/event-driven",
+        "cover",
+        "pending",
+        "2026-05-04T13:15:00+00:00",
+        null,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+        const item = listRes
+          .json()
+          .items.find((job: { jobKey: string }) => job.jobKey === "https://example.com/jobs/event-driven");
+        expect(item).toMatchObject({
+          currentStage: "apply",
+          currentSubstage: "cover",
+          currentState: "pending",
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("backfills legacy jobs inserted after the first projection refresh", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

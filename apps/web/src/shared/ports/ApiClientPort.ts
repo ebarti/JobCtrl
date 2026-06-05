@@ -60,6 +60,7 @@ import type {
   RetailorJobRequest,
   TailorJobRequest,
   RetryStageRequest,
+  RunJobStageRequest,
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
@@ -208,6 +209,7 @@ export interface ApiClientPort {
   deleteCredential(key: CredentialKey): Promise<CredentialsResponse>;
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
+  runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
   generateMaterials(jobKey: string, body?: Partial<GenerateMaterialsRequest>): Promise<ActionRunResponse>;
   applyJob(jobKey: string, body?: Partial<ApplyJobRequest>): Promise<ActionRunResponse>;
   cancelJobAction(jobKey: string, body?: CancelJobActionRequest): Promise<ActionRunResponse>;

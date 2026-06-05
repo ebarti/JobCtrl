@@ -269,6 +269,15 @@ user can stop the in-flight run without resolving a fake `pipeline` job row.
 to `default`, which omits `--model` and lets the local Claude Code
 configuration choose the active model.
 
+`POST /v1/jobs/:jobKey/actions/run-stage` starts one job-scoped preparation
+pickup without resetting stage state. It accepts the internal preparation
+stages `enrich`, `score`, `tailor`, and `cover`, rejects product-stage starts
+such as `apply`, resolves the route key to the canonical job URL, checks worker
+readiness, and dispatches `run_stage` for the remaining preparation sequence
+from the requested substage. The Jobs page uses this route when viewed rows are
+`pending` on a visible preparation substage, so pending preparation continues
+autonomously when the user opens or filters Jobs.
+
 The `limit` field is forwarded to every selected stage. For `discover`, the
 Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's
 internal detail-enrichment queue drain, and the preparation work-item drains.
@@ -306,6 +315,10 @@ Current-version preparation maintenance actions are separate endpoints:
   `cover`, starting at the retried stage). `apply` retry still dispatches the
   explicit apply action; retries do not auto-submit applications unless the
   requested stage is `apply`.
+- The active Jobs bulk toolbar exposes `retry all failed` outside the failed
+  state filter. It posts the current Jobs filters with `state: failed` and
+  `deleted: active`, so users can recover failed substages from pending or
+  mixed-state views without selecting each failed row first.
 
 First-time manual tailoring is not a re-tailor action. The job detail stage
 timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal

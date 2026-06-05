@@ -40,6 +40,7 @@ import {
   RescoreJobRequestSchema,
   ResetStaleScoresForRescoreRequestSchema,
   RetryStageRequestSchema,
+  RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
   RunPipelineStagesRequestSchema,
@@ -757,6 +758,46 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     });
   });
 
+  app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/run-stage", async (request, reply) => {
+    const body = parseBody(reply, RunJobStageRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    if (!PREPARATION_PICKUP_STAGES.has(body.stage)) {
+      void reply.code(400);
+      return { ok: false, error: "unsupported_job_stage_run", stage: body.stage };
+    }
+    const stages = retryContinuationStages(body.stage);
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
+      if (!jobUrl) {
+        return { ok: false, error: "job_not_found" };
+      }
+      const command: ActionCommandPayload = {
+        action: "run_stage",
+        jobKey: jobUrl,
+        stage: body.stage,
+        stages,
+        dryRun: body.dryRun,
+        limit: body.limit,
+        workers: body.workers,
+        minScore: body.minScore,
+        validationMode: body.validationMode,
+        llmModel: body.llmModel,
+      };
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const dispatch = await actionDispatcher(command, actionContext);
+      if (dispatch.workflowId) {
+        recordPipelineWorkflowStarted(options.dbPath, body.stage, dispatch.workflowId, dispatch.runId);
+      }
+      void reply.code(dispatch.status === "queued" ? 202 : 200);
+      return buildActionResponse(command, dispatch);
+    });
+  });
+
   app.post<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/actions/generate-materials", async (request, reply) => {
     const body = parseBody(reply, GenerateMaterialsRequestSchema, request.body ?? {});
     if (!body) {
@@ -1352,6 +1393,8 @@ function retryContinuationStages(stage: Stage): Stage[] {
       return [];
   }
 }
+
+const PREPARATION_PICKUP_STAGES: ReadonlySet<Stage> = new Set(["enrich", "score", "tailor", "cover"]);
 
 function unsupportedPerJobMaterialAction(jobKey?: string): {
   ok: false;

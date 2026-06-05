@@ -3,12 +3,13 @@ import {
   type JobMutationResponse,
   type JobSortField,
   type JobSummary,
+  type Stage,
   STAGE_STATES,
 } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
 import type { UseMutationResult } from "@tanstack/react-query";
 import type { RowSelectionState, SortingState } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useDeleteJobsBulkMutation } from "../../contexts/discovery/hooks/useDeleteJobsBulkMutation.js";
 import { useHideJobsBulkMutation } from "../../contexts/discovery/hooks/useHideJobsBulkMutation.js";
@@ -17,6 +18,7 @@ import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRe
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
 import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
+import { useRunJobStageMutation } from "../../contexts/pipeline/hooks/useRunJobStageMutation.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import {
@@ -50,6 +52,7 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "apply_status",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+const AUTONOMOUS_PICKUP_STAGES: ReadonlySet<Stage> = new Set(["enrich", "score", "tailor", "cover"]);
 
 function filterFor(value: string | undefined): DataGridTextFilter | undefined {
   if (!value) return undefined;
@@ -110,6 +113,7 @@ export function JobsView() {
   const restoreJobs = useRestoreJobsBulkMutation();
   const unhideJobs = useUnhideJobsBulkMutation();
   const retryFailedJobs = useRetryFailedJobsMutation();
+  const runJobStage = useRunJobStageMutation();
   const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -117,6 +121,7 @@ export function JobsView() {
   const [localTableFilters, setLocalTableFilters] =
     useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
+  const autoPickupKeys = useRef<Set<string>>(new Set());
   const tableFilters = useMemo<DataGridFilterState>(
     () => ({
       ...localTableFilters,
@@ -228,6 +233,20 @@ export function JobsView() {
     [allMatchingSelected, selectedKeys, staleKeysOnPage],
   );
 
+  useEffect(() => {
+    for (const job of data?.items ?? []) {
+      if (job.currentState !== "pending" || !AUTONOMOUS_PICKUP_STAGES.has(job.currentSubstage)) {
+        continue;
+      }
+      const pickupKey = `${job.jobKey}:${job.currentSubstage}`;
+      if (autoPickupKeys.current.has(pickupKey)) {
+        continue;
+      }
+      autoPickupKeys.current.add(pickupKey);
+      runJobStage.mutate({ jobId: job.jobKey, stage: job.currentSubstage });
+    }
+  }, [data?.items, runJobStage]);
+
   const selectAllMatching = () => {
     setRowSelection({});
     setAllMatchingSelected(Boolean(data?.pagination.total));
@@ -269,7 +288,8 @@ export function JobsView() {
     permanentlyDeleteJobs.isPending ||
     restoreJobs.isPending ||
     unhideJobs.isPending ||
-    retryFailedJobs.isPending;
+    retryFailedJobs.isPending ||
+    runJobStage.isPending;
 
   const selectedPayloads = (): BulkJobMutationRequest[] =>
     allMatchingSelected
@@ -328,13 +348,7 @@ export function JobsView() {
   };
 
   const retryAllFailed = () => {
-    const count = data?.pagination.total ?? 0;
-    if (!count) {
-      return;
-    }
-    if (
-      !window.confirm(`Retry ${count} failed job${count === 1 ? "" : "s"}?`)
-    ) {
+    if (!window.confirm("Retry all failed jobs matching the current filters?")) {
       return;
     }
     mutatePayloads(

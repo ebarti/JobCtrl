@@ -63,12 +63,13 @@ apply and retry actions.
 
 ## Execution Surfaces
 
-There are four execution surfaces. They share the same Python stage
+There are five execution surfaces. They share the same Python stage
 implementations where possible, but they differ in orchestration.
 
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
 | Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
+| Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs starts one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The API dispatches a job-scoped `JobPipelineWorkflow` for the remaining preparation sequence from that substage. | Internal preparation pickup |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
 | Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation queue drain. | Discover and Apply |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
@@ -614,6 +615,10 @@ sequenceDiagram
 - Successful `tailor_resume` work immediately invokes the job-scoped cover
   stage. Cover failures are recorded on the cover stage for retry without
   forcing the tailored resume work item to regenerate the resume.
+- Viewing the Jobs page is also a pickup signal: visible rows whose current
+  state is `pending` and whose current substage is `enrich`, `score`, `tailor`,
+  or `cover` dispatch a job-scoped run from that substage without resetting
+  attempts or failure metadata.
 - Work item lifecycle events are part of the SSE catalog, so Operations can
   invalidate dashboard, job detail, artifact, and activity projections while
   Discover is still running.
@@ -1093,7 +1098,10 @@ API endpoints owned by Operations:
 builders write only `discover` or `apply` there, even when the first actionable
 internal row is `enrich`, `score`, `tailor`, or `cover`. The full internal
 stage list remains in `job_detail_projections.stages_json` for review,
-diagnostics, and repair decisions.
+diagnostics, and repair decisions. Cover is the exception that can advance the
+product stage: when the first actionable internal row is `cover` and a tailored
+resume exists, the list projection writes `current_stage='apply'` while keeping
+`current_substage='cover'` and the cover state visible for retry or repair.
 
 ```mermaid
 flowchart LR

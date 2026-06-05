@@ -245,10 +245,16 @@ deliberately.
 
 In the local web UI, dashboard KPIs open matching Jobs filters. Failures opens
 failed jobs so you can retry selected failures or retry all currently matching
-failed jobs after confirmation. A retry from a job detail drawer resumes the
-remaining preparation pipeline for that job (`enrich` -> `score` -> `tailor` ->
-`cover`, starting at the retried stage); application submission remains a
-separate explicit action. Applied opens the jobs with an actual applied outcome
+failed jobs after confirmation. The active Jobs toolbar keeps `retry all failed`
+available outside the failed-state filter; it retries failed jobs matching the
+current non-state filters. Viewing the Jobs page also picks up visible pending
+preparation substages (`enrich`, `score`, `tailor`, or `cover`) by starting the
+job-scoped pipeline at that substage. A retry from a job detail drawer resumes
+the remaining preparation pipeline for that job (`enrich` -> `score` ->
+`tailor` -> `cover`, starting at the retried stage); application submission
+remains a separate explicit action. Cover remains retryable preparation work,
+but a pending or failed cover stage does not keep a job with a tailored resume
+out of Apply review. Applied opens the jobs with an actual applied outcome
 (`applied_at` present or apply status `applied`), not a synthetic pipeline
 state.
 
@@ -401,11 +407,13 @@ tombstones instead of creating a new suppression record.
 The Pipelines tab exposes the product-stage starts for `discover` and `apply`.
 Discover owns preparation and Apply owns browser automation; lower-level
 `enrich`, `score`, `tailor`, and `cover` remain CLI/API maintenance and
-diagnostic surfaces rather than product tabs. Each product tab keeps persisted
-local config and only shows controls that the selected stage actually consumes.
-Running a tab submits that stage through the local API. The panel reports when
-the request is waiting on the local worker, whether the start was queued,
-completed, dry-run, or failed, and the returned run/action id when one is
+diagnostic surfaces rather than product tabs. The Jobs page can still start
+those internal stages for visible pending or retryable per-job work through the
+job-scoped API. Each product tab keeps persisted local config and only shows
+controls that the selected stage actually consumes. Running a tab submits that
+stage through the local API. The panel reports when the request is waiting on
+the local worker, whether the start was queued, completed, dry-run, or failed,
+and the returned run/action id when one is
 available. Queued or running Discover and Apply workflows expose stop controls
 from the Pipelines and Workflow Runs views, and active per-job apply runs can be
 stopped from Apply review when a latest apply run is attached to the job.

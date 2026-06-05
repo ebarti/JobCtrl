@@ -1030,8 +1030,8 @@ function loadStages(db: SqliteDatabase, jobUrl: string): NormalizedStage[] {
   });
 }
 
-function jobListStage(stage: string | null | undefined): "discover" | "apply" {
-  return stage === "apply" ? "apply" : "discover";
+function jobListStage(stage: string | null | undefined, hasResume = false): "discover" | "apply" {
+  return stage === "apply" || (stage === "cover" && hasResume) ? "apply" : "discover";
 }
 
 function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: string): void {
@@ -1157,7 +1157,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     score.criteriaJson,
     score.traceJson,
     score.correctionJson,
-    jobListStage(firstActionable?.stage),
+    jobListStage(firstActionable?.stage, hasResume),
     firstActionable?.stage ?? "discover",
     firstActionable?.state ?? "pending",
     firstActionable?.error_code ?? null,

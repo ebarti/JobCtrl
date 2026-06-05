@@ -62,6 +62,7 @@ import type {
   RetailorJobRequest,
   TailorJobRequest,
   RetryStageRequest,
+  RunJobStageRequest,
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
@@ -441,6 +442,10 @@ export class JobHunterApiClient {
 
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse> {
     return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/retry-stage`, body);
+  }
+
+  runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse> {
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/actions/run-stage`, body);
   }
 
   generateMaterials(jobKey: string, body: Partial<GenerateMaterialsRequest> = {}): Promise<ActionRunResponse> {

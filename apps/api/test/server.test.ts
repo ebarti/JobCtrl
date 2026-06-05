@@ -2687,6 +2687,76 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("dispatches pending preparation pickup without resetting the stage", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/run-stage`,
+      payload: { stage: "score", dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "https://example.com/jobs/ready",
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
+        dryRun: true,
+        limit: 1,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
+  it("rejects job-scoped preparation pickup for missing jobs", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/missing");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/run-stage`,
+      payload: { stage: "score", dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "job_not_found",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("rejects unsupported job-scoped starts for non-preparation stages", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/run-stage`,
+      payload: { stage: "apply", dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "unsupported_job_stage_run",
+      stage: "apply",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
   it("rejects unsupported per-job material generation but runs cover retry continuation", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
