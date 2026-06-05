@@ -1,5 +1,10 @@
 # Target Search Recall Implementation Plan
 
+> **Status:** Implemented. Canonical current behavior is documented in
+> `README.md`, `docs/local-ts-api.md`, and
+> `docs/job-pipeline-architecture.md`; the delivery summary is in
+> `docs/delivered.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expand profile-driven discovery searches so strong non-verbatim matches are found without changing saved profile preferences or weakening location controls.

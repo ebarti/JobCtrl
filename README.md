@@ -13,11 +13,10 @@ including enrichment, scoring, resume tailoring, and artifact suppression.
 Those lower-level stages remain available as maintenance and diagnostic
 commands.
 
-The automation engine is Python. The newer product surface is a local
-TypeScript API plus a React/Vite web shell. The intended frontend direction is
-TanStack Router for client-side routing plus TanStack Query for API/cache state
-management. SQLite and local files remain the source of truth while the project
-validates reliability before any hosted/SaaS hardening.
+The automation engine is Python. The product surface is a local TypeScript API
+plus a React/Vite web app built on TanStack Router, TanStack Query, TanStack
+Table, and TanStack Form. SQLite and local files remain the source of truth
+while the project validates reliability before any hosted/SaaS hardening.
 
 ## What It Does
 
@@ -41,8 +40,8 @@ JobHunter is split by responsibility:
 
 - `apps/api`: local TypeScript/Fastify API for typed read models, local
   product actions, profile/settings, artifacts, and worker invocation.
-- `apps/web`: current React/Vite local web shell; planned direction is
-  TanStack Router plus TanStack Query as the UI grows beyond the shell.
+- `apps/web`: React/Vite local web app using TanStack Router, Query, Table,
+  and Form with SSE-backed cache invalidation.
 - `workers/automation/src/jobhunter`: Python automation engine, CLI, workers,
   profile import, PDF creation, and apply automation.
 
@@ -479,6 +478,8 @@ JobHunter uses local user configuration plus package-shipped registries:
   profile tables are empty.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
 - `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
+- `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS
+  behavior settings.
 
 Profile, Preferences, Discovery target search, and Settings forms autosave five
 seconds after the last edit through the same local API mutations as the Save
@@ -492,7 +493,6 @@ for source text, scope, action, tools, metrics, outcome, seniority signal,
 evidence strength, claim confidence, and user confirmation. Only verified facts
 and evidence reframing can be auto-approved; adjacent translations and draft
 claims remain review material.
-- `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
 
 Discovery runtime settings are edited on the Discovery page and stored in the
 SQLite `discovery_settings` table. JobSpy board selection uses the `boards`

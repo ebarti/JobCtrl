@@ -1,23 +1,25 @@
 # Backlog
 
-This is the authoritative roadmap. Keep detailed historical proposals under
-`docs/plans/proposed/`; move delivered work to `docs/delivered.md`.
+This is the authoritative roadmap. Keep active accepted or exploratory
+proposals under `docs/plans/proposed/`; move delivered or superseded plans to
+`docs/plans/implemented/` and summarize delivered work in `docs/delivered.md`.
 
-## Current State Snapshot (2026-05-17)
+## Current State Snapshot (2026-06-05)
 
 Delivered work is archived in [`docs/delivered.md`](delivered.md) and the
 implemented plan directory. Discovery RFC production wiring and scoring
 intelligence are implemented via PR #61; the calibrated scoring policy stack,
-local Temporal stack, DDD / hexagonal migration, and frontend TanStack
-migration are also implemented.
+target-search recall, the single Discovery preparation stage, apply review and
+outcome feedback, resume-tailoring quality gates, the local Temporal stack, DDD
+/ hexagonal migration, and frontend TanStack migration are also implemented.
 
 The active local-product backlog is the remaining validation and hardening
 work below: realtime cache patching beyond apply-run timeline events,
 non-apply workflow-run / cancellation parity, cleanup of legacy `jobs.*`
-storage fallbacks, profile/materials/browser QA gaps, frontend a11y
-deferrals, and tooling / CI enforcement gaps. Hosted product, hosted data,
-hosted automation, packaging, and cloud-mode frontend adapters remain
-deferred until the local product is solid.
+storage fallbacks, table/artifact/profile UX improvements, browser QA gaps,
+frontend a11y deferrals, and tooling / CI enforcement gaps. Hosted product,
+hosted data, hosted automation, packaging, and cloud-mode frontend adapters
+remain deferred until the local product is solid.
 
 ## Local Product Validation
 
@@ -283,7 +285,7 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-15 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
+13 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
 they exercise pre-existing production accessibility defects that are scoped
 out of the Phase 7 baseline. Each defect needs a follow-up production fix;
 once fixed, the deferral is removed from the corresponding story
@@ -305,9 +307,9 @@ parameters.
 
 Production fixes for the in-repo files (`data-table.tsx`, `toast.tsx`,
 `ArtifactFilterBar.tsx`, `StructuredProfileEditor.tsx`, `ApplyHistory.tsx`)
-unblock the remaining in-repo deferrals immediately. The five
-remaining deferrals (Radix transient internals + cmdk) need either upstream
-fixes or local wrappers with the missing ARIA plumbing.
+unblock the in-repo production-file deferrals immediately. The five remaining
+wrapper/library deferrals (Radix transient internals + cmdk) need either
+upstream fixes or local wrappers with the missing ARIA plumbing.
 
 ## Frontend Tooling + CI Backlog (Phase 1–8 Deferrals)
 

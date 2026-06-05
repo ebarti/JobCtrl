@@ -1,5 +1,9 @@
 # Apply Review Queue And Outcome Feedback Implementation Plan
 
+> **Status:** Implemented. Canonical current behavior is documented in
+> `README.md`, `docs/local-ts-api.md`, `docs/local-reliability-qa.md`, and
+> `docs/architecture.md`; the delivery summary is in `docs/delivered.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a user-approved apply review queue and outcome tracking loop with Gmail-only email feedback.
