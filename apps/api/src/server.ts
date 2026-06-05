@@ -115,6 +115,7 @@ import {
   listWorkflowRuns,
   readSettingsConfig,
 } from "./read-model.js";
+import { refreshProjections } from "./projections.js";
 import { isTrustedMutationSource, LOCAL_CORS_METHODS, LOCAL_ORIGIN_PATTERNS } from "./local-origin.js";
 import {
   ProfileInputError,
@@ -773,6 +774,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
       }
+      refreshProjections(db);
       const command: ActionCommandPayload = {
         action: "run_stage",
         jobKey: jobUrl,
@@ -785,6 +787,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         validationMode: body.validationMode,
         llmModel: body.llmModel,
       };
+      const eligibility = preparationPickupEligibility(db, jobUrl, body.stage, body.minScore);
+      if (!eligibility.eligible) {
+        void reply.code(200);
+        return buildActionResponse(command, {
+          status: "not_eligible",
+          message: eligibility.message,
+          result: { reason: eligibility.reason },
+        });
+      }
       const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
       if (!workerReady) {
         return undefined;
@@ -1395,6 +1406,209 @@ function retryContinuationStages(stage: Stage): Stage[] {
 }
 
 const PREPARATION_PICKUP_STAGES: ReadonlySet<Stage> = new Set(["enrich", "score", "tailor", "cover"]);
+const PREPARATION_PICKUP_MAX_ATTEMPTS: Partial<Record<Stage, number>> = {
+  tailor: 5,
+  cover: 5,
+};
+
+interface PreparationPickupEligibility {
+  eligible: boolean;
+  reason: string;
+  message: string;
+}
+
+interface PreparationPickupRow {
+  full_description: string | null;
+  fit_score: number | null;
+  score_breakdown_json: string | null;
+  score_version: number | null;
+  has_resume: number | null;
+  has_cover_letter: number | null;
+  has_pdf: number | null;
+  stage_state: string | null;
+  attempt_count: number | null;
+  max_attempts: number | null;
+  score_stage_state: string | null;
+  unresolved_stale_scores: number | null;
+}
+
+function preparationPickupEligibility(
+  db: ApiDb,
+  jobUrl: string,
+  stage: Stage,
+  minScore: number,
+): PreparationPickupEligibility {
+  if (!tableExists(db, "job_list_projections")) {
+    return ineligiblePickup("projection_unavailable", "Preparation pickup is waiting for job projections.");
+  }
+  const staleScoreSelect = tableExists(db, "job_score_staleness")
+    ? `(SELECT COUNT(*)
+        FROM job_score_staleness stale
+        WHERE stale.tenant_id = 'local'
+          AND stale.job_url = jobs.url
+          AND stale.resolved = 0)`
+    : "0";
+  const row = db
+    .prepare(
+      `SELECT
+         projections.full_description,
+         projections.fit_score,
+         projections.score_breakdown_json,
+         projections.score_version,
+         projections.has_resume,
+         projections.has_cover_letter,
+         projections.has_pdf,
+         stage_state.state AS stage_state,
+         stage_state.attempt_count,
+         stage_state.max_attempts,
+         score_state.state AS score_stage_state,
+         ${staleScoreSelect} AS unresolved_stale_scores
+       FROM jobs
+       LEFT JOIN job_list_projections projections
+         ON projections.tenant_id = 'local' AND projections.job_id = jobs.url
+       LEFT JOIN job_stage_states stage_state
+         ON stage_state.job_url = jobs.url AND stage_state.stage = ?
+       LEFT JOIN job_stage_states score_state
+         ON score_state.job_url = jobs.url AND score_state.stage = 'score'
+       WHERE jobs.url = ?
+       LIMIT 1`,
+    )
+    .get(stage, jobUrl) as PreparationPickupRow | undefined;
+  if (!row) {
+    return ineligiblePickup("job_not_found", "Job is no longer available for preparation pickup.");
+  }
+  if ((row.stage_state ?? "pending") !== "pending") {
+    return ineligiblePickup("stage_not_pending", `The ${stage} stage is not pending.`);
+  }
+  if (stageAttemptsExhausted(stage, row)) {
+    return ineligiblePickup("stage_attempts_exhausted", `The ${stage} stage has exhausted automatic attempts.`);
+  }
+
+  const hasFullDescription = Boolean(row.full_description?.trim());
+  const fitScore = row.fit_score === null || row.fit_score === undefined ? null : Number(row.fit_score);
+  const scoreIsStale = Number(row.unresolved_stale_scores ?? 0) > 0;
+  const scoreIsCurrentForDownstream =
+    !scoreIsStale &&
+    ((row.score_stage_state ?? null) === null ||
+      row.score_stage_state === "succeeded" ||
+      (row.score_version === null && row.score_stage_state !== "stale"));
+  const scoreBlocked = scoreBreakdownBlocksDownstream(row.score_breakdown_json);
+  const hasResume = Boolean(row.has_resume);
+  const hasCoverLetter = Boolean(row.has_cover_letter);
+  const hasPdf = Boolean(row.has_pdf);
+
+  if (stage === "enrich") {
+    return hasFullDescription
+      ? ineligiblePickup("already_enriched", "Job already has enriched posting detail.")
+      : eligiblePickup();
+  }
+  if (stage === "score") {
+    if (!hasFullDescription) {
+      return ineligiblePickup("missing_description", "Job needs enrichment before scoring.");
+    }
+    return fitScore === null || scoreIsStale
+      ? eligiblePickup()
+      : ineligiblePickup("already_scored", "Job already has a current score.");
+  }
+
+  const downstreamBlock = downstreamPreparationBlock({
+    fitScore,
+    minScore,
+    hasFullDescription,
+    scoreIsCurrentForDownstream,
+    scoreBlocked,
+  });
+  if (downstreamBlock) {
+    return downstreamBlock;
+  }
+  if (stage === "tailor") {
+    return hasResume
+      ? ineligiblePickup("already_tailored", "Job already has a tailored resume.")
+      : eligiblePickup();
+  }
+  if (stage === "cover") {
+    if (!hasResume) {
+      return ineligiblePickup("missing_resume", "Job needs a tailored resume before cover generation.");
+    }
+    if (!hasPdf) {
+      return ineligiblePickup("missing_resume_pdf", "Job needs a rendered tailored resume before cover generation.");
+    }
+    return hasCoverLetter
+      ? ineligiblePickup("already_covered", "Job already has a cover letter.")
+      : eligiblePickup();
+  }
+  return ineligiblePickup("unsupported_stage", `Stage ${stage} is not eligible for automatic pickup.`);
+}
+
+function downstreamPreparationBlock(input: {
+  fitScore: number | null;
+  minScore: number;
+  hasFullDescription: boolean;
+  scoreIsCurrentForDownstream: boolean;
+  scoreBlocked: boolean;
+}): PreparationPickupEligibility | null {
+  if (input.fitScore === null) {
+    return ineligiblePickup("missing_score", "Job needs a score before materials generation.");
+  }
+  if (input.fitScore < input.minScore) {
+    return ineligiblePickup("score_below_threshold", "Job score is below the materials threshold.");
+  }
+  if (!input.hasFullDescription) {
+    return ineligiblePickup("missing_description", "Job needs enrichment before materials generation.");
+  }
+  if (input.scoreBlocked) {
+    return ineligiblePickup("score_blocks_downstream", "Score eligibility blocks materials generation.");
+  }
+  if (!input.scoreIsCurrentForDownstream) {
+    return ineligiblePickup("score_not_current", "Job needs a current score before materials generation.");
+  }
+  return null;
+}
+
+function stageAttemptsExhausted(stage: Stage, row: PreparationPickupRow): boolean {
+  if (row.stage_state === "exhausted") {
+    return true;
+  }
+  const maxAttempts = row.max_attempts ?? PREPARATION_PICKUP_MAX_ATTEMPTS[stage] ?? null;
+  if (maxAttempts === null) {
+    return false;
+  }
+  return Number(row.attempt_count ?? 0) >= Number(maxAttempts);
+}
+
+function scoreBreakdownBlocksDownstream(scoreBreakdownJson: string | null): boolean {
+  if (!scoreBreakdownJson) {
+    return false;
+  }
+  try {
+    const parsed: unknown = JSON.parse(scoreBreakdownJson);
+    if (!parsed || typeof parsed !== "object") {
+      return false;
+    }
+    const eligibility = (parsed as { eligibility?: unknown }).eligibility;
+    if (!eligibility || typeof eligibility !== "object") {
+      return false;
+    }
+    const status = String((eligibility as { status?: unknown }).status ?? "").toLowerCase();
+    if (status === "blocked") {
+      return true;
+    }
+    return ["hard_blockers", "hardBlockers", "blockers"].some((key) => {
+      const value = (eligibility as Record<string, unknown>)[key];
+      return Array.isArray(value) && value.length > 0;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function eligiblePickup(): PreparationPickupEligibility {
+  return { eligible: true, reason: "eligible", message: "Preparation pickup is eligible." };
+}
+
+function ineligiblePickup(reason: string, message: string): PreparationPickupEligibility {
+  return { eligible: false, reason, message };
+}
 
 function unsupportedPerJobMaterialAction(jobKey?: string): {
   ok: false;

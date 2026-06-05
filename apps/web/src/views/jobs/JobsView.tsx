@@ -53,6 +53,7 @@ const SEARCH_FILTER_COLUMNS = new Set([
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
 const AUTONOMOUS_PICKUP_STAGES: ReadonlySet<Stage> = new Set(["enrich", "score", "tailor", "cover"]);
+const AUTONOMOUS_PICKUP_MIN_SCORE = 7;
 
 function filterFor(value: string | undefined): DataGridTextFilter | undefined {
   if (!value) return undefined;
@@ -102,6 +103,53 @@ function sameKeys(
   );
 }
 
+function autoPickupSnapshotKey(jobs: readonly JobSummary[]): string {
+  return jobs
+    .map((job) =>
+      [
+        job.jobKey,
+        job.currentStage,
+        job.currentSubstage,
+        job.currentState,
+        job.fitScore ?? "",
+        job.scoredAt ?? "",
+        job.scoreStaleness.isStale ? "stale" : "fresh",
+        job.scoreBreakdown?.eligibility.status ?? "",
+        job.scoreBreakdown?.eligibility.hardBlockers.join(",") ?? "",
+      ].join(":"),
+    )
+    .join("|");
+}
+
+function scoreBlocksMaterials(job: JobSummary): boolean {
+  const eligibility = job.scoreBreakdown?.eligibility;
+  return eligibility?.status === "blocked" || Boolean(eligibility?.hardBlockers.length);
+}
+
+function isPotentialAutonomousPickup(job: JobSummary): boolean {
+  if (job.currentState !== "pending" || !AUTONOMOUS_PICKUP_STAGES.has(job.currentSubstage)) {
+    return false;
+  }
+  if (job.currentSubstage === "enrich") {
+    return true;
+  }
+  if (job.currentSubstage === "score") {
+    return job.fitScore === null || job.scoreStaleness.isStale;
+  }
+  if (
+    job.fitScore === null ||
+    job.fitScore < AUTONOMOUS_PICKUP_MIN_SCORE ||
+    job.scoreStaleness.isStale ||
+    scoreBlocksMaterials(job)
+  ) {
+    return false;
+  }
+  if (job.currentSubstage === "cover") {
+    return job.currentStage === "apply";
+  }
+  return true;
+}
+
 export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
@@ -122,6 +170,7 @@ export function JobsView() {
     useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
   const autoPickupKeys = useRef<Set<string>>(new Set());
+  const autoPickupSnapshots = useRef<Set<string>>(new Set());
   const tableFilters = useMemo<DataGridFilterState>(
     () => ({
       ...localTableFilters,
@@ -234,17 +283,24 @@ export function JobsView() {
   );
 
   useEffect(() => {
-    for (const job of data?.items ?? []) {
-      if (job.currentState !== "pending" || !AUTONOMOUS_PICKUP_STAGES.has(job.currentSubstage)) {
-        continue;
-      }
-      const pickupKey = `${job.jobKey}:${job.currentSubstage}`;
-      if (autoPickupKeys.current.has(pickupKey)) {
-        continue;
-      }
-      autoPickupKeys.current.add(pickupKey);
-      runJobStage.mutate({ jobId: job.jobKey, stage: job.currentSubstage });
+    const jobs = data?.items ?? [];
+    if (runJobStage.isPending || jobs.length === 0) {
+      return;
     }
+    const snapshotKey = autoPickupSnapshotKey(jobs);
+    if (autoPickupSnapshots.current.has(snapshotKey)) {
+      return;
+    }
+    autoPickupSnapshots.current.add(snapshotKey);
+    const job = jobs.find((candidate) => {
+      const pickupKey = `${candidate.jobKey}:${candidate.currentSubstage}`;
+      return !autoPickupKeys.current.has(pickupKey) && isPotentialAutonomousPickup(candidate);
+    });
+    if (!job) {
+      return;
+    }
+    autoPickupKeys.current.add(`${job.jobKey}:${job.currentSubstage}`);
+    runJobStage.mutate({ jobId: job.jobKey, stage: job.currentSubstage });
   }, [data?.items, runJobStage]);
 
   const selectAllMatching = () => {

@@ -213,6 +213,77 @@ describe("<JobsView> bulk delete integration", () => {
     );
   });
 
+  it("does not auto-start pending tailor rows that are not likely eligible", async () => {
+    const lowFitTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-low-fit-tailor",
+      url: "https://example.com/jobs/job-low-fit-tailor",
+      title: "Low Fit Tailor",
+      fitScore: 5,
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([lowFitTailor]));
+    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("state=all", "state=pending"),
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Low Fit Tailor")).toBeInTheDocument();
+    await waitFor(() => expect(jobs).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runJobStage).not.toHaveBeenCalled();
+  });
+
+  it("starts at most one automatic preparation pickup per unchanged jobs list", async () => {
+    const firstTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-pending-tailor-a",
+      url: "https://example.com/jobs/job-pending-tailor-a",
+      title: "Pending Tailor A",
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const secondTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-pending-tailor-b",
+      url: "https://example.com/jobs/job-pending-tailor-b",
+      title: "Pending Tailor B",
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([firstTailor, secondTailor]));
+    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("state=all", "state=pending"),
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Pending Tailor A")).toBeInTheDocument();
+    expect(await screen.findByText("Pending Tailor B")).toBeInTheDocument();
+    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runJobStage).toHaveBeenCalledTimes(1);
+    expect(runJobStage).toHaveBeenCalledWith(
+      "job-pending-tailor-a",
+      expect.objectContaining({ stage: "tailor" }),
+    );
+  });
+
   it("moves product filters into the table header and keeps them URL-backed", async () => {
     const user = userEvent.setup();
     const discoverJob = jobWithStage("job-discover", "Discovery candidate", "discover");

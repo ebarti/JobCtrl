@@ -69,7 +69,7 @@ implementations where possible, but they differ in orchestration.
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
 | Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
-| Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs starts one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The API dispatches a job-scoped `JobPipelineWorkflow` for the remaining preparation sequence from that substage. | Internal preparation pickup |
+| Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs can start one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The web page paces pickup to one unchanged list snapshot, and the API refreshes projections plus gates dispatch on observable stage eligibility before starting a job-scoped `JobPipelineWorkflow`. | Internal preparation pickup |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
 | Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation queue drain. | Discover and Apply |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
@@ -615,10 +615,11 @@ sequenceDiagram
 - Successful `tailor_resume` work immediately invokes the job-scoped cover
   stage. Cover failures are recorded on the cover stage for retry without
   forcing the tailored resume work item to regenerate the resume.
-- Viewing the Jobs page is also a pickup signal: visible rows whose current
-  state is `pending` and whose current substage is `enrich`, `score`, `tailor`,
-  or `cover` dispatch a job-scoped run from that substage without resetting
-  attempts or failure metadata.
+- Viewing the Jobs page is also a pickup signal: eligible visible rows whose
+  current state is `pending` and whose current substage is `enrich`, `score`,
+  `tailor`, or `cover` can dispatch a job-scoped run from that substage without
+  resetting attempts or failure metadata. The API route is the safety boundary:
+  known-ineligible rows return `not_eligible` and do not start worker activity.
 - Work item lifecycle events are part of the SSE catalog, so Operations can
   invalidate dashboard, job detail, artifact, and activity projections while
   Discover is still running.

@@ -274,9 +274,13 @@ pickup without resetting stage state. It accepts the internal preparation
 stages `enrich`, `score`, `tailor`, and `cover`, rejects product-stage starts
 such as `apply`, resolves the route key to the canonical job URL, checks worker
 readiness, and dispatches `run_stage` for the remaining preparation sequence
-from the requested substage. The Jobs page uses this route when viewed rows are
-`pending` on a visible preparation substage, so pending preparation continues
-autonomously when the user opens or filters Jobs.
+from the requested substage. Before dispatch, the route refreshes projections
+and checks that the requested substage is still pending and observably eligible;
+known-ineligible rows return `status: "not_eligible"` without starting worker
+work. The Jobs page uses this route for eligible viewed rows that are `pending`
+on a visible preparation substage, and starts at most one pickup per unchanged
+list snapshot so pending preparation continues autonomously without page-render
+fanout.
 
 The `limit` field is forwarded to every selected stage. For `discover`, the
 Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's

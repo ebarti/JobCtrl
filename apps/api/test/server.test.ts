@@ -2690,7 +2690,19 @@ describe("local TypeScript API", () => {
   it("dispatches pending preparation pickup without resetting the stage", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
-    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+    const db = new Database(options.dbPath);
+    insertJob(db, {
+      url: "https://example.com/jobs/pending-score",
+      title: "Unscored Platform Engineer",
+      site: "ExampleCo",
+      fitScore: null,
+      scoredAt: null,
+    });
+    insertStage(db, "https://example.com/jobs/pending-score", "discover", "succeeded");
+    insertStage(db, "https://example.com/jobs/pending-score", "enrich", "succeeded");
+    insertStage(db, "https://example.com/jobs/pending-score", "score", "pending");
+    db.close();
+    const jobKey = encodeURIComponent("https://example.com/jobs/pending-score");
 
     const response = await app.inject({
       method: "POST",
@@ -2702,7 +2714,7 @@ describe("local TypeScript API", () => {
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "run_stage",
-        jobKey: "https://example.com/jobs/ready",
+        jobKey: "https://example.com/jobs/pending-score",
         stage: "score",
         stages: ["score", "tailor", "cover"],
         dryRun: true,
@@ -2710,6 +2722,43 @@ describe("local TypeScript API", () => {
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
+
+    await app.close();
+  });
+
+  it("does not dispatch automatic pickup for known-ineligible preparation work", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const db = new Database(options.dbPath);
+    insertJob(db, {
+      url: "https://example.com/jobs/low-fit-tailor",
+      title: "Low Fit Tailor",
+      site: "ExampleCo",
+      fitScore: 5,
+    });
+    insertScore(db, "https://example.com/jobs/low-fit-tailor", 1, 5);
+    insertStage(db, "https://example.com/jobs/low-fit-tailor", "discover", "succeeded");
+    insertStage(db, "https://example.com/jobs/low-fit-tailor", "enrich", "succeeded");
+    insertStage(db, "https://example.com/jobs/low-fit-tailor", "score", "succeeded");
+    insertStage(db, "https://example.com/jobs/low-fit-tailor", "tailor", "pending");
+    db.close();
+    const jobKey = encodeURIComponent("https://example.com/jobs/low-fit-tailor");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/run-stage`,
+      payload: { stage: "tailor", dryRun: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      action: "run_stage",
+      status: "not_eligible",
+      jobKey: "https://example.com/jobs/low-fit-tailor",
+      result: { reason: "score_below_threshold" },
+    });
+    expect(dispatch).not.toHaveBeenCalled();
 
     await app.close();
   });
