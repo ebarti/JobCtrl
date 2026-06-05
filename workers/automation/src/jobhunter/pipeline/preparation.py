@@ -384,7 +384,18 @@ def _tailor_item(
         return {"skipped": True, "reason": result.get("reason", "not_eligible")}
     if result.get("status") != "approved":
         raise RuntimeError(str(result.get("error") or f"Tailoring ended with status {result.get('status')}"))
+    from jobhunter.scoring.cover_letter import run_cover_letters
+
+    cover_result = run_cover_letters(
+        min_score=min_score,
+        limit=1,
+        validation_mode=validation_mode,
+        llm_model=llm_model,
+        job_urls=(str(item.job_id),),
+        tenant_id=tenant_id,
+    )
     return {
+        "cover": cover_result,
         "materialsGeneration": getattr(result.get("materials"), "generation", None),
         "status": result.get("status"),
     }

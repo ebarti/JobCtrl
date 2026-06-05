@@ -3618,7 +3618,7 @@ describe("local TypeScript API", () => {
         action: "run_stage",
         jobKey: "pipeline",
         stage: "tailor",
-        stages: ["tailor"],
+        stages: ["tailor", "cover"],
         dryRun: false,
         limit: 0,
         minScore: 6,

@@ -15,9 +15,10 @@ SQLite and reconstruct the existing response object shape for frontend/client
 compatibility.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
-background `tailor` pipeline run with `retailor=true`, `dryRun=false`,
+background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,
 and no item limit. The Python materials generation path creates a new materials
-generation for each re-tailored job and preserves the prior generation as
+generation for each re-tailored job, immediately follows it with cover-letter
+generation for jobs that are ready, and preserves the prior generation as
 historical/superseded artifact data.
 The web Profile, Preferences, Discovery target search, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
@@ -253,7 +254,8 @@ is supplied. Low-level internal requests can still pass `rescore` and
 dispatches the ordered stage list to JSON-RPC
 `run_stage`, which starts `JobPipelineWorkflow`; when `discover` runs, the
 Python runner discovers jobs, drains detail enrichment, and then drains
-internal preparation work for scoring, tailoring, and artifact suppression.
+internal preparation work for scoring, tailoring, cover generation for
+successfully tailored jobs, and artifact suppression.
 When the selected stage is `apply`, the same `run_stage` request remains inside
 `JobPipelineWorkflow`, which delegates to `ApplyWorkflow` as a child workflow.
 The dedicated apply JSON-RPC method is used by per-job apply actions, not by
@@ -293,7 +295,8 @@ Current-version preparation maintenance actions are separate endpoints:
   `rescore_jobs_not_on_current_scoring_policy` for selected or bounded active
   jobs.
 - `POST /v1/jobs/:jobKey/actions/retailor-current-policy` dispatches
-  `retailor_job` for one job and can suppress the prior active artifacts.
+  `retailor_job` for one job and can suppress the prior active artifacts;
+  successful re-tailoring continues into cover generation for that job.
 - `POST /v1/materials/actions/retailor-current-policy` dispatches
   `retailor_current_policy` for selected or bounded eligible jobs and can
   suppress prior active artifacts.
@@ -307,9 +310,10 @@ Current-version preparation maintenance actions are separate endpoints:
 First-time manual tailoring is not a re-tailor action. The job detail stage
 timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal
 `tailor` stage, dispatching JSON-RPC `tailor_job` for the selected job only.
-That explicit user action records a `TailorRequested` audit-history event and
+That explicit user action records a `TailorRequested` audit-history event,
 overrides the default low-fit auto-tailoring gate for the selected job without
-changing the batch `minScore` behavior.
+changing the batch `minScore` behavior, and immediately continues into cover
+generation when tailoring succeeds.
 
 The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for

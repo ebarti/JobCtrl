@@ -589,6 +589,10 @@ sequenceDiagram
         Discover->>Queue: enqueue tailor_resume(target=tailoring policy version)
         Queue->>Materials: tailor_job_by_url(job, current policy)
         Materials-->>Ops: ResumeApproved / ResumeFailed
+        opt resume approved
+            Queue->>Materials: run_cover_letters(job)
+            Materials-->>Ops: CoverLetterGenerated / CoverLetterFailed
+        end
         Queue-->>Ops: PreparationWorkItemCompleted or Failed
     else ineligible with active artifacts
         Discover->>Queue: enqueue suppress_tailored_artifacts(target=threshold)
@@ -607,6 +611,9 @@ sequenceDiagram
   `suppress_tailored_artifacts`.
 - `source_event_id` ties each item to the latest discovery/enrichment/source
   fact that made the work necessary.
+- Successful `tailor_resume` work immediately invokes the job-scoped cover
+  stage. Cover failures are recorded on the cover stage for retry without
+  forcing the tailored resume work item to regenerate the resume.
 - Work item lifecycle events are part of the SSE catalog, so Operations can
   invalidate dashboard, job detail, artifact, and activity projections while
   Discover is still running.
@@ -795,7 +802,7 @@ sequenceDiagram
 
     Api->>Rpc: tailor_job, retailor_job, or retailor_current_policy
     Prep->>Runner: tailor_resume work item during Discover
-    Rpc->>Runner: run_pipeline(stages=["tailor"]) for low-level maintenance
+    Rpc->>Runner: run_pipeline(stages=["tailor", "cover"]) for job-scoped actions
     Runner->>Tailor: run_tailoring(...)
     Tailor->>DB: select scored jobs meeting minScore
     Tailor->>Profile: load resume baseline and tailoring rules
@@ -850,7 +857,8 @@ classDiagram
 ### Data And Events
 
 - Reads jobs with score >= `minScore`; a per-job `tailor_job` user action can
-  override that floor only for the selected job.
+  override that floor only for the selected job and then continue into the
+  job-scoped cover stage.
 - Reads profile resume baseline, skills, writing style, and tailoring rules.
 - Writes tailored resume records and local artifacts under the JobHunter app
   directory.

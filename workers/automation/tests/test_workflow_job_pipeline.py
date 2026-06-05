@@ -318,6 +318,106 @@ async def test_pipeline_workflow_forwards_validation_mode_to_tailor_and_cover():
 
 
 @pytest.mark.asyncio
+async def test_job_scoped_tailor_continuation_runs_cover_for_same_job_after_success():
+    queue = f"pipeline-tailor-cover-{uuid.uuid4()}"
+    job_url = "https://example.com/job/manual-tailor"
+    tailored_urls: list[str] = []
+    cover_url_batches: list[tuple[str, ...]] = []
+
+    def fake_tailor_job_by_url(url: str, **_kwargs):
+        tailored_urls.append(url)
+        return {"status": "approved"}
+
+    def fake_run_cover_letters(*, job_urls: tuple[str, ...] = (), **_kwargs):
+        cover_url_batches.append(job_urls)
+        return {"generated": len(job_urls), "errors": 0, "elapsed": 0.01}
+
+    with (
+        patch("jobhunter.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
+        patch("jobhunter.scoring.cover_letter.run_cover_letters", side_effect=fake_run_cover_letters),
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["tailor", "cover"],
+                        job_url=job_url,
+                        limit=1,
+                    ),
+                    id=f"pipeline-tailor-cover-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["tailor", "cover"]
+    assert result.stages_failed == []
+    assert tailored_urls == [job_url]
+    assert cover_url_batches == [(job_url,)]
+
+
+@pytest.mark.asyncio
+async def test_current_policy_tailor_continuation_covers_only_approved_jobs():
+    queue = f"pipeline-current-policy-tailor-cover-{uuid.uuid4()}"
+    selected_url = "https://example.com/job/current-policy-selected"
+    unrelated_pending_cover_url = "https://example.com/job/unrelated-pending-cover"
+    tailored_urls: list[str] = []
+    cover_url_batches: list[tuple[str, ...]] = []
+
+    def fake_current_policy_urls(_conn, **kwargs):
+        assert kwargs["limit"] == 1
+        return (selected_url,)
+
+    def fake_tailor_job_by_url(url: str, **_kwargs):
+        tailored_urls.append(url)
+        return {"status": "approved"}
+
+    def fake_run_cover_letters(*, job_urls: tuple[str, ...] = (), **_kwargs):
+        cover_url_batches.append(job_urls)
+        if not job_urls:
+            return {"generated": 1, "errors": 0, "elapsed": 0.01, "global": unrelated_pending_cover_url}
+        return {"generated": len(job_urls), "errors": 0, "elapsed": 0.01}
+
+    with (
+        patch("jobhunter.database.get_connection", return_value=object()),
+        patch("jobhunter.pipeline.current_policy_selectors.tailoring_current_policy_job_urls", side_effect=fake_current_policy_urls),
+        patch("jobhunter.scoring.tailor.tailor_job_by_url", side_effect=fake_tailor_job_by_url),
+        patch("jobhunter.scoring.cover_letter.run_cover_letters", side_effect=fake_run_cover_letters),
+    ):
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow],
+                activities=_all_activities(),
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(
+                        tenant_id="local",
+                        stages=["tailor", "cover"],
+                        limit=1,
+                        retailor=True,
+                        tailor_current_policy_only=True,
+                    ),
+                    id=f"pipeline-current-policy-tailor-cover-wf-{uuid.uuid4()}",
+                    task_queue=queue,
+                )
+
+    assert result.stages_completed == ["tailor", "cover"]
+    assert result.stages_failed == []
+    assert tailored_urls == [selected_url]
+    assert cover_url_batches == [(selected_url,)]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_workflow_preserves_stage_options():
     queue = f"pipeline-options-{uuid.uuid4()}"
 

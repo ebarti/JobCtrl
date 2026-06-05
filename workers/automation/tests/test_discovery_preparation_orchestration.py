@@ -21,7 +21,7 @@ from jobhunter.domain.materials import (
     RenderFormat,
     ValidationResult,
 )
-from jobhunter.domain.preparation import PreparationWorkItemKind
+from jobhunter.domain.preparation import PreparationWorkItem, PreparationWorkItemKind
 from jobhunter.domain.scoring import FitScore, JobScore, MatchedKeywords, ScoreBreakdown
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.materials import SqliteMaterialsRepository
@@ -197,6 +197,74 @@ def test_discovery_preparation_auto_retries_failed_work_item_in_same_drain(
     assert [(row["kind"], row["state"], row["attempts"], row["last_error"]) for row in rows] == [
         ("score_job", "completed", 2, ""),
         ("tailor_resume", "completed", 1, ""),
+    ]
+
+
+def test_tailor_work_item_runs_cover_for_approved_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    url = "https://example.com/job/tailored-for-cover"
+    item = PreparationWorkItem.queued(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        kind=PreparationWorkItemKind.TAILOR_RESUME,
+        target_version=1,
+        source_event_id="source-1",
+        created_at="2026-06-05T00:00:00+00:00",
+    )
+    tailor_calls: list[tuple[str, dict[str, object]]] = []
+    cover_calls: list[dict[str, object]] = []
+
+    def fake_tailor_job_by_url(job_url: str, **kwargs: object) -> dict[str, object]:
+        tailor_calls.append((job_url, kwargs))
+        return {"status": "approved", "materials": SimpleNamespace(generation=3)}
+
+    def fake_run_cover_letters(**kwargs: object) -> dict[str, object]:
+        cover_calls.append(kwargs)
+        return {"generated": 1, "errors": 0, "elapsed": 0.1}
+
+    monkeypatch.setattr("jobhunter.scoring.tailor.tailor_job_by_url", fake_tailor_job_by_url)
+    monkeypatch.setattr("jobhunter.scoring.cover_letter.run_cover_letters", fake_run_cover_letters)
+
+    result = preparation._tailor_item(
+        item,
+        min_score=7,
+        validation_mode="normal",
+        workers=2,
+        llm_model="local:model",
+        tailor_models=("local:tailor",),
+        tailor_judge_model="local:judge",
+        tailor_judge_min_score=0.9,
+        tenant_id=LOCAL_TENANT,
+    )
+
+    assert result == {
+        "cover": {"generated": 1, "errors": 0, "elapsed": 0.1},
+        "materialsGeneration": 3,
+        "status": "approved",
+    }
+    assert tailor_calls == [
+        (
+            url,
+            {
+                "min_score": 7,
+                "validation_mode": "normal",
+                "workers": 2,
+                "llm_model": "local:model",
+                "tailor_models": ("local:tailor",),
+                "tailor_judge_model": "local:judge",
+                "tailor_judge_min_score": 0.9,
+                "tenant_id": LOCAL_TENANT,
+            },
+        )
+    ]
+    assert cover_calls == [
+        {
+            "min_score": 7,
+            "limit": 1,
+            "validation_mode": "normal",
+            "llm_model": "local:model",
+            "job_urls": (url,),
+            "tenant_id": LOCAL_TENANT,
+        }
     ]
 
 

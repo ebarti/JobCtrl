@@ -249,7 +249,7 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     job_url = str(_require(params, "jobUrl"))
     return _pipeline_workflow_spec(
         params,
-        stages=["tailor"],
+        stages=["tailor", "cover"],
         limit=1,
         retailor=True,
         job_url=job_url,
@@ -263,7 +263,7 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     job_url = str(_require(params, "jobUrl"))
     return _pipeline_workflow_spec(
         params,
-        stages=["tailor"],
+        stages=["tailor", "cover"],
         limit=1,
         retailor=False,
         job_url=job_url,
@@ -276,7 +276,7 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
     return _pipeline_workflow_spec(
         params,
-        stages=["tailor"],
+        stages=["tailor", "cover"],
         limit=int(params.get("limit", 100)),
         retailor=True,
         job_urls=_job_urls(params),

@@ -131,6 +131,34 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(result.status).toBe("queued");
   });
 
+  it("maps a tailor retry with runAfter through cover for the same job", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "retry_stage",
+        jobKey: "https://example.com/jobs/x",
+        stage: "tailor",
+        runAfter: true,
+        dryRun: true,
+        limit: 1,
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls[0]).toEqual({
+      method: "run_stage",
+      params: expect.objectContaining({
+        jobUrl: "https://example.com/jobs/x",
+        stage: "tailor",
+        stages: ["tailor", "cover"],
+        limit: 1,
+        dryRun: true,
+      }),
+    });
+  });
+
   it("maps a global run-stage workflow start to a queued action", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({
