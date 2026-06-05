@@ -98,6 +98,39 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(result.status).toBe("queued");
   });
 
+  it("maps a retry-stage with runAfter for preparation into a job-scoped pipeline run", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    const result = await dispatcher(
+      {
+        action: "retry_stage",
+        jobKey: "https://example.com/jobs/x",
+        stage: "enrich",
+        stages: ["enrich", "score", "tailor", "cover"],
+        runAfter: true,
+        dryRun: true,
+        limit: 1,
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls[0]).toEqual({
+      method: "run_stage",
+      params: expect.objectContaining({
+        tenantId: "local",
+        expectedAppDir: "/tmp",
+        expectedDbPath: "/tmp/jobhunter.db",
+        jobUrl: "https://example.com/jobs/x",
+        stage: "enrich",
+        stages: ["enrich", "score", "tailor", "cover"],
+        limit: 1,
+        dryRun: true,
+      }),
+    });
+    expect(result.status).toBe("queued");
+  });
+
   it("maps a global run-stage workflow start to a queued action", async () => {
     const fake = new FakeDispatcher();
     fake.setResponse({

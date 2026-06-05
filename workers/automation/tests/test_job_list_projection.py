@@ -167,6 +167,36 @@ def test_pipeline_progress_keeps_internal_preparation_inside_discover_list_stage
     assert score_stage["state"] == "pending"
 
 
+def test_stage_projection_preserves_non_retryable_failures(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/jobs/non-retryable"
+    _seed_job(conn, url, title="Closed Posting")
+
+    set_stage_state(conn, url, "discover", "succeeded", finished_at=utc_now())
+    set_stage_state(
+        conn,
+        url,
+        "enrich",
+        "failed",
+        attempt_count=1,
+        error_code="POSTING_INACTIVE",
+        error_message="posting removed",
+        retryable=False,
+        validate_transition=False,
+    )
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    detail = conn.execute(
+        "SELECT stages_json FROM job_detail_projections WHERE job_id = ?",
+        (url,),
+    ).fetchone()
+    stages = json.loads(_row_value(detail, "stages_json", "[]"))
+    enrich_stage = next(stage for stage in stages if stage["stage"] == "enrich")
+    assert enrich_stage["state"] == "failed"
+    assert enrich_stage["retryable"] is False
+
+
 def test_score_event_populates_fit_score(conn: sqlite3.Connection) -> None:
     url = "https://example.com/jobs/3"
     _seed_job(conn, url)

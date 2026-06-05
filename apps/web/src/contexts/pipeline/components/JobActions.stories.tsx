@@ -16,15 +16,14 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {};
 
-export const WithNextAction: Story = {
+export const RetryableFailure: Story = {
   args: {
-    nextAction: "Tailoring resume…",
+    canRetryStage: true,
   },
 };
 
 export const ApplyStage: Story = {
   args: {
     currentStage: "apply",
-    nextAction: "Submitting application…",
   },
 };

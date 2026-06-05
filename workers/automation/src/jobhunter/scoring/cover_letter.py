@@ -156,6 +156,7 @@ def run_cover_letters(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     publisher: EventPublisher | None = None,
     pdf_renderer: PdfRendererPort | None = None,
+    job_urls: tuple[str, ...] = (),
     tenant_id: TenantId = LOCAL_TENANT,
 ) -> dict:
     """Generate cover letters for jobs whose tailored resume is approved."""
@@ -168,12 +169,18 @@ def run_cover_letters(
         repository = SqliteMaterialsRepository(conn)
     min_score = effective_tailoring_min_score(min_score)
 
+    selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
     jobs = get_jobs_by_stage(
         conn=conn,
         stage="pending_cover",
         min_score=min_score,
-        limit=limit,
+        limit=0 if selected_urls else limit,
     )
+    if selected_urls:
+        selected_set = set(selected_urls)
+        jobs = [job for job in jobs if str(job.get("url") or "") in selected_set]
+        if limit > 0:
+            jobs = jobs[:limit]
 
     if not jobs:
         log.info("No jobs needing cover letters (score >= %d).", min_score)

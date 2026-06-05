@@ -2219,6 +2219,35 @@ textarea {
   gap: 6px;
 }
 
+.timeline-diagnostics {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.timeline-diagnostics div {
+  display: grid;
+  grid-template-columns: minmax(46px, max-content) minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+
+.timeline-diagnostics dt {
+  color: var(--ink-2);
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.timeline-diagnostics dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .timeline-action {
   width: 100%;
   justify-content: center;

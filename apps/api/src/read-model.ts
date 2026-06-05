@@ -584,7 +584,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     "SELECT * FROM job_detail_projections WHERE tenant_id = ? AND job_id = ?",
     [DEFAULT_TENANT, listRow.job_id],
   );
-  const stages = parseStages(detailRow?.stages_json);
+  const stages = reconcileStageRetryability(db, listRow.job_id, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, listRow.job_id);
   const auditHistory = buildJobAuditHistory(db, listRow.job_id);
   return {
@@ -1012,6 +1012,12 @@ function jobEventToAuditEntry(
           ["Source", payloadText(payload, "sourceId", "source_id")],
           ["Failure", humanizeToken(payloadText(payload, "errorClass", "error_class"))],
           ["Retryable", yesNo(payloadBoolean(payload, "retryable"))],
+          ["Active state", humanizeToken(payloadText(payload, "activeState", "active_state"))],
+          ["Verification", humanizeToken(payloadText(payload, "verificationMethod", "verification_method"))],
+          ["HTTP status", payloadText(payload, "httpStatus", "http_status")],
+          ["Extraction tier", payloadText(payload, "tier", "extractionTier", "extraction_tier")],
+          ["Description chars", payloadText(payload, "descriptionChars", "description_chars")],
+          ["Apply URL found", yesNo(payloadBoolean(payload, "applicationUrlFound", "application_url_found"))],
         ),
       });
     case "JobActiveStateChanged":
@@ -1426,6 +1432,12 @@ function stageAuditEntry(
       ["Duration", durationLabel(payloadNumber(payload, "durationMs", "duration_ms"))],
       ["Blocked by", payloadList(payload, "blockedBy", "blocked_by").map(stageLabel).join(", ")],
       ["Retryable", yesNo(payloadBoolean(payload, "retryable"))],
+      ["Active state", humanizeToken(payloadText(payload, "activeState", "active_state"))],
+      ["Verification", humanizeToken(payloadText(payload, "verificationMethod", "verification_method"))],
+      ["HTTP status", payloadText(payload, "httpStatus", "http_status")],
+      ["Extraction tier", payloadText(payload, "tier", "extractionTier", "extraction_tier")],
+      ["Description chars", payloadText(payload, "descriptionChars", "description_chars")],
+      ["Apply URL found", yesNo(payloadBoolean(payload, "applicationUrlFound", "application_url_found"))],
     ),
   });
 }
@@ -2279,6 +2291,45 @@ function parseStages(stagesJson: string | undefined): StageSummary[] {
     });
   }
   return STAGES.map((stage) => byStage.get(stage) ?? defaultStage(stage, "pending"));
+}
+
+function reconcileStageRetryability(
+  db: SqliteDatabase,
+  jobId: string,
+  stages: StageSummary[],
+): StageSummary[] {
+  const retryability = latestStageRetryabilityByEvent(db, jobId);
+  if (retryability.size === 0) return stages;
+  return stages.map((stage) => {
+    if (!["failed", "exhausted"].includes(stage.state)) return stage;
+    if (stage.stage === "enrich") return { ...stage, retryable: true };
+    if (retryability.get(stage.stage) !== false) return stage;
+    return { ...stage, retryable: false, nextAction: null };
+  });
+}
+
+function latestStageRetryabilityByEvent(db: SqliteDatabase, jobId: string): Map<Stage, boolean> {
+  if (!tableExists(db, "job_events")) return new Map();
+  const rows = allRows<{ stage: string | null; payload_json: string | null }>(
+    db,
+    `SELECT stage, payload_json
+     FROM job_events
+     WHERE job_url = ?
+       AND stage IS NOT NULL
+       AND payload_json IS NOT NULL
+     ORDER BY event_id ASC`,
+    [jobId],
+  );
+  const retryability = new Map<Stage, boolean>();
+  for (const row of rows) {
+    if (!isStage(row.stage)) continue;
+    const payload = parseJsonRecord(row.payload_json);
+    const retryable = payload?.["retryable"];
+    if (typeof retryable === "boolean") {
+      retryability.set(row.stage, retryable);
+    }
+  }
+  return retryability;
 }
 
 function defaultStages(): StageSummary[] {

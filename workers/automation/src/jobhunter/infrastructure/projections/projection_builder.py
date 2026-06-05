@@ -562,7 +562,7 @@ class ProjectionBuilder:
                     duration_ms=_row_nullable_int(row, "duration_ms"),
                     error_code=_row_nullable_str(row, "error_code"),
                     error_message=_row_nullable_str(row, "error_message"),
-                    retryable=bool(_row_nullable_int(row, "retryable") or 1),
+                    retryable=_row_nullable_int(row, "retryable") != 0,
                     blocked_by=tuple(str(item) for item in blocked_by)
                     if isinstance(blocked_by, list)
                     else (),

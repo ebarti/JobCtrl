@@ -14,15 +14,25 @@ import { RetryStageButton } from "./RetryStageButton.js";
 export interface JobActionsProps {
   jobId: string;
   currentStage: Stage;
-  nextAction?: string | null;
+  canRetryStage?: boolean;
   canRetailor?: boolean;
 }
 
-export function JobActions({ jobId, currentStage, nextAction, canRetailor = false }: JobActionsProps): JSX.Element {
+export function JobActions({
+  jobId,
+  currentStage,
+  canRetryStage = false,
+  canRetailor = false,
+}: JobActionsProps): JSX.Element {
   return (
     <div className="action-panel" role="toolbar" aria-label="Job actions">
-      {nextAction ? <span className="next-action">{nextAction}</span> : null}
-      <RetryStageButton jobId={jobId} stage={currentStage} />
+      {canRetryStage ? (
+        <RetryStageButton
+          jobId={jobId}
+          stage={currentStage}
+          runAfter={shouldRunAfterRetry(currentStage)}
+        />
+      ) : null}
       <CancelStageButton jobId={jobId} stage={currentStage} />
       <RescoreJobButton jobId={jobId} />
       {canRetailor ? <RetailorJobButton jobId={jobId} /> : null}
@@ -33,4 +43,8 @@ export function JobActions({ jobId, currentStage, nextAction, canRetailor = fals
       <MarkSkippedButton jobId={jobId} />
     </div>
   );
+}
+
+function shouldRunAfterRetry(stage: Stage): boolean {
+  return stage !== "discover";
 }

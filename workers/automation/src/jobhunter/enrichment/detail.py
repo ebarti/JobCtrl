@@ -377,6 +377,80 @@ def scrape_detail_page(page, url: str) -> dict:
     return result
 
 
+def _detail_failure_retryable(cascade_result: dict) -> bool:
+    """Classify detail extraction failures after page fetch/verification.
+
+    Extraction failures stay retryable: extractor rules, page markup, and
+    timing can all change independently of the posting's active state.
+    """
+    active_state = ActiveState.from_optional(cascade_result.get("active_state"))
+    verification_method = str(cascade_result.get("verification_method") or "")
+    if (
+        active_state is not None
+        and active_state is not ActiveState.ACTIVE
+        and verification_method
+        and verification_method != "unknown"
+    ):
+        return False
+    return True
+
+
+def _discovery_description_fallback(
+    conn: sqlite3.Connection, url: str
+) -> tuple[str | None, str | None]:
+    """Return discovery-owned content that is usable as enrichment fallback."""
+    row = conn.execute(
+        """
+        SELECT full_description, description, application_url
+        FROM jobs
+        WHERE url = ?
+        """,
+        (url,),
+    ).fetchone()
+    if row is None:
+        return None, None
+
+    full_description = (
+        row["full_description"] if isinstance(row, sqlite3.Row) else row[0]
+    )
+    description = row["description"] if isinstance(row, sqlite3.Row) else row[1]
+    application_url = (
+        row["application_url"] if isinstance(row, sqlite3.Row) else row[2]
+    )
+
+    for candidate in (full_description, description):
+        text = str(candidate or "").strip()
+        if len(text) > 200:
+            return text, str(application_url).strip() if application_url else None
+    return None, str(application_url).strip() if application_url else None
+
+
+def _apply_discovery_description_fallback(
+    conn: sqlite3.Connection, url: str, cascade_result: dict
+) -> dict:
+    """Promote discovery content when a live detail scrape finds no description."""
+    if str(cascade_result.get("full_description") or "").strip():
+        return cascade_result
+    if cascade_result.get("status") not in {"error", "partial"}:
+        return cascade_result
+
+    description, application_url = _discovery_description_fallback(conn, url)
+    if not description:
+        return cascade_result
+
+    original_status = cascade_result.get("status")
+    original_error = cascade_result.get("error")
+    updated = dict(cascade_result)
+    updated["status"] = "partial"
+    updated["full_description"] = description
+    if not updated.get("application_url") and application_url:
+        updated["application_url"] = application_url
+    updated["fallback_source"] = "discovery"
+    updated["detail_status"] = original_status
+    updated["detail_error"] = original_error
+    return updated
+
+
 def _make_llm_extractor() -> LlmExtractor:
     """Build a Tier-3 extractor backed by the canonical LlmAdapter.
 
@@ -498,7 +572,9 @@ def scrape_site_batch(
                     started_at=started_at,
                 )
 
-                cascade_result = scrape_detail_page(page, url)
+                cascade_result = _apply_discovery_description_fallback(
+                    conn, url, scrape_detail_page(page, url)
+                )
                 stats["processed"] += 1
 
                 tier = cascade_result.get("tier_used")
@@ -529,6 +605,16 @@ def scrape_site_batch(
                 finished_at = utc_now()
                 if status in ("ok", "partial"):
                     stats[status] += 1
+                    fallback_source = cascade_result.get("fallback_source")
+                    stage_metadata = (
+                        {
+                            "fallbackSource": fallback_source,
+                            "detailStatus": cascade_result.get("detail_status"),
+                            "detailError": cascade_result.get("detail_error"),
+                        }
+                        if fallback_source
+                        else None
+                    )
                     full_desc = FullDescription(
                         text=cascade_result["full_description"] or ""
                     )
@@ -560,14 +646,31 @@ def scrape_site_batch(
                         attempt_count=succeeded.attempt_count,
                         started_at=started_at,
                         finished_at=finished_at,
+                        metadata=stage_metadata,
                     )
+                    completed_payload = {
+                        "tier": tier,
+                        "elapsed": elapsed,
+                        "descriptionChars": desc_len,
+                        "applicationUrlFound": bool(
+                            cascade_result.get("application_url")
+                        ),
+                    }
+                    if fallback_source:
+                        completed_payload.update(
+                            {
+                                "fallbackSource": fallback_source,
+                                "detailStatus": cascade_result.get("detail_status"),
+                                "detailError": cascade_result.get("detail_error"),
+                            }
+                        )
                     record_job_event(
                         conn,
                         url,
                         "enrich",
                         "StageCompleted",
                         message=f"Enrichment {status}: {desc_len} description chars",
-                        payload={"tier": tier, "elapsed": elapsed},
+                        payload=completed_payload,
                     )
                 elif status == "inactive":
                     stats["error"] += 1
@@ -607,13 +710,38 @@ def scrape_site_batch(
                         "StageFailed",
                         level="info",
                         message=err.message,
+                        payload={
+                            "errorCode": "POSTING_INACTIVE",
+                            "errorMessage": err.message,
+                            "retryable": False,
+                            "attemptNumber": failed.attempt_count,
+                            "status": status,
+                            "tier": tier,
+                            "elapsed": elapsed,
+                            "durationMs": int(elapsed * 1000) if elapsed else None,
+                            "descriptionChars": desc_len,
+                            "applicationUrlFound": bool(
+                                cascade_result.get("application_url")
+                            ),
+                            "activeState": cascade_result.get("active_state"),
+                            "active_state": cascade_result.get("active_state"),
+                            "verificationMethod": cascade_result.get(
+                                "verification_method"
+                            ),
+                            "verification_method": cascade_result.get(
+                                "verification_method"
+                            ),
+                            "httpStatus": cascade_result.get("http_status"),
+                            "http_status": cascade_result.get("http_status"),
+                        },
                     )
                 else:
                     stats["error"] += 1
+                    retryable = _detail_failure_retryable(cascade_result)
                     err = EnrichmentError(
                         code="DETAIL_ERROR",
                         message=str(cascade_result.get("error") or "unknown")[:500],
-                        retryable=True,
+                        retryable=retryable,
                     )
                     failed = aggregate.fail_attempt(
                         error=err, finished_at=finished_at
@@ -629,8 +757,8 @@ def scrape_site_batch(
                         finished_at=finished_at,
                         error_code="DETAIL_ERROR",
                         error_message=err.message,
-                        retryable=True,
-                        next_action=f"jobhunter retry enrich {url}",
+                        retryable=retryable,
+                        next_action=f"jobhunter retry enrich {url}" if retryable else None,
                     )
                     record_job_event(
                         conn,
@@ -639,6 +767,30 @@ def scrape_site_batch(
                         "StageFailed",
                         level="error",
                         message=err.message,
+                        payload={
+                            "errorCode": "DETAIL_ERROR",
+                            "errorMessage": err.message,
+                            "retryable": retryable,
+                            "attemptNumber": failed.attempt_count,
+                            "status": status,
+                            "tier": tier,
+                            "elapsed": elapsed,
+                            "durationMs": int(elapsed * 1000) if elapsed else None,
+                            "descriptionChars": desc_len,
+                            "applicationUrlFound": bool(
+                                cascade_result.get("application_url")
+                            ),
+                            "activeState": cascade_result.get("active_state"),
+                            "active_state": cascade_result.get("active_state"),
+                            "verificationMethod": cascade_result.get(
+                                "verification_method"
+                            ),
+                            "verification_method": cascade_result.get(
+                                "verification_method"
+                            ),
+                            "httpStatus": cascade_result.get("http_status"),
+                            "http_status": cascade_result.get("http_status"),
+                        },
                     )
                     _record_posting_snapshot_failure_from_cascade(
                         conn,
@@ -840,11 +992,12 @@ def _record_posting_snapshot_failure_from_cascade(
             updated_at=failed_at,
         )
         error_class = str(cascade_result.get("error") or "DETAIL_ERROR")[:120]
+        retryable = _detail_failure_retryable(cascade_result)
         snapshot_set, _ = snapshot_set.record_capture_failure(
             source_id=resolved_source_id,
             error_class=error_class,
             message=str(cascade_result.get("error") or "detail extraction failed")[:500],
-            retryable=False,
+            retryable=retryable,
             failed_at=failed_at,
         )
         snapshot_set, previous_active = snapshot_set.mark_active_state(
@@ -869,7 +1022,25 @@ def _record_posting_snapshot_failure_from_cascade(
                 "sourceId": resolved_source_id,
                 "error_class": error_class,
                 "errorClass": error_class,
-                "retryable": False,
+                "retryable": retryable,
+                "status": cascade_result.get("status"),
+                "tier": cascade_result.get("tier_used"),
+                "elapsed": cascade_result.get("elapsed"),
+                "durationMs": (
+                    int(float(cascade_result.get("elapsed")) * 1000)
+                    if cascade_result.get("elapsed")
+                    else None
+                ),
+                "descriptionChars": len(
+                    str(cascade_result.get("full_description") or "")
+                ),
+                "applicationUrlFound": bool(cascade_result.get("application_url")),
+                "active_state": active_state.value,
+                "activeState": active_state.value,
+                "verification_method": verification_method,
+                "verificationMethod": verification_method,
+                "http_status": cascade_result.get("http_status"),
+                "httpStatus": cascade_result.get("http_status"),
                 "failed_at": failed_at,
                 "failedAt": failed_at,
             },
@@ -940,6 +1111,7 @@ def _run_detail_scraper(
     sites: list[str] | None = None,
     max_per_site: int | None = None,
     workers: int = 1,
+    job_urls: tuple[str, ...] = (),
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -955,11 +1127,19 @@ def _run_detail_scraper(
     # is the aggregate's status alone. The legacy
     # ``detail_scraped_at IS NULL`` gate was redundant AND blocked the
     # post-``reset_job_stage("enrich")`` re-pickup.
+    where_parts = [db_module._ENRICHMENT_PENDING, skip_filter]
+    params: list[str] = []
+    selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
+    if selected_urls:
+        placeholders = ", ".join("?" for _ in selected_urls)
+        where_parts.append(f"jobs.url IN ({placeholders})")
+        params.extend(selected_urls)
+
     rows = conn.execute(
         f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "
-        f"WHERE {db_module._ENRICHMENT_PENDING} "
-        f"AND {skip_filter} "
-        "ORDER BY jobs.site"
+        f"WHERE {' AND '.join(where_parts)} "
+        "ORDER BY jobs.site",
+        params,
     ).fetchall()
 
     if not rows:

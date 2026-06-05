@@ -37,6 +37,10 @@ function preparationStages(stages: readonly StageSummary[]): StageSummary[] {
   return stages.filter((stage) => stage.stage !== "apply");
 }
 
+function canRetryStage(stage: StageSummary | undefined): boolean {
+  return Boolean(stage && ["failed", "exhausted"].includes(stage.state));
+}
+
 function JobAuditHistorySection({
   entries,
 }: {
@@ -65,6 +69,9 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
 
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
   const errorMessage = detailErrorTitle(detailError);
+  const currentSubstage = detail?.stages.find(
+    (stage) => stage.stage === detail.job.currentSubstage,
+  );
 
   return (
     <DetailDrawerBackdrop onDismiss={close}>
@@ -84,9 +91,9 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
             <JobOverview detail={detail} />
             <JobActions
               jobId={detail.job.jobKey}
-              currentStage={detail.job.currentStage}
+              currentStage={detail.job.currentSubstage}
+              canRetryStage={canRetryStage(currentSubstage)}
               canRetailor={detail.artifacts.length > 0}
-              nextAction={detail.job.nextAction}
             />
             <Section title="Preparation diagnostics">
               <StageTimeline

@@ -13,7 +13,7 @@ import type {
   Stage,
 } from "@jobhunter/contracts";
 import { http, HttpResponse } from "msw";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -158,6 +158,36 @@ describe("<JobsView> bulk delete integration", () => {
     expect(jobs).toHaveBeenCalledWith(
       expect.objectContaining({ applyStatus: "applied" }),
     );
+  });
+
+  it("moves product filters into the table header and keeps them URL-backed", async () => {
+    const user = userEvent.setup();
+    const discoverJob = jobWithStage("job-discover", "Discovery candidate", "discover");
+    const jobs = vi.fn(async (query?: Partial<JobListQuery>) =>
+      makeJobsPage(query?.stage === "discover" ? [discoverJob] : []),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(() => expect(jobs).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("all stages")).not.toBeInTheDocument();
+    expect(screen.queryByText("all states")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /filter stage column/i }));
+    await user.click(
+      within(screen.getByLabelText("Stage values")).getByRole("checkbox", {
+        name: "discover",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(jobs).toHaveBeenLastCalledWith(expect.objectContaining({ stage: "discover" })),
+    );
+    expect(router.state.location.search).toMatchObject({ stage: "discover", page: 1 });
   });
 
   it("uses the product Discover stage for all-matching bulk filters", async () => {

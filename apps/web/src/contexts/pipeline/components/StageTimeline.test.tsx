@@ -42,4 +42,26 @@ describe("<StageTimeline>", () => {
 
     expect(screen.queryByRole("button", { name: "tailor this job" })).not.toBeInTheDocument();
   });
+
+  it("shows failed-stage diagnostics without raw next-action commands", () => {
+    renderWithProviders(
+      <StageTimeline
+        stages={[
+          {
+            ...makeStage("enrich", "failed"),
+            attemptCount: 1,
+            durationMs: 20_000,
+            errorCode: "DETAIL_ERROR",
+            errorMessage: "no data extracted",
+            nextAction: "jobhunter retry enrich https://example.com/jobs/1",
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent("DETAIL_ERROR");
+    expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent("no data extracted");
+    expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(/retry\s*available/);
+    expect(screen.queryByText(/jobhunter retry enrich/i)).not.toBeInTheDocument();
+  });
 });

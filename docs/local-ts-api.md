@@ -297,6 +297,12 @@ Current-version preparation maintenance actions are separate endpoints:
 - `POST /v1/materials/actions/retailor-current-policy` dispatches
   `retailor_current_policy` for selected or bounded eligible jobs and can
   suppress prior active artifacts.
+- `POST /v1/jobs/:jobKey/actions/retry-stage` resets the selected stage. With
+  `runAfter: true`, preparation retries dispatch a job-scoped pipeline workflow
+  for the remaining preparation stages (`enrich` -> `score` -> `tailor` ->
+  `cover`, starting at the retried stage). `apply` retry still dispatches the
+  explicit apply action; retries do not auto-submit applications unless the
+  requested stage is `apply`.
 
 First-time manual tailoring is not a re-tailor action. The job detail stage
 timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal

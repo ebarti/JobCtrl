@@ -227,6 +227,7 @@ class CoverActivityInput:
     limit: int = 0
     validation_mode: str = "normal"
     dry_run: bool = False
+    job_urls: tuple[str, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
 
@@ -253,6 +254,19 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
         expected_db_path=payload.expected_db_path,
     )
 
+    if payload.job_urls:
+        result = await run_blocking_with_heartbeat(
+            lambda: _run_selected_cover(payload),
+            starting_message="selected cover starting",
+            progress_message="selected cover still running",
+        )
+        return CoverActivityOutput(
+            status=str(result["status"]),
+            elapsed=float(result["elapsed"]),
+            errors=dict(result["errors"]),
+            stages=list(result["stages"]),
+        )
+
     def _do() -> dict[str, Any]:
         return run_pipeline(
             stages=["cover"],
@@ -278,3 +292,51 @@ async def cover_activity(payload: CoverActivityInput) -> CoverActivityOutput:
         errors=errors,
         stages=stages,
     )
+
+
+def _run_selected_cover(payload: CoverActivityInput) -> dict[str, Any]:
+    from jobhunter.scoring.cover_letter import run_cover_letters
+
+    urls = _limited_job_urls(payload.job_urls, payload.limit)
+    if payload.dry_run:
+        return {
+            "status": "ok",
+            "elapsed": 0.0,
+            "errors": {},
+            "stages": [
+                {
+                    "stage": "cover",
+                    "status": "ok",
+                    "elapsed": 0.0,
+                    "selected": len(urls),
+                    "dry_run": True,
+                }
+            ],
+        }
+
+    t0 = time.time()
+    result = run_cover_letters(
+        min_score=payload.min_score,
+        limit=payload.limit,
+        validation_mode=payload.validation_mode,
+        llm_model=payload.llm_model,
+        job_urls=urls,
+    )
+    elapsed = float(result.get("elapsed") or (time.time() - t0))
+    error_count = int(result.get("errors") or 0)
+    errors = {"cover": f"{error_count} cover letter error(s)"} if error_count > 0 else {}
+    status = "failed" if errors else "ok"
+    return {
+        "status": status,
+        "elapsed": elapsed,
+        "errors": errors,
+        "stages": [
+            {
+                "stage": "cover",
+                "status": status,
+                "elapsed": elapsed,
+                "selected": len(urls),
+                **result,
+            }
+        ],
+    }

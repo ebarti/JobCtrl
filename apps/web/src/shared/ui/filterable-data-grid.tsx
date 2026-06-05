@@ -36,6 +36,7 @@ export interface DataGridColumn<TData> {
   getSortValue?: (row: TData) => string | number;
   getFilterValue?: (row: TData) => string;
   getFilterSearchValue?: (row: TData) => string;
+  filterValues?: readonly string[];
   className?: string;
   headerClassName?: string;
   filterValueLimit?: number;
@@ -147,6 +148,7 @@ function sortedDistinctValues<TData>(
   data: readonly TData[],
   column: DataGridColumn<TData>,
 ): string[] {
+  if (column.filterValues) return [...column.filterValues];
   if (!column.getFilterValue) return [];
   return Array.from(
     new Set(data.map(column.getFilterValue).filter(Boolean)),

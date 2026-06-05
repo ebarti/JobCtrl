@@ -300,7 +300,14 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
     if (command.stage === "apply") {
       return { method: "apply", params: applyRpcParams(command, context) };
     }
-    return null;
+    const stages = command.stages && command.stages.length > 0
+      ? command.stages
+      : retryContinuationStages(command.stage);
+    if (stages.length === 0) return null;
+    return {
+      method: "run_stage",
+      params: runStageRpcParams({ ...command, stages, limit: command.limit ?? 1 }, context),
+    };
   }
   if (command.action === "rescore_job") {
     return {
@@ -364,6 +371,23 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
     };
   }
   return null;
+}
+
+function retryContinuationStages(stage: NonNullable<ActionCommandPayload["stage"]>): NonNullable<ActionCommandPayload["stages"]> {
+  switch (stage) {
+    case "enrich":
+      return ["enrich", "score", "tailor", "cover"];
+    case "score":
+      return ["score", "tailor", "cover"];
+    case "tailor":
+      return ["tailor", "cover"];
+    case "cover":
+      return ["cover"];
+    case "apply":
+      return ["apply"];
+    default:
+      return [];
+  }
 }
 
 function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatchContext): Record<string, unknown> {
