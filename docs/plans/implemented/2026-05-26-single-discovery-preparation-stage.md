@@ -1,5 +1,10 @@
 # Single Discovery Preparation Stage Implementation Plan
 
+> **Status:** Implemented. Canonical current behavior is documented in
+> `README.md`, `docs/local-ts-api.md`, `docs/job-pipeline-architecture.md`,
+> and `docs/architecture.md`; the delivery summary is in
+> `docs/delivered.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make Discovery the single user-facing preparation stage while keeping scoring and tailoring as separate internal bounded contexts with versioned, event-driven orchestration.

@@ -55,10 +55,10 @@ deployment model.
 ### Non-Goals
 
 - **Migration plan.** This document does not prescribe phase ordering, file
-  moves, PR sequencing, or cutover scripts. That belongs to the planning
-  team (`docs/plans/proposed/frontend-tanstack-migration.md`). Whenever this
-  doc says "the target X replaces Y," it is a structural statement, not an
-  ordering constraint.
+  moves, PR sequencing, or cutover scripts. The historical migration plan lives
+  at `docs/plans/implemented/2026-05-06-frontend-tanstack-migration.md`.
+  Whenever this doc says "the target X replaces Y," it is a structural
+  statement, not an ordering constraint.
 - **Implementation code.** Pseudocode and TypeScript signatures appear where
   they aid clarity; no production `.tsx`, no tests, no `package.json` edits,
   no Vite plugin configuration.

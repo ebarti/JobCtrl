@@ -118,9 +118,9 @@ commands listed under the "Frontend" section of
 
 | Layer | Files | Purpose |
 | --- | --- | --- |
-| Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (32 handlers — one per `DomainEvent` variant), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
-| Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 9 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the eight Operations read hooks plus `useActivityEventQuery`. The original plan named `tsd`; the implementation uses Vitest's typecheck mode — same artifact (typed test files), same gate, integrated runner (cf. target §10.6). |
-| End-to-end (Playwright headless) | 8 specs in `apps/web/e2e/tests/` (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `settings`, `wizard`) | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `materials.spec.ts` is `test.fixme`'d pending the `GenerateMaterialsUseCase` backend exposure (tracked in `docs/backlog.md`). |
+| Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
+| Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 10 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery` and `useWorkflowRunsListQuery`. The original plan named `tsd`; the implementation uses Vitest's typecheck mode — same artifact (typed test files), same gate, integrated runner (cf. target §10.6). |
+| End-to-end (Playwright headless) | 9 specs in `apps/web/e2e/tests/` (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `runs`, `settings`, `wizard`) | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `materials.spec.ts` is `test.fixme`'d pending the `GenerateMaterialsUseCase` backend exposure (tracked in `docs/backlog.md`). |
 | A11y suites (Vitest + `axe-core` + `jest-axe`) | 9 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, and command components — fails on critical violations (target §10.7). |
 
 ### Scoring Policy Feedback Smoke
@@ -167,7 +167,7 @@ axe violations fail CI (`a11y: { test: "error" }`). The Storybook test runner
 (`pnpm web:storybook:test`) is the gate; `pnpm --filter @jobhunter/web test`
 also runs the colocated `*.a11y.test.tsx` suites for forms and dialogs.
 
-17 stories defer the a11y check (`a11y: { test: "off" }`) because they
+13 stories defer the a11y check (`a11y: { test: "off" }`) because they
 exercise pre-existing production a11y defects that are scoped out of the
 Phase 7 baseline. Each deferral is tracked in
 [`docs/backlog.md`](backlog.md) "Frontend Accessibility Backlog (Phase 7
