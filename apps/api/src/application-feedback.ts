@@ -571,13 +571,14 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
   const currentState = stageState(row.current_state);
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
+  const applicationUrl = applyTargetUrl(row);
   return {
     jobKey: row.job_id,
     title: row.title || "Untitled",
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
     fitScore: nullableNumber(row.fit_score),
-    applicationUrl: row.application_url,
+    applicationUrl,
     currentStage: stage(row.current_stage),
     currentState,
     materials: {
@@ -624,11 +625,20 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
 function queueBlockers(row: ReviewQueueRow, currentState: StageState): string[] {
   const blockers: string[] = [];
   if (!row.has_resume) blockers.push("missing_resume");
-  if (!row.application_url) blockers.push("missing_application_url");
+  if (!applyTargetUrl(row)) blockers.push("missing_application_url");
   if (currentState !== "pending") {
     blockers.push(stageBlockerReason(row, currentState));
   }
   return blockers;
+}
+
+function applyTargetUrl(row: ReviewQueueRow): string | null {
+  const directApplyUrl = cleanBlockerText(row.application_url);
+  if (directApplyUrl) {
+    return directApplyUrl;
+  }
+  const postingUrl = cleanBlockerText(row.job_id);
+  return postingUrl || null;
 }
 
 function stageBlockerReason(row: ReviewQueueRow, currentState: StageState): string {
