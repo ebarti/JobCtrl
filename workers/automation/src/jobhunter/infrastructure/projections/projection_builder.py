@@ -90,8 +90,8 @@ DEFAULT_MAX_ATTEMPTS: dict[str, int] = {
 }
 
 
-def _job_list_stage(stage: str | None) -> str:
-    return "apply" if stage == "apply" else "discover"
+def _job_list_stage(stage: str | None, *, has_resume: bool = False) -> str:
+    return "apply" if stage == "apply" or (stage == "cover" and has_resume) else "discover"
 
 _SOURCE_BOARD_NAMES = {"greenhouse", "linkedin", "talent.com"}
 
@@ -426,6 +426,8 @@ class ProjectionBuilder:
         has_resume = bool(tailor_path)
         has_cover_letter = bool(cover_path)
         has_pdf = bool(resume_pdf_path or cover_pdf_path)
+        if first_actionable is not None:
+            current_stage = _job_list_stage(first_actionable.stage, has_resume=has_resume)
 
         # Apply state:
         ar_status = apply_run.get("status") if apply_run else None

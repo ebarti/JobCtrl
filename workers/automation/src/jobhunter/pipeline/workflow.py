@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -116,10 +116,19 @@ class JobPipelineWorkflow:
         completed: list[str] = []
         failed: list[str] = []
         failure: str | None = None
+        derived_cover_job_urls: tuple[str, ...] | None = None
 
         for stage in payload.stages:
+            stage_payload = payload
+            if stage == "cover" and derived_cover_job_urls is not None and not _has_selected_job_scope(payload):
+                if not derived_cover_job_urls:
+                    completed.append(stage)
+                    derived_cover_job_urls = None
+                    continue
+                stage_payload = replace(payload, job_urls=derived_cover_job_urls, limit=0)
+
             try:
-                result = await _execute_stage(stage, payload)
+                result = await _execute_stage(stage, stage_payload)
             except ActivityError as exc:
                 failed.append(stage)
                 failure = f"{stage}: {exc.cause if exc.cause else exc}"
@@ -132,6 +141,10 @@ class JobPipelineWorkflow:
                 break
 
             completed.append(stage)
+            if stage == "tailor" and not _has_selected_job_scope(payload):
+                derived_cover_job_urls = _approved_tailor_job_urls(result)
+            elif stage != "cover":
+                derived_cover_job_urls = None
 
         return JobPipelineWorkflowResult(
             stages_completed=completed,
@@ -278,6 +291,28 @@ def _selected_job_urls(payload: JobPipelineWorkflowInput) -> tuple[str, ...]:
     if payload.job_url:
         return (payload.job_url,)
     return ()
+
+
+def _has_selected_job_scope(payload: JobPipelineWorkflowInput) -> bool:
+    return bool(payload.job_url or payload.job_urls)
+
+
+def _approved_tailor_job_urls(result: Any) -> tuple[str, ...] | None:
+    stages = _result_value(result, "stages")
+    if not isinstance(stages, list):
+        return None
+    for stage_result in stages:
+        if not isinstance(stage_result, dict):
+            continue
+        if stage_result.get("stage") != "tailor":
+            continue
+        if "approvedJobUrls" not in stage_result:
+            return None
+        raw_urls = stage_result.get("approvedJobUrls")
+        if not isinstance(raw_urls, list):
+            return ()
+        return tuple(dict.fromkeys(str(url) for url in raw_urls if str(url)))
+    return None
 
 
 _SUCCESS_STAGE_STATUSES = frozenset({"ok", "partial", "skipped"})

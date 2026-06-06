@@ -20,7 +20,7 @@ from jobhunter.infrastructure.rpc import handlers as handlers_mod
 from jobhunter.infrastructure.rpc.handlers import register_default_handlers
 from jobhunter.infrastructure.rpc.server import JsonRpcServer
 from jobhunter.materials import activities as materials_activities_mod
-from jobhunter.materials.activities import TailorActivityInput, tailor_activity
+from jobhunter.materials.activities import CoverActivityInput, TailorActivityInput, cover_activity, tailor_activity
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.pipeline import workflow as workflow_mod
 from jobhunter.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
@@ -405,7 +405,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailorJudgeMinScore": 0.9,
             },
             {
-                "stages": ["tailor"],
+                "stages": ["tailor", "cover"],
                 "limit": 1,
                 "rescore": False,
                 "retailor": False,
@@ -431,7 +431,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailorJudgeMinScore": 0.9,
             },
             {
-                "stages": ["tailor"],
+                "stages": ["tailor", "cover"],
                 "limit": 1,
                 "rescore": False,
                 "retailor": True,
@@ -458,7 +458,7 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "suppressExistingArtifacts": True,
             },
             {
-                "stages": ["tailor"],
+                "stages": ["tailor", "cover"],
                 "limit": 5,
                 "rescore": False,
                 "retailor": True,
@@ -569,8 +569,16 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
             suppress_existing_artifacts=True,
         ),
     )
+    await workflow_mod._execute_stage(
+        "cover",
+        JobPipelineWorkflowInput(
+            tenant_id="local",
+            stages=["cover"],
+            job_url="https://example.com/job/cover-one",
+        ),
+    )
 
-    assert len(captured) == 4
+    assert len(captured) == 5
     assert captured[0][0] is score_activity
     assert isinstance(captured[0][1], ScoreActivityInput)
     assert captured[0][1].job_urls == ("https://example.com/job/score-one",)
@@ -591,6 +599,9 @@ async def test_pipeline_workflow_preserves_selected_job_urls_in_activity_inputs(
         "https://example.com/job/tailor-b",
     )
     assert captured[3][1].suppress_existing_artifacts is True
+    assert captured[4][0] is cover_activity
+    assert isinstance(captured[4][1], CoverActivityInput)
+    assert captured[4][1].job_urls == ("https://example.com/job/cover-one",)
 
 
 def test_selected_score_activity_runs_only_requested_urls(monkeypatch) -> None:
@@ -720,6 +731,14 @@ def test_selected_tailor_activity_runs_only_requested_urls(monkeypatch) -> None:
     assert result["errors"] == {}
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["approved"] == 2
+    assert result["stages"][0]["selectedJobUrls"] == [
+        "https://example.com/job/tailor-a",
+        "https://example.com/job/tailor-b",
+    ]
+    assert result["stages"][0]["approvedJobUrls"] == [
+        "https://example.com/job/tailor-a",
+        "https://example.com/job/tailor-b",
+    ]
 
 
 def test_current_policy_tailor_activity_skips_current_policy_artifacts(
@@ -764,6 +783,7 @@ def test_current_policy_tailor_activity_skips_current_policy_artifacts(
     assert all(kwargs["suppress_existing_artifacts"] is True for _url, kwargs in calls)
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["approved"] == 2
+    assert set(result["stages"][0]["approvedJobUrls"]) == {missing_url, outdated_url}
 
     calls.clear()
     result = materials_activities_mod._run_current_policy_tailoring(

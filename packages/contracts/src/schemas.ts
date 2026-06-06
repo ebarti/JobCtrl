@@ -107,6 +107,19 @@ export const RetryStageRequestSchema = z
   .strict();
 export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
 
+export const RunJobStageRequestSchema = z
+  .object({
+    stage: z.enum(STAGES),
+    dryRun: z.boolean().default(false),
+    limit: z.coerce.number().int().min(1).max(25).default(1),
+    workers: z.coerce.number().int().min(1).max(16).default(1),
+    minScore: z.coerce.number().int().min(0).max(10).default(7),
+    validationMode: z.enum(PIPELINE_VALIDATION_MODES).default("normal"),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
+  })
+  .strict();
+export type RunJobStageRequest = z.infer<typeof RunJobStageRequestSchema>;
+
 export const ResetStaleScoresForRescoreRequestSchema = z
   .object({
     limit: z.coerce.number().int().min(0).max(500).default(0),

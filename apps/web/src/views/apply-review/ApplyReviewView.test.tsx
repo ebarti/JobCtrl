@@ -18,6 +18,22 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
   ),
 }));
 
+vi.mock("../jobs/JobDetailDrawer.js", () => ({
+  JobDetailDrawer: ({
+    jobId,
+    onClose,
+  }: {
+    readonly jobId: string;
+    readonly onClose: () => void;
+  }) => (
+    <div aria-label={`Job details for ${jobId}`} role="dialog">
+      <button type="button" onClick={onClose}>
+        close details
+      </button>
+    </div>
+  ),
+}));
+
 describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
@@ -31,9 +47,39 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
+    const detailButton = screen.getByRole("button", {
+      name: /Open job detail for Principal Platform Engineer/i,
+    });
+    expect(detailButton).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open job detail/i })).not.toBeInTheDocument();
     const resumePdf = screen.getByRole("img", { name: "Tailored resume PDF" });
     expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("opens job detail as an in-place overlay", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ApplyReviewView />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Open job detail for Principal Platform Engineer/i,
+      }),
+    );
+
+    expect(
+      screen.getByRole("dialog", {
+        name: `Job details for ${sampleApplyReviewQueue.items[0]!.jobKey}`,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "close details" }));
+
+    expect(
+      screen.queryByRole("dialog", {
+        name: `Job details for ${sampleApplyReviewQueue.items[0]!.jobKey}`,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders non-pending review decisions as user-facing copy", async () => {

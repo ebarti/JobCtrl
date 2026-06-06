@@ -7,6 +7,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import type {
+  ActionRunResponse,
   BulkJobMutationRequest,
   JobListQuery,
   JobSummary,
@@ -85,7 +86,20 @@ function jobWithStage(
     url: `https://example.com/jobs/${jobKey}`,
     title,
     currentStage,
+    currentSubstage: currentStage,
     currentState: currentStage === "apply" ? "pending" : sampleJob.currentState,
+  };
+}
+
+function queuedAction(action: ActionRunResponse["action"], jobKey: string): ActionRunResponse {
+  return {
+    ok: true,
+    runId: `run-${action}`,
+    actionId: `action-${action}`,
+    action,
+    status: "queued",
+    jobKey,
+    command: { action, jobKey },
   };
 }
 
@@ -157,6 +171,116 @@ describe("<JobsView> bulk delete integration", () => {
     expect(await screen.findByText(appliedJob.title)).toBeInTheDocument();
     expect(jobs).toHaveBeenCalledWith(
       expect.objectContaining({ applyStatus: "applied" }),
+    );
+  });
+
+  it("starts visible pending preparation substages when the jobs page is viewed", async () => {
+    const pendingTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-pending-tailor",
+      url: "https://example.com/jobs/job-pending-tailor",
+      title: "Pending Tailor",
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const pendingApply: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "job-pending-apply",
+      url: "https://example.com/jobs/job-pending-apply",
+      title: "Pending Apply",
+      currentStage: "apply",
+      currentSubstage: "apply",
+      currentState: "pending",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([pendingTailor, pendingApply]));
+    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("state=all", "state=pending"),
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
+    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
+    expect(runJobStage).toHaveBeenCalledWith(
+      "job-pending-tailor",
+      expect.objectContaining({ stage: "tailor", dryRun: false, limit: 1 }),
+    );
+  });
+
+  it("does not auto-start pending tailor rows that are not likely eligible", async () => {
+    const lowFitTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-low-fit-tailor",
+      url: "https://example.com/jobs/job-low-fit-tailor",
+      title: "Low Fit Tailor",
+      fitScore: 5,
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([lowFitTailor]));
+    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("state=all", "state=pending"),
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Low Fit Tailor")).toBeInTheDocument();
+    await waitFor(() => expect(jobs).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runJobStage).not.toHaveBeenCalled();
+  });
+
+  it("starts at most one automatic preparation pickup per unchanged jobs list", async () => {
+    const firstTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-pending-tailor-a",
+      url: "https://example.com/jobs/job-pending-tailor-a",
+      title: "Pending Tailor A",
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const secondTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-pending-tailor-b",
+      url: "https://example.com/jobs/job-pending-tailor-b",
+      title: "Pending Tailor B",
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([firstTailor, secondTailor]));
+    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      SEARCH.replace("state=all", "state=pending"),
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText("Pending Tailor A")).toBeInTheDocument();
+    expect(await screen.findByText("Pending Tailor B")).toBeInTheDocument();
+    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(runJobStage).toHaveBeenCalledTimes(1);
+    expect(runJobStage).toHaveBeenCalledWith(
+      "job-pending-tailor-a",
+      expect.objectContaining({ stage: "tailor" }),
     );
   });
 
@@ -682,6 +806,54 @@ describe("<JobsView> bulk delete integration", () => {
 
     const harness = buildProviderHarness();
     const { router, Wrapper } = buildRouter(harness, failedSearch);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: /retry all failed/i }),
+        ).toBeInTheDocument(),
+      {
+        timeout: 5_000,
+      },
+    );
+    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0]).toMatchObject({
+      allMatching: true,
+      filter: { state: "failed", deleted: "active" },
+      jobKeys: [],
+    });
+  });
+
+  it("posts all matching failed jobs to bulk retry from the pending filter", async () => {
+    const user = userEvent.setup();
+    const pendingSearch =
+      "?stage=all&state=pending&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
+    const calls: Array<{
+      allMatching?: boolean;
+      filter?: { state?: string; deleted?: string };
+      jobKeys?: string[];
+    }> = [];
+    server.use(
+      http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
+        const body = (await request.json()) as {
+          allMatching?: boolean;
+          filter?: { state?: string; deleted?: string };
+          jobKeys?: string[];
+        };
+        calls.push(body);
+        return HttpResponse.json({
+          ok: true,
+          count: 2,
+          jobKeys: ["job-1", "job-2"],
+        });
+      }),
+    );
+
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, pendingSearch);
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     await waitFor(

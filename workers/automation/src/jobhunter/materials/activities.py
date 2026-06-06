@@ -151,12 +151,15 @@ def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
                     "elapsed": 0.0,
                     "selected": len(urls),
                     "dry_run": True,
+                    "selectedJobUrls": list(urls),
+                    "approvedJobUrls": [],
                 }
             ],
         }
 
     t0 = time.time()
     approved = 0
+    approved_urls: list[str] = []
     skipped = 0
     failed = 0
     errors: dict[str, str] = {}
@@ -178,6 +181,7 @@ def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
         status = str(result.get("status") or "error")
         if status == "approved":
             approved += 1
+            approved_urls.append(url)
         elif status in {"skipped", "not_eligible"}:
             skipped += 1
         else:
@@ -197,6 +201,8 @@ def _run_selected_tailoring(payload: TailorActivityInput) -> dict[str, Any]:
                 "elapsed": elapsed,
                 "selected": len(urls),
                 "approved": approved,
+                "selectedJobUrls": list(urls),
+                "approvedJobUrls": approved_urls,
                 "skipped": skipped,
                 "failed": failed,
             }

@@ -181,6 +181,33 @@ describe("<JobBulkActions>", () => {
     expect(onRetryAll).toHaveBeenCalledTimes(1);
   });
 
+  it("shows retry all failed for active jobs outside the failed filter", async () => {
+    const user = userEvent.setup();
+    const onRetryAll = vi.fn();
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, state: "pending" }}
+        selectedCount={0}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+        onRetryAllFailed={onRetryAll}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /retry selected/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /retry all failed/i }));
+
+    expect(onRetryAll).toHaveBeenCalledTimes(1);
+  });
+
   it("invokes permanent delete from deleted jobs", async () => {
     const user = userEvent.setup();
     const onPermanentDelete = vi.fn();

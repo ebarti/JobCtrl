@@ -51,8 +51,8 @@ export function JobBulkActions({
   const restoring = search.deleted === "deleted";
   const hidden = search.deleted === "hidden";
   const closed = search.deleted === "closed";
-  const retryableFailures =
-    search.deleted === "active" && search.state === "failed";
+  const retryAllFailures = search.deleted === "active";
+  const retrySelectedFailures = retryAllFailures && search.state === "failed";
   const primaryLabel = hidden
     ? "unhide selected"
     : restoring
@@ -149,8 +149,7 @@ export function JobBulkActions({
           ) : null}
         </>
       ) : null}
-      {retryableFailures ? (
-        <>
+      {retrySelectedFailures ? (
           <button
             className="tab on"
             type="button"
@@ -159,15 +158,16 @@ export function JobBulkActions({
           >
             retry selected
           </button>
-          <button
-            className="tab"
-            type="button"
-            disabled={!hasAnyMatching || hasLocalFilters || loading}
-            onClick={onRetryAllFailed}
-          >
-            retry all failed
-          </button>
-        </>
+      ) : null}
+      {retryAllFailures ? (
+        <button
+          className="tab"
+          type="button"
+          disabled={hasLocalFilters || loading}
+          onClick={onRetryAllFailed}
+        >
+          retry all failed
+        </button>
       ) : null}
       {!hidden ? (
         <button

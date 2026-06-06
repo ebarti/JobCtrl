@@ -105,7 +105,7 @@ export async function handleProfileUpdatedEvent(
     action: "run_stage",
     jobKey: PIPELINE_ACTION_JOB_KEY,
     stage: "tailor",
-    stages: ["tailor"],
+    stages: ["tailor", "cover"],
     dryRun: false,
     limit: 0,
     workers: 1,

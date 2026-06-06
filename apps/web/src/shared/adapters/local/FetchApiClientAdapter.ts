@@ -229,6 +229,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   retryStage(jobKey: string, body: Parameters<JobHunterApiClient["retryStage"]>[1]) {
     return this.client.retryStage(jobKey, body);
   }
+  runJobStage(jobKey: string, body: Parameters<JobHunterApiClient["runJobStage"]>[1]) {
+    return this.client.runJobStage(jobKey, body);
+  }
   generateMaterials(jobKey: string, body: Parameters<JobHunterApiClient["generateMaterials"]>[1] = {}) {
     return this.client.generateMaterials(jobKey, body);
   }

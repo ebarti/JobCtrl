@@ -1,4 +1,5 @@
 import type { ApplyReviewQueueItem } from "@jobhunter/contracts";
+import { ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -10,6 +11,7 @@ import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
 import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
+import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
 type MaterialStatus = {
   readonly kind: "ready" | "preparing" | "repair";
@@ -316,6 +318,12 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const evidenceGroups = evidenceValues(item).length;
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
+  const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDetailJobKey(null);
+  }, [item.jobKey]);
+
   return (
     <main className="apply-review-selected">
       <header className="apply-review-selected-head">
@@ -328,6 +336,15 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
         </div>
         <div className="apply-review-selected-actions">
           <span className={`tag ${status.tone}`}>{status.label}</span>
+          <button
+            aria-label={`Open job detail for ${item.title}`}
+            className="tab"
+            type="button"
+            onClick={() => setDetailJobKey(item.jobKey)}
+          >
+            <ExternalLink size={14} aria-hidden="true" />
+            open job detail
+          </button>
           {activeRun ? (
             <CancelApplyButton
               jobId={item.jobKey}
@@ -340,6 +357,13 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           <ApplyReviewDecisionControls item={item} />
         </div>
       </header>
+
+      {detailJobKey ? (
+        <JobDetailDrawer
+          jobId={detailJobKey}
+          onClose={() => setDetailJobKey(null)}
+        />
+      ) : null}
 
       <div className="apply-review-status-note">
         <b>{status.summary}</b>

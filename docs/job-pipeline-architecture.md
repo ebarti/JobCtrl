@@ -63,12 +63,13 @@ apply and retry actions.
 
 ## Execution Surfaces
 
-There are four execution surfaces. They share the same Python stage
+There are five execution surfaces. They share the same Python stage
 implementations where possible, but they differ in orchestration.
 
 | Surface | Entry point | Execution model | Stages |
 | --- | --- | --- | --- |
 | Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
+| Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs can start one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The web page paces pickup to one unchanged list snapshot, and the API refreshes projections plus gates dispatch on observable stage eligibility before starting a job-scoped `JobPipelineWorkflow`. | Internal preparation pickup |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
 | Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation queue drain. | Discover and Apply |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
@@ -589,6 +590,10 @@ sequenceDiagram
         Discover->>Queue: enqueue tailor_resume(target=tailoring policy version)
         Queue->>Materials: tailor_job_by_url(job, current policy)
         Materials-->>Ops: ResumeApproved / ResumeFailed
+        opt resume approved
+            Queue->>Materials: run_cover_letters(job)
+            Materials-->>Ops: CoverLetterGenerated / CoverLetterFailed
+        end
         Queue-->>Ops: PreparationWorkItemCompleted or Failed
     else ineligible with active artifacts
         Discover->>Queue: enqueue suppress_tailored_artifacts(target=threshold)
@@ -607,6 +612,14 @@ sequenceDiagram
   `suppress_tailored_artifacts`.
 - `source_event_id` ties each item to the latest discovery/enrichment/source
   fact that made the work necessary.
+- Successful `tailor_resume` work immediately invokes the job-scoped cover
+  stage. Cover failures are recorded on the cover stage for retry without
+  forcing the tailored resume work item to regenerate the resume.
+- Viewing the Jobs page is also a pickup signal: eligible visible rows whose
+  current state is `pending` and whose current substage is `enrich`, `score`,
+  `tailor`, or `cover` can dispatch a job-scoped run from that substage without
+  resetting attempts or failure metadata. The API route is the safety boundary:
+  known-ineligible rows return `not_eligible` and do not start worker activity.
 - Work item lifecycle events are part of the SSE catalog, so Operations can
   invalidate dashboard, job detail, artifact, and activity projections while
   Discover is still running.
@@ -795,7 +808,7 @@ sequenceDiagram
 
     Api->>Rpc: tailor_job, retailor_job, or retailor_current_policy
     Prep->>Runner: tailor_resume work item during Discover
-    Rpc->>Runner: run_pipeline(stages=["tailor"]) for low-level maintenance
+    Rpc->>Runner: run_pipeline(stages=["tailor", "cover"]) for job-scoped actions
     Runner->>Tailor: run_tailoring(...)
     Tailor->>DB: select scored jobs meeting minScore
     Tailor->>Profile: load resume baseline and tailoring rules
@@ -850,7 +863,8 @@ classDiagram
 ### Data And Events
 
 - Reads jobs with score >= `minScore`; a per-job `tailor_job` user action can
-  override that floor only for the selected job.
+  override that floor only for the selected job and then continue into the
+  job-scoped cover stage.
 - Reads profile resume baseline, skills, writing style, and tailoring rules.
 - Writes tailored resume records and local artifacts under the JobHunter app
   directory.
@@ -1085,7 +1099,10 @@ API endpoints owned by Operations:
 builders write only `discover` or `apply` there, even when the first actionable
 internal row is `enrich`, `score`, `tailor`, or `cover`. The full internal
 stage list remains in `job_detail_projections.stages_json` for review,
-diagnostics, and repair decisions.
+diagnostics, and repair decisions. Cover is the exception that can advance the
+product stage: when the first actionable internal row is `cover` and a tailored
+resume exists, the list projection writes `current_stage='apply'` while keeping
+`current_substage='cover'` and the cover state visible for retry or repair.
 
 ```mermaid
 flowchart LR
