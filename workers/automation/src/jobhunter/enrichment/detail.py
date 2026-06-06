@@ -72,6 +72,11 @@ from jobhunter.infrastructure.enrichment.playwright_fetcher import (
     _collect_json_ld,
     _collect_main_content,
 )
+from jobhunter.infrastructure.enrichment.linkedin_apply_resolver import (
+    LinkedInApplyResolution,
+    LinkedInApplyUrlResolver,
+    linkedin_apply_resolver_enabled,
+)
 from jobhunter.infrastructure.network.proxy import ProxyConfig, parse_proxy
 from jobhunter.infrastructure.llm import get_llm_adapter
 
@@ -84,6 +89,7 @@ SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
 
 # Module-level proxy config (set from CLI or caller)
 _PROXY_CONFIG: ProxyConfig | None = None
+_MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS = 3
 
 
 def set_proxy(proxy_str: str | None) -> None:
@@ -91,6 +97,12 @@ def set_proxy(proxy_str: str | None) -> None:
     global _PROXY_CONFIG
     if proxy_str:
         _PROXY_CONFIG = parse_proxy(proxy_str)
+
+
+def _is_linkedin_job(site: str | None, url: str) -> bool:
+    site_text = str(site or "").strip().lower()
+    url_text = str(url or "").strip().lower()
+    return site_text == "linkedin" or "linkedin.com/jobs/" in url_text
 
 
 # -- URL resolution ----------------------------------------------------------
@@ -451,6 +463,70 @@ def _apply_discovery_description_fallback(
     return updated
 
 
+def _apply_authenticated_linkedin_apply_url(
+    *,
+    site: str | None,
+    url: str,
+    cascade_result: dict,
+    resolver: object | None,
+    page: object | None = None,
+) -> dict:
+    """Resolve a missing LinkedIn apply URL with an authenticated browser.
+
+    This runs only after the normal enrichment cascade has produced usable
+    description text. It treats the authenticated click as an application URL
+    fallback, not as an application submission path.
+    """
+    if resolver is None or not _is_linkedin_job(site, url):
+        return cascade_result
+    if cascade_result.get("application_url"):
+        return cascade_result
+    if not str(cascade_result.get("full_description") or "").strip():
+        return cascade_result
+    if cascade_result.get("status") not in {"ok", "partial"}:
+        return cascade_result
+
+    try:
+        if page is not None and hasattr(resolver, "resolve_loaded_page"):
+            resolution = resolver.resolve_loaded_page(page, url)  # type: ignore[attr-defined]
+        elif hasattr(resolver, "resolve"):
+            resolution = resolver.resolve(url)  # type: ignore[attr-defined]
+        else:
+            return cascade_result
+    except Exception as exc:  # noqa: BLE001 - resolver is best-effort
+        log.warning("LinkedIn apply URL resolver failed for %s: %s", url, exc)
+        return {
+            **cascade_result,
+            "authenticated_apply_url_error": str(exc)[:300],
+        }
+
+    application_url: str | None
+    method = "authenticated_browser"
+    error: str | None = None
+    if isinstance(resolution, LinkedInApplyResolution):
+        application_url = resolution.application_url
+        method = resolution.method
+        error = resolution.error
+    else:
+        application_url = str(resolution).strip() if resolution else None
+
+    if not application_url:
+        updated = {
+            **cascade_result,
+            "authenticated_apply_url_method": method,
+        }
+        if error:
+            updated["authenticated_apply_url_error"] = error
+        return updated
+
+    return {
+        **cascade_result,
+        "status": "ok",
+        "application_url": application_url,
+        "authenticated_apply_url_method": method,
+    }
+
+
 def _make_llm_extractor() -> LlmExtractor:
     """Build a Tier-3 extractor backed by the canonical LlmAdapter.
 
@@ -474,6 +550,7 @@ SITE_DELAYS = {
     "CareerJet Canada": 3.0,
     "Hacker News Jobs": 1.0,
     "BuiltIn Remote": 2.0,
+    "linkedin": 6.0,
 }
 
 
@@ -514,12 +591,39 @@ def scrape_site_batch(
 
     try:
         with sync_playwright() as p:
-            launch_opts: dict = {"headless": True}
-            if _PROXY_CONFIG is not None:
-                launch_opts["proxy"] = _PROXY_CONFIG.playwright
-            browser = p.chromium.launch(**launch_opts)
-            context = browser.new_context(user_agent=UA)
-            page = context.new_page()
+            browser = None
+            resolver: LinkedInApplyUrlResolver | None = None
+            if linkedin_apply_resolver_enabled() and _is_linkedin_job(site, jobs[0][0]):
+                resolver = LinkedInApplyUrlResolver(
+                    proxy=_PROXY_CONFIG,
+                    user_agent=UA,
+                    playwright=p,
+                )
+                try:
+                    resolver.start()
+                    page = resolver.new_page()
+                    log.info(
+                        "LinkedIn authenticated browser enabled for %d enrichment job(s)",
+                        len(jobs),
+                    )
+                except Exception as exc:  # noqa: BLE001 - fallback to static browser
+                    log.warning(
+                        "LinkedIn authenticated browser unavailable; falling back to unauthenticated enrichment: %s",
+                        exc,
+                    )
+                    resolver.close()
+                    resolver = None
+                    page = None
+            else:
+                page = None
+
+            if page is None:
+                launch_opts: dict = {"headless": True}
+                if _PROXY_CONFIG is not None:
+                    launch_opts["proxy"] = _PROXY_CONFIG.playwright
+                browser = p.chromium.launch(**launch_opts)
+                context = browser.new_context(user_agent=UA)
+                page = context.new_page()
 
             for i, (url, title) in enumerate(jobs):
                 log.info(
@@ -575,6 +679,13 @@ def scrape_site_batch(
                 cascade_result = _apply_discovery_description_fallback(
                     conn, url, scrape_detail_page(page, url)
                 )
+                cascade_result = _apply_authenticated_linkedin_apply_url(
+                    site=site,
+                    url=url,
+                    cascade_result=cascade_result,
+                    resolver=resolver,
+                    page=page,
+                )
                 stats["processed"] += 1
 
                 tier = cascade_result.get("tier_used")
@@ -606,15 +717,23 @@ def scrape_site_batch(
                 if status in ("ok", "partial"):
                     stats[status] += 1
                     fallback_source = cascade_result.get("fallback_source")
-                    stage_metadata = (
-                        {
-                            "fallbackSource": fallback_source,
-                            "detailStatus": cascade_result.get("detail_status"),
-                            "detailError": cascade_result.get("detail_error"),
-                        }
-                        if fallback_source
-                        else None
-                    )
+                    stage_metadata: dict[str, object] = {}
+                    if fallback_source:
+                        stage_metadata.update(
+                            {
+                                "fallbackSource": fallback_source,
+                                "detailStatus": cascade_result.get("detail_status"),
+                                "detailError": cascade_result.get("detail_error"),
+                            }
+                        )
+                    if cascade_result.get("authenticated_apply_url_method"):
+                        stage_metadata["authenticatedApplyUrlMethod"] = (
+                            cascade_result.get("authenticated_apply_url_method")
+                        )
+                    if cascade_result.get("authenticated_apply_url_error"):
+                        stage_metadata["authenticatedApplyUrlError"] = (
+                            cascade_result.get("authenticated_apply_url_error")
+                        )
                     full_desc = FullDescription(
                         text=cascade_result["full_description"] or ""
                     )
@@ -646,7 +765,7 @@ def scrape_site_batch(
                         attempt_count=succeeded.attempt_count,
                         started_at=started_at,
                         finished_at=finished_at,
-                        metadata=stage_metadata,
+                        metadata=stage_metadata or None,
                     )
                     completed_payload = {
                         "tier": tier,
@@ -656,6 +775,14 @@ def scrape_site_batch(
                             cascade_result.get("application_url")
                         ),
                     }
+                    if cascade_result.get("authenticated_apply_url_method"):
+                        completed_payload["authenticatedApplyUrlMethod"] = (
+                            cascade_result.get("authenticated_apply_url_method")
+                        )
+                    if cascade_result.get("authenticated_apply_url_error"):
+                        completed_payload["authenticatedApplyUrlError"] = (
+                            cascade_result.get("authenticated_apply_url_error")
+                        )
                     if fallback_source:
                         completed_payload.update(
                             {
@@ -805,7 +932,10 @@ def scrape_site_batch(
                 if i < len(jobs) - 1:
                     time.sleep(delay)
 
-            browser.close()
+            if browser is not None:
+                browser.close()
+            if resolver is not None:
+                resolver.close()
     finally:
         if own_conn:
             conn.close()
@@ -1098,6 +1228,138 @@ def _source_id_for_enriched_job(
     return source_id or fallback
 
 
+def _attempt_count_from_json(attempts_json: str | None) -> int:
+    if not attempts_json:
+        return 0
+    try:
+        attempts = json.loads(attempts_json)
+    except Exception:
+        return 0
+    return len(attempts) if isinstance(attempts, list) else 0
+
+
+def _last_failed_attempt_retryable(attempts_json: str | None) -> bool:
+    if not attempts_json:
+        return True
+    try:
+        attempts = json.loads(attempts_json)
+    except Exception:
+        return True
+    if not isinstance(attempts, list):
+        return True
+    for attempt in reversed(attempts):
+        if not isinstance(attempt, dict):
+            continue
+        if str(attempt.get("status") or "").lower() != "failed":
+            continue
+        error = attempt.get("error")
+        if not isinstance(error, dict):
+            return True
+        return bool(error.get("retryable", True))
+    return True
+
+
+def _reset_authenticated_linkedin_retry_candidates(
+    conn: sqlite3.Connection,
+    *,
+    job_urls: tuple[str, ...] = (),
+    limit: int | None = None,
+) -> int:
+    """Reset LinkedIn rows that need authenticated enrichment retry.
+
+    The normal enrichment queue excludes failed aggregates and already enriched
+    rows. LinkedIn is the exception because a logged-in browser can expose data
+    hidden from the first unauthenticated pass, especially the external apply
+    target. The reset is bounded by attempt count so repeated enrich runs do not
+    loop forever when the profile is not logged in or the posting has no
+    external apply target.
+    """
+    if not linkedin_apply_resolver_enabled():
+        return 0
+
+    selected_urls = tuple(dict.fromkeys(url for url in job_urls if url))
+    where = [
+        "lower(COALESCE(j.site, '')) = 'linkedin'",
+        "e.current_status IN ('failed', 'enriched')",
+        "(e.current_status = 'failed' OR e.application_url IS NULL OR e.application_url = '')",
+    ]
+    params: list[object] = []
+    if selected_urls:
+        placeholders = ", ".join("?" for _ in selected_urls)
+        where.append(f"j.url IN ({placeholders})")
+        params.extend(selected_urls)
+
+    rows = conn.execute(
+        f"""
+        SELECT j.url, e.current_status, e.application_url, e.attempts_json
+        FROM jobs j
+        JOIN job_enrichments e ON e.job_url = j.url
+        WHERE {' AND '.join(where)}
+        ORDER BY e.updated_at DESC
+        """,
+        params,
+    ).fetchall()
+
+    from jobhunter.state import (
+        ensure_job_stage_rows,
+        record_job_event,
+        set_stage_state,
+        utc_now,
+    )
+
+    repo = SqliteEnrichmentRepository(conn)
+    reset_count = 0
+    for row in rows:
+        attempts_json = row["attempts_json"] if isinstance(row, sqlite3.Row) else row[3]
+        if _attempt_count_from_json(attempts_json) >= _MAX_AUTHENTICATED_LINKEDIN_RETRY_ATTEMPTS:
+            continue
+        current_status = row["current_status"] if isinstance(row, sqlite3.Row) else row[1]
+        if str(current_status) == "failed" and not _last_failed_attempt_retryable(attempts_json):
+            continue
+        url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
+        url = str(url)
+        reset_at = utc_now()
+        aggregate = repo.load(LOCAL_TENANT, JobId(url))
+        if aggregate is None:
+            continue
+        repo.save(aggregate.reset(reset_at=reset_at))
+        conn.execute(
+            "UPDATE jobs SET detail_error = NULL, detail_scraped_at = NULL WHERE url = ?",
+            (url,),
+        )
+        ensure_job_stage_rows(conn, url)
+        set_stage_state(
+            conn,
+            url,
+            "enrich",
+            "pending",
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            url,
+            "enrich",
+            "StageReset",
+            message="LinkedIn authenticated enrichment retry queued",
+            payload={
+                "reason": "linkedin_authenticated_apply_url",
+                "previousStatus": str(current_status or ""),
+                "automated": True,
+                "resetAt": reset_at,
+            },
+        )
+        reset_count += 1
+        if limit and limit > 0 and reset_count >= limit:
+            break
+    if reset_count:
+        conn.commit()
+        log.info(
+            "LinkedIn authenticated enrichment retry queued for %d job(s)",
+            reset_count,
+        )
+    return reset_count
+
+
 def _snapshot_confidence_value(confidence: SnapshotConfidence) -> float:
     if confidence is SnapshotConfidence.HIGH:
         return 0.95
@@ -1134,6 +1396,12 @@ def _run_detail_scraper(
         placeholders = ", ".join("?" for _ in selected_urls)
         where_parts.append(f"jobs.url IN ({placeholders})")
         params.extend(selected_urls)
+
+    _reset_authenticated_linkedin_retry_candidates(
+        conn,
+        job_urls=selected_urls,
+        limit=max_per_site,
+    )
 
     rows = conn.execute(
         f"SELECT jobs.url, jobs.title, jobs.site FROM jobs {db_module._ENRICHMENT_JOIN} "

@@ -113,9 +113,19 @@ pnpm web:build
 ```
 
 Run the test pyramid (Vitest unit / hook / component, type-level tests, and
-Playwright end-to-end). The unit / type / E2E scripts are not aliased at the
-repo root yet (tracked in `docs/backlog.md`); run them via `pnpm --filter`
-or from the package directory:
+Playwright end-to-end) through the root aliases:
+
+```bash
+pnpm web:test
+pnpm web:test:watch
+pnpm web:test:coverage
+pnpm web:test-d
+pnpm web:e2e
+pnpm web:e2e:headed
+```
+
+The package-local commands are equivalent and useful when working directly
+inside the web package:
 
 ```bash
 pnpm --filter @jobhunter/web test

@@ -13,11 +13,10 @@ including enrichment, scoring, resume tailoring, and artifact suppression.
 Those lower-level stages remain available as maintenance and diagnostic
 commands.
 
-The automation engine is Python. The newer product surface is a local
-TypeScript API plus a React/Vite web shell. The intended frontend direction is
-TanStack Router for client-side routing plus TanStack Query for API/cache state
-management. SQLite and local files remain the source of truth while the project
-validates reliability before any hosted/SaaS hardening.
+The automation engine is Python. The product surface is a local TypeScript API
+plus a React/Vite web app built on TanStack Router, TanStack Query, TanStack
+Table, and TanStack Form. SQLite and local files remain the source of truth
+while the project validates reliability before any hosted/SaaS hardening.
 
 ## What It Does
 
@@ -41,8 +40,8 @@ JobHunter is split by responsibility:
 
 - `apps/api`: local TypeScript/Fastify API for typed read models, local
   product actions, profile/settings, artifacts, and worker invocation.
-- `apps/web`: current React/Vite local web shell; planned direction is
-  TanStack Router plus TanStack Query as the UI grows beyond the shell.
+- `apps/web`: React/Vite local web app using TanStack Router, Query, Table,
+  and Form with SSE-backed cache invalidation.
 - `workers/automation/src/jobhunter`: Python automation engine, CLI, workers,
   profile import, PDF creation, and apply automation.
 
@@ -294,6 +293,11 @@ agent needs to click through to the employer form. The default model is
 `default`, which lets Claude Code use its configured local model; pass
 `--model <name>` only when you want to override that local default.
 
+For LinkedIn postings, enrichment can use a dedicated authenticated Chrome
+profile to retry first-pass misses and capture the external company apply URL.
+The resolver only clicks far enough to capture the outbound target; it does not
+fill forms or submit applications.
+
 The local API and web app also record apply-review decisions and application
 outcomes. The web `/apply-review` queue shows active apply-stage jobs with
 materials readiness, latest apply-run context, blockers, review decisions, and
@@ -495,6 +499,8 @@ JobHunter uses local user configuration plus package-shipped registries:
   profile tables are empty.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
 - `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
+- `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS
+  behavior settings.
 
 Profile, Preferences, Discovery target search, and Settings forms autosave five
 seconds after the last edit through the same local API mutations as the Save
@@ -508,7 +514,6 @@ for source text, scope, action, tools, metrics, outcome, seniority signal,
 evidence strength, claim confidence, and user confirmation. Only verified facts
 and evidence reframing can be auto-approved; adjacent translations and draft
 claims remain review material.
-- `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS behavior settings.
 
 Discovery runtime settings are edited on the Discovery page and stored in the
 SQLite `discovery_settings` table. JobSpy board selection uses the `boards`
@@ -586,6 +591,19 @@ Common environment variables:
   tailoring.
 - `TAILORING_JUDGE_MIN_SCORE`: optional quality threshold for judge approval.
 - `CHROME_PATH`: override Chrome/Chromium detection.
+- `JOBHUNTER_LINKEDIN_APPLY_RESOLVER`: set to `0` to disable authenticated
+  LinkedIn apply URL resolution during enrichment.
+- `JOBHUNTER_LINKEDIN_APPLY_PROFILE_DIR`: Chrome profile directory used for
+  LinkedIn apply URL resolution. Defaults to
+  `~/.jobhunter/chrome-workers/linkedin-apply-url-resolver`.
+- `JOBHUNTER_LINKEDIN_APPLY_SOURCE_PROFILE_DIR`: optional Chrome profile to
+  copy into the dedicated LinkedIn resolver profile the first time it is
+  created. Defaults to the platform Chrome user-data directory.
+- `JOBHUNTER_LINKEDIN_APPLY_CHROME_PROFILE`: Chrome profile name inside the
+  resolver user-data directory, for example `Default` or `Profile 2`.
+- `JOBHUNTER_LINKEDIN_APPLY_HEADLESS`: set to `1` to run the LinkedIn resolver
+  profile headless. The default is visible Chrome so a throwaway LinkedIn
+  account can be logged in and kept fresh.
 - `PDFLATEX_PATH`: override LaTeX detection.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
 - `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout

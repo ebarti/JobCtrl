@@ -1,5 +1,11 @@
 # Apply Review Queue And Outcome Feedback Design
 
+> **Status:** Implemented with one important product narrowing: review
+> decisions record approval facts only and do not start browser submission by
+> themselves. Canonical current behavior is documented in `README.md`,
+> `docs/local-ts-api.md`, and `docs/architecture.md`; the delivery summary is
+> in `docs/delivered.md`.
+
 ## Goal
 
 Build an end-to-end application control loop for JobHunter:
