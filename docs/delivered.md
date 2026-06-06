@@ -3,6 +3,47 @@
 This is the per-PR delivery archive. It records what changed and where to find
 the detailed implementation plan or QA notes.
 
+## 2026-06-05: Recent Local Product Stack Reconciliation
+
+Plans:
+
+- `docs/plans/implemented/2026-05-24-target-search-recall.md`
+- `docs/plans/implemented/2026-05-26-single-discovery-preparation-stage.md`
+- `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback-design.md`
+- `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback.md`
+- `docs/plans/implemented/2026-06-03-resume-tailoring-quality.md`
+
+Delivered:
+
+- Target-search recall now expands saved Discovery targets into exact and
+  same-tier recall queries, keeps track/seniority boundaries in title matching,
+  applies source-first title intent for ATS / Workday / Smart Extract sources,
+  and treats Discover limits as new-job budgets.
+- Discovery is the single user-facing preparation stage. It owns discovery,
+  detail enrichment, current-policy scoring, tailoring eligibility, and
+  tailored-artifact suppression through durable preparation work items, while
+  Apply remains the explicit submission stage.
+- Apply review, manual outcomes, outcome suggestions, and bounded Gmail outcome
+  feedback are implemented across the local API, web app, and Python worker
+  with raw notes and Gmail body text kept out of events, telemetry, logs, and
+  broad projections.
+- Resume tailoring now uses profile evidence controls, deterministic quality /
+  ATS checks, generator and judge model routing, high-fit adversarial review,
+  and synthetic evaluation fixtures.
+- Recent hardening added job audit history, source-progress duplicate-crawl
+  protection, database-backed source matching, and failed-stage retry flow
+  improvements.
+
+Validation:
+
+- Current regression ownership is documented in
+  [`docs/local-reliability-qa.md`](local-reliability-qa.md), including target
+  search, Discovery preparation, apply review / Gmail feedback, resume
+  tailoring quality, source-progress, job audit history, and failed-stage retry
+  coverage.
+- The proposed-plan archive was reconciled so delivered plan documents now live
+  under `docs/plans/implemented/`.
+
 ## 2026-05-22: Proposed Plan Status Reconciliation
 
 Plans:
@@ -144,7 +185,7 @@ Delivered (Phases 1–8):
   `addon-msw` and `addon-a11y` (critical+serious axe violations fail
   CI). Per-primitive stories for every shadcn primitive in `shared/ui/`,
   per-context stories for every domain component, per-view stories for
-  the dashboard / jobs / artifacts / profile composers. 17 stories
+  the dashboard / jobs / artifacts / profile composers. 13 stories
   carry an explicit `a11y: { test: "off" }` deferral with attribution
   to the underlying production a11y defect; each deferral is tracked
   in `docs/backlog.md`.
@@ -172,8 +213,9 @@ Cross-cutting outcomes:
   functions per `docs/frontend-target.md` §9.
 - Realtime via SSE + pure-function invalidation router; new backend
   events are a one-row schema addition + a one-row router handler.
-- Test counts: 70 vitest files (≈291 tests), 9 type tests, 8 Playwright
-  specs, 9 a11y suites; Storybook test runner is the gate for stories
+- Current frontend coverage snapshot: 115 colocated Vitest test files,
+  10 type tests, 9 Playwright specs, 9 a11y suites; Storybook test runner is
+  the gate for stories
   + critical a11y bar.
 
 ## 2026-05-06: DDD + Hexagonal Migration (9 phases)

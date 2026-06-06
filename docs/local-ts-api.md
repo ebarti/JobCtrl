@@ -170,31 +170,6 @@ from `apply_run_projections.events_json` (`type`, `level`, `message`, `at`) so
 the Run details drawer renders persisted history without exposing raw event
 payloads.
 
-Apply review and outcome feedback endpoints are local-first API foundations for
-later UI and Gmail ingestion work:
-
-- `GET /v1/apply/review-queue` returns active apply-stage jobs that are ready
-  or close enough for human review, plus materials readiness, latest apply-run
-  context, blockers, and latest review state.
-- `POST /v1/jobs/:jobKey/apply-review/decision` appends an
-  `approve_submit`, `approve_dry_run`, `defer`, `decline`, or `reset`
-  decision. Approval records intent only in this slice; it does not dispatch
-  the apply worker.
-- `GET /v1/outcomes` and `GET /v1/jobs/:jobKey/outcomes` return reviewed
-  outcomes and any outcome suggestions.
-- `POST /v1/jobs/:jobKey/outcomes` writes a manual reviewed outcome.
-- `POST /v1/outcome-suggestions/:suggestionId/decision` accepts, corrects, or
-  ignores a pending suggestion and writes a reviewed outcome for accepted or
-  corrected suggestions.
-
-These routes create `application_review_decisions`, `application_outcomes`,
-`application_email_evidence`, and `application_outcome_suggestions`
-idempotently in SQLite. Gmail scanning and body ingestion are not implemented
-by this API slice. Outcome notes may be stored in `application_outcomes`, and
-future linked email bodies may live in `application_email_evidence`, but
-`job_events.payload_json` stores only safe IDs, kinds, sources, timestamps, and
-note/body presence flags.
-
 Apply review and outcome feedback endpoints power the local web
 `/apply-review` queue and the job-detail outcome timeline. Gmail feedback
 ingestion is Gmail-only and runs through the Python worker, not through the
