@@ -2,6 +2,7 @@ import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_proces
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -160,6 +161,38 @@ describe("dev launcher contract", () => {
       expect(list).toContain(
         'web        pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port "$JOBHUNTER_WEB_PORT"',
       );
+    } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("reports worker heartbeat health in status output", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobhunter-dev-launcher-"));
+    const devDir = join(tempDir, "dev-state");
+    const pidDir = join(devDir, "pids");
+
+    try {
+      mkdirSync(pidDir, { recursive: true });
+      writeFileSync(join(pidDir, "worker.pid"), String(process.pid));
+      writeFileSync(
+        join(tempDir, "curl"),
+        `#!/usr/bin/env bash
+echo '{"worker":{"status":"stale"}}'
+`,
+      );
+      chmodSync(join(tempDir, "curl"), 0o755);
+
+      const output = execFileSync(devScript, ["status"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: devScriptEnv(devDir, {
+          PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+          JOBHUNTER_API_PORT: "9988",
+        }),
+      });
+
+      expect(output).toContain("HEALTH");
+      expect(output).toMatch(/worker\s+up\s+\d+\s+stale\s+/);
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
     }

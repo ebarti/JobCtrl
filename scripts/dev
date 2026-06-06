@@ -11,7 +11,7 @@
 #   scripts/dev start [name...]    Start named processes (or all if none given)
 #   scripts/dev stop  [name...]    Stop named (or all)
 #   scripts/dev restart [name...]  Stop then start
-#   scripts/dev status             Show pid + alive state for all known
+#   scripts/dev status             Show pid, alive state, and worker health
 #   scripts/dev logs <name>        tail -f the log file for one process
 #   scripts/dev setup              Install/sync Node and Python dependencies
 #   scripts/dev list               Print the process registry
@@ -159,6 +159,60 @@ set_default_env() {
   mkdir -p "$(dirname "$JOBHUNTER_TEMPORAL_DB")"
 }
 
+start_detached_command() {
+  local cmd="$1" log="$2"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$ROOT" "$log" "$cmd" <<'PY'
+import os
+import sys
+
+root, log_path, command = sys.argv[1:]
+read_fd, write_fd = os.pipe()
+pid = os.fork()
+
+if pid:
+    os.close(write_fd)
+    with os.fdopen(read_fd) as pipe:
+        detached_pid = pipe.read().strip()
+    _, status = os.waitpid(pid, 0)
+    if status != 0 or not detached_pid:
+        sys.exit(os.waitstatus_to_exitcode(status))
+    print(detached_pid)
+    sys.exit(0)
+
+os.close(read_fd)
+try:
+    os.setsid()
+    detached_pid = os.fork()
+    if detached_pid:
+        os.write(write_fd, str(detached_pid).encode("utf-8"))
+        os.close(write_fd)
+        os._exit(0)
+
+    os.close(write_fd)
+    os.chdir(root)
+    stdin_fd = os.open(os.devnull, os.O_RDONLY)
+    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(stdin_fd, 0)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    if stdin_fd > 2:
+        os.close(stdin_fd)
+    if log_fd > 2:
+        os.close(log_fd)
+    os.execvp("bash", ["bash", "-c", f"exec {command}"])
+except Exception:
+    os._exit(127)
+PY
+    return 0
+  fi
+
+  # Fallback for minimal shells. Python-backed starts detach the child from the
+  # launching process tree; plain nohup is retained when Python is unavailable.
+  ( cd "$ROOT" && exec nohup bash -c "exec $cmd" ) </dev/null >>"$log" 2>&1 &
+  echo "$!"
+}
+
 start_one() {
   local name="$1"
   if ! is_known "$name"; then
@@ -170,11 +224,8 @@ start_one() {
   cmd=$(process_command "$name")
   log=$(log_file "$name")
   : > "$log"
-  # Use `nohup` so the child survives the launching shell; `bash -c`
-  # gives the command a single PID we can track and tree-kill later.
-  ( cd "$ROOT" && exec nohup bash -c "exec $cmd" ) </dev/null >>"$log" 2>&1 &
-  local pid=$!
-  disown 2>/dev/null || true
+  local pid
+  pid=$(start_detached_command "$cmd" "$log")
   echo "$pid" > "$(pid_file "$name")"
   echo "$name: started (pid $pid, logs $log)"
 }
@@ -296,10 +347,35 @@ cmd_restart() {
   cmd_start "$@"
 }
 
+worker_health_status() {
+  if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    echo "unknown"
+    return 0
+  fi
+
+  local payload status
+  payload=$(
+    curl -fsS --max-time 1 \
+      "http://${JOBHUNTER_API_HOST}:${JOBHUNTER_API_PORT}/v1/health" 2>/dev/null || true
+  )
+  if [[ -z "$payload" ]]; then
+    echo "unknown"
+    return 0
+  fi
+
+  status=$(
+    python3 -c 'import json, sys; print((json.load(sys.stdin).get("worker") or {}).get("status") or "unknown")' \
+      <<< "$payload" 2>/dev/null || true
+  )
+  echo "${status:-unknown}"
+}
+
 cmd_status() {
-  printf "%-10s %-8s %-8s %s\n" NAME STATE PID LOG
+  load_env_file
+  set_default_env
+  printf "%-10s %-8s %-8s %-10s %s\n" NAME STATE PID HEALTH LOG
   for n in $(process_names); do
-    local state pid log
+    local state pid health log
     if is_running "$n"; then
       state="up"
       pid=$(read_pid "$n")
@@ -307,8 +383,12 @@ cmd_status() {
       state="down"
       pid="-"
     fi
+    health="-"
+    if [[ "$n" == "worker" && "$state" == "up" ]]; then
+      health=$(worker_health_status)
+    fi
     log=$(log_file "$n")
-    printf "%-10s %-8s %-8s %s\n" "$n" "$state" "$pid" "$log"
+    printf "%-10s %-8s %-8s %-10s %s\n" "$n" "$state" "$pid" "$health" "$log"
   done
 }
 

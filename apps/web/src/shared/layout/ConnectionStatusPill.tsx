@@ -30,7 +30,7 @@ export function ConnectionStatusPill() {
       </span>
       {workerUnhealthy ? (
         <div className="connection-banner" role="alert" aria-live="assertive">
-          {health.data?.worker.message ?? "Temporal worker health is unavailable."}
+          {health.data?.worker.message ?? "JobHunter automation worker health is unavailable."}
         </div>
       ) : lostForLong ? (
         <div className="connection-banner" role="status" aria-live="polite">

@@ -21,7 +21,7 @@ pnpm dev
 ```
 
 `pnpm dev` starts the full local fleet in dependency order: Temporal dev server,
-TypeScript API, Vite web app, and the JobHunter Temporal worker. Before each
+TypeScript API, Vite web app, and the JobHunter automation worker. Before each
 component starts, the launcher stops the previous tracked JobHunter process
 tree for that component, so rerunning `pnpm dev` starts from a clean owned
 stack. It runs in the foreground so supervised terminals keep the child
@@ -44,6 +44,10 @@ pnpm dev:status
 pnpm dev:logs worker
 scripts/dev list
 ```
+
+`pnpm dev:status` combines PID liveness with the API worker heartbeat health
+classification. When the worker process is alive but its heartbeat is stale,
+the worker row reports `stale` so operator status matches the dashboard.
 
 For a detached background stack in a normal shell, use the explicit daemon mode:
 

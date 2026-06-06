@@ -154,7 +154,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("reports a healthy Temporal worker heartbeat from the API database", async () => {
+  it("reports a healthy JobHunter automation worker heartbeat from the API database", async () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-1",
       appDir: tempDir,
@@ -186,7 +186,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("reports a stale Temporal worker heartbeat", async () => {
+  it("reports a stale JobHunter automation worker heartbeat", async () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-stale",
       appDir: tempDir,
@@ -212,7 +212,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("reports a mismatched Temporal worker heartbeat", async () => {
+  it("reports a mismatched JobHunter automation worker heartbeat", async () => {
     insertWorkerHeartbeat(options.dbPath, {
       workerId: "worker-wrong-db",
       appDir: path.join(tempDir, "other-app"),
