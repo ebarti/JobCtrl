@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useCallback } from "react";
 
 import { JobDetailDrawer } from "../views/jobs/JobDetailDrawer.js";
 
@@ -8,5 +9,11 @@ export const Route = createFileRoute("/jobs/$jobId")({
 
 function JobDrawerRoute() {
   const { jobId } = Route.useParams();
-  return <JobDetailDrawer jobId={jobId} />;
+  const search = Route.useSearch();
+  const navigate = useNavigate();
+  const close = useCallback(() => {
+    void navigate({ to: "/jobs", search });
+  }, [navigate, search]);
+
+  return <JobDetailDrawer jobId={jobId} onClose={close} />;
 }

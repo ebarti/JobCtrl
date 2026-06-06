@@ -5,6 +5,8 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -16,6 +18,19 @@ import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
+
+function RoutedJobDetailDrawer({ jobId }: { readonly jobId: string }) {
+  const navigate = useNavigate();
+  const search = useSearch({ from: "/jobs" });
+  return (
+    <JobDetailDrawer
+      jobId={jobId}
+      onClose={() => {
+        void navigate({ to: "/jobs", search });
+      }}
+    />
+  );
+}
 
 function renderJobDetailDrawer(jobId: string) {
   const harness = buildProviderHarness();
@@ -29,7 +44,7 @@ function renderJobDetailDrawer(jobId: string) {
   const detailRoute = createRoute({
     getParentRoute: () => jobsRoute,
     path: "/$jobId",
-    component: () => <JobDetailDrawer jobId={jobId} />,
+    component: () => <RoutedJobDetailDrawer jobId={jobId} />,
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([jobsRoute.addChildren([detailRoute])]),

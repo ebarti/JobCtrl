@@ -1,7 +1,5 @@
 import { JobHunterApiError } from "@jobhunter/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
@@ -24,6 +22,7 @@ import { JobOverview } from "./JobOverview.js";
 
 export interface JobDetailDrawerProps {
   jobId: string;
+  onClose: () => void;
 }
 
 function detailErrorTitle(error: unknown): string {
@@ -59,13 +58,8 @@ function JobAuditHistorySection({
   );
 }
 
-export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
-  const navigate = useNavigate();
-  const search = useSearch({ from: "/jobs" });
-  const close = useCallback(() => {
-    void navigate({ to: "/jobs", search });
-  }, [navigate, search]);
-  useEscapeKey(true, close);
+export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
+  useEscapeKey(true, onClose);
 
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
   const errorMessage = detailErrorTitle(detailError);
@@ -74,13 +68,13 @@ export function JobDetailDrawer({ jobId }: JobDetailDrawerProps) {
   );
 
   return (
-    <DetailDrawerBackdrop onDismiss={close}>
+    <DetailDrawerBackdrop onDismiss={onClose}>
       <div className="drawer" role="dialog" aria-modal="true" aria-label="Job details">
         <button
           aria-label="Close job details"
           className="drawer-close"
           type="button"
-          onClick={close}
+          onClick={onClose}
         >
           x
         </button>

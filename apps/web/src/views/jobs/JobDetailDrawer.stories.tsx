@@ -6,6 +6,8 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
@@ -16,11 +18,24 @@ import { JobDetailDrawer } from "./JobDetailDrawer.js";
 const meta = {
   title: "Views/Jobs/JobDetailDrawer",
   component: JobDetailDrawer,
-  args: { jobId: "job-1" },
+  args: { jobId: "job-1", onClose: () => undefined },
 } satisfies Meta<typeof JobDetailDrawer>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
+
+function RoutedJobDetailDrawer({ jobId }: { readonly jobId: string }) {
+  const navigate = useNavigate();
+  const search = useSearch({ from: "/jobs" });
+  return (
+    <JobDetailDrawer
+      jobId={jobId}
+      onClose={() => {
+        void navigate({ to: "/jobs", search });
+      }}
+    />
+  );
+}
 
 function JobDetailDrawerHost({ jobId }: { jobId: string }) {
   const router = useMemo(() => {
@@ -29,7 +44,7 @@ function JobDetailDrawerHost({ jobId }: { jobId: string }) {
       getParentRoute: () => root,
       path: "/jobs",
       validateSearch: (search) => jobsSearchSchema.parse(search),
-      component: () => <JobDetailDrawer jobId={jobId} />,
+      component: () => <RoutedJobDetailDrawer jobId={jobId} />,
     });
     return createRouter({
       routeTree: root.addChildren([jobs]),

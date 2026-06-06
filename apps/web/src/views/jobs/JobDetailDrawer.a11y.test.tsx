@@ -5,6 +5,8 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { axe } from "jest-axe";
 import { render, waitFor } from "@testing-library/react";
@@ -14,6 +16,19 @@ import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
+function RoutedJobDetailDrawer() {
+  const navigate = useNavigate();
+  const search = useSearch({ from: "/jobs" });
+  return (
+    <JobDetailDrawer
+      jobId="job-1"
+      onClose={() => {
+        void navigate({ to: "/jobs", search });
+      }}
+    />
+  );
+}
+
 describe("<JobDetailDrawer> a11y", () => {
   it("has no critical axe violations when populated from MSW", async () => {
     const harness = buildProviderHarness();
@@ -22,7 +37,7 @@ describe("<JobDetailDrawer> a11y", () => {
       getParentRoute: () => rootRoute,
       path: "/jobs",
       validateSearch: jobsSearchSchema,
-      component: () => <JobDetailDrawer jobId="job-1" />,
+      component: RoutedJobDetailDrawer,
     });
     const router = createRouter({
       routeTree: rootRoute.addChildren([jobsRoute]),
