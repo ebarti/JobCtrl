@@ -294,6 +294,11 @@ agent needs to click through to the employer form. The default model is
 `default`, which lets Claude Code use its configured local model; pass
 `--model <name>` only when you want to override that local default.
 
+For LinkedIn postings, enrichment can use a dedicated authenticated Chrome
+profile to retry first-pass misses and capture the external company apply URL.
+The resolver only clicks far enough to capture the outbound target; it does not
+fill forms or submit applications.
+
 The local API and web app also record apply-review decisions and application
 outcomes. The web `/apply-review` queue shows active apply-stage jobs with
 materials readiness, latest apply-run context, blockers, review decisions, and
@@ -582,6 +587,19 @@ Common environment variables:
   tailoring.
 - `TAILORING_JUDGE_MIN_SCORE`: optional quality threshold for judge approval.
 - `CHROME_PATH`: override Chrome/Chromium detection.
+- `JOBHUNTER_LINKEDIN_APPLY_RESOLVER`: set to `0` to disable authenticated
+  LinkedIn apply URL resolution during enrichment.
+- `JOBHUNTER_LINKEDIN_APPLY_PROFILE_DIR`: Chrome profile directory used for
+  LinkedIn apply URL resolution. Defaults to
+  `~/.jobhunter/chrome-workers/linkedin-apply-url-resolver`.
+- `JOBHUNTER_LINKEDIN_APPLY_SOURCE_PROFILE_DIR`: optional Chrome profile to
+  copy into the dedicated LinkedIn resolver profile the first time it is
+  created. Defaults to the platform Chrome user-data directory.
+- `JOBHUNTER_LINKEDIN_APPLY_CHROME_PROFILE`: Chrome profile name inside the
+  resolver user-data directory, for example `Default` or `Profile 2`.
+- `JOBHUNTER_LINKEDIN_APPLY_HEADLESS`: set to `1` to run the LinkedIn resolver
+  profile headless. The default is visible Chrome so a throwaway LinkedIn
+  account can be logged in and kept fresh.
 - `PDFLATEX_PATH`: override LaTeX detection.
 - `CAPSOLVER_API_KEY`: enable CAPTCHA solving support.
 - `JOBHUNTER_APPLY_TIMEOUT_SECONDS`: per-job auto-apply agent timeout

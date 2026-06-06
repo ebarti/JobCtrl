@@ -498,6 +498,8 @@ sequenceDiagram
     Detail->>Fetcher: fetch posting detail pages
     Fetcher-->>Extractor: raw HTML / page content
     Extractor->>DB: persist full description, apply URL, attempts/errors
+    Detail->>Fetcher: for LinkedIn misses, retry with authenticated Chrome
+    Fetcher-->>DB: persist external company apply URL when captured
     Runner->>DB: enrich stage/job events for retry visibility
     DB->>Ops: job detail/list projections refresh
 ```
@@ -540,6 +542,10 @@ classDiagram
 - Reads pending jobs from SQLite selectors.
 - Writes enriched description/application fields and canonical enrichment rows
   where available.
+- Retries LinkedIn rows that are failed or enriched without an application URL
+  with a bounded authenticated Chrome pass. The pass may click the LinkedIn
+  apply control to capture an external company URL, but it stops before forms
+  or submission.
 - Records detail scrape timestamps and errors for retry/debug visibility.
 - Records enrich job/stage events for retry/debug visibility without exposing
   Enrich as a top-level pipeline action.
