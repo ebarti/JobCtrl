@@ -2278,6 +2278,28 @@ textarea {
   gap: 4px;
 }
 
+.persona-audit-disclosure {
+  min-width: 0;
+  border-top: 1px solid var(--rule);
+  padding-top: 8px;
+}
+
+.persona-audit-disclosure summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.persona-audit-disclosure[open] summary {
+  margin-bottom: 8px;
+}
+
+.persona-audit-detail-body {
+  display: grid;
+  gap: 8px;
+}
+
 @container (min-width: 520px) {
   .persona-audit-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));

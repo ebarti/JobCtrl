@@ -41,10 +41,12 @@ Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts for actionable high-signal terms, evidence and quality
 summaries, judge/adversarial-review results,
 warning-repair status, annotated source-vs-tailored resume changes, high-fit
-persona prompt/response audit, and model selection metadata. They do not expose
-raw generator prompts, raw profile payloads, or raw job text; annotation and
-persona prompt snippets are bounded excerpts of the selected source, tailored
-resume, and adversarial-review request.
+persona prompt/response audit, and model selection metadata. Persona warning
+cards expose an expandable audit trail for the stored LLM request and structured
+response behind that judgment. They do not expose raw generator prompts, raw
+profile payloads, or raw job text; annotation and persona prompt snippets are
+bounded excerpts of the selected source, tailored resume, and adversarial-review
+request.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,

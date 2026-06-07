@@ -250,12 +250,14 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("Why overall score")).toBeInTheDocument();
     expect(screen.getByText("Persona judgments")).toBeInTheDocument();
     expect(screen.getByText("Evidence Auditor")).toBeInTheDocument();
-    expect(screen.getByText("What was asked")).toBeInTheDocument();
+    expect(screen.getByText("Show LLM audit trail")).toBeInTheDocument();
+    expect(screen.getByText("Persona rubric")).toBeInTheDocument();
     expect(screen.getByText("Check that every metric, tool, role, company, and achievement is supported.")).toBeInTheDocument();
     expect(screen.getByText("Why it scored this way")).toBeInTheDocument();
     expect(screen.getByText("LLM returned")).toBeInTheDocument();
-    expect(screen.getByText("LLM request")).toBeInTheDocument();
-    expect(screen.getByText("LLM response")).toBeInTheDocument();
+    expect(screen.getByText("Exact LLM request")).toBeInTheDocument();
+    expect(screen.getByText("Persona response")).toBeInTheDocument();
+    expect(screen.getByText("Stored LLM response")).toBeInTheDocument();
     expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
     expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
     expect(screen.getAllByText("All personas passed with no blockers.").length).toBeGreaterThan(0);

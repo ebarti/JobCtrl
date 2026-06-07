@@ -441,10 +441,12 @@ available from the Artifacts drawer for audit/detail review. It includes keyword
 coverage counts for actionable high-signal terms, evidence support, quality gates,
 review outcome, warning-repair status,
 annotated source-vs-tailored resume changes, high-fit persona prompt/response
-audit, and model summary. The rationale does not expose raw generator prompts,
-raw profile payloads, or raw job text; annotated changes and persona prompts are
-bounded excerpts explaining what was reframed, what was asked, how the reviewer
-responded, and why the score was assigned.
+audit, and model summary. Persona warnings include an expandable audit trail for
+the stored LLM request and structured response behind that judgment. The
+rationale does not expose raw generator prompts, raw profile payloads, or raw job
+text; annotated changes and persona prompts are bounded excerpts explaining what
+was reframed, what was asked, how the reviewer responded, and why the score was
+assigned.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;

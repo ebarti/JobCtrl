@@ -8,6 +8,7 @@ export interface TailoringExplanationSectionProps {
 
 type AdversarialReview = NonNullable<ArtifactTailoringExplanation["adversarialReview"]>;
 type PersonaAudit = AdversarialReview["personas"][number];
+type AdversarialAudit = AdversarialReview["audit"];
 type ResponseSummaryValue = {
   readonly verdict: string | null;
   readonly score: number | null;
@@ -148,7 +149,51 @@ function ResponseSummary({ response }: { readonly response: ResponseSummaryValue
   );
 }
 
-function PersonaAuditList({ personas }: { readonly personas: readonly PersonaAudit[] }) {
+function PersonaAuditDetails({
+  persona,
+  audit,
+}: {
+  readonly persona: PersonaAudit;
+  readonly audit: AdversarialAudit;
+}) {
+  return (
+    <details className="persona-audit-disclosure">
+      <summary>Show LLM audit trail</summary>
+      <div className="persona-audit-detail-body">
+        {persona.promptRubric ? (
+          <TextEvidence title="Persona rubric">{persona.promptRubric}</TextEvidence>
+        ) : null}
+        <TextEvidence title="Exact LLM request">
+          {audit?.promptMessages.length ? (
+            <PromptMessageList messages={audit.promptMessages} />
+          ) : (
+            <p className="muted">Exact LLM request was not captured for this artifact.</p>
+          )}
+        </TextEvidence>
+        {persona.response ? (
+          <TextEvidence title="Persona response">
+            <ResponseSummary response={persona.response} />
+          </TextEvidence>
+        ) : null}
+        <TextEvidence title="Stored LLM response">
+          {audit?.response ? (
+            <ResponseSummary response={audit.response} />
+          ) : (
+            <p className="muted">Structured LLM response was not captured for this artifact.</p>
+          )}
+        </TextEvidence>
+      </div>
+    </details>
+  );
+}
+
+function PersonaAuditList({
+  personas,
+  audit,
+}: {
+  readonly personas: readonly PersonaAudit[];
+  readonly audit: AdversarialAudit;
+}) {
   return (
     <div className="persona-audit-list">
       {personas.map((persona) => (
@@ -161,9 +206,6 @@ function PersonaAuditList({ personas }: { readonly personas: readonly PersonaAud
             <AuditStatus verdict={persona.verdict} score={persona.score} />
           </header>
           <div className="persona-audit-body">
-            {persona.promptRubric ? (
-              <TextEvidence title="What was asked">{persona.promptRubric}</TextEvidence>
-            ) : null}
             {persona.scoreRationale || persona.scoreBasis.length ? (
               <TextEvidence title="Why it scored this way">
                 {persona.scoreRationale ? <p>{persona.scoreRationale}</p> : null}
@@ -175,6 +217,7 @@ function PersonaAuditList({ personas }: { readonly personas: readonly PersonaAud
                 <ResponseSummary response={persona.response} />
               </TextEvidence>
             ) : null}
+            <PersonaAuditDetails persona={persona} audit={audit} />
           </div>
         </article>
       ))}
@@ -432,23 +475,14 @@ export function TailoringExplanationSection({
                 ) : null}
                 <TextEvidence title="Persona judgments">
                   {explanation.adversarialReview.personas.length ? (
-                    <PersonaAuditList personas={explanation.adversarialReview.personas} />
+                    <PersonaAuditList
+                      audit={explanation.adversarialReview.audit}
+                      personas={explanation.adversarialReview.personas}
+                    />
                   ) : (
                     <span className="muted">none recorded</span>
                   )}
                 </TextEvidence>
-                {explanation.adversarialReview.audit?.promptMessages.length ? (
-                  <TextEvidence title="LLM request">
-                    <PromptMessageList
-                      messages={explanation.adversarialReview.audit.promptMessages}
-                    />
-                  </TextEvidence>
-                ) : null}
-                {explanation.adversarialReview.audit?.response ? (
-                  <TextEvidence title="LLM response">
-                    <ResponseSummary response={explanation.adversarialReview.audit.response} />
-                  </TextEvidence>
-                ) : null}
               </div>
             ) : (
               <p className="muted">{explanation.adversarialReview?.skippedReason}</p>
