@@ -166,6 +166,16 @@ def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() 
     job = {
         "url": "https://example.com/platform",
         "title": "Head of Platform Engineering",
+        "score_keywords": [
+            "head",
+            "leading",
+            "expert",
+            "2019",
+            "across",
+            "since",
+            "platform",
+            "kubernetes",
+        ],
         "full_description": (
             "Join Impress, Europe's leading health-tech innovator. Everyone deserves "
             "a smile they love. We are looking for an onsite leader in Barcelona. "
@@ -187,6 +197,12 @@ def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() 
     assert "everyone" not in plan.job_keywords
     assert "smile" not in plan.job_keywords
     assert "barcelona" not in plan.job_keywords
+    assert "head" not in plan.job_keywords
+    assert "leading" not in plan.job_keywords
+    assert "expert" not in plan.job_keywords
+    assert "2019" not in plan.job_keywords
+    assert "across" not in plan.job_keywords
+    assert "since" not in plan.job_keywords
 
 
 def test_tailoring_plan_metadata_preserves_full_keyword_audit_set() -> None:

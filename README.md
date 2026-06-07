@@ -438,8 +438,8 @@ regeneration.
 Apply review shows the safe tailoring rationale under the selected tailored
 resume when a resume PDF artifact is available. The same rationale remains
 available from the Artifacts drawer for audit/detail review. It includes keyword
-coverage counts, displayed high-signal terms, filtered extracted keyword terms,
-evidence support, quality gates, review outcome, warning-repair status,
+coverage counts for actionable high-signal terms, evidence support, quality gates,
+review outcome, warning-repair status,
 annotated source-vs-tailored resume changes, high-fit persona prompt/response
 audit, and model summary. The rationale does not expose raw generator prompts,
 raw profile payloads, or raw job text; annotated changes and persona prompts are

@@ -117,20 +117,20 @@ describe("<ArtifactDetailPanel>", () => {
         covered: ["platform reliability"],
         missing: ["typescript"],
         filtered: {
-          planned: ["join", "impress", "head"],
-          covered: ["head"],
-          missing: ["join", "impress"],
+          planned: [],
+          covered: [],
+          missing: [],
         },
         counts: {
-          planned: 5,
-          covered: 2,
-          missing: 3,
+          planned: 2,
+          covered: 1,
+          missing: 1,
           displayedPlanned: 2,
           displayedCovered: 1,
           displayedMissing: 1,
-          filteredPlanned: 3,
-          filteredCovered: 1,
-          filteredMissing: 2,
+          filteredPlanned: 0,
+          filteredCovered: 0,
+          filteredMissing: 0,
         },
       },
       evidence: {
@@ -143,7 +143,7 @@ describe("<ArtifactDetailPanel>", () => {
       quality: {
         passed: true,
         errors: [],
-        warnings: ["Low keyword coverage"],
+        warnings: [],
         notes: ["Keyword coverage: 1/2"],
         metricClaims: ["35%"],
         repeatedKeywords: [],
@@ -255,10 +255,10 @@ describe("<ArtifactDetailPanel>", () => {
     expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("Senior")).toBeInTheDocument();
     expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
-    expect(screen.getByText("2/5 covered")).toBeInTheDocument();
-    expect(screen.getByText("5 total · 2 shown · 3 filtered")).toBeInTheDocument();
-    expect(screen.getByText("Filtered covered keywords")).toBeInTheDocument();
-    expect(screen.getByText("head")).toBeInTheDocument();
+    expect(screen.getByText("1/2 covered")).toBeInTheDocument();
+    expect(screen.getByText("2 total")).toBeInTheDocument();
+    expect(screen.queryByText("Filtered covered keywords")).not.toBeInTheDocument();
+    expect(screen.queryByText("head")).not.toBeInTheDocument();
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getAllByText("ev_latency")).toHaveLength(2);
     expect(screen.getAllByText("ev_scope").length).toBeGreaterThan(0);

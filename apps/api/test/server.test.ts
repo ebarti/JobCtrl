@@ -2088,57 +2088,20 @@ describe("local TypeScript API", () => {
           covered: ["platform reliability"],
           missing: ["typescript"],
           filtered: {
-            planned: [
-              "join",
-              "impress",
-              "europe",
-              "health",
-              "tech",
-              "innovator",
-              "believe",
-              "everyone",
-              "deserves",
-              "smile",
-              "head",
-              "2019",
-              "across",
-              "they",
-              "love",
-              "largest",
-              "ortho",
-              "clinic",
-              "chain",
-            ],
-            covered: ["head", "2019", "across"],
-            missing: [
-              "join",
-              "impress",
-              "europe",
-              "health",
-              "tech",
-              "innovator",
-              "believe",
-              "everyone",
-              "deserves",
-              "smile",
-              "they",
-              "love",
-              "largest",
-              "ortho",
-              "clinic",
-              "chain",
-            ],
+            planned: [],
+            covered: [],
+            missing: [],
           },
           counts: {
-            planned: 21,
-            covered: 4,
-            missing: 17,
+            planned: 2,
+            covered: 1,
+            missing: 1,
             displayedPlanned: 2,
             displayedCovered: 1,
             displayedMissing: 1,
-            filteredPlanned: 19,
-            filteredCovered: 3,
-            filteredMissing: 16,
+            filteredPlanned: 0,
+            filteredCovered: 0,
+            filteredMissing: 0,
           },
         },
         evidence: {
@@ -2147,6 +2110,7 @@ describe("local TypeScript API", () => {
           verifiedMetricCount: 2,
         },
         quality: {
+          warnings: [],
           metricClaims: ["35%"],
         },
         judge: {
@@ -2231,9 +2195,12 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(response.json())).not.toContain("must not leak");
     expect(response.json().tailoringExplanation.keywords.covered).not.toContain("join");
     expect(response.json().tailoringExplanation.keywords.missing).not.toContain("join");
-    expect(response.json().tailoringExplanation.keywords.filtered.missing).toContain("join");
-    expect(response.json().tailoringExplanation.keywords.filtered.missing).toContain("innovator");
-    expect(response.json().tailoringExplanation.keywords.filtered.missing).toContain("smile");
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("head");
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("2019");
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("join");
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("innovator");
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("smile");
+    expect(JSON.stringify(response.json().tailoringExplanation.quality)).not.toContain("Low keyword coverage");
     expect(JSON.stringify(response.json())).not.toContain("5teams");
     expect(JSON.stringify(response.json())).not.toContain("2service");
     expect(JSON.stringify(response.json())).not.toContain("15engineers");

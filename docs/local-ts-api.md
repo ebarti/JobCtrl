@@ -38,8 +38,8 @@ local artifact projection; it returns `404` for missing metadata/files and
 `415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
 route still delegates to the local OS opener.
 Tailored resume artifact detail responses include safe tailoring evidence only:
-keyword coverage counts, displayed high-signal keyword terms, filtered extracted
-keyword terms, evidence and quality summaries, judge/adversarial-review results,
+keyword coverage counts for actionable high-signal terms, evidence and quality
+summaries, judge/adversarial-review results,
 warning-repair status, annotated source-vs-tailored resume changes, high-fit
 persona prompt/response audit, and model selection metadata. They do not expose
 raw generator prompts, raw profile payloads, or raw job text; annotation and

@@ -126,11 +126,16 @@ _LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
     "across",
     "barcelona",
     "believe",
+    "care",
     "chain",
     "clinic",
+    "clinics",
+    "combine",
     "company",
     "cool",
+    "cutting",
     "deserves",
+    "edge",
     "europe",
     "everyone",
     "expert",
@@ -147,10 +152,13 @@ _LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
     "love",
     "office",
     "ortho",
+    "orthodontics",
     "onsite",
     "rapid",
     "remote",
+    "revolutionizing",
     "salary",
+    "since",
     "smile",
     "tech",
     "they",
@@ -178,6 +186,7 @@ _HIGH_SIGNAL_DESCRIPTION_KEYWORDS: set[str] = {
     "kafka",
     "kubernetes",
     "latency",
+    "leadership",
     "management",
     "node.js",
     "observability",
@@ -729,7 +738,7 @@ def _select_required_evidence_ids(
 def _extract_job_keywords(job: dict) -> tuple[str, ...]:
     ordered: list[str] = []
 
-    for key in (
+    trusted_keyword_fields = (
         "title",
         "role_title",
         "skills",
@@ -737,19 +746,26 @@ def _extract_job_keywords(job: dict) -> tuple[str, ...]:
         "preferred_skills",
         "responsibilities",
         "requirements",
+    )
+    generic_keyword_fields = (
         "signals",
         "matched_signals",
         "missing_signals",
         "transferable_signals",
         "score_keywords",
         "keywords",
-    ):
+    )
+    for key in trusted_keyword_fields:
         for value in _flatten_text(job.get(key)):
             _append_keywords(ordered, value, include_phrase=key != "title")
 
+    for key in generic_keyword_fields:
+        for value in _flatten_text(job.get(key)):
+            _append_keywords(ordered, value, include_phrase=True, require_high_signal=True)
+
     for key in ("score_breakdown", "score_breakdown_json", "score_reasoning"):
         for value in _flatten_text(job.get(key)):
-            _append_keywords(ordered, value, include_phrase=False)
+            _append_keywords(ordered, value, include_phrase=False, require_high_signal=True)
 
     description = " ".join(
         str(job.get(key) or "") for key in ("full_description", "description")
@@ -907,12 +923,18 @@ def _annotation_evidence_notes(
     return tuple(dict.fromkeys(note for note in notes if note))
 
 
-def _append_keywords(ordered: list[str], value: str, *, include_phrase: bool) -> None:
+def _append_keywords(
+    ordered: list[str],
+    value: str,
+    *,
+    include_phrase: bool,
+    require_high_signal: bool = False,
+) -> None:
     phrase = _normalize_phrase(value)
     if include_phrase and 1 < len(phrase.split()) <= 4:
-        _add_keyword(ordered, phrase)
+        _add_keyword(ordered, phrase, require_high_signal=require_high_signal)
     for token in _significant_tokens(value):
-        _add_keyword(ordered, token)
+        _add_keyword(ordered, token, require_high_signal=require_high_signal)
 
 
 def _append_description_keywords(ordered: list[str], value: str) -> None:

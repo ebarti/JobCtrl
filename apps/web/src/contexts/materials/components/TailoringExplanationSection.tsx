@@ -39,11 +39,10 @@ function yesNo(value: boolean | null): string {
   return value ? "yes" : "no";
 }
 
-function countSummary(count: number, displayed: number, filtered: number): string {
+function countSummary(count: number, displayed: number): string {
   if (!count) return "none recorded";
   const parts = [`${count} total`];
   if (displayed !== count) parts.push(`${displayed} shown`);
-  if (filtered) parts.push(`${filtered} filtered`);
   return parts.join(" · ");
 }
 
@@ -228,9 +227,6 @@ export function TailoringExplanationSection({
     explanation.keywords.planned,
     explanation.keywords.covered,
     explanation.keywords.missing,
-    explanation.keywords.filtered.planned,
-    explanation.keywords.filtered.covered,
-    explanation.keywords.filtered.missing,
     explanation.evidence.representedIds,
     explanation.evidence.requiredIds,
     explanation.evidence.missingIds,
@@ -330,7 +326,6 @@ export function TailoringExplanationSection({
                     {countSummary(
                       explanation.keywords.counts.planned,
                       explanation.keywords.counts.displayedPlanned,
-                      explanation.keywords.counts.filteredPlanned,
                     )}
                   </dd>
                 </div>
@@ -338,14 +333,6 @@ export function TailoringExplanationSection({
               <EvidenceRow label="Displayed target keywords" items={explanation.keywords.planned} />
               <EvidenceRow label="Displayed covered keywords" items={explanation.keywords.covered} />
               <EvidenceRow label="Displayed missing keywords" items={explanation.keywords.missing} />
-              <EvidenceRow
-                label="Filtered covered keywords"
-                items={explanation.keywords.filtered.covered}
-              />
-              <EvidenceRow
-                label="Filtered missing keywords"
-                items={explanation.keywords.filtered.missing}
-              />
               <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
               <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
               <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />

@@ -1928,26 +1928,38 @@ const DISPLAY_METRIC_CLAIM_RE =
 const LOW_SIGNAL_KEYWORDS = new Set([
   "about",
   "across",
+  "barcelona",
   "believe",
+  "care",
   "chain",
   "clinic",
+  "clinics",
+  "combine",
   "company",
   "cool",
+  "cutting",
   "deserves",
+  "edge",
+  "europe",
   "everyone",
   "expert",
   "fast",
   "growth",
   "head",
   "health",
+  "impress",
   "innovator",
+  "invisible",
   "join",
   "largest",
   "leading",
   "love",
   "office",
   "ortho",
+  "orthodontics",
   "rapid",
+  "revolutionizing",
+  "since",
   "smile",
   "team",
   "teams",
@@ -1976,6 +1988,7 @@ const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
   "kafka",
   "kubernetes",
   "leadership",
+  "management",
   "node",
   "node.js",
   "observability",
@@ -2038,10 +2051,16 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   const plannedKeywordAudit = metadataKeywordAudit(
     keywordUniverse(qualityPlan.job_keywords, keywordCoverage.covered, keywordCoverage.missing),
     32,
-    64,
   );
-  const coveredKeywordAudit = metadataKeywordAudit(keywordCoverage.covered, 32, 64);
-  const missingKeywordAudit = metadataKeywordAudit(keywordCoverage.missing, 32, 64);
+  const coveredKeywordAudit = metadataKeywordAudit(keywordCoverage.covered, 32);
+  const missingKeywordAudit = metadataKeywordAudit(keywordCoverage.missing, 32);
+  const qualityMessages = cleanKeywordQualityMessages({
+    rawErrors: qualityChecks.errors,
+    rawWarnings: qualityChecks.warnings,
+    rawNotes: qualityChecks.notes,
+    plannedCount: plannedKeywordAudit.total,
+    coveredCount: coveredKeywordAudit.total,
+  });
 
   const explanation: ArtifactTailoringExplanation = {
     targetSeniority: metadataText(qualityPlan.target_seniority),
@@ -2082,9 +2101,9 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
     },
     quality: {
       passed: metadataBoolean(qualityChecks.passed),
-      errors: metadataTextList(qualityChecks.errors, 8, 220),
-      warnings: metadataTextList(qualityChecks.warnings, 8, 220),
-      notes: metadataTextList(qualityChecks.notes, 8, 220),
+      errors: qualityMessages.errors,
+      warnings: qualityMessages.warnings,
+      notes: qualityMessages.notes,
       metricClaims: metadataMetricClaims(qualityChecks.metric_claims),
       repeatedKeywords: metadataRepeatedKeywords(qualityChecks.repeated_keywords),
     },
@@ -2363,6 +2382,54 @@ function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[]
   return out;
 }
 
+function cleanKeywordQualityMessages({
+  rawErrors,
+  rawWarnings,
+  rawNotes,
+  plannedCount,
+  coveredCount,
+}: {
+  rawErrors: unknown;
+  rawWarnings: unknown;
+  rawNotes: unknown;
+  plannedCount: number;
+  coveredCount: number;
+}): { errors: string[]; warnings: string[]; notes: string[] } {
+  const errors = metadataTextList(rawErrors, 8, 220).filter(notKeywordCoverageMessage);
+  const warnings = metadataTextList(rawWarnings, 8, 220).filter(notKeywordCoverageMessage);
+  const notes = metadataTextList(rawNotes, 8, 220).filter(notKeywordCoverageMessage);
+  if (plannedCount >= 4 && coveredCount === 0) {
+    errors.push("Keyword coverage extremely empty: no target job keywords covered");
+  } else if (plannedCount >= 4 && coveredCount / plannedCount < 0.25) {
+    warnings.push(`Low keyword coverage: covered ${coveredCount}/${plannedCount} target keywords`);
+  }
+  if (plannedCount > 0 && coveredCount > 0) {
+    notes.push(`Keyword coverage: ${coveredCount}/${plannedCount}`);
+  }
+  return {
+    errors: dedupeBounded(errors, 8),
+    warnings: dedupeBounded(warnings, 8),
+    notes: dedupeBounded(notes, 8),
+  };
+}
+
+function notKeywordCoverageMessage(value: string): boolean {
+  return !/\bkeyword coverage\b/i.test(value);
+}
+
+function dedupeBounded(values: readonly string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 function keywordUniverse(...values: unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const value of values) {
@@ -2374,25 +2441,23 @@ function keywordUniverse(...values: unknown[]): unknown[] {
 function metadataKeywordAudit(
   value: unknown,
   displayLimit = 32,
-  filteredLimit = 64,
   maxLength = 120,
 ): { displayed: string[]; filtered: string[]; total: number } {
   if (!Array.isArray(value)) return { displayed: [], filtered: [], total: 0 };
   const seen = new Set<string>();
+  const actionableSeen = new Set<string>();
   const displayed: string[] = [];
-  const filtered: string[] = [];
   for (const raw of value) {
     const text = metadataText(raw, maxLength);
     const key = normalizedKeywordKey(text);
     if (!text || !key || seen.has(key)) continue;
     seen.add(key);
     if (isMeaningfulDisplayKeyword(text, key)) {
+      actionableSeen.add(key);
       if (displayed.length < displayLimit) displayed.push(text);
-    } else if (filtered.length < filteredLimit) {
-      filtered.push(text);
     }
   }
-  return { displayed, filtered, total: seen.size };
+  return { displayed, filtered: [], total: actionableSeen.size };
 }
 
 function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {

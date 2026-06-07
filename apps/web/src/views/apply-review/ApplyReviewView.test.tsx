@@ -49,20 +49,20 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     covered: ["platform reliability"],
     missing: ["incident response"],
     filtered: {
-      planned: ["join", "impress"],
+      planned: [],
       covered: [],
-      missing: ["join", "impress"],
+      missing: [],
     },
     counts: {
-      planned: 5,
+      planned: 3,
       covered: 1,
-      missing: 4,
+      missing: 1,
       displayedPlanned: 3,
       displayedCovered: 1,
       displayedMissing: 1,
-      filteredPlanned: 2,
+      filteredPlanned: 0,
       filteredCovered: 0,
-      filteredMissing: 2,
+      filteredMissing: 0,
     },
   },
   evidence: {
@@ -232,11 +232,11 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
     expect(screen.getByText("Principal")).toBeInTheDocument();
     expect(screen.getByText("Why these changes")).toBeInTheDocument();
-    expect(screen.getByText("1/5 covered")).toBeInTheDocument();
-    expect(screen.getByText("5 total · 3 shown · 2 filtered")).toBeInTheDocument();
+    expect(screen.getByText("1/3 covered")).toBeInTheDocument();
+    expect(screen.getByText("3 total")).toBeInTheDocument();
     expect(screen.getByText("Displayed target keywords")).toBeInTheDocument();
-    expect(screen.getByText("Filtered missing keywords")).toBeInTheDocument();
-    expect(screen.getByText("join")).toBeInTheDocument();
+    expect(screen.queryByText("Filtered missing keywords")).not.toBeInTheDocument();
+    expect(screen.queryByText("join")).not.toBeInTheDocument();
     expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
     expect(screen.getByText("Senior SWE at Acme")).toBeInTheDocument();
     expect(screen.getByText("Built platform services.")).toBeInTheDocument();
