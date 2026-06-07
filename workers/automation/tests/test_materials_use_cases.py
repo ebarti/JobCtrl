@@ -464,6 +464,11 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert metadata["quality_plan"]["target_seniority"] == "senior"
     assert metadata["quality_plan"]["required_evidence_ids"] == ["ev_latency"]
     assert metadata["quality_checks"]["passed"] is True
+    assert metadata["change_annotations"][0]["section"] == "executive_profile"
+    assert metadata["change_annotations"][0]["change_type"] == "summary_reframed"
+    assert metadata["change_annotations"][1]["section"] == "experience"
+    assert metadata["change_annotations"][1]["source_id"] == "acme_swe"
+    assert metadata["change_annotations"][1]["evidence_ids"] == ["ev_latency"]
     assert outcome.report["tailoring_quality"]["quality_checks"]["passed"] is True
 
 

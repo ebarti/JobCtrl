@@ -91,6 +91,21 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     acceptedWithResidualWarnings: false,
     acceptedWarnings: [],
   },
+  annotatedChanges: [
+    {
+      section: "experience",
+      label: "Senior SWE at Acme",
+      changeType: "achievement_reframed",
+      sourceId: "ev_platform_reliability",
+      sourceText: ["Built platform services."],
+      tailoredText: ["Owned platform reliability improvements for incident response."],
+      rationale: "Experience was emphasized because it matches platform reliability.",
+      jobSignals: ["platform reliability", "incident response"],
+      controls: ["target seniority: principal", "claim mode: evidence_reframing"],
+      evidenceIds: ["ev_platform_reliability"],
+      evidenceNotes: ["ev_platform_reliability: platform ownership"],
+    },
+  ],
   models: {
     candidateModels: ["generator-a"],
     selectedModel: "generator-a",
@@ -148,8 +163,14 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
     expect(screen.getByText("Principal")).toBeInTheDocument();
     expect(screen.getByText("Why these changes")).toBeInTheDocument();
+    expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
+    expect(screen.getByText("Senior SWE at Acme")).toBeInTheDocument();
+    expect(screen.getByText("Built platform services.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Owned platform reliability improvements for incident response."),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(2);
+    expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(3);
     expect(screen.getByText("93% / minimum 84%")).toBeInTheDocument();
     expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
   });

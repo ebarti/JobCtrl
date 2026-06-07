@@ -2137,6 +2137,44 @@ textarea {
   font-size: 13px;
 }
 
+.tailoring-change-list {
+  display: grid;
+  gap: 10px;
+}
+
+.tailoring-change {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.tailoring-change header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tailoring-change header span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.annotation-line-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.annotation-line-list li {
+  overflow-wrap: anywhere;
+}
+
 .detail-list.compact {
   gap: 8px;
 }

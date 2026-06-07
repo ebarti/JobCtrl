@@ -159,6 +159,21 @@ describe("<ArtifactDetailPanel>", () => {
         acceptedWithResidualWarnings: true,
         acceptedWarnings: ["Bullet could be more concise."],
       },
+      annotatedChanges: [
+        {
+          section: "executive_profile",
+          label: "Executive profile",
+          changeType: "summary_reframed",
+          sourceId: "executive_profile",
+          sourceText: ["Senior backend engineer."],
+          tailoredText: ["Senior platform engineer focused on Kubernetes reliability."],
+          rationale: "Summary was reframed toward platform reliability.",
+          jobSignals: ["platform reliability", "kubernetes"],
+          controls: ["target seniority: senior", "claim mode: evidence_reframing"],
+          evidenceIds: ["ev_scope"],
+          evidenceNotes: ["ev_scope: technical ownership"],
+        },
+      ],
       models: {
         candidateModels: ["generator-a"],
         selectedModel: "generator-a",
@@ -171,9 +186,9 @@ describe("<ArtifactDetailPanel>", () => {
     expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("Senior")).toBeInTheDocument();
     expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
-    expect(screen.getByText("platform reliability")).toBeInTheDocument();
+    expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getAllByText("ev_latency")).toHaveLength(2);
-    expect(screen.getByText("ev_scope")).toBeInTheDocument();
+    expect(screen.getAllByText("ev_scope").length).toBeGreaterThan(0);
     expect(screen.queryByText("Missing evidence")).not.toBeInTheDocument();
     expect(screen.queryByText("Metric claims")).not.toBeInTheDocument();
     expect(screen.queryByText("none recorded")).not.toBeInTheDocument();
@@ -182,6 +197,10 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("Accepted residual warnings")).toBeInTheDocument();
     expect(screen.getByText("Warning repair attempted")).toBeInTheDocument();
     expect(screen.getByText("Bullet could be more concise.")).toBeInTheDocument();
+    expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
+    expect(screen.getByText("Summary was reframed toward platform reliability.")).toBeInTheDocument();
+    expect(screen.getByText("Senior backend engineer.")).toBeInTheDocument();
+    expect(screen.getByText("Senior platform engineer focused on Kubernetes reliability.")).toBeInTheDocument();
     expect(screen.getByText("Evidence Auditor: PASS (90%)")).toBeInTheDocument();
   });
 });

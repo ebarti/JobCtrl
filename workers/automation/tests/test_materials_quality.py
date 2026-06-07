@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from jobhunter.domain.materials.quality import (
+    build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
@@ -118,6 +119,43 @@ def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority()
     assert plan.claim_mode == "evidence_reframing"
     assert plan.writing_style["bullet_style"] == "leadership"
     assert plan.target_seniority == "senior"
+
+
+def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -> None:
+    profile = _profile()
+    job = _senior_job()
+    plan = build_tailoring_plan(profile, job)
+    payload = _payload(
+        bullet=(
+            "Owned Python API reliability and reduced latency 35% using PostgreSQL."
+        )
+    )
+
+    annotations = build_tailoring_change_annotations(profile, job, payload, plan)
+
+    summary = next(item for item in annotations if item["section"] == "executive_profile")
+    assert summary["change_type"] == "summary_reframed"
+    assert summary["source_text"] == ["Senior backend engineer."]
+    assert summary["tailored_text"] == [
+        "Senior backend engineer focused on Python API reliability."
+    ]
+    assert summary["controls"][:3] == [
+        "target seniority: senior",
+        "claim mode: evidence_reframing",
+        "adjacent drafts blocked",
+    ]
+
+    experience = next(item for item in annotations if item["section"] == "experience")
+    assert experience["source_id"] == "acme_swe"
+    assert experience["change_type"] == "achievement_reframed"
+    assert "Senior SWE" in experience["source_text"]
+    assert experience["tailored_text"] == [
+        "Senior SWE",
+        "Owned Python API reliability and reduced latency 35% using PostgreSQL.",
+    ]
+    assert "api" in experience["job_signals"]
+    assert experience["evidence_ids"] == ["ev_latency"]
+    assert any("35% latency reduction" in note for note in experience["evidence_notes"])
     assert "ev_latency" in plan.required_evidence_ids
     assert "ev_latency" in plan.seniority_evidence_ids
     assert "python" in plan.job_keywords

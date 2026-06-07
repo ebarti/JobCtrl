@@ -59,6 +59,16 @@ function EvidenceRow({
   );
 }
 
+function TextLineList({ items }: { readonly items: readonly string[] }) {
+  return (
+    <ul className="annotation-line-list">
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
 export function TailoringExplanationSection({
   explanation,
   className = "section",
@@ -114,6 +124,53 @@ export function TailoringExplanationSection({
             <dd>{scoreText(explanation.judge.score, explanation.judge.minScore)}</dd>
           </div>
         </dl>
+
+        {explanation.annotatedChanges.length ? (
+          <div className="evidence-block">
+            <h4>Annotated resume changes</h4>
+            <div className="tailoring-change-list">
+              {explanation.annotatedChanges.map((change) => (
+                <article
+                  className="tailoring-change"
+                  key={`${change.section}-${change.sourceId ?? change.label}`}
+                >
+                  <header>
+                    <b>{change.label}</b>
+                    <span>{formatToken(change.changeType)}</span>
+                  </header>
+                  <dl className="detail-list compact">
+                    <EvidenceRow label="Job signals" items={change.jobSignals} />
+                    <EvidenceRow label="Evidence" items={change.evidenceIds} />
+                    <EvidenceRow label="Controls" items={change.controls} />
+                    {change.rationale ? (
+                      <div>
+                        <dt>Why</dt>
+                        <dd>{change.rationale}</dd>
+                      </div>
+                    ) : null}
+                    {change.sourceText.length ? (
+                      <div>
+                        <dt>Source</dt>
+                        <dd>
+                          <TextLineList items={change.sourceText} />
+                        </dd>
+                      </div>
+                    ) : null}
+                    {change.tailoredText.length ? (
+                      <div>
+                        <dt>Tailored</dt>
+                        <dd>
+                          <TextLineList items={change.tailoredText} />
+                        </dd>
+                      </div>
+                    ) : null}
+                    <EvidenceRow label="Evidence notes" items={change.evidenceNotes} />
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {hasChangeEvidence ? (
           <div className="evidence-block">

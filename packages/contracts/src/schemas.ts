@@ -1372,6 +1372,19 @@ export interface ArtifactTailoringExplanation {
     acceptedWithResidualWarnings: boolean | null;
     acceptedWarnings: string[];
   };
+  annotatedChanges: Array<{
+    section: string;
+    label: string;
+    changeType: string;
+    sourceId: string | null;
+    sourceText: string[];
+    tailoredText: string[];
+    rationale: string | null;
+    jobSignals: string[];
+    controls: string[];
+    evidenceIds: string[];
+    evidenceNotes: string[];
+  }>;
   models: {
     candidateModels: string[];
     selectedModel: string | null;

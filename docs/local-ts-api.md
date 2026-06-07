@@ -39,9 +39,10 @@ local artifact projection; it returns `404` for missing metadata/files and
 route still delegates to the local OS opener.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 high-signal keyword coverage, evidence and quality summaries,
-judge/adversarial-review results, warning-repair status, and model selection
-metadata; they do not expose raw prompts, raw profile/resume payloads, or raw
-job text.
+judge/adversarial-review results, warning-repair status, annotated
+source-vs-tailored resume changes, and model selection metadata. They do not
+expose raw prompts, raw profile payloads, or raw job text; annotation snippets
+are bounded excerpts of the selected source and tailored resume text.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,

@@ -65,6 +65,7 @@ from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.quality import (
     TailoringPlan,
+    build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
@@ -884,6 +885,7 @@ class TailorResumeUseCase:
             "quality_checks": report.get("quality_checks") or {},
             "adversarial_review": report.get("adversarial_review") or {},
             "review_feedback": report.get("review_feedback") or {},
+            "change_annotations": report.get("change_annotations") or [],
             "candidate_summaries": report.get("candidate_summaries") or [],
             "judge": judge_record,
         }
@@ -1003,6 +1005,7 @@ class TailorResumeUseCase:
                 "accepted_with_residual_warnings": False,
                 "accepted_warning_notes": [],
             },
+            "change_annotations": [],
             "attempt_history": [],
             "candidate_summaries": [],
         }
@@ -1026,6 +1029,14 @@ class TailorResumeUseCase:
             report["adversarial_review"] = selected.record.get("adversarial_review")
             report["selected_candidate"] = selected.record.get("candidate_id")
             report["selected_model"] = selected.model
+            report["change_annotations"] = list(
+                build_tailoring_change_annotations(
+                    profile_snapshot.as_dict(),
+                    job,
+                    selected.payload,
+                    tailoring_plan,
+                )
+            )
             feedback = report["review_feedback"]
             feedback["accepted_with_residual_warnings"] = bool(warning_notes)
             feedback["accepted_warning_notes"] = list(warning_notes[:8])

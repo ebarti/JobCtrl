@@ -2082,6 +2082,7 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       acceptedWithResidualWarnings: metadataBoolean(reviewFeedback.accepted_with_residual_warnings),
       acceptedWarnings: metadataTextList(reviewFeedback.accepted_warning_notes, 8, 220),
     },
+    annotatedChanges: parseTailoringChangeAnnotations(metadata.change_annotations),
     models: {
       candidateModels: metadataTextList(metadata.candidate_models, 6, 120),
       selectedModel: metadataText(metadata.selected_model, 120),
@@ -2119,6 +2120,25 @@ function parseAdversarialReview(
   };
 }
 
+function parseTailoringChangeAnnotations(
+  value: unknown,
+): ArtifactTailoringExplanation["annotatedChanges"] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).slice(0, 12).map((item) => ({
+    section: metadataText(item.section, 80) ?? "resume",
+    label: metadataText(item.label, 120) ?? "Resume change",
+    changeType: metadataText(item.change_type ?? item.changeType, 80) ?? "tailored",
+    sourceId: metadataText(item.source_id ?? item.sourceId, 120),
+    sourceText: metadataTextList(item.source_text ?? item.sourceText, 8, 360),
+    tailoredText: metadataTextList(item.tailored_text ?? item.tailoredText, 8, 360),
+    rationale: metadataText(item.rationale, 360),
+    jobSignals: metadataKeywordList(item.job_signals ?? item.jobSignals, 8),
+    controls: metadataTextList(item.controls, 10, 180),
+    evidenceIds: metadataTextList(item.evidence_ids ?? item.evidenceIds, 12, 120),
+    evidenceNotes: metadataTextList(item.evidence_notes ?? item.evidenceNotes, 8, 220),
+  }));
+}
+
 function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanation): boolean {
   return Boolean(
     explanation.targetSeniority ||
@@ -2154,6 +2174,7 @@ function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanatio
       explanation.reviewFeedback.warningRepairAttempted !== null ||
       explanation.reviewFeedback.acceptedWithResidualWarnings !== null ||
       explanation.reviewFeedback.acceptedWarnings.length ||
+      explanation.annotatedChanges.length ||
       explanation.models.candidateModels.length ||
       explanation.models.selectedModel ||
       explanation.models.selectedCandidate ||
