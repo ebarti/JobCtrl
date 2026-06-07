@@ -2017,13 +2017,14 @@ function tailoringExplanationForArtifact(
   if (!TAILORING_ARTIFACT_TYPES.has(row.artifact_type)) return null;
 
   const jobKeywords = tailoringJobKeywordsForArtifact(db, row);
-  const direct = parseTailoringExplanation(row.metadata_json, { jobKeywords });
+  const resumeText = tailoringResumeTextForArtifact(db, row);
+  const direct = parseTailoringExplanation(row.metadata_json, { jobKeywords, resumeText });
   if (direct) return direct;
   if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
 
-  const sibling = getRow<{ metadata_json: string | null }>(
+  const sibling = getRow<{ metadata_json: string | null; local_path: string | null }>(
     db,
-    `SELECT metadata_json
+    `SELECT metadata_json, local_path
        FROM artifact_list_projections
       WHERE tenant_id = ?
         AND job_id = ?
@@ -2035,7 +2036,10 @@ function tailoringExplanationForArtifact(
       LIMIT 1`,
     [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
   );
-  return parseTailoringExplanation(sibling?.metadata_json ?? null, { jobKeywords });
+  return parseTailoringExplanation(sibling?.metadata_json ?? null, {
+    jobKeywords,
+    resumeText: resumeText ?? localTextFile(sibling?.local_path ?? ""),
+  });
 }
 
 function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
@@ -2051,9 +2055,39 @@ function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjec
   return parseScoreKeywords(job?.score_keywords_json ?? null);
 }
 
+function tailoringResumeTextForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string | null {
+  if (row.artifact_type === "tailored_resume" || row.artifact_type === "tailored_resume_txt") {
+    return localTextFile(row.local_path ?? "");
+  }
+  if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+
+  const sibling = getRow<{ local_path: string | null }>(
+    db,
+    `SELECT local_path
+       FROM artifact_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+        AND local_path IS NOT NULL
+        AND TRIM(local_path) != ''
+        AND LOWER(COALESCE(status, '')) NOT IN ('suppressed', 'rejected')
+      ORDER BY CASE WHEN ? IS NOT NULL AND generation = ? THEN 0 ELSE 1 END,
+               CASE LOWER(COALESCE(status, ''))
+                 WHEN 'approved' THEN 0
+                 WHEN 'active' THEN 1
+                 ELSE 2
+               END,
+               COALESCE(generation, -1) DESC,
+               created_at DESC
+      LIMIT 1`,
+    [row.tenant_id, row.job_id, row.generation, row.generation],
+  );
+  return localTextFile(sibling?.local_path ?? "");
+}
+
 function parseTailoringExplanation(
   value: string | null,
-  options: { jobKeywords?: readonly string[] } = {},
+  options: { jobKeywords?: readonly string[]; resumeText?: string | null } = {},
 ): ArtifactTailoringExplanation | null {
   const metadata = parseJsonRecord(value);
   if (!metadata) return null;
@@ -2066,22 +2100,29 @@ function parseTailoringExplanation(
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
   const reviewFeedback = metadataRecord(metadata.review_feedback);
   const judgeMinScore = metadataNumber(metadata.judge_min_score);
-  const coverageRecorded =
+  const savedCoverageRecorded =
     Array.isArray(keywordCoverage.covered) || Array.isArray(keywordCoverage.missing);
   const targetKeywordCandidates = keywordCandidates(
     qualityPlan.job_keywords,
     options.jobKeywords,
-    coverageRecorded ? keywordCoverage.covered : undefined,
-    coverageRecorded ? keywordCoverage.missing : undefined,
   );
-  const coveredKeywordCandidates = coverageRecorded ? keywordCandidates(keywordCoverage.covered) : [];
+  const textCoverage = keywordCoverageFromResumeText(targetKeywordCandidates, options.resumeText);
+  const coverageRecorded = textCoverage !== null || savedCoverageRecorded;
+  const targetKeywordKeys = new Set(targetKeywordCandidates.map((candidate) => candidate.key));
+  const coveredKeywordCandidates =
+    textCoverage?.covered ??
+    (savedCoverageRecorded
+      ? keywordCandidates(keywordCoverage.covered).filter((candidate) => targetKeywordKeys.has(candidate.key))
+      : []);
   const coveredKeywordKeys = new Set(coveredKeywordCandidates.map((candidate) => candidate.key));
-  const missingKeywordCandidates = coverageRecorded
-    ? dedupeKeywordCandidates([
-        ...keywordCandidates(keywordCoverage.missing),
-        ...targetKeywordCandidates.filter((candidate) => !coveredKeywordKeys.has(candidate.key)),
-      ]).filter((candidate) => !coveredKeywordKeys.has(candidate.key))
-    : [];
+  const missingKeywordCandidates =
+    textCoverage?.missing ??
+    (savedCoverageRecorded
+      ? dedupeKeywordCandidates([
+          ...keywordCandidates(keywordCoverage.missing).filter((candidate) => targetKeywordKeys.has(candidate.key)),
+          ...targetKeywordCandidates.filter((candidate) => !coveredKeywordKeys.has(candidate.key)),
+        ]).filter((candidate) => !coveredKeywordKeys.has(candidate.key))
+      : []);
   const plannedKeywordAudit = keywordAuditFromCandidates(targetKeywordCandidates, 32);
   const coveredKeywordAudit = keywordAuditFromCandidates(coveredKeywordCandidates, 32);
   const missingKeywordAudit = keywordAuditFromCandidates(missingKeywordCandidates, 32);
@@ -2499,6 +2540,35 @@ function dedupeKeywordCandidates(candidates: readonly KeywordCandidate[]): Keywo
     out.push(candidate);
   }
   return out;
+}
+
+function keywordCoverageFromResumeText(
+  targetCandidates: readonly KeywordCandidate[],
+  resumeText: string | null | undefined,
+): { covered: KeywordCandidate[]; missing: KeywordCandidate[] } | null {
+  if (!resumeText || !targetCandidates.length) return null;
+  const covered: KeywordCandidate[] = [];
+  const missing: KeywordCandidate[] = [];
+  for (const candidate of targetCandidates) {
+    if (resumeContainsKeyword(resumeText, candidate.key)) {
+      covered.push(candidate);
+    } else {
+      missing.push(candidate);
+    }
+  }
+  return { covered, missing };
+}
+
+function resumeContainsKeyword(resumeText: string, normalizedKeyword: string): boolean {
+  const terms = normalizedKeyword.split(/\s+/).filter(Boolean).map(escapeRegExp);
+  if (!terms.length) return false;
+  const body = terms.join("[\\s,;/()_-]+");
+  const pattern = new RegExp(`(^|[^a-z0-9+#])${body}($|[^a-z0-9+#])`, "i");
+  return pattern.test(resumeText);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function keywordAuditFromCandidates(
@@ -4096,6 +4166,17 @@ function localFileSize(filePath: string): number | null {
   try {
     const stat = fs.statSync(filePath);
     return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+function localTextFile(filePath: string): string | null {
+  if (!filePath) return null;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+    return fs.readFileSync(filePath, "utf8");
   } catch {
     return null;
   }

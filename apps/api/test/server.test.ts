@@ -1883,7 +1883,7 @@ describe("local TypeScript API", () => {
 
   it("returns safe tailoring explanation for tailored resume artifacts", async () => {
     const resumePath = path.join(tempDir, "tailoring-evidence-resume.txt");
-    fs.writeFileSync(resumePath, "tailored resume");
+    fs.writeFileSync(resumePath, "Senior platform reliability resume.");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
     insertJob(seedDb, {
@@ -2255,9 +2255,9 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("does not treat job keywords as missing when resume keyword coverage was not recorded", async () => {
+  it("computes resume keyword coverage when saved keyword coverage was not recorded", async () => {
     const resumePath = path.join(tempDir, "tailoring-no-coverage-resume.txt");
-    fs.writeFileSync(resumePath, "tailored resume with AWS, GCP, Java, and observability");
+    fs.writeFileSync(resumePath, "tailored resume with AWS/GCP, Java, and observability");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
     insertJob(seedDb, {
@@ -2297,24 +2297,23 @@ describe("local TypeScript API", () => {
       ok: true,
       tailoringExplanation: {
         keywords: {
-          coverageRecorded: false,
+          coverageRecorded: true,
           planned: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code"],
-          covered: [],
-          missing: [],
+          covered: ["AWS", "GCP", "Java", "Observability"],
+          missing: ["Infrastructure as Code"],
           counts: {
             planned: 5,
-            covered: 0,
-            missing: 0,
+            covered: 4,
+            missing: 1,
           },
         },
         quality: {
           errors: [],
           warnings: [],
-          notes: [],
+          notes: ["Keyword coverage: 4/5"],
         },
       },
     });
-    expect(JSON.stringify(response.json().tailoringExplanation.quality)).not.toContain("Keyword coverage");
 
     await app.close();
   });
