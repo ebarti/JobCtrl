@@ -2181,8 +2181,16 @@ textarea {
   gap: 8px;
 }
 
+.adversarial-review {
+  container-type: inline-size;
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
 .persona-audit,
-.prompt-audit {
+.prompt-audit,
+.audit-response {
   min-width: 0;
   border: 1px solid var(--rule);
   border-radius: 6px;
@@ -2195,15 +2203,52 @@ textarea {
   align-items: baseline;
   justify-content: space-between;
   gap: 6px;
-  margin-bottom: 6px;
 }
 
-.persona-audit header span,
+.persona-audit header div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.persona-audit header div span,
 .prompt-audit > b,
-.audit-response > b {
+.audit-status,
+.audit-response-list > b {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.persona-audit-body,
+.audit-text-block {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-text-block h5 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.audit-text-block p,
+.audit-response p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.audit-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+}
+
+.audit-status span + span::before {
+  content: "·";
+  margin-right: 4px;
 }
 
 .prompt-audit pre {
@@ -2220,6 +2265,23 @@ textarea {
 .audit-response {
   display: grid;
   gap: 6px;
+}
+
+.audit-response-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.audit-response-list {
+  display: grid;
+  gap: 4px;
+}
+
+@container (min-width: 520px) {
+  .persona-audit-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .detail-list.compact {

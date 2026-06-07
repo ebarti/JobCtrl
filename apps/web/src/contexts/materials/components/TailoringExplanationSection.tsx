@@ -1,4 +1,5 @@
 import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
+import type { ReactNode } from "react";
 
 export interface TailoringExplanationSectionProps {
   readonly explanation: ArtifactTailoringExplanation | null;
@@ -78,6 +79,21 @@ function EvidenceRow({
   );
 }
 
+function TextEvidence({
+  title,
+  children,
+}: {
+  readonly title: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section className="audit-text-block">
+      <h5>{title}</h5>
+      {children}
+    </section>
+  );
+}
+
 function TextLineList({ items }: { readonly items: readonly string[] }) {
   return (
     <ul className="annotation-line-list">
@@ -88,19 +104,47 @@ function TextLineList({ items }: { readonly items: readonly string[] }) {
   );
 }
 
+function AuditStatus({
+  verdict,
+  score,
+}: {
+  readonly verdict: string | null;
+  readonly score: number | null;
+}) {
+  return (
+    <span className="audit-status">
+      <span>{verdict ?? "-"}</span>
+      {score === null ? null : <span>{scoreText(score)}</span>}
+    </span>
+  );
+}
+
+function AuditResponseList({
+  label,
+  items,
+}: {
+  readonly label: string;
+  readonly items: readonly string[];
+}) {
+  if (!items.length) return null;
+  return (
+    <div className="audit-response-list">
+      <b>{label}</b>
+      <EvidenceList items={items} />
+    </div>
+  );
+}
+
 function ResponseSummary({ response }: { readonly response: ResponseSummaryValue }) {
-  const rows = [
-    response.scoreRationale,
-    ...response.blockers.map((item) => `Blocker: ${item}`),
-    ...response.warnings.map((item) => `Warning: ${item}`),
-    ...response.repairInstructions.map((item) => `Repair: ${item}`),
-  ].filter((item): item is string => Boolean(item));
   return (
     <div className="audit-response">
-      <b>
-        {response.verdict ?? "-"} {response.score === null ? "" : `(${scoreText(response.score)})`}
-      </b>
-      {rows.length ? <EvidenceList items={rows} /> : null}
+      <div className="audit-response-summary">
+        <AuditStatus verdict={response.verdict} score={response.score} />
+      </div>
+      {response.scoreRationale ? <p>{response.scoreRationale}</p> : null}
+      <AuditResponseList label="Blockers" items={response.blockers} />
+      <AuditResponseList label="Warnings" items={response.warnings} />
+      <AuditResponseList label="Repair" items={response.repairInstructions} />
     </div>
   );
 }
@@ -111,28 +155,28 @@ function PersonaAuditList({ personas }: { readonly personas: readonly PersonaAud
       {personas.map((persona) => (
         <article className="persona-audit" key={persona.persona}>
           <header>
-            <b>{formatToken(persona.persona)}</b>
-            <span>
-              {persona.verdict ?? "-"} {persona.score === null ? "" : `(${scoreText(persona.score)})`}
-            </span>
+            <div>
+              <b>{formatToken(persona.persona)}</b>
+              <span>Persona judgment</span>
+            </div>
+            <AuditStatus verdict={persona.verdict} score={persona.score} />
           </header>
-          <dl className="detail-list compact">
+          <div className="persona-audit-body">
             {persona.promptRubric ? (
-              <div>
-                <dt>Asked</dt>
-                <dd>{persona.promptRubric}</dd>
-              </div>
+              <TextEvidence title="What was asked">{persona.promptRubric}</TextEvidence>
+            ) : null}
+            {persona.scoreRationale || persona.scoreBasis.length ? (
+              <TextEvidence title="Why it scored this way">
+                {persona.scoreRationale ? <p>{persona.scoreRationale}</p> : null}
+                {persona.scoreBasis.length ? <EvidenceList items={persona.scoreBasis} /> : null}
+              </TextEvidence>
             ) : null}
             {persona.response ? (
-              <div>
-                <dt>Response</dt>
-                <dd>
-                  <ResponseSummary response={persona.response} />
-                </dd>
-              </div>
+              <TextEvidence title="LLM returned">
+                <ResponseSummary response={persona.response} />
+              </TextEvidence>
             ) : null}
-            <EvidenceRow label="Why score" items={persona.scoreBasis} />
-          </dl>
+          </div>
         </article>
       ))}
     </div>
@@ -378,55 +422,47 @@ export function TailoringExplanationSection({
           <div className="evidence-block">
             <h4>High-fit review</h4>
             {explanation.adversarialReview?.ran ? (
-              <dl className="detail-list compact">
-                <div>
-                  <dt>Passed</dt>
-                  <dd>{yesNo(explanation.adversarialReview.passed)}</dd>
-                </div>
-                <div>
-                  <dt>Score</dt>
-                  <dd>
-                    {scoreText(
-                      explanation.adversarialReview.score,
-                      explanation.adversarialReview.threshold,
-                    )}
-                  </dd>
-                </div>
-                {explanation.adversarialReview.scoreRationale ? (
+              <div className="adversarial-review">
+                <dl className="evidence-summary-grid">
                   <div>
-                    <dt>Why score</dt>
-                    <dd>{explanation.adversarialReview.scoreRationale}</dd>
+                    <dt>Passed</dt>
+                    <dd>{yesNo(explanation.adversarialReview.passed)}</dd>
                   </div>
-                ) : null}
-                <div>
-                  <dt>Personas</dt>
-                  <dd>
-                    {explanation.adversarialReview.personas.length ? (
-                      <PersonaAuditList personas={explanation.adversarialReview.personas} />
-                    ) : (
-                      <span className="muted">none recorded</span>
-                    )}
-                  </dd>
-                </div>
-                {explanation.adversarialReview.audit?.promptMessages.length ? (
                   <div>
-                    <dt>LLM request</dt>
+                    <dt>Score</dt>
                     <dd>
-                      <PromptMessageList
-                        messages={explanation.adversarialReview.audit.promptMessages}
-                      />
+                      {scoreText(
+                        explanation.adversarialReview.score,
+                        explanation.adversarialReview.threshold,
+                      )}
                     </dd>
                   </div>
+                </dl>
+                {explanation.adversarialReview.scoreRationale ? (
+                  <TextEvidence title="Why overall score">
+                    <p>{explanation.adversarialReview.scoreRationale}</p>
+                  </TextEvidence>
+                ) : null}
+                <TextEvidence title="Persona judgments">
+                  {explanation.adversarialReview.personas.length ? (
+                    <PersonaAuditList personas={explanation.adversarialReview.personas} />
+                  ) : (
+                    <span className="muted">none recorded</span>
+                  )}
+                </TextEvidence>
+                {explanation.adversarialReview.audit?.promptMessages.length ? (
+                  <TextEvidence title="LLM request">
+                    <PromptMessageList
+                      messages={explanation.adversarialReview.audit.promptMessages}
+                    />
+                  </TextEvidence>
                 ) : null}
                 {explanation.adversarialReview.audit?.response ? (
-                  <div>
-                    <dt>LLM response</dt>
-                    <dd>
-                      <ResponseSummary response={explanation.adversarialReview.audit.response} />
-                    </dd>
-                  </div>
+                  <TextEvidence title="LLM response">
+                    <ResponseSummary response={explanation.adversarialReview.audit.response} />
+                  </TextEvidence>
                 ) : null}
-              </dl>
+              </div>
             ) : (
               <p className="muted">{explanation.adversarialReview?.skippedReason}</p>
             )}
