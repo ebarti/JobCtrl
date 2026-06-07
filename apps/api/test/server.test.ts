@@ -1956,7 +1956,7 @@ describe("local TypeScript API", () => {
             represented_ids: ["ev_latency"],
             missing_ids: [],
           },
-          metric_claims: ["35%"],
+          metric_claims: ["35%", "5teams", "2service", "15engineers"],
           repeated_keywords: [{ keyword: "platform", count: 5 }],
         },
         judge: {
@@ -2020,6 +2020,9 @@ describe("local TypeScript API", () => {
           representedIds: ["ev_latency"],
           verifiedMetricCount: 2,
         },
+        quality: {
+          metricClaims: ["35%"],
+        },
         judge: {
           passed: true,
           score: 0.91,
@@ -2041,6 +2044,9 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(response.json())).not.toContain("join");
     expect(JSON.stringify(response.json())).not.toContain("innovator");
     expect(JSON.stringify(response.json())).not.toContain("smile");
+    expect(JSON.stringify(response.json())).not.toContain("5teams");
+    expect(JSON.stringify(response.json())).not.toContain("2service");
+    expect(JSON.stringify(response.json())).not.toContain("15engineers");
 
     await app.close();
   });

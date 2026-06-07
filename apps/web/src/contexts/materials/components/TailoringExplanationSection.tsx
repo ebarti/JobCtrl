@@ -151,16 +151,6 @@ export function TailoringExplanationSection({
               <dt>Verified metrics</dt>
               <dd>{explanation.evidence.verifiedMetricCount ?? "-"}</dd>
             </div>
-            <div>
-              <dt>Metric claims</dt>
-              <dd>
-                {explanation.quality.metricClaims.length ? (
-                  <EvidenceList items={explanation.quality.metricClaims} />
-                ) : (
-                  <span className="muted">none recorded</span>
-                )}
-              </dd>
-            </div>
           </dl>
         </div>
 

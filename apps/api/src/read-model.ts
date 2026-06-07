@@ -1923,6 +1923,8 @@ const TAILORING_ARTIFACT_TYPES = new Set([
 ]);
 const TAILORING_PDF_ARTIFACT_TYPES = new Set(["resume_pdf", "tailored_resume_pdf"]);
 const KEYWORD_TOKEN_RE = /[a-z0-9][a-z0-9+#./-]*/gi;
+const DISPLAY_METRIC_CLAIM_RE =
+  /^(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))$/i;
 const LOW_SIGNAL_KEYWORDS = new Set([
   "about",
   "across",
@@ -2059,7 +2061,7 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       errors: metadataTextList(qualityChecks.errors, 8, 220),
       warnings: metadataTextList(qualityChecks.warnings, 8, 220),
       notes: metadataTextList(qualityChecks.notes, 8, 220),
-      metricClaims: metadataTextList(qualityChecks.metric_claims, 12, 120),
+      metricClaims: metadataMetricClaims(qualityChecks.metric_claims),
       repeatedKeywords: metadataRepeatedKeywords(qualityChecks.repeated_keywords),
     },
     judge: {
@@ -2211,6 +2213,22 @@ function isMeaningfulDisplayKeyword(text: string, normalized: string): boolean {
   const token = tokens[0]!;
   if (LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token)) return false;
   return HIGH_SIGNAL_SINGLE_KEYWORDS.has(token) || /[+#./-]/.test(text);
+}
+
+function metadataMetricClaims(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, 80);
+    if (!text || !DISPLAY_METRIC_CLAIM_RE.test(text)) continue;
+    const key = text.toLowerCase().replace(/\s+/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 8) break;
+  }
+  return out;
 }
 
 function metadataRepeatedKeywords(value: unknown): string[] {

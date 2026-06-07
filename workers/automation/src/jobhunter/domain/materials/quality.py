@@ -116,6 +116,97 @@ _STOPWORDS: set[str] = {
     "system",
     "systems",
 }
+_LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
+    "about",
+    "across",
+    "barcelona",
+    "believe",
+    "chain",
+    "clinic",
+    "company",
+    "cool",
+    "deserves",
+    "europe",
+    "everyone",
+    "expert",
+    "fast",
+    "growth",
+    "head",
+    "health",
+    "impress",
+    "innovator",
+    "international",
+    "join",
+    "largest",
+    "leading",
+    "love",
+    "office",
+    "ortho",
+    "onsite",
+    "rapid",
+    "remote",
+    "salary",
+    "smile",
+    "tech",
+    "they",
+    "worldwide",
+}
+_HIGH_SIGNAL_DESCRIPTION_KEYWORDS: set[str] = {
+    "api",
+    "architecture",
+    "automation",
+    "aws",
+    "azure",
+    "backend",
+    "ci/cd",
+    "cloud",
+    "cost",
+    "devops",
+    "disaster",
+    "docker",
+    "gcp",
+    "governance",
+    "incident",
+    "infrastructure",
+    "java",
+    "javascript",
+    "kafka",
+    "kubernetes",
+    "latency",
+    "management",
+    "node.js",
+    "observability",
+    "optimization",
+    "performance",
+    "platform",
+    "postgres",
+    "postgresql",
+    "productivity",
+    "python",
+    "react",
+    "redis",
+    "reliability",
+    "resiliency",
+    "scalability",
+    "security",
+    "sre",
+    "terraform",
+    "typescript",
+}
+_HIGH_SIGNAL_DESCRIPTION_PHRASES: tuple[str, ...] = (
+    "api performance",
+    "backend systems",
+    "ci/cd",
+    "cloud governance",
+    "cloud infrastructure",
+    "cost optimization",
+    "developer productivity",
+    "disaster recovery",
+    "incident management",
+    "infrastructure as code",
+    "platform engineering",
+    "service reliability",
+)
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9+#./-]*")
 _METRIC_RE = re.compile(
@@ -499,8 +590,7 @@ def _extract_job_keywords(job: dict) -> tuple[str, ...]:
     description = " ".join(
         str(job.get(key) or "") for key in ("full_description", "description")
     )
-    for token in _significant_tokens(description):
-        _add_keyword(ordered, token)
+    _append_description_keywords(ordered, description)
 
     return tuple(ordered[:32])
 
@@ -531,12 +621,42 @@ def _append_keywords(ordered: list[str], value: str, *, include_phrase: bool) ->
         _add_keyword(ordered, token)
 
 
-def _add_keyword(ordered: list[str], keyword: str) -> None:
+def _append_description_keywords(ordered: list[str], value: str) -> None:
+    normalized = _normalize_phrase(value)
+    for phrase in _HIGH_SIGNAL_DESCRIPTION_PHRASES:
+        if _contains_term(normalized, phrase):
+            _add_keyword(ordered, phrase, require_high_signal=True)
+    tokens = _significant_tokens(value)
+    for token in tokens:
+        _add_keyword(ordered, token, require_high_signal=True)
+
+
+def _add_keyword(
+    ordered: list[str],
+    keyword: str,
+    *,
+    require_high_signal: bool = False,
+) -> None:
     keyword = _normalize_phrase(keyword)
-    if not keyword or keyword in _STOPWORDS:
+    if not keyword or not _is_keyword_candidate(keyword, require_high_signal=require_high_signal):
         return
     if keyword not in ordered:
         ordered.append(keyword)
+
+
+def _is_keyword_candidate(keyword: str, *, require_high_signal: bool) -> bool:
+    tokens = keyword.split()
+    if not tokens:
+        return False
+    if all(token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS or token.isdigit() for token in tokens):
+        return False
+    if require_high_signal:
+        return any(token in _HIGH_SIGNAL_DESCRIPTION_KEYWORDS for token in tokens)
+    if len(tokens) == 1:
+        token = tokens[0]
+        if token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS or token.isdigit():
+            return False
+    return True
 
 
 def _flatten_text(value: Any) -> list[str]:
@@ -612,7 +732,7 @@ def _check_metrics(
     generated_lower: str,
     plan: TailoringPlan,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    metric_claims = tuple(dict.fromkeys(_normalize_metric(match.group(0)) for match in _METRIC_RE.finditer(generated_lower)))
+    metric_claims = tuple(dict.fromkeys(_display_metric(match.group(0)) for match in _METRIC_RE.finditer(generated_lower)))
     allowed_text = " ".join(plan.verified_metrics).lower()
     unknown = tuple(
         metric for metric in metric_claims if metric and not _contains_metric_text(allowed_text, metric)
@@ -709,7 +829,7 @@ def _significant_tokens(text: str) -> list[str]:
     tokens = []
     for token in _WORD_RE.findall(str(text).lower()):
         token = token.strip("./-")
-        if len(token) < 3 or token in _STOPWORDS:
+        if len(token) < 3 or token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS:
             continue
         tokens.append(token)
     counts = Counter(tokens)
@@ -748,6 +868,10 @@ def _contains_metric_text(text: str, metric: str) -> bool:
 
 def _normalize_metric(value: str) -> str:
     return re.sub(r"\s+", "", str(value).lower().replace(",", "")).strip(".")
+
+
+def _display_metric(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value).strip().replace(",", "")).strip(".")
 
 
 def _normalize_phrase(value: str) -> str:

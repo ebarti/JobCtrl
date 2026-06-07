@@ -124,6 +124,33 @@ def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority()
     assert "latency" in plan.job_keywords
 
 
+def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() -> None:
+    job = {
+        "url": "https://example.com/platform",
+        "title": "Head of Platform Engineering",
+        "full_description": (
+            "Join Impress, Europe's leading health-tech innovator. Everyone deserves "
+            "a smile they love. We are looking for an onsite leader in Barcelona. "
+            "Own platform engineering, cloud infrastructure, Java, Node.js, "
+            "Kubernetes, CI/CD, observability, incident management, developer "
+            "productivity, cost optimization, security, resiliency, and disaster recovery."
+        ),
+    }
+
+    plan = build_tailoring_plan(_profile(), job)
+
+    assert "platform" in plan.job_keywords
+    assert "kubernetes" in plan.job_keywords
+    assert "ci/cd" in plan.job_keywords
+    assert "observability" in plan.job_keywords
+    assert "join" not in plan.job_keywords
+    assert "impress" not in plan.job_keywords
+    assert "innovator" not in plan.job_keywords
+    assert "everyone" not in plan.job_keywords
+    assert "smile" not in plan.job_keywords
+    assert "barcelona" not in plan.job_keywords
+
+
 def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() -> None:
     plan = build_tailoring_plan(_profile(), _senior_job())
     bullet = "Owned API latency work and reduced latency by 80% with Python."
@@ -136,6 +163,22 @@ def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() ->
 
     assert result.passed is False
     assert any("Unknown metric" in error and "80%" in error for error in result.errors)
+
+
+def test_quality_metric_claims_keep_readable_spacing() -> None:
+    plan = build_tailoring_plan(_profile(), _senior_job())
+    bullet = "Owned 5 teams and reduced latency 35% across 2 services."
+
+    result = evaluate_tailoring_quality(
+        _payload(bullet=bullet),
+        _resume_text(bullet=bullet),
+        plan,
+    )
+
+    assert "5 teams" in result.metric_claims
+    assert "2 services" in result.metric_claims
+    assert "5teams" not in result.metric_claims
+    assert "2services" not in result.metric_claims
 
 
 def test_quality_warns_or_fails_keyword_stuffing_by_severity() -> None:
