@@ -433,8 +433,9 @@ regeneration.
 Apply review shows the safe tailoring rationale under the selected tailored
 resume when a resume PDF artifact is available. The same rationale remains
 available from the Artifacts drawer for audit/detail review. It includes keyword
-coverage, evidence support, quality gates, review findings, and model summary
-without exposing raw prompts or resume/profile contents.
+coverage filtered to high-signal terms, evidence support, quality gates, review
+findings, and model summary without exposing raw prompts or resume/profile
+contents.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;

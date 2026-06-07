@@ -32,13 +32,30 @@ function hasItems(items: readonly string[]): boolean {
 }
 
 function EvidenceList({ items }: { readonly items: readonly string[] }) {
-  if (!items.length) return <span className="muted">none recorded</span>;
   return (
     <ul className="compact-list">
       {items.map((item) => (
         <li key={item}>{item}</li>
       ))}
     </ul>
+  );
+}
+
+function EvidenceRow({
+  label,
+  items,
+}: {
+  readonly label: string;
+  readonly items: readonly string[];
+}) {
+  if (!items.length) return null;
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        <EvidenceList items={items} />
+      </dd>
+    </div>
   );
 }
 
@@ -63,6 +80,14 @@ export function TailoringExplanationSection({
   const showAdversarial =
     explanation.adversarialReview &&
     (explanation.adversarialReview.ran || explanation.adversarialReview.skippedReason);
+  const hasChangeEvidence = [
+    explanation.keywords.covered,
+    explanation.keywords.missing,
+    explanation.evidence.representedIds,
+    explanation.evidence.requiredIds,
+    explanation.evidence.missingIds,
+    explanation.evidence.seniorityIds,
+  ].some(hasItems);
 
   return (
     <section className={className}>
@@ -87,47 +112,19 @@ export function TailoringExplanationSection({
           </div>
         </dl>
 
-        <div className="evidence-block">
-          <h4>Why these changes</h4>
-          <dl className="detail-list compact">
-            <div>
-              <dt>Covered keywords</dt>
-              <dd>
-                <EvidenceList items={explanation.keywords.covered} />
-              </dd>
-            </div>
-            <div>
-              <dt>Missing keywords</dt>
-              <dd>
-                <EvidenceList items={explanation.keywords.missing} />
-              </dd>
-            </div>
-            <div>
-              <dt>Represented evidence</dt>
-              <dd>
-                <EvidenceList items={explanation.evidence.representedIds} />
-              </dd>
-            </div>
-            <div>
-              <dt>Required evidence</dt>
-              <dd>
-                <EvidenceList items={explanation.evidence.requiredIds} />
-              </dd>
-            </div>
-            <div>
-              <dt>Missing evidence</dt>
-              <dd>
-                <EvidenceList items={explanation.evidence.missingIds} />
-              </dd>
-            </div>
-            <div>
-              <dt>Seniority evidence</dt>
-              <dd>
-                <EvidenceList items={explanation.evidence.seniorityIds} />
-              </dd>
-            </div>
-          </dl>
-        </div>
+        {hasChangeEvidence ? (
+          <div className="evidence-block">
+            <h4>Why these changes</h4>
+            <dl className="detail-list compact">
+              <EvidenceRow label="Covered keywords" items={explanation.keywords.covered} />
+              <EvidenceRow label="Missing keywords" items={explanation.keywords.missing} />
+              <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
+              <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
+              <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />
+              <EvidenceRow label="Seniority evidence" items={explanation.evidence.seniorityIds} />
+            </dl>
+          </div>
+        ) : null}
 
         <div className="evidence-block">
           <h4>Safety checks</h4>
@@ -139,7 +136,11 @@ export function TailoringExplanationSection({
             <div>
               <dt>Auto-approvable claims</dt>
               <dd>
-                <EvidenceList items={explanation.safety.autoApprovableClaimModes.map(formatToken)} />
+                {explanation.safety.autoApprovableClaimModes.length ? (
+                  <EvidenceList items={explanation.safety.autoApprovableClaimModes.map(formatToken)} />
+                ) : (
+                  <span className="muted">none recorded</span>
+                )}
               </dd>
             </div>
             <div>
@@ -153,7 +154,11 @@ export function TailoringExplanationSection({
             <div>
               <dt>Metric claims</dt>
               <dd>
-                <EvidenceList items={explanation.quality.metricClaims} />
+                {explanation.quality.metricClaims.length ? (
+                  <EvidenceList items={explanation.quality.metricClaims} />
+                ) : (
+                  <span className="muted">none recorded</span>
+                )}
               </dd>
             </div>
           </dl>
@@ -198,13 +203,17 @@ export function TailoringExplanationSection({
                 <div>
                   <dt>Personas</dt>
                   <dd>
-                    <EvidenceList
-                      items={explanation.adversarialReview.personas.map((persona) =>
-                        `${formatToken(persona.persona)}: ${persona.verdict ?? "-"} ${
-                          persona.score === null ? "" : `(${Math.round(persona.score * 100)}%)`
-                        }`.trim(),
-                      )}
-                    />
+                    {explanation.adversarialReview.personas.length ? (
+                      <EvidenceList
+                        items={explanation.adversarialReview.personas.map((persona) =>
+                          `${formatToken(persona.persona)}: ${persona.verdict ?? "-"} ${
+                            persona.score === null ? "" : `(${Math.round(persona.score * 100)}%)`
+                          }`.trim(),
+                        )}
+                      />
+                    ) : (
+                      <span className="muted">none recorded</span>
+                    )}
                   </dd>
                 </div>
               </dl>
@@ -228,7 +237,11 @@ export function TailoringExplanationSection({
             <div>
               <dt>Candidate models</dt>
               <dd>
-                <EvidenceList items={explanation.models.candidateModels} />
+                {explanation.models.candidateModels.length ? (
+                  <EvidenceList items={explanation.models.candidateModels} />
+                ) : (
+                  <span className="muted">none recorded</span>
+                )}
               </dd>
             </div>
             <div>

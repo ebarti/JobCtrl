@@ -1922,6 +1922,77 @@ const TAILORING_ARTIFACT_TYPES = new Set([
   "tailored_resume_pdf",
 ]);
 const TAILORING_PDF_ARTIFACT_TYPES = new Set(["resume_pdf", "tailored_resume_pdf"]);
+const KEYWORD_TOKEN_RE = /[a-z0-9][a-z0-9+#./-]*/gi;
+const LOW_SIGNAL_KEYWORDS = new Set([
+  "about",
+  "across",
+  "believe",
+  "chain",
+  "clinic",
+  "company",
+  "cool",
+  "deserves",
+  "everyone",
+  "expert",
+  "fast",
+  "growth",
+  "head",
+  "health",
+  "innovator",
+  "join",
+  "largest",
+  "leading",
+  "love",
+  "office",
+  "ortho",
+  "rapid",
+  "smile",
+  "team",
+  "teams",
+  "tech",
+  "they",
+  "worldwide",
+]);
+const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
+  "architecture",
+  "automation",
+  "aws",
+  "azure",
+  "backend",
+  "cloud",
+  "ci/cd",
+  "cicd",
+  "cost",
+  "developer",
+  "devops",
+  "docker",
+  "gcp",
+  "incident",
+  "infrastructure",
+  "java",
+  "javascript",
+  "kafka",
+  "kubernetes",
+  "leadership",
+  "node",
+  "node.js",
+  "observability",
+  "optimization",
+  "platform",
+  "postgres",
+  "postgresql",
+  "productivity",
+  "python",
+  "react",
+  "redis",
+  "reliability",
+  "resiliency",
+  "scalability",
+  "security",
+  "sre",
+  "terraform",
+  "typescript",
+]);
 
 function tailoringExplanationForArtifact(
   db: SqliteDatabase,
@@ -1972,9 +2043,9 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       qualityPassed: metadataBoolean(qualityChecks.passed),
     },
     keywords: {
-      planned: metadataTextList(qualityPlan.job_keywords, 16),
-      covered: metadataTextList(keywordCoverage.covered, 16),
-      missing: metadataTextList(keywordCoverage.missing, 16),
+      planned: metadataKeywordList(qualityPlan.job_keywords, 16),
+      covered: metadataKeywordList(keywordCoverage.covered, 16),
+      missing: metadataKeywordList(keywordCoverage.missing, 16),
     },
     evidence: {
       requiredIds: metadataTextList(qualityPlan.required_evidence_ids, 32),
@@ -2105,6 +2176,41 @@ function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[]
     if (out.length >= limit) break;
   }
   return out;
+}
+
+function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, maxLength);
+    const key = normalizedKeywordKey(text);
+    if (!text || !key || !isMeaningfulDisplayKeyword(text, key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function normalizedKeywordKey(value: string | null): string | null {
+  if (!value) return null;
+  const tokens = value.toLowerCase().match(KEYWORD_TOKEN_RE) ?? [];
+  return tokens.length ? tokens.join(" ") : null;
+}
+
+function isMeaningfulDisplayKeyword(text: string, normalized: string): boolean {
+  const tokens = normalized.split(" ").filter(Boolean);
+  if (!tokens.length || tokens.length > 4) return false;
+  if (tokens.every((token) => LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token))) {
+    return false;
+  }
+  if (tokens.length > 1) {
+    return tokens.some((token) => !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
+  }
+  const token = tokens[0]!;
+  if (LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token)) return false;
+  return HIGH_SIGNAL_SINGLE_KEYWORDS.has(token) || /[+#./-]/.test(text);
 }
 
 function metadataRepeatedKeywords(value: unknown): string[] {

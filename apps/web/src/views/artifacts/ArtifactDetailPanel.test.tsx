@@ -169,6 +169,8 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("platform reliability")).toBeInTheDocument();
     expect(screen.getAllByText("ev_latency")).toHaveLength(2);
     expect(screen.getByText("ev_scope")).toBeInTheDocument();
+    expect(screen.queryByText("Missing evidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("none recorded")).not.toBeInTheDocument();
     expect(screen.getByText("91% / minimum 82%")).toBeInTheDocument();
     expect(screen.getByText("Evidence Auditor: PASS (90%)")).toBeInTheDocument();
   });

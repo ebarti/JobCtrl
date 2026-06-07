@@ -1907,7 +1907,20 @@ describe("local TypeScript API", () => {
           claim_mode: "evidence_reframing",
           auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
           allow_adjacent_achievement_drafts: false,
-          job_keywords: ["platform reliability", "typescript"],
+          job_keywords: [
+            "platform reliability",
+            "typescript",
+            "join",
+            "impress",
+            "europe",
+            "health",
+            "tech",
+            "innovator",
+            "believe",
+            "everyone",
+            "deserves",
+            "smile",
+          ],
           required_evidence_ids: ["ev_latency"],
           seniority_evidence_ids: ["ev_scope"],
           verified_metric_count: 2,
@@ -1918,8 +1931,26 @@ describe("local TypeScript API", () => {
           warnings: ["Low keyword coverage"],
           notes: ["Keyword coverage: 1/2"],
           keyword_coverage: {
-            covered: ["platform reliability"],
-            missing: ["typescript"],
+            covered: ["platform reliability", "head", "2019", "across"],
+            missing: [
+              "typescript",
+              "join",
+              "impress",
+              "europe",
+              "health",
+              "tech",
+              "innovator",
+              "believe",
+              "everyone",
+              "deserves",
+              "smile",
+              "they",
+              "love",
+              "largest",
+              "ortho",
+              "clinic",
+              "chain",
+            ],
           },
           evidence_support: {
             represented_ids: ["ev_latency"],
@@ -1980,6 +2011,7 @@ describe("local TypeScript API", () => {
         claimMode: "evidence_reframing",
         validationMode: "normal",
         keywords: {
+          planned: ["platform reliability", "typescript"],
           covered: ["platform reliability"],
           missing: ["typescript"],
         },
@@ -2006,6 +2038,9 @@ describe("local TypeScript API", () => {
       },
     });
     expect(JSON.stringify(response.json())).not.toContain("must not leak");
+    expect(JSON.stringify(response.json())).not.toContain("join");
+    expect(JSON.stringify(response.json())).not.toContain("innovator");
+    expect(JSON.stringify(response.json())).not.toContain("smile");
 
     await app.close();
   });
