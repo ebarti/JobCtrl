@@ -356,15 +356,15 @@ export function TailoringExplanationSection({
             <dl className="detail-list compact">
               {hasKeywordCounts ? (
                 <div>
-                  <dt>Target keyword coverage</dt>
+                  <dt>Actionable keyword coverage</dt>
                   <dd>
-                    {explanation.keywords.counts.covered}/{explanation.keywords.counts.planned} covered
+                    {explanation.keywords.counts.covered}/{explanation.keywords.counts.planned} recorded covered
                   </dd>
                 </div>
               ) : null}
               {hasKeywordCounts ? (
                 <div>
-                  <dt>Target keywords</dt>
+                  <dt>Actionable job keywords</dt>
                   <dd>
                     {countSummary(
                       explanation.keywords.counts.planned,
@@ -373,9 +373,9 @@ export function TailoringExplanationSection({
                   </dd>
                 </div>
               ) : null}
-              <EvidenceRow label="Displayed target keywords" items={explanation.keywords.planned} />
-              <EvidenceRow label="Displayed covered keywords" items={explanation.keywords.covered} />
-              <EvidenceRow label="Displayed missing keywords" items={explanation.keywords.missing} />
+              <EvidenceRow label="Target job keywords" items={explanation.keywords.planned} />
+              <EvidenceRow label="Recorded covered keywords" items={explanation.keywords.covered} />
+              <EvidenceRow label="Not recorded as covered" items={explanation.keywords.missing} />
               <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
               <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
               <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />

@@ -232,9 +232,12 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
     expect(screen.getByText("Principal")).toBeInTheDocument();
     expect(screen.getByText("Why these changes")).toBeInTheDocument();
-    expect(screen.getByText("1/3 covered")).toBeInTheDocument();
+    expect(screen.getByText("1/3 recorded covered")).toBeInTheDocument();
     expect(screen.getByText("3 total")).toBeInTheDocument();
-    expect(screen.getByText("Displayed target keywords")).toBeInTheDocument();
+    expect(screen.getByText("Target job keywords")).toBeInTheDocument();
+    expect(screen.getByText("Recorded covered keywords")).toBeInTheDocument();
+    expect(screen.getByText("Not recorded as covered")).toBeInTheDocument();
+    expect(screen.queryByText("Displayed target keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("Filtered missing keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("join")).not.toBeInTheDocument();
     expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();

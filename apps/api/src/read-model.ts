@@ -2015,7 +2015,8 @@ function tailoringExplanationForArtifact(
 ): ArtifactTailoringExplanation | null {
   if (!TAILORING_ARTIFACT_TYPES.has(row.artifact_type)) return null;
 
-  const direct = parseTailoringExplanation(row.metadata_json);
+  const jobKeywords = tailoringJobKeywordsForArtifact(db, row);
+  const direct = parseTailoringExplanation(row.metadata_json, { jobKeywords });
   if (direct) return direct;
   if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
 
@@ -2033,10 +2034,26 @@ function tailoringExplanationForArtifact(
       LIMIT 1`,
     [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
   );
-  return parseTailoringExplanation(sibling?.metadata_json ?? null);
+  return parseTailoringExplanation(sibling?.metadata_json ?? null, { jobKeywords });
 }
 
-function parseTailoringExplanation(value: string | null): ArtifactTailoringExplanation | null {
+function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
+  const job = getRow<{ score_keywords_json: string | null }>(
+    db,
+    `SELECT score_keywords_json
+       FROM job_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+      LIMIT 1`,
+    [row.tenant_id, row.job_id],
+  );
+  return parseScoreKeywords(job?.score_keywords_json ?? null);
+}
+
+function parseTailoringExplanation(
+  value: string | null,
+  options: { jobKeywords?: readonly string[] } = {},
+): ArtifactTailoringExplanation | null {
   const metadata = parseJsonRecord(value);
   if (!metadata) return null;
 
@@ -2048,12 +2065,21 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
   const reviewFeedback = metadataRecord(metadata.review_feedback);
   const judgeMinScore = metadataNumber(metadata.judge_min_score);
-  const plannedKeywordAudit = metadataKeywordAudit(
-    keywordUniverse(qualityPlan.job_keywords, keywordCoverage.covered, keywordCoverage.missing),
-    32,
+  const targetKeywordCandidates = keywordCandidates(
+    qualityPlan.job_keywords,
+    options.jobKeywords,
+    keywordCoverage.covered,
+    keywordCoverage.missing,
   );
-  const coveredKeywordAudit = metadataKeywordAudit(keywordCoverage.covered, 32);
-  const missingKeywordAudit = metadataKeywordAudit(keywordCoverage.missing, 32);
+  const coveredKeywordCandidates = keywordCandidates(keywordCoverage.covered);
+  const coveredKeywordKeys = new Set(coveredKeywordCandidates.map((candidate) => candidate.key));
+  const missingKeywordCandidates = dedupeKeywordCandidates([
+    ...keywordCandidates(keywordCoverage.missing),
+    ...targetKeywordCandidates.filter((candidate) => !coveredKeywordKeys.has(candidate.key)),
+  ]).filter((candidate) => !coveredKeywordKeys.has(candidate.key));
+  const plannedKeywordAudit = keywordAuditFromCandidates(targetKeywordCandidates, 32);
+  const coveredKeywordAudit = keywordAuditFromCandidates(coveredKeywordCandidates, 32);
+  const missingKeywordAudit = keywordAuditFromCandidates(missingKeywordCandidates, 32);
   const qualityMessages = cleanKeywordQualityMessages({
     rawErrors: qualityChecks.errors,
     rawWarnings: qualityChecks.warnings,
@@ -2430,34 +2456,52 @@ function dedupeBounded(values: readonly string[], limit: number): string[] {
   return out;
 }
 
-function keywordUniverse(...values: unknown[]): unknown[] {
-  const out: unknown[] = [];
-  for (const value of values) {
-    if (Array.isArray(value)) out.push(...value);
-  }
-  return out;
+interface KeywordCandidate {
+  key: string;
+  text: string;
 }
 
-function metadataKeywordAudit(
-  value: unknown,
-  displayLimit = 32,
-  maxLength = 120,
-): { displayed: string[]; filtered: string[]; total: number } {
-  if (!Array.isArray(value)) return { displayed: [], filtered: [], total: 0 };
+function keywordCandidates(...values: unknown[]): KeywordCandidate[] {
+  return dedupeKeywordCandidates(values.flatMap((value) => metadataKeywordCandidates(value)));
+}
+
+function metadataKeywordCandidates(value: unknown, maxLength = 120): KeywordCandidate[] {
+  if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
-  const actionableSeen = new Set<string>();
-  const displayed: string[] = [];
+  const candidates: KeywordCandidate[] = [];
   for (const raw of value) {
     const text = metadataText(raw, maxLength);
     const key = normalizedKeywordKey(text);
     if (!text || !key || seen.has(key)) continue;
     seen.add(key);
     if (isMeaningfulDisplayKeyword(text, key)) {
-      actionableSeen.add(key);
-      if (displayed.length < displayLimit) displayed.push(text);
+      candidates.push({ key, text });
     }
   }
-  return { displayed, filtered: [], total: actionableSeen.size };
+  return candidates;
+}
+
+function dedupeKeywordCandidates(candidates: readonly KeywordCandidate[]): KeywordCandidate[] {
+  const seen = new Set<string>();
+  const out: KeywordCandidate[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.key)) continue;
+    seen.add(candidate.key);
+    out.push(candidate);
+  }
+  return out;
+}
+
+function keywordAuditFromCandidates(
+  candidates: readonly KeywordCandidate[],
+  displayLimit = 32,
+): { displayed: string[]; filtered: string[]; total: number } {
+  const deduped = dedupeKeywordCandidates(candidates);
+  return {
+    displayed: deduped.slice(0, displayLimit).map((candidate) => candidate.text),
+    filtered: [],
+    total: deduped.length,
+  };
 }
 
 function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {

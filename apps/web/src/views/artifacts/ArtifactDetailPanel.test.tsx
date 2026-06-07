@@ -255,8 +255,12 @@ describe("<ArtifactDetailPanel>", () => {
     expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("Senior")).toBeInTheDocument();
     expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
-    expect(screen.getByText("1/2 covered")).toBeInTheDocument();
+    expect(screen.getByText("1/2 recorded covered")).toBeInTheDocument();
     expect(screen.getByText("2 total")).toBeInTheDocument();
+    expect(screen.getByText("Target job keywords")).toBeInTheDocument();
+    expect(screen.getByText("Recorded covered keywords")).toBeInTheDocument();
+    expect(screen.getByText("Not recorded as covered")).toBeInTheDocument();
+    expect(screen.queryByText("Displayed target keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("Filtered covered keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("head")).not.toBeInTheDocument();
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);

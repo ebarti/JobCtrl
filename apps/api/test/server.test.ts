@@ -1893,6 +1893,22 @@ describe("local TypeScript API", () => {
       fitScore: 9,
       tailoredPath: resumePath,
     });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-evidence", 1, 9, {
+      keywords: [
+        "Platform Engineering",
+        "Kubernetes",
+        "AWS",
+        "GCP",
+        "CI/CD",
+        "Infrastructure as Code",
+        "Java",
+        "Node.js",
+        "Observability",
+        "Cost Optimization",
+        "Developer Productivity",
+        "Scalability",
+      ],
+    });
     insertMaterialsGeneration(seedDb, {
       jobUrl: "https://example.com/jobs/tailoring-evidence",
       artifactId: "artifact-tailoring-evidence",
@@ -2084,21 +2100,50 @@ describe("local TypeScript API", () => {
         claimMode: "evidence_reframing",
         validationMode: "normal",
         keywords: {
-          planned: ["platform reliability", "typescript"],
+          planned: [
+            "platform reliability",
+            "typescript",
+            "Platform Engineering",
+            "Kubernetes",
+            "AWS",
+            "GCP",
+            "CI/CD",
+            "Infrastructure as Code",
+            "Java",
+            "Node.js",
+            "Observability",
+            "Cost Optimization",
+            "Developer Productivity",
+            "Scalability",
+          ],
           covered: ["platform reliability"],
-          missing: ["typescript"],
+          missing: [
+            "typescript",
+            "Platform Engineering",
+            "Kubernetes",
+            "AWS",
+            "GCP",
+            "CI/CD",
+            "Infrastructure as Code",
+            "Java",
+            "Node.js",
+            "Observability",
+            "Cost Optimization",
+            "Developer Productivity",
+            "Scalability",
+          ],
           filtered: {
             planned: [],
             covered: [],
             missing: [],
           },
           counts: {
-            planned: 2,
+            planned: 14,
             covered: 1,
-            missing: 1,
-            displayedPlanned: 2,
+            missing: 13,
+            displayedPlanned: 14,
             displayedCovered: 1,
-            displayedMissing: 1,
+            displayedMissing: 13,
             filteredPlanned: 0,
             filteredCovered: 0,
             filteredMissing: 0,
@@ -2110,7 +2155,7 @@ describe("local TypeScript API", () => {
           verifiedMetricCount: 2,
         },
         quality: {
-          warnings: [],
+          warnings: ["Low keyword coverage: covered 1/14 target keywords"],
           metricClaims: ["35%"],
         },
         judge: {
@@ -2200,7 +2245,8 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("join");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("innovator");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("smile");
-    expect(JSON.stringify(response.json().tailoringExplanation.quality)).not.toContain("Low keyword coverage");
+    expect(JSON.stringify(response.json().tailoringExplanation.quality)).toContain("covered 1/14");
+    expect(JSON.stringify(response.json().tailoringExplanation.quality)).not.toContain("covered 6/32");
     expect(JSON.stringify(response.json())).not.toContain("5teams");
     expect(JSON.stringify(response.json())).not.toContain("2service");
     expect(JSON.stringify(response.json())).not.toContain("15engineers");
@@ -4857,6 +4903,10 @@ function insertScore(
     correction?: Record<string, unknown> | null;
     policyVersion?: number;
     policyId?: string;
+    keywords?: string[];
+    matchedSignals?: string[];
+    missingSignals?: string[];
+    transferableSignals?: string[];
   } = {},
 ): void {
   db.prepare(
@@ -4876,11 +4926,11 @@ function insertScore(
       fit_band: fitScore >= 9 ? "excellent" : fitScore >= 7 ? "strong" : "plausible",
       confidence: "medium",
       eligibility: { status: "eligible", hard_blockers: [], warnings: [] },
-      matched_signals: ["platform reliability"],
-      missing_signals: [],
-      transferable_signals: [],
+      matched_signals: options.matchedSignals ?? ["platform reliability"],
+      missing_signals: options.missingSignals ?? [],
+      transferable_signals: options.transferableSignals ?? [],
     }),
-    JSON.stringify(["platform"]),
+    JSON.stringify(options.keywords ?? ["platform"]),
     "2026-04-29T10:02:00+00:00",
     options.correction === undefined
       ? null
