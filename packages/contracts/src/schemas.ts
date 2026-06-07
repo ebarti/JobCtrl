@@ -1309,6 +1309,71 @@ export interface JobDetail {
 export interface ArtifactDetail {
   ok: true;
   artifact: ArtifactSummary;
+  tailoringExplanation: ArtifactTailoringExplanation | null;
+}
+
+export interface ArtifactTailoringExplanation {
+  targetSeniority: string | null;
+  claimMode: string | null;
+  validationMode: string | null;
+  safety: {
+    autoApprovableClaimModes: string[];
+    allowAdjacentAchievementDrafts: boolean | null;
+    qualityPassed: boolean | null;
+  };
+  keywords: {
+    planned: string[];
+    covered: string[];
+    missing: string[];
+  };
+  evidence: {
+    requiredIds: string[];
+    seniorityIds: string[];
+    representedIds: string[];
+    missingIds: string[];
+    verifiedMetricCount: number | null;
+  };
+  quality: {
+    passed: boolean | null;
+    errors: string[];
+    warnings: string[];
+    notes: string[];
+    metricClaims: string[];
+    repeatedKeywords: string[];
+  };
+  judge: {
+    passed: boolean | null;
+    verdict: string | null;
+    score: number | null;
+    minScore: number | null;
+    issues: string[];
+    unsupportedClaims: string[];
+    fabrications: string[];
+    missingRequiredEvidence: string[];
+    repairInstructions: string[];
+  };
+  adversarialReview: {
+    ran: boolean;
+    passed: boolean | null;
+    score: number | null;
+    threshold: number | null;
+    blockers: string[];
+    warnings: string[];
+    repairInstructions: string[];
+    personas: Array<{
+      persona: string;
+      verdict: string | null;
+      score: number | null;
+    }>;
+    skippedReason: string | null;
+  } | null;
+  models: {
+    candidateModels: string[];
+    selectedModel: string | null;
+    selectedCandidate: string | null;
+    judgeModel: string | null;
+    attempts: number | null;
+  };
 }
 
 export interface ArtifactOpenResponse {

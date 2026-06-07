@@ -429,6 +429,10 @@ Jobs whose first-time tailoring is skipped by the default low-fit gate can still
 be tailored explicitly from the job detail tailor stage. Re-tailor controls are
 reserved for jobs that already have tailored artifacts and need current-policy
 regeneration.
+Opening a tailored resume or rendered resume PDF in the Artifacts drawer shows
+the safe tailoring rationale persisted with that artifact, including keyword
+coverage, evidence support, quality gates, review findings, and model summary
+without exposing raw prompts or resume/profile contents.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;

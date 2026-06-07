@@ -23,6 +23,7 @@ import type {
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
+  ArtifactTailoringExplanation,
   BulkJobMutationFilter,
   DashboardSettings,
   DashboardSummary,
@@ -165,6 +166,7 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   size_bytes: number | null;
   created_at: string | null;
   generation: number | null;
+  metadata_json: string | null;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -1719,7 +1721,11 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
     [artifactId],
   );
   if (!row) return null;
-  return { ok: true, artifact: rowToArtifactSummary(row) };
+  return {
+    ok: true,
+    artifact: rowToArtifactSummary(row),
+    tailoringExplanation: tailoringExplanationForArtifact(db, row),
+  };
 }
 
 /** Validate a candidate profile JSON. Used by callers (e.g. tests, future
@@ -1907,6 +1913,229 @@ function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+const TAILORING_ARTIFACT_TYPES = new Set([
+  "tailored_resume",
+  "tailored_resume_txt",
+  "resume_pdf",
+  "tailored_resume_pdf",
+]);
+const TAILORING_PDF_ARTIFACT_TYPES = new Set(["resume_pdf", "tailored_resume_pdf"]);
+
+function tailoringExplanationForArtifact(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+): ArtifactTailoringExplanation | null {
+  if (!TAILORING_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+
+  const direct = parseTailoringExplanation(row.metadata_json);
+  if (direct) return direct;
+  if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+
+  const sibling = getRow<{ metadata_json: string | null }>(
+    db,
+    `SELECT metadata_json
+       FROM artifact_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+        AND metadata_json IS NOT NULL
+        AND TRIM(metadata_json) != ''
+        AND (? IS NULL OR generation = ? OR generation IS NULL)
+      ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1`,
+    [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+  );
+  return parseTailoringExplanation(sibling?.metadata_json ?? null);
+}
+
+function parseTailoringExplanation(value: string | null): ArtifactTailoringExplanation | null {
+  const metadata = parseJsonRecord(value);
+  if (!metadata) return null;
+
+  const qualityPlan = metadataRecord(metadata.quality_plan);
+  const qualityChecks = metadataRecord(metadata.quality_checks);
+  const keywordCoverage = metadataRecord(qualityChecks.keyword_coverage);
+  const evidenceSupport = metadataRecord(qualityChecks.evidence_support);
+  const judge = metadataRecord(metadata.judge);
+  const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
+  const judgeMinScore = metadataNumber(metadata.judge_min_score);
+
+  const explanation: ArtifactTailoringExplanation = {
+    targetSeniority: metadataText(qualityPlan.target_seniority),
+    claimMode: metadataText(qualityPlan.claim_mode),
+    validationMode: metadataText(metadata.validation_mode),
+    safety: {
+      autoApprovableClaimModes: metadataTextList(qualityPlan.auto_approvable_claim_modes),
+      allowAdjacentAchievementDrafts: metadataBoolean(qualityPlan.allow_adjacent_achievement_drafts),
+      qualityPassed: metadataBoolean(qualityChecks.passed),
+    },
+    keywords: {
+      planned: metadataTextList(qualityPlan.job_keywords, 16),
+      covered: metadataTextList(keywordCoverage.covered, 16),
+      missing: metadataTextList(keywordCoverage.missing, 16),
+    },
+    evidence: {
+      requiredIds: metadataTextList(qualityPlan.required_evidence_ids, 32),
+      seniorityIds: metadataTextList(qualityPlan.seniority_evidence_ids, 32),
+      representedIds: metadataTextList(evidenceSupport.represented_ids, 32),
+      missingIds: metadataTextList(evidenceSupport.missing_ids, 32),
+      verifiedMetricCount: metadataNumber(qualityPlan.verified_metric_count),
+    },
+    quality: {
+      passed: metadataBoolean(qualityChecks.passed),
+      errors: metadataTextList(qualityChecks.errors, 8, 220),
+      warnings: metadataTextList(qualityChecks.warnings, 8, 220),
+      notes: metadataTextList(qualityChecks.notes, 8, 220),
+      metricClaims: metadataTextList(qualityChecks.metric_claims, 12, 120),
+      repeatedKeywords: metadataRepeatedKeywords(qualityChecks.repeated_keywords),
+    },
+    judge: {
+      passed: metadataBoolean(judge.passed),
+      verdict: metadataText(judge.verdict),
+      score: metadataNumber(judge.score),
+      minScore: judgeMinScore,
+      issues: metadataTextList(judge.issues, 8, 220),
+      unsupportedClaims: metadataTextList(judge.unsupported_claims, 8, 220),
+      fabrications: metadataTextList(judge.fabrications, 8, 220),
+      missingRequiredEvidence: metadataTextList(judge.missing_required_evidence, 8, 220),
+      repairInstructions: metadataTextList(judge.repair_instructions, 8, 220),
+    },
+    adversarialReview,
+    models: {
+      candidateModels: metadataTextList(metadata.candidate_models, 6, 120),
+      selectedModel: metadataText(metadata.selected_model, 120),
+      selectedCandidate: metadataText(metadata.selected_candidate, 80),
+      judgeModel: metadataText(metadata.judge_model, 120),
+      attempts: metadataNumber(metadata.attempts),
+    },
+  };
+
+  return hasTailoringExplanationContent(explanation) ? explanation : null;
+}
+
+function parseAdversarialReview(
+  value: unknown,
+): ArtifactTailoringExplanation["adversarialReview"] {
+  const review = metadataRecord(value);
+  const ran = metadataBoolean(review.ran);
+  if (ran === null) return null;
+  return {
+    ran,
+    passed: metadataBoolean(review.passed),
+    score: metadataNumber(review.score),
+    threshold: metadataNumber(review.threshold),
+    blockers: metadataTextList(review.blockers, 8, 220),
+    warnings: metadataTextList(review.warnings, 8, 220),
+    repairInstructions: metadataTextList(review.repair_instructions, 8, 220),
+    personas: Array.isArray(review.personas)
+      ? review.personas.filter(isRecord).slice(0, 8).map((persona) => ({
+          persona: metadataText(persona.persona, 80) ?? "reviewer",
+          verdict: metadataText(persona.verdict, 20),
+          score: metadataNumber(persona.score),
+        }))
+      : [],
+    skippedReason: metadataText(review.skipped_reason, 180),
+  };
+}
+
+function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanation): boolean {
+  return Boolean(
+    explanation.targetSeniority ||
+      explanation.claimMode ||
+      explanation.validationMode ||
+      explanation.safety.autoApprovableClaimModes.length ||
+      explanation.safety.allowAdjacentAchievementDrafts !== null ||
+      explanation.safety.qualityPassed !== null ||
+      explanation.keywords.planned.length ||
+      explanation.keywords.covered.length ||
+      explanation.keywords.missing.length ||
+      explanation.evidence.requiredIds.length ||
+      explanation.evidence.seniorityIds.length ||
+      explanation.evidence.representedIds.length ||
+      explanation.evidence.missingIds.length ||
+      explanation.evidence.verifiedMetricCount !== null ||
+      explanation.quality.passed !== null ||
+      explanation.quality.errors.length ||
+      explanation.quality.warnings.length ||
+      explanation.quality.notes.length ||
+      explanation.quality.metricClaims.length ||
+      explanation.quality.repeatedKeywords.length ||
+      explanation.judge.passed !== null ||
+      explanation.judge.verdict ||
+      explanation.judge.score !== null ||
+      explanation.judge.minScore !== null ||
+      explanation.judge.issues.length ||
+      explanation.judge.unsupportedClaims.length ||
+      explanation.judge.fabrications.length ||
+      explanation.judge.missingRequiredEvidence.length ||
+      explanation.judge.repairInstructions.length ||
+      explanation.adversarialReview ||
+      explanation.models.candidateModels.length ||
+      explanation.models.selectedModel ||
+      explanation.models.selectedCandidate ||
+      explanation.models.judgeModel ||
+      explanation.models.attempts !== null,
+  );
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function metadataText(value: unknown, maxLength = 120): string | null {
+  const text = safeAuditText(value, maxLength);
+  if (!text || /(?:api[_-]?key|password|secret|token|bearer\s+)/i.test(text) || text.includes("://")) {
+    return null;
+  }
+  return text;
+}
+
+function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, maxLength);
+    const key = text?.toLowerCase();
+    if (!text || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function metadataRepeatedKeywords(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const keyword = isRecord(raw)
+      ? metadataText(raw.keyword ?? raw.term ?? raw.value, 80)
+      : metadataText(raw, 80);
+    if (!keyword) continue;
+    const count = isRecord(raw) ? metadataNumber(raw.count) : null;
+    const text = count !== null && count > 0 ? `${keyword} (${count})` : keyword;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function metadataBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === 0 || value === "false") return false;
+  if (value === 1 || value === "true") return true;
+  return null;
+}
+
+function metadataNumber(value: unknown): number | null {
+  return nullableNumber(value);
 }
 
 function parseScoreKeywords(value: string | null): string[] {

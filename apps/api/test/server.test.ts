@@ -1875,6 +1875,215 @@ describe("local TypeScript API", () => {
         type: "tailored_resume_txt",
         status: "active",
       },
+      tailoringExplanation: null,
+    });
+
+    await app.close();
+  });
+
+  it("returns safe tailoring explanation for tailored resume artifacts", async () => {
+    const resumePath = path.join(tempDir, "tailoring-evidence-resume.txt");
+    fs.writeFileSync(resumePath, "tailored resume");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-evidence",
+      title: "Senior Platform Engineer",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-evidence",
+      artifactId: "artifact-tailoring-evidence",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata: {
+        validation_mode: "normal",
+        attempts: 2,
+        quality_plan: {
+          target_seniority: "senior",
+          claim_mode: "evidence_reframing",
+          auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
+          allow_adjacent_achievement_drafts: false,
+          job_keywords: ["platform reliability", "typescript"],
+          required_evidence_ids: ["ev_latency"],
+          seniority_evidence_ids: ["ev_scope"],
+          verified_metric_count: 2,
+        },
+        quality_checks: {
+          passed: true,
+          errors: [],
+          warnings: ["Low keyword coverage"],
+          notes: ["Keyword coverage: 1/2"],
+          keyword_coverage: {
+            covered: ["platform reliability"],
+            missing: ["typescript"],
+          },
+          evidence_support: {
+            represented_ids: ["ev_latency"],
+            missing_ids: [],
+          },
+          metric_claims: ["35%"],
+          repeated_keywords: [{ keyword: "platform", count: 5 }],
+        },
+        judge: {
+          passed: true,
+          verdict: "PASS",
+          score: 0.91,
+          issues: [],
+          unsupported_claims: [],
+          fabrications: [],
+          missing_required_evidence: [],
+          repair_instructions: [],
+        },
+        judge_min_score: 0.82,
+        adversarial_review: {
+          ran: true,
+          passed: true,
+          score: 0.88,
+          threshold: 0.8,
+          blockers: [],
+          warnings: [],
+          repair_instructions: [],
+          personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+          skipped_reason: "",
+        },
+        candidate_models: ["generator-a"],
+        selected_model: "generator-a",
+        selected_candidate: "candidate-1",
+        judge_model: "judge-a",
+        system_prompt: "must not leak",
+        job_text: "must not leak",
+        parsed_json: { must: "not leak" },
+      },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-evidence",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      artifact: {
+        artifactId: "artifact-tailoring-evidence",
+        type: "tailored_resume",
+        status: "approved",
+      },
+      tailoringExplanation: {
+        targetSeniority: "senior",
+        claimMode: "evidence_reframing",
+        validationMode: "normal",
+        keywords: {
+          covered: ["platform reliability"],
+          missing: ["typescript"],
+        },
+        evidence: {
+          requiredIds: ["ev_latency"],
+          representedIds: ["ev_latency"],
+          verifiedMetricCount: 2,
+        },
+        judge: {
+          passed: true,
+          score: 0.91,
+          minScore: 0.82,
+        },
+        adversarialReview: {
+          ran: true,
+          passed: true,
+          personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+        },
+        models: {
+          selectedModel: "generator-a",
+          judgeModel: "judge-a",
+          attempts: 2,
+        },
+      },
+    });
+    expect(JSON.stringify(response.json())).not.toContain("must not leak");
+
+    await app.close();
+  });
+
+  it("returns null tailoring explanation for legacy material artifacts without metadata column", async () => {
+    const resumePath = path.join(tempDir, "legacy-no-metadata-resume.txt");
+    fs.writeFileSync(resumePath, "legacy tailored resume");
+    const seedDb = new Database(options.dbPath);
+    seedDb.exec(`
+      CREATE TABLE IF NOT EXISTS job_materials (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        tenant_id TEXT NOT NULL DEFAULT 'local',
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (job_url, generation)
+      );
+      CREATE TABLE IF NOT EXISTS job_materials_artifacts (
+        job_url TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        artifact_type TEXT NOT NULL,
+        artifact_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        path TEXT NOT NULL,
+        render_format TEXT NOT NULL,
+        size_bytes INTEGER,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (job_url, generation, artifact_type)
+      );
+    `);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/legacy-no-metadata",
+      title: "Legacy Resume Engineer",
+      site: "LegacyCo",
+      fitScore: 8,
+      tailoredPath: resumePath,
+    });
+    seedDb
+      .prepare(
+        `INSERT INTO job_materials (
+           job_url, generation, tenant_id, status, created_at, updated_at
+         ) VALUES (?, 1, 'local', 'resume_approved', ?, ?)`,
+      )
+      .run(
+        "https://example.com/jobs/legacy-no-metadata",
+        "2026-05-26T10:00:00+00:00",
+        "2026-05-26T10:00:00+00:00",
+      );
+    seedDb
+      .prepare(
+        `INSERT INTO job_materials_artifacts (
+           job_url, generation, artifact_type, artifact_id, status, path,
+           render_format, size_bytes, created_at
+         ) VALUES (?, 1, 'tailored_resume', 'artifact-legacy-no-metadata', 'approved', ?, 'text', ?, ?)`,
+      )
+      .run(
+        "https://example.com/jobs/legacy-no-metadata",
+        resumePath,
+        fs.statSync(resumePath).size,
+        "2026-05-26T10:00:00+00:00",
+      );
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-legacy-no-metadata",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      artifact: {
+        artifactId: "artifact-legacy-no-metadata",
+        type: "tailored_resume",
+      },
+      tailoringExplanation: null,
     });
 
     await app.close();

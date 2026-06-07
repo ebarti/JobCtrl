@@ -336,7 +336,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       local_path             TEXT NOT NULL DEFAULT '',
       size_bytes             INTEGER,
       created_at             TEXT,
-      generation             INTEGER
+      generation             INTEGER,
+      metadata_json          TEXT
     );
     CREATE TABLE IF NOT EXISTS apply_run_projections (
       run_id                 TEXT PRIMARY KEY,
@@ -450,6 +451,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_criteria_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_trace_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_correction_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
   return schemaChanged;
 }
 
@@ -1215,8 +1217,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const insertArtifact = db.prepare(
     `INSERT INTO artifact_list_projections (
        artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
-       status, local_path, size_bytes, created_at, generation
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       status, local_path, size_bytes, created_at, generation, metadata_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const a of artifacts) {
     insertArtifact.run(
@@ -1231,6 +1233,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
       a.sizeBytes,
       a.createdAt,
       a.generation,
+      a.metadataJson,
     );
   }
 }
@@ -1243,6 +1246,7 @@ interface ArtifactRow {
   sizeBytes: number | null;
   createdAt: string | null;
   generation: number | null;
+  metadataJson: string | null;
 }
 
 function collectArtifacts(
@@ -1253,6 +1257,9 @@ function collectArtifacts(
   const out: ArtifactRow[] = [];
   const seen = new Set<string>();
   if (tableExists(db, "job_materials_artifacts")) {
+    const metadataSelect = hasColumn(db, "job_materials_artifacts", "metadata_json")
+      ? "metadata_json"
+      : "NULL AS metadata_json";
     const rows = allRows<{
       artifact_id: string;
       artifact_type: string;
@@ -1261,9 +1268,10 @@ function collectArtifacts(
       created_at: string | null;
       size_bytes: number | null;
       generation: number | null;
+      metadata_json: string | null;
     }>(
       db,
-      `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation
+      `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation, ${metadataSelect}
        FROM job_materials_artifacts WHERE job_url = ?`,
       [jobUrl],
     );
@@ -1280,6 +1288,7 @@ function collectArtifacts(
         sizeBytes: nullableNumber(row.size_bytes),
         createdAt: nullableString(row.created_at),
         generation: nullableNumber(row.generation),
+        metadataJson: nullableString(row.metadata_json),
       });
     }
   }
@@ -1310,6 +1319,7 @@ function collectArtifacts(
         sizeBytes: nullableNumber(row.size_bytes),
         createdAt: nullableString(row.created_at),
         generation: null,
+        metadataJson: null,
       });
     }
   }
@@ -1332,6 +1342,7 @@ function collectArtifacts(
       sizeBytes: null,
       createdAt: tailorTxt?.createdAt ?? null,
       generation: null,
+      metadataJson: tailorTxt?.metadataJson ?? null,
     });
   }
   const coverTxt = out.find((a) => a.artifactType === "cover_letter_txt" && isDefaultVisibleArtifact(a));
@@ -1347,6 +1358,7 @@ function collectArtifacts(
       sizeBytes: null,
       createdAt: coverTxt?.createdAt ?? null,
       generation: null,
+      metadataJson: null,
     });
   }
   return out;

@@ -2078,15 +2078,104 @@ textarea {
   min-height: calc(100vh - 116px);
 }
 
-.artifact-detail-layout > .section {
+.artifact-detail-sidebar {
   min-width: 0;
   border-right: 1px solid var(--rule);
+}
+
+.artifact-detail-sidebar > .section + .section {
+  border-top: 1px solid var(--rule);
 }
 
 .artifact-preview-panel {
   min-width: 0;
   min-height: 0;
   background: #242424;
+}
+
+.tailoring-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.evidence-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.evidence-summary-grid > div,
+.finding-list {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.evidence-summary-grid dt,
+.detail-list.compact dt {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.evidence-summary-grid dd {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.evidence-block {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.evidence-block h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.detail-list.compact {
+  gap: 8px;
+}
+
+.detail-list.compact div {
+  grid-template-columns: minmax(112px, 0.34fr) minmax(0, 0.66fr);
+}
+
+.compact-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compact-list li {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.finding-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.finding-list.danger {
+  border-color: rgba(181, 71, 58, 0.35);
+}
+
+.finding-list.warning {
+  border-color: rgba(183, 126, 44, 0.45);
 }
 
 .external-link {
@@ -3190,9 +3279,14 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  .artifact-detail-layout > .section {
+  .artifact-detail-sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--rule);
+  }
+
+  .detail-list.compact div,
+  .evidence-summary-grid {
+    grid-template-columns: 1fr;
   }
 
   .outcome-suggestion-head {

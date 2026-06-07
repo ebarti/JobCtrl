@@ -1,3 +1,4 @@
+import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -24,7 +25,11 @@ vi.mock("../../shared/ui/PdfPreviewViewer.js", () => ({
   ),
 }));
 
-function renderArtifactRoute(children: ReactNode, status = "approved") {
+function renderArtifactRoute(
+  children: ReactNode,
+  status = "approved",
+  tailoringExplanation: ArtifactTailoringExplanation | null = null,
+) {
   const artifact = {
     ...sampleArtifact,
     artifactId: "artifact-preview",
@@ -39,7 +44,7 @@ function renderArtifactRoute(children: ReactNode, status = "approved") {
     ports: {
       ...ports,
       api: Object.assign(Object.create(Object.getPrototypeOf(ports.api)), ports.api, {
-        artifact: vi.fn(async () => ({ ok: true as const, artifact })),
+        artifact: vi.fn(async () => ({ ok: true as const, artifact, tailoringExplanation })),
         artifactPreviewPdfUrl,
       }),
     },
@@ -95,5 +100,76 @@ describe("<ArtifactDetailPanel>", () => {
         "This artifact is historical audit material and is not active apply-ready material.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("renders tailoring rationale from artifact detail evidence", async () => {
+    renderArtifactRoute(<ArtifactDetailPanel artifactId="artifact-preview" />, "approved", {
+      targetSeniority: "senior",
+      claimMode: "evidence_reframing",
+      validationMode: "normal",
+      safety: {
+        autoApprovableClaimModes: ["verified_only"],
+        allowAdjacentAchievementDrafts: false,
+        qualityPassed: true,
+      },
+      keywords: {
+        planned: ["platform reliability", "typescript"],
+        covered: ["platform reliability"],
+        missing: ["typescript"],
+      },
+      evidence: {
+        requiredIds: ["ev_latency"],
+        seniorityIds: ["ev_scope"],
+        representedIds: ["ev_latency"],
+        missingIds: [],
+        verifiedMetricCount: 2,
+      },
+      quality: {
+        passed: true,
+        errors: [],
+        warnings: ["Low keyword coverage"],
+        notes: ["Keyword coverage: 1/2"],
+        metricClaims: ["35%"],
+        repeatedKeywords: [],
+      },
+      judge: {
+        passed: true,
+        verdict: "PASS",
+        score: 0.91,
+        minScore: 0.82,
+        issues: [],
+        unsupportedClaims: [],
+        fabrications: [],
+        missingRequiredEvidence: [],
+        repairInstructions: [],
+      },
+      adversarialReview: {
+        ran: true,
+        passed: true,
+        score: 0.88,
+        threshold: 0.8,
+        blockers: [],
+        warnings: [],
+        repairInstructions: [],
+        personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+        skippedReason: null,
+      },
+      models: {
+        candidateModels: ["generator-a"],
+        selectedModel: "generator-a",
+        selectedCandidate: "candidate-1",
+        judgeModel: "judge-a",
+        attempts: 2,
+      },
+    });
+
+    expect(await screen.findByText("Tailoring rationale")).toBeInTheDocument();
+    expect(screen.getByText("Senior")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Reframing")).toBeInTheDocument();
+    expect(screen.getByText("platform reliability")).toBeInTheDocument();
+    expect(screen.getAllByText("ev_latency")).toHaveLength(2);
+    expect(screen.getByText("ev_scope")).toBeInTheDocument();
+    expect(screen.getByText("91% / minimum 82%")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Auditor: PASS (90%)")).toBeInTheDocument();
   });
 });
