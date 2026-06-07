@@ -837,11 +837,6 @@ class TailorResumeUseCase:
             prior_generation = None
             materials = previous
 
-        # Persist the predecessor first so existing artifacts stop being
-        # active before the new generation is written.
-        if prior_generation is not None:
-            self._repository.save(prior_generation)
-
         report, parsed_payload, validation, verdict = self._run_attempts(
             job=job,
             profile_snapshot=profile_snapshot,
@@ -933,6 +928,8 @@ class TailorResumeUseCase:
             },
             updated_at=materials.updated_at,
         )
+        if materials.is_resume_approved and prior_generation is not None:
+            self._repository.save(prior_generation)
         self._repository.save(materials)
 
         status = self._derive_status(report, validation, verdict)

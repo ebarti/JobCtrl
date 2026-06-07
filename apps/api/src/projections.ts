@@ -625,7 +625,11 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   }
   const generationRow = getRow<{ max_generation: number }>(
     db,
-    "SELECT MAX(generation) AS max_generation FROM job_materials WHERE job_url = ?",
+    `SELECT MAX(generation) AS max_generation
+       FROM job_materials_artifacts
+      WHERE job_url = ?
+        AND status = 'approved'
+        AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf')`,
     [jobUrl],
   );
   const generation = generationRow ? generationRow.max_generation : null;
@@ -1329,9 +1333,16 @@ function collectArtifacts(
   // still see the matching ``*_pdf`` row.  When a real PDF artifact is
   // registered we never overwrite it (``seen`` guards against
   // duplicates).
-  const tailorTxt = out.find((a) => a.artifactType === "tailored_resume_txt" && isDefaultVisibleArtifact(a));
+  const tailorSource = preferredArtifactSource(
+    out,
+    ["tailored_resume", "tailored_resume_txt"],
+    materials.generation,
+  );
   const tailorPdfPath =
-    materials.resumePdfPath ?? (tailorTxt ? pdfSibling(tailorTxt.localPath) : null);
+    materials.resumePdfPath ??
+    (tailorSource?.artifactType === "tailored_resume_txt"
+      ? pdfSibling(tailorSource.localPath)
+      : null);
   if (tailorPdfPath && !seen.has(`tailored_resume_pdf:${tailorPdfPath}`)) {
     seen.add(`tailored_resume_pdf:${tailorPdfPath}`);
     out.push({
@@ -1340,14 +1351,21 @@ function collectArtifacts(
       status: "active",
       localPath: tailorPdfPath,
       sizeBytes: null,
-      createdAt: tailorTxt?.createdAt ?? null,
+      createdAt: tailorSource?.createdAt ?? null,
       generation: null,
-      metadataJson: tailorTxt?.metadataJson ?? null,
+      metadataJson: tailorSource?.metadataJson ?? null,
     });
   }
-  const coverTxt = out.find((a) => a.artifactType === "cover_letter_txt" && isDefaultVisibleArtifact(a));
+  const coverSource = preferredArtifactSource(
+    out,
+    ["cover_letter", "cover_letter_txt"],
+    materials.generation,
+  );
   const coverPdfPath =
-    materials.coverPdfPath ?? (coverTxt ? pdfSibling(coverTxt.localPath) : null);
+    materials.coverPdfPath ??
+    (coverSource?.artifactType === "cover_letter_txt"
+      ? pdfSibling(coverSource.localPath)
+      : null);
   if (coverPdfPath && !seen.has(`cover_letter_pdf:${coverPdfPath}`)) {
     seen.add(`cover_letter_pdf:${coverPdfPath}`);
     out.push({
@@ -1356,9 +1374,9 @@ function collectArtifacts(
       status: "active",
       localPath: coverPdfPath,
       sizeBytes: null,
-      createdAt: coverTxt?.createdAt ?? null,
+      createdAt: coverSource?.createdAt ?? null,
       generation: null,
-      metadataJson: null,
+      metadataJson: coverSource?.metadataJson ?? null,
     });
   }
   return out;
@@ -1366,6 +1384,39 @@ function collectArtifacts(
 
 function isDefaultVisibleArtifact(artifact: Pick<ArtifactRow, "status">): boolean {
   return String(artifact.status ?? "").toLowerCase() !== "suppressed";
+}
+
+function preferredArtifactSource(
+  artifacts: ArtifactRow[],
+  artifactTypes: string[],
+  preferredGeneration: number | null,
+): ArtifactRow | undefined {
+  const typeSet = new Set(artifactTypes);
+  return artifacts
+    .filter((artifact) => typeSet.has(artifact.artifactType) && isDefaultVisibleArtifact(artifact))
+    .sort((left, right) => {
+      const leftPreferred = left.generation === preferredGeneration ? 1 : 0;
+      const rightPreferred = right.generation === preferredGeneration ? 1 : 0;
+      if (leftPreferred !== rightPreferred) return rightPreferred - leftPreferred;
+      const leftStatus = artifactStatusRank(left.status);
+      const rightStatus = artifactStatusRank(right.status);
+      if (leftStatus !== rightStatus) return rightStatus - leftStatus;
+      return Number(right.generation ?? -1) - Number(left.generation ?? -1);
+    })[0];
+}
+
+function artifactStatusRank(status: string): number {
+  switch (String(status ?? "").toLowerCase()) {
+    case "approved":
+    case "active":
+      return 3;
+    case "candidate":
+      return 2;
+    case "rejected":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function pdfSibling(value: string | null | undefined): string | null {

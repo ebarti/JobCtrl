@@ -487,6 +487,178 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("projects latest approved materials when a newer re-tailor generation is rejected", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_validation_json TEXT,
+          last_verdict_json TEXT,
+          metadata_json TEXT,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          render_format TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+      `);
+      const jobUrl = "https://example.com/jobs/event-driven";
+      const insertMaterials = db.prepare(
+        `INSERT INTO job_materials (
+          job_url, generation, tenant_id, status, created_at, updated_at
+        ) VALUES (?, ?, 'local', ?, ?, ?)`,
+      );
+      insertMaterials.run(
+        jobUrl,
+        1,
+        "complete",
+        "2026-05-04T12:00:00+00:00",
+        "2026-05-04T12:10:00+00:00",
+      );
+      insertMaterials.run(
+        jobUrl,
+        3,
+        "complete",
+        "2026-05-04T13:00:00+00:00",
+        "2026-05-04T13:10:00+00:00",
+      );
+      insertMaterials.run(
+        jobUrl,
+        4,
+        "resume_in_progress",
+        "2026-05-04T14:00:00+00:00",
+        "2026-05-04T14:05:00+00:00",
+      );
+      const insertArtifact = db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insertArtifact.run(
+        jobUrl,
+        1,
+        "tailored_resume",
+        "gen1-superseded-resume",
+        "superseded",
+        "/tmp/gen1-resume.txt",
+        "text",
+        9,
+        JSON.stringify({ quality_plan: { target_seniority: "junior" } }),
+        "2026-05-04T12:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        3,
+        "tailored_resume",
+        "gen3-resume",
+        "approved",
+        "/tmp/gen3-resume.txt",
+        "text",
+        10,
+        JSON.stringify({ quality_plan: { target_seniority: "executive" } }),
+        "2026-05-04T13:05:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        3,
+        "resume_pdf",
+        "gen3-pdf",
+        "approved",
+        "/tmp/gen3-resume.pdf",
+        "pdf",
+        20,
+        "{}",
+        "2026-05-04T13:06:00+00:00",
+      );
+      insertArtifact.run(
+        jobUrl,
+        4,
+        "tailored_resume",
+        "gen4-rejected-resume",
+        "rejected",
+        "/tmp/gen4-rejected-resume.txt",
+        "text",
+        11,
+        "{}",
+        "2026-05-04T14:05:00+00:00",
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const listRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(listRes.statusCode, listRes.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readDb = new Database(dbPath, { readonly: true });
+      try {
+        const projection = readDb
+          .prepare(
+            `SELECT has_resume, has_pdf
+               FROM job_list_projections
+              WHERE tenant_id = 'local' AND job_id = ?`,
+          )
+          .get(jobUrl) as { has_resume: number; has_pdf: number } | undefined;
+        expect(projection).toMatchObject({ has_resume: 1, has_pdf: 1 });
+
+        const rejected = readDb
+          .prepare(
+            `SELECT status
+               FROM artifact_list_projections
+              WHERE tenant_id = 'local'
+                AND job_id = ?
+                AND artifact_id = 'gen4-rejected-resume'`,
+          )
+          .get(jobUrl) as { status: string } | undefined;
+        expect(rejected).toMatchObject({ status: "rejected" });
+
+        const syntheticPdf = readDb
+          .prepare(
+            `SELECT metadata_json
+               FROM artifact_list_projections
+              WHERE tenant_id = 'local'
+                AND job_id = ?
+                AND artifact_type = 'tailored_resume_pdf'`,
+          )
+          .get(jobUrl) as { metadata_json: string | null } | undefined;
+        expect(JSON.parse(syntheticPdf?.metadata_json ?? "{}")).toMatchObject({
+          quality_plan: { target_seniority: "executive" },
+        });
+      } finally {
+        readDb.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("backfills legacy jobs inserted after the first projection refresh", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

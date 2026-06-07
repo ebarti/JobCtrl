@@ -216,6 +216,21 @@ def _good_json_payload() -> str:
     )
 
 
+def _keyword_stuffed_json_payload() -> str:
+    stuffed = " ".join(["backend"] * 10)
+    return json.dumps(
+        {
+            "executive_profile": f"Senior engineer focused on {stuffed}.",
+            "experience_updates": [
+                {"id": "acme_swe", "title": "", "bullets": [f"Built {stuffed}."]},
+            ],
+            "skill_category_updates": [
+                {"id": "languages", "items": ["Python", "Go"]},
+            ],
+        }
+    )
+
+
 def _quality_json_payload(*, metric: str = "35%") -> str:
     return json.dumps(
         {
@@ -1013,6 +1028,53 @@ def test_tailor_use_case_retailor_suppresses_previous_generation_when_requested(
     assert suppressed_save.tailored_resume.metadata["suppression"]["reason"] == (
         "retailor_current_policy"
     )
+
+
+def test_tailor_use_case_failed_retailor_keeps_previous_generation_active(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    initial = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path="/tmp/old.txt",
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(initial)
+
+    llm = _ScriptedLlm([_keyword_stuffed_json_payload()] * 4)
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        retailor=True,
+        suppress_existing_artifacts=True,
+    )
+
+    assert outcome.materials is not None
+    assert outcome.status == "failed_validation"
+    assert outcome.materials.generation == 2
+    assert outcome.materials.tailored_resume is not None
+    assert outcome.materials.tailored_resume.status is ArtifactStatus.REJECTED
+    previous = repo.load(LOCAL_TENANT, JobId(job["url"]), generation=1)
+    assert previous is not None
+    assert previous.tailored_resume is not None
+    assert previous.tailored_resume.status is ArtifactStatus.APPROVED
 
 
 # ---------------------------------------------------------------------------

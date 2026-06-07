@@ -450,8 +450,9 @@ function countOutdatedTailoredArtifacts(
     db,
     `WITH latest AS (
        SELECT job_url, MAX(generation) AS max_generation
-       FROM job_materials
-       WHERE tenant_id = ?
+       FROM job_materials_artifacts
+       WHERE status = 'approved'
+         AND artifact_type = 'tailored_resume'
        GROUP BY job_url
      )
      SELECT a.job_url, a.metadata_json
@@ -459,7 +460,7 @@ function countOutdatedTailoredArtifacts(
        JOIN latest ON latest.job_url = a.job_url AND latest.max_generation = a.generation
       WHERE a.artifact_type = 'tailored_resume'
         AND a.status = 'approved'`,
-    [tenantId],
+    [],
   );
   return rows.filter((row) => {
     if (!activeJobs.has(row.job_url)) return false;
