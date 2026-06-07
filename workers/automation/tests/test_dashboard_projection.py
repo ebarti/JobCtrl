@@ -208,6 +208,15 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
         """,
         (url, "/tmp/resume.txt", json.dumps(metadata), utc_now()),
     )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'pdf', 120, '{}', ?)
+        """,
+        (url, "/tmp/resume.pdf", utc_now()),
+    )
     record_job_event(conn, url, "tailor", "MaterialsGenerated")
     conn.commit()
 
@@ -221,6 +230,15 @@ def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connectio
     ).fetchone()
 
     assert json.loads(_row_value(row, "metadata_json", "{}")) == metadata
+    synthetic_pdf = conn.execute(
+        """
+        SELECT metadata_json
+        FROM artifact_list_projections
+        WHERE tenant_id = 'local' AND artifact_type = 'tailored_resume_pdf'
+        """
+    ).fetchone()
+
+    assert json.loads(_row_value(synthetic_pdf, "metadata_json", "{}")) == metadata
 
 
 def test_funnel_counts_per_stage(conn: sqlite3.Connection) -> None:
