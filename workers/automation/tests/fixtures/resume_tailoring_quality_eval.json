@@ -176,11 +176,13 @@
       "response": {
         "verdict": "PASS",
         "score": 0.9,
+        "score_rationale": "Overall review fails because the evidence auditor found an unsupported metric.",
         "personas": [
           {
             "persona": "evidence_auditor",
             "verdict": "FAIL",
             "score": 0.2,
+            "score_rationale": "The tailored metric is not supported by the available profile evidence.",
             "blockers": ["The 80% latency claim is unsupported by profile evidence."],
             "warnings": ["Metric wording is too specific for the available evidence."],
             "repair_instructions": ["Use the verified 35% latency reduction claim or remove the metric."]

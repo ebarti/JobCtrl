@@ -1356,6 +1356,7 @@ export interface ArtifactTailoringExplanation {
     ran: boolean;
     passed: boolean | null;
     score: number | null;
+    scoreRationale: string | null;
     threshold: number | null;
     blockers: string[];
     warnings: string[];
@@ -1364,7 +1365,42 @@ export interface ArtifactTailoringExplanation {
       persona: string;
       verdict: string | null;
       score: number | null;
+      scoreRationale: string | null;
+      promptRubric: string | null;
+      blockers: string[];
+      warnings: string[];
+      repairInstructions: string[];
+      scoreBasis: string[];
+      response: {
+        verdict: string | null;
+        score: number | null;
+        scoreRationale: string | null;
+        blockers: string[];
+        warnings: string[];
+        repairInstructions: string[];
+      } | null;
     }>;
+    audit: {
+      model: string | null;
+      schemaVersion: string | null;
+      promptMessages: Array<{ role: string; content: string }>;
+      response: {
+        verdict: string | null;
+        score: number | null;
+        scoreRationale: string | null;
+        blockers: string[];
+        warnings: string[];
+        repairInstructions: string[];
+        personas: Array<{
+          verdict: string | null;
+          score: number | null;
+          scoreRationale: string | null;
+          blockers: string[];
+          warnings: string[];
+          repairInstructions: string[];
+        }>;
+      } | null;
+    } | null;
     skippedReason: string | null;
   } | null;
   reviewFeedback: {

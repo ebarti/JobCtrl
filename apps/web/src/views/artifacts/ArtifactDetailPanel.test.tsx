@@ -147,11 +147,64 @@ describe("<ArtifactDetailPanel>", () => {
         ran: true,
         passed: true,
         score: 0.88,
+        scoreRationale: "All personas passed with residual warnings only.",
         threshold: 0.8,
         blockers: [],
         warnings: ["Bullet could be more concise."],
         repairInstructions: [],
-        personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+        personas: [
+          {
+            persona: "evidence_auditor",
+            verdict: "PASS",
+            score: 0.9,
+            scoreRationale: "Evidence was supported by profile facts.",
+            promptRubric: "Check that every metric, tool, role, company, and achievement is supported.",
+            blockers: [],
+            warnings: [],
+            repairInstructions: [],
+            scoreBasis: ["LLM verdict: PASS", "LLM score: 0.90", "Blockers: none"],
+            response: {
+              verdict: "PASS",
+              score: 0.9,
+              scoreRationale: "Evidence was supported by profile facts.",
+              blockers: [],
+              warnings: [],
+              repairInstructions: [],
+            },
+          },
+        ],
+        audit: {
+          model: "judge-a",
+          schemaVersion: "tailor-adversarial.v2",
+          promptMessages: [
+            {
+              role: "system",
+              content: "Evaluate the tailored resume from every persona below.",
+            },
+            {
+              role: "user",
+              content: "Run the adversarial review and return JSON.",
+            },
+          ],
+          response: {
+            verdict: "PASS",
+            score: 0.88,
+            scoreRationale: "All personas passed with residual warnings only.",
+            blockers: [],
+            warnings: ["Bullet could be more concise."],
+            repairInstructions: [],
+            personas: [
+              {
+                verdict: "PASS",
+                score: 0.9,
+                scoreRationale: "Evidence was supported by profile facts.",
+                blockers: [],
+                warnings: [],
+                repairInstructions: [],
+              },
+            ],
+          },
+        },
         skippedReason: null,
       },
       reviewFeedback: {
@@ -201,6 +254,10 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("Summary was reframed toward platform reliability.")).toBeInTheDocument();
     expect(screen.getByText("Senior backend engineer.")).toBeInTheDocument();
     expect(screen.getByText("Senior platform engineer focused on Kubernetes reliability.")).toBeInTheDocument();
-    expect(screen.getByText("Evidence Auditor: PASS (90%)")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Auditor")).toBeInTheDocument();
+    expect(screen.getByText("Check that every metric, tool, role, company, and achievement is supported.")).toBeInTheDocument();
+    expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
+    expect(screen.getAllByText("All personas passed with residual warnings only.").length).toBeGreaterThan(0);
   });
 });

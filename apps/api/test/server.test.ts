@@ -1974,11 +1974,64 @@ describe("local TypeScript API", () => {
           ran: true,
           passed: true,
           score: 0.88,
+          score_rationale: "All personas passed with no blockers.",
           threshold: 0.8,
           blockers: [],
           warnings: ["Bullet could be more concise."],
           repair_instructions: [],
-          personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+          personas: [
+            {
+              persona: "evidence_auditor",
+              verdict: "PASS",
+              score: 0.9,
+              score_rationale: "Evidence was supported by profile facts.",
+              prompt_rubric: "Check that every metric, tool, role, company, and achievement is supported.",
+              blockers: [],
+              warnings: [],
+              repair_instructions: [],
+              score_basis: ["LLM verdict: PASS", "LLM score: 0.90", "Blockers: none"],
+              response: {
+                verdict: "PASS",
+                score: 0.9,
+                score_rationale: "Evidence was supported by profile facts.",
+                blockers: [],
+                warnings: [],
+                repair_instructions: [],
+              },
+            },
+          ],
+          llm_audit: {
+            model: "judge-a",
+            schema_version: "tailor-adversarial.v2",
+            prompt_messages: [
+              {
+                role: "system",
+                content: "Evaluate the tailored resume from every persona below.",
+              },
+              {
+                role: "user",
+                content: "Run the adversarial review and return JSON.",
+              },
+            ],
+            response: {
+              verdict: "PASS",
+              score: 0.88,
+              score_rationale: "All personas passed with no blockers.",
+              blockers: [],
+              warnings: ["Bullet could be more concise."],
+              repair_instructions: [],
+              personas: [
+                {
+                  verdict: "PASS",
+                  score: 0.9,
+                  score_rationale: "Evidence was supported by profile facts.",
+                  blockers: [],
+                  warnings: [],
+                  repair_instructions: [],
+                },
+              ],
+            },
+          },
           skipped_reason: "",
         },
         review_feedback: {
@@ -2051,8 +2104,49 @@ describe("local TypeScript API", () => {
         adversarialReview: {
           ran: true,
           passed: true,
+          scoreRationale: "All personas passed with no blockers.",
           warnings: ["Bullet could be more concise."],
-          personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+          personas: [
+            {
+              persona: "evidence_auditor",
+              verdict: "PASS",
+              score: 0.9,
+              scoreRationale: "Evidence was supported by profile facts.",
+              promptRubric: "Check that every metric, tool, role, company, and achievement is supported.",
+              blockers: [],
+              warnings: [],
+              repairInstructions: [],
+              scoreBasis: ["LLM verdict: PASS", "LLM score: 0.90", "Blockers: none"],
+              response: {
+                verdict: "PASS",
+                score: 0.9,
+                scoreRationale: "Evidence was supported by profile facts.",
+                blockers: [],
+                warnings: [],
+                repairInstructions: [],
+              },
+            },
+          ],
+          audit: {
+            model: "judge-a",
+            schemaVersion: "tailor-adversarial.v2",
+            promptMessages: [
+              {
+                role: "system",
+                content: "Evaluate the tailored resume from every persona below.",
+              },
+              {
+                role: "user",
+                content: "Run the adversarial review and return JSON.",
+              },
+            ],
+            response: {
+              verdict: "PASS",
+              score: 0.88,
+              scoreRationale: "All personas passed with no blockers.",
+              warnings: ["Bullet could be more concise."],
+            },
+          },
         },
         reviewFeedback: {
           warningRepairAttempted: true,

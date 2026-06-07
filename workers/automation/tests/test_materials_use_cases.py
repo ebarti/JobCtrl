@@ -307,11 +307,13 @@ def _adversarial_pass(*, warnings: list[str] | None = None) -> str:
         {
             "verdict": "PASS",
             "score": 0.91,
+            "score_rationale": "Overall review passed because no persona reported blockers.",
             "personas": [
                 {
                     "persona": "evidence_auditor",
                     "verdict": "PASS",
                     "score": 0.92,
+                    "score_rationale": "Profile evidence supports the tailored claims.",
                     "blockers": [],
                     "warnings": warnings or [],
                     "repair_instructions": [],
@@ -329,11 +331,13 @@ def _adversarial_fail() -> str:
         {
             "verdict": "FAIL",
             "score": 0.31,
+            "score_rationale": "Overall review failed because interview defensibility found an unsupported claim.",
             "personas": [
                 {
                     "persona": "interview_defensibility_critic",
                     "verdict": "FAIL",
                     "score": 0.25,
+                    "score_rationale": "The claim cannot be defended with available profile evidence.",
                     "blockers": ["Claim cannot be defended in interview."],
                     "warnings": [],
                     "repair_instructions": ["Replace the unsupported claim with verified evidence."],
@@ -529,6 +533,11 @@ def test_tailor_use_case_runs_adversarial_review_for_high_fit_jobs(
     assert review["ran"] is True
     assert review["passed"] is True
     assert review["normalized_fit_score"] == 0.9
+    assert review["llm_audit"]["model"]
+    assert "adversarial resume review" in review["llm_audit"]["prompt_messages"][0]["content"]
+    assert review["personas"][0]["score_rationale"] == "Profile evidence supports the tailored claims."
+    assert review["personas"][0]["prompt_rubric"]
+    assert review["personas"][0]["response"]["verdict"] == "PASS"
 
 
 def test_tailor_use_case_retries_adversarial_warnings_before_accepting(

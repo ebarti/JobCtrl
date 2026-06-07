@@ -366,6 +366,25 @@ def _as_string_list(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _audit_prompt_messages(messages: list[LlmMessage]) -> tuple[dict[str, str], ...]:
+    return tuple(
+        {"role": message.role, "content": _audit_prompt_text(message.content)}
+        for message in messages
+    )
+
+
+def _audit_prompt_text(value: object, *, max_chars: int = 2400) -> str:
+    text = str(value or "").replace("\r\n", "\n").strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(
+        r"(?i)(api[_-]?key|password|secret|token|bearer)\s*[:=]\s*\S+",
+        r"\1: [redacted]",
+        text,
+    )
+    return text if len(text) <= max_chars else f"{text[:max_chars - 1]}…"
+
+
 def _candidate_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
     notes: list[str] = []
     validator = record.get("validator") if isinstance(record.get("validator"), dict) else {}
@@ -1506,11 +1525,13 @@ class TailorResumeUseCase:
                 ),
             ),
         ]
+        prompt_messages = _audit_prompt_messages(messages)
+        judge_model = self._llm_policy.effective_judge_model
         try:
             response = self._chat_json_payload(
                 messages,
                 schema=ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
-                model=self._llm_policy.effective_judge_model,
+                model=judge_model,
                 temperature=self._llm_policy.judge_temperature,
                 max_tokens=self._llm_policy.judge_max_tokens,
                 thinking_budget=self._llm_policy.thinking_budget,
@@ -1521,11 +1542,15 @@ class TailorResumeUseCase:
                 threshold=ADVERSARIAL_REVIEW_THRESHOLD,
                 normalized_fit_score=normalized_fit,
                 error=str(exc),
+                model=judge_model,
+                prompt_messages=prompt_messages,
             )
         return AdversarialReviewResult.from_response(
             response,
             threshold=ADVERSARIAL_REVIEW_THRESHOLD,
             normalized_fit_score=normalized_fit,
+            model=judge_model,
+            prompt_messages=prompt_messages,
         )
 
     def _adversarial_failed_verdict(

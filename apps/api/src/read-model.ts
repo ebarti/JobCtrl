@@ -2105,19 +2105,128 @@ function parseAdversarialReview(
     ran,
     passed: metadataBoolean(review.passed),
     score: metadataNumber(review.score),
+    scoreRationale: metadataText(review.score_rationale ?? review.scoreRationale, 360),
     threshold: metadataNumber(review.threshold),
     blockers: metadataTextList(review.blockers, 8, 220),
     warnings: metadataTextList(review.warnings, 8, 220),
     repairInstructions: metadataTextList(review.repair_instructions, 8, 220),
     personas: Array.isArray(review.personas)
-      ? review.personas.filter(isRecord).slice(0, 8).map((persona) => ({
-          persona: metadataText(persona.persona, 80) ?? "reviewer",
-          verdict: metadataText(persona.verdict, 20),
-          score: metadataNumber(persona.score),
-        }))
+      ? review.personas.filter(isRecord).slice(0, 8).map(parseAdversarialPersona)
       : [],
+    audit: parseAdversarialAudit(review.llm_audit ?? review.llmAudit),
     skippedReason: metadataText(review.skipped_reason, 180),
   };
+}
+
+function parseAdversarialPersona(
+  persona: Record<string, unknown>,
+): NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["personas"][number] {
+  const response = parseAdversarialPersonaResponse(persona.response, persona);
+  return {
+    persona: metadataText(persona.persona, 80) ?? "reviewer",
+    verdict: metadataText(persona.verdict, 20),
+    score: metadataNumber(persona.score),
+    scoreRationale: metadataText(persona.score_rationale ?? persona.scoreRationale, 360),
+    promptRubric: metadataText(persona.prompt_rubric ?? persona.promptRubric, 360),
+    blockers: metadataTextList(persona.blockers, 8, 220),
+    warnings: metadataTextList(persona.warnings, 8, 220),
+    repairInstructions: metadataTextList(persona.repair_instructions, 8, 220),
+    scoreBasis: metadataTextList(persona.score_basis ?? persona.scoreBasis, 8, 220),
+    response,
+  };
+}
+
+function parseAdversarialAudit(
+  value: unknown,
+): NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["audit"] {
+  const audit = metadataRecord(value);
+  const rawPromptMessages = audit.prompt_messages ?? audit.promptMessages;
+  const promptMessages = Array.isArray(rawPromptMessages)
+    ? rawPromptMessages
+        .filter(isRecord)
+        .slice(0, 4)
+        .flatMap((message) => {
+          const role = metadataText(message.role, 40) ?? "user";
+          const content = metadataPromptText(message.content, 2400);
+          return content ? [{ role, content }] : [];
+        })
+    : [];
+  const response = parseAdversarialResponse(audit.response);
+  if (
+    !promptMessages.length &&
+    !response &&
+    !metadataText(audit.model, 120) &&
+    !metadataText(audit.schema_version ?? audit.schemaVersion, 120)
+  ) {
+    return null;
+  }
+  return {
+    model: metadataText(audit.model, 120),
+    schemaVersion: metadataText(audit.schema_version ?? audit.schemaVersion, 120),
+    promptMessages,
+    response,
+  };
+}
+
+function parseAdversarialResponse(
+  value: unknown,
+): NonNullable<NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["audit"]>["response"] {
+  const response = metadataRecord(value);
+  const personas = Array.isArray(response.personas)
+    ? response.personas.filter(isRecord).slice(0, 8).map((persona) => ({
+        verdict: metadataText(persona.verdict, 20),
+        score: metadataNumber(persona.score),
+        scoreRationale: metadataText(persona.score_rationale ?? persona.scoreRationale, 360),
+        blockers: metadataTextList(persona.blockers, 8, 220),
+        warnings: metadataTextList(persona.warnings, 8, 220),
+        repairInstructions: metadataTextList(persona.repair_instructions, 8, 220),
+      }))
+    : [];
+  const parsed = {
+    verdict: metadataText(response.verdict, 20),
+    score: metadataNumber(response.score),
+    scoreRationale: metadataText(response.score_rationale ?? response.scoreRationale, 360),
+    blockers: metadataTextList(response.blockers, 8, 220),
+    warnings: metadataTextList(response.warnings, 8, 220),
+    repairInstructions: metadataTextList(response.repair_instructions, 8, 220),
+    personas,
+  };
+  if (
+    !parsed.verdict &&
+    parsed.score === null &&
+    !parsed.scoreRationale &&
+    !parsed.blockers.length &&
+    !parsed.warnings.length &&
+    !parsed.repairInstructions.length &&
+    !parsed.personas.length
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseAdversarialPersonaResponse(
+  value: unknown,
+  fallback: Record<string, unknown>,
+): NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["personas"][number]["response"] {
+  const response = metadataRecord(value);
+  const source = Object.keys(response).length ? response : fallback;
+  const parsed = {
+    verdict: metadataText(source.verdict, 20),
+    score: metadataNumber(source.score),
+    scoreRationale: metadataText(source.score_rationale ?? source.scoreRationale, 360),
+    blockers: metadataTextList(source.blockers, 8, 220),
+    warnings: metadataTextList(source.warnings, 8, 220),
+    repairInstructions: metadataTextList(source.repair_instructions, 8, 220),
+  };
+  return parsed.verdict ||
+    parsed.score !== null ||
+    parsed.scoreRationale ||
+    parsed.blockers.length ||
+    parsed.warnings.length ||
+    parsed.repairInstructions.length
+    ? parsed
+    : null;
 }
 
 function parseTailoringChangeAnnotations(
@@ -2193,6 +2302,21 @@ function metadataText(value: unknown, maxLength = 120): string | null {
     return null;
   }
   return text;
+}
+
+function metadataPromptText(value: unknown, maxLength = 1800): string | null {
+  if (value === null || value === undefined || typeof value === "object") return null;
+  const normalized = String(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!normalized || normalized === "null" || normalized === "undefined") return null;
+  const redacted = normalized.replace(
+    /(api[_-]?key|password|secret|token|bearer)\s*[:=]\s*\S+/gi,
+    "$1: [redacted]",
+  );
+  return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
 }
 
 function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[] {

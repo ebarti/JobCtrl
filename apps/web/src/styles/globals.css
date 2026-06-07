@@ -2175,6 +2175,53 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.persona-audit-list,
+.prompt-audit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.persona-audit,
+.prompt-audit {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.persona-audit header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.persona-audit header span,
+.prompt-audit > b,
+.audit-response > b {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.prompt-audit pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.audit-response {
+  display: grid;
+  gap: 6px;
+}
+
 .detail-list.compact {
   gap: 8px;
 }

@@ -32,6 +32,7 @@ def test_adversarial_review_result_merges_persona_blockers() -> None:
         {
             "verdict": "PASS",
             "score": 0.9,
+            "score_rationale": "Overall pass despite a persona blocker in the fixture.",
             "blockers": [],
             "warnings": ["General warning."],
             "repair_instructions": [],
@@ -40,6 +41,7 @@ def test_adversarial_review_result_merges_persona_blockers() -> None:
                     "persona": "evidence_auditor",
                     "verdict": "FAIL",
                     "score": 0.2,
+                    "score_rationale": "Metric support is missing from profile evidence.",
                     "blockers": ["Metric is unsupported."],
                     "warnings": ["Metric wording is vague."],
                     "repair_instructions": ["Remove the metric."],
@@ -54,3 +56,6 @@ def test_adversarial_review_result_merges_persona_blockers() -> None:
     assert result.blockers == ("Metric is unsupported.",)
     assert result.warnings == ("General warning.", "Metric wording is vague.")
     assert result.repair_instructions == ("Remove the metric.",)
+    assert result.personas[0].score_rationale == "Metric support is missing from profile evidence."
+    assert result.to_dict()["personas"][0]["prompt_rubric"]
+    assert any("Metric support is missing" in item for item in result.to_dict()["personas"][0]["score_basis"])

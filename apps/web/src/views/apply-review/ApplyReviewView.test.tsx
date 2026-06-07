@@ -79,11 +79,64 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     ran: true,
     passed: true,
     score: 0.9,
+    scoreRationale: "All personas passed with no blockers.",
     threshold: 0.8,
     blockers: [],
     warnings: [],
     repairInstructions: [],
-    personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.91 }],
+    personas: [
+      {
+        persona: "evidence_auditor",
+        verdict: "PASS",
+        score: 0.91,
+        scoreRationale: "Evidence was supported by profile facts.",
+        promptRubric: "Check that every metric, tool, role, company, and achievement is supported.",
+        blockers: [],
+        warnings: [],
+        repairInstructions: [],
+        scoreBasis: ["LLM verdict: PASS", "LLM score: 0.91", "Blockers: none"],
+        response: {
+          verdict: "PASS",
+          score: 0.91,
+          scoreRationale: "Evidence was supported by profile facts.",
+          blockers: [],
+          warnings: [],
+          repairInstructions: [],
+        },
+      },
+    ],
+    audit: {
+      model: "judge-a",
+      schemaVersion: "tailor-adversarial.v2",
+      promptMessages: [
+        {
+          role: "system",
+          content: "Evaluate the tailored resume from every persona below.",
+        },
+        {
+          role: "user",
+          content: "Run the adversarial review and return JSON.",
+        },
+      ],
+      response: {
+        verdict: "PASS",
+        score: 0.9,
+        scoreRationale: "All personas passed with no blockers.",
+        blockers: [],
+        warnings: [],
+        repairInstructions: [],
+        personas: [
+          {
+            verdict: "PASS",
+            score: 0.91,
+            scoreRationale: "Evidence was supported by profile facts.",
+            blockers: [],
+            warnings: [],
+            repairInstructions: [],
+          },
+        ],
+      },
+    },
     skippedReason: null,
   },
   reviewFeedback: {
@@ -172,6 +225,12 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(3);
     expect(screen.getByText("93% / minimum 84%")).toBeInTheDocument();
+    expect(screen.getByText("High-fit review")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Auditor")).toBeInTheDocument();
+    expect(screen.getByText("Check that every metric, tool, role, company, and achievement is supported.")).toBeInTheDocument();
+    expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
+    expect(screen.getAllByText("All personas passed with no blockers.").length).toBeGreaterThan(0);
     expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
   });
 

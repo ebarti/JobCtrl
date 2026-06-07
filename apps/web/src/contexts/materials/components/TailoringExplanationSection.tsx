@@ -5,6 +5,17 @@ export interface TailoringExplanationSectionProps {
   readonly className?: string;
 }
 
+type AdversarialReview = NonNullable<ArtifactTailoringExplanation["adversarialReview"]>;
+type PersonaAudit = AdversarialReview["personas"][number];
+type ResponseSummaryValue = {
+  readonly verdict: string | null;
+  readonly score: number | null;
+  readonly scoreRationale: string | null;
+  readonly blockers: readonly string[];
+  readonly warnings: readonly string[];
+  readonly repairInstructions: readonly string[];
+};
+
 function formatToken(value: string | null | undefined): string {
   if (!value) return "-";
   return value
@@ -66,6 +77,74 @@ function TextLineList({ items }: { readonly items: readonly string[] }) {
         <li key={item}>{item}</li>
       ))}
     </ul>
+  );
+}
+
+function ResponseSummary({ response }: { readonly response: ResponseSummaryValue }) {
+  const rows = [
+    response.scoreRationale,
+    ...response.blockers.map((item) => `Blocker: ${item}`),
+    ...response.warnings.map((item) => `Warning: ${item}`),
+    ...response.repairInstructions.map((item) => `Repair: ${item}`),
+  ].filter((item): item is string => Boolean(item));
+  return (
+    <div className="audit-response">
+      <b>
+        {response.verdict ?? "-"} {response.score === null ? "" : `(${scoreText(response.score)})`}
+      </b>
+      {rows.length ? <EvidenceList items={rows} /> : null}
+    </div>
+  );
+}
+
+function PersonaAuditList({ personas }: { readonly personas: readonly PersonaAudit[] }) {
+  return (
+    <div className="persona-audit-list">
+      {personas.map((persona) => (
+        <article className="persona-audit" key={persona.persona}>
+          <header>
+            <b>{formatToken(persona.persona)}</b>
+            <span>
+              {persona.verdict ?? "-"} {persona.score === null ? "" : `(${scoreText(persona.score)})`}
+            </span>
+          </header>
+          <dl className="detail-list compact">
+            {persona.promptRubric ? (
+              <div>
+                <dt>Asked</dt>
+                <dd>{persona.promptRubric}</dd>
+              </div>
+            ) : null}
+            {persona.response ? (
+              <div>
+                <dt>Response</dt>
+                <dd>
+                  <ResponseSummary response={persona.response} />
+                </dd>
+              </div>
+            ) : null}
+            <EvidenceRow label="Why score" items={persona.scoreBasis} />
+          </dl>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function PromptMessageList({
+  messages,
+}: {
+  readonly messages: readonly { readonly role: string; readonly content: string }[];
+}) {
+  return (
+    <div className="prompt-audit-list">
+      {messages.map((message, index) => (
+        <article className="prompt-audit" key={`${message.role}-${index}`}>
+          <b>{formatToken(message.role)}</b>
+          <pre>{message.content}</pre>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -268,22 +347,40 @@ export function TailoringExplanationSection({
                     )}
                   </dd>
                 </div>
+                {explanation.adversarialReview.scoreRationale ? (
+                  <div>
+                    <dt>Why score</dt>
+                    <dd>{explanation.adversarialReview.scoreRationale}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Personas</dt>
                   <dd>
                     {explanation.adversarialReview.personas.length ? (
-                      <EvidenceList
-                        items={explanation.adversarialReview.personas.map((persona) =>
-                          `${formatToken(persona.persona)}: ${persona.verdict ?? "-"} ${
-                            persona.score === null ? "" : `(${Math.round(persona.score * 100)}%)`
-                          }`.trim(),
-                        )}
-                      />
+                      <PersonaAuditList personas={explanation.adversarialReview.personas} />
                     ) : (
                       <span className="muted">none recorded</span>
                     )}
                   </dd>
                 </div>
+                {explanation.adversarialReview.audit?.promptMessages.length ? (
+                  <div>
+                    <dt>LLM request</dt>
+                    <dd>
+                      <PromptMessageList
+                        messages={explanation.adversarialReview.audit.promptMessages}
+                      />
+                    </dd>
+                  </div>
+                ) : null}
+                {explanation.adversarialReview.audit?.response ? (
+                  <div>
+                    <dt>LLM response</dt>
+                    <dd>
+                      <ResponseSummary response={explanation.adversarialReview.audit.response} />
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
             ) : (
               <p className="muted">{explanation.adversarialReview?.skippedReason}</p>
