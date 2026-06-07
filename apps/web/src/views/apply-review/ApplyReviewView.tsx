@@ -176,7 +176,7 @@ function reviewStateLabel(item: ApplyReviewQueueItem): string | null {
   const decidedAt = item.review.decidedAt ? ` · ${formatDateTime(item.review.decidedAt)}` : "";
   switch (item.review.state) {
     case "approved_submit":
-      return `Approved when ready${decidedAt}`;
+      return `Approved for submit${decidedAt}`;
     case "approved_dry_run":
       return `Approved for dry run${decidedAt}`;
     case "deferred":

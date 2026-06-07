@@ -199,7 +199,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText(/Current decision: Approved when ready/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Current decision: Approved for submit/i)).toBeInTheDocument();
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
