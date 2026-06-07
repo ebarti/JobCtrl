@@ -28,6 +28,10 @@ export {
   type OpenArtifactButtonProps,
 } from "./components/OpenArtifactButton.js";
 export {
+  TailoringExplanationSection,
+  type TailoringExplanationSectionProps,
+} from "./components/TailoringExplanationSection.js";
+export {
   RetailorCurrentPolicyButton,
   RetailorJobButton,
   TailorJobButton,

@@ -1,3 +1,4 @@
+import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -5,7 +6,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { routeTree } from "../../routeTree.gen.js";
-import { sampleApplyReviewQueue } from "../../test/fixtures/projections.js";
+import { sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
 import { buildProviderHarness, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
@@ -34,6 +35,66 @@ vi.mock("../jobs/JobDetailDrawer.js", () => ({
   ),
 }));
 
+const sampleTailoringExplanation: ArtifactTailoringExplanation = {
+  targetSeniority: "principal",
+  claimMode: "evidence_reframing",
+  validationMode: "normal",
+  safety: {
+    autoApprovableClaimModes: ["verified_only"],
+    allowAdjacentAchievementDrafts: false,
+    qualityPassed: true,
+  },
+  keywords: {
+    planned: ["platform reliability", "incident response"],
+    covered: ["platform reliability"],
+    missing: ["incident response"],
+  },
+  evidence: {
+    requiredIds: ["ev_platform_reliability"],
+    seniorityIds: ["ev_principal_scope"],
+    representedIds: ["ev_platform_reliability"],
+    missingIds: [],
+    verifiedMetricCount: 2,
+  },
+  quality: {
+    passed: true,
+    errors: [],
+    warnings: [],
+    notes: ["Keyword coverage: 1/2"],
+    metricClaims: ["42%"],
+    repeatedKeywords: [],
+  },
+  judge: {
+    passed: true,
+    verdict: "PASS",
+    score: 0.93,
+    minScore: 0.84,
+    issues: [],
+    unsupportedClaims: [],
+    fabrications: [],
+    missingRequiredEvidence: [],
+    repairInstructions: [],
+  },
+  adversarialReview: {
+    ran: true,
+    passed: true,
+    score: 0.9,
+    threshold: 0.8,
+    blockers: [],
+    warnings: [],
+    repairInstructions: [],
+    personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.91 }],
+    skippedReason: null,
+  },
+  models: {
+    candidateModels: ["generator-a"],
+    selectedModel: "generator-a",
+    selectedCandidate: "candidate-1",
+    judgeModel: "judge-a",
+    attempts: 2,
+  },
+};
+
 describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
@@ -55,6 +116,37 @@ describe("<ApplyReviewView>", () => {
     const resumePdf = screen.getByRole("img", { name: "Tailored resume PDF" });
     expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("surfaces resume tailoring rationale in the apply review workspace", async () => {
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: sampleTailoringExplanation,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
+    expect(screen.getByText("Principal")).toBeInTheDocument();
+    expect(screen.getByText("Why these changes")).toBeInTheDocument();
+    expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(2);
+    expect(screen.getByText("93% / minimum 84%")).toBeInTheDocument();
+    expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
   });
 
   it("opens job detail as an in-place overlay", async () => {
