@@ -44,7 +44,9 @@ judge/adversarial-review results,
 warning-repair status, annotated source-vs-tailored resume changes, high-fit
 persona prompt/response audit, and model selection metadata. Persona warning
 cards expose an expandable audit trail for the stored LLM request and structured
-response behind that judgment. They do not expose raw generator prompts, raw
+response behind that judgment. Keyword payloads include whether resume keyword
+coverage was recorded, so callers do not have to infer missing resume matches
+from target job keywords alone. They do not expose raw generator prompts, raw
 profile payloads, or raw job text; annotation and persona prompt snippets are
 bounded excerpts of the selected source, tailored resume, and adversarial-review
 request.

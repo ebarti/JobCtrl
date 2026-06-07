@@ -279,6 +279,8 @@ export function TailoringExplanationSection({
     explanation.keywords.counts.planned > 0 ||
     explanation.keywords.counts.covered > 0 ||
     explanation.keywords.counts.missing > 0;
+  const hasTargetKeywords = explanation.keywords.counts.planned > 0;
+  const hasResumeKeywordAudit = explanation.keywords.coverageRecorded;
 
   return (
     <section className={className}>
@@ -356,13 +358,15 @@ export function TailoringExplanationSection({
             <dl className="detail-list compact">
               {hasKeywordCounts ? (
                 <div>
-                  <dt>Resume keyword matches</dt>
+                  <dt>Resume match audit</dt>
                   <dd>
-                    {explanation.keywords.counts.covered}/{explanation.keywords.counts.planned} found in resume
+                    {hasResumeKeywordAudit
+                      ? `${explanation.keywords.counts.covered}/${explanation.keywords.counts.planned} found in resume`
+                      : "not recorded for this artifact"}
                   </dd>
                 </div>
               ) : null}
-              {hasKeywordCounts ? (
+              {hasTargetKeywords ? (
                 <div>
                   <dt>Actionable job keywords</dt>
                   <dd>
@@ -374,8 +378,12 @@ export function TailoringExplanationSection({
                 </div>
               ) : null}
               <EvidenceRow label="Target job keywords" items={explanation.keywords.planned} />
-              <EvidenceRow label="Found in tailored resume" items={explanation.keywords.covered} />
-              <EvidenceRow label="No recorded resume match" items={explanation.keywords.missing} />
+              {hasResumeKeywordAudit ? (
+                <>
+                  <EvidenceRow label="Found in tailored resume" items={explanation.keywords.covered} />
+                  <EvidenceRow label="No resume keyword match found" items={explanation.keywords.missing} />
+                </>
+              ) : null}
               <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
               <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
               <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />

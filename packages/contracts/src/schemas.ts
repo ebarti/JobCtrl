@@ -1322,6 +1322,7 @@ export interface ArtifactTailoringExplanation {
     qualityPassed: boolean | null;
   };
   keywords: {
+    coverageRecorded: boolean;
     planned: string[];
     covered: string[];
     missing: string[];

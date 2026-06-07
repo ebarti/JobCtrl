@@ -2065,18 +2065,22 @@ function parseTailoringExplanation(
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
   const reviewFeedback = metadataRecord(metadata.review_feedback);
   const judgeMinScore = metadataNumber(metadata.judge_min_score);
+  const coverageRecorded =
+    Array.isArray(keywordCoverage.covered) || Array.isArray(keywordCoverage.missing);
   const targetKeywordCandidates = keywordCandidates(
     qualityPlan.job_keywords,
     options.jobKeywords,
-    keywordCoverage.covered,
-    keywordCoverage.missing,
+    coverageRecorded ? keywordCoverage.covered : undefined,
+    coverageRecorded ? keywordCoverage.missing : undefined,
   );
-  const coveredKeywordCandidates = keywordCandidates(keywordCoverage.covered);
+  const coveredKeywordCandidates = coverageRecorded ? keywordCandidates(keywordCoverage.covered) : [];
   const coveredKeywordKeys = new Set(coveredKeywordCandidates.map((candidate) => candidate.key));
-  const missingKeywordCandidates = dedupeKeywordCandidates([
-    ...keywordCandidates(keywordCoverage.missing),
-    ...targetKeywordCandidates.filter((candidate) => !coveredKeywordKeys.has(candidate.key)),
-  ]).filter((candidate) => !coveredKeywordKeys.has(candidate.key));
+  const missingKeywordCandidates = coverageRecorded
+    ? dedupeKeywordCandidates([
+        ...keywordCandidates(keywordCoverage.missing),
+        ...targetKeywordCandidates.filter((candidate) => !coveredKeywordKeys.has(candidate.key)),
+      ]).filter((candidate) => !coveredKeywordKeys.has(candidate.key))
+    : [];
   const plannedKeywordAudit = keywordAuditFromCandidates(targetKeywordCandidates, 32);
   const coveredKeywordAudit = keywordAuditFromCandidates(coveredKeywordCandidates, 32);
   const missingKeywordAudit = keywordAuditFromCandidates(missingKeywordCandidates, 32);
@@ -2084,6 +2088,7 @@ function parseTailoringExplanation(
     rawErrors: qualityChecks.errors,
     rawWarnings: qualityChecks.warnings,
     rawNotes: qualityChecks.notes,
+    coverageRecorded,
     plannedCount: plannedKeywordAudit.total,
     coveredCount: coveredKeywordAudit.total,
   });
@@ -2098,6 +2103,7 @@ function parseTailoringExplanation(
       qualityPassed: metadataBoolean(qualityChecks.passed),
     },
     keywords: {
+      coverageRecorded,
       planned: plannedKeywordAudit.displayed,
       covered: coveredKeywordAudit.displayed,
       missing: missingKeywordAudit.displayed,
@@ -2412,24 +2418,26 @@ function cleanKeywordQualityMessages({
   rawErrors,
   rawWarnings,
   rawNotes,
+  coverageRecorded,
   plannedCount,
   coveredCount,
 }: {
   rawErrors: unknown;
   rawWarnings: unknown;
   rawNotes: unknown;
+  coverageRecorded: boolean;
   plannedCount: number;
   coveredCount: number;
 }): { errors: string[]; warnings: string[]; notes: string[] } {
   const errors = metadataTextList(rawErrors, 8, 220).filter(notKeywordCoverageMessage);
   const warnings = metadataTextList(rawWarnings, 8, 220).filter(notKeywordCoverageMessage);
   const notes = metadataTextList(rawNotes, 8, 220).filter(notKeywordCoverageMessage);
-  if (plannedCount >= 4 && coveredCount === 0) {
+  if (coverageRecorded && plannedCount >= 4 && coveredCount === 0) {
     errors.push("Keyword coverage extremely empty: no target job keywords covered");
-  } else if (plannedCount >= 4 && coveredCount / plannedCount < 0.25) {
+  } else if (coverageRecorded && plannedCount >= 4 && coveredCount / plannedCount < 0.25) {
     warnings.push(`Low keyword coverage: covered ${coveredCount}/${plannedCount} target keywords`);
   }
-  if (plannedCount > 0 && coveredCount > 0) {
+  if (coverageRecorded && plannedCount > 0 && coveredCount > 0) {
     notes.push(`Keyword coverage: ${coveredCount}/${plannedCount}`);
   }
   return {

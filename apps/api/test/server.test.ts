@@ -2100,6 +2100,7 @@ describe("local TypeScript API", () => {
         claimMode: "evidence_reframing",
         validationMode: "normal",
         keywords: {
+          coverageRecorded: true,
           planned: [
             "platform reliability",
             "typescript",
@@ -2250,6 +2251,70 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(response.json())).not.toContain("5teams");
     expect(JSON.stringify(response.json())).not.toContain("2service");
     expect(JSON.stringify(response.json())).not.toContain("15engineers");
+
+    await app.close();
+  });
+
+  it("does not treat job keywords as missing when resume keyword coverage was not recorded", async () => {
+    const resumePath = path.join(tempDir, "tailoring-no-coverage-resume.txt");
+    fs.writeFileSync(resumePath, "tailored resume with AWS, GCP, Java, and observability");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-no-coverage",
+      title: "Platform Engineering Lead",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+    });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-no-coverage", 1, 9, {
+      keywords: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code"],
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-no-coverage",
+      artifactId: "artifact-tailoring-no-coverage",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata: {
+        quality_checks: {
+          errors: ["Keyword coverage extremely empty: no target job keywords covered"],
+          warnings: [],
+          notes: [],
+        },
+      },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-no-coverage",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      tailoringExplanation: {
+        keywords: {
+          coverageRecorded: false,
+          planned: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code"],
+          covered: [],
+          missing: [],
+          counts: {
+            planned: 5,
+            covered: 0,
+            missing: 0,
+          },
+        },
+        quality: {
+          errors: [],
+          warnings: [],
+          notes: [],
+        },
+      },
+    });
+    expect(JSON.stringify(response.json().tailoringExplanation.quality)).not.toContain("Keyword coverage");
 
     await app.close();
   });

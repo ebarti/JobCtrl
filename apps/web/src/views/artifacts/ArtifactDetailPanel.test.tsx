@@ -113,6 +113,7 @@ describe("<ArtifactDetailPanel>", () => {
         qualityPassed: true,
       },
       keywords: {
+        coverageRecorded: true,
         planned: ["platform reliability", "typescript"],
         covered: ["platform reliability"],
         missing: ["typescript"],
@@ -259,7 +260,8 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("2 total")).toBeInTheDocument();
     expect(screen.getByText("Target job keywords")).toBeInTheDocument();
     expect(screen.getByText("Found in tailored resume")).toBeInTheDocument();
-    expect(screen.getByText("No recorded resume match")).toBeInTheDocument();
+    expect(screen.getByText("No resume keyword match found")).toBeInTheDocument();
+    expect(screen.queryByText("No recorded resume match")).not.toBeInTheDocument();
     expect(screen.queryByText("Not recorded as covered")).not.toBeInTheDocument();
     expect(screen.queryByText("Displayed target keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("Filtered covered keywords")).not.toBeInTheDocument();
@@ -292,5 +294,88 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
     expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
     expect(screen.getAllByText("All personas passed with residual warnings only.").length).toBeGreaterThan(0);
+  });
+
+  it("does not show missing resume keyword matches when coverage was not recorded", async () => {
+    renderArtifactRoute(<ArtifactDetailPanel artifactId="artifact-preview" />, "approved", {
+      targetSeniority: null,
+      claimMode: null,
+      validationMode: null,
+      safety: {
+        autoApprovableClaimModes: [],
+        allowAdjacentAchievementDrafts: null,
+        qualityPassed: null,
+      },
+      keywords: {
+        coverageRecorded: false,
+        planned: ["AWS", "GCP", "Java", "Observability"],
+        covered: [],
+        missing: [],
+        filtered: {
+          planned: [],
+          covered: [],
+          missing: [],
+        },
+        counts: {
+          planned: 4,
+          covered: 0,
+          missing: 0,
+          displayedPlanned: 4,
+          displayedCovered: 0,
+          displayedMissing: 0,
+          filteredPlanned: 0,
+          filteredCovered: 0,
+          filteredMissing: 0,
+        },
+      },
+      evidence: {
+        requiredIds: [],
+        seniorityIds: [],
+        representedIds: [],
+        missingIds: [],
+        verifiedMetricCount: null,
+      },
+      quality: {
+        passed: null,
+        errors: [],
+        warnings: [],
+        notes: [],
+        metricClaims: [],
+        repeatedKeywords: [],
+      },
+      judge: {
+        passed: null,
+        verdict: null,
+        score: null,
+        minScore: null,
+        issues: [],
+        unsupportedClaims: [],
+        fabrications: [],
+        missingRequiredEvidence: [],
+        repairInstructions: [],
+      },
+      adversarialReview: null,
+      reviewFeedback: {
+        warningRepairAttempted: null,
+        acceptedWithResidualWarnings: null,
+        acceptedWarnings: [],
+      },
+      annotatedChanges: [],
+      models: {
+        candidateModels: [],
+        selectedModel: null,
+        selectedCandidate: null,
+        judgeModel: null,
+        attempts: null,
+      },
+    });
+
+    expect(await screen.findByText("Resume match audit")).toBeInTheDocument();
+    expect(screen.getByText("not recorded for this artifact")).toBeInTheDocument();
+    expect(screen.getByText("Target job keywords")).toBeInTheDocument();
+    expect(screen.getByText("AWS")).toBeInTheDocument();
+    expect(screen.queryByText("Found in tailored resume")).not.toBeInTheDocument();
+    expect(screen.queryByText("No resume keyword match found")).not.toBeInTheDocument();
+    expect(screen.queryByText(/0\/4 found in resume/i)).not.toBeInTheDocument();
   });
 });

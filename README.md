@@ -444,6 +444,8 @@ warning-repair status,
 annotated source-vs-tailored resume changes, high-fit persona prompt/response
 audit, and model summary. Persona warnings include an expandable audit trail for
 the stored LLM request and structured response behind that judgment. The
+keyword section marks when a resume keyword match audit was not recorded, instead
+of treating target terms as missing from the resume.
 rationale does not expose raw generator prompts, raw profile payloads, or raw job
 text; annotated changes and persona prompts are bounded excerpts explaining what
 was reframed, what was asked, how the reviewer responded, and why the score was

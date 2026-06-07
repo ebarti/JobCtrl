@@ -45,6 +45,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     qualityPassed: true,
   },
   keywords: {
+    coverageRecorded: true,
     planned: ["platform reliability", "incident response", "kubernetes"],
     covered: ["platform reliability"],
     missing: ["incident response"],
@@ -232,11 +233,13 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
     expect(screen.getByText("Principal")).toBeInTheDocument();
     expect(screen.getByText("Why these changes")).toBeInTheDocument();
+    expect(screen.getByText("Resume match audit")).toBeInTheDocument();
     expect(screen.getByText("1/3 found in resume")).toBeInTheDocument();
     expect(screen.getByText("3 total")).toBeInTheDocument();
     expect(screen.getByText("Target job keywords")).toBeInTheDocument();
     expect(screen.getByText("Found in tailored resume")).toBeInTheDocument();
-    expect(screen.getByText("No recorded resume match")).toBeInTheDocument();
+    expect(screen.getByText("No resume keyword match found")).toBeInTheDocument();
+    expect(screen.queryByText("No recorded resume match")).not.toBeInTheDocument();
     expect(screen.queryByText("Not recorded as covered")).not.toBeInTheDocument();
     expect(screen.queryByText("Displayed target keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("Filtered missing keywords")).not.toBeInTheDocument();
