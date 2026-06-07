@@ -165,6 +165,9 @@ _LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
     "worldwide",
 }
 _HIGH_SIGNAL_DESCRIPTION_KEYWORDS: set[str] = {
+    "ai",
+    "ai-first",
+    "ai-native",
     "api",
     "architecture",
     "automation",
@@ -201,6 +204,7 @@ _HIGH_SIGNAL_DESCRIPTION_KEYWORDS: set[str] = {
     "redis",
     "reliability",
     "resiliency",
+    "saas",
     "scalability",
     "security",
     "sre",
@@ -213,11 +217,14 @@ _HIGH_SIGNAL_DESCRIPTION_PHRASES: tuple[str, ...] = (
     "ci/cd",
     "cloud governance",
     "cloud infrastructure",
+    "cloud-native",
     "cost optimization",
+    "developer platform",
     "developer productivity",
     "disaster recovery",
     "incident management",
     "infrastructure as code",
+    "platform as product",
     "platform engineering",
     "service reliability",
 )

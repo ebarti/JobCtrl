@@ -281,29 +281,50 @@ export function TailoringExplanationSection({
     explanation.keywords.counts.missing > 0;
   const hasTargetKeywords = explanation.keywords.counts.planned > 0;
   const hasResumeKeywordAudit = explanation.keywords.coverageRecorded;
+  const hasSummaryData =
+    Boolean(explanation.targetSeniority) ||
+    Boolean(explanation.claimMode) ||
+    explanation.quality.passed !== null ||
+    explanation.safety.qualityPassed !== null ||
+    explanation.judge.score !== null ||
+    explanation.judge.minScore !== null;
+  const hasSafetyData =
+    Boolean(explanation.validationMode) ||
+    explanation.safety.autoApprovableClaimModes.length > 0 ||
+    explanation.safety.allowAdjacentAchievementDrafts !== null ||
+    explanation.evidence.verifiedMetricCount !== null;
+  const hasGenerationContext =
+    Boolean(explanation.models.selectedModel) ||
+    Boolean(explanation.models.judgeModel) ||
+    explanation.models.candidateModels.length > 0 ||
+    Boolean(explanation.models.selectedCandidate) ||
+    explanation.models.attempts !== null;
+  const hasGenerationAuditData = hasSummaryData || hasSafetyData || hasGenerationContext;
 
   return (
     <section className={className}>
       <h3>Tailoring rationale</h3>
       <div className="tailoring-evidence">
-        <dl className="evidence-summary-grid">
-          <div>
-            <dt>Target seniority</dt>
-            <dd>{formatToken(explanation.targetSeniority)}</dd>
-          </div>
-          <div>
-            <dt>Claim mode</dt>
-            <dd>{formatToken(explanation.claimMode)}</dd>
-          </div>
-          <div>
-            <dt>Quality gate</dt>
-            <dd>{yesNo(explanation.quality.passed ?? explanation.safety.qualityPassed)}</dd>
-          </div>
-          <div>
-            <dt>Judge score</dt>
-            <dd>{scoreText(explanation.judge.score, explanation.judge.minScore)}</dd>
-          </div>
-        </dl>
+        {hasSummaryData ? (
+          <dl className="evidence-summary-grid">
+            <div>
+              <dt>Target seniority</dt>
+              <dd>{formatToken(explanation.targetSeniority)}</dd>
+            </div>
+            <div>
+              <dt>Claim mode</dt>
+              <dd>{formatToken(explanation.claimMode)}</dd>
+            </div>
+            <div>
+              <dt>Quality gate</dt>
+              <dd>{yesNo(explanation.quality.passed ?? explanation.safety.qualityPassed)}</dd>
+            </div>
+            <div>
+              <dt>Judge score</dt>
+              <dd>{scoreText(explanation.judge.score, explanation.judge.minScore)}</dd>
+            </div>
+          </dl>
+        ) : null}
 
         {explanation.annotatedChanges.length ? (
           <div className="evidence-block">
@@ -392,33 +413,39 @@ export function TailoringExplanationSection({
           </div>
         ) : null}
 
-        <div className="evidence-block">
-          <h4>Safety checks</h4>
-          <dl className="detail-list compact">
-            <div>
-              <dt>Validation mode</dt>
-              <dd>{formatToken(explanation.validationMode)}</dd>
-            </div>
-            <div>
-              <dt>Auto-approvable claims</dt>
-              <dd>
-                {explanation.safety.autoApprovableClaimModes.length ? (
-                  <EvidenceList items={explanation.safety.autoApprovableClaimModes.map(formatToken)} />
-                ) : (
-                  <span className="muted">none recorded</span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>Adjacent drafts allowed</dt>
-              <dd>{yesNo(explanation.safety.allowAdjacentAchievementDrafts)}</dd>
-            </div>
-            <div>
-              <dt>Verified metrics</dt>
-              <dd>{explanation.evidence.verifiedMetricCount ?? "-"}</dd>
-            </div>
-          </dl>
-        </div>
+        {hasSafetyData ? (
+          <div className="evidence-block">
+            <h4>Safety checks</h4>
+            <dl className="detail-list compact">
+              {explanation.validationMode ? (
+                <div>
+                  <dt>Validation mode</dt>
+                  <dd>{formatToken(explanation.validationMode)}</dd>
+                </div>
+              ) : null}
+              {explanation.safety.autoApprovableClaimModes.length ? (
+                <div>
+                  <dt>Auto-approvable claims</dt>
+                  <dd>
+                    <EvidenceList items={explanation.safety.autoApprovableClaimModes.map(formatToken)} />
+                  </dd>
+                </div>
+              ) : null}
+              {explanation.safety.allowAdjacentAchievementDrafts !== null ? (
+                <div>
+                  <dt>Adjacent drafts allowed</dt>
+                  <dd>{yesNo(explanation.safety.allowAdjacentAchievementDrafts)}</dd>
+                </div>
+              ) : null}
+              {explanation.evidence.verifiedMetricCount !== null ? (
+                <div>
+                  <dt>Verified metrics</dt>
+                  <dd>{explanation.evidence.verifiedMetricCount}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        ) : null}
 
         {showReviewOutcome ? (
           <div className="evidence-block">
@@ -498,37 +525,52 @@ export function TailoringExplanationSection({
           </div>
         ) : null}
 
-        <div className="evidence-block">
-          <h4>Generation context</h4>
-          <dl className="detail-list compact">
-            <div>
-              <dt>Selected model</dt>
-              <dd>{explanation.models.selectedModel ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Judge model</dt>
-              <dd>{explanation.models.judgeModel ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Candidate models</dt>
-              <dd>
-                {explanation.models.candidateModels.length ? (
-                  <EvidenceList items={explanation.models.candidateModels} />
-                ) : (
-                  <span className="muted">none recorded</span>
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>Selected candidate</dt>
-              <dd>{explanation.models.selectedCandidate ?? "-"}</dd>
-            </div>
-            <div>
-              <dt>Attempts</dt>
-              <dd>{explanation.models.attempts ?? "-"}</dd>
-            </div>
-          </dl>
-        </div>
+        {hasGenerationContext ? (
+          <div className="evidence-block">
+            <h4>Generation context</h4>
+            <dl className="detail-list compact">
+              {explanation.models.selectedModel ? (
+                <div>
+                  <dt>Selected model</dt>
+                  <dd>{explanation.models.selectedModel}</dd>
+                </div>
+              ) : null}
+              {explanation.models.judgeModel ? (
+                <div>
+                  <dt>Judge model</dt>
+                  <dd>{explanation.models.judgeModel}</dd>
+                </div>
+              ) : null}
+              {explanation.models.candidateModels.length ? (
+                <div>
+                  <dt>Candidate models</dt>
+                  <dd>
+                    <EvidenceList items={explanation.models.candidateModels} />
+                  </dd>
+                </div>
+              ) : null}
+              {explanation.models.selectedCandidate ? (
+                <div>
+                  <dt>Selected candidate</dt>
+                  <dd>{explanation.models.selectedCandidate}</dd>
+                </div>
+              ) : null}
+              {explanation.models.attempts !== null ? (
+                <div>
+                  <dt>Attempts</dt>
+                  <dd>{explanation.models.attempts}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        ) : null}
+
+        {!hasGenerationAuditData && hasResumeKeywordAudit ? (
+          <div className="evidence-block">
+            <h4>Generation audit</h4>
+            <p className="muted">not recorded for this artifact</p>
+          </div>
+        ) : null}
       </div>
     </section>
   );

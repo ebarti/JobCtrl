@@ -1892,6 +1892,8 @@ describe("local TypeScript API", () => {
       site: "EvidenceCo",
       fitScore: 9,
       tailoredPath: resumePath,
+      fullDescription:
+        "Senior platform reliability role covering Platform Engineering, Kubernetes, AWS, GCP, CI/CD, Infrastructure as Code, Java, Node.js, Observability, Cost Optimization, Developer Productivity, and Scalability.",
     });
     insertScore(seedDb, "https://example.com/jobs/tailoring-evidence", 1, 9, {
       keywords: [
@@ -2266,9 +2268,11 @@ describe("local TypeScript API", () => {
       site: "EvidenceCo",
       fitScore: 9,
       tailoredPath: resumePath,
+      fullDescription:
+        "Platform Engineering Lead with AWS, GCP, Java, Observability, and Infrastructure as Code responsibilities.",
     });
     insertScore(seedDb, "https://example.com/jobs/tailoring-no-coverage", 1, 9, {
-      keywords: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code"],
+      keywords: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code", "Multi-region"],
     });
     insertMaterialsGeneration(seedDb, {
       jobUrl: "https://example.com/jobs/tailoring-no-coverage",
@@ -2298,22 +2302,83 @@ describe("local TypeScript API", () => {
       tailoringExplanation: {
         keywords: {
           coverageRecorded: true,
-          planned: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code"],
+          planned: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code", "Platform Engineering"],
           covered: ["AWS", "GCP", "Java", "Observability"],
-          missing: ["Infrastructure as Code"],
+          missing: ["Infrastructure as Code", "Platform Engineering"],
           counts: {
-            planned: 5,
+            planned: 6,
             covered: 4,
-            missing: 1,
+            missing: 2,
           },
         },
         quality: {
           errors: [],
           warnings: [],
-          notes: ["Keyword coverage: 4/5"],
+          notes: ["Keyword coverage: 4/6"],
         },
       },
     });
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("Multi-region");
+
+    await app.close();
+  });
+
+  it("grounds audit keywords in job text instead of score-only inferred terms", async () => {
+    const resumePath = path.join(tempDir, "tailoring-job-text-keywords-resume.txt");
+    fs.writeFileSync(resumePath, "Resume with CI/CD developer platform delivery.");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-job-text-keywords",
+      title: "Platform Director",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+      fullDescription: "We need AWS, CI/CD, and Developer Platform leadership.",
+    });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-job-text-keywords", 1, 9, {
+      keywords: ["Developer Platform", "CI/CD", "Multi-region"],
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-job-text-keywords",
+      artifactId: "artifact-tailoring-job-text-keywords",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata: {
+        quality_checks: {
+          errors: [],
+          warnings: [],
+          notes: [],
+        },
+      },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-job-text-keywords",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      tailoringExplanation: {
+        keywords: {
+          coverageRecorded: true,
+          planned: ["Developer Platform", "CI/CD", "AWS"],
+          covered: ["Developer Platform", "CI/CD"],
+          missing: ["AWS"],
+          counts: {
+            planned: 3,
+            covered: 2,
+            missing: 1,
+          },
+        },
+      },
+    });
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("Multi-region");
 
     await app.close();
   });
@@ -4923,6 +4988,8 @@ function insertJob(
     fitScore?: number | null;
     scoredAt?: string | null;
     tailoredPath?: string;
+    description?: string;
+    fullDescription?: string;
   },
 ): void {
   db.prepare(
@@ -4940,8 +5007,8 @@ function insertJob(
     "",
     "2026-04-29T10:00:00+00:00",
     job.url,
-    "Short description",
-    "Long description",
+    job.description ?? "Short description",
+    job.fullDescription ?? "Long description",
     "2026-04-29T10:01:00+00:00",
     job.fitScore ?? null,
     "Good fit",

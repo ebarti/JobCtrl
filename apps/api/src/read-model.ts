@@ -1969,6 +1969,9 @@ const LOW_SIGNAL_KEYWORDS = new Set([
   "worldwide",
 ]);
 const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
+  "ai",
+  "ai-first",
+  "ai-native",
   "architecture",
   "automation",
   "aws",
@@ -2003,11 +2006,45 @@ const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
   "redis",
   "reliability",
   "resiliency",
+  "saas",
   "scalability",
   "security",
   "sre",
   "terraform",
   "typescript",
+]);
+const ACTIONABLE_JOB_PHRASES = [
+  "api performance",
+  "backend systems",
+  "ci/cd",
+  "cloud governance",
+  "cloud infrastructure",
+  "cloud-native",
+  "cost optimization",
+  "developer platform",
+  "developer productivity",
+  "disaster recovery",
+  "incident management",
+  "infrastructure as code",
+  "platform as product",
+  "platform engineering",
+  "service reliability",
+];
+const JOB_KEYWORD_DISPLAY_OVERRIDES = new Map([
+  ["ai", "AI"],
+  ["ai-first", "AI-first"],
+  ["ai-native", "AI-native"],
+  ["api", "API"],
+  ["aws", "AWS"],
+  ["azure", "Azure"],
+  ["ci/cd", "CI/CD"],
+  ["cicd", "CI/CD"],
+  ["gcp", "GCP"],
+  ["javascript", "JavaScript"],
+  ["node.js", "Node.js"],
+  ["saas", "SaaS"],
+  ["sre", "SRE"],
+  ["typescript", "TypeScript"],
 ]);
 
 function tailoringExplanationForArtifact(
@@ -2043,16 +2080,30 @@ function tailoringExplanationForArtifact(
 }
 
 function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
-  const job = getRow<{ score_keywords_json: string | null }>(
+  const job = getRow<{
+    title: string | null;
+    description: string | null;
+    full_description: string | null;
+    score_keywords_json: string | null;
+  }>(
     db,
-    `SELECT score_keywords_json
+    `SELECT title, description, full_description, score_keywords_json
        FROM job_list_projections
       WHERE tenant_id = ?
         AND job_id = ?
       LIMIT 1`,
     [row.tenant_id, row.job_id],
   );
-  return parseScoreKeywords(job?.score_keywords_json ?? null);
+  if (!job) return [];
+
+  const jobText = [job.title, job.description, job.full_description].filter(Boolean).join("\n");
+  const scoreCandidates = keywordCandidates(parseScoreKeywords(job.score_keywords_json ?? null)).filter((candidate) =>
+    textContainsNormalizedKeyword(jobText, candidate.key),
+  );
+  const descriptionCandidates = extractJobDescriptionKeywordCandidates(jobText);
+  return pruneSubsumedSingleKeywords(dedupeKeywordCandidates([...scoreCandidates, ...descriptionCandidates])).map(
+    (candidate) => candidate.text,
+  );
 }
 
 function tailoringResumeTextForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string | null {
@@ -2102,9 +2153,8 @@ function parseTailoringExplanation(
   const judgeMinScore = metadataNumber(metadata.judge_min_score);
   const savedCoverageRecorded =
     Array.isArray(keywordCoverage.covered) || Array.isArray(keywordCoverage.missing);
-  const targetKeywordCandidates = keywordCandidates(
-    qualityPlan.job_keywords,
-    options.jobKeywords,
+  const targetKeywordCandidates = pruneSubsumedSingleKeywords(
+    keywordCandidates(qualityPlan.job_keywords, options.jobKeywords),
   );
   const textCoverage = keywordCoverageFromResumeText(targetKeywordCandidates, options.resumeText);
   const coverageRecorded = textCoverage !== null || savedCoverageRecorded;
@@ -2531,6 +2581,34 @@ function metadataKeywordCandidates(value: unknown, maxLength = 120): KeywordCand
   return candidates;
 }
 
+function extractJobDescriptionKeywordCandidates(value: string): KeywordCandidate[] {
+  const normalizedText = value.toLowerCase();
+  const candidates: KeywordCandidate[] = [];
+  for (const phrase of ACTIONABLE_JOB_PHRASES) {
+    const key = normalizedKeywordKey(phrase);
+    if (!key || !textContainsNormalizedKeyword(normalizedText, key)) continue;
+    candidates.push({ key, text: displayJobKeyword(key) });
+  }
+  for (const rawToken of normalizedText.match(KEYWORD_TOKEN_RE) ?? []) {
+    const key = normalizedKeywordKey(rawToken);
+    if (!key || !HIGH_SIGNAL_SINGLE_KEYWORDS.has(key) || !isMeaningfulDisplayKeyword(rawToken, key)) {
+      continue;
+    }
+    candidates.push({ key, text: displayJobKeyword(key) });
+  }
+  return dedupeKeywordCandidates(candidates);
+}
+
+function textContainsNormalizedKeyword(text: string, normalizedKeyword: string): boolean {
+  return resumeContainsKeyword(text, normalizedKeyword);
+}
+
+function displayJobKeyword(normalizedKeyword: string): string {
+  const override = JOB_KEYWORD_DISPLAY_OVERRIDES.get(normalizedKeyword);
+  if (override) return override;
+  return normalizedKeyword.replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
 function dedupeKeywordCandidates(candidates: readonly KeywordCandidate[]): KeywordCandidate[] {
   const seen = new Set<string>();
   const out: KeywordCandidate[] = [];
@@ -2540,6 +2618,18 @@ function dedupeKeywordCandidates(candidates: readonly KeywordCandidate[]): Keywo
     out.push(candidate);
   }
   return out;
+}
+
+function pruneSubsumedSingleKeywords(candidates: readonly KeywordCandidate[]): KeywordCandidate[] {
+  return candidates.filter((candidate) => {
+    const terms = candidate.key.split(" ").filter(Boolean);
+    if (terms.length !== 1) return true;
+    return !candidates.some((other) => {
+      if (other.key === candidate.key) return false;
+      const otherTerms = other.key.split(" ").filter(Boolean);
+      return otherTerms.length > 1 && otherTerms.includes(candidate.key);
+    });
+  });
 }
 
 function keywordCoverageFromResumeText(

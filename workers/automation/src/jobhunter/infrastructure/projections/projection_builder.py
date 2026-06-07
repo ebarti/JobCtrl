@@ -517,6 +517,7 @@ class ProjectionBuilder:
                 size_bytes=a.get("size_bytes"),
                 created_at=a.get("created_at"),
                 generation=a.get("generation"),
+                metadata_json=a.get("metadata_json"),
             )
             for a in artifacts
         ]
@@ -774,7 +775,7 @@ class ProjectionBuilder:
             for row in self._conn.execute(
                 """
                 SELECT artifact_id, artifact_type, status, path, created_at,
-                       size_bytes, generation
+                       size_bytes, generation, metadata_json
                 FROM job_materials_artifacts
                 WHERE job_url = ?
                 """,
@@ -798,6 +799,7 @@ class ProjectionBuilder:
                         "created_at": _row_nullable_str(row, "created_at"),
                         "size_bytes": _row_nullable_int(row, "size_bytes"),
                         "generation": _row_nullable_int(row, "generation"),
+                        "metadata_json": _row_nullable_str(row, "metadata_json"),
                     }
                 )
         except sqlite3.OperationalError:
