@@ -356,9 +356,9 @@ export function TailoringExplanationSection({
             <dl className="detail-list compact">
               {hasKeywordCounts ? (
                 <div>
-                  <dt>Actionable keyword coverage</dt>
+                  <dt>Resume keyword matches</dt>
                   <dd>
-                    {explanation.keywords.counts.covered}/{explanation.keywords.counts.planned} recorded covered
+                    {explanation.keywords.counts.covered}/{explanation.keywords.counts.planned} found in resume
                   </dd>
                 </div>
               ) : null}
@@ -374,8 +374,8 @@ export function TailoringExplanationSection({
                 </div>
               ) : null}
               <EvidenceRow label="Target job keywords" items={explanation.keywords.planned} />
-              <EvidenceRow label="Recorded covered keywords" items={explanation.keywords.covered} />
-              <EvidenceRow label="Not recorded as covered" items={explanation.keywords.missing} />
+              <EvidenceRow label="Found in tailored resume" items={explanation.keywords.covered} />
+              <EvidenceRow label="No recorded resume match" items={explanation.keywords.missing} />
               <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
               <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
               <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />
