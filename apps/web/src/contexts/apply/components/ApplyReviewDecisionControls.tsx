@@ -8,7 +8,7 @@ export interface ApplyReviewDecisionControlsProps {
 }
 
 const DECISION_LABELS: Record<ApplyReviewDecisionValue, string> = {
-  approve_submit: "Approve when ready",
+  approve_submit: "Approve submit",
   approve_dry_run: "Approve dry run",
   defer: "Defer",
   decline: "Decline",
@@ -30,9 +30,19 @@ const PRIMARY_DECISIONS: readonly ApplyReviewDecisionValue[] = [
   "decline",
 ];
 
+function hasCompletedDryRun(item: ApplyReviewQueueItem): boolean {
+  const run = item.latestApplyRun;
+  if (!run?.dryRun) return false;
+  const status = `${run.status} ${run.result ?? ""}`.toLowerCase();
+  return status.includes("succeeded") || status.includes("complete");
+}
+
 export function ApplyReviewDecisionControls({ item }: ApplyReviewDecisionControlsProps) {
   const decision = useApplyReviewDecisionMutation();
   const pending = decision.isPending;
+  const primaryDecisions = PRIMARY_DECISIONS.filter(
+    (value) => value !== "approve_submit" || hasCompletedDryRun(item),
+  );
 
   const submitDecision = (value: ApplyReviewDecisionValue) => {
     decision.mutate({
@@ -47,7 +57,7 @@ export function ApplyReviewDecisionControls({ item }: ApplyReviewDecisionControl
 
   return (
     <div className="apply-review-actions">
-      {PRIMARY_DECISIONS.map((value) => (
+      {primaryDecisions.map((value) => (
         <Button
           key={value}
           size="sm"

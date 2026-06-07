@@ -238,6 +238,39 @@ describe("<ApplyReviewView>", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides submit approval until a dry run has completed", async () => {
+    const noDryRunQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              latestApplyRun: null,
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => noDryRunQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: /Approve dry run for Principal Platform Engineer/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /Approve submit for Principal Platform Engineer/i,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the verbatim job post markdown without injecting raw html", async () => {
     const markdownQueue = {
       ...sampleApplyReviewQueue,
@@ -344,7 +377,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: /approve when ready for principal platform engineer/i }));
+    await user.click(await screen.findByRole("button", { name: /approve submit for principal platform engineer/i }));
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
     expect(decideApplyReview).toHaveBeenCalledWith(

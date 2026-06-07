@@ -303,8 +303,9 @@ outcomes. The web `/apply-review` queue shows active apply-stage jobs with
 materials readiness, latest apply-run context, blockers, review decisions, and
 pending outcome suggestions. Job details include a local outcome timeline and
 manual outcome form. `approve_submit` is an approval fact only; it does not
-start browser submission by itself. Manual outcomes can include local notes in
-SQLite, but event payloads contain only safe identifiers, outcome kinds, and
+start browser submission by itself, and the web UI only offers submit approval
+after a completed dry run. Manual outcomes can include local notes in SQLite,
+but event payloads contain only safe identifiers, outcome kinds, and
 presence flags.
 
 Gmail outcome feedback is a separate read-only scan from the verification-code

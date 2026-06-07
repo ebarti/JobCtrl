@@ -136,9 +136,10 @@ the policy update state, and the reset control posts to
 
 For UI/API changes around application review or outcome tracking, open
 `/apply-review` and verify the queue shows ready and blocked apply-stage jobs,
-records `approve_submit`, dry-run approval, defer, decline, and reset decisions
-without starting apply/browser automation, and refreshes the queue after each
-decision. Open a job detail drawer and verify manual outcomes save with a
+offers submit approval only after a completed dry run, records `approve_submit`,
+dry-run approval, defer, decline, and reset decisions without starting
+apply/browser automation, and refreshes the queue after each decision. Open a
+job detail drawer and verify manual outcomes save with a
 canonical timestamp, local notes render only in the outcome timeline, pending
 outcome suggestions can be accepted, corrected, or ignored, and the job audit
 history shows review/outcome milestones without raw notes, email body text,

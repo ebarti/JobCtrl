@@ -195,8 +195,9 @@ verification-code MCP server:
   plus evidence/suggestion IDs, job keys, kinds, and confidence values only; it
   never returns raw Gmail body text.
 
-The web review queue records approval facts only. `approve_submit` does not
-dispatch browser submission, and `approve_dry_run` does not start a dry run.
+The web review queue records approval facts only. It only offers submit
+approval after a completed dry run. `approve_submit` does not dispatch browser
+submission, and `approve_dry_run` does not start a dry run.
 Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 `occurredAt` timestamps when the field is supplied.
 
