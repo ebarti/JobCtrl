@@ -333,7 +333,7 @@ class TailoringPlan:
                 if key in self.writing_style
             },
             "target_seniority": self.target_seniority,
-            "job_keywords": list(self.job_keywords[:16]),
+            "job_keywords": list(self.job_keywords),
             "required_evidence_ids": list(self.required_evidence_ids),
             "seniority_evidence_ids": list(self.seniority_evidence_ids),
             "verified_metric_count": len(self.verified_metrics),

@@ -189,6 +189,24 @@ def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() 
     assert "barcelona" not in plan.job_keywords
 
 
+def test_tailoring_plan_metadata_preserves_full_keyword_audit_set() -> None:
+    job = {
+        "url": "https://example.com/platform",
+        "title": "Head of Platform Engineering",
+        "skills": [f"Kubernetes capability {index}" for index in range(20)],
+        "full_description": (
+            "Own platform engineering, cloud infrastructure, Java, Node.js, "
+            "Kubernetes, CI/CD, observability, incident management, developer "
+            "productivity, cost optimization, security, resiliency, and disaster recovery."
+        ),
+    }
+
+    plan = build_tailoring_plan(_profile(), job)
+
+    assert len(plan.job_keywords) > 16
+    assert plan.to_metadata()["job_keywords"] == list(plan.job_keywords)
+
+
 def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() -> None:
     plan = build_tailoring_plan(_profile(), _senior_job())
     bullet = "Owned API latency work and reduced latency by 80% with Python."

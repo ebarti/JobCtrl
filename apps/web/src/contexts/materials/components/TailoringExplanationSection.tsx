@@ -38,6 +38,14 @@ function yesNo(value: boolean | null): string {
   return value ? "yes" : "no";
 }
 
+function countSummary(count: number, displayed: number, filtered: number): string {
+  if (!count) return "none recorded";
+  const parts = [`${count} total`];
+  if (displayed !== count) parts.push(`${displayed} shown`);
+  if (filtered) parts.push(`${filtered} filtered`);
+  return parts.join(" · ");
+}
+
 function hasItems(items: readonly string[]): boolean {
   return items.length > 0;
 }
@@ -173,13 +181,21 @@ export function TailoringExplanationSection({
     explanation.adversarialReview &&
     (explanation.adversarialReview.ran || explanation.adversarialReview.skippedReason);
   const hasChangeEvidence = [
+    explanation.keywords.planned,
     explanation.keywords.covered,
     explanation.keywords.missing,
+    explanation.keywords.filtered.planned,
+    explanation.keywords.filtered.covered,
+    explanation.keywords.filtered.missing,
     explanation.evidence.representedIds,
     explanation.evidence.requiredIds,
     explanation.evidence.missingIds,
     explanation.evidence.seniorityIds,
   ].some(hasItems);
+  const hasKeywordCounts =
+    explanation.keywords.counts.planned > 0 ||
+    explanation.keywords.counts.covered > 0 ||
+    explanation.keywords.counts.missing > 0;
 
   return (
     <section className={className}>
@@ -251,12 +267,41 @@ export function TailoringExplanationSection({
           </div>
         ) : null}
 
-        {hasChangeEvidence ? (
+        {hasChangeEvidence || hasKeywordCounts ? (
           <div className="evidence-block">
             <h4>Why these changes</h4>
             <dl className="detail-list compact">
-              <EvidenceRow label="Covered keywords" items={explanation.keywords.covered} />
-              <EvidenceRow label="Missing keywords" items={explanation.keywords.missing} />
+              {hasKeywordCounts ? (
+                <div>
+                  <dt>Target keyword coverage</dt>
+                  <dd>
+                    {explanation.keywords.counts.covered}/{explanation.keywords.counts.planned} covered
+                  </dd>
+                </div>
+              ) : null}
+              {hasKeywordCounts ? (
+                <div>
+                  <dt>Target keywords</dt>
+                  <dd>
+                    {countSummary(
+                      explanation.keywords.counts.planned,
+                      explanation.keywords.counts.displayedPlanned,
+                      explanation.keywords.counts.filteredPlanned,
+                    )}
+                  </dd>
+                </div>
+              ) : null}
+              <EvidenceRow label="Displayed target keywords" items={explanation.keywords.planned} />
+              <EvidenceRow label="Displayed covered keywords" items={explanation.keywords.covered} />
+              <EvidenceRow label="Displayed missing keywords" items={explanation.keywords.missing} />
+              <EvidenceRow
+                label="Filtered covered keywords"
+                items={explanation.keywords.filtered.covered}
+              />
+              <EvidenceRow
+                label="Filtered missing keywords"
+                items={explanation.keywords.filtered.missing}
+              />
               <EvidenceRow label="Represented evidence" items={explanation.evidence.representedIds} />
               <EvidenceRow label="Required evidence" items={explanation.evidence.requiredIds} />
               <EvidenceRow label="Missing evidence" items={explanation.evidence.missingIds} />

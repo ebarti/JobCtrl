@@ -1325,6 +1325,22 @@ export interface ArtifactTailoringExplanation {
     planned: string[];
     covered: string[];
     missing: string[];
+    filtered: {
+      planned: string[];
+      covered: string[];
+      missing: string[];
+    };
+    counts: {
+      planned: number;
+      covered: number;
+      missing: number;
+      displayedPlanned: number;
+      displayedCovered: number;
+      displayedMissing: number;
+      filteredPlanned: number;
+      filteredCovered: number;
+      filteredMissing: number;
+    };
   };
   evidence: {
     requiredIds: string[];

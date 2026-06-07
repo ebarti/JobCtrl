@@ -2035,6 +2035,13 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
   const reviewFeedback = metadataRecord(metadata.review_feedback);
   const judgeMinScore = metadataNumber(metadata.judge_min_score);
+  const plannedKeywordAudit = metadataKeywordAudit(
+    keywordUniverse(qualityPlan.job_keywords, keywordCoverage.covered, keywordCoverage.missing),
+    32,
+    64,
+  );
+  const coveredKeywordAudit = metadataKeywordAudit(keywordCoverage.covered, 32, 64);
+  const missingKeywordAudit = metadataKeywordAudit(keywordCoverage.missing, 32, 64);
 
   const explanation: ArtifactTailoringExplanation = {
     targetSeniority: metadataText(qualityPlan.target_seniority),
@@ -2046,9 +2053,25 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       qualityPassed: metadataBoolean(qualityChecks.passed),
     },
     keywords: {
-      planned: metadataKeywordList(qualityPlan.job_keywords, 16),
-      covered: metadataKeywordList(keywordCoverage.covered, 16),
-      missing: metadataKeywordList(keywordCoverage.missing, 16),
+      planned: plannedKeywordAudit.displayed,
+      covered: coveredKeywordAudit.displayed,
+      missing: missingKeywordAudit.displayed,
+      filtered: {
+        planned: plannedKeywordAudit.filtered,
+        covered: coveredKeywordAudit.filtered,
+        missing: missingKeywordAudit.filtered,
+      },
+      counts: {
+        planned: plannedKeywordAudit.total,
+        covered: coveredKeywordAudit.total,
+        missing: missingKeywordAudit.total,
+        displayedPlanned: plannedKeywordAudit.displayed.length,
+        displayedCovered: coveredKeywordAudit.displayed.length,
+        displayedMissing: missingKeywordAudit.displayed.length,
+        filteredPlanned: plannedKeywordAudit.filtered.length,
+        filteredCovered: coveredKeywordAudit.filtered.length,
+        filteredMissing: missingKeywordAudit.filtered.length,
+      },
     },
     evidence: {
       requiredIds: metadataTextList(qualityPlan.required_evidence_ids, 32),
@@ -2259,6 +2282,12 @@ function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanatio
       explanation.keywords.planned.length ||
       explanation.keywords.covered.length ||
       explanation.keywords.missing.length ||
+      explanation.keywords.filtered.planned.length ||
+      explanation.keywords.filtered.covered.length ||
+      explanation.keywords.filtered.missing.length ||
+      explanation.keywords.counts.planned ||
+      explanation.keywords.counts.covered ||
+      explanation.keywords.counts.missing ||
       explanation.evidence.requiredIds.length ||
       explanation.evidence.seniorityIds.length ||
       explanation.evidence.representedIds.length ||
@@ -2332,6 +2361,38 @@ function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[]
     if (out.length >= limit) break;
   }
   return out;
+}
+
+function keywordUniverse(...values: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (const value of values) {
+    if (Array.isArray(value)) out.push(...value);
+  }
+  return out;
+}
+
+function metadataKeywordAudit(
+  value: unknown,
+  displayLimit = 32,
+  filteredLimit = 64,
+  maxLength = 120,
+): { displayed: string[]; filtered: string[]; total: number } {
+  if (!Array.isArray(value)) return { displayed: [], filtered: [], total: 0 };
+  const seen = new Set<string>();
+  const displayed: string[] = [];
+  const filtered: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, maxLength);
+    const key = normalizedKeywordKey(text);
+    if (!text || !key || seen.has(key)) continue;
+    seen.add(key);
+    if (isMeaningfulDisplayKeyword(text, key)) {
+      if (displayed.length < displayLimit) displayed.push(text);
+    } else if (filtered.length < filteredLimit) {
+      filtered.push(text);
+    }
+  }
+  return { displayed, filtered, total: seen.size };
 }
 
 function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {

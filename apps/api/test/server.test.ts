@@ -2087,6 +2087,59 @@ describe("local TypeScript API", () => {
           planned: ["platform reliability", "typescript"],
           covered: ["platform reliability"],
           missing: ["typescript"],
+          filtered: {
+            planned: [
+              "join",
+              "impress",
+              "europe",
+              "health",
+              "tech",
+              "innovator",
+              "believe",
+              "everyone",
+              "deserves",
+              "smile",
+              "head",
+              "2019",
+              "across",
+              "they",
+              "love",
+              "largest",
+              "ortho",
+              "clinic",
+              "chain",
+            ],
+            covered: ["head", "2019", "across"],
+            missing: [
+              "join",
+              "impress",
+              "europe",
+              "health",
+              "tech",
+              "innovator",
+              "believe",
+              "everyone",
+              "deserves",
+              "smile",
+              "they",
+              "love",
+              "largest",
+              "ortho",
+              "clinic",
+              "chain",
+            ],
+          },
+          counts: {
+            planned: 21,
+            covered: 4,
+            missing: 17,
+            displayedPlanned: 2,
+            displayedCovered: 1,
+            displayedMissing: 1,
+            filteredPlanned: 19,
+            filteredCovered: 3,
+            filteredMissing: 16,
+          },
         },
         evidence: {
           requiredIds: ["ev_latency"],
@@ -2176,9 +2229,11 @@ describe("local TypeScript API", () => {
       },
     });
     expect(JSON.stringify(response.json())).not.toContain("must not leak");
-    expect(JSON.stringify(response.json())).not.toContain("join");
-    expect(JSON.stringify(response.json())).not.toContain("innovator");
-    expect(JSON.stringify(response.json())).not.toContain("smile");
+    expect(response.json().tailoringExplanation.keywords.covered).not.toContain("join");
+    expect(response.json().tailoringExplanation.keywords.missing).not.toContain("join");
+    expect(response.json().tailoringExplanation.keywords.filtered.missing).toContain("join");
+    expect(response.json().tailoringExplanation.keywords.filtered.missing).toContain("innovator");
+    expect(response.json().tailoringExplanation.keywords.filtered.missing).toContain("smile");
     expect(JSON.stringify(response.json())).not.toContain("5teams");
     expect(JSON.stringify(response.json())).not.toContain("2service");
     expect(JSON.stringify(response.json())).not.toContain("15engineers");

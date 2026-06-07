@@ -45,9 +45,25 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     qualityPassed: true,
   },
   keywords: {
-    planned: ["platform reliability", "incident response"],
+    planned: ["platform reliability", "incident response", "kubernetes"],
     covered: ["platform reliability"],
     missing: ["incident response"],
+    filtered: {
+      planned: ["join", "impress"],
+      covered: [],
+      missing: ["join", "impress"],
+    },
+    counts: {
+      planned: 5,
+      covered: 1,
+      missing: 4,
+      displayedPlanned: 3,
+      displayedCovered: 1,
+      displayedMissing: 1,
+      filteredPlanned: 2,
+      filteredCovered: 0,
+      filteredMissing: 2,
+    },
   },
   evidence: {
     requiredIds: ["ev_platform_reliability"],
@@ -216,6 +232,11 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
     expect(screen.getByText("Principal")).toBeInTheDocument();
     expect(screen.getByText("Why these changes")).toBeInTheDocument();
+    expect(screen.getByText("1/5 covered")).toBeInTheDocument();
+    expect(screen.getByText("5 total · 3 shown · 2 filtered")).toBeInTheDocument();
+    expect(screen.getByText("Displayed target keywords")).toBeInTheDocument();
+    expect(screen.getByText("Filtered missing keywords")).toBeInTheDocument();
+    expect(screen.getByText("join")).toBeInTheDocument();
     expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
     expect(screen.getByText("Senior SWE at Acme")).toBeInTheDocument();
     expect(screen.getByText("Built platform services.")).toBeInTheDocument();
