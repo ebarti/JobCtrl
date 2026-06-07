@@ -37,6 +37,11 @@ PDF artifacts. The preview route serves only known PDF artifact files from the
 local artifact projection; it returns `404` for missing metadata/files and
 `415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
 route still delegates to the local OS opener.
+Tailored resume artifact detail responses include safe tailoring evidence only:
+high-signal keyword coverage, evidence and quality summaries,
+judge/adversarial-review results, warning-repair status, and model selection
+metadata; they do not expose raw prompts, raw profile/resume payloads, or raw
+job text.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,

@@ -149,10 +149,15 @@ describe("<ArtifactDetailPanel>", () => {
         score: 0.88,
         threshold: 0.8,
         blockers: [],
-        warnings: [],
+        warnings: ["Bullet could be more concise."],
         repairInstructions: [],
         personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
         skippedReason: null,
+      },
+      reviewFeedback: {
+        warningRepairAttempted: true,
+        acceptedWithResidualWarnings: true,
+        acceptedWarnings: ["Bullet could be more concise."],
       },
       models: {
         candidateModels: ["generator-a"],
@@ -173,6 +178,10 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.queryByText("Metric claims")).not.toBeInTheDocument();
     expect(screen.queryByText("none recorded")).not.toBeInTheDocument();
     expect(screen.getByText("91% / minimum 82%")).toBeInTheDocument();
+    expect(screen.getByText("Review outcome")).toBeInTheDocument();
+    expect(screen.getByText("Accepted residual warnings")).toBeInTheDocument();
+    expect(screen.getByText("Warning repair attempted")).toBeInTheDocument();
+    expect(screen.getByText("Bullet could be more concise.")).toBeInTheDocument();
     expect(screen.getByText("Evidence Auditor: PASS (90%)")).toBeInTheDocument();
   });
 });

@@ -1976,10 +1976,15 @@ describe("local TypeScript API", () => {
           score: 0.88,
           threshold: 0.8,
           blockers: [],
-          warnings: [],
+          warnings: ["Bullet could be more concise."],
           repair_instructions: [],
           personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
           skipped_reason: "",
+        },
+        review_feedback: {
+          warning_retry_attempted: true,
+          accepted_with_residual_warnings: true,
+          accepted_warning_notes: ["Bullet could be more concise."],
         },
         candidate_models: ["generator-a"],
         selected_model: "generator-a",
@@ -2031,7 +2036,13 @@ describe("local TypeScript API", () => {
         adversarialReview: {
           ran: true,
           passed: true,
+          warnings: ["Bullet could be more concise."],
           personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.9 }],
+        },
+        reviewFeedback: {
+          warningRepairAttempted: true,
+          acceptedWithResidualWarnings: true,
+          acceptedWarnings: ["Bullet could be more concise."],
         },
         models: {
           selectedModel: "generator-a",

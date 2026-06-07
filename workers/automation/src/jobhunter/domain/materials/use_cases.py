@@ -365,6 +365,30 @@ def _as_string_list(value: object) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _candidate_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
+    notes: list[str] = []
+    validator = record.get("validator") if isinstance(record.get("validator"), dict) else {}
+    quality = (
+        record.get("quality_checks")
+        if isinstance(record.get("quality_checks"), dict)
+        else {}
+    )
+    judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
+    review = (
+        record.get("adversarial_review")
+        if isinstance(record.get("adversarial_review"), dict)
+        else {}
+    )
+
+    notes.extend(_as_string_list(validator.get("warnings")))
+    notes.extend(_as_string_list(quality.get("warnings")))
+    notes.extend(_as_string_list(judge.get("repair_instructions")))
+    if review.get("ran"):
+        notes.extend(_as_string_list(review.get("warnings")))
+        notes.extend(_as_string_list(review.get("repair_instructions")))
+    return tuple(dict.fromkeys(notes))
+
+
 def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
     payload = record.get("parsed_json") if isinstance(record.get("parsed_json"), dict) else {}
     return {
@@ -859,6 +883,7 @@ class TailorResumeUseCase:
             "quality_plan": report.get("quality_plan") or {},
             "quality_checks": report.get("quality_checks") or {},
             "adversarial_review": report.get("adversarial_review") or {},
+            "review_feedback": report.get("review_feedback") or {},
             "candidate_summaries": report.get("candidate_summaries") or [],
             "judge": judge_record,
         }
@@ -973,6 +998,11 @@ class TailorResumeUseCase:
             "quality_plan": tailoring_plan.to_metadata(),
             "quality_checks": None,
             "adversarial_review": None,
+            "review_feedback": {
+                "warning_retry_attempted": False,
+                "accepted_with_residual_warnings": False,
+                "accepted_warning_notes": [],
+            },
             "attempt_history": [],
             "candidate_summaries": [],
         }
@@ -981,6 +1011,33 @@ class TailorResumeUseCase:
         last_validation: ValidationResult = ValidationResult.failure(("no attempt yet",))
         last_verdict: JudgeVerdict | None = None
         best_rejected: _TailorCandidate | None = None
+        best_warned_approved: tuple[_TailorCandidate, tuple[str, ...]] | None = None
+
+        def accept_candidate(
+            selected: _TailorCandidate,
+            attempt_record: dict[str, Any] | None,
+            *,
+            warning_notes: tuple[str, ...] = (),
+        ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
+            report["status"] = "approved"
+            report["validator"] = selected.validation.to_dict()
+            report["judge"] = selected.record.get("judge")
+            report["quality_checks"] = selected.record.get("quality_checks")
+            report["adversarial_review"] = selected.record.get("adversarial_review")
+            report["selected_candidate"] = selected.record.get("candidate_id")
+            report["selected_model"] = selected.model
+            feedback = report["review_feedback"]
+            feedback["accepted_with_residual_warnings"] = bool(warning_notes)
+            feedback["accepted_warning_notes"] = list(warning_notes[:8])
+            if attempt_record is not None:
+                attempt_record["status"] = (
+                    "approved_with_residual_warnings" if warning_notes else "approved"
+                )
+                attempt_record["selected_candidate"] = selected.record.get("candidate_id")
+                if warning_notes:
+                    attempt_record["accepted_warning_notes"] = list(warning_notes[:8])
+                report["attempt_history"].append(attempt_record)
+            return report, selected.payload, selected.validation, selected.verdict
 
         for attempt in range(self._max_retries + 1):
             report["attempts"] = attempt + 1
@@ -1036,18 +1093,55 @@ class TailorResumeUseCase:
                         best_rejected = candidate
 
             if approved_candidates:
-                selected = max(approved_candidates, key=lambda item: item.judge_score)
-                report["status"] = "approved"
-                report["validator"] = selected.validation.to_dict()
-                report["judge"] = selected.record.get("judge")
-                report["quality_checks"] = selected.record.get("quality_checks")
-                report["adversarial_review"] = selected.record.get("adversarial_review")
-                report["selected_candidate"] = selected.record.get("candidate_id")
-                report["selected_model"] = selected.model
-                attempt_record["status"] = "approved"
-                attempt_record["selected_candidate"] = selected.record.get("candidate_id")
+                approved_with_notes = [
+                    (candidate, _candidate_warning_notes(candidate.record))
+                    for candidate in approved_candidates
+                ]
+                clean_approved = [
+                    candidate for candidate, notes in approved_with_notes if not notes
+                ]
+                if clean_approved:
+                    selected = max(clean_approved, key=lambda item: item.judge_score)
+                    return accept_candidate(selected, attempt_record)
+
+                selected, warning_notes = max(
+                    approved_with_notes,
+                    key=lambda item: (-len(item[1]), item[0].judge_score),
+                )
+                if (
+                    best_warned_approved is None
+                    or (-len(warning_notes), selected.judge_score)
+                    > (
+                        -len(best_warned_approved[1]),
+                        best_warned_approved[0].judge_score,
+                    )
+                ):
+                    best_warned_approved = (selected, warning_notes)
+                if attempt < self._max_retries:
+                    avoid_notes.extend(warning_notes)
+                    report["review_feedback"]["warning_retry_attempted"] = True
+                    attempt_record["status"] = "approved_with_warnings_retry"
+                    attempt_record["warning_retry_notes"] = list(warning_notes[:8])
+                    report["attempt_history"].append(attempt_record)
+                    continue
+                best_selected, best_warning_notes = best_warned_approved or (
+                    selected,
+                    warning_notes,
+                )
+                if best_selected is selected:
+                    return accept_candidate(
+                        selected,
+                        attempt_record,
+                        warning_notes=warning_notes,
+                    )
+                attempt_record["status"] = "approved_with_warnings_not_selected"
+                attempt_record["warning_retry_notes"] = list(warning_notes[:8])
                 report["attempt_history"].append(attempt_record)
-                return report, selected.payload, selected.validation, selected.verdict
+                return accept_candidate(
+                    best_selected,
+                    None,
+                    warning_notes=best_warning_notes,
+                )
 
             for candidate_record in attempt_record["candidates"]:
                 status = str(candidate_record.get("status", ""))
@@ -1069,6 +1163,9 @@ class TailorResumeUseCase:
             report["attempt_history"].append(attempt_record)
 
         report["status"] = "exhausted_retries"
+        if best_warned_approved is not None:
+            selected, warning_notes = best_warned_approved
+            return accept_candidate(selected, None, warning_notes=warning_notes)
         if best_rejected is not None:
             report["status"] = (
                 "failed_adversarial_review"

@@ -526,7 +526,7 @@ def test_tailor_use_case_runs_adversarial_review_for_high_fit_jobs(
     assert review["normalized_fit_score"] == 0.9
 
 
-def test_tailor_use_case_persists_adversarial_warnings_without_blocking(
+def test_tailor_use_case_retries_adversarial_warnings_before_accepting(
     tmp_path: Path, job: dict
 ) -> None:
     snapshot = ProfileSnapshot.from_profile(
@@ -534,25 +534,84 @@ def test_tailor_use_case_persists_adversarial_warnings_without_blocking(
     )
     high_fit_job = {**job, "fit_score": 9, "title": "Senior Backend Engineer"}
     repo = _FakeRepository()
-    llm = _ScriptedLlm([
-        _quality_json_payload(),
-        _judge_pass(),
-        _adversarial_pass(warnings=["Bullet could be more concise."]),
-    ])
+    llm = _ScriptedLlm(
+        [
+            _quality_json_payload(),
+            _judge_pass(),
+            _adversarial_pass(warnings=["Bullet could be more concise."]),
+            _quality_json_payload(),
+            _judge_pass(),
+            _adversarial_pass(),
+        ]
+    )
     use_case = TailorResumeUseCase(
         repository=repo,
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        max_retries=1,
     )
 
     outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
 
     assert outcome.status == "approved"
+    assert len(llm.calls) == 6
+    assert "Bullet could be more concise." in llm.calls[3][0].content
+    assert outcome.report["review_feedback"]["warning_retry_attempted"] is True
+    assert outcome.report["review_feedback"]["accepted_with_residual_warnings"] is False
+    assert outcome.report["attempt_history"][0]["status"] == "approved_with_warnings_retry"
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    review = outcome.materials.tailored_resume.metadata["adversarial_review"]
+    assert review["warnings"] == []
+    assert outcome.materials.tailored_resume.metadata["review_feedback"] == {
+        "warning_retry_attempted": True,
+        "accepted_with_residual_warnings": False,
+        "accepted_warning_notes": [],
+    }
+
+
+def test_tailor_use_case_persists_residual_adversarial_warnings_without_retries(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    high_fit_job = {**job, "fit_score": 9, "title": "Senior Backend Engineer"}
+    repo = _FakeRepository()
+    llm = _ScriptedLlm(
+        [
+            _quality_json_payload(),
+            _judge_pass(),
+            _adversarial_pass(warnings=["Bullet could be more concise."]),
+        ]
+    )
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 3
+    assert outcome.report["review_feedback"] == {
+        "warning_retry_attempted": False,
+        "accepted_with_residual_warnings": True,
+        "accepted_warning_notes": ["Bullet could be more concise."],
+    }
     assert outcome.materials is not None
     assert outcome.materials.tailored_resume is not None
     review = outcome.materials.tailored_resume.metadata["adversarial_review"]
     assert review["warnings"] == ["Bullet could be more concise."]
+    assert outcome.materials.tailored_resume.metadata["review_feedback"] == {
+        "warning_retry_attempted": False,
+        "accepted_with_residual_warnings": True,
+        "accepted_warning_notes": ["Bullet could be more concise."],
+    }
 
 
 def test_tailor_use_case_adversarial_blocker_fails_and_feeds_retry_notes(

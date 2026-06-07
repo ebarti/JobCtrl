@@ -86,6 +86,11 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     personas: [{ persona: "evidence_auditor", verdict: "PASS", score: 0.91 }],
     skippedReason: null,
   },
+  reviewFeedback: {
+    warningRepairAttempted: false,
+    acceptedWithResidualWarnings: false,
+    acceptedWarnings: [],
+  },
   models: {
     candidateModels: ["generator-a"],
     selectedModel: "generator-a",

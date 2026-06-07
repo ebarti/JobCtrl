@@ -1367,6 +1367,11 @@ export interface ArtifactTailoringExplanation {
     }>;
     skippedReason: string | null;
   } | null;
+  reviewFeedback: {
+    warningRepairAttempted: boolean | null;
+    acceptedWithResidualWarnings: boolean | null;
+    acceptedWarnings: string[];
+  };
   models: {
     candidateModels: string[];
     selectedModel: string | null;

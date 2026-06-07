@@ -212,7 +212,9 @@ Useful options:
 For high-fit jobs (fit score `8+`), a resume that passes deterministic
 validation and the structured judge is also checked by adversarial reviewer
 personas. Blocker findings keep the resume unapproved and feed the retry loop
-instead of being hidden as a successful tailoring run.
+instead of being hidden as a successful tailoring run. Non-blocking review
+warnings also feed a repair retry while retry budget remains; any warning still
+shown on the accepted artifact is residual feedback on the selected resume.
 
 The same tailoring controls can be provided through
 `TAILORING_GENERATOR_MODELS`, `TAILORING_JUDGE_MODEL`, and
@@ -434,8 +436,8 @@ Apply review shows the safe tailoring rationale under the selected tailored
 resume when a resume PDF artifact is available. The same rationale remains
 available from the Artifacts drawer for audit/detail review. It includes keyword
 coverage filtered to high-signal terms, evidence support, quality gates, review
-findings, and model summary without exposing raw prompts or resume/profile
-contents.
+outcome, warning-repair status, and model summary without exposing raw prompts
+or resume/profile contents.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;

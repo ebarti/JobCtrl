@@ -2033,6 +2033,7 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   const evidenceSupport = metadataRecord(qualityChecks.evidence_support);
   const judge = metadataRecord(metadata.judge);
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
+  const reviewFeedback = metadataRecord(metadata.review_feedback);
   const judgeMinScore = metadataNumber(metadata.judge_min_score);
 
   const explanation: ArtifactTailoringExplanation = {
@@ -2076,6 +2077,11 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       repairInstructions: metadataTextList(judge.repair_instructions, 8, 220),
     },
     adversarialReview,
+    reviewFeedback: {
+      warningRepairAttempted: metadataBoolean(reviewFeedback.warning_retry_attempted),
+      acceptedWithResidualWarnings: metadataBoolean(reviewFeedback.accepted_with_residual_warnings),
+      acceptedWarnings: metadataTextList(reviewFeedback.accepted_warning_notes, 8, 220),
+    },
     models: {
       candidateModels: metadataTextList(metadata.candidate_models, 6, 120),
       selectedModel: metadataText(metadata.selected_model, 120),
@@ -2145,6 +2151,9 @@ function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanatio
       explanation.judge.missingRequiredEvidence.length ||
       explanation.judge.repairInstructions.length ||
       explanation.adversarialReview ||
+      explanation.reviewFeedback.warningRepairAttempted !== null ||
+      explanation.reviewFeedback.acceptedWithResidualWarnings !== null ||
+      explanation.reviewFeedback.acceptedWarnings.length ||
       explanation.models.candidateModels.length ||
       explanation.models.selectedModel ||
       explanation.models.selectedCandidate ||

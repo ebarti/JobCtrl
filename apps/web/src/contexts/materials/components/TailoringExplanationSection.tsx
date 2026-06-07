@@ -77,6 +77,9 @@ export function TailoringExplanationSection({
     ...explanation.quality.warnings,
     ...(explanation.adversarialReview?.warnings ?? []),
   ];
+  const warningRepairAttempted = explanation.reviewFeedback.warningRepairAttempted;
+  const showReviewOutcome =
+    hasItems(blockingIssues) || hasItems(warnings) || warningRepairAttempted === true;
   const showAdversarial =
     explanation.adversarialReview &&
     (explanation.adversarialReview.ran || explanation.adversarialReview.skippedReason);
@@ -154,18 +157,36 @@ export function TailoringExplanationSection({
           </dl>
         </div>
 
-        {hasItems(blockingIssues) || hasItems(warnings) ? (
+        {showReviewOutcome ? (
           <div className="evidence-block">
-            <h4>Review findings</h4>
+            <h4>Review outcome</h4>
             {hasItems(blockingIssues) ? (
               <div className="finding-list danger">
-                <b>Blocking</b>
+                <b>Blocking repair feedback</b>
                 <EvidenceList items={blockingIssues} />
               </div>
             ) : null}
+            {warningRepairAttempted === true && !hasItems(warnings) ? (
+              <dl className="detail-list compact">
+                <div>
+                  <dt>Warning repair attempted</dt>
+                  <dd>yes</dd>
+                </div>
+              </dl>
+            ) : null}
             {hasItems(warnings) ? (
               <div className="finding-list warning">
-                <b>Warnings</b>
+                <b>Accepted residual warnings</b>
+                <dl className="detail-list compact">
+                  <div>
+                    <dt>Warning repair attempted</dt>
+                    <dd>
+                      {warningRepairAttempted === null
+                        ? "not recorded"
+                        : yesNo(warningRepairAttempted)}
+                    </dd>
+                  </div>
+                </dl>
                 <EvidenceList items={warnings} />
               </div>
             ) : null}
