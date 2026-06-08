@@ -659,6 +659,113 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("repairs stale artifact projection metadata from canonical material artifacts", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_validation_json TEXT,
+          last_verdict_json TEXT,
+          metadata_json TEXT,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          render_format TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+      `);
+      const jobUrl = "https://example.com/jobs/event-driven";
+      db.prepare(
+        `INSERT INTO job_materials (
+          job_url, generation, tenant_id, status, created_at, updated_at
+        ) VALUES (?, 1, 'local', 'complete', ?, ?)`,
+      ).run(jobUrl, "2026-05-04T13:00:00+00:00", "2026-05-04T13:10:00+00:00");
+      db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', 'stale-resume', 'approved', ?, 'text', 10, ?, ?)`,
+      ).run(
+        jobUrl,
+        "/tmp/stale-resume.txt",
+        JSON.stringify({
+          quality_plan: { target_seniority: "executive" },
+          selected_model: "generator-a",
+        }),
+        "2026-05-04T13:05:00+00:00",
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const firstRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(firstRes.statusCode, firstRes.body).toBe(200);
+
+        const corruptDb = new Database(dbPath);
+        corruptDb
+          .prepare(
+            `UPDATE artifact_list_projections
+                SET metadata_json = '{}'
+              WHERE tenant_id = 'local'
+                AND job_id = ?
+                AND artifact_type = 'tailored_resume'`,
+          )
+          .run(jobUrl);
+        corruptDb.close();
+
+        const secondRes = await app.inject({ method: "GET", url: "/v1/jobs?q=event" });
+        expect(secondRes.statusCode, secondRes.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const readDb = new Database(dbPath, { readonly: true });
+      try {
+        const projection = readDb
+          .prepare(
+            `SELECT metadata_json
+               FROM artifact_list_projections
+              WHERE tenant_id = 'local'
+                AND job_id = ?
+                AND artifact_type = 'tailored_resume'`,
+          )
+          .get(jobUrl) as { metadata_json: string | null } | undefined;
+        expect(JSON.parse(projection?.metadata_json ?? "{}")).toMatchObject({
+          quality_plan: { target_seniority: "executive" },
+          selected_model: "generator-a",
+        });
+      } finally {
+        readDb.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("backfills legacy jobs inserted after the first projection refresh", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

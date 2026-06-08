@@ -568,7 +568,7 @@ export function TailoringExplanationSection({
         {!hasGenerationAuditData && hasResumeKeywordAudit ? (
           <div className="evidence-block">
             <h4>Generation audit</h4>
-            <p className="muted">not recorded for this artifact</p>
+            <p className="muted">audit metadata incomplete for this artifact</p>
           </div>
         ) : null}
       </div>

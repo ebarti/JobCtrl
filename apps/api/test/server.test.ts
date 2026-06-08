@@ -2281,7 +2281,9 @@ describe("local TypeScript API", () => {
       status: "approved",
       path: resumePath,
       metadata: {
+        ...completeTailoringAuditMetadata(),
         quality_checks: {
+          passed: true,
           errors: ["Keyword coverage extremely empty: no target job keywords covered"],
           warnings: [],
           notes: [],
@@ -2334,7 +2336,7 @@ describe("local TypeScript API", () => {
       site: "EvidenceCo",
       fitScore: 9,
       tailoredPath: resumePath,
-      fullDescription: "We need AWS, CI/CD, Developer Platform leadership, and multi-region operating context.",
+      fullDescription: "We need AWS, CI/CD, Developer Platform delivery, and multi-region operating context.",
     });
     insertScore(seedDb, "https://example.com/jobs/tailoring-job-text-keywords", 1, 9, {
       keywords: ["Developer Platform", "CI/CD", "Multi-region"],
@@ -2345,13 +2347,7 @@ describe("local TypeScript API", () => {
       artifactType: "tailored_resume",
       status: "approved",
       path: resumePath,
-      metadata: {
-        quality_checks: {
-          errors: [],
-          warnings: [],
-          notes: [],
-        },
-      },
+      metadata: completeTailoringAuditMetadata(),
     });
     seedDb.close();
 
@@ -2379,6 +2375,133 @@ describe("local TypeScript API", () => {
       },
     });
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("Multi-region");
+
+    await app.close();
+  });
+
+  it("flags keyword-only tailoring explanations as incomplete audit metadata", async () => {
+    const resumePath = path.join(tempDir, "tailoring-incomplete-audit-resume.txt");
+    fs.writeFileSync(resumePath, "Resume with AWS and CI/CD delivery.");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-incomplete-audit",
+      title: "Platform Engineering Lead",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+      fullDescription: "Platform Engineering Lead with AWS, CI/CD, Observability, and Infrastructure as Code.",
+    });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-incomplete-audit", 1, 9, {
+      keywords: ["AWS", "CI/CD", "Observability", "Infrastructure as Code"],
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-incomplete-audit",
+      artifactId: "artifact-tailoring-incomplete-audit",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata: {
+        quality_checks: {
+          errors: [],
+          warnings: [],
+          notes: [],
+        },
+      },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-incomplete-audit",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      tailoringExplanation: {
+        keywords: {
+          coverageRecorded: true,
+          planned: ["AWS", "CI/CD", "Observability", "Infrastructure as Code", "Platform Engineering"],
+          covered: ["AWS", "CI/CD"],
+          missing: ["Observability", "Infrastructure as Code", "Platform Engineering"],
+        },
+      },
+    });
+    expect(response.json().tailoringExplanation.quality.errors[0]).toContain(
+      "Tailoring audit metadata incomplete: missing target seniority",
+    );
+    expect(response.json().tailoringExplanation.quality.errors[0]).toContain("selected model");
+    expect(response.json().tailoringExplanation.quality.errors[0]).toContain("persona review");
+
+    await app.close();
+  });
+
+  it("uses sibling tailored resume audit metadata for PDF artifacts with shell metadata", async () => {
+    const resumePath = path.join(tempDir, "tailoring-pdf-sibling-resume.txt");
+    const pdfPath = path.join(tempDir, "tailoring-pdf-sibling-resume.pdf");
+    fs.writeFileSync(resumePath, "Executive platform resume with AWS and CI/CD.");
+    fs.writeFileSync(pdfPath, "fake pdf");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-pdf-sibling",
+      title: "Platform Director",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+      fullDescription: "Platform Director role requiring AWS, CI/CD, and Platform Engineering.",
+    });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-pdf-sibling", 1, 9, {
+      keywords: ["AWS", "CI/CD", "Platform Engineering"],
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-pdf-sibling",
+      artifactId: "artifact-tailoring-pdf-sibling-text",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata: completeTailoringAuditMetadata(),
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-pdf-sibling",
+      artifactId: "artifact-tailoring-pdf-sibling-pdf",
+      artifactType: "resume_pdf",
+      status: "approved",
+      path: pdfPath,
+      metadata: {
+        quality_checks: {
+          errors: [],
+          warnings: [],
+          notes: [],
+        },
+      },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-pdf-sibling-pdf",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      tailoringExplanation: {
+        targetSeniority: "executive",
+        claimMode: "evidence_reframing",
+        validationMode: "normal",
+        models: {
+          selectedModel: "generator-a",
+          judgeModel: "judge-a",
+        },
+      },
+    });
+    expect(JSON.stringify(response.json().tailoringExplanation.quality.errors)).not.toContain(
+      "Tailoring audit metadata incomplete",
+    );
 
     await app.close();
   });
@@ -5144,6 +5267,122 @@ function createMaterialsTables(db: Database.Database): void {
       PRIMARY KEY (job_url, generation, artifact_type)
     );
   `);
+}
+
+function completeTailoringAuditMetadata(): Record<string, unknown> {
+  return {
+    validation_mode: "normal",
+    attempts: 1,
+    quality_plan: {
+      target_seniority: "executive",
+      claim_mode: "evidence_reframing",
+      auto_approvable_claim_modes: ["verified_only", "evidence_reframing"],
+      allow_adjacent_achievement_drafts: false,
+      job_keywords: [],
+      required_evidence_ids: ["ev_scope"],
+      seniority_evidence_ids: ["ev_scope"],
+      verified_metric_count: 3,
+    },
+    quality_checks: {
+      passed: true,
+      errors: [],
+      warnings: [],
+      notes: [],
+    },
+    judge: {
+      passed: true,
+      verdict: "PASS",
+      score: 0.9,
+      issues: [],
+      unsupported_claims: [],
+      fabrications: [],
+      missing_required_evidence: [],
+      repair_instructions: [],
+    },
+    judge_min_score: 0.82,
+    adversarial_review: {
+      ran: true,
+      passed: true,
+      score: 0.9,
+      score_rationale: "All personas passed.",
+      threshold: 0.8,
+      blockers: [],
+      warnings: [],
+      repair_instructions: [],
+      personas: [
+        {
+          persona: "evidence_auditor",
+          verdict: "PASS",
+          score: 0.9,
+          score_rationale: "Claims are supported by evidence.",
+          prompt_rubric: "Check support for every tailored claim.",
+          blockers: [],
+          warnings: [],
+          repair_instructions: [],
+          score_basis: ["LLM verdict: PASS", "LLM score: 0.90", "Blockers: none"],
+          response: {
+            verdict: "PASS",
+            score: 0.9,
+            score_rationale: "Claims are supported by evidence.",
+            blockers: [],
+            warnings: [],
+            repair_instructions: [],
+          },
+        },
+      ],
+      llm_audit: {
+        model: "judge-a",
+        schema_version: "tailor-adversarial.v2",
+        prompt_messages: [
+          {
+            role: "system",
+            content: "Evaluate the tailored resume using the persona rubric.",
+          },
+          {
+            role: "user",
+            content: "Return the structured adversarial review.",
+          },
+        ],
+        response: {
+          verdict: "PASS",
+          score: 0.9,
+          score_rationale: "All personas passed.",
+          blockers: [],
+          warnings: [],
+          repair_instructions: [],
+          personas: [
+            {
+              verdict: "PASS",
+              score: 0.9,
+              score_rationale: "Claims are supported by evidence.",
+              blockers: [],
+              warnings: [],
+              repair_instructions: [],
+            },
+          ],
+        },
+      },
+    },
+    change_annotations: [
+      {
+        section: "executive_profile",
+        label: "Executive profile",
+        change_type: "summary_reframed",
+        source_id: "executive_profile",
+        source_text: ["Platform leadership profile."],
+        tailored_text: ["Executive platform leadership profile."],
+        rationale: "Profile was reframed toward executive platform leadership.",
+        job_signals: ["Platform Engineering"],
+        controls: ["target seniority: executive", "claim mode: evidence_reframing"],
+        evidence_ids: ["ev_scope"],
+        evidence_notes: ["ev_scope: platform ownership"],
+      },
+    ],
+    candidate_models: ["generator-a"],
+    selected_model: "generator-a",
+    selected_candidate: "candidate-1",
+    judge_model: "judge-a",
+  };
 }
 
 function insertMaterialsGeneration(

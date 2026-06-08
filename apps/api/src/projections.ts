@@ -561,6 +561,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   for (const jobUrl of staleDeletedProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobUrl);
   }
+  for (const jobUrl of staleArtifactMetadataProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobUrl);
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
@@ -601,6 +604,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 }
 
 interface MaterialsLatest {
+  hasCanonicalHistory: boolean;
   generation: number | null;
   tailorPath: string | null;
   tailoredAt: string | null;
@@ -612,6 +616,7 @@ interface MaterialsLatest {
 
 function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLatest {
   const empty: MaterialsLatest = {
+    hasCanonicalHistory: false,
     generation: null,
     tailorPath: null,
     tailoredAt: null,
@@ -623,6 +628,16 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   if (!tableExists(db, "job_materials") || !tableExists(db, "job_materials_artifacts")) {
     return empty;
   }
+  const hasCanonicalHistory = Boolean(
+    getRow<{ c: number }>(
+      db,
+      `SELECT COUNT(*) AS c
+         FROM job_materials_artifacts
+        WHERE job_url = ?
+          AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf')`,
+      [jobUrl],
+    )?.c,
+  );
   const generationRow = getRow<{ max_generation: number }>(
     db,
     `SELECT MAX(generation) AS max_generation
@@ -634,7 +649,7 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   );
   const generation = generationRow ? generationRow.max_generation : null;
   if (generation === null || generation === undefined) {
-    return empty;
+    return { ...empty, hasCanonicalHistory };
   }
   const artifacts = allRows<{ artifact_type: string; path: string; created_at: string | null }>(
     db,
@@ -642,7 +657,7 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
      WHERE job_url = ? AND generation = ? AND status = 'approved'`,
     [jobUrl, Number(generation)],
   );
-  const latest: MaterialsLatest = { ...empty, generation: Number(generation) };
+  const latest: MaterialsLatest = { ...empty, hasCanonicalHistory, generation: Number(generation) };
   for (const a of artifacts) {
     if (!a.path) continue;
     if (a.artifact_type === "tailored_resume") {
@@ -944,6 +959,38 @@ function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): strin
   return rows.map((row) => row.job_id).filter(Boolean);
 }
 
+function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  if (!tableExists(db, "artifact_list_projections") || !tableExists(db, "job_materials_artifacts")) {
+    return [];
+  }
+  if (
+    !hasColumn(db, "artifact_list_projections", "metadata_json") ||
+    !hasColumn(db, "job_materials_artifacts", "metadata_json")
+  ) {
+    return [];
+  }
+
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT DISTINCT p.job_id
+       FROM artifact_list_projections p
+      WHERE p.tenant_id = ?
+        AND p.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'tailored_resume_pdf')
+        AND (p.metadata_json IS NULL OR TRIM(p.metadata_json) = '' OR TRIM(p.metadata_json) = '{}')
+        AND EXISTS (
+          SELECT 1
+            FROM job_materials_artifacts a
+           WHERE a.job_url = p.job_id
+             AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+             AND a.metadata_json IS NOT NULL
+             AND TRIM(a.metadata_json) != ''
+             AND TRIM(a.metadata_json) != '{}'
+        )`,
+    [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
+}
+
 interface StageRow extends Record<string, unknown> {
   stage: string;
   state: string;
@@ -1078,7 +1125,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
 
-  const hasCanonicalMaterials = materials.generation !== null && materials.generation !== undefined;
+  const hasCanonicalMaterials = materials.hasCanonicalHistory;
   const tailorPath = hasCanonicalMaterials ? materials.tailorPath : nullableString(job.tailored_resume_path);
   const coverPath = hasCanonicalMaterials ? materials.coverPath : nullableString(job.cover_letter_path);
   const hasResume = Boolean(tailorPath);

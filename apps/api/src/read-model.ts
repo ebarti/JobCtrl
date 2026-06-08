@@ -2060,8 +2060,10 @@ function tailoringExplanationForArtifact(
   const jobKeywords = tailoringJobKeywordsForArtifact(db, row);
   const resumeText = tailoringResumeTextForArtifact(db, row);
   const direct = parseTailoringExplanation(row.metadata_json, { jobKeywords, resumeText });
-  if (direct) return direct;
-  if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+  if (direct && (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type) || hasCompleteTailoringAudit(direct))) {
+    return direct;
+  }
+  if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return direct;
 
   const sibling = getRow<{ metadata_json: string | null; local_path: string | null }>(
     db,
@@ -2077,10 +2079,15 @@ function tailoringExplanationForArtifact(
       LIMIT 1`,
     [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
   );
-  return parseTailoringExplanation(sibling?.metadata_json ?? null, {
+  const siblingExplanation = parseTailoringExplanation(sibling?.metadata_json ?? null, {
     jobKeywords,
     resumeText: resumeText ?? localTextFile(sibling?.local_path ?? ""),
   });
+  if (!siblingExplanation) return direct;
+  if (!direct) return siblingExplanation;
+  return missingTailoringAuditFields(siblingExplanation).length < missingTailoringAuditFields(direct).length
+    ? siblingExplanation
+    : direct;
 }
 
 function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
@@ -2261,8 +2268,53 @@ function parseTailoringExplanation(
       attempts: metadataNumber(metadata.attempts),
     },
   };
+  const missingAuditFields = missingTailoringAuditFields(explanation);
+  if (missingAuditFields.length) {
+    explanation.quality.errors = [
+      `Tailoring audit metadata incomplete: missing ${missingAuditFields.join(", ")}`,
+      ...explanation.quality.errors,
+    ];
+  }
 
   return hasTailoringExplanationContent(explanation) ? explanation : null;
+}
+
+function hasCompleteTailoringAudit(explanation: ArtifactTailoringExplanation): boolean {
+  return missingTailoringAuditFields(explanation).length === 0;
+}
+
+function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation): string[] {
+  const missing: string[] = [];
+  if (!explanation.targetSeniority) missing.push("target seniority");
+  if (!explanation.claimMode) missing.push("claim mode");
+  if (!explanation.validationMode) missing.push("validation mode");
+  if (!explanation.safety.autoApprovableClaimModes.length) missing.push("auto-approvable claim modes");
+  if (explanation.safety.allowAdjacentAchievementDrafts === null) missing.push("adjacent draft policy");
+  if (explanation.safety.qualityPassed === null && explanation.quality.passed === null) {
+    missing.push("quality gate");
+  }
+  if (explanation.evidence.verifiedMetricCount === null) missing.push("verified metric count");
+  if (!explanation.evidence.requiredIds.length && !explanation.evidence.seniorityIds.length) {
+    missing.push("profile evidence mapping");
+  }
+  if (!explanation.annotatedChanges.length) missing.push("resume change annotations");
+  if (explanation.judge.passed === null && !explanation.judge.verdict && explanation.judge.score === null) {
+    missing.push("judge result");
+  }
+  if (explanation.judge.minScore === null) missing.push("judge threshold");
+  if (!explanation.models.selectedModel) missing.push("selected model");
+  if (!explanation.models.judgeModel) missing.push("judge model");
+  if (!explanation.models.candidateModels.length) missing.push("candidate models");
+  if (!explanation.models.selectedCandidate) missing.push("selected candidate");
+  if (explanation.models.attempts === null) missing.push("attempt count");
+  if (!explanation.adversarialReview) {
+    missing.push("persona review");
+  } else if (explanation.adversarialReview.ran) {
+    if (!explanation.adversarialReview.personas.length) missing.push("persona judgments");
+    if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
+    if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+  }
+  return missing;
 }
 
 function parseAdversarialReview(

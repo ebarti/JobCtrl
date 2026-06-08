@@ -44,7 +44,7 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
   },
   quality: {
     passed: null,
-    errors: [],
+    errors: ["Tailoring audit metadata incomplete: missing target seniority, claim mode"],
     warnings: [],
     notes: [],
     metricClaims: [],
@@ -78,13 +78,15 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
 };
 
 describe("<TailoringExplanationSection>", () => {
-  it("does not render empty generation audit rows for keyword-only explanations", () => {
+  it("flags keyword-only explanations as incomplete audit metadata", () => {
     render(<TailoringExplanationSection explanation={keywordOnlyExplanation} />);
 
     expect(screen.getByText("Tailoring rationale")).toBeInTheDocument();
     expect(screen.getByText("2/3 found in resume")).toBeInTheDocument();
     expect(screen.getByText("Generation audit")).toBeInTheDocument();
-    expect(screen.getByText("not recorded for this artifact")).toBeInTheDocument();
+    expect(screen.getByText("audit metadata incomplete for this artifact")).toBeInTheDocument();
+    expect(screen.getByText("Blocking repair feedback")).toBeInTheDocument();
+    expect(screen.getByText("Tailoring audit metadata incomplete: missing target seniority, claim mode")).toBeInTheDocument();
     expect(screen.queryByText("Target seniority")).not.toBeInTheDocument();
     expect(screen.queryByText("Safety checks")).not.toBeInTheDocument();
     expect(screen.queryByText("Generation context")).not.toBeInTheDocument();
