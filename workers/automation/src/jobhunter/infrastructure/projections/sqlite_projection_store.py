@@ -59,6 +59,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_detail_projections", "score_version", "INTEGER"),
     ("job_detail_projections", "scored_at", "TEXT"),
+    ("artifact_list_projections", "metadata_json", "TEXT"),
 )
 
 
@@ -157,7 +158,8 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             local_path             TEXT NOT NULL DEFAULT '',
             size_bytes             INTEGER,
             created_at             TEXT,
-            generation             INTEGER
+            generation             INTEGER,
+            metadata_json          TEXT
         )
         """
     )
@@ -519,8 +521,8 @@ class SqliteProjectionStore:
             INSERT INTO artifact_list_projections (
                 artifact_id, tenant_id, job_id, job_title, job_employer,
                 artifact_type, status, local_path, size_bytes, created_at,
-                generation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                generation, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(artifact_id) DO UPDATE SET
                 job_id        = excluded.job_id,
                 job_title     = excluded.job_title,
@@ -530,7 +532,8 @@ class SqliteProjectionStore:
                 local_path    = excluded.local_path,
                 size_bytes    = excluded.size_bytes,
                 created_at    = excluded.created_at,
-                generation    = excluded.generation
+                generation    = excluded.generation,
+                metadata_json = excluded.metadata_json
             """,
             (
                 projection.artifact_id,
@@ -544,6 +547,7 @@ class SqliteProjectionStore:
                 projection.size_bytes,
                 projection.created_at,
                 projection.generation,
+                projection.metadata_json,
             ),
         )
 

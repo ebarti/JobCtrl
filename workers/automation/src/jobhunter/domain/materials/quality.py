@@ -17,9 +17,14 @@ from jobhunter.resume_profile import (
     get_achievement_evidence,
     get_claim_mode,
     get_experience_entries,
+    get_resume_master,
     get_resume_constraints,
+    get_skill_categories,
     get_tailoring_quality_controls,
     get_writing_style,
+    tailored_experience_bullets,
+    tailored_experience_title,
+    tailored_skill_items,
 )
 
 
@@ -116,6 +121,113 @@ _STOPWORDS: set[str] = {
     "system",
     "systems",
 }
+_LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
+    "about",
+    "across",
+    "barcelona",
+    "believe",
+    "care",
+    "chain",
+    "clinic",
+    "clinics",
+    "combine",
+    "company",
+    "cool",
+    "cutting",
+    "deserves",
+    "edge",
+    "europe",
+    "everyone",
+    "expert",
+    "fast",
+    "growth",
+    "head",
+    "health",
+    "impress",
+    "innovator",
+    "international",
+    "join",
+    "largest",
+    "leading",
+    "love",
+    "office",
+    "ortho",
+    "orthodontics",
+    "onsite",
+    "rapid",
+    "remote",
+    "revolutionizing",
+    "salary",
+    "since",
+    "smile",
+    "tech",
+    "they",
+    "worldwide",
+}
+_HIGH_SIGNAL_DESCRIPTION_KEYWORDS: set[str] = {
+    "ai",
+    "ai-first",
+    "ai-native",
+    "api",
+    "architecture",
+    "automation",
+    "aws",
+    "azure",
+    "backend",
+    "ci/cd",
+    "cloud",
+    "cost",
+    "devops",
+    "disaster",
+    "docker",
+    "gcp",
+    "governance",
+    "incident",
+    "infrastructure",
+    "java",
+    "javascript",
+    "kafka",
+    "kubernetes",
+    "latency",
+    "leadership",
+    "management",
+    "node.js",
+    "observability",
+    "optimization",
+    "performance",
+    "platform",
+    "postgres",
+    "postgresql",
+    "productivity",
+    "python",
+    "react",
+    "redis",
+    "reliability",
+    "resiliency",
+    "saas",
+    "scalability",
+    "security",
+    "sre",
+    "terraform",
+    "typescript",
+}
+_HIGH_SIGNAL_DESCRIPTION_PHRASES: tuple[str, ...] = (
+    "api performance",
+    "backend systems",
+    "ci/cd",
+    "cloud governance",
+    "cloud infrastructure",
+    "cloud-native",
+    "cost optimization",
+    "developer platform",
+    "developer productivity",
+    "disaster recovery",
+    "incident management",
+    "infrastructure as code",
+    "platform as product",
+    "platform engineering",
+    "service reliability",
+)
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9+#./-]*")
 _METRIC_RE = re.compile(
@@ -237,7 +349,7 @@ class TailoringPlan:
                 if key in self.writing_style
             },
             "target_seniority": self.target_seniority,
-            "job_keywords": list(self.job_keywords[:16]),
+            "job_keywords": list(self.job_keywords),
             "required_evidence_ids": list(self.required_evidence_ids),
             "seniority_evidence_ids": list(self.seniority_evidence_ids),
             "verified_metric_count": len(self.verified_metrics),
@@ -284,6 +396,36 @@ class TailoringQualityResult:
         }
 
 
+@dataclass(frozen=True)
+class TailoringChangeAnnotation:
+    section: str
+    label: str
+    change_type: str
+    source_id: str
+    source_text: tuple[str, ...]
+    tailored_text: tuple[str, ...]
+    rationale: str
+    job_signals: tuple[str, ...] = ()
+    controls: tuple[str, ...] = ()
+    evidence_ids: tuple[str, ...] = ()
+    evidence_notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "section": self.section,
+            "label": self.label,
+            "change_type": self.change_type,
+            "source_id": self.source_id,
+            "source_text": list(self.source_text),
+            "tailored_text": list(self.tailored_text),
+            "rationale": self.rationale,
+            "job_signals": list(self.job_signals),
+            "controls": list(self.controls),
+            "evidence_ids": list(self.evidence_ids),
+            "evidence_notes": list(self.evidence_notes),
+        }
+
+
 def build_tailoring_plan(profile: dict, job: dict) -> TailoringPlan:
     controls = get_tailoring_quality_controls(profile)
     writing_style = get_writing_style(profile)
@@ -323,6 +465,135 @@ def build_tailoring_plan(profile: dict, job: dict) -> TailoringPlan:
         verified_metrics=verified_metrics,
         evidence_items=evidence_items,
     )
+
+
+def build_tailoring_change_annotations(
+    profile: dict,
+    job: dict,
+    tailored_payload: dict,
+    plan: TailoringPlan,
+) -> tuple[dict[str, Any], ...]:
+    """Explain the selected tailored payload as an auditable change log."""
+    resume = get_resume_master(profile)
+    annotations: list[TailoringChangeAnnotation] = []
+    controls = _annotation_controls(plan)
+
+    baseline_summary = _normalize_space(
+        str(resume.get("executive_profile", {}).get("baseline_text", ""))
+    )
+    tailored_summary = _normalize_space(str(tailored_payload.get("executive_profile") or ""))
+    if tailored_summary:
+        annotations.append(
+            TailoringChangeAnnotation(
+                section="executive_profile",
+                label="Executive profile",
+                change_type=(
+                    "summary_reframed"
+                    if _normalize_phrase(baseline_summary) != _normalize_phrase(tailored_summary)
+                    else "summary_preserved"
+                ),
+                source_id="executive_profile",
+                source_text=_annotation_lines([baseline_summary]),
+                tailored_text=_annotation_lines([tailored_summary]),
+                rationale=_summary_rationale(plan, job, tailored_summary),
+                job_signals=_annotation_job_signals(tailored_summary, plan, job),
+                controls=controls,
+                evidence_ids=tuple(plan.seniority_evidence_ids[:6]),
+                evidence_notes=_annotation_evidence_notes(
+                    plan,
+                    plan.seniority_evidence_ids,
+                    tailored_summary,
+                ),
+            )
+        )
+
+    updates = {
+        str(update.get("id")): update
+        for update in tailored_payload.get("experience_updates") or []
+        if isinstance(update, dict) and update.get("id")
+    }
+    for entry in get_experience_entries(profile):
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("id") or "")
+        update = updates.get(entry_id, {})
+        if not update:
+            continue
+        source_bullets = _text_list(entry.get("bullets"))
+        tailored_title = tailored_experience_title(entry, update, profile)
+        tailored_bullets = tailored_experience_bullets(entry, update, profile)
+        tailored_lines = [
+            line for line in [tailored_title, *tailored_bullets] if str(line).strip()
+        ]
+        if not tailored_lines:
+            continue
+        source_title = str(entry.get("title") or "").strip()
+        evidence_ids = tuple(
+            item.evidence_id
+            for item in plan.evidence_items
+            if item.experience_entry_id == entry_id
+            and (
+                item.evidence_id in plan.required_evidence_ids
+                or item.evidence_id in plan.seniority_evidence_ids
+                or _evidence_represented(_normalize_space("\n".join(tailored_lines)).lower(), item)
+            )
+        )
+        annotations.append(
+            TailoringChangeAnnotation(
+                section="experience",
+                label=_experience_label(entry),
+                change_type=_experience_change_type(entry, update, profile),
+                source_id=entry_id,
+                source_text=_annotation_lines([source_title, *source_bullets], limit=5),
+                tailored_text=_annotation_lines(tailored_lines, limit=5),
+                rationale=_experience_rationale(plan, job, entry, tailored_lines),
+                job_signals=_annotation_job_signals("\n".join(tailored_lines), plan, job),
+                controls=controls,
+                evidence_ids=evidence_ids[:6],
+                evidence_notes=_annotation_evidence_notes(
+                    plan,
+                    evidence_ids,
+                    "\n".join(tailored_lines),
+                ),
+            )
+        )
+
+    skill_updates = {
+        str(update.get("id")): update
+        for update in tailored_payload.get("skill_category_updates") or []
+        if isinstance(update, dict) and update.get("id")
+    }
+    for category in get_skill_categories(profile):
+        if not isinstance(category, dict):
+            continue
+        category_id = str(category.get("id") or "")
+        update = skill_updates.get(category_id, {})
+        if not update:
+            continue
+        source_items = _text_list(category.get("items"))
+        tailored_items = tailored_skill_items(category, update, profile)
+        if not tailored_items:
+            continue
+        annotations.append(
+            TailoringChangeAnnotation(
+                section="skills",
+                label=f"{category.get('label') or 'Skills'} skills",
+                change_type=(
+                    "skills_reordered"
+                    if [_normalize_phrase(item) for item in tailored_items]
+                    != [_normalize_phrase(item) for item in source_items]
+                    else "skills_preserved"
+                ),
+                source_id=category_id,
+                source_text=_annotation_lines(source_items, limit=10),
+                tailored_text=_annotation_lines(tailored_items, limit=10),
+                rationale=_skills_rationale(plan, job, tailored_items),
+                job_signals=_annotation_job_signals(", ".join(tailored_items), plan, job),
+                controls=controls,
+            )
+        )
+
+    return tuple(item.to_dict() for item in annotations[:12])
 
 
 def evaluate_tailoring_quality(
@@ -474,7 +745,7 @@ def _select_required_evidence_ids(
 def _extract_job_keywords(job: dict) -> tuple[str, ...]:
     ordered: list[str] = []
 
-    for key in (
+    trusted_keyword_fields = (
         "title",
         "role_title",
         "skills",
@@ -482,25 +753,31 @@ def _extract_job_keywords(job: dict) -> tuple[str, ...]:
         "preferred_skills",
         "responsibilities",
         "requirements",
+    )
+    generic_keyword_fields = (
         "signals",
         "matched_signals",
         "missing_signals",
         "transferable_signals",
         "score_keywords",
         "keywords",
-    ):
+    )
+    for key in trusted_keyword_fields:
         for value in _flatten_text(job.get(key)):
             _append_keywords(ordered, value, include_phrase=key != "title")
 
+    for key in generic_keyword_fields:
+        for value in _flatten_text(job.get(key)):
+            _append_keywords(ordered, value, include_phrase=True, require_high_signal=True)
+
     for key in ("score_breakdown", "score_breakdown_json", "score_reasoning"):
         for value in _flatten_text(job.get(key)):
-            _append_keywords(ordered, value, include_phrase=False)
+            _append_keywords(ordered, value, include_phrase=False, require_high_signal=True)
 
     description = " ".join(
         str(job.get(key) or "") for key in ("full_description", "description")
     )
-    for token in _significant_tokens(description):
-        _add_keyword(ordered, token)
+    _append_description_keywords(ordered, description)
 
     return tuple(ordered[:32])
 
@@ -523,20 +800,186 @@ def _target_seniority(job: dict) -> str:
     return "mid"
 
 
-def _append_keywords(ordered: list[str], value: str, *, include_phrase: bool) -> None:
+def _annotation_controls(plan: TailoringPlan) -> tuple[str, ...]:
+    controls = [
+        f"target seniority: {plan.target_seniority}",
+        f"claim mode: {plan.claim_mode}",
+        "adjacent drafts allowed" if plan.allow_adjacent_achievement_drafts else "adjacent drafts blocked",
+    ]
+    for key in ("tone", "bullet_style", "verbosity", "keyword_density"):
+        value = plan.writing_style.get(key)
+        if value:
+            controls.append(f"{key.replace('_', ' ')}: {value}")
+    if plan.auto_approvable_claim_modes:
+        controls.append(
+            "auto-approvable claims: "
+            + ", ".join(plan.auto_approvable_claim_modes[:4])
+        )
+    return tuple(controls)
+
+
+def _annotation_lines(values: list[str] | tuple[str, ...], *, limit: int = 4) -> tuple[str, ...]:
+    lines = []
+    for value in values:
+        line = _normalize_space(str(value))
+        if line:
+            lines.append(line[:320])
+    return tuple(list(dict.fromkeys(lines))[:limit])
+
+
+def _annotation_job_signals(text: str, plan: TailoringPlan, job: dict) -> tuple[str, ...]:
+    normalized = _normalize_space(text).lower()
+    signals = [
+        keyword for keyword in plan.job_keywords if _contains_term(normalized, keyword)
+    ]
+    if not signals:
+        title = str(job.get("title") or job.get("role_title") or "").strip()
+        if title:
+            signals.append(title)
+    return tuple(list(dict.fromkeys(signals))[:8])
+
+
+def _summary_rationale(plan: TailoringPlan, job: dict, tailored_summary: str) -> str:
+    signals = ", ".join(_annotation_job_signals(tailored_summary, plan, job))
+    if signals:
+        return (
+            f"Summary was framed for a {plan.target_seniority} target and the "
+            f"job signals {signals}, using {plan.claim_mode} rather than new claims."
+        )
+    return (
+        f"Summary was framed for a {plan.target_seniority} target using "
+        f"{plan.claim_mode} and the selected writing controls."
+    )
+
+
+def _experience_rationale(
+    plan: TailoringPlan,
+    job: dict,
+    entry: dict,
+    tailored_lines: list[str],
+) -> str:
+    signals = ", ".join(_annotation_job_signals("\n".join(tailored_lines), plan, job))
+    company = str(entry.get("company") or "this experience").strip()
+    if signals:
+        return (
+            f"{company} was emphasized because it supports the target role through "
+            f"{signals}; wording is constrained by {plan.claim_mode} evidence controls."
+        )
+    return (
+        f"{company} was carried into the tailored resume because it is selected "
+        f"profile experience and fits the {plan.target_seniority} target."
+    )
+
+
+def _skills_rationale(plan: TailoringPlan, job: dict, tailored_items: list[str]) -> str:
+    signals = ", ".join(_annotation_job_signals(", ".join(tailored_items), plan, job))
+    if signals:
+        return (
+            f"Skill ordering highlights job-matching signals ({signals}) while "
+            "preserving the selected profile skill category."
+        )
+    return "Skill category is preserved from the profile under the selected tailoring controls."
+
+
+def _experience_label(entry: dict) -> str:
+    title = str(entry.get("title") or "Experience").strip()
+    company = str(entry.get("company") or "").strip()
+    return f"{title} at {company}" if company else title
+
+
+def _experience_change_type(entry: dict, update: dict, profile: dict) -> str:
+    source_title = _normalize_phrase(str(entry.get("title") or ""))
+    tailored_title = _normalize_phrase(tailored_experience_title(entry, update, profile))
+    source_bullets = [_normalize_phrase(item) for item in _text_list(entry.get("bullets"))]
+    tailored_bullets = [
+        _normalize_phrase(item) for item in tailored_experience_bullets(entry, update, profile)
+    ]
+    title_changed = tailored_title and tailored_title != source_title
+    bullets_changed = tailored_bullets != source_bullets
+    if title_changed and bullets_changed:
+        return "title_and_achievement_reframed"
+    if title_changed:
+        return "title_reframed"
+    if bullets_changed:
+        return "achievement_reframed"
+    return "experience_preserved"
+
+
+def _annotation_evidence_notes(
+    plan: TailoringPlan,
+    evidence_ids: tuple[str, ...],
+    tailored_text: str,
+) -> tuple[str, ...]:
+    notes: list[str] = []
+    normalized = _normalize_space(tailored_text).lower()
+    for evidence_id in evidence_ids[:6]:
+        item = plan.evidence_by_id.get(evidence_id)
+        if item is None:
+            continue
+        parts = []
+        if item.metrics:
+            parts.append(", ".join(item.metrics[:3]))
+        if item.tools:
+            tools = [tool for tool in item.tools if _contains_term(normalized, tool.lower())]
+            parts.append(", ".join((tools or list(item.tools))[:3]))
+        if item.seniority_signal:
+            parts.append(item.seniority_signal)
+        if not parts and item.source_text:
+            parts.append(item.source_text[:160])
+        notes.append(f"{item.evidence_id}: " + "; ".join(part for part in parts if part))
+    return tuple(dict.fromkeys(note for note in notes if note))
+
+
+def _append_keywords(
+    ordered: list[str],
+    value: str,
+    *,
+    include_phrase: bool,
+    require_high_signal: bool = False,
+) -> None:
     phrase = _normalize_phrase(value)
     if include_phrase and 1 < len(phrase.split()) <= 4:
-        _add_keyword(ordered, phrase)
+        _add_keyword(ordered, phrase, require_high_signal=require_high_signal)
     for token in _significant_tokens(value):
-        _add_keyword(ordered, token)
+        _add_keyword(ordered, token, require_high_signal=require_high_signal)
 
 
-def _add_keyword(ordered: list[str], keyword: str) -> None:
+def _append_description_keywords(ordered: list[str], value: str) -> None:
+    normalized = _normalize_phrase(value)
+    for phrase in _HIGH_SIGNAL_DESCRIPTION_PHRASES:
+        if _contains_term(normalized, phrase):
+            _add_keyword(ordered, phrase, require_high_signal=True)
+    tokens = _significant_tokens(value)
+    for token in tokens:
+        _add_keyword(ordered, token, require_high_signal=True)
+
+
+def _add_keyword(
+    ordered: list[str],
+    keyword: str,
+    *,
+    require_high_signal: bool = False,
+) -> None:
     keyword = _normalize_phrase(keyword)
-    if not keyword or keyword in _STOPWORDS:
+    if not keyword or not _is_keyword_candidate(keyword, require_high_signal=require_high_signal):
         return
     if keyword not in ordered:
         ordered.append(keyword)
+
+
+def _is_keyword_candidate(keyword: str, *, require_high_signal: bool) -> bool:
+    tokens = keyword.split()
+    if not tokens:
+        return False
+    if all(token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS or token.isdigit() for token in tokens):
+        return False
+    if require_high_signal:
+        return any(token in _HIGH_SIGNAL_DESCRIPTION_KEYWORDS for token in tokens)
+    if len(tokens) == 1:
+        token = tokens[0]
+        if token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS or token.isdigit():
+            return False
+    return True
 
 
 def _flatten_text(value: Any) -> list[str]:
@@ -612,7 +1055,7 @@ def _check_metrics(
     generated_lower: str,
     plan: TailoringPlan,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    metric_claims = tuple(dict.fromkeys(_normalize_metric(match.group(0)) for match in _METRIC_RE.finditer(generated_lower)))
+    metric_claims = tuple(dict.fromkeys(_display_metric(match.group(0)) for match in _METRIC_RE.finditer(generated_lower)))
     allowed_text = " ".join(plan.verified_metrics).lower()
     unknown = tuple(
         metric for metric in metric_claims if metric and not _contains_metric_text(allowed_text, metric)
@@ -709,7 +1152,7 @@ def _significant_tokens(text: str) -> list[str]:
     tokens = []
     for token in _WORD_RE.findall(str(text).lower()):
         token = token.strip("./-")
-        if len(token) < 3 or token in _STOPWORDS:
+        if len(token) < 3 or token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS:
             continue
         tokens.append(token)
     counts = Counter(tokens)
@@ -750,6 +1193,10 @@ def _normalize_metric(value: str) -> str:
     return re.sub(r"\s+", "", str(value).lower().replace(",", "")).strip(".")
 
 
+def _display_metric(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value).strip().replace(",", "")).strip(".")
+
+
 def _normalize_phrase(value: str) -> str:
     return " ".join(_WORD_RE.findall(str(value).lower())).strip()
 
@@ -769,6 +1216,8 @@ __all__ = [
     "EvidencePlanItem",
     "TailoringPlan",
     "TailoringQualityResult",
+    "TailoringChangeAnnotation",
+    "build_tailoring_change_annotations",
     "build_tailoring_plan",
     "evaluate_tailoring_quality",
 ]

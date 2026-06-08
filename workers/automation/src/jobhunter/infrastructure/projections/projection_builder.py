@@ -373,6 +373,7 @@ class ProjectionBuilder:
         apply_run = self._load_latest_apply_run(job_url)
         deleted_at = self._load_deleted_at(job_url)
         artifacts = self._load_artifacts(job_url)
+        artifacts = _with_synthetic_pdf_artifacts(job_url, artifacts, materials)
 
         title = _row_str(job_row, "title")
         site = _row_str(job_row, "site")
@@ -517,6 +518,7 @@ class ProjectionBuilder:
                 size_bytes=a.get("size_bytes"),
                 created_at=a.get("created_at"),
                 generation=a.get("generation"),
+                metadata_json=a.get("metadata_json"),
             )
             for a in artifacts
         ]
@@ -774,7 +776,7 @@ class ProjectionBuilder:
             for row in self._conn.execute(
                 """
                 SELECT artifact_id, artifact_type, status, path, created_at,
-                       size_bytes, generation
+                       size_bytes, generation, metadata_json
                 FROM job_materials_artifacts
                 WHERE job_url = ?
                 """,
@@ -798,6 +800,7 @@ class ProjectionBuilder:
                         "created_at": _row_nullable_str(row, "created_at"),
                         "size_bytes": _row_nullable_int(row, "size_bytes"),
                         "generation": _row_nullable_int(row, "generation"),
+                        "metadata_json": _row_nullable_str(row, "metadata_json"),
                     }
                 )
         except sqlite3.OperationalError:
@@ -1284,6 +1287,117 @@ def _row_nullable_int(row: object, key: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _with_synthetic_pdf_artifacts(
+    job_url: str,
+    artifacts: list[dict],
+    materials: dict,
+) -> list[dict]:
+    out = list(artifacts)
+    seen = {
+        (str(item.get("artifact_type") or ""), str(item.get("local_path") or ""))
+        for item in out
+    }
+    preferred_generation = materials.get("generation")
+
+    tailor_source = _preferred_artifact_source(
+        out,
+        {"tailored_resume", "tailored_resume_txt"},
+        preferred_generation,
+    )
+    tailor_pdf_path = materials.get("resume_pdf_path")
+    if (
+        not tailor_pdf_path
+        and tailor_source
+        and tailor_source.get("artifact_type") == "tailored_resume_txt"
+    ):
+        tailor_pdf_path = _pdf_sibling(str(tailor_source.get("local_path") or ""))
+    if tailor_pdf_path and ("tailored_resume_pdf", tailor_pdf_path) not in seen:
+        out.append(
+            {
+                "artifact_id": f"{job_url}:tailored_resume_pdf:{tailor_pdf_path}",
+                "artifact_type": "tailored_resume_pdf",
+                "status": "active",
+                "local_path": tailor_pdf_path,
+                "created_at": tailor_source.get("created_at") if tailor_source else None,
+                "size_bytes": None,
+                "generation": tailor_source.get("generation") if tailor_source else None,
+                "metadata_json": tailor_source.get("metadata_json") if tailor_source else None,
+            }
+        )
+
+    cover_source = _preferred_artifact_source(
+        out,
+        {"cover_letter", "cover_letter_txt"},
+        preferred_generation,
+    )
+    cover_pdf_path = materials.get("cover_pdf_path")
+    if (
+        not cover_pdf_path
+        and cover_source
+        and cover_source.get("artifact_type") == "cover_letter_txt"
+    ):
+        cover_pdf_path = _pdf_sibling(str(cover_source.get("local_path") or ""))
+    if cover_pdf_path and ("cover_letter_pdf", cover_pdf_path) not in seen:
+        out.append(
+            {
+                "artifact_id": f"{job_url}:cover_letter_pdf:{cover_pdf_path}",
+                "artifact_type": "cover_letter_pdf",
+                "status": "active",
+                "local_path": cover_pdf_path,
+                "created_at": cover_source.get("created_at") if cover_source else None,
+                "size_bytes": None,
+                "generation": cover_source.get("generation") if cover_source else None,
+                "metadata_json": cover_source.get("metadata_json") if cover_source else None,
+            }
+        )
+    return out
+
+
+def _preferred_artifact_source(
+    artifacts: list[dict],
+    artifact_types: set[str],
+    preferred_generation: object,
+) -> dict | None:
+    candidates = [
+        artifact
+        for artifact in artifacts
+        if str(artifact.get("artifact_type") or "") in artifact_types
+        and _is_default_visible_artifact(str(artifact.get("status") or ""))
+    ]
+    candidates.sort(
+        key=lambda artifact: (
+            artifact.get("generation") == preferred_generation,
+            _artifact_status_rank(str(artifact.get("status") or "")),
+            int(artifact.get("generation") or -1),
+        ),
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _is_default_visible_artifact(status: str) -> bool:
+    return status.lower() != "suppressed"
+
+
+def _artifact_status_rank(status: str) -> int:
+    match status.lower():
+        case "approved" | "active":
+            return 3
+        case "candidate":
+            return 2
+        case "rejected":
+            return 1
+        case _:
+            return 0
+
+
+def _pdf_sibling(value: str) -> str | None:
+    if not value:
+        return None
+    base = value.rsplit(".", 1)[0] if "." in value else value
+    return f"{base}.pdf"
 
 
 def _row_get(row: object, key: str) -> object:

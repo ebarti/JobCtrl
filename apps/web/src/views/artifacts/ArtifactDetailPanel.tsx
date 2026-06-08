@@ -2,6 +2,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { useOpenArtifactMutation } from "../../contexts/materials/hooks/useOpenArtifactMutation.js";
+import { TailoringExplanationSection } from "../../contexts/materials/components/TailoringExplanationSection.js";
 import { artifactStatusDescription } from "../../contexts/materials/lib/artifact-status-copy.js";
 import { artifactStatusTone } from "../../contexts/materials/lib/artifact-status-tone.js";
 import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtifactDetailQuery.js";
@@ -83,56 +84,59 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
               </span>
             </div>
             <div className="artifact-detail-layout">
-              <Section title="Artifact details">
-                {isSuppressed(detail.artifact.status) ? (
-                  <div className="banner inline">
-                    This artifact is historical audit material and is not active apply-ready material.
-                  </div>
-                ) : null}
-                <dl className="detail-list">
-                  <div>
-                    <dt>Status</dt>
-                    <dd>{artifactStatusDescription(detail.artifact.status)}</dd>
-                  </div>
-                  <div>
-                    <dt>Artifact id</dt>
-                    <dd className="mono">{detail.artifact.artifactId}</dd>
-                  </div>
-                  <div>
-                    <dt>Job</dt>
-                    <dd>{detail.artifact.jobKey || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Local path</dt>
-                    <dd className="mono">{detail.artifact.localPath || "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Size</dt>
-                    <dd>{detail.artifact.size}</dd>
-                  </div>
-                </dl>
-                <button
-                  className="tab on"
-                  type="button"
-                  disabled={openArtifact.isPending || detail.artifact.status === "missing"}
-                  onClick={() => openArtifact.mutate({ artifactId: detail.artifact.artifactId })}
-                >
-                  {openArtifact.isPending ? "opening" : "open"}
-                </button>
-                <button
-                  className="tab"
-                  type="button"
-                  disabled={!detail.artifact.jobKey}
-                  onClick={() =>
-                    void navigate({
-                      to: "/jobs/$jobId",
-                      params: { jobId: detail.artifact.jobKey },
-                    })
-                  }
-                >
-                  open related job
-                </button>
-              </Section>
+              <div className="artifact-detail-sidebar">
+                <Section title="Artifact details">
+                  {isSuppressed(detail.artifact.status) ? (
+                    <div className="banner inline">
+                      This artifact is historical audit material and is not active apply-ready material.
+                    </div>
+                  ) : null}
+                  <dl className="detail-list">
+                    <div>
+                      <dt>Status</dt>
+                      <dd>{artifactStatusDescription(detail.artifact.status)}</dd>
+                    </div>
+                    <div>
+                      <dt>Artifact id</dt>
+                      <dd className="mono">{detail.artifact.artifactId}</dd>
+                    </div>
+                    <div>
+                      <dt>Job</dt>
+                      <dd>{detail.artifact.jobKey || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Local path</dt>
+                      <dd className="mono">{detail.artifact.localPath || "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Size</dt>
+                      <dd>{detail.artifact.size}</dd>
+                    </div>
+                  </dl>
+                  <button
+                    className="tab on"
+                    type="button"
+                    disabled={openArtifact.isPending || detail.artifact.status === "missing"}
+                    onClick={() => openArtifact.mutate({ artifactId: detail.artifact.artifactId })}
+                  >
+                    {openArtifact.isPending ? "opening" : "open"}
+                  </button>
+                  <button
+                    className="tab"
+                    type="button"
+                    disabled={!detail.artifact.jobKey}
+                    onClick={() =>
+                      void navigate({
+                        to: "/jobs/$jobId",
+                        params: { jobId: detail.artifact.jobKey },
+                      })
+                    }
+                  >
+                    open related job
+                  </button>
+                </Section>
+                <TailoringExplanationSection explanation={detail.tailoringExplanation} />
+              </div>
               {isPreviewablePdfArtifact(detail.artifact.type, detail.artifact.localPath) ? (
                 <section className="artifact-preview-panel" aria-label="Artifact PDF preview">
                   <PdfPreviewViewer

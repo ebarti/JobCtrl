@@ -160,6 +160,7 @@ class ArtifactListProjection:
     size_bytes: int | None = None
     created_at: str | None = None
     generation: int | None = None
+    metadata_json: str | None = None
 
 
 @dataclass(frozen=True)

@@ -216,6 +216,21 @@ def _good_json_payload() -> str:
     )
 
 
+def _keyword_stuffed_json_payload() -> str:
+    stuffed = " ".join(["backend"] * 10)
+    return json.dumps(
+        {
+            "executive_profile": f"Senior engineer focused on {stuffed}.",
+            "experience_updates": [
+                {"id": "acme_swe", "title": "", "bullets": [f"Built {stuffed}."]},
+            ],
+            "skill_category_updates": [
+                {"id": "languages", "items": ["Python", "Go"]},
+            ],
+        }
+    )
+
+
 def _quality_json_payload(*, metric: str = "35%") -> str:
     return json.dumps(
         {
@@ -307,11 +322,13 @@ def _adversarial_pass(*, warnings: list[str] | None = None) -> str:
         {
             "verdict": "PASS",
             "score": 0.91,
+            "score_rationale": "Overall review passed because no persona reported blockers.",
             "personas": [
                 {
                     "persona": "evidence_auditor",
                     "verdict": "PASS",
                     "score": 0.92,
+                    "score_rationale": "Profile evidence supports the tailored claims.",
                     "blockers": [],
                     "warnings": warnings or [],
                     "repair_instructions": [],
@@ -329,11 +346,13 @@ def _adversarial_fail() -> str:
         {
             "verdict": "FAIL",
             "score": 0.31,
+            "score_rationale": "Overall review failed because interview defensibility found an unsupported claim.",
             "personas": [
                 {
                     "persona": "interview_defensibility_critic",
                     "verdict": "FAIL",
                     "score": 0.25,
+                    "score_rationale": "The claim cannot be defended with available profile evidence.",
                     "blockers": ["Claim cannot be defended in interview."],
                     "warnings": [],
                     "repair_instructions": ["Replace the unsupported claim with verified evidence."],
@@ -464,6 +483,11 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
     assert metadata["quality_plan"]["target_seniority"] == "senior"
     assert metadata["quality_plan"]["required_evidence_ids"] == ["ev_latency"]
     assert metadata["quality_checks"]["passed"] is True
+    assert metadata["change_annotations"][0]["section"] == "executive_profile"
+    assert metadata["change_annotations"][0]["change_type"] == "summary_reframed"
+    assert metadata["change_annotations"][1]["section"] == "experience"
+    assert metadata["change_annotations"][1]["source_id"] == "acme_swe"
+    assert metadata["change_annotations"][1]["evidence_ids"] == ["ev_latency"]
     assert outcome.report["tailoring_quality"]["quality_checks"]["passed"] is True
 
 
@@ -524,9 +548,14 @@ def test_tailor_use_case_runs_adversarial_review_for_high_fit_jobs(
     assert review["ran"] is True
     assert review["passed"] is True
     assert review["normalized_fit_score"] == 0.9
+    assert review["llm_audit"]["model"]
+    assert "adversarial resume review" in review["llm_audit"]["prompt_messages"][0]["content"]
+    assert review["personas"][0]["score_rationale"] == "Profile evidence supports the tailored claims."
+    assert review["personas"][0]["prompt_rubric"]
+    assert review["personas"][0]["response"]["verdict"] == "PASS"
 
 
-def test_tailor_use_case_persists_adversarial_warnings_without_blocking(
+def test_tailor_use_case_retries_adversarial_warnings_before_accepting(
     tmp_path: Path, job: dict
 ) -> None:
     snapshot = ProfileSnapshot.from_profile(
@@ -534,25 +563,84 @@ def test_tailor_use_case_persists_adversarial_warnings_without_blocking(
     )
     high_fit_job = {**job, "fit_score": 9, "title": "Senior Backend Engineer"}
     repo = _FakeRepository()
-    llm = _ScriptedLlm([
-        _quality_json_payload(),
-        _judge_pass(),
-        _adversarial_pass(warnings=["Bullet could be more concise."]),
-    ])
+    llm = _ScriptedLlm(
+        [
+            _quality_json_payload(),
+            _judge_pass(),
+            _adversarial_pass(warnings=["Bullet could be more concise."]),
+            _quality_json_payload(),
+            _judge_pass(),
+            _adversarial_pass(),
+        ]
+    )
     use_case = TailorResumeUseCase(
         repository=repo,
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        max_retries=1,
     )
 
     outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
 
     assert outcome.status == "approved"
+    assert len(llm.calls) == 6
+    assert "Bullet could be more concise." in llm.calls[3][0].content
+    assert outcome.report["review_feedback"]["warning_retry_attempted"] is True
+    assert outcome.report["review_feedback"]["accepted_with_residual_warnings"] is False
+    assert outcome.report["attempt_history"][0]["status"] == "approved_with_warnings_retry"
+    assert outcome.materials is not None
+    assert outcome.materials.tailored_resume is not None
+    review = outcome.materials.tailored_resume.metadata["adversarial_review"]
+    assert review["warnings"] == []
+    assert outcome.materials.tailored_resume.metadata["review_feedback"] == {
+        "warning_retry_attempted": True,
+        "accepted_with_residual_warnings": False,
+        "accepted_warning_notes": [],
+    }
+
+
+def test_tailor_use_case_persists_residual_adversarial_warnings_without_retries(
+    tmp_path: Path, job: dict
+) -> None:
+    snapshot = ProfileSnapshot.from_profile(
+        Profile.from_dict(LOCAL_TENANT, _profile_with_evidence_dict())
+    )
+    high_fit_job = {**job, "fit_score": 9, "title": "Senior Backend Engineer"}
+    repo = _FakeRepository()
+    llm = _ScriptedLlm(
+        [
+            _quality_json_payload(),
+            _judge_pass(),
+            _adversarial_pass(warnings=["Bullet could be more concise."]),
+        ]
+    )
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+        max_retries=0,
+    )
+
+    outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 3
+    assert outcome.report["review_feedback"] == {
+        "warning_retry_attempted": False,
+        "accepted_with_residual_warnings": True,
+        "accepted_warning_notes": ["Bullet could be more concise."],
+    }
     assert outcome.materials is not None
     assert outcome.materials.tailored_resume is not None
     review = outcome.materials.tailored_resume.metadata["adversarial_review"]
     assert review["warnings"] == ["Bullet could be more concise."]
+    assert outcome.materials.tailored_resume.metadata["review_feedback"] == {
+        "warning_retry_attempted": False,
+        "accepted_with_residual_warnings": True,
+        "accepted_warning_notes": ["Bullet could be more concise."],
+    }
 
 
 def test_tailor_use_case_adversarial_blocker_fails_and_feeds_retry_notes(
@@ -940,6 +1028,53 @@ def test_tailor_use_case_retailor_suppresses_previous_generation_when_requested(
     assert suppressed_save.tailored_resume.metadata["suppression"]["reason"] == (
         "retailor_current_policy"
     )
+
+
+def test_tailor_use_case_failed_retailor_keeps_previous_generation_active(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    initial = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path="/tmp/old.txt",
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    )
+    repo.save(initial)
+
+    llm = _ScriptedLlm([_keyword_stuffed_json_payload()] * 4)
+    use_case = TailorResumeUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+        assembler=ResumeAssembler(),
+    )
+    outcome = use_case.execute(
+        job=job,
+        profile_snapshot=snapshot,
+        tailored_dir=tmp_path,
+        retailor=True,
+        suppress_existing_artifacts=True,
+    )
+
+    assert outcome.materials is not None
+    assert outcome.status == "failed_validation"
+    assert outcome.materials.generation == 2
+    assert outcome.materials.tailored_resume is not None
+    assert outcome.materials.tailored_resume.status is ArtifactStatus.REJECTED
+    previous = repo.load(LOCAL_TENANT, JobId(job["url"]), generation=1)
+    assert previous is not None
+    assert previous.tailored_resume is not None
+    assert previous.tailored_resume.status is ArtifactStatus.APPROVED
 
 
 # ---------------------------------------------------------------------------

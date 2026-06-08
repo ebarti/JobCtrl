@@ -108,6 +108,7 @@ export interface ArtifactListProjection {
   readonly sizeBytes: number | null;
   readonly createdAt: string | null;
   readonly generation: number | null;
+  readonly metadataJson: string | null;
 }
 
 export interface ApplyRunProjection {

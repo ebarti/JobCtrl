@@ -1309,6 +1309,142 @@ export interface JobDetail {
 export interface ArtifactDetail {
   ok: true;
   artifact: ArtifactSummary;
+  tailoringExplanation: ArtifactTailoringExplanation | null;
+}
+
+export interface ArtifactTailoringExplanation {
+  targetSeniority: string | null;
+  claimMode: string | null;
+  validationMode: string | null;
+  safety: {
+    autoApprovableClaimModes: string[];
+    allowAdjacentAchievementDrafts: boolean | null;
+    qualityPassed: boolean | null;
+  };
+  keywords: {
+    coverageRecorded: boolean;
+    planned: string[];
+    covered: string[];
+    missing: string[];
+    filtered: {
+      planned: string[];
+      covered: string[];
+      missing: string[];
+    };
+    counts: {
+      planned: number;
+      covered: number;
+      missing: number;
+      displayedPlanned: number;
+      displayedCovered: number;
+      displayedMissing: number;
+      filteredPlanned: number;
+      filteredCovered: number;
+      filteredMissing: number;
+    };
+  };
+  evidence: {
+    requiredIds: string[];
+    seniorityIds: string[];
+    representedIds: string[];
+    missingIds: string[];
+    verifiedMetricCount: number | null;
+  };
+  quality: {
+    passed: boolean | null;
+    errors: string[];
+    warnings: string[];
+    notes: string[];
+    metricClaims: string[];
+    repeatedKeywords: string[];
+  };
+  judge: {
+    passed: boolean | null;
+    verdict: string | null;
+    score: number | null;
+    minScore: number | null;
+    issues: string[];
+    unsupportedClaims: string[];
+    fabrications: string[];
+    missingRequiredEvidence: string[];
+    repairInstructions: string[];
+  };
+  adversarialReview: {
+    ran: boolean;
+    passed: boolean | null;
+    score: number | null;
+    scoreRationale: string | null;
+    threshold: number | null;
+    blockers: string[];
+    warnings: string[];
+    repairInstructions: string[];
+    personas: Array<{
+      persona: string;
+      verdict: string | null;
+      score: number | null;
+      scoreRationale: string | null;
+      promptRubric: string | null;
+      blockers: string[];
+      warnings: string[];
+      repairInstructions: string[];
+      scoreBasis: string[];
+      response: {
+        verdict: string | null;
+        score: number | null;
+        scoreRationale: string | null;
+        blockers: string[];
+        warnings: string[];
+        repairInstructions: string[];
+      } | null;
+    }>;
+    audit: {
+      model: string | null;
+      schemaVersion: string | null;
+      promptMessages: Array<{ role: string; content: string }>;
+      response: {
+        verdict: string | null;
+        score: number | null;
+        scoreRationale: string | null;
+        blockers: string[];
+        warnings: string[];
+        repairInstructions: string[];
+        personas: Array<{
+          verdict: string | null;
+          score: number | null;
+          scoreRationale: string | null;
+          blockers: string[];
+          warnings: string[];
+          repairInstructions: string[];
+        }>;
+      } | null;
+    } | null;
+    skippedReason: string | null;
+  } | null;
+  reviewFeedback: {
+    warningRepairAttempted: boolean | null;
+    acceptedWithResidualWarnings: boolean | null;
+    acceptedWarnings: string[];
+  };
+  annotatedChanges: Array<{
+    section: string;
+    label: string;
+    changeType: string;
+    sourceId: string | null;
+    sourceText: string[];
+    tailoredText: string[];
+    rationale: string | null;
+    jobSignals: string[];
+    controls: string[];
+    evidenceIds: string[];
+    evidenceNotes: string[];
+  }>;
+  models: {
+    candidateModels: string[];
+    selectedModel: string | null;
+    selectedCandidate: string | null;
+    judgeModel: string | null;
+    attempts: number | null;
+  };
 }
 
 export interface ArtifactOpenResponse {

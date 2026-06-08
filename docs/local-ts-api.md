@@ -37,6 +37,19 @@ PDF artifacts. The preview route serves only known PDF artifact files from the
 local artifact projection; it returns `404` for missing metadata/files and
 `415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
 route still delegates to the local OS opener.
+Tailored resume artifact detail responses include safe tailoring evidence only:
+keyword coverage counts for actionable high-signal terms derived from the
+material audit and job scoring keywords, evidence and quality summaries,
+judge/adversarial-review results,
+warning-repair status, annotated source-vs-tailored resume changes, high-fit
+persona prompt/response audit, and model selection metadata. Persona warning
+cards expose an expandable audit trail for the stored LLM request and structured
+response behind that judgment. Keyword payloads include whether resume keyword
+coverage was recorded, so callers do not have to infer missing resume matches
+from target job keywords alone. They do not expose raw generator prompts, raw
+profile payloads, or raw job text; annotation and persona prompt snippets are
+bounded excerpts of the selected source, tailored resume, and adversarial-review
+request.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
@@ -195,8 +208,9 @@ verification-code MCP server:
   plus evidence/suggestion IDs, job keys, kinds, and confidence values only; it
   never returns raw Gmail body text.
 
-The web review queue records approval facts only. `approve_submit` does not
-dispatch browser submission, and `approve_dry_run` does not start a dry run.
+The web review queue records approval facts only. It only offers submit
+approval after a completed dry run. `approve_submit` does not dispatch browser
+submission, and `approve_dry_run` does not start a dry run.
 Manual outcomes and suggestion corrections require canonical ISO-8601 UTC
 `occurredAt` timestamps when the field is supplied.
 

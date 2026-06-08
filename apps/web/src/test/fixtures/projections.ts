@@ -407,7 +407,7 @@ export function makeActivityPage(
 }
 
 export function makeArtifactDetail(artifact: ArtifactSummary = sampleArtifact): ArtifactDetail {
-  return { ok: true, artifact };
+  return { ok: true, artifact, tailoringExplanation: null };
 }
 
 export const sampleDashboardSummary: DashboardSummary = {

@@ -187,6 +187,60 @@ def test_score_distribution_groups_by_score(conn: sqlite3.Connection) -> None:
     assert distribution_by_score[5] == 1
 
 
+def test_artifact_projection_preserves_material_metadata(conn: sqlite3.Connection) -> None:
+    url = "https://example.com/materials-metadata"
+    _seed_job(conn, url)
+    metadata = {"quality_plan": {"target_seniority": "executive"}}
+    conn.execute(
+        """
+        INSERT INTO job_materials (
+            job_url, generation, tenant_id, status, created_at, updated_at, metadata_json
+        ) VALUES (?, 1, 'local', 'resume_approved', ?, ?, '{}')
+        """,
+        (url, utc_now(), utc_now()),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'tailored_resume', 'artifact-1', 'approved', ?, 'text', 12, ?, ?)
+        """,
+        (url, "/tmp/resume.txt", json.dumps(metadata), utc_now()),
+    )
+    conn.execute(
+        """
+        INSERT INTO job_materials_artifacts (
+            job_url, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, 'resume_pdf', 'artifact-pdf', 'approved', ?, 'pdf', 120, '{}', ?)
+        """,
+        (url, "/tmp/resume.pdf", utc_now()),
+    )
+    record_job_event(conn, url, "tailor", "MaterialsGenerated")
+    conn.commit()
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    row = conn.execute(
+        """
+        SELECT metadata_json
+        FROM artifact_list_projections
+        WHERE tenant_id = 'local' AND artifact_id = 'artifact-1'
+        """
+    ).fetchone()
+
+    assert json.loads(_row_value(row, "metadata_json", "{}")) == metadata
+    synthetic_pdf = conn.execute(
+        """
+        SELECT metadata_json
+        FROM artifact_list_projections
+        WHERE tenant_id = 'local' AND artifact_type = 'tailored_resume_pdf'
+        """
+    ).fetchone()
+
+    assert json.loads(_row_value(synthetic_pdf, "metadata_json", "{}")) == metadata
+
+
 def test_funnel_counts_per_stage(conn: sqlite3.Connection) -> None:
     url = "https://example.com/funnel"
     _seed_job(conn, url)

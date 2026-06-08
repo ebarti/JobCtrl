@@ -23,6 +23,7 @@ import type {
   ArtifactDetail,
   ArtifactListQuery,
   ArtifactSummary,
+  ArtifactTailoringExplanation,
   BulkJobMutationFilter,
   DashboardSettings,
   DashboardSummary,
@@ -165,6 +166,7 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   size_bytes: number | null;
   created_at: string | null;
   generation: number | null;
+  metadata_json: string | null;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -448,8 +450,9 @@ function countOutdatedTailoredArtifacts(
     db,
     `WITH latest AS (
        SELECT job_url, MAX(generation) AS max_generation
-       FROM job_materials
-       WHERE tenant_id = ?
+       FROM job_materials_artifacts
+       WHERE status = 'approved'
+         AND artifact_type = 'tailored_resume'
        GROUP BY job_url
      )
      SELECT a.job_url, a.metadata_json
@@ -457,7 +460,7 @@ function countOutdatedTailoredArtifacts(
        JOIN latest ON latest.job_url = a.job_url AND latest.max_generation = a.generation
       WHERE a.artifact_type = 'tailored_resume'
         AND a.status = 'approved'`,
-    [tenantId],
+    [],
   );
   return rows.filter((row) => {
     if (!activeJobs.has(row.job_url)) return false;
@@ -1719,7 +1722,11 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
     [artifactId],
   );
   if (!row) return null;
-  return { ok: true, artifact: rowToArtifactSummary(row) };
+  return {
+    ok: true,
+    artifact: rowToArtifactSummary(row),
+    tailoringExplanation: tailoringExplanationForArtifact(db, row),
+  };
 }
 
 /** Validate a candidate profile JSON. Used by callers (e.g. tests, future
@@ -1907,6 +1914,905 @@ function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+const TAILORING_ARTIFACT_TYPES = new Set([
+  "tailored_resume",
+  "tailored_resume_txt",
+  "resume_pdf",
+  "tailored_resume_pdf",
+]);
+const TAILORING_PDF_ARTIFACT_TYPES = new Set(["resume_pdf", "tailored_resume_pdf"]);
+const KEYWORD_TOKEN_RE = /[a-z0-9][a-z0-9+#./-]*/gi;
+const DISPLAY_METRIC_CLAIM_RE =
+  /^(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))$/i;
+const LOW_SIGNAL_KEYWORDS = new Set([
+  "about",
+  "across",
+  "barcelona",
+  "believe",
+  "care",
+  "chain",
+  "clinic",
+  "clinics",
+  "combine",
+  "company",
+  "cool",
+  "cutting",
+  "deserves",
+  "edge",
+  "europe",
+  "everyone",
+  "expert",
+  "fast",
+  "growth",
+  "head",
+  "health",
+  "impress",
+  "innovator",
+  "invisible",
+  "join",
+  "largest",
+  "leading",
+  "love",
+  "office",
+  "ortho",
+  "orthodontics",
+  "rapid",
+  "revolutionizing",
+  "since",
+  "smile",
+  "team",
+  "teams",
+  "tech",
+  "they",
+  "worldwide",
+]);
+const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
+  "ai",
+  "ai-first",
+  "ai-native",
+  "architecture",
+  "automation",
+  "aws",
+  "azure",
+  "backend",
+  "cloud",
+  "ci/cd",
+  "cicd",
+  "cost",
+  "developer",
+  "devops",
+  "docker",
+  "gcp",
+  "incident",
+  "infrastructure",
+  "java",
+  "javascript",
+  "kafka",
+  "kubernetes",
+  "leadership",
+  "management",
+  "node",
+  "node.js",
+  "observability",
+  "optimization",
+  "platform",
+  "postgres",
+  "postgresql",
+  "productivity",
+  "python",
+  "react",
+  "redis",
+  "reliability",
+  "resiliency",
+  "saas",
+  "scalability",
+  "security",
+  "sre",
+  "terraform",
+  "typescript",
+]);
+const ACTIONABLE_JOB_PHRASES = [
+  "api performance",
+  "backend systems",
+  "ci/cd",
+  "cloud governance",
+  "cloud infrastructure",
+  "cloud-native",
+  "cost optimization",
+  "developer platform",
+  "developer productivity",
+  "disaster recovery",
+  "incident management",
+  "infrastructure as code",
+  "platform as product",
+  "platform engineering",
+  "service reliability",
+];
+const JOB_KEYWORD_DISPLAY_OVERRIDES = new Map([
+  ["ai", "AI"],
+  ["ai-first", "AI-first"],
+  ["ai-native", "AI-native"],
+  ["api", "API"],
+  ["aws", "AWS"],
+  ["azure", "Azure"],
+  ["ci/cd", "CI/CD"],
+  ["cicd", "CI/CD"],
+  ["gcp", "GCP"],
+  ["javascript", "JavaScript"],
+  ["node.js", "Node.js"],
+  ["saas", "SaaS"],
+  ["sre", "SRE"],
+  ["typescript", "TypeScript"],
+]);
+const NON_ACTIONABLE_JOB_KEYWORD_KEYS = new Set([
+  "multi region",
+  "multi-region",
+]);
+
+function tailoringExplanationForArtifact(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+): ArtifactTailoringExplanation | null {
+  if (!TAILORING_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+
+  const jobKeywords = tailoringJobKeywordsForArtifact(db, row);
+  const resumeText = tailoringResumeTextForArtifact(db, row);
+  const direct = parseTailoringExplanation(row.metadata_json, { jobKeywords, resumeText });
+  if (direct && (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type) || hasCompleteTailoringAudit(direct))) {
+    return direct;
+  }
+  if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return direct;
+
+  const sibling = getRow<{ metadata_json: string | null; local_path: string | null }>(
+    db,
+    `SELECT metadata_json, local_path
+       FROM artifact_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+        AND metadata_json IS NOT NULL
+        AND TRIM(metadata_json) != ''
+        AND (? IS NULL OR generation = ? OR generation IS NULL)
+      ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1`,
+    [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+  );
+  const siblingExplanation = parseTailoringExplanation(sibling?.metadata_json ?? null, {
+    jobKeywords,
+    resumeText: resumeText ?? localTextFile(sibling?.local_path ?? ""),
+  });
+  if (!siblingExplanation) return direct;
+  if (!direct) return siblingExplanation;
+  return missingTailoringAuditFields(siblingExplanation).length < missingTailoringAuditFields(direct).length
+    ? siblingExplanation
+    : direct;
+}
+
+function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
+  const job = getRow<{
+    title: string | null;
+    description: string | null;
+    full_description: string | null;
+    score_keywords_json: string | null;
+  }>(
+    db,
+    `SELECT title, description, full_description, score_keywords_json
+       FROM job_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+      LIMIT 1`,
+    [row.tenant_id, row.job_id],
+  );
+  if (!job) return [];
+
+  const jobText = [job.title, job.description, job.full_description].filter(Boolean).join("\n");
+  const scoreCandidates = keywordCandidates(parseScoreKeywords(job.score_keywords_json ?? null)).filter((candidate) =>
+    isActionableJobKeywordCandidate(candidate) && textContainsNormalizedKeyword(jobText, candidate.key),
+  );
+  const descriptionCandidates = extractJobDescriptionKeywordCandidates(jobText);
+  return pruneSubsumedSingleKeywords(dedupeKeywordCandidates([...scoreCandidates, ...descriptionCandidates]))
+    .filter(isActionableJobKeywordCandidate)
+    .map((candidate) => candidate.text);
+}
+
+function tailoringResumeTextForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string | null {
+  if (row.artifact_type === "tailored_resume" || row.artifact_type === "tailored_resume_txt") {
+    return localTextFile(row.local_path ?? "");
+  }
+  if (!TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+
+  const sibling = getRow<{ local_path: string | null }>(
+    db,
+    `SELECT local_path
+       FROM artifact_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+        AND local_path IS NOT NULL
+        AND TRIM(local_path) != ''
+        AND LOWER(COALESCE(status, '')) NOT IN ('suppressed', 'rejected')
+      ORDER BY CASE WHEN ? IS NOT NULL AND generation = ? THEN 0 ELSE 1 END,
+               CASE LOWER(COALESCE(status, ''))
+                 WHEN 'approved' THEN 0
+                 WHEN 'active' THEN 1
+                 ELSE 2
+               END,
+               COALESCE(generation, -1) DESC,
+               created_at DESC
+      LIMIT 1`,
+    [row.tenant_id, row.job_id, row.generation, row.generation],
+  );
+  return localTextFile(sibling?.local_path ?? "");
+}
+
+function parseTailoringExplanation(
+  value: string | null,
+  options: { jobKeywords?: readonly string[]; resumeText?: string | null } = {},
+): ArtifactTailoringExplanation | null {
+  const metadata = parseJsonRecord(value);
+  if (!metadata) return null;
+
+  const qualityPlan = metadataRecord(metadata.quality_plan);
+  const qualityChecks = metadataRecord(metadata.quality_checks);
+  const keywordCoverage = metadataRecord(qualityChecks.keyword_coverage);
+  const evidenceSupport = metadataRecord(qualityChecks.evidence_support);
+  const judge = metadataRecord(metadata.judge);
+  const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
+  const reviewFeedback = metadataRecord(metadata.review_feedback);
+  const judgeMinScore = metadataNumber(metadata.judge_min_score);
+  const savedCoverageRecorded =
+    Array.isArray(keywordCoverage.covered) || Array.isArray(keywordCoverage.missing);
+  const targetKeywordCandidates = pruneSubsumedSingleKeywords(
+    keywordCandidates(qualityPlan.job_keywords, options.jobKeywords).filter(isActionableJobKeywordCandidate),
+  );
+  const textCoverage = keywordCoverageFromResumeText(targetKeywordCandidates, options.resumeText);
+  const coverageRecorded = textCoverage !== null || savedCoverageRecorded;
+  const targetKeywordKeys = new Set(targetKeywordCandidates.map((candidate) => candidate.key));
+  const coveredKeywordCandidates =
+    textCoverage?.covered ??
+    (savedCoverageRecorded
+      ? keywordCandidates(keywordCoverage.covered).filter((candidate) => targetKeywordKeys.has(candidate.key))
+      : []);
+  const coveredKeywordKeys = new Set(coveredKeywordCandidates.map((candidate) => candidate.key));
+  const missingKeywordCandidates =
+    textCoverage?.missing ??
+    (savedCoverageRecorded
+      ? dedupeKeywordCandidates([
+          ...keywordCandidates(keywordCoverage.missing).filter((candidate) => targetKeywordKeys.has(candidate.key)),
+          ...targetKeywordCandidates.filter((candidate) => !coveredKeywordKeys.has(candidate.key)),
+        ]).filter((candidate) => !coveredKeywordKeys.has(candidate.key))
+      : []);
+  const plannedKeywordAudit = keywordAuditFromCandidates(targetKeywordCandidates, 32);
+  const coveredKeywordAudit = keywordAuditFromCandidates(coveredKeywordCandidates, 32);
+  const missingKeywordAudit = keywordAuditFromCandidates(missingKeywordCandidates, 32);
+  const qualityMessages = cleanKeywordQualityMessages({
+    rawErrors: qualityChecks.errors,
+    rawWarnings: qualityChecks.warnings,
+    rawNotes: qualityChecks.notes,
+    coverageRecorded,
+    plannedCount: plannedKeywordAudit.total,
+    coveredCount: coveredKeywordAudit.total,
+  });
+
+  const explanation: ArtifactTailoringExplanation = {
+    targetSeniority: metadataText(qualityPlan.target_seniority),
+    claimMode: metadataText(qualityPlan.claim_mode),
+    validationMode: metadataText(metadata.validation_mode),
+    safety: {
+      autoApprovableClaimModes: metadataTextList(qualityPlan.auto_approvable_claim_modes),
+      allowAdjacentAchievementDrafts: metadataBoolean(qualityPlan.allow_adjacent_achievement_drafts),
+      qualityPassed: metadataBoolean(qualityChecks.passed),
+    },
+    keywords: {
+      coverageRecorded,
+      planned: plannedKeywordAudit.displayed,
+      covered: coveredKeywordAudit.displayed,
+      missing: missingKeywordAudit.displayed,
+      filtered: {
+        planned: plannedKeywordAudit.filtered,
+        covered: coveredKeywordAudit.filtered,
+        missing: missingKeywordAudit.filtered,
+      },
+      counts: {
+        planned: plannedKeywordAudit.total,
+        covered: coveredKeywordAudit.total,
+        missing: missingKeywordAudit.total,
+        displayedPlanned: plannedKeywordAudit.displayed.length,
+        displayedCovered: coveredKeywordAudit.displayed.length,
+        displayedMissing: missingKeywordAudit.displayed.length,
+        filteredPlanned: plannedKeywordAudit.filtered.length,
+        filteredCovered: coveredKeywordAudit.filtered.length,
+        filteredMissing: missingKeywordAudit.filtered.length,
+      },
+    },
+    evidence: {
+      requiredIds: metadataTextList(qualityPlan.required_evidence_ids, 32),
+      seniorityIds: metadataTextList(qualityPlan.seniority_evidence_ids, 32),
+      representedIds: metadataTextList(evidenceSupport.represented_ids, 32),
+      missingIds: metadataTextList(evidenceSupport.missing_ids, 32),
+      verifiedMetricCount: metadataNumber(qualityPlan.verified_metric_count),
+    },
+    quality: {
+      passed: metadataBoolean(qualityChecks.passed),
+      errors: qualityMessages.errors,
+      warnings: qualityMessages.warnings,
+      notes: qualityMessages.notes,
+      metricClaims: metadataMetricClaims(qualityChecks.metric_claims),
+      repeatedKeywords: metadataRepeatedKeywords(qualityChecks.repeated_keywords),
+    },
+    judge: {
+      passed: metadataBoolean(judge.passed),
+      verdict: metadataText(judge.verdict),
+      score: metadataNumber(judge.score),
+      minScore: judgeMinScore,
+      issues: metadataTextList(judge.issues, 8, 220),
+      unsupportedClaims: metadataTextList(judge.unsupported_claims, 8, 220),
+      fabrications: metadataTextList(judge.fabrications, 8, 220),
+      missingRequiredEvidence: metadataTextList(judge.missing_required_evidence, 8, 220),
+      repairInstructions: metadataTextList(judge.repair_instructions, 8, 220),
+    },
+    adversarialReview,
+    reviewFeedback: {
+      warningRepairAttempted: metadataBoolean(reviewFeedback.warning_retry_attempted),
+      acceptedWithResidualWarnings: metadataBoolean(reviewFeedback.accepted_with_residual_warnings),
+      acceptedWarnings: metadataTextList(reviewFeedback.accepted_warning_notes, 8, 220),
+    },
+    annotatedChanges: parseTailoringChangeAnnotations(metadata.change_annotations),
+    models: {
+      candidateModels: metadataTextList(metadata.candidate_models, 6, 120),
+      selectedModel: metadataText(metadata.selected_model, 120),
+      selectedCandidate: metadataText(metadata.selected_candidate, 80),
+      judgeModel: metadataText(metadata.judge_model, 120),
+      attempts: metadataNumber(metadata.attempts),
+    },
+  };
+  const missingAuditFields = missingTailoringAuditFields(explanation);
+  if (missingAuditFields.length) {
+    explanation.quality.errors = [
+      `Tailoring audit metadata incomplete: missing ${missingAuditFields.join(", ")}`,
+      ...explanation.quality.errors,
+    ];
+  }
+
+  return hasTailoringExplanationContent(explanation) ? explanation : null;
+}
+
+function hasCompleteTailoringAudit(explanation: ArtifactTailoringExplanation): boolean {
+  return missingTailoringAuditFields(explanation).length === 0;
+}
+
+function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation): string[] {
+  const missing: string[] = [];
+  if (!explanation.targetSeniority) missing.push("target seniority");
+  if (!explanation.claimMode) missing.push("claim mode");
+  if (!explanation.validationMode) missing.push("validation mode");
+  if (!explanation.safety.autoApprovableClaimModes.length) missing.push("auto-approvable claim modes");
+  if (explanation.safety.allowAdjacentAchievementDrafts === null) missing.push("adjacent draft policy");
+  if (explanation.safety.qualityPassed === null && explanation.quality.passed === null) {
+    missing.push("quality gate");
+  }
+  if (explanation.evidence.verifiedMetricCount === null) missing.push("verified metric count");
+  if (!explanation.evidence.requiredIds.length && !explanation.evidence.seniorityIds.length) {
+    missing.push("profile evidence mapping");
+  }
+  if (!explanation.annotatedChanges.length) missing.push("resume change annotations");
+  if (explanation.judge.passed === null && !explanation.judge.verdict && explanation.judge.score === null) {
+    missing.push("judge result");
+  }
+  if (explanation.judge.minScore === null) missing.push("judge threshold");
+  if (!explanation.models.selectedModel) missing.push("selected model");
+  if (!explanation.models.judgeModel) missing.push("judge model");
+  if (!explanation.models.candidateModels.length) missing.push("candidate models");
+  if (!explanation.models.selectedCandidate) missing.push("selected candidate");
+  if (explanation.models.attempts === null) missing.push("attempt count");
+  if (!explanation.adversarialReview) {
+    missing.push("persona review");
+  } else if (explanation.adversarialReview.ran) {
+    if (!explanation.adversarialReview.personas.length) missing.push("persona judgments");
+    if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
+    if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+  }
+  return missing;
+}
+
+function parseAdversarialReview(
+  value: unknown,
+): ArtifactTailoringExplanation["adversarialReview"] {
+  const review = metadataRecord(value);
+  const ran = metadataBoolean(review.ran);
+  if (ran === null) return null;
+  return {
+    ran,
+    passed: metadataBoolean(review.passed),
+    score: metadataNumber(review.score),
+    scoreRationale: metadataText(review.score_rationale ?? review.scoreRationale, 360),
+    threshold: metadataNumber(review.threshold),
+    blockers: metadataTextList(review.blockers, 8, 220),
+    warnings: metadataTextList(review.warnings, 8, 220),
+    repairInstructions: metadataTextList(review.repair_instructions, 8, 220),
+    personas: Array.isArray(review.personas)
+      ? review.personas.filter(isRecord).slice(0, 8).map(parseAdversarialPersona)
+      : [],
+    audit: parseAdversarialAudit(review.llm_audit ?? review.llmAudit),
+    skippedReason: metadataText(review.skipped_reason, 180),
+  };
+}
+
+function parseAdversarialPersona(
+  persona: Record<string, unknown>,
+): NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["personas"][number] {
+  const response = parseAdversarialPersonaResponse(persona.response, persona);
+  return {
+    persona: metadataText(persona.persona, 80) ?? "reviewer",
+    verdict: metadataText(persona.verdict, 20),
+    score: metadataNumber(persona.score),
+    scoreRationale: metadataText(persona.score_rationale ?? persona.scoreRationale, 360),
+    promptRubric: metadataText(persona.prompt_rubric ?? persona.promptRubric, 360),
+    blockers: metadataTextList(persona.blockers, 8, 220),
+    warnings: metadataTextList(persona.warnings, 8, 220),
+    repairInstructions: metadataTextList(persona.repair_instructions, 8, 220),
+    scoreBasis: metadataTextList(persona.score_basis ?? persona.scoreBasis, 8, 220),
+    response,
+  };
+}
+
+function parseAdversarialAudit(
+  value: unknown,
+): NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["audit"] {
+  const audit = metadataRecord(value);
+  const rawPromptMessages = audit.prompt_messages ?? audit.promptMessages;
+  const promptMessages = Array.isArray(rawPromptMessages)
+    ? rawPromptMessages
+        .filter(isRecord)
+        .slice(0, 4)
+        .flatMap((message) => {
+          const role = metadataText(message.role, 40) ?? "user";
+          const content = metadataPromptText(message.content, 2400);
+          return content ? [{ role, content }] : [];
+        })
+    : [];
+  const response = parseAdversarialResponse(audit.response);
+  if (
+    !promptMessages.length &&
+    !response &&
+    !metadataText(audit.model, 120) &&
+    !metadataText(audit.schema_version ?? audit.schemaVersion, 120)
+  ) {
+    return null;
+  }
+  return {
+    model: metadataText(audit.model, 120),
+    schemaVersion: metadataText(audit.schema_version ?? audit.schemaVersion, 120),
+    promptMessages,
+    response,
+  };
+}
+
+function parseAdversarialResponse(
+  value: unknown,
+): NonNullable<NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["audit"]>["response"] {
+  const response = metadataRecord(value);
+  const personas = Array.isArray(response.personas)
+    ? response.personas.filter(isRecord).slice(0, 8).map((persona) => ({
+        verdict: metadataText(persona.verdict, 20),
+        score: metadataNumber(persona.score),
+        scoreRationale: metadataText(persona.score_rationale ?? persona.scoreRationale, 360),
+        blockers: metadataTextList(persona.blockers, 8, 220),
+        warnings: metadataTextList(persona.warnings, 8, 220),
+        repairInstructions: metadataTextList(persona.repair_instructions, 8, 220),
+      }))
+    : [];
+  const parsed = {
+    verdict: metadataText(response.verdict, 20),
+    score: metadataNumber(response.score),
+    scoreRationale: metadataText(response.score_rationale ?? response.scoreRationale, 360),
+    blockers: metadataTextList(response.blockers, 8, 220),
+    warnings: metadataTextList(response.warnings, 8, 220),
+    repairInstructions: metadataTextList(response.repair_instructions, 8, 220),
+    personas,
+  };
+  if (
+    !parsed.verdict &&
+    parsed.score === null &&
+    !parsed.scoreRationale &&
+    !parsed.blockers.length &&
+    !parsed.warnings.length &&
+    !parsed.repairInstructions.length &&
+    !parsed.personas.length
+  ) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseAdversarialPersonaResponse(
+  value: unknown,
+  fallback: Record<string, unknown>,
+): NonNullable<ArtifactTailoringExplanation["adversarialReview"]>["personas"][number]["response"] {
+  const response = metadataRecord(value);
+  const source = Object.keys(response).length ? response : fallback;
+  const parsed = {
+    verdict: metadataText(source.verdict, 20),
+    score: metadataNumber(source.score),
+    scoreRationale: metadataText(source.score_rationale ?? source.scoreRationale, 360),
+    blockers: metadataTextList(source.blockers, 8, 220),
+    warnings: metadataTextList(source.warnings, 8, 220),
+    repairInstructions: metadataTextList(source.repair_instructions, 8, 220),
+  };
+  return parsed.verdict ||
+    parsed.score !== null ||
+    parsed.scoreRationale ||
+    parsed.blockers.length ||
+    parsed.warnings.length ||
+    parsed.repairInstructions.length
+    ? parsed
+    : null;
+}
+
+function parseTailoringChangeAnnotations(
+  value: unknown,
+): ArtifactTailoringExplanation["annotatedChanges"] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).slice(0, 12).map((item) => ({
+    section: metadataText(item.section, 80) ?? "resume",
+    label: metadataText(item.label, 120) ?? "Resume change",
+    changeType: metadataText(item.change_type ?? item.changeType, 80) ?? "tailored",
+    sourceId: metadataText(item.source_id ?? item.sourceId, 120),
+    sourceText: metadataTextList(item.source_text ?? item.sourceText, 8, 360),
+    tailoredText: metadataTextList(item.tailored_text ?? item.tailoredText, 8, 360),
+    rationale: metadataText(item.rationale, 360),
+    jobSignals: metadataKeywordList(item.job_signals ?? item.jobSignals, 8),
+    controls: metadataTextList(item.controls, 10, 180),
+    evidenceIds: metadataTextList(item.evidence_ids ?? item.evidenceIds, 12, 120),
+    evidenceNotes: metadataTextList(item.evidence_notes ?? item.evidenceNotes, 8, 220),
+  }));
+}
+
+function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanation): boolean {
+  return Boolean(
+    explanation.targetSeniority ||
+      explanation.claimMode ||
+      explanation.validationMode ||
+      explanation.safety.autoApprovableClaimModes.length ||
+      explanation.safety.allowAdjacentAchievementDrafts !== null ||
+      explanation.safety.qualityPassed !== null ||
+      explanation.keywords.planned.length ||
+      explanation.keywords.covered.length ||
+      explanation.keywords.missing.length ||
+      explanation.keywords.filtered.planned.length ||
+      explanation.keywords.filtered.covered.length ||
+      explanation.keywords.filtered.missing.length ||
+      explanation.keywords.counts.planned ||
+      explanation.keywords.counts.covered ||
+      explanation.keywords.counts.missing ||
+      explanation.evidence.requiredIds.length ||
+      explanation.evidence.seniorityIds.length ||
+      explanation.evidence.representedIds.length ||
+      explanation.evidence.missingIds.length ||
+      explanation.evidence.verifiedMetricCount !== null ||
+      explanation.quality.passed !== null ||
+      explanation.quality.errors.length ||
+      explanation.quality.warnings.length ||
+      explanation.quality.notes.length ||
+      explanation.quality.metricClaims.length ||
+      explanation.quality.repeatedKeywords.length ||
+      explanation.judge.passed !== null ||
+      explanation.judge.verdict ||
+      explanation.judge.score !== null ||
+      explanation.judge.minScore !== null ||
+      explanation.judge.issues.length ||
+      explanation.judge.unsupportedClaims.length ||
+      explanation.judge.fabrications.length ||
+      explanation.judge.missingRequiredEvidence.length ||
+      explanation.judge.repairInstructions.length ||
+      explanation.adversarialReview ||
+      explanation.reviewFeedback.warningRepairAttempted !== null ||
+      explanation.reviewFeedback.acceptedWithResidualWarnings !== null ||
+      explanation.reviewFeedback.acceptedWarnings.length ||
+      explanation.annotatedChanges.length ||
+      explanation.models.candidateModels.length ||
+      explanation.models.selectedModel ||
+      explanation.models.selectedCandidate ||
+      explanation.models.judgeModel ||
+      explanation.models.attempts !== null,
+  );
+}
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function metadataText(value: unknown, maxLength = 120): string | null {
+  const text = safeAuditText(value, maxLength);
+  if (!text || /(?:api[_-]?key|password|secret|token|bearer\s+)/i.test(text) || text.includes("://")) {
+    return null;
+  }
+  return text;
+}
+
+function metadataPromptText(value: unknown, maxLength = 1800): string | null {
+  if (value === null || value === undefined || typeof value === "object") return null;
+  const normalized = String(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!normalized || normalized === "null" || normalized === "undefined") return null;
+  const redacted = normalized.replace(
+    /(api[_-]?key|password|secret|token|bearer)\s*[:=]\s*\S+/gi,
+    "$1: [redacted]",
+  );
+  return redacted.length > maxLength ? `${redacted.slice(0, maxLength - 1)}…` : redacted;
+}
+
+function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, maxLength);
+    const key = text?.toLowerCase();
+    if (!text || !key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function cleanKeywordQualityMessages({
+  rawErrors,
+  rawWarnings,
+  rawNotes,
+  coverageRecorded,
+  plannedCount,
+  coveredCount,
+}: {
+  rawErrors: unknown;
+  rawWarnings: unknown;
+  rawNotes: unknown;
+  coverageRecorded: boolean;
+  plannedCount: number;
+  coveredCount: number;
+}): { errors: string[]; warnings: string[]; notes: string[] } {
+  const errors = metadataTextList(rawErrors, 8, 220).filter(notKeywordCoverageMessage);
+  const warnings = metadataTextList(rawWarnings, 8, 220).filter(notKeywordCoverageMessage);
+  const notes = metadataTextList(rawNotes, 8, 220).filter(notKeywordCoverageMessage);
+  if (coverageRecorded && plannedCount >= 4 && coveredCount === 0) {
+    errors.push("Keyword coverage extremely empty: no target job keywords covered");
+  } else if (coverageRecorded && plannedCount >= 4 && coveredCount / plannedCount < 0.25) {
+    warnings.push(`Low keyword coverage: covered ${coveredCount}/${plannedCount} target keywords`);
+  }
+  if (coverageRecorded && plannedCount > 0 && coveredCount > 0) {
+    notes.push(`Keyword coverage: ${coveredCount}/${plannedCount}`);
+  }
+  return {
+    errors: dedupeBounded(errors, 8),
+    warnings: dedupeBounded(warnings, 8),
+    notes: dedupeBounded(notes, 8),
+  };
+}
+
+function notKeywordCoverageMessage(value: string): boolean {
+  return !/\bkeyword coverage\b/i.test(value);
+}
+
+function dedupeBounded(values: readonly string[], limit: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+interface KeywordCandidate {
+  key: string;
+  text: string;
+}
+
+function keywordCandidates(...values: unknown[]): KeywordCandidate[] {
+  return dedupeKeywordCandidates(values.flatMap((value) => metadataKeywordCandidates(value)));
+}
+
+function metadataKeywordCandidates(value: unknown, maxLength = 120): KeywordCandidate[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const candidates: KeywordCandidate[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, maxLength);
+    const key = normalizedKeywordKey(text);
+    if (!text || !key || seen.has(key)) continue;
+    seen.add(key);
+    if (isMeaningfulDisplayKeyword(text, key)) {
+      candidates.push({ key, text });
+    }
+  }
+  return candidates;
+}
+
+function extractJobDescriptionKeywordCandidates(value: string): KeywordCandidate[] {
+  const normalizedText = value.toLowerCase();
+  const candidates: KeywordCandidate[] = [];
+  for (const phrase of ACTIONABLE_JOB_PHRASES) {
+    const key = normalizedKeywordKey(phrase);
+    if (!key || !textContainsNormalizedKeyword(normalizedText, key)) continue;
+    candidates.push({ key, text: displayJobKeyword(key) });
+  }
+  for (const rawToken of normalizedText.match(KEYWORD_TOKEN_RE) ?? []) {
+    const key = normalizedKeywordKey(rawToken);
+    if (!key || !HIGH_SIGNAL_SINGLE_KEYWORDS.has(key) || !isMeaningfulDisplayKeyword(rawToken, key)) {
+      continue;
+    }
+    candidates.push({ key, text: displayJobKeyword(key) });
+  }
+  return dedupeKeywordCandidates(candidates);
+}
+
+function textContainsNormalizedKeyword(text: string, normalizedKeyword: string): boolean {
+  return resumeContainsKeyword(text, normalizedKeyword);
+}
+
+function displayJobKeyword(normalizedKeyword: string): string {
+  const override = JOB_KEYWORD_DISPLAY_OVERRIDES.get(normalizedKeyword);
+  if (override) return override;
+  return normalizedKeyword.replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function dedupeKeywordCandidates(candidates: readonly KeywordCandidate[]): KeywordCandidate[] {
+  const seen = new Set<string>();
+  const out: KeywordCandidate[] = [];
+  for (const candidate of candidates) {
+    if (seen.has(candidate.key)) continue;
+    seen.add(candidate.key);
+    out.push(candidate);
+  }
+  return out;
+}
+
+function isActionableJobKeywordCandidate(candidate: KeywordCandidate): boolean {
+  return !NON_ACTIONABLE_JOB_KEYWORD_KEYS.has(candidate.key);
+}
+
+function pruneSubsumedSingleKeywords(candidates: readonly KeywordCandidate[]): KeywordCandidate[] {
+  return candidates.filter((candidate) => {
+    const terms = candidate.key.split(" ").filter(Boolean);
+    if (terms.length !== 1) return true;
+    return !candidates.some((other) => {
+      if (other.key === candidate.key) return false;
+      const otherTerms = other.key.split(" ").filter(Boolean);
+      return otherTerms.length > 1 && otherTerms.includes(candidate.key);
+    });
+  });
+}
+
+function keywordCoverageFromResumeText(
+  targetCandidates: readonly KeywordCandidate[],
+  resumeText: string | null | undefined,
+): { covered: KeywordCandidate[]; missing: KeywordCandidate[] } | null {
+  if (!resumeText || !targetCandidates.length) return null;
+  const covered: KeywordCandidate[] = [];
+  const missing: KeywordCandidate[] = [];
+  for (const candidate of targetCandidates) {
+    if (resumeContainsKeyword(resumeText, candidate.key)) {
+      covered.push(candidate);
+    } else {
+      missing.push(candidate);
+    }
+  }
+  return { covered, missing };
+}
+
+function resumeContainsKeyword(resumeText: string, normalizedKeyword: string): boolean {
+  const terms = normalizedKeyword.split(/\s+/).filter(Boolean).map(escapeRegExp);
+  if (!terms.length) return false;
+  const body = terms.join("[\\s,;/()_-]+");
+  const pattern = new RegExp(`(^|[^a-z0-9+#])${body}($|[^a-z0-9+#])`, "i");
+  return pattern.test(resumeText);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function keywordAuditFromCandidates(
+  candidates: readonly KeywordCandidate[],
+  displayLimit = 32,
+): { displayed: string[]; filtered: string[]; total: number } {
+  const deduped = dedupeKeywordCandidates(candidates);
+  return {
+    displayed: deduped.slice(0, displayLimit).map((candidate) => candidate.text),
+    filtered: [],
+    total: deduped.length,
+  };
+}
+
+function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, maxLength);
+    const key = normalizedKeywordKey(text);
+    if (!text || !key || !isMeaningfulDisplayKeyword(text, key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function normalizedKeywordKey(value: string | null): string | null {
+  if (!value) return null;
+  const tokens = value.toLowerCase().match(KEYWORD_TOKEN_RE) ?? [];
+  return tokens.length ? tokens.join(" ") : null;
+}
+
+function isMeaningfulDisplayKeyword(text: string, normalized: string): boolean {
+  const tokens = normalized.split(" ").filter(Boolean);
+  if (!tokens.length || tokens.length > 4) return false;
+  if (tokens.every((token) => LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token))) {
+    return false;
+  }
+  if (tokens.length > 1) {
+    return tokens.some((token) => !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
+  }
+  const token = tokens[0]!;
+  if (LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token)) return false;
+  return HIGH_SIGNAL_SINGLE_KEYWORDS.has(token) || /[+#./-]/.test(text);
+}
+
+function metadataMetricClaims(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value) {
+    const text = metadataText(raw, 80);
+    if (!text || !DISPLAY_METRIC_CLAIM_RE.test(text)) continue;
+    const key = text.toLowerCase().replace(/\s+/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function metadataRepeatedKeywords(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const keyword = isRecord(raw)
+      ? metadataText(raw.keyword ?? raw.term ?? raw.value, 80)
+      : metadataText(raw, 80);
+    if (!keyword) continue;
+    const count = isRecord(raw) ? metadataNumber(raw.count) : null;
+    const text = count !== null && count > 0 ? `${keyword} (${count})` : keyword;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function metadataBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === 0 || value === "false") return false;
+  if (value === 1 || value === "true") return true;
+  return null;
+}
+
+function metadataNumber(value: unknown): number | null {
+  return nullableNumber(value);
 }
 
 function parseScoreKeywords(value: string | null): string[] {
@@ -3410,6 +4316,17 @@ function localFileSize(filePath: string): number | null {
   try {
     const stat = fs.statSync(filePath);
     return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+function localTextFile(filePath: string): string | null {
+  if (!filePath) return null;
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+    return fs.readFileSync(filePath, "utf8");
   } catch {
     return null;
   }

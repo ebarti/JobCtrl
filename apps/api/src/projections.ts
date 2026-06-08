@@ -336,7 +336,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       local_path             TEXT NOT NULL DEFAULT '',
       size_bytes             INTEGER,
       created_at             TEXT,
-      generation             INTEGER
+      generation             INTEGER,
+      metadata_json          TEXT
     );
     CREATE TABLE IF NOT EXISTS apply_run_projections (
       run_id                 TEXT PRIMARY KEY,
@@ -450,6 +451,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_criteria_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_trace_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_correction_json", "TEXT") || schemaChanged;
+  schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
   return schemaChanged;
 }
 
@@ -559,6 +561,9 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
   for (const jobUrl of staleDeletedProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobUrl);
   }
+  for (const jobUrl of staleArtifactMetadataProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobUrl);
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
@@ -599,6 +604,7 @@ export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void
 }
 
 interface MaterialsLatest {
+  hasCanonicalHistory: boolean;
   generation: number | null;
   tailorPath: string | null;
   tailoredAt: string | null;
@@ -610,6 +616,7 @@ interface MaterialsLatest {
 
 function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLatest {
   const empty: MaterialsLatest = {
+    hasCanonicalHistory: false,
     generation: null,
     tailorPath: null,
     tailoredAt: null,
@@ -621,14 +628,28 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
   if (!tableExists(db, "job_materials") || !tableExists(db, "job_materials_artifacts")) {
     return empty;
   }
+  const hasCanonicalHistory = Boolean(
+    getRow<{ c: number }>(
+      db,
+      `SELECT COUNT(*) AS c
+         FROM job_materials_artifacts
+        WHERE job_url = ?
+          AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf')`,
+      [jobUrl],
+    )?.c,
+  );
   const generationRow = getRow<{ max_generation: number }>(
     db,
-    "SELECT MAX(generation) AS max_generation FROM job_materials WHERE job_url = ?",
+    `SELECT MAX(generation) AS max_generation
+       FROM job_materials_artifacts
+      WHERE job_url = ?
+        AND status = 'approved'
+        AND artifact_type IN ('tailored_resume', 'cover_letter', 'resume_pdf', 'cover_letter_pdf')`,
     [jobUrl],
   );
   const generation = generationRow ? generationRow.max_generation : null;
   if (generation === null || generation === undefined) {
-    return empty;
+    return { ...empty, hasCanonicalHistory };
   }
   const artifacts = allRows<{ artifact_type: string; path: string; created_at: string | null }>(
     db,
@@ -636,7 +657,7 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
      WHERE job_url = ? AND generation = ? AND status = 'approved'`,
     [jobUrl, Number(generation)],
   );
-  const latest: MaterialsLatest = { ...empty, generation: Number(generation) };
+  const latest: MaterialsLatest = { ...empty, hasCanonicalHistory, generation: Number(generation) };
   for (const a of artifacts) {
     if (!a.path) continue;
     if (a.artifact_type === "tailored_resume") {
@@ -938,6 +959,58 @@ function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): strin
   return rows.map((row) => row.job_id).filter(Boolean);
 }
 
+function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  if (!tableExists(db, "artifact_list_projections") || !tableExists(db, "job_materials_artifacts")) {
+    return [];
+  }
+  if (
+    !hasColumn(db, "artifact_list_projections", "metadata_json") ||
+    !hasColumn(db, "job_materials_artifacts", "metadata_json")
+  ) {
+    return [];
+  }
+
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT DISTINCT p.job_id
+       FROM artifact_list_projections p
+      WHERE p.tenant_id = ?
+        AND p.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'tailored_resume_pdf')
+        AND EXISTS (
+          SELECT 1
+            FROM job_materials_artifacts a
+           WHERE a.job_url = p.job_id
+             AND a.artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+             AND a.metadata_json IS NOT NULL
+             AND TRIM(a.metadata_json) != ''
+             AND TRIM(a.metadata_json) != '{}'
+             AND (
+               p.metadata_json IS NULL
+               OR TRIM(p.metadata_json) = ''
+               OR TRIM(p.metadata_json) = '{}'
+               OR (
+                 json_extract(p.metadata_json, '$.quality_plan.target_seniority') IS NULL
+                 AND json_extract(a.metadata_json, '$.quality_plan.target_seniority') IS NOT NULL
+               )
+               OR (
+                 json_extract(p.metadata_json, '$.selected_model') IS NULL
+                 AND json_extract(a.metadata_json, '$.selected_model') IS NOT NULL
+               )
+               OR (
+                 json_extract(p.metadata_json, '$.adversarial_review.llm_audit.prompt_messages[0].content') IS NULL
+                 AND json_extract(a.metadata_json, '$.adversarial_review.llm_audit.prompt_messages[0].content') IS NOT NULL
+               )
+               OR (
+                 COALESCE(json_array_length(json_extract(p.metadata_json, '$.change_annotations')), 0) = 0
+                 AND COALESCE(json_array_length(json_extract(a.metadata_json, '$.change_annotations')), 0) > 0
+               )
+             )
+        )`,
+    [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
+}
+
 interface StageRow extends Record<string, unknown> {
   stage: string;
   state: string;
@@ -1072,7 +1145,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const scoreBreakdownJson = score.breakdown ? JSON.stringify(score.breakdown) : null;
   const scoreKeywordsJson = JSON.stringify(score.keywords);
 
-  const hasCanonicalMaterials = materials.generation !== null && materials.generation !== undefined;
+  const hasCanonicalMaterials = materials.hasCanonicalHistory;
   const tailorPath = hasCanonicalMaterials ? materials.tailorPath : nullableString(job.tailored_resume_path);
   const coverPath = hasCanonicalMaterials ? materials.coverPath : nullableString(job.cover_letter_path);
   const hasResume = Boolean(tailorPath);
@@ -1215,8 +1288,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const insertArtifact = db.prepare(
     `INSERT INTO artifact_list_projections (
        artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
-       status, local_path, size_bytes, created_at, generation
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       status, local_path, size_bytes, created_at, generation, metadata_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const a of artifacts) {
     insertArtifact.run(
@@ -1231,6 +1304,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
       a.sizeBytes,
       a.createdAt,
       a.generation,
+      a.metadataJson,
     );
   }
 }
@@ -1243,6 +1317,7 @@ interface ArtifactRow {
   sizeBytes: number | null;
   createdAt: string | null;
   generation: number | null;
+  metadataJson: string | null;
 }
 
 function collectArtifacts(
@@ -1253,6 +1328,9 @@ function collectArtifacts(
   const out: ArtifactRow[] = [];
   const seen = new Set<string>();
   if (tableExists(db, "job_materials_artifacts")) {
+    const metadataSelect = hasColumn(db, "job_materials_artifacts", "metadata_json")
+      ? "metadata_json"
+      : "NULL AS metadata_json";
     const rows = allRows<{
       artifact_id: string;
       artifact_type: string;
@@ -1261,9 +1339,10 @@ function collectArtifacts(
       created_at: string | null;
       size_bytes: number | null;
       generation: number | null;
+      metadata_json: string | null;
     }>(
       db,
-      `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation
+      `SELECT artifact_id, artifact_type, status, path, created_at, size_bytes, generation, ${metadataSelect}
        FROM job_materials_artifacts WHERE job_url = ?`,
       [jobUrl],
     );
@@ -1280,6 +1359,7 @@ function collectArtifacts(
         sizeBytes: nullableNumber(row.size_bytes),
         createdAt: nullableString(row.created_at),
         generation: nullableNumber(row.generation),
+        metadataJson: nullableString(row.metadata_json),
       });
     }
   }
@@ -1310,6 +1390,7 @@ function collectArtifacts(
         sizeBytes: nullableNumber(row.size_bytes),
         createdAt: nullableString(row.created_at),
         generation: null,
+        metadataJson: null,
       });
     }
   }
@@ -1319,9 +1400,16 @@ function collectArtifacts(
   // still see the matching ``*_pdf`` row.  When a real PDF artifact is
   // registered we never overwrite it (``seen`` guards against
   // duplicates).
-  const tailorTxt = out.find((a) => a.artifactType === "tailored_resume_txt" && isDefaultVisibleArtifact(a));
+  const tailorSource = preferredArtifactSource(
+    out,
+    ["tailored_resume", "tailored_resume_txt"],
+    materials.generation,
+  );
   const tailorPdfPath =
-    materials.resumePdfPath ?? (tailorTxt ? pdfSibling(tailorTxt.localPath) : null);
+    materials.resumePdfPath ??
+    (tailorSource?.artifactType === "tailored_resume_txt"
+      ? pdfSibling(tailorSource.localPath)
+      : null);
   if (tailorPdfPath && !seen.has(`tailored_resume_pdf:${tailorPdfPath}`)) {
     seen.add(`tailored_resume_pdf:${tailorPdfPath}`);
     out.push({
@@ -1330,13 +1418,21 @@ function collectArtifacts(
       status: "active",
       localPath: tailorPdfPath,
       sizeBytes: null,
-      createdAt: tailorTxt?.createdAt ?? null,
+      createdAt: tailorSource?.createdAt ?? null,
       generation: null,
+      metadataJson: tailorSource?.metadataJson ?? null,
     });
   }
-  const coverTxt = out.find((a) => a.artifactType === "cover_letter_txt" && isDefaultVisibleArtifact(a));
+  const coverSource = preferredArtifactSource(
+    out,
+    ["cover_letter", "cover_letter_txt"],
+    materials.generation,
+  );
   const coverPdfPath =
-    materials.coverPdfPath ?? (coverTxt ? pdfSibling(coverTxt.localPath) : null);
+    materials.coverPdfPath ??
+    (coverSource?.artifactType === "cover_letter_txt"
+      ? pdfSibling(coverSource.localPath)
+      : null);
   if (coverPdfPath && !seen.has(`cover_letter_pdf:${coverPdfPath}`)) {
     seen.add(`cover_letter_pdf:${coverPdfPath}`);
     out.push({
@@ -1345,8 +1441,9 @@ function collectArtifacts(
       status: "active",
       localPath: coverPdfPath,
       sizeBytes: null,
-      createdAt: coverTxt?.createdAt ?? null,
+      createdAt: coverSource?.createdAt ?? null,
       generation: null,
+      metadataJson: coverSource?.metadataJson ?? null,
     });
   }
   return out;
@@ -1354,6 +1451,39 @@ function collectArtifacts(
 
 function isDefaultVisibleArtifact(artifact: Pick<ArtifactRow, "status">): boolean {
   return String(artifact.status ?? "").toLowerCase() !== "suppressed";
+}
+
+function preferredArtifactSource(
+  artifacts: ArtifactRow[],
+  artifactTypes: string[],
+  preferredGeneration: number | null,
+): ArtifactRow | undefined {
+  const typeSet = new Set(artifactTypes);
+  return artifacts
+    .filter((artifact) => typeSet.has(artifact.artifactType) && isDefaultVisibleArtifact(artifact))
+    .sort((left, right) => {
+      const leftPreferred = left.generation === preferredGeneration ? 1 : 0;
+      const rightPreferred = right.generation === preferredGeneration ? 1 : 0;
+      if (leftPreferred !== rightPreferred) return rightPreferred - leftPreferred;
+      const leftStatus = artifactStatusRank(left.status);
+      const rightStatus = artifactStatusRank(right.status);
+      if (leftStatus !== rightStatus) return rightStatus - leftStatus;
+      return Number(right.generation ?? -1) - Number(left.generation ?? -1);
+    })[0];
+}
+
+function artifactStatusRank(status: string): number {
+  switch (String(status ?? "").toLowerCase()) {
+    case "approved":
+    case "active":
+      return 3;
+    case "candidate":
+      return 2;
+    case "rejected":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function pdfSibling(value: string | null | undefined): string | null {

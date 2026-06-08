@@ -1,3 +1,4 @@
+import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -5,7 +6,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { routeTree } from "../../routeTree.gen.js";
-import { sampleApplyReviewQueue } from "../../test/fixtures/projections.js";
+import { sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
 import { buildProviderHarness, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
@@ -34,6 +35,156 @@ vi.mock("../jobs/JobDetailDrawer.js", () => ({
   ),
 }));
 
+const sampleTailoringExplanation: ArtifactTailoringExplanation = {
+  targetSeniority: "principal",
+  claimMode: "evidence_reframing",
+  validationMode: "normal",
+  safety: {
+    autoApprovableClaimModes: ["verified_only"],
+    allowAdjacentAchievementDrafts: false,
+    qualityPassed: true,
+  },
+  keywords: {
+    coverageRecorded: true,
+    planned: ["platform reliability", "incident response", "kubernetes"],
+    covered: ["platform reliability"],
+    missing: ["incident response"],
+    filtered: {
+      planned: [],
+      covered: [],
+      missing: [],
+    },
+    counts: {
+      planned: 3,
+      covered: 1,
+      missing: 1,
+      displayedPlanned: 3,
+      displayedCovered: 1,
+      displayedMissing: 1,
+      filteredPlanned: 0,
+      filteredCovered: 0,
+      filteredMissing: 0,
+    },
+  },
+  evidence: {
+    requiredIds: ["ev_platform_reliability"],
+    seniorityIds: ["ev_principal_scope"],
+    representedIds: ["ev_platform_reliability"],
+    missingIds: [],
+    verifiedMetricCount: 2,
+  },
+  quality: {
+    passed: true,
+    errors: [],
+    warnings: [],
+    notes: ["Keyword coverage: 1/2"],
+    metricClaims: ["42%"],
+    repeatedKeywords: [],
+  },
+  judge: {
+    passed: true,
+    verdict: "PASS",
+    score: 0.93,
+    minScore: 0.84,
+    issues: [],
+    unsupportedClaims: [],
+    fabrications: [],
+    missingRequiredEvidence: [],
+    repairInstructions: [],
+  },
+  adversarialReview: {
+    ran: true,
+    passed: true,
+    score: 0.9,
+    scoreRationale: "All personas passed with no blockers.",
+    threshold: 0.8,
+    blockers: [],
+    warnings: [],
+    repairInstructions: [],
+    personas: [
+      {
+        persona: "evidence_auditor",
+        verdict: "PASS",
+        score: 0.91,
+        scoreRationale: "Evidence was supported by profile facts.",
+        promptRubric: "Check that every metric, tool, role, company, and achievement is supported.",
+        blockers: [],
+        warnings: [],
+        repairInstructions: [],
+        scoreBasis: ["LLM verdict: PASS", "LLM score: 0.91", "Blockers: none"],
+        response: {
+          verdict: "PASS",
+          score: 0.91,
+          scoreRationale: "Evidence was supported by profile facts.",
+          blockers: [],
+          warnings: [],
+          repairInstructions: [],
+        },
+      },
+    ],
+    audit: {
+      model: "judge-a",
+      schemaVersion: "tailor-adversarial.v2",
+      promptMessages: [
+        {
+          role: "system",
+          content: "Evaluate the tailored resume from every persona below.",
+        },
+        {
+          role: "user",
+          content: "Run the adversarial review and return JSON.",
+        },
+      ],
+      response: {
+        verdict: "PASS",
+        score: 0.9,
+        scoreRationale: "All personas passed with no blockers.",
+        blockers: [],
+        warnings: [],
+        repairInstructions: [],
+        personas: [
+          {
+            verdict: "PASS",
+            score: 0.91,
+            scoreRationale: "Evidence was supported by profile facts.",
+            blockers: [],
+            warnings: [],
+            repairInstructions: [],
+          },
+        ],
+      },
+    },
+    skippedReason: null,
+  },
+  reviewFeedback: {
+    warningRepairAttempted: false,
+    acceptedWithResidualWarnings: false,
+    acceptedWarnings: [],
+  },
+  annotatedChanges: [
+    {
+      section: "experience",
+      label: "Senior SWE at Acme",
+      changeType: "achievement_reframed",
+      sourceId: "ev_platform_reliability",
+      sourceText: ["Built platform services."],
+      tailoredText: ["Owned platform reliability improvements for incident response."],
+      rationale: "Experience was emphasized because it matches platform reliability.",
+      jobSignals: ["platform reliability", "incident response"],
+      controls: ["target seniority: principal", "claim mode: evidence_reframing"],
+      evidenceIds: ["ev_platform_reliability"],
+      evidenceNotes: ["ev_platform_reliability: platform ownership"],
+    },
+  ],
+  models: {
+    candidateModels: ["generator-a"],
+    selectedModel: "generator-a",
+    selectedCandidate: "candidate-1",
+    judgeModel: "judge-a",
+    attempts: 2,
+  },
+};
+
 describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
@@ -55,6 +206,69 @@ describe("<ApplyReviewView>", () => {
     const resumePdf = screen.getByRole("img", { name: "Tailored resume PDF" });
     expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("surfaces resume tailoring rationale in the apply review workspace", async () => {
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: sampleTailoringExplanation,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
+    expect(screen.getByText("Principal")).toBeInTheDocument();
+    expect(screen.getByText("Why these changes")).toBeInTheDocument();
+    expect(screen.getByText("Resume match audit")).toBeInTheDocument();
+    expect(screen.getByText("1/3 found in resume")).toBeInTheDocument();
+    expect(screen.getByText("3 total")).toBeInTheDocument();
+    expect(screen.getByText("Target job keywords")).toBeInTheDocument();
+    expect(screen.getByText("Found in tailored resume")).toBeInTheDocument();
+    expect(screen.getByText("No resume keyword match found")).toBeInTheDocument();
+    expect(screen.queryByText("No recorded resume match")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not recorded as covered")).not.toBeInTheDocument();
+    expect(screen.queryByText("Displayed target keywords")).not.toBeInTheDocument();
+    expect(screen.queryByText("Filtered missing keywords")).not.toBeInTheDocument();
+    expect(screen.queryByText("join")).not.toBeInTheDocument();
+    expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
+    expect(screen.getByText("Senior SWE at Acme")).toBeInTheDocument();
+    expect(screen.getByText("Built platform services.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Owned platform reliability improvements for incident response."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(3);
+    expect(screen.getByText("93% / minimum 84%")).toBeInTheDocument();
+    expect(screen.getByText("High-fit review")).toBeInTheDocument();
+    expect(screen.getByText("Why overall score")).toBeInTheDocument();
+    expect(screen.getByText("Persona judgments")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Auditor")).toBeInTheDocument();
+    expect(screen.getByText("Show LLM audit trail")).toBeInTheDocument();
+    expect(screen.getByText("Persona rubric")).toBeInTheDocument();
+    expect(screen.getByText("Check that every metric, tool, role, company, and achievement is supported.")).toBeInTheDocument();
+    expect(screen.getByText("Why it scored this way")).toBeInTheDocument();
+    expect(screen.getByText("LLM returned")).toBeInTheDocument();
+    expect(screen.getByText("Exact LLM request")).toBeInTheDocument();
+    expect(screen.getByText("Persona response")).toBeInTheDocument();
+    expect(screen.getByText("Stored LLM response")).toBeInTheDocument();
+    expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
+    expect(screen.getAllByText("All personas passed with no blockers.").length).toBeGreaterThan(0);
+    expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
   });
 
   it("opens job detail as an in-place overlay", async () => {
@@ -107,7 +321,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText(/Current decision: Approved when ready/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Current decision: Approved for submit/i)).toBeInTheDocument();
     expect(screen.queryByText(/approved_submit/i)).not.toBeInTheDocument();
   });
 
@@ -144,6 +358,39 @@ describe("<ApplyReviewView>", () => {
         name: /Stop apply run for Principal Platform Engineer/i,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("hides submit approval until a dry run has completed", async () => {
+    const noDryRunQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              latestApplyRun: null,
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => noDryRunQueue),
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("button", {
+        name: /Approve dry run for Principal Platform Engineer/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: /Approve submit for Principal Platform Engineer/i,
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the verbatim job post markdown without injecting raw html", async () => {
@@ -252,7 +499,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: /approve when ready for principal platform engineer/i }));
+    await user.click(await screen.findByRole("button", { name: /approve submit for principal platform engineer/i }));
 
     await waitFor(() => expect(decideApplyReview).toHaveBeenCalledTimes(1));
     expect(decideApplyReview).toHaveBeenCalledWith(

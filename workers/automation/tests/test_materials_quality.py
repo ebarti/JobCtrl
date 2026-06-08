@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from jobhunter.domain.materials.quality import (
+    build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
@@ -118,10 +119,111 @@ def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority()
     assert plan.claim_mode == "evidence_reframing"
     assert plan.writing_style["bullet_style"] == "leadership"
     assert plan.target_seniority == "senior"
+
+
+def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -> None:
+    profile = _profile()
+    job = _senior_job()
+    plan = build_tailoring_plan(profile, job)
+    payload = _payload(
+        bullet=(
+            "Owned Python API reliability and reduced latency 35% using PostgreSQL."
+        )
+    )
+
+    annotations = build_tailoring_change_annotations(profile, job, payload, plan)
+
+    summary = next(item for item in annotations if item["section"] == "executive_profile")
+    assert summary["change_type"] == "summary_reframed"
+    assert summary["source_text"] == ["Senior backend engineer."]
+    assert summary["tailored_text"] == [
+        "Senior backend engineer focused on Python API reliability."
+    ]
+    assert summary["controls"][:3] == [
+        "target seniority: senior",
+        "claim mode: evidence_reframing",
+        "adjacent drafts blocked",
+    ]
+
+    experience = next(item for item in annotations if item["section"] == "experience")
+    assert experience["source_id"] == "acme_swe"
+    assert experience["change_type"] == "achievement_reframed"
+    assert "Senior SWE" in experience["source_text"]
+    assert experience["tailored_text"] == [
+        "Senior SWE",
+        "Owned Python API reliability and reduced latency 35% using PostgreSQL.",
+    ]
+    assert "api" in experience["job_signals"]
+    assert experience["evidence_ids"] == ["ev_latency"]
+    assert any("35% latency reduction" in note for note in experience["evidence_notes"])
     assert "ev_latency" in plan.required_evidence_ids
     assert "ev_latency" in plan.seniority_evidence_ids
     assert "python" in plan.job_keywords
     assert "latency" in plan.job_keywords
+
+
+def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() -> None:
+    job = {
+        "url": "https://example.com/platform",
+        "title": "Head of Platform Engineering",
+        "score_keywords": [
+            "head",
+            "leading",
+            "expert",
+            "2019",
+            "across",
+            "since",
+            "platform",
+            "kubernetes",
+            "Multi-region",
+        ],
+        "full_description": (
+            "Join Impress, Europe's leading health-tech innovator. Everyone deserves "
+            "a smile they love. We are looking for an onsite leader in Barcelona. "
+            "Own platform engineering, cloud infrastructure, Java, Node.js, "
+            "Kubernetes, CI/CD, observability, incident management, developer "
+            "productivity, cost optimization, security, resiliency, disaster recovery, "
+            "and multi-region operating context."
+        ),
+    }
+
+    plan = build_tailoring_plan(_profile(), job)
+
+    assert "platform" in plan.job_keywords
+    assert "kubernetes" in plan.job_keywords
+    assert "ci/cd" in plan.job_keywords
+    assert "observability" in plan.job_keywords
+    assert "join" not in plan.job_keywords
+    assert "impress" not in plan.job_keywords
+    assert "innovator" not in plan.job_keywords
+    assert "everyone" not in plan.job_keywords
+    assert "smile" not in plan.job_keywords
+    assert "barcelona" not in plan.job_keywords
+    assert "head" not in plan.job_keywords
+    assert "leading" not in plan.job_keywords
+    assert "expert" not in plan.job_keywords
+    assert "2019" not in plan.job_keywords
+    assert "across" not in plan.job_keywords
+    assert "since" not in plan.job_keywords
+    assert "multi-region" not in plan.job_keywords
+
+
+def test_tailoring_plan_metadata_preserves_full_keyword_audit_set() -> None:
+    job = {
+        "url": "https://example.com/platform",
+        "title": "Head of Platform Engineering",
+        "skills": [f"Kubernetes capability {index}" for index in range(20)],
+        "full_description": (
+            "Own platform engineering, cloud infrastructure, Java, Node.js, "
+            "Kubernetes, CI/CD, observability, incident management, developer "
+            "productivity, cost optimization, security, resiliency, and disaster recovery."
+        ),
+    }
+
+    plan = build_tailoring_plan(_profile(), job)
+
+    assert len(plan.job_keywords) > 16
+    assert plan.to_metadata()["job_keywords"] == list(plan.job_keywords)
 
 
 def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() -> None:
@@ -136,6 +238,22 @@ def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() ->
 
     assert result.passed is False
     assert any("Unknown metric" in error and "80%" in error for error in result.errors)
+
+
+def test_quality_metric_claims_keep_readable_spacing() -> None:
+    plan = build_tailoring_plan(_profile(), _senior_job())
+    bullet = "Owned 5 teams and reduced latency 35% across 2 services."
+
+    result = evaluate_tailoring_quality(
+        _payload(bullet=bullet),
+        _resume_text(bullet=bullet),
+        plan,
+    )
+
+    assert "5 teams" in result.metric_claims
+    assert "2 services" in result.metric_claims
+    assert "5teams" not in result.metric_claims
+    assert "2services" not in result.metric_claims
 
 
 def test_quality_warns_or_fails_keyword_stuffing_by_severity() -> None:

@@ -212,7 +212,12 @@ Useful options:
 For high-fit jobs (fit score `8+`), a resume that passes deterministic
 validation and the structured judge is also checked by adversarial reviewer
 personas. Blocker findings keep the resume unapproved and feed the retry loop
-instead of being hidden as a successful tailoring run.
+instead of being hidden as a successful tailoring run. Non-blocking review
+warnings also feed a repair retry while retry budget remains; any warning still
+shown on the accepted artifact is residual feedback on the selected resume.
+Persona reviews persist their rubric, bounded LLM request excerpts, structured
+response fields, and score rationale so a `PASS (100%)` judgement remains
+auditable.
 
 The same tailoring controls can be provided through
 `TAILORING_GENERATOR_MODELS`, `TAILORING_JUDGE_MODEL`, and
@@ -303,8 +308,9 @@ outcomes. The web `/apply-review` queue shows active apply-stage jobs with
 materials readiness, latest apply-run context, blockers, review decisions, and
 pending outcome suggestions. Job details include a local outcome timeline and
 manual outcome form. `approve_submit` is an approval fact only; it does not
-start browser submission by itself. Manual outcomes can include local notes in
-SQLite, but event payloads contain only safe identifiers, outcome kinds, and
+start browser submission by itself, and the web UI only offers submit approval
+after a completed dry run. Manual outcomes can include local notes in SQLite,
+but event payloads contain only safe identifiers, outcome kinds, and
 presence flags.
 
 Gmail outcome feedback is a separate read-only scan from the verification-code
@@ -433,6 +439,21 @@ Jobs whose first-time tailoring is skipped by the default low-fit gate can still
 be tailored explicitly from the job detail tailor stage. Re-tailor controls are
 reserved for jobs that already have tailored artifacts and need current-policy
 regeneration.
+Apply review shows the safe tailoring rationale under the selected tailored
+resume when a resume PDF artifact is available. The same rationale remains
+available from the Artifacts drawer for audit/detail review. It includes keyword
+coverage counts for actionable high-signal terms derived from the material audit
+and job scoring keywords, evidence support, quality gates, review outcome,
+warning-repair status,
+annotated source-vs-tailored resume changes, high-fit persona prompt/response
+audit, and model summary. Persona warnings include an expandable audit trail for
+the stored LLM request and structured response behind that judgment. The
+keyword section marks when a resume keyword match audit was not recorded, instead
+of treating target terms as missing from the resume.
+rationale does not expose raw generator prompts, raw profile payloads, or raw job
+text; annotated changes and persona prompts are bounded excerpts explaining what
+was reframed, what was asked, how the reviewer responded, and why the score was
+assigned.
 Longer-running progress appears in the dashboard pipeline and
 apply-runs cards, while the Debug tab owns the paginated Recent activity table
 for event-level inspection. Non-apply stages emit pipeline lifecycle events;
