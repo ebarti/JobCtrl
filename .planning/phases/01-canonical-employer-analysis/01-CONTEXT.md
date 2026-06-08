@@ -22,10 +22,10 @@ Requirements covered: ANALYSIS-01, ANALYSIS-02, ANALYSIS-03, ANALYSIS-04, ANALYS
 ### AI Execution Model — agent SDKs only (PROJECT-LEVEL directive)
 - **D-01:** All **new** AI usage goes through **agent SDKs**, never raw model APIs. The existing hand-rolled `jobhunter.llm.LLMClient` (httpx over OpenAI-compat + Gemini-native) is **not** the path for new work. This is a project-wide standard going forward.
 - **D-02:** Existing, out-of-scope LLM usages (scoring, current tailor/judge/voice, etc.) are **left untouched** this phase — no strangler, no forced migration. They migrate to agent SDKs in their own future work.
-- **D-03:** The Phase 1 employer-analysis call runs through **all three SDKs**: **Claude Agent SDK**, **Codex SDK**, **Antigravity SDK**. The point is to mix three diverse models to get better data.
+- **D-03:** The Phase 1 employer-analysis call runs through **two SDKs this milestone**: **Claude Agent SDK** + **Codex SDK** (merge+synthesize over 2 diverse models). The **Antigravity/Google leg is DEFERRED** (dropped 2026-06-09 per user — "skip antigravity"); the `AnalysisDraftPort` keeps an open slot to add it later. A real `google-antigravity` SDK exists with a working reference impl in `~/Github/mestre` (`mestre/vendor_lane/backends/antigravity_sdk.py`).
 - **D-04:** Auth posture (as stated by the user):
   - Claude Agent SDK → the active Claude Code session / sign-in (already authenticated).
-  - Antigravity SDK → `GOOGLE_APPLICATION_CREDENTIALS` (Google application credentials).
+  - (Antigravity/Google leg DEFERRED — auth N/A this milestone; when re-added the SDK uses `GEMINI_API_KEY`/`GOOGLE_API_KEY` per the mestre reference.)
   - Codex SDK → existing authenticated subscription.
   - Do **not** introduce metered per-token API-key paths for these; use the SDKs' own auth.
 - **D-05:** Supersedes PROJECT.md's current LLM constraint ("default to latest Claude models… keep provider selection explicit… existing 180s client timeout"). PROJECT.md must be updated to record the agent-SDK / ensemble / no-cost / no-timeout stance (flagged as a follow-up; see Deferred).
@@ -96,7 +96,7 @@ Requirements covered: ANALYSIS-01, ANALYSIS-02, ANALYSIS-03, ANALYSIS-04, ANALYS
 - `apps/api/src/read-model.ts` (`tailoringExplanationForArtifact`), `apps/api/src/projections.ts`, `packages/contracts/src/schemas.ts`, `packages/contracts/src/rpc.ts`.
 
 ### MUST research in AI-SPEC (no doc in-repo yet)
-- **Claude Agent SDK**, **Codex SDK**, **Antigravity SDK** — official docs for: programmatic/headless invocation, structured/typed output mechanism, determinism controls, cancellation, max-turns/timeout config, and auth (Claude Code session; `GOOGLE_APPLICATION_CREDENTIALS`; Codex subscription). These are the single biggest knowledge gap for planning.
+- **Claude Agent SDK** and **Codex SDK** — programmatic/headless invocation, structured/typed output, cancellation, no-timeout config, auth (Claude Code session; Codex subscription). **Authoritative reference: `~/Github/mestre/mestre/vendor_lane/backends/{claude_sdk,codex_sdk}.py`, `agent_protocol.py`, `structured_output.py`** — a working multi-vendor agent-SDK lane (mirror these patterns + their test mocking). (Antigravity leg deferred; `antigravity_sdk.py` in mestre is the future reference.)
 
 </canonical_refs>
 
