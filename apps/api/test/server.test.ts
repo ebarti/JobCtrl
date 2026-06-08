@@ -2269,7 +2269,7 @@ describe("local TypeScript API", () => {
       fitScore: 9,
       tailoredPath: resumePath,
       fullDescription:
-        "Platform Engineering Lead with AWS, GCP, Java, Observability, and Infrastructure as Code responsibilities.",
+        "Platform Engineering Lead with AWS, GCP, Java, Observability, Infrastructure as Code, and multi-region context.",
     });
     insertScore(seedDb, "https://example.com/jobs/tailoring-no-coverage", 1, 9, {
       keywords: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code", "Multi-region"],
@@ -2334,7 +2334,7 @@ describe("local TypeScript API", () => {
       site: "EvidenceCo",
       fitScore: 9,
       tailoredPath: resumePath,
-      fullDescription: "We need AWS, CI/CD, and Developer Platform leadership.",
+      fullDescription: "We need AWS, CI/CD, Developer Platform leadership, and multi-region operating context.",
     });
     insertScore(seedDb, "https://example.com/jobs/tailoring-job-text-keywords", 1, 9, {
       keywords: ["Developer Platform", "CI/CD", "Multi-region"],

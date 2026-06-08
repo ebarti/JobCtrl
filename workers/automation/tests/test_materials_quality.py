@@ -175,13 +175,15 @@ def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() 
             "since",
             "platform",
             "kubernetes",
+            "Multi-region",
         ],
         "full_description": (
             "Join Impress, Europe's leading health-tech innovator. Everyone deserves "
             "a smile they love. We are looking for an onsite leader in Barcelona. "
             "Own platform engineering, cloud infrastructure, Java, Node.js, "
             "Kubernetes, CI/CD, observability, incident management, developer "
-            "productivity, cost optimization, security, resiliency, and disaster recovery."
+            "productivity, cost optimization, security, resiliency, disaster recovery, "
+            "and multi-region operating context."
         ),
     }
 
@@ -203,6 +205,7 @@ def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() 
     assert "2019" not in plan.job_keywords
     assert "across" not in plan.job_keywords
     assert "since" not in plan.job_keywords
+    assert "multi-region" not in plan.job_keywords
 
 
 def test_tailoring_plan_metadata_preserves_full_keyword_audit_set() -> None:

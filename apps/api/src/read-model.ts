@@ -2046,6 +2046,10 @@ const JOB_KEYWORD_DISPLAY_OVERRIDES = new Map([
   ["sre", "SRE"],
   ["typescript", "TypeScript"],
 ]);
+const NON_ACTIONABLE_JOB_KEYWORD_KEYS = new Set([
+  "multi region",
+  "multi-region",
+]);
 
 function tailoringExplanationForArtifact(
   db: SqliteDatabase,
@@ -2098,12 +2102,12 @@ function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjec
 
   const jobText = [job.title, job.description, job.full_description].filter(Boolean).join("\n");
   const scoreCandidates = keywordCandidates(parseScoreKeywords(job.score_keywords_json ?? null)).filter((candidate) =>
-    textContainsNormalizedKeyword(jobText, candidate.key),
+    isActionableJobKeywordCandidate(candidate) && textContainsNormalizedKeyword(jobText, candidate.key),
   );
   const descriptionCandidates = extractJobDescriptionKeywordCandidates(jobText);
-  return pruneSubsumedSingleKeywords(dedupeKeywordCandidates([...scoreCandidates, ...descriptionCandidates])).map(
-    (candidate) => candidate.text,
-  );
+  return pruneSubsumedSingleKeywords(dedupeKeywordCandidates([...scoreCandidates, ...descriptionCandidates]))
+    .filter(isActionableJobKeywordCandidate)
+    .map((candidate) => candidate.text);
 }
 
 function tailoringResumeTextForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string | null {
@@ -2154,7 +2158,7 @@ function parseTailoringExplanation(
   const savedCoverageRecorded =
     Array.isArray(keywordCoverage.covered) || Array.isArray(keywordCoverage.missing);
   const targetKeywordCandidates = pruneSubsumedSingleKeywords(
-    keywordCandidates(qualityPlan.job_keywords, options.jobKeywords),
+    keywordCandidates(qualityPlan.job_keywords, options.jobKeywords).filter(isActionableJobKeywordCandidate),
   );
   const textCoverage = keywordCoverageFromResumeText(targetKeywordCandidates, options.resumeText);
   const coverageRecorded = textCoverage !== null || savedCoverageRecorded;
@@ -2618,6 +2622,10 @@ function dedupeKeywordCandidates(candidates: readonly KeywordCandidate[]): Keywo
     out.push(candidate);
   }
   return out;
+}
+
+function isActionableJobKeywordCandidate(candidate: KeywordCandidate): boolean {
+  return !NON_ACTIONABLE_JOB_KEYWORD_KEYS.has(candidate.key);
 }
 
 function pruneSubsumedSingleKeywords(candidates: readonly KeywordCandidate[]): KeywordCandidate[] {
