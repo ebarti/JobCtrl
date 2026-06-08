@@ -1,0 +1,521 @@
+# Codebase Structure
+
+**Analysis Date:** 2026-06-08
+
+## Repository Layout
+
+```text
+.
+├── AGENTS.md
+├── README.md
+├── docs/
+├── package.json
+├── pnpm-workspace.yaml
+├── scripts/
+├── apps/
+│   ├── api/
+│   └── web/
+├── packages/
+│   ├── api-client/
+│   ├── contracts/
+│   ├── domain-types/
+│   └── tsconfig/
+├── workers/
+│   └── automation/
+├── .planning/
+│   └── codebase/
+└── .mestre/
+```
+
+This repo is a pnpm workspace for TypeScript packages and apps, with the Python worker managed separately by uv under `workers/automation/`. `pnpm-workspace.yaml` includes `apps/*` and `packages/*`; it does not include the Python package.
+
+## Top-Level Directories
+
+### Product Documentation
+
+- `README.md` documents user-facing behavior, setup, local commands, runtime artifacts, and safety notes.
+- `docs/architecture.md` documents the implemented TypeScript API, React app, Python worker, bounded contexts, projection read model, JSON-RPC protocol, local-first boundary, frontend state layers, and observability.
+- `docs/job-pipeline-architecture.md` documents pipeline execution, stage call paths, persistence, projection visibility, and failure behavior.
+- `docs/ddd-target.md` documents the DDD and hexagonal architecture target that the current codebase implements.
+- `docs/frontend-target.md` documents the frontend target architecture and current implementation conventions.
+- `docs/decisions.md` contains ADRs for local-first delivery, TypeScript API, React/Vite, DDD, projections, JSON-RPC, TanStack, frontend ports, SSE, and the view/context split.
+
+### TypeScript Apps
+
+- `apps/api/` is the local Fastify API.
+- `apps/web/` is the React/Vite browser app.
+
+### Shared TypeScript Packages
+
+- `packages/contracts/` owns Zod HTTP and JSON-RPC schemas.
+- `packages/domain-types/` owns pure TypeScript domain mirrors and stage/domain-event types.
+- `packages/api-client/` owns the typed HTTP client used by the web API adapter.
+- `packages/tsconfig/` owns shared TypeScript config presets.
+
+### Python Worker
+
+- `workers/automation/` is a uv-managed Python package exposing the `jobhunter` CLI and worker.
+- `workers/automation/src/jobhunter/` contains CLI, database, state, stage modules, DDD domain packages, infrastructure adapters, Temporal workflows, JSON-RPC server, and generated-material automation.
+- `workers/automation/tests/` contains Python unit, integration, projection, workflow, and regression tests.
+
+### Tooling and Planning
+
+- `scripts/` contains repo helper scripts such as development stack launch/status helpers.
+- `.planning/codebase/` is the generated GSD codebase mapping output location.
+- `.mestre/` is local project/tooling metadata present in this worktree.
+
+## API App Structure
+
+```text
+apps/api/
+├── package.json
+├── src/
+│   ├── main.ts
+│   ├── server.ts
+│   ├── config.ts
+│   ├── db.ts
+│   ├── contracts.ts
+│   ├── read-model.ts
+│   ├── write-model.ts
+│   ├── projections.ts
+│   ├── event-stream.ts
+│   ├── json-rpc-adapter.ts
+│   ├── local-actions.ts
+│   ├── local-origin.ts
+│   ├── profile-store.ts
+│   ├── credentials.ts
+│   ├── discovery-controls.ts
+│   ├── application-feedback.ts
+│   ├── worker-health.ts
+│   ├── gmail-feedback-worker.ts
+│   ├── manual-capture-worker.ts
+│   ├── place-validation.ts
+│   └── location-normalization.ts
+└── test/
+```
+
+Key API files:
+
+- `apps/api/src/main.ts` starts the local Fastify server.
+- `apps/api/src/server.ts` builds the Fastify app and registers all HTTP routes.
+- `apps/api/src/config.ts` resolves host, port, and runtime paths.
+- `apps/api/src/db.ts` provides SQLite connection helpers.
+- `apps/api/src/read-model.ts` builds dashboard, jobs, details, artifacts, workflow runs, activity, and audit read models.
+- `apps/api/src/write-model.ts` performs TypeScript-owned local writes.
+- `apps/api/src/projections.ts` creates and refreshes projection tables from SQLite state/events.
+- `apps/api/src/event-stream.ts` implements `GET /v1/events/stream`.
+- `apps/api/src/json-rpc-adapter.ts` owns the subprocess JSON-RPC transport to Python.
+- `apps/api/src/local-actions.ts` maps API actions to JSON-RPC methods or local helpers.
+- `apps/api/test/` contains API unit/integration tests and QA seeds.
+
+## Web App Structure
+
+```text
+apps/web/
+├── package.json
+├── index.html
+├── vite.config.ts
+├── tsr.config.ts
+├── vitest.config.ts
+├── vitest.types.config.ts
+├── playwright.config.ts
+├── e2e/
+│   └── tests/
+├── src/
+│   ├── main.tsx
+│   ├── App.tsx
+│   ├── router.ts
+│   ├── routeTree.gen.ts
+│   ├── routes/
+│   ├── views/
+│   ├── contexts/
+│   ├── shared/
+│   ├── components/
+│   ├── hooks/
+│   ├── lib/
+│   └── test/
+└── public/
+```
+
+Key web entry points:
+
+- `apps/web/src/main.tsx` wires ports, QueryClient, tenant provider, SSE provider, theme/density providers, and the router.
+- `apps/web/src/App.tsx` renders the TanStack Router provider.
+- `apps/web/src/router.ts` creates the typed TanStack Router.
+- `apps/web/src/routes/__root.tsx` owns the root shell route.
+- `apps/web/src/routeTree.gen.ts` is generated by TanStack Router.
+
+### Web Routes
+
+Routes are file-based under `apps/web/src/routes/`. Current route groups include:
+
+- Dashboard: `apps/web/src/routes/index.tsx`, `apps/web/src/routes/dashboard.tsx`.
+- Jobs: `apps/web/src/routes/jobs.tsx`, `apps/web/src/routes/jobs.index.tsx`, `apps/web/src/routes/jobs.$jobId.tsx`, `apps/web/src/routes/jobs.$jobId.run.$runId.tsx`, and `apps/web/src/routes/-jobs.search.ts`.
+- Artifacts: `apps/web/src/routes/artifacts.tsx`, `apps/web/src/routes/artifacts.index.tsx`, `apps/web/src/routes/artifacts.$artifactId.tsx`, and `apps/web/src/routes/-artifacts.search.ts`.
+- Debug activity: `apps/web/src/routes/debug.tsx`, `apps/web/src/routes/activity.$eventId.tsx`, and `apps/web/src/routes/-debug.search.ts`.
+- Apply review: `apps/web/src/routes/apply-review.tsx`.
+- Discovery: `apps/web/src/routes/discovery.tsx`.
+- Pipeline/workflow runs: `apps/web/src/routes/pipelines.tsx`, `apps/web/src/routes/runs.tsx`, `apps/web/src/routes/runs.index.tsx`, `apps/web/src/routes/runs.$runId.tsx`, and `apps/web/src/routes/-runs.search.ts`.
+- Profile import: `apps/web/src/routes/profile.tsx`, `apps/web/src/routes/profile.index.tsx`, `apps/web/src/routes/profile.import.tsx`, `apps/web/src/routes/profile.import.upload.tsx`, `apps/web/src/routes/profile.import.preview.tsx`, and `apps/web/src/routes/profile.import.confirm.tsx`.
+- Settings/preferences: `apps/web/src/routes/settings.tsx`, `apps/web/src/routes/settings.index.tsx`, `apps/web/src/routes/settings.credentials.tsx`, and `apps/web/src/routes/preferences.tsx`.
+- Spike route: `apps/web/src/routes/spikes.table-filters.tsx`.
+
+### Web Views
+
+Views compose context components and Operations hooks:
+
+- `apps/web/src/views/dashboard/`
+- `apps/web/src/views/jobs/`
+- `apps/web/src/views/artifacts/`
+- `apps/web/src/views/apply-review/`
+- `apps/web/src/views/debug/`
+- `apps/web/src/views/discovery/`
+- `apps/web/src/views/pipelines/`
+- `apps/web/src/views/runs/`
+
+View table column models live near their views, for example `apps/web/src/views/jobs/columns.tsx`, `apps/web/src/views/artifacts/columns.tsx`, `apps/web/src/views/debug/activity-columns.tsx`, and `apps/web/src/views/runs/columns.tsx`.
+
+### Web Contexts
+
+Context folders mirror backend bounded contexts:
+
+```text
+apps/web/src/contexts/
+├── discovery/
+├── enrichment/
+├── profile/
+├── scoring/
+├── materials/
+├── apply/
+├── pipeline/
+└── operations/
+```
+
+Common context file roles:
+
+- `apps/web/src/contexts/<context>/components/` contains reusable context-owned UI.
+- `apps/web/src/contexts/<context>/hooks/` contains mutations and context-specific queries.
+- `apps/web/src/contexts/<context>/handlers.ts` maps domain events to invalidation targets.
+- `apps/web/src/contexts/<context>/queryKeys.ts` defines context-owned query-key factories.
+- `apps/web/src/contexts/<context>/selectors/`, `lib/`, `forms/`, and `stores/` are used where the context needs them.
+- `apps/web/src/contexts/<context>/index.ts` is the public export surface for that context.
+
+Operations is the read-side exception:
+
+- `apps/web/src/contexts/operations/hooks/` owns read query hooks such as `useJobsListQuery.ts`, `useJobDetailQuery.ts`, `useDashboardSummaryQuery.ts`, `useArtifactsListQuery.ts`, `useApplyRunsListQuery.ts`, `useActivityListQuery.ts`, and `useWorkflowRunsListQuery.ts`.
+- `apps/web/src/contexts/operations/queryKeys.ts` re-exports the central query-key surface.
+- `apps/web/src/contexts/operations/invalidation-router.ts` routes SSE domain events to invalidations.
+- `apps/web/src/contexts/operations/providers/EventStreamProvider.tsx` subscribes to the local SSE stream.
+
+### Web Shared Layer
+
+- `apps/web/src/shared/ports/` defines browser-side ports.
+- `apps/web/src/shared/adapters/local/` contains local adapters such as the fetch API client and SSE adapter.
+- `apps/web/src/shared/lib/createOptimisticMutation.ts` supports optimistic mutation helpers.
+- `apps/web/src/test/msw/` contains MSW REST and SSE handlers.
+
+## Shared Package Structure
+
+```text
+packages/
+├── api-client/
+│   └── src/client.ts
+├── contracts/
+│   ├── src/schemas.ts
+│   └── src/rpc.ts
+├── domain-types/
+│   ├── src/identifiers.ts
+│   ├── src/pipeline.ts
+│   ├── src/tenant.ts
+│   └── test/
+└── tsconfig/
+    ├── base.json
+    ├── node.json
+    └── react.json
+```
+
+Important package locations:
+
+- `packages/contracts/src/schemas.ts` for HTTP DTOs, request schemas, stage constants, and read-model schemas.
+- `packages/contracts/src/rpc.ts` for JSON-RPC method schemas.
+- `packages/domain-types/src/pipeline.ts` for TypeScript stage and stage-state types.
+- `packages/domain-types/src/tenant.ts` for local tenant typing.
+- `packages/domain-types/test/` for domain-type parity and behavior tests.
+- `packages/api-client/src/client.ts` for the browser/API typed client.
+- `packages/tsconfig/` for shared TypeScript compiler presets.
+
+## Python Worker Structure
+
+```text
+workers/automation/
+├── pyproject.toml
+├── uv.lock
+├── src/jobhunter/
+│   ├── __main__.py
+│   ├── cli.py
+│   ├── actions.py
+│   ├── config.py
+│   ├── database.py
+│   ├── state.py
+│   ├── llm.py
+│   ├── model_defaults.py
+│   ├── operational_metrics.py
+│   ├── profile_import.py
+│   ├── resume_profile.py
+│   ├── domain/
+│   ├── infrastructure/
+│   ├── pipeline/
+│   ├── apply/
+│   ├── discovery/
+│   ├── enrichment/
+│   ├── scoring/
+│   ├── materials/
+│   ├── profile/
+│   ├── wizard/
+│   └── config/
+└── tests/
+```
+
+Top-level Python files:
+
+- `workers/automation/src/jobhunter/cli.py` is the Typer CLI.
+- `workers/automation/src/jobhunter/__main__.py` supports module execution.
+- `workers/automation/src/jobhunter/actions.py` is the structured local action dispatcher.
+- `workers/automation/src/jobhunter/database.py` owns SQLite schema and migrations.
+- `workers/automation/src/jobhunter/state.py` owns canonical stage-state helpers and event/artifact recording.
+- `workers/automation/src/jobhunter/config.py` resolves runtime configuration.
+- `workers/automation/src/jobhunter/operational_metrics.py` records operational metrics.
+- `workers/automation/src/jobhunter/llm.py` and `workers/automation/src/jobhunter/model_defaults.py` support LLM usage and defaults.
+
+### Python Domain Packages
+
+```text
+workers/automation/src/jobhunter/domain/
+├── apply/
+├── discovery/
+├── enrichment/
+├── events/
+├── materials/
+├── operations/
+├── pipeline/
+├── ports/
+├── preparation/
+├── profile/
+├── rpc/
+├── scoring/
+├── identifiers.py
+├── job_content_identity.py
+├── pipeline_types.py
+└── tenant.py
+```
+
+Domain package conventions:
+
+- Aggregates are usually in `aggregate.py`, for example `workers/automation/src/jobhunter/domain/apply/aggregate.py`.
+- Use cases are usually in `use_cases.py`, for example `workers/automation/src/jobhunter/domain/materials/use_cases.py`.
+- Value objects are usually in `value_objects.py`.
+- Domain services are usually in `services.py`.
+- Port protocols live under `workers/automation/src/jobhunter/domain/ports/`.
+- Domain event factories live under `workers/automation/src/jobhunter/domain/events/`.
+- Operations projections are modeled in `workers/automation/src/jobhunter/domain/operations/projections.py`.
+- JSON-RPC domain messages live in `workers/automation/src/jobhunter/domain/rpc/messages.py`.
+
+### Python Infrastructure Packages
+
+```text
+workers/automation/src/jobhunter/infrastructure/
+├── apply/
+├── discovery/
+├── enrichment/
+├── events/
+├── gmail/
+├── llm/
+├── materials/
+├── network/
+├── observability/
+├── pipeline/
+├── preparation/
+├── profile/
+├── projections/
+├── rpc/
+├── scoring/
+├── temporal/
+└── runtime_identity.py
+```
+
+Infrastructure conventions:
+
+- SQLite adapters are named `sqlite_repository.py`, for example `workers/automation/src/jobhunter/infrastructure/scoring/sqlite_repository.py`.
+- Temporal runtime files live in `workers/automation/src/jobhunter/infrastructure/temporal/`.
+- JSON-RPC server and handler files live in `workers/automation/src/jobhunter/infrastructure/rpc/`.
+- External integration adapters are grouped by provider or capability, for example `workers/automation/src/jobhunter/infrastructure/gmail/`, `workers/automation/src/jobhunter/infrastructure/llm/`, `workers/automation/src/jobhunter/infrastructure/apply/`, and `workers/automation/src/jobhunter/infrastructure/materials/`.
+- Projection adapters live in `workers/automation/src/jobhunter/infrastructure/projections/`.
+- The in-process event bus lives in `workers/automation/src/jobhunter/infrastructure/events/in_process_bus.py`.
+
+### Python Workflow and Stage Modules
+
+- Pipeline workflow: `workers/automation/src/jobhunter/pipeline/workflow.py`.
+- Pipeline runner: `workers/automation/src/jobhunter/pipeline/runner.py`.
+- Apply workflow: `workers/automation/src/jobhunter/apply/workflow.py`.
+- Apply activity: `workers/automation/src/jobhunter/apply/activities.py`.
+- Discovery activity: `workers/automation/src/jobhunter/discovery/activities.py`.
+- Enrichment activity: `workers/automation/src/jobhunter/enrichment/activities.py`.
+- Scoring activity: `workers/automation/src/jobhunter/scoring/activities.py`.
+- Materials activities: `workers/automation/src/jobhunter/materials/activities.py`.
+- Profile import activity: `workers/automation/src/jobhunter/profile/activities.py`.
+- Temporal registry: `workers/automation/src/jobhunter/infrastructure/temporal/registry.py`.
+- Temporal worker: `workers/automation/src/jobhunter/infrastructure/temporal/worker.py`.
+
+## Key Configuration Files
+
+- `package.json` defines root scripts, workspace package manager, Node version, and full-stack dev/test commands.
+- `pnpm-workspace.yaml` defines TypeScript workspace package globs.
+- `apps/api/package.json` defines API scripts and dependencies.
+- `apps/api/tsconfig.json` defines API TypeScript settings.
+- `apps/web/package.json` defines web scripts and dependencies.
+- `apps/web/vite.config.ts` defines Vite settings.
+- `apps/web/tsr.config.ts` defines TanStack Router generation.
+- `apps/web/vitest.config.ts` and `apps/web/vitest.types.config.ts` define web test and type-test configs.
+- `apps/web/e2e/playwright.config.ts` defines web Playwright E2E settings.
+- `packages/tsconfig/base.json`, `packages/tsconfig/node.json`, and `packages/tsconfig/react.json` define shared TypeScript presets.
+- `workers/automation/pyproject.toml` defines the Python package, `jobhunter` CLI entry point, Python version, dependencies, optional dev dependencies, and Ruff configuration.
+- `workers/automation/uv.lock` pins Python dependencies.
+
+## Naming Conventions
+
+### TypeScript and React
+
+- React components use PascalCase filenames such as `apps/web/src/views/jobs/JobsView.tsx` and `apps/web/src/contexts/pipeline/components/StageBadge.tsx`.
+- Hooks use `use*.ts` or `use*.tsx`, for example `apps/web/src/contexts/operations/hooks/useJobsListQuery.ts` and `apps/web/src/contexts/apply/hooks/useApplyJobMutation.ts`.
+- Query-key factories use `*Keys.ts`, for example `apps/web/src/contexts/operations/jobsKeys.ts` and `apps/web/src/contexts/materials/queryKeys.ts`.
+- Context invalidation files are named `handlers.ts`.
+- Route files follow TanStack Router conventions, including `__root.tsx`, `$` params such as `jobs.$jobId.tsx`, and dash-prefixed helpers such as `-jobs.search.ts`.
+- Tests are colocated as `*.test.ts` or `*.test.tsx`.
+- Accessibility tests are colocated as `*.a11y.test.tsx`.
+- Storybook stories are colocated as `*.stories.tsx`.
+- Type-level tests live under `apps/web/test/types/` and use `*.test-d.ts`.
+
+### Python
+
+- Python modules use snake_case filenames.
+- Domain context folders use stable bounded-context names such as `discovery`, `enrichment`, `profile`, `scoring`, `materials`, `apply`, `pipeline`, and `operations`.
+- Domain files use conventional names: `aggregate.py`, `entities.py`, `value_objects.py`, `services.py`, `use_cases.py`, `policy.py`, and `repository.py`.
+- SQLite infrastructure adapters are named `sqlite_repository.py`.
+- Temporal workflow files are named `workflow.py`; activities are named `activities.py`.
+- Python tests under `workers/automation/tests/` are named `test_*.py`.
+
+### Documentation
+
+- Repo docs use lowercase dash-separated names under `docs/`, for example `docs/job-pipeline-architecture.md`.
+- Generated GSD codebase maps use uppercase names under `.planning/codebase/`, for example `.planning/codebase/ARCHITECTURE.md` and `.planning/codebase/STRUCTURE.md`.
+
+## Test Locations
+
+- Root TypeScript/API/web test command: `pnpm test`.
+- API tests: `apps/api/test/`.
+- Web colocated unit/component tests: `apps/web/src/**/*.test.ts` and `apps/web/src/**/*.test.tsx`.
+- Web a11y tests: `apps/web/src/**/*.a11y.test.tsx`.
+- Web stories: `apps/web/src/**/*.stories.tsx`.
+- Web MSW handlers: `apps/web/src/test/msw/handlers.ts` and `apps/web/src/test/msw/sse-handlers.ts`.
+- Web E2E tests: `apps/web/e2e/tests/`.
+- Web type tests: `apps/web/test/types/`.
+- Shared domain-type tests: `packages/domain-types/test/`.
+- Python tests: `workers/automation/tests/`.
+- Python fixtures: `workers/automation/tests/fixtures/`.
+
+## Where to Add New Code
+
+### New API Read Endpoint
+
+1. Add or update DTO schemas in `packages/contracts/src/schemas.ts`.
+2. Add read-model logic in `apps/api/src/read-model.ts`.
+3. Register the route in `apps/api/src/server.ts`.
+4. Add a typed client method in `packages/api-client/src/client.ts`.
+5. Add or update API tests in `apps/api/test/`.
+6. Add a web Operations query hook under `apps/web/src/contexts/operations/hooks/` if the browser consumes the endpoint.
+
+### New API Mutation
+
+1. Add request/response schemas in `packages/contracts/src/schemas.ts`.
+2. For TypeScript-owned local writes, implement the write in `apps/api/src/write-model.ts`.
+3. For Python-owned behavior, add or extend a JSON-RPC method in `packages/contracts/src/rpc.ts`, `apps/api/src/local-actions.ts`, and `workers/automation/src/jobhunter/infrastructure/rpc/handlers.py`.
+4. Register the HTTP route in `apps/api/src/server.ts`.
+5. Add a context-owned web mutation hook under `apps/web/src/contexts/<context>/hooks/`.
+6. Add focused invalidation through the mutation and/or `apps/web/src/contexts/<context>/handlers.ts`.
+
+### New Web Screen
+
+1. Add a route under `apps/web/src/routes/`.
+2. Put page composition in a view folder under `apps/web/src/views/<view>/`.
+3. Reuse context components and Operations hooks from `apps/web/src/contexts/`.
+4. Add URL search schema next to the route if the screen has filters or paging, following files such as `apps/web/src/routes/-jobs.search.ts`.
+5. Add colocated component/view tests and stories where the screen is user-facing.
+
+### New Web Context Feature
+
+1. Place context-owned UI under `apps/web/src/contexts/<context>/components/`.
+2. Place mutation hooks under `apps/web/src/contexts/<context>/hooks/`.
+3. Place context query keys in `apps/web/src/contexts/<context>/queryKeys.ts` or read-side keys under `apps/web/src/contexts/operations/`.
+4. Update `apps/web/src/contexts/<context>/handlers.ts` for new domain events.
+5. Export public pieces from `apps/web/src/contexts/<context>/index.ts`.
+
+### New Python Domain Behavior
+
+1. Add aggregates, value objects, services, policies, and use cases under `workers/automation/src/jobhunter/domain/<context>/`.
+2. Add or extend port protocols under `workers/automation/src/jobhunter/domain/ports/` when behavior depends on infrastructure.
+3. Implement adapters under `workers/automation/src/jobhunter/infrastructure/<context>/`.
+4. Add domain events under `workers/automation/src/jobhunter/domain/events/` if the behavior changes projected or realtime state.
+5. Add tests under `workers/automation/tests/`, preferably around the use case and adapter boundaries.
+
+### New Pipeline or Workflow Behavior
+
+1. Update stage logic in `workers/automation/src/jobhunter/pipeline/runner.py` or the owning context module.
+2. Add or update activities in `workers/automation/src/jobhunter/<context>/activities.py`.
+3. Update workflows in `workers/automation/src/jobhunter/pipeline/workflow.py` or `workers/automation/src/jobhunter/apply/workflow.py`.
+4. Register new activities or workflows in `workers/automation/src/jobhunter/infrastructure/temporal/registry.py`.
+5. Update JSON-RPC handlers in `workers/automation/src/jobhunter/infrastructure/rpc/handlers.py` if the action is UI-triggered.
+6. Add workflow/activity tests under `workers/automation/tests/`.
+
+### New Projection or Read Model Field
+
+1. Add the domain/read DTO in `workers/automation/src/jobhunter/domain/operations/projections.py` if Python owns the projection shape.
+2. Update SQLite projection storage in `workers/automation/src/jobhunter/infrastructure/projections/sqlite_projection_store.py`.
+3. Update projection building in `workers/automation/src/jobhunter/infrastructure/projections/projection_builder.py`.
+4. Mirror API refresh logic in `apps/api/src/projections.ts` if the TypeScript API reads the projection.
+5. Expose it through `apps/api/src/read-model.ts`.
+6. Add Zod response fields in `packages/contracts/src/schemas.ts`.
+7. Update web view/context rendering under `apps/web/src/`.
+
+### New Domain Event
+
+1. Add Python event factory under `workers/automation/src/jobhunter/domain/events/`.
+2. Persist or publish it from the owning use case, repository, or `workers/automation/src/jobhunter/state.py`.
+3. Mirror the event type in `packages/domain-types/src/`.
+4. Add an invalidation handler in `apps/web/src/contexts/<context>/handlers.ts`.
+5. Ensure `apps/web/src/contexts/operations/every-event-has-handler.test.ts` passes.
+
+## Generated and Runtime Data Boundaries
+
+Do not treat local runtime data as source files:
+
+- `~/.jobhunter/jobhunter.db` is the local SQLite runtime database.
+- `~/.jobhunter` contains profile data, credentials, generated resumes, generated cover letters, PDFs, application logs, and other sensitive artifacts.
+- Temporal dev-server data and browser profiles are runtime artifacts, not code.
+- Generated route files such as `apps/web/src/routeTree.gen.ts` are source-controlled generated artifacts; update them through the configured tooling, not by hand unless intentionally repairing generation output.
+
+## High-Value Starting Points
+
+- Product behavior: `README.md`.
+- Current implemented architecture: `docs/architecture.md`.
+- Pipeline behavior: `docs/job-pipeline-architecture.md`.
+- Backend DDD conventions: `docs/ddd-target.md`.
+- Frontend conventions: `docs/frontend-target.md`.
+- Architecture decisions: `docs/decisions.md`.
+- API route surface: `apps/api/src/server.ts`.
+- API read model: `apps/api/src/read-model.ts`.
+- Python CLI/runtime: `workers/automation/src/jobhunter/cli.py`.
+- Pipeline runner: `workers/automation/src/jobhunter/pipeline/runner.py`.
+- Temporal registry: `workers/automation/src/jobhunter/infrastructure/temporal/registry.py`.
+- Web route tree: `apps/web/src/routes/`.
+- Web context boundaries: `apps/web/src/contexts/`.
+- Shared contracts: `packages/contracts/src/schemas.ts` and `packages/contracts/src/rpc.ts`.
