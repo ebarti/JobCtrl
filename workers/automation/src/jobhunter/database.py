@@ -147,6 +147,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_score_tables(conn)
     ensure_tailoring_policy_tables(conn)
     ensure_materials_tables(conn)
+    ensure_employer_analysis_tables(conn)
     ensure_preparation_work_item_tables(conn)
     ensure_enrichment_tables(conn)
     ensure_posting_snapshot_tables(conn)
@@ -1419,6 +1420,107 @@ def _backfill_one_materials_row(
                 created,
             ),
         )
+
+
+def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the canonical employer-analysis tables (Phase 1).
+
+    The persisted "ideal candidate" analysis that replaces ``_extract_job_keywords``
+    and drives downstream tailoring. Per D-09 the analysis is stored as CANONICAL
+    ROWS — never inside an artifact ``metadata_json`` blob:
+
+      * ``job_employer_analysis`` — one row per ``(job_url, generation)``. Holds
+        the reconciled canonical analysis (role framing / seniority / narrative
+        / requirements / keywords as structured columns + JSON arrays), the
+        snapshot+version cache key (D-11/D-12), the cross-model agreement signal,
+        and the ``legs_attempted`` / ``legs_succeeded`` ensemble-completeness
+        counters (D-08).
+      * ``job_employer_analysis_sub_analyses`` — one row per per-model draft that
+        contributed to the canonical record (D-08 audit trail).
+      * ``job_employer_analysis_failures`` — one row per leg that errored /
+        timed out / returned malformed output, so a degraded ensemble is
+        surfaced, never silently dropped (D-08 / failure mode #2).
+
+    Generation-versioned like ``job_materials`` (D-13): a forced/failed
+    re-analyze writes a higher generation; prior generations are retained as
+    audit history (never deleted). No backfill — analyses are produced fresh by
+    the ensemble; legacy jobs simply have none until their next tailor.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_employer_analysis (
+            job_url               TEXT NOT NULL,
+            generation            INTEGER NOT NULL,
+            tenant_id             TEXT NOT NULL DEFAULT 'local',
+            snapshot_hash         TEXT NOT NULL,
+            prompt_version        TEXT NOT NULL,
+            sdk_set_version       TEXT NOT NULL,
+            cache_key             TEXT NOT NULL,
+            role_framing          TEXT NOT NULL DEFAULT '',
+            inferred_seniority    TEXT NOT NULL DEFAULT '',
+            ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+            requirements_json     TEXT NOT NULL DEFAULT '[]',
+            keywords_json         TEXT NOT NULL DEFAULT '[]',
+            agreement_json        TEXT NOT NULL DEFAULT '{}',
+            legs_attempted        INTEGER NOT NULL,
+            legs_succeeded        INTEGER NOT NULL,
+            created_at            TEXT NOT NULL,
+            PRIMARY KEY (job_url, generation),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_employer_analysis_sub_analyses (
+            job_url               TEXT NOT NULL,
+            generation            INTEGER NOT NULL,
+            model_id              TEXT NOT NULL,
+            tenant_id             TEXT NOT NULL DEFAULT 'local',
+            analysis_json         TEXT NOT NULL,
+            PRIMARY KEY (job_url, generation, model_id),
+            FOREIGN KEY (job_url, generation)
+                REFERENCES job_employer_analysis(job_url, generation) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_employer_analysis_failures (
+            job_url               TEXT NOT NULL,
+            generation            INTEGER NOT NULL,
+            model_id              TEXT NOT NULL,
+            tenant_id             TEXT NOT NULL DEFAULT 'local',
+            error                 TEXT NOT NULL,
+            raw_output            TEXT,
+            PRIMARY KEY (job_url, generation, model_id),
+            FOREIGN KEY (job_url, generation)
+                REFERENCES job_employer_analysis(job_url, generation) ON DELETE CASCADE
+        )
+        """
+    )
+    # Selector for the snapshot+version cache short-circuit (D-11/D-12).
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_employer_analysis_cache_key
+        ON job_employer_analysis(tenant_id, job_url, cache_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_employer_analysis_tenant_job_gen
+        ON job_employer_analysis(tenant_id, job_url, generation DESC)
+        """
+    )
+    conn.commit()
+    return [
+        "job_employer_analysis",
+        "job_employer_analysis_sub_analyses",
+        "job_employer_analysis_failures",
+    ]
 
 
 def ensure_enrichment_tables(conn: sqlite3.Connection | None = None) -> list[str]:

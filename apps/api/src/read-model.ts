@@ -27,6 +27,7 @@ import type {
   BulkJobMutationFilter,
   DashboardSettings,
   DashboardSummary,
+  EmployerAnalysis,
   JobDeletedFilter,
   JobAuditEntry,
   JobDetail,
@@ -151,6 +152,7 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   score_trace_json: string | null;
   score_correction_json: string | null;
   stages_json: string;
+  employer_analysis_json: string | null;
   last_updated_at: string | null;
 }
 
@@ -600,7 +602,22 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     stages,
     artifacts,
     auditHistory,
+    employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
   };
+}
+
+/**
+ * Parse the projected canonical employer analysis (Phase 1). The projection
+ * builder is the single owner of this shape; the read model only deserialises
+ * the stored JSON, never recomputes it.
+ */
+function parseEmployerAnalysis(value: string | null): EmployerAnalysis | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as EmployerAnalysis;
+  } catch {
+    return null;
+  }
 }
 
 interface JobAuditEventRow extends Record<string, unknown> {

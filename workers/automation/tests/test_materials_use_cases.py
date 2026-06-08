@@ -134,6 +134,48 @@ def job() -> dict:
 # ---------------------------------------------------------------------------
 
 
+class _FakeAnalyzeUseCase:
+    """Stand-in for ``AnalyzeJobUseCase`` so tailor tests skip the live ensemble.
+
+    Returns a fixed canonical analysis whose keywords cover the terms the tailor
+    test jobs use (python / postgresql / api / latency), so ``build_tailoring_plan``
+    gets its keywords from the analysis (D-21) without any SDK call.
+    """
+
+    def execute(self, *, job: dict, tenant_id=LOCAL_TENANT, force: bool = False):
+        from jobhunter.domain.materials.analysis import (
+            AnalysisAgreement,
+            EmployerAnalysis,
+            JobAnalysis,
+            ReasonedKeyword,
+            compute_snapshot_hash,
+        )
+        from jobhunter.domain.materials.analyze_use_case import AnalyzeJobOutcome
+
+        canonical = JobAnalysis(
+            role_framing="Backend ownership.",
+            inferred_seniority="senior",
+            ideal_candidate_narrative="A hands-on backend owner.",
+            requirements=[],
+            keywords=[
+                ReasonedKeyword(keyword=term, evidence_span=term)
+                for term in ("python", "postgresql", "api", "latency", "backend")
+            ],
+        )
+        analysis = EmployerAnalysis.build(
+            tenant_id=tenant_id,
+            job_id=JobId(str(job["url"])),
+            generation=1,
+            snapshot_hash=compute_snapshot_hash(str(job.get("full_description") or "jd")),
+            canonical=canonical,
+            sub_analyses=(),
+            failures=(),
+            agreement=AnalysisAgreement(score=1.0),
+            legs_attempted=2,
+        )
+        return AnalyzeJobOutcome(analysis=analysis, cached=False)
+
+
 class _FakeRepository:
     def __init__(self) -> None:
         self.saved: list[MaterialsSet] = []
@@ -432,6 +474,7 @@ def test_tailor_use_case_happy_path(tmp_path: Path, snapshot: ProfileSnapshot, j
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         publisher=publisher,
     )
     outcome = use_case.execute(
@@ -469,6 +512,7 @@ def test_tailor_use_case_injects_quality_plan_and_persists_metadata(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
 
     outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
@@ -501,6 +545,7 @@ def test_tailor_use_case_skips_adversarial_review_below_high_fit_threshold(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
 
     outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
@@ -535,6 +580,7 @@ def test_tailor_use_case_runs_adversarial_review_for_high_fit_jobs(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
 
     outcome = use_case.execute(job=high_fit_job, profile_snapshot=snapshot, tailored_dir=tmp_path)
@@ -578,6 +624,7 @@ def test_tailor_use_case_retries_adversarial_warnings_before_accepting(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         max_retries=1,
     )
 
@@ -620,6 +667,7 @@ def test_tailor_use_case_persists_residual_adversarial_warnings_without_retries(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         max_retries=0,
     )
 
@@ -671,6 +719,7 @@ def test_tailor_use_case_adversarial_blocker_fails_and_feeds_retry_notes(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         max_retries=1,
     )
 
@@ -708,6 +757,7 @@ def test_tailor_use_case_quality_failure_feeds_retry_notes(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
 
     outcome = use_case.execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
@@ -735,6 +785,7 @@ def test_tailor_use_case_judge_rejected_fails_quality_gate(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
     outcome = use_case.execute(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
@@ -758,6 +809,7 @@ def test_tailor_use_case_routes_multiple_candidate_models_and_persists_safe_meta
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         llm_policy=TailoringLlmPolicy(
             candidate_models=("local:draft-a", "openai:draft-b"),
             judge_model="gemini:judge-c",
@@ -796,6 +848,7 @@ def test_tailor_use_case_lenient_skips_judge(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
 
     outcome = use_case.execute(
@@ -821,6 +874,7 @@ def test_tailor_use_case_failed_validation_persists_rejected_artifact(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
     outcome = use_case.execute(
         job=job, profile_snapshot=snapshot, tailored_dir=tmp_path
@@ -838,6 +892,7 @@ def test_tailor_use_case_tries_multiple_candidate_models_and_separate_judge(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         llm_policy=TailoringLlmPolicy(
             candidate_models=("local:bad-candidate", "local:good-candidate"),
             judge_model="local:judge",
@@ -871,6 +926,7 @@ def test_tailor_use_case_pass_verdict_below_threshold_fails_judge(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         llm_policy=TailoringLlmPolicy(judge_min_score=0.9),
     )
 
@@ -893,6 +949,7 @@ def test_tailor_use_case_lenient_skips_structured_judge(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         llm_policy=TailoringLlmPolicy(judge_model="local:judge"),
     )
 
@@ -919,6 +976,7 @@ def test_tailor_use_case_exhausted_when_no_parseable_json(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
         publisher=publisher,
     )
     outcome = use_case.execute(
@@ -956,6 +1014,7 @@ def test_tailor_use_case_retailor_supersedes_previous_generation(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
     outcome = use_case.execute(
         job=job,
@@ -1002,6 +1061,7 @@ def test_tailor_use_case_retailor_suppresses_previous_generation_when_requested(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
     outcome = use_case.execute(
         job=job,
@@ -1057,6 +1117,7 @@ def test_tailor_use_case_failed_retailor_keeps_previous_generation_active(
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
+        analyze_use_case=_FakeAnalyzeUseCase(),
     )
     outcome = use_case.execute(
         job=job,

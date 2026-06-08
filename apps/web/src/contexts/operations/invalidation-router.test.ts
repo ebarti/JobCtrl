@@ -169,6 +169,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
+  EmployerAnalyzed: [jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   TailoringPolicyUpdated: [
     profileKeys.profile(LOCAL_TENANT),
     jobsKeys.all(LOCAL_TENANT),

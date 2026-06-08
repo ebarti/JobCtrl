@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from jobhunter.domain.events.base import DomainEvent
+from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.operations.projections import (
     ApplyRunProjection,
     ArtifactListProjection,
@@ -369,6 +370,7 @@ class ProjectionBuilder:
         stages = self._load_stage_projections(job_url)
         score = self._load_latest_score(job_url)
         materials = self._load_latest_materials(job_url)
+        employer_analysis_json = self._load_employer_analysis(job_url)
         enrichment = self._load_enrichment(job_url)
         apply_run = self._load_latest_apply_run(job_url)
         deleted_at = self._load_deleted_at(job_url)
@@ -500,6 +502,7 @@ class ProjectionBuilder:
             score_version=score_version,
             scored_at=scored_at,
             stages=tuple(stages),
+            employer_analysis_json=employer_analysis_json,
             last_updated_at=last_updated_at,
         )
         self._store.upsert_job_detail(detail_proj)
@@ -652,6 +655,28 @@ class ProjectionBuilder:
             elif atype == "cover_letter_pdf":
                 result["cover_pdf_path"] = path
         return result
+
+    def _load_employer_analysis(self, job_url: str) -> str | None:
+        """Project the latest canonical employer analysis read shape (Phase 1).
+
+        The single owner of the analysis read shape: it loads the latest
+        ``EmployerAnalysis`` generation from canonical rows and serialises
+        ``to_read_model()`` to JSON for the detail projection. Returns ``None``
+        when no analysis exists yet (the common case before a job is tailored).
+        """
+        from jobhunter.infrastructure.materials.employer_analysis_repository import (
+            SqliteEmployerAnalysisRepository,
+        )
+
+        try:
+            record = SqliteEmployerAnalysisRepository(self._conn).load(
+                self._tenant_id, JobId(job_url)
+            )
+        except sqlite3.OperationalError:
+            return None
+        if record is None:
+            return None
+        return json.dumps(record.to_read_model(), ensure_ascii=False)
 
     def _load_enrichment(self, job_url: str) -> dict:
         try:

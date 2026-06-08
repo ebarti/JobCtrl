@@ -12,6 +12,9 @@ See ddd-target.md §5.5. This package wires the domain ports defined in
 
 from __future__ import annotations
 
+from jobhunter.infrastructure.materials.employer_analysis_repository import (
+    SqliteEmployerAnalysisRepository,
+)
 from jobhunter.infrastructure.materials.latex_pdf import LatexPdfAdapter
 from jobhunter.infrastructure.materials.playwright_html_pdf import (
     PlaywrightHtmlPdfAdapter,
@@ -26,6 +29,7 @@ __all__ = [
     "LatexPdfAdapter",
     "MaterialsGenerationConflict",
     "PlaywrightHtmlPdfAdapter",
+    "SqliteEmployerAnalysisRepository",
     "SqliteMaterialsRepository",
     "SqliteTailoringPolicyRepository",
 ]

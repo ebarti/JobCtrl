@@ -1,5 +1,6 @@
 import type {
   CoverLetterGenerated,
+  EmployerAnalyzed,
   MaterialsExhausted,
   PdfRendered,
   ResumeApproved,
@@ -50,6 +51,14 @@ export const materialsExhaustedHandler = (
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
+export const employerAnalyzedHandler = (
+  event: EmployerAnalyzed,
+): readonly InvalidationItem[] => [
+  // The canonical employer analysis is served on the job detail; refresh it so
+  // the inspector (Phase 5) shows the latest generation.
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
 
 export const tailorRetailorRequestedHandler = (

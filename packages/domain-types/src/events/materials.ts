@@ -83,6 +83,32 @@ export function createMaterialsExhausted(tenantId: TenantId, payload: MaterialsE
   return createDomainEvent("MaterialsExhausted", tenantId, payload);
 }
 
+// -- EmployerAnalyzed -------------------------------------------------------
+
+/**
+ * Phase 1 — a canonical employer analysis was persisted for a job.
+ *
+ * Carries the snapshot+version cache key and the degraded-ensemble signal
+ * (`legsSucceeded` / `legsAttempted`) so the read-side and audit trail see a
+ * degraded ensemble immediately (D-08).
+ */
+export interface EmployerAnalyzedPayload {
+  readonly jobId: string;
+  readonly generation: number;
+  readonly snapshotHash: string;
+  readonly cacheKey: string;
+  readonly legsAttempted: number;
+  readonly legsSucceeded: number;
+  readonly analyzedAt: string;
+  readonly cached: boolean;
+}
+
+export type EmployerAnalyzed = DomainEvent<"EmployerAnalyzed", EmployerAnalyzedPayload>;
+
+export function createEmployerAnalyzed(tenantId: TenantId, payload: EmployerAnalyzedPayload): EmployerAnalyzed {
+  return createDomainEvent("EmployerAnalyzed", tenantId, payload);
+}
+
 // -- TailorRetailorRequested -----------------------------------------------
 
 export const RETAILOR_REQUEST_KINDS = ["single_job", "bulk_current_policy", "policy_update", "repair"] as const;

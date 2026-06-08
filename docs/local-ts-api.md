@@ -321,6 +321,18 @@ overrides the default low-fit auto-tailoring gate for the selected job without
 changing the batch `minScore` behavior, and immediately continues into cover
 generation when tailoring succeeds.
 
+The `analyze_job` JSON-RPC method (params `jobUrl`, optional `force`) produces or
+returns the canonical employer analysis for one job independently of a full
+tailor. Unlike the workflow-mode tailor methods, it runs synchronously: it
+executes the two-SDK analysis ensemble to completion (no wall-clock timeout) and
+persists the canonical analysis, then returns `{ jobUrl, generation, cacheKey,
+cached, legsAttempted, legsSucceeded, degraded }`. The same analysis is produced
+automatically as the front-half sub-step of tailoring, so a re-tailor reuses the
+cached analysis (keyed by posting snapshot hash) rather than re-reasoning;
+`force: true` recomputes and supersedes the prior generation. The standalone
+inspector surface for this analysis is a later milestone — this milestone lands
+the method, persistence, and read path only.
+
 The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for
 `tailor_resume`; raising it can make active artifacts ineligible and enqueue

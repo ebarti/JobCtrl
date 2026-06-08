@@ -147,6 +147,59 @@ used to rank people for hiring decisions, the architecture needs a separate
 governance layer for validation, bias audits, notices, adverse-impact review,
 and human-review procedures before production use.
 
+## Canonical Employer Analysis (Materials sub-step)
+
+The Materials context owns a persisted, inspectable "ideal candidate" analysis
+that replaces the former `_extract_job_keywords` stopword heuristic and is the
+single source of truth for tailoring keyword selection. It is produced by a
+**two-SDK agent ensemble** — Claude Agent SDK + Codex SDK — running in parallel
+and reconciled by a Claude synthesizer pass (a Google/Antigravity leg is
+reserved on the port for a future milestone). This is the first AI capability on
+the agent-SDK standard: all *new* AI runs through agent SDKs, never the legacy
+httpx `jobhunter.llm.LLMClient`.
+
+- **Domain model** (`domain/materials/analysis.py`): `JobAnalysis` /
+  `JobAnalysisDraft` (Pydantic) carry role framing, inferred seniority, an
+  ideal-candidate narrative, requirements classified `must_have` vs
+  `nice_to_have` with a 0–1 priority weight, and reasoned keywords each tied to a
+  quoted job-description evidence span and linked to the requirement they
+  support (orphans allowed but flagged). The `EmployerAnalysis` aggregate is
+  generation-versioned (mirroring `MaterialsSet`) and retains the reconciled
+  canonical record plus every per-model sub-analysis, the per-leg failures, and
+  the cross-model agreement signal.
+- **Grounding gate** (`domain/materials/analysis_grounding.py`): a deterministic
+  literal-substring validator rejects any evidence span that is not found
+  verbatim in the persisted posting snapshot — the cardinal correctness gate,
+  run on every draft and on the synthesized canonical before persistence. JSON
+  Schema cannot express this, so it is a separate hard check.
+- **Ports + adapters** (`domain/ports/materials.py`,
+  `infrastructure/analysis/`): the use case depends on `AnalysisDraftPort` /
+  `AnalysisSynthesizerPort`, never on a concrete SDK. The ensemble runs the legs
+  with `asyncio.gather(..., return_exceptions=True)` so one SDK failure never
+  cancels the healthy legs; partial failures are persisted as degraded-ensemble
+  audit data and the analysis records its `legs_succeeded / legs_attempted`
+  completeness. A hard error surfaces only when *all* legs fail. There is **no
+  wall-clock timeout** on the analysis path — the only stop is cooperative
+  cancellation.
+- **Reproducibility** is a cache contract, not determinism: the analysis is
+  keyed on `snapshot_hash + prompt-version + SDK-set-version`. Re-tailoring the
+  same posting reuses the cached canonical record instead of re-reasoning; an
+  explicit `force` recompute supersedes (never destroys) the prior generation.
+- **Lifecycle**: `AnalyzeJobUseCase` runs as the `_run_analyze` front-half
+  sub-step of tailor (`TailorResumeUseCase` consumes the persisted analysis), and
+  is also reachable standalone through the `analyze_job` JSON-RPC method.
+  Persistence is canonical rows (`job_employer_analysis` + per-model
+  sub-analysis and failure child tables), never `metadata_json`. The use case
+  publishes `EmployerAnalyzed`, which lands a `job_events` row so the projection
+  rebuilds and the SSE invalidation router refreshes the job detail.
+- **Read path**: a single projection owner serves the analysis on the job-detail
+  read model (`job_detail_projections.employer_analysis_json`), built identically
+  by the Python projection builder and `apps/api/src/projections.ts` and served
+  by `read-model.ts` as `JobDetail.employerAnalysis`. A cross-runtime projection
+  parity test covers the table on both runtimes. The inspector UI for this
+  analysis is deferred to a later milestone; this milestone lands the backend,
+  contracts, and read path only.
+
 ## Apply Review And Outcome Feedback
 
 The Apply Automation context now has a local feedback foundation in the
@@ -532,6 +585,15 @@ JSON-RPC request returns. The stage runner forwards the caller's `limit` to
 every stage. Discovery sources use that limit as a bounded debug crawl cap,
 switch to sequential source execution when a cap is present, and skip remaining
 sources after the cap is reached.
+
+The employer-analysis ensemble is the first capability on the **agent-SDK**
+standard (Claude Agent SDK + Codex SDK). Those SDKs consume the existing local
+session credentials (Claude Code session, reused Codex login) — they introduce
+no new key management. The analysis run is visible through its persisted
+`EmployerAnalyzed` `job_events` record and the read-model `ensemble_completeness`
+field today; folding the four ensemble legs (drafts + synthesizer) into the same
+Langfuse `generation`-span pipeline as the other LLM calls is the next
+observability step.
 
 The `TracingInterceptor` is registered both client-side
 (`infrastructure/temporal/client.py`) and worker-side

@@ -143,6 +143,11 @@ class JobDetailProjection:
     scored_at: str | None = None
     stages: tuple[StageProjection, ...] = ()
     last_updated_at: str | None = None
+    # Phase 1: the canonical employer-analysis read shape (JSON of the latest
+    # generation's ``EmployerAnalysis.to_read_model()``), or None when no
+    # analysis exists yet. Built by the single projection owner from canonical
+    # rows so the inspector read path has one source of truth.
+    employer_analysis_json: str | None = None
 
 
 @dataclass(frozen=True)

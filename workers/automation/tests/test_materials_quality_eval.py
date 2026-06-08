@@ -8,18 +8,49 @@ from typing import Any
 
 import pytest
 
+from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.adversarial import (
     AdversarialReviewResult,
     normalized_job_fit_score,
     should_run_adversarial_review,
 )
+from jobhunter.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    compute_snapshot_hash,
+)
 from jobhunter.domain.materials.quality import (
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
+from jobhunter.domain.tenant import LOCAL_TENANT
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "resume_tailoring_quality_eval.json"
+
+
+def _employer_analysis(*keywords: str) -> EmployerAnalysis:
+    """Minimal canonical analysis supplying the fixture's covered keywords (D-21)."""
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[],
+        keywords=[ReasonedKeyword(keyword=term, evidence_span=term) for term in keywords],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("https://example.com/eval"),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash(" ".join(keywords) or "jd"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -39,6 +70,7 @@ def test_tailoring_quality_eval_preserves_claim_safety_controls(
     plan = build_tailoring_plan(
         fixture["profile"],
         fixture["jobs"]["high_fit_senior_backend"],
+        employer_analysis=_employer_analysis("python", "latency"),
     )
 
     assert plan.claim_mode == "adjacent_translation"
@@ -61,7 +93,15 @@ def test_tailoring_quality_eval_covers_combined_failure_modes(
 
     for case in fixture["quality_cases"]:
         job = fixture["jobs"][case["job"]]
-        plan = build_tailoring_plan(fixture["profile"], job)
+        # The analysis reflects the job: its keywords are the job's skills (lower-
+        # cased) plus the canonical backend terms, so required-evidence selection
+        # mirrors what a real ensemble analysis of this posting would drive.
+        job_keywords = [str(skill).lower() for skill in job.get("skills", [])]
+        plan = build_tailoring_plan(
+            fixture["profile"],
+            job,
+            employer_analysis=_employer_analysis("python", "latency", *job_keywords),
+        )
         result = evaluate_tailoring_quality(
             _payload(case["bullet"]),
             _resume_text(case["bullet"]),

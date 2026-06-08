@@ -35,7 +35,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha1
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover — type-only import, avoids any import cycle
+    from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase
 
 from jobhunter.domain.events import (
     CoverLetterGeneratedPayload,
@@ -53,6 +56,7 @@ from jobhunter.domain.materials.aggregate import (
     MaterialsSet,
     MaterialsSetFactory,
 )
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.materials.adversarial import (
     ADVERSARIAL_REVIEW_RESPONSE_SCHEMA,
     ADVERSARIAL_REVIEW_THRESHOLD,
@@ -774,6 +778,7 @@ class TailorResumeUseCase:
         max_retries: int = 3,
         llm_policy: TailoringLlmPolicy | None = None,
         policy_repository: TailoringPolicyRepository | None = None,
+        analyze_use_case: "AnalyzeJobUseCase | None" = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -783,6 +788,11 @@ class TailorResumeUseCase:
         self._max_retries = max_retries
         self._llm_policy = llm_policy or TailoringLlmPolicy.from_env()
         self._policy_repository = policy_repository
+        # D-20: the canonical employer analysis is the front-half sub-step of
+        # tailor. When an ``analyze_use_case`` is injected, ``execute`` runs
+        # ``_run_analyze`` to produce/reuse it before tailoring; otherwise the
+        # caller must pass ``employer_analysis`` into ``execute`` directly.
+        self._analyze_use_case = analyze_use_case
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -798,8 +808,15 @@ class TailorResumeUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         retailor: bool = False,
         suppress_existing_artifacts: bool = False,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> TailorOutcome:
         job_id = JobId(str(job["url"]))
+        # D-20: run/reuse the canonical employer analysis as the front-half
+        # sub-step of tailor (cache-backed, so a re-tailor reuses it). The
+        # analysis drives keyword selection in ``build_tailoring_plan``.
+        employer_analysis = self._run_analyze(
+            job=job, tenant_id=tenant_id, employer_analysis=employer_analysis
+        )
         previous = self._repository.load(tenant_id, job_id)
         created_at = _utc_now()
 
@@ -841,6 +858,7 @@ class TailorResumeUseCase:
             job=job,
             profile_snapshot=profile_snapshot,
             validation_mode=validation_mode,
+            employer_analysis=employer_analysis,
         )
         attempts = report["attempts"]
 
@@ -980,12 +998,40 @@ class TailorResumeUseCase:
     # Internals
     # ------------------------------------------------------------------
 
+    def _run_analyze(
+        self,
+        *,
+        job: dict,
+        tenant_id: TenantId,
+        employer_analysis: EmployerAnalysis | None,
+    ) -> EmployerAnalysis:
+        """The ``_run_analyze`` front-half sub-step of tailor (D-20).
+
+        Resolution order:
+          1. an explicit ``employer_analysis`` passed by the caller wins;
+          2. otherwise the injected ``AnalyzeJobUseCase`` produces/reuses it
+             (cache-backed — a re-tailor on the same snapshot reuses it);
+          3. if neither is available the use case cannot tailor (the analysis
+             is the single source of truth for keyword selection — D-21), so we
+             fail loudly rather than silently fall back to a heuristic.
+        """
+        if employer_analysis is not None:
+            return employer_analysis
+        if self._analyze_use_case is None:
+            raise ValueError(
+                "TailorResumeUseCase requires either an employer_analysis argument or an "
+                "injected analyze_use_case (the canonical employer analysis is the single "
+                "source of truth for tailoring keywords — D-20/D-21)."
+            )
+        return self._analyze_use_case.execute(job=job, tenant_id=tenant_id).analysis
+
     def _run_attempts(
         self,
         *,
         job: dict,
         profile_snapshot: ProfileSnapshot,
         validation_mode: str,
+        employer_analysis: EmployerAnalysis,
     ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
         """Run the LLM ⇒ validate ⇒ judge attempt loop.
 
@@ -993,7 +1039,9 @@ class TailorResumeUseCase:
         payload (or ``None`` if every attempt failed to parse) + the last
         :class:`ValidationResult` and :class:`JudgeVerdict`.
         """
-        tailoring_plan = build_tailoring_plan(profile_snapshot.as_dict(), job)
+        tailoring_plan = build_tailoring_plan(
+            profile_snapshot.as_dict(), job, employer_analysis=employer_analysis
+        )
         tailor_prompt_base = build_master_tailor_prompt(
             profile_snapshot,
             tailoring_plan=tailoring_plan,

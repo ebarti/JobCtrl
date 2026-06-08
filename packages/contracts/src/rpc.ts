@@ -70,6 +70,7 @@ export const RpcMethods = {
   TailorJob: "tailor_job",
   RetailorJob: "retailor_job",
   RetailorCurrentPolicy: "retailor_current_policy",
+  AnalyzeJob: "analyze_job",
   Apply: "apply",
   ProfileImport: "profile_import",
   CancelRun: "cancel_run",
@@ -222,6 +223,37 @@ export const TailorJobParamsSchema = z
   })
   .strict();
 export type TailorJobParams = z.infer<typeof TailorJobParamsSchema>;
+
+/**
+ * Phase 1 (D-10): produce/inspect the canonical employer analysis for one job
+ * independently of a full tailor. ``force`` bypasses the snapshot+version cache
+ * to recompute (which supersedes, never destroys, the prior analysis — D-13).
+ * The analysis runs the 2-SDK ensemble to completion with NO wall-clock
+ * timeout (D-19); the call is synchronous and returns once persisted.
+ */
+export const AnalyzeJobParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1).optional(),
+    expectedDbPath: z.string().trim().min(1).optional(),
+    jobUrl: z.string().min(1),
+    force: z.boolean().default(false),
+  })
+  .strict();
+export type AnalyzeJobParams = z.infer<typeof AnalyzeJobParamsSchema>;
+
+export const AnalyzeJobResultSchema = z
+  .object({
+    jobUrl: z.string(),
+    generation: z.number().int(),
+    cacheKey: z.string(),
+    cached: z.boolean(),
+    legsAttempted: z.number().int(),
+    legsSucceeded: z.number().int(),
+    degraded: z.boolean(),
+  })
+  .strict();
+export type AnalyzeJobResult = z.infer<typeof AnalyzeJobResultSchema>;
 
 export const RetailorJobParamsSchema = z
   .object({

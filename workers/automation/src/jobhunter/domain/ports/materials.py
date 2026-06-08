@@ -19,6 +19,11 @@ from typing import Protocol
 
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.aggregate import MaterialsSet
+from jobhunter.domain.materials.analysis import (
+    EmployerAnalysis,
+    JobAnalysis,
+    JobAnalysisDraft,
+)
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.policy import TailoringPolicy
 from jobhunter.domain.materials.value_objects import (
@@ -156,6 +161,86 @@ class TailoringPolicyRepository(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Employer-analysis ports (Phase 1 — hexagonal seam for the 2-SDK ensemble)
+# ---------------------------------------------------------------------------
+
+
+class AnalysisDraftPort(Protocol):
+    """One ensemble leg: produce a typed analysis draft from a JD snapshot.
+
+    The use case + ensemble orchestrator depend on this port, never on a
+    concrete SDK. One adapter per provider (``ClaudeAnalysisAdapter``,
+    ``CodexAnalysisAdapter``; a Google/Antigravity slot is reserved for a
+    future leg — D-03). ``draft`` runs the leg to completion with NO wall-clock
+    timeout (D-19); the only stop is cooperative task cancellation by the
+    caller.
+    """
+
+    @property
+    def model_id(self) -> str:
+        """The SDK/model id this adapter drives (tags the draft for audit)."""
+        ...
+
+    async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
+        """Return a schema-validated draft, or raise on SDK/parse failure."""
+        ...
+
+
+class AnalysisSynthesizerPort(Protocol):
+    """Reconcile per-model drafts into one canonical analysis (D-06/D-07).
+
+    Itself an agent-SDK call (Claude Agent SDK per D-07). Receives the typed
+    surviving drafts + the JD snapshot and emits the canonical
+    :class:`JobAnalysis`, which the use case re-validates for grounding before
+    persistence.
+    """
+
+    async def reconcile(
+        self,
+        system_prompt: str,
+        *,
+        drafts: tuple[JobAnalysisDraft, ...],
+        jd_snapshot: str,
+    ) -> JobAnalysis:
+        """Return the reconciled canonical analysis."""
+        ...
+
+
+class EmployerAnalysisRepository(Protocol):
+    """Persistence port for the :class:`EmployerAnalysis` aggregate.
+
+    Versioning mirrors :class:`MaterialsRepository` (D-13): :meth:`save`
+    allocates the next generation per ``(tenant, job)`` and supersedes — never
+    destroys — prior accepted analyses. :meth:`get_by_cache_key` short-circuits
+    the ensemble when an analysis already exists for the same
+    ``(snapshot_hash, prompt_version, sdk_set_version)`` cache key (D-11/D-12).
+    """
+
+    def load(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        generation: int | None = None,
+    ) -> EmployerAnalysis | None:
+        """Return the requested analysis (latest generation by default)."""
+        ...
+
+    def get_by_cache_key(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        cache_key: str,
+    ) -> EmployerAnalysis | None:
+        """Return the cached analysis for ``cache_key``, or ``None`` (D-11)."""
+        ...
+
+    def save(self, analysis: EmployerAnalysis) -> None:
+        """Persist a new generation, superseding prior ones atomically (D-13)."""
+        ...
+
+
+# ---------------------------------------------------------------------------
 # PdfRendererPort
 # ---------------------------------------------------------------------------
 
@@ -206,10 +291,18 @@ class PdfRendererPort(Protocol):
 
 
 __all__ = [
+    "AnalysisDraftPort",
+    "AnalysisSynthesizerPort",
     "ArtifactStatus",
     "ArtifactType",
+    "EmployerAnalysisRepository",
     "MaterialsRepository",
     "PdfRendererPort",
     "RenderFormat",
     "TailoringPolicyRepository",
 ]
+
+
+# Re-export to silence unused-import warnings for the schema types referenced
+# only in port signatures above.
+_ = (EmployerAnalysis, JobAnalysis, JobAnalysisDraft)

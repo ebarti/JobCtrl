@@ -67,3 +67,26 @@ class MaterialsExhaustedPayload:
 
 def create_materials_exhausted(tenant_id: TenantId, payload: MaterialsExhaustedPayload) -> DomainEvent:
     return create_domain_event("MaterialsExhausted", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class EmployerAnalyzedPayload:
+    """Phase 1 — a canonical employer analysis was persisted for a job.
+
+    Carries the generation, the snapshot+version cache key, and the
+    degraded-ensemble signal (``legs_succeeded`` / ``legs_attempted``) so the
+    read-side and audit trail see a degraded ensemble immediately (D-08).
+    """
+
+    job_id: str
+    generation: int
+    snapshot_hash: str
+    cache_key: str
+    legs_attempted: int
+    legs_succeeded: int
+    analyzed_at: str
+    cached: bool = False
+
+
+def create_employer_analyzed(tenant_id: TenantId, payload: EmployerAnalyzedPayload) -> DomainEvent:
+    return create_domain_event("EmployerAnalyzed", tenant_id, asdict(payload))

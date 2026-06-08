@@ -273,6 +273,46 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
     )
 
 
+def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
+    """Produce/inspect the canonical employer analysis for one job (D-10).
+
+    Synchronous: runs the 2-SDK ensemble to completion (NO wall-clock timeout —
+    D-19) and persists the canonical analysis, superseding prior generations
+    (D-13). ``force`` bypasses the snapshot+version cache to recompute. Returns
+    the persisted record's identity + the degraded-ensemble signal so a caller
+    can see a degraded run immediately (D-08).
+    """
+    tenant_id = _tenant_id(params)
+    job_url = str(_require(params, "jobUrl"))
+    force = _bool_param(params, "force", default=False)
+
+    from jobhunter.database import get_connection, load_job_with_enrichment
+    from jobhunter.domain.tenant import TenantId
+    from jobhunter.scoring.tailor import _build_analyze_use_case
+
+    conn = get_connection()
+    job = load_job_with_enrichment(conn, job_url)
+    if job is None:
+        raise invalid_params(f"unknown jobUrl: {job_url}")
+    if not (job.get("full_description") or job.get("description")):
+        raise invalid_params(
+            f"job {job_url} has no description to analyze; enrich it first"
+        )
+
+    use_case = _build_analyze_use_case(conn=conn)
+    outcome = use_case.execute(job=job, tenant_id=TenantId(tenant_id), force=force)
+    record = outcome.analysis
+    return {
+        "jobUrl": job_url,
+        "generation": record.generation,
+        "cacheKey": record.cache_key,
+        "cached": outcome.cached,
+        "legsAttempted": record.legs_attempted,
+        "legsSucceeded": record.legs_succeeded,
+        "degraded": record.is_degraded,
+    }
+
+
 def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
     return _pipeline_workflow_spec(
         params,
@@ -414,6 +454,9 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("tailor_job", tailor_job, mode="workflow")
     server.register("retailor_job", retailor_job, mode="workflow")
     server.register("retailor_current_policy", retailor_current_policy, mode="workflow")
+    # Standalone employer-analysis trigger (D-10) — synchronous; runs the
+    # ensemble inline (no timeout, D-19) and persists the canonical analysis.
+    server.register("analyze_job", analyze_job, mode="sync")
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")

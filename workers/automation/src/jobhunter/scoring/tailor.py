@@ -114,9 +114,72 @@ def _build_llm_policy(
     )
 
 
+class _EmployerAnalyzedEventRecorder:
+    """EventPublisher that persists ``EmployerAnalyzed`` into ``job_events``.
+
+    The ``AnalyzeJobUseCase`` publishes the domain event through this recorder;
+    we translate it into a durable ``job_events`` row (keyed on the job url) so
+    the projection builder marks the job dirty and rebuilds the read model, and
+    the SSE invalidation router fans the analysis out to the UI. Other event
+    types are ignored — this recorder is scoped to the analysis sub-step.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def publish(self, event) -> None:  # noqa: ANN001 — DomainEvent (duck-typed)
+        if getattr(event, "event_type", None) != "EmployerAnalyzed":
+            return
+        payload = dict(getattr(event, "payload", {}) or {})
+        job_url = str(payload.get("job_id") or "")
+        if not job_url:
+            return
+        completeness = f"{payload.get('legs_succeeded')}/{payload.get('legs_attempted')}"
+        record_job_event(
+            self._conn,
+            job_url,
+            "tailor",
+            "EmployerAnalyzed",
+            message=f"Employer analysis generation {payload.get('generation')} ({completeness} legs)",
+            payload=payload,
+        )
+        self._conn.commit()
+
+    def subscribe(self, event_type, handler):  # noqa: ANN001 — protocol completeness
+        raise NotImplementedError("_EmployerAnalyzedEventRecorder is publish-only")
+
+
 # ---------------------------------------------------------------------------
 # Use-case construction (DI seam)
 # ---------------------------------------------------------------------------
+
+
+def _build_analyze_use_case(
+    *,
+    conn,
+    publisher: EventPublisher | None = None,
+):
+    """Construct the :class:`AnalyzeJobUseCase` for the tailor sub-step (D-20).
+
+    Wires the 2-SDK ensemble (Claude + Codex draft adapters + Claude
+    synthesizer, D-03/D-07) behind the hexagonal ports. The publisher defaults
+    to ``record_employer_analyzed_event`` so a successful analysis lands an
+    ``EmployerAnalyzed`` row in ``job_events`` (read-side projection + SSE).
+    """
+    from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase
+    from jobhunter.infrastructure.analysis import (
+        ClaudeAnalysisAdapter,
+        ClaudeAnalysisSynthesizer,
+        CodexAnalysisAdapter,
+    )
+    from jobhunter.infrastructure.materials import SqliteEmployerAnalysisRepository
+
+    return AnalyzeJobUseCase(
+        repository=SqliteEmployerAnalysisRepository(conn),
+        adapters=(ClaudeAnalysisAdapter(), CodexAnalysisAdapter()),
+        synthesizer=ClaudeAnalysisSynthesizer(),
+        publisher=publisher or _EmployerAnalyzedEventRecorder(conn),
+    )
 
 
 def _build_use_case(
@@ -128,6 +191,7 @@ def _build_use_case(
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
+    analyze_use_case=None,
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
     conn = get_connection()
@@ -143,6 +207,8 @@ def _build_use_case(
         assembler = ResumeAssembler()
     if llm_policy is None:
         llm_policy = _build_llm_policy()
+    if analyze_use_case is None:
+        analyze_use_case = _build_analyze_use_case(conn=conn, publisher=publisher)
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
@@ -151,6 +217,7 @@ def _build_use_case(
         publisher=publisher,
         llm_policy=llm_policy,
         policy_repository=policy_repository,
+        analyze_use_case=analyze_use_case,
     )
 
 

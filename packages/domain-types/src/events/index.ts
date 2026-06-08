@@ -113,6 +113,9 @@ export {
   type MaterialsExhaustedPayload,
   type MaterialsExhausted,
   createMaterialsExhausted,
+  type EmployerAnalyzedPayload,
+  type EmployerAnalyzed,
+  createEmployerAnalyzed,
   RETAILOR_REQUEST_KINDS,
   type RetailorRequestKind,
   type TailorRetailorRequestedPayload,
@@ -227,6 +230,7 @@ import type {
 import type { JobScored, ScoreCorrected, ScoreRescoreRequested } from "./scoring.js";
 import type {
   CoverLetterGenerated,
+  EmployerAnalyzed,
   MaterialsExhausted,
   PdfRendered,
   ResumeApproved,
@@ -291,6 +295,7 @@ export type DomainEventUnion =
   | CoverLetterGenerated
   | PdfRendered
   | MaterialsExhausted
+  | EmployerAnalyzed
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
   | PreparationWorkItemQueued
@@ -348,6 +353,7 @@ export const DOMAIN_EVENT_TYPES = [
   "CoverLetterGenerated",
   "PdfRendered",
   "MaterialsExhausted",
+  "EmployerAnalyzed",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
   "PreparationWorkItemQueued",

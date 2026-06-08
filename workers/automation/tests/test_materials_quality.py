@@ -2,11 +2,47 @@
 
 from __future__ import annotations
 
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    compute_snapshot_hash,
+)
 from jobhunter.domain.materials.quality import (
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
 )
+from jobhunter.domain.tenant import LOCAL_TENANT
+
+
+def _employer_analysis(*keywords: str, job_url: str = "https://example.com/senior-backend") -> EmployerAnalysis:
+    """Minimal canonical analysis supplying the given job keywords (Phase 1, D-21).
+
+    ``build_tailoring_plan`` now sources its keywords from the persisted
+    employer analysis instead of the removed ``_extract_job_keywords`` heuristic,
+    so quality tests pass a small analysis whose keyword terms drive the plan.
+    """
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[],
+        keywords=[ReasonedKeyword(keyword=term, evidence_span=term) for term in keywords],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job_url),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash(" ".join(keywords) or "jd"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
 
 
 def _profile() -> dict:
@@ -114,7 +150,11 @@ def _resume_text(*, bullet: str) -> str:
 
 
 def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority() -> None:
-    plan = build_tailoring_plan(_profile(), _senior_job())
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency", "postgresql"),
+    )
 
     assert plan.claim_mode == "evidence_reframing"
     assert plan.writing_style["bullet_style"] == "leadership"
@@ -124,7 +164,11 @@ def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority()
 def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -> None:
     profile = _profile()
     job = _senior_job()
-    plan = build_tailoring_plan(profile, job)
+    plan = build_tailoring_plan(
+        profile,
+        job,
+        employer_analysis=_employer_analysis("python", "latency", "api", "postgresql"),
+    )
     payload = _payload(
         bullet=(
             "Owned Python API reliability and reduced latency 35% using PostgreSQL."
@@ -162,72 +206,48 @@ def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -
     assert "latency" in plan.job_keywords
 
 
-def test_build_tailoring_plan_ignores_marketing_copy_when_extracting_keywords() -> None:
+def test_build_tailoring_plan_sources_keywords_from_canonical_analysis() -> None:
+    # D-21: keywords come from the persisted, evidence-grounded employer
+    # analysis — the old _extract_job_keywords stopword heuristic is gone.
     job = {
         "url": "https://example.com/platform",
         "title": "Head of Platform Engineering",
-        "score_keywords": [
-            "head",
-            "leading",
-            "expert",
-            "2019",
-            "across",
-            "since",
-            "platform",
-            "kubernetes",
-            "Multi-region",
-        ],
-        "full_description": (
-            "Join Impress, Europe's leading health-tech innovator. Everyone deserves "
-            "a smile they love. We are looking for an onsite leader in Barcelona. "
-            "Own platform engineering, cloud infrastructure, Java, Node.js, "
-            "Kubernetes, CI/CD, observability, incident management, developer "
-            "productivity, cost optimization, security, resiliency, disaster recovery, "
-            "and multi-region operating context."
-        ),
+        # Marketing copy in the JD must NOT leak into keywords; only the
+        # analysis's reasoned terms drive the plan.
+        "full_description": "Join Impress, Europe's leading innovator. Own platform engineering.",
     }
+    analysis = _employer_analysis(
+        "platform",
+        "kubernetes",
+        "ci/cd",
+        "observability",
+        job_url="https://example.com/platform",
+    )
 
-    plan = build_tailoring_plan(_profile(), job)
+    plan = build_tailoring_plan(_profile(), job, employer_analysis=analysis)
 
-    assert "platform" in plan.job_keywords
-    assert "kubernetes" in plan.job_keywords
-    assert "ci/cd" in plan.job_keywords
-    assert "observability" in plan.job_keywords
+    assert plan.job_keywords == ("platform", "kubernetes", "ci/cd", "observability")
+    # Marketing copy is absent because keywords no longer come from the JD text.
     assert "join" not in plan.job_keywords
     assert "impress" not in plan.job_keywords
     assert "innovator" not in plan.job_keywords
-    assert "everyone" not in plan.job_keywords
-    assert "smile" not in plan.job_keywords
-    assert "barcelona" not in plan.job_keywords
-    assert "head" not in plan.job_keywords
-    assert "leading" not in plan.job_keywords
-    assert "expert" not in plan.job_keywords
-    assert "2019" not in plan.job_keywords
-    assert "across" not in plan.job_keywords
-    assert "since" not in plan.job_keywords
-    assert "multi-region" not in plan.job_keywords
 
 
 def test_tailoring_plan_metadata_preserves_full_keyword_audit_set() -> None:
-    job = {
-        "url": "https://example.com/platform",
-        "title": "Head of Platform Engineering",
-        "skills": [f"Kubernetes capability {index}" for index in range(20)],
-        "full_description": (
-            "Own platform engineering, cloud infrastructure, Java, Node.js, "
-            "Kubernetes, CI/CD, observability, incident management, developer "
-            "productivity, cost optimization, security, resiliency, and disaster recovery."
-        ),
-    }
+    analysis = _employer_analysis(*[f"skill-{index}" for index in range(20)])
 
-    plan = build_tailoring_plan(_profile(), job)
+    plan = build_tailoring_plan(_profile(), _senior_job(), employer_analysis=analysis)
 
     assert len(plan.job_keywords) > 16
     assert plan.to_metadata()["job_keywords"] == list(plan.job_keywords)
 
 
 def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() -> None:
-    plan = build_tailoring_plan(_profile(), _senior_job())
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
     bullet = "Owned API latency work and reduced latency by 80% with Python."
 
     result = evaluate_tailoring_quality(
@@ -241,7 +261,11 @@ def test_quality_rejects_unknown_metric_not_in_verified_profile_or_evidence() ->
 
 
 def test_quality_metric_claims_keep_readable_spacing() -> None:
-    plan = build_tailoring_plan(_profile(), _senior_job())
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
     bullet = "Owned 5 teams and reduced latency 35% across 2 services."
 
     result = evaluate_tailoring_quality(
@@ -257,7 +281,11 @@ def test_quality_metric_claims_keep_readable_spacing() -> None:
 
 
 def test_quality_warns_or_fails_keyword_stuffing_by_severity() -> None:
-    plan = build_tailoring_plan(_profile(), _senior_job())
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
     warning_bullet = "Owned Python Python Python Python Python services with 35% latency gains."
     failing_bullet = (
         "Owned Python Python Python Python Python Python Python Python Python "
@@ -280,7 +308,11 @@ def test_quality_warns_or_fails_keyword_stuffing_by_severity() -> None:
 
 
 def test_quality_requires_seniority_signal_for_senior_roles_when_evidence_exists() -> None:
-    plan = build_tailoring_plan(_profile(), _senior_job())
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_employer_analysis("python", "latency"),
+    )
     weak_bullet = "Improved API behavior with Python and reduced latency 35%."
     strong_bullet = "Owned API latency improvements and reduced latency 35% with Python."
 
@@ -306,7 +338,9 @@ def test_mid_level_jobs_do_not_require_executive_framing() -> None:
         "skills": ["Python"],
         "full_description": "Build Python backend services.",
     }
-    plan = build_tailoring_plan(_profile(), job)
+    plan = build_tailoring_plan(
+        _profile(), job, employer_analysis=_employer_analysis("python")
+    )
     bullet = "Improved Python API reliability and reduced latency 35%."
 
     result = evaluate_tailoring_quality(
@@ -326,7 +360,9 @@ def test_mid_level_jobs_warn_on_executive_style_overreach() -> None:
         "skills": ["Python"],
         "full_description": "Build Python backend services.",
     }
-    plan = build_tailoring_plan(_profile(), job)
+    plan = build_tailoring_plan(
+        _profile(), job, employer_analysis=_employer_analysis("python")
+    )
     bullet = "Defined company-wide strategy for executive stakeholders."
 
     result = evaluate_tailoring_quality(

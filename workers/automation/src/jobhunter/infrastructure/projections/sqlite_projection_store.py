@@ -59,6 +59,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "score_keywords_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("job_detail_projections", "score_version", "INTEGER"),
     ("job_detail_projections", "scored_at", "TEXT"),
+    ("job_detail_projections", "employer_analysis_json", "TEXT"),
     ("artifact_list_projections", "metadata_json", "TEXT"),
 )
 
@@ -140,6 +141,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             score_version          INTEGER,
             scored_at              TEXT,
             stages_json            TEXT NOT NULL DEFAULT '[]',
+            employer_analysis_json TEXT,
             last_updated_at        TEXT,
             PRIMARY KEY (tenant_id, job_id)
         )
@@ -470,17 +472,18 @@ class SqliteProjectionStore:
             INSERT INTO job_detail_projections (
                 tenant_id, job_id, description_preview, score_breakdown_json,
                 score_keywords_json, score_reasoning, score_version, scored_at,
-                stages_json, last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                stages_json, employer_analysis_json, last_updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-                description_preview  = excluded.description_preview,
-                score_breakdown_json = excluded.score_breakdown_json,
-                score_keywords_json  = excluded.score_keywords_json,
-                score_reasoning      = excluded.score_reasoning,
-                score_version        = excluded.score_version,
-                scored_at            = excluded.scored_at,
-                stages_json          = excluded.stages_json,
-                last_updated_at      = excluded.last_updated_at
+                description_preview    = excluded.description_preview,
+                score_breakdown_json   = excluded.score_breakdown_json,
+                score_keywords_json    = excluded.score_keywords_json,
+                score_reasoning        = excluded.score_reasoning,
+                score_version          = excluded.score_version,
+                scored_at              = excluded.scored_at,
+                stages_json            = excluded.stages_json,
+                employer_analysis_json = excluded.employer_analysis_json,
+                last_updated_at        = excluded.last_updated_at
             """,
             (
                 str(projection.tenant_id),
@@ -511,6 +514,7 @@ class SqliteProjectionStore:
                         for stage in projection.stages
                     ]
                 ),
+                projection.employer_analysis_json,
                 projection.last_updated_at,
             ),
         )

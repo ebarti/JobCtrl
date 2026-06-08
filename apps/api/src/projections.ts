@@ -322,6 +322,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       score_trace_json       TEXT,
       score_correction_json  TEXT,
       stages_json            TEXT NOT NULL DEFAULT '[]',
+      employer_analysis_json TEXT,
       last_updated_at        TEXT,
       PRIMARY KEY (tenant_id, job_id)
     );
@@ -451,6 +452,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_criteria_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_trace_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_correction_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_detail_projections", "employer_analysis_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
   return schemaChanged;
 }
@@ -673,6 +676,121 @@ function loadLatestMaterials(db: SqliteDatabase, jobUrl: string): MaterialsLates
     }
   }
   return latest;
+}
+
+interface EmployerAnalysisRow extends Record<string, unknown> {
+  generation: number;
+  snapshot_hash: string;
+  prompt_version: string;
+  sdk_set_version: string;
+  cache_key: string;
+  role_framing: string;
+  inferred_seniority: string;
+  ideal_candidate_narrative: string;
+  requirements_json: string;
+  keywords_json: string;
+  agreement_json: string;
+  legs_attempted: number;
+  legs_succeeded: number;
+  created_at: string;
+}
+
+/**
+ * Phase 1: rebuild the canonical employer-analysis read shape from canonical
+ * rows. This MUST stay byte-equivalent to the Python
+ * ``EmployerAnalysis.to_read_model()`` — the cross-runtime projection parity
+ * test asserts both builders agree. Returns null when no analysis exists.
+ */
+function loadEmployerAnalysisJson(db: SqliteDatabase, jobUrl: string): string | null {
+  if (!tableExists(db, "job_employer_analysis")) return null;
+  const row = getRow<EmployerAnalysisRow>(
+    db,
+    `SELECT * FROM job_employer_analysis WHERE job_url = ?
+      ORDER BY generation DESC LIMIT 1`,
+    [jobUrl],
+  );
+  if (!row) return null;
+  const generation = Number(row.generation);
+  const legsAttempted = Number(row.legs_attempted);
+  const legsSucceeded = Number(row.legs_succeeded);
+  const agreement = parseAnalysisAgreement(row.agreement_json);
+
+  const subRows = allRows<{ model_id: string; analysis_json: string }>(
+    db,
+    `SELECT model_id, analysis_json FROM job_employer_analysis_sub_analyses
+      WHERE job_url = ? AND generation = ? ORDER BY model_id`,
+    [jobUrl, generation],
+  );
+  const failureRows = allRows<{ model_id: string; error: string; raw_output: string | null }>(
+    db,
+    `SELECT model_id, error, raw_output FROM job_employer_analysis_failures
+      WHERE job_url = ? AND generation = ? ORDER BY model_id`,
+    [jobUrl, generation],
+  );
+
+  const readModel = {
+    generation,
+    snapshot_hash: row.snapshot_hash,
+    prompt_version: row.prompt_version,
+    sdk_set_version: row.sdk_set_version,
+    cache_key: row.cache_key,
+    created_at: row.created_at,
+    ensemble_completeness: `${legsSucceeded}/${legsAttempted}`,
+    legs_attempted: legsAttempted,
+    legs_succeeded: legsSucceeded,
+    is_degraded: legsSucceeded < legsAttempted,
+    agreement,
+    role_framing: row.role_framing,
+    inferred_seniority: row.inferred_seniority,
+    ideal_candidate_narrative: row.ideal_candidate_narrative,
+    requirements: parseJsonArray(row.requirements_json),
+    keywords: parseJsonArray(row.keywords_json),
+    sub_analyses: subRows.map((sub) => ({
+      model_id: sub.model_id,
+      ...(parseJsonObject(sub.analysis_json) as Record<string, unknown>),
+    })),
+    failures: failureRows.map((f) => ({
+      model_id: f.model_id,
+      error: f.error,
+      raw_output: f.raw_output ?? null,
+    })),
+  };
+  return JSON.stringify(readModel);
+}
+
+function parseAnalysisAgreement(value: string | null): {
+  score: number;
+  flagged_requirements: string[];
+  flagged_keywords: string[];
+} {
+  const parsed = parseJsonObject(value);
+  return {
+    score: typeof parsed.score === "number" ? parsed.score : 0.0,
+    flagged_requirements: Array.isArray(parsed.flagged_requirements)
+      ? (parsed.flagged_requirements as string[])
+      : [],
+    flagged_keywords: Array.isArray(parsed.flagged_keywords) ? (parsed.flagged_keywords as string[]) : [],
+  };
+}
+
+function parseJsonArray(value: string | null): unknown[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 interface ScoreBreakdownLatest {
@@ -1127,6 +1245,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   const score = loadLatestScore(db, jobUrl);
   const materials = loadLatestMaterials(db, jobUrl);
+  const employerAnalysisJson = loadEmployerAnalysisJson(db, jobUrl);
   const enrichment = loadEnrichment(db, jobUrl);
   const apply = loadLatestApplyRun(db, jobUrl);
   const deletedAt = loadDeletedAt(db, jobUrl);
@@ -1251,20 +1370,21 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        tenant_id, job_id, description_preview, score_breakdown_json,
        score_keywords_json, score_reasoning, score_version, scored_at,
        score_criteria_json, score_trace_json, score_correction_json,
-       stages_json, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       stages_json, employer_analysis_json, last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
-       description_preview  = excluded.description_preview,
-       score_breakdown_json = excluded.score_breakdown_json,
-       score_keywords_json  = excluded.score_keywords_json,
-       score_reasoning      = excluded.score_reasoning,
-       score_version        = excluded.score_version,
-       scored_at            = excluded.scored_at,
-       score_criteria_json  = excluded.score_criteria_json,
-       score_trace_json     = excluded.score_trace_json,
-       score_correction_json = excluded.score_correction_json,
-       stages_json          = excluded.stages_json,
-       last_updated_at      = excluded.last_updated_at`,
+       description_preview    = excluded.description_preview,
+       score_breakdown_json   = excluded.score_breakdown_json,
+       score_keywords_json    = excluded.score_keywords_json,
+       score_reasoning        = excluded.score_reasoning,
+       score_version          = excluded.score_version,
+       scored_at              = excluded.scored_at,
+       score_criteria_json    = excluded.score_criteria_json,
+       score_trace_json       = excluded.score_trace_json,
+       score_correction_json  = excluded.score_correction_json,
+       stages_json            = excluded.stages_json,
+       employer_analysis_json = excluded.employer_analysis_json,
+       last_updated_at        = excluded.last_updated_at`,
   ).run(
     tenantId,
     jobUrl,
@@ -1278,6 +1398,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     score.traceJson,
     score.correctionJson,
     JSON.stringify(stages),
+    employerAnalysisJson,
     lastUpdatedAt,
   );
 

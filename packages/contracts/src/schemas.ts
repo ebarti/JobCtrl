@@ -1295,6 +1295,72 @@ export interface OperationalSourceMetricSummary extends OperationalStageMetricSu
   lastRunId: string | null;
 }
 
+/**
+ * Phase 1 — the canonical employer-analysis read DTO served on JobDetail.
+ *
+ * Mirrors the Python ``EmployerAnalysis.to_read_model()`` projection: the
+ * reconciled "ideal candidate" analysis plus the full ensemble audit trail
+ * (per-model sub-analyses, per-leg failures, agreement signal, and the
+ * degraded-ensemble completeness). Snake_case keys match the projection JSON.
+ */
+export interface EmployerAnalysisRequirement {
+  id: string;
+  text: string;
+  tier: "must_have" | "nice_to_have";
+  weight: number;
+  evidence_span: string;
+}
+
+export interface EmployerAnalysisKeyword {
+  keyword: string;
+  evidence_span: string;
+  requirement_ref: string | null;
+  rationale: string;
+  is_orphan: boolean;
+}
+
+export interface EmployerAnalysisAgreement {
+  score: number;
+  flagged_requirements: string[];
+  flagged_keywords: string[];
+}
+
+export interface EmployerAnalysisSubAnalysis {
+  model_id: string;
+  role_framing: string;
+  inferred_seniority: string;
+  ideal_candidate_narrative: string;
+  requirements: EmployerAnalysisRequirement[];
+  keywords: EmployerAnalysisKeyword[];
+}
+
+export interface EmployerAnalysisFailure {
+  model_id: string;
+  error: string;
+  raw_output: string | null;
+}
+
+export interface EmployerAnalysis {
+  generation: number;
+  snapshot_hash: string;
+  prompt_version: string;
+  sdk_set_version: string;
+  cache_key: string;
+  created_at: string;
+  ensemble_completeness: string;
+  legs_attempted: number;
+  legs_succeeded: number;
+  is_degraded: boolean;
+  agreement: EmployerAnalysisAgreement;
+  role_framing: string;
+  inferred_seniority: string;
+  ideal_candidate_narrative: string;
+  requirements: EmployerAnalysisRequirement[];
+  keywords: EmployerAnalysisKeyword[];
+  sub_analyses: EmployerAnalysisSubAnalysis[];
+  failures: EmployerAnalysisFailure[];
+}
+
 export interface JobDetail {
   ok: true;
   job: JobSummary & {
@@ -1304,6 +1370,9 @@ export interface JobDetail {
   stages: StageSummary[];
   artifacts: ArtifactSummary[];
   auditHistory: JobAuditEntry[];
+  // Phase 1: the canonical employer analysis served from projection rows, or
+  // null when no analysis has been produced for this job yet.
+  employerAnalysis: EmployerAnalysis | null;
 }
 
 export interface ArtifactDetail {
@@ -1484,6 +1553,7 @@ export interface ActionCommandPayload {
     | "tailor_job"
     | "retailor_job"
     | "retailor_current_policy"
+    | "analyze_job"
     | "generate_materials"
     | "apply"
     | "cancel"

@@ -354,6 +354,18 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
       params: retailorRpcParams(command, context),
     };
   }
+  if (command.action === "analyze_job") {
+    return {
+      method: "analyze_job",
+      params: {
+        tenantId: "local",
+        expectedAppDir: context.appDir,
+        expectedDbPath: context.dbPath,
+        jobUrl: command.jobKey,
+        force: Boolean(command.retailor),
+      },
+    };
+  }
   if (command.action === "generate_materials") return null;
   if (command.action === "apply") {
     return { method: "apply", params: applyRpcParams(command, context) };

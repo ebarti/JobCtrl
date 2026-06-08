@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.materials.value_objects import ValidationResult
 from jobhunter.resume_profile import (
     get_achievement_evidence,
@@ -164,70 +165,6 @@ _LOW_SIGNAL_JOB_KEYWORDS: set[str] = {
     "they",
     "worldwide",
 }
-_HIGH_SIGNAL_DESCRIPTION_KEYWORDS: set[str] = {
-    "ai",
-    "ai-first",
-    "ai-native",
-    "api",
-    "architecture",
-    "automation",
-    "aws",
-    "azure",
-    "backend",
-    "ci/cd",
-    "cloud",
-    "cost",
-    "devops",
-    "disaster",
-    "docker",
-    "gcp",
-    "governance",
-    "incident",
-    "infrastructure",
-    "java",
-    "javascript",
-    "kafka",
-    "kubernetes",
-    "latency",
-    "leadership",
-    "management",
-    "node.js",
-    "observability",
-    "optimization",
-    "performance",
-    "platform",
-    "postgres",
-    "postgresql",
-    "productivity",
-    "python",
-    "react",
-    "redis",
-    "reliability",
-    "resiliency",
-    "saas",
-    "scalability",
-    "security",
-    "sre",
-    "terraform",
-    "typescript",
-}
-_HIGH_SIGNAL_DESCRIPTION_PHRASES: tuple[str, ...] = (
-    "api performance",
-    "backend systems",
-    "ci/cd",
-    "cloud governance",
-    "cloud infrastructure",
-    "cloud-native",
-    "cost optimization",
-    "developer platform",
-    "developer productivity",
-    "disaster recovery",
-    "incident management",
-    "infrastructure as code",
-    "platform as product",
-    "platform engineering",
-    "service reliability",
-)
 
 _WORD_RE = re.compile(r"[a-z0-9][a-z0-9+#./-]*")
 _METRIC_RE = re.compile(
@@ -426,11 +363,24 @@ class TailoringChangeAnnotation:
         }
 
 
-def build_tailoring_plan(profile: dict, job: dict) -> TailoringPlan:
+def build_tailoring_plan(
+    profile: dict,
+    job: dict,
+    *,
+    employer_analysis: EmployerAnalysis,
+) -> TailoringPlan:
+    """Build the deterministic tailoring plan from the profile + canonical analysis.
+
+    Phase 1 (D-21): job keywords come from the persisted, evidence-grounded
+    :class:`EmployerAnalysis` (the 2-SDK ensemble's reconciled, reasoned
+    keywords) — the flakey ``_extract_job_keywords`` stopword heuristic has been
+    ripped out outright (no shim). The rest of the plan (evidence selection,
+    seniority, verified metrics) is unchanged.
+    """
     controls = get_tailoring_quality_controls(profile)
     writing_style = get_writing_style(profile)
     evidence_items = tuple(_evidence_item(item) for item in get_achievement_evidence(profile))
-    job_keywords = _extract_job_keywords(job)
+    job_keywords = _analysis_job_keywords(employer_analysis)
     target_seniority = _target_seniority(job)
     seniority_evidence_ids = tuple(
         item.evidence_id for item in evidence_items if _has_seniority_signal(item)
@@ -742,43 +692,23 @@ def _select_required_evidence_ids(
     return tuple(selected)
 
 
-def _extract_job_keywords(job: dict) -> tuple[str, ...]:
+def _analysis_job_keywords(employer_analysis: EmployerAnalysis) -> tuple[str, ...]:
+    """Derive the tailoring plan's job keywords from the canonical analysis (D-21).
+
+    The keywords are the 2-SDK ensemble's reconciled, evidence-grounded
+    ``ReasonedKeyword`` terms — each already tied to a literal JD evidence span.
+    Deduplicated case-insensitively while preserving the analysis order (which
+    reflects the reconciled importance ranking), capped to keep the prompt /
+    coverage check bounded.
+    """
     ordered: list[str] = []
-
-    trusted_keyword_fields = (
-        "title",
-        "role_title",
-        "skills",
-        "required_skills",
-        "preferred_skills",
-        "responsibilities",
-        "requirements",
-    )
-    generic_keyword_fields = (
-        "signals",
-        "matched_signals",
-        "missing_signals",
-        "transferable_signals",
-        "score_keywords",
-        "keywords",
-    )
-    for key in trusted_keyword_fields:
-        for value in _flatten_text(job.get(key)):
-            _append_keywords(ordered, value, include_phrase=key != "title")
-
-    for key in generic_keyword_fields:
-        for value in _flatten_text(job.get(key)):
-            _append_keywords(ordered, value, include_phrase=True, require_high_signal=True)
-
-    for key in ("score_breakdown", "score_breakdown_json", "score_reasoning"):
-        for value in _flatten_text(job.get(key)):
-            _append_keywords(ordered, value, include_phrase=False, require_high_signal=True)
-
-    description = " ".join(
-        str(job.get(key) or "") for key in ("full_description", "description")
-    )
-    _append_description_keywords(ordered, description)
-
+    seen: set[str] = set()
+    for keyword in employer_analysis.canonical.keywords:
+        normalized = _normalize_phrase(keyword.keyword)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered.append(normalized)
     return tuple(ordered[:32])
 
 
@@ -928,58 +858,6 @@ def _annotation_evidence_notes(
             parts.append(item.source_text[:160])
         notes.append(f"{item.evidence_id}: " + "; ".join(part for part in parts if part))
     return tuple(dict.fromkeys(note for note in notes if note))
-
-
-def _append_keywords(
-    ordered: list[str],
-    value: str,
-    *,
-    include_phrase: bool,
-    require_high_signal: bool = False,
-) -> None:
-    phrase = _normalize_phrase(value)
-    if include_phrase and 1 < len(phrase.split()) <= 4:
-        _add_keyword(ordered, phrase, require_high_signal=require_high_signal)
-    for token in _significant_tokens(value):
-        _add_keyword(ordered, token, require_high_signal=require_high_signal)
-
-
-def _append_description_keywords(ordered: list[str], value: str) -> None:
-    normalized = _normalize_phrase(value)
-    for phrase in _HIGH_SIGNAL_DESCRIPTION_PHRASES:
-        if _contains_term(normalized, phrase):
-            _add_keyword(ordered, phrase, require_high_signal=True)
-    tokens = _significant_tokens(value)
-    for token in tokens:
-        _add_keyword(ordered, token, require_high_signal=True)
-
-
-def _add_keyword(
-    ordered: list[str],
-    keyword: str,
-    *,
-    require_high_signal: bool = False,
-) -> None:
-    keyword = _normalize_phrase(keyword)
-    if not keyword or not _is_keyword_candidate(keyword, require_high_signal=require_high_signal):
-        return
-    if keyword not in ordered:
-        ordered.append(keyword)
-
-
-def _is_keyword_candidate(keyword: str, *, require_high_signal: bool) -> bool:
-    tokens = keyword.split()
-    if not tokens:
-        return False
-    if all(token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS or token.isdigit() for token in tokens):
-        return False
-    if require_high_signal:
-        return any(token in _HIGH_SIGNAL_DESCRIPTION_KEYWORDS for token in tokens)
-    if len(tokens) == 1:
-        token = tokens[0]
-        if token in _STOPWORDS or token in _LOW_SIGNAL_JOB_KEYWORDS or token.isdigit():
-            return False
-    return True
 
 
 def _flatten_text(value: Any) -> list[str]:

@@ -1082,6 +1082,155 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("serves the canonical employer analysis from projection rows (TS↔Python parity)", async () => {
+    // AUDIT-02-style cross-runtime parity: seed the canonical
+    // ``job_employer_analysis`` rows exactly as the Python repository writes
+    // them, then assert the TS projection builder + read model reconstruct the
+    // same read shape the Python ``EmployerAnalysis.to_read_model()`` produces.
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_employer_analysis (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          snapshot_hash TEXT NOT NULL,
+          prompt_version TEXT NOT NULL,
+          sdk_set_version TEXT NOT NULL,
+          cache_key TEXT NOT NULL,
+          role_framing TEXT NOT NULL DEFAULT '',
+          inferred_seniority TEXT NOT NULL DEFAULT '',
+          ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+          requirements_json TEXT NOT NULL DEFAULT '[]',
+          keywords_json TEXT NOT NULL DEFAULT '[]',
+          agreement_json TEXT NOT NULL DEFAULT '{}',
+          legs_attempted INTEGER NOT NULL,
+          legs_succeeded INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_employer_analysis_sub_analyses (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          model_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          analysis_json TEXT NOT NULL,
+          PRIMARY KEY (job_url, generation, model_id)
+        );
+        CREATE TABLE job_employer_analysis_failures (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          model_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          error TEXT NOT NULL,
+          raw_output TEXT,
+          PRIMARY KEY (job_url, generation, model_id)
+        );
+      `);
+      const requirements = [
+        {
+          id: "r1",
+          text: "5+ years Python",
+          tier: "must_have",
+          weight: 0.9,
+          evidence_span: "5+ years Python",
+        },
+      ];
+      const keywords = [
+        {
+          keyword: "Python",
+          evidence_span: "5+ years Python",
+          requirement_ref: "r1",
+          rationale: "core",
+          is_orphan: false,
+        },
+      ];
+      // Two generations prove "load latest" + supersede-not-destroy (D-13).
+      const insertAnalysis = db.prepare(
+        `INSERT INTO job_employer_analysis (
+          job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
+          cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
+          requirements_json, keywords_json, agreement_json, legs_attempted, legs_succeeded, created_at
+        ) VALUES (?, ?, 'local', ?, 'employer-analysis-v1', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      insertAnalysis.run(
+        jobUrl, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
+        "Old framing.", "mid", "Old narrative.",
+        "[]", "[]", JSON.stringify({ score: 0.5, flagged_requirements: [], flagged_keywords: [] }),
+        2, 2, "2026-05-04T12:00:00+00:00",
+      );
+      insertAnalysis.run(
+        jobUrl, 2, "hash-new", "hash-new:employer-analysis-v1:claude+codex-v1",
+        "Own the event platform.", "senior", "A hands-on platform owner.",
+        JSON.stringify(requirements), JSON.stringify(keywords),
+        JSON.stringify({ score: 0.8, flagged_requirements: [], flagged_keywords: ["kafka"] }),
+        2, 1, "2026-05-04T13:00:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO job_employer_analysis_sub_analyses (job_url, generation, model_id, tenant_id, analysis_json)
+         VALUES (?, 2, 'claude-opus-4-8', 'local', ?)`,
+      ).run(
+        jobUrl,
+        JSON.stringify({
+          role_framing: "Own the event platform.",
+          inferred_seniority: "senior",
+          ideal_candidate_narrative: "A hands-on platform owner.",
+          requirements,
+          keywords,
+        }),
+      );
+      db.prepare(
+        `INSERT INTO job_employer_analysis_failures (job_url, generation, model_id, tenant_id, error, raw_output)
+         VALUES (?, 2, 'gpt-5.4', 'local', 'codex app-server timeout', NULL)`,
+      ).run(jobUrl);
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const detailRes = await app.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+        const analysis = detailRes.json().employerAnalysis;
+        expect(analysis).not.toBeNull();
+        // Latest generation only (gen 2); gen 1 superseded but retained as history.
+        expect(analysis).toMatchObject({
+          generation: 2,
+          cache_key: "hash-new:employer-analysis-v1:claude+codex-v1",
+          ensemble_completeness: "1/2",
+          legs_attempted: 2,
+          legs_succeeded: 1,
+          is_degraded: true,
+          role_framing: "Own the event platform.",
+          inferred_seniority: "senior",
+        });
+        expect(analysis.requirements[0]).toMatchObject({ tier: "must_have", weight: 0.9 });
+        expect(analysis.keywords[0]).toMatchObject({ keyword: "Python", requirement_ref: "r1" });
+        expect(analysis.agreement.flagged_keywords).toEqual(["kafka"]);
+        expect(analysis.sub_analyses[0].model_id).toBe("claude-opus-4-8");
+        expect(analysis.failures[0]).toMatchObject({
+          model_id: "gpt-5.4",
+          error: "codex app-server timeout",
+          raw_output: null,
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("rebuilds source health from discovery, enrichment, and content events", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

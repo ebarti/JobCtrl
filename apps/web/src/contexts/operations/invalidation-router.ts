@@ -39,6 +39,7 @@ import {
 } from "../enrichment/handlers.js";
 import {
   coverLetterGeneratedHandler,
+  employerAnalyzedHandler,
   materialsExhaustedHandler,
   pdfRenderedHandler,
   resumeApprovedHandler,
@@ -141,6 +142,7 @@ export const handlers: HandlerMap = {
   CoverLetterGenerated: coverLetterGeneratedHandler,
   PdfRendered: pdfRenderedHandler,
   MaterialsExhausted: materialsExhaustedHandler,
+  EmployerAnalyzed: employerAnalyzedHandler,
   TailoringPolicyUpdated: tailoringPolicyUpdatedHandler,
   TailorRetailorRequested: tailorRetailorRequestedHandler,
   TailoredArtifactsSuppressed: tailoredArtifactsSuppressedHandler,

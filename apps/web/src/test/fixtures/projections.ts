@@ -354,6 +354,7 @@ export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
     ],
     artifacts: [],
     auditHistory: sampleJobAuditHistory,
+    employerAnalysis: null,
   };
 }
 
