@@ -976,7 +976,6 @@ function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: strin
        FROM artifact_list_projections p
       WHERE p.tenant_id = ?
         AND p.artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'tailored_resume_pdf')
-        AND (p.metadata_json IS NULL OR TRIM(p.metadata_json) = '' OR TRIM(p.metadata_json) = '{}')
         AND EXISTS (
           SELECT 1
             FROM job_materials_artifacts a
@@ -985,6 +984,27 @@ function staleArtifactMetadataProjectionJobs(db: SqliteDatabase, tenantId: strin
              AND a.metadata_json IS NOT NULL
              AND TRIM(a.metadata_json) != ''
              AND TRIM(a.metadata_json) != '{}'
+             AND (
+               p.metadata_json IS NULL
+               OR TRIM(p.metadata_json) = ''
+               OR TRIM(p.metadata_json) = '{}'
+               OR (
+                 json_extract(p.metadata_json, '$.quality_plan.target_seniority') IS NULL
+                 AND json_extract(a.metadata_json, '$.quality_plan.target_seniority') IS NOT NULL
+               )
+               OR (
+                 json_extract(p.metadata_json, '$.selected_model') IS NULL
+                 AND json_extract(a.metadata_json, '$.selected_model') IS NOT NULL
+               )
+               OR (
+                 json_extract(p.metadata_json, '$.adversarial_review.llm_audit.prompt_messages[0].content') IS NULL
+                 AND json_extract(a.metadata_json, '$.adversarial_review.llm_audit.prompt_messages[0].content') IS NOT NULL
+               )
+               OR (
+                 COALESCE(json_array_length(json_extract(p.metadata_json, '$.change_annotations')), 0) = 0
+                 AND COALESCE(json_array_length(json_extract(a.metadata_json, '$.change_annotations')), 0) > 0
+               )
+             )
         )`,
     [tenantId],
   );

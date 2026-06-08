@@ -709,6 +709,17 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         JSON.stringify({
           quality_plan: { target_seniority: "executive" },
           selected_model: "generator-a",
+          adversarial_review: {
+            llm_audit: {
+              prompt_messages: [{ role: "user", content: "Run persona review." }],
+            },
+          },
+          change_annotations: [
+            {
+              section: "executive_profile",
+              label: "Executive profile",
+            },
+          ],
         }),
         "2026-05-04T13:05:00+00:00",
       );
@@ -729,7 +740,10 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         corruptDb
           .prepare(
             `UPDATE artifact_list_projections
-                SET metadata_json = '{}'
+                SET metadata_json = json_object(
+                  'quality_plan', json_object('target_seniority', 'executive'),
+                  'selected_model', 'generator-a'
+                )
               WHERE tenant_id = 'local'
                 AND job_id = ?
                 AND artifact_type = 'tailored_resume'`,
@@ -757,6 +771,17 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(JSON.parse(projection?.metadata_json ?? "{}")).toMatchObject({
           quality_plan: { target_seniority: "executive" },
           selected_model: "generator-a",
+          adversarial_review: {
+            llm_audit: {
+              prompt_messages: [{ role: "user", content: "Run persona review." }],
+            },
+          },
+          change_annotations: [
+            {
+              section: "executive_profile",
+              label: "Executive profile",
+            },
+          ],
         });
       } finally {
         readDb.close();
