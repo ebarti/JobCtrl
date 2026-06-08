@@ -355,7 +355,7 @@ pnpm dev
 ```
 
 That launches the Temporal dev server, local TypeScript API, React/Vite web app,
-and JobHunter Temporal worker in the foreground. Before each component starts,
+and JobHunter automation worker in the foreground. Before each component starts,
 the launcher stops the previous tracked JobHunter process tree for that
 component, so rerunning `pnpm dev` starts from a clean owned stack. Keep the
 terminal open and use Ctrl-C to stop the stack. The launcher defaults to
@@ -368,6 +368,10 @@ pnpm dev:status
 pnpm dev:logs worker
 ```
 
+`pnpm dev:status` reports process liveness for the local fleet and includes
+the API health classification for the worker heartbeat, so a live worker process
+whose heartbeat has gone stale is shown as `stale` instead of only `up`.
+
 For a detached background stack, use the explicit daemon mode:
 
 ```bash
@@ -376,8 +380,8 @@ pnpm dev:stop
 ```
 
 The API health endpoint reports the API app/database identity and the latest
-Temporal worker heartbeat. The web topbar alerts when the worker is missing or
-stale, and pipeline stage buttons stay disabled until the worker is
+JobHunter automation worker heartbeat. The web topbar alerts when the worker is
+missing or stale, and pipeline stage buttons stay disabled until the worker is
 heartbeating against the same local database.
 
 Temporal workflow history is persisted under `.dev/temporal/temporal.db` by

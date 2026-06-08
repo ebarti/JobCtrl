@@ -28,7 +28,7 @@ export const sampleHealthResponse: ApiHealthResponse = {
     expectedDbPath: "/tmp/jobhunter-test/jobhunter.db",
     expectedAppDir: "/tmp/jobhunter-test",
     staleAfterSeconds: 45,
-    message: "Temporal worker heartbeat is current and uses the API database.",
+    message: "JobHunter automation worker heartbeat is current and uses the API database.",
     heartbeat: {
       workerId: "worker-test",
       component: "temporal-worker",

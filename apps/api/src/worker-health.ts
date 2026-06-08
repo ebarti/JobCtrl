@@ -67,7 +67,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
         expectedDbPath,
         expectedAppDir,
         staleAfterSeconds,
-        message: "No Temporal worker heartbeat has been written to the API database.",
+        message: "No JobHunter automation worker heartbeat has been written to the API database.",
         heartbeat: null,
       };
     }
@@ -87,7 +87,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
         expectedDbPath,
         expectedAppDir,
         staleAfterSeconds,
-        message: "No Temporal worker heartbeat has been written to the API database.",
+        message: "No JobHunter automation worker heartbeat has been written to the API database.",
         heartbeat: null,
       };
     }
@@ -100,7 +100,7 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
         expectedDbPath,
         expectedAppDir,
         staleAfterSeconds,
-        message: `Temporal worker runtime does not match the API runtime: ${mismatches.join("; ")}.`,
+        message: `JobHunter automation worker runtime does not match the API runtime: ${mismatches.join("; ")}.`,
         heartbeat,
       };
     }
@@ -113,8 +113,8 @@ export function readWorkerHealth(dbPath: string, now = new Date()): WorkerHealth
       expectedAppDir,
       staleAfterSeconds,
       message: stale
-        ? `Temporal worker heartbeat is stale; last seen at ${heartbeat.lastSeenAt}.`
-        : "Temporal worker heartbeat is current and uses the API database.",
+        ? `JobHunter automation worker heartbeat is stale; last seen at ${heartbeat.lastSeenAt}.`
+        : "JobHunter automation worker heartbeat is current and uses the API database.",
       heartbeat,
     };
   } finally {

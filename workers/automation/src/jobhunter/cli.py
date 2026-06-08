@@ -1344,28 +1344,18 @@ async def _worker_heartbeat_loop(
     worker_id: str,
     *,
     worker_started_at: datetime | None = None,
+    interval_seconds: float = 15.0,
 ) -> None:
-    from jobhunter.database import get_connection
-    from jobhunter.infrastructure.runtime_identity import write_worker_heartbeat
-    from jobhunter.state import recover_orphaned_discovery_runs, recover_orphaned_running_stages
-
     while True:
-        await asyncio.sleep(15)
-        write_worker_heartbeat(task_queue=task_queue, worker_id=worker_id)
-        if worker_started_at is None:
-            continue
+        await asyncio.sleep(interval_seconds)
         try:
-            conn = get_connection()
-            recovered_stages = recover_orphaned_running_stages(
-                conn,
-                started_before=worker_started_at,
-            )
-            recovered_discovery_runs = recover_orphaned_discovery_runs(
-                conn,
-                started_before=worker_started_at,
+            recovered_stages, recovered_discovery_runs = _worker_heartbeat_iteration(
+                task_queue,
+                worker_id,
+                worker_started_at=worker_started_at,
             )
         except Exception:
-            log.warning("Worker orphan recovery sweep failed", exc_info=True)
+            log.warning("Worker heartbeat loop iteration failed; will retry", exc_info=True)
             continue
         if recovered_stages:
             console.print(
@@ -1377,6 +1367,31 @@ async def _worker_heartbeat_loop(
                 f"[yellow]Recovered {recovered_discovery_runs} orphaned discovery run(s) "
                 "from prior worker shutdown.[/yellow]"
             )
+
+
+def _worker_heartbeat_iteration(
+    task_queue: str,
+    worker_id: str,
+    *,
+    worker_started_at: datetime | None = None,
+) -> tuple[int, int]:
+    from jobhunter.database import get_connection
+    from jobhunter.infrastructure.runtime_identity import write_worker_heartbeat
+    from jobhunter.state import recover_orphaned_discovery_runs, recover_orphaned_running_stages
+
+    write_worker_heartbeat(task_queue=task_queue, worker_id=worker_id)
+    if worker_started_at is None:
+        return (0, 0)
+    conn = get_connection()
+    recovered_stages = recover_orphaned_running_stages(
+        conn,
+        started_before=worker_started_at,
+    )
+    recovered_discovery_runs = recover_orphaned_discovery_runs(
+        conn,
+        started_before=worker_started_at,
+    )
+    return (recovered_stages, recovered_discovery_runs)
 
 
 @app.command()

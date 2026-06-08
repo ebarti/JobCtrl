@@ -358,12 +358,13 @@ The JSON-RPC worker is launched with the API runtime `appDir` as
 `JOBHUNTER_DIR`, so API reads, SSE, and Python automation all use the same
 local SQLite database. The API also passes `expectedAppDir` and
 `expectedDbPath` into worker-started workflows. Worker activities verify those
-runtime values before writing, and fail non-retryably if the Temporal worker is
-connected to a different local app directory or SQLite database. The worker
+runtime values before writing, and fail non-retryably if the automation worker
+is connected to a different local app directory or SQLite database. The worker
 writes `worker_runtime_heartbeats` into the same database; `GET /v1/health`
-returns the API app/database identity plus the latest worker heartbeat status.
-The web topbar surfaces missing or stale worker heartbeats, and the pipeline
-stage trigger blocks new worker-backed actions until the worker is healthy.
+returns the API app/database identity plus the latest automation worker
+heartbeat status. The web topbar surfaces missing or stale worker heartbeats,
+and the pipeline stage trigger blocks new worker-backed actions until the worker
+is healthy.
 Non-apply pipeline runs also emit pipeline-level
 `StageStarted` / `StageCompleted` / `StageFailed` rows, and Discover emits
 the same lifecycle rows plus `DiscoveryRunStarted`,

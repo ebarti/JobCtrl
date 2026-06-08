@@ -382,10 +382,10 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
   const workerUnhealthy =
     health.isPending || health.isError || health.data?.worker.status !== "healthy";
   const workerHealthMessage = health.isPending
-    ? "Checking Temporal worker runtime..."
+    ? "Checking JobHunter automation worker runtime..."
     : health.isError
-      ? `Temporal worker health check failed: ${health.error.message}`
-      : (health.data?.worker.message ?? "Temporal worker health is unavailable.");
+      ? `JobHunter automation worker health check failed: ${health.error.message}`
+      : (health.data?.worker.message ?? "JobHunter automation worker health is unavailable.");
 
   const patchConfig = (patch: Partial<StageTriggerConfig>) => {
     patchStageConfig(activeStage, patch);
