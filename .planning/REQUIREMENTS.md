@@ -85,13 +85,38 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (to be filled by roadmap) | — | Pending |
+| ANALYSIS-01 | Phase 1 | Pending |
+| ANALYSIS-02 | Phase 1 | Pending |
+| ANALYSIS-03 | Phase 1 | Pending |
+| ANALYSIS-04 | Phase 1 | Pending |
+| ANALYSIS-05 | Phase 1 | Pending |
+| ANALYSIS-06 | Phase 1 | Pending |
+| GROUND-01 | Phase 2 | Pending |
+| GROUND-02 | Phase 2 | Pending |
+| GROUND-03 | Phase 2 | Pending |
+| GROUND-04 | Phase 2 | Pending |
+| GROUND-05 | Phase 2 | Pending |
+| CONTROL-01 | Phase 2 | Pending |
+| CONTROL-02 | Phase 2 | Pending |
+| CONTROL-03 | Phase 2 | Pending |
+| GROUND-06 | Phase 3 | Pending |
+| VOICE-01 | Phase 3 | Pending |
+| VOICE-02 | Phase 3 | Pending |
+| VOICE-03 | Phase 3 | Pending |
+| AUDIT-01 | Phase 4 | Pending |
+| AUDIT-02 | Phase 4 | Pending |
+| INSPECT-01 | Phase 5 | Pending |
+| INSPECT-02 | Phase 5 | Pending |
+| INSPECT-03 | Phase 5 | Pending |
+| INSPECT-04 | Phase 5 | Pending |
+| INSPECT-05 | Phase 5 | Pending |
+| INSPECT-06 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 24 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 24 ⚠️
+- v1 requirements: 26 total (enumerated list is authoritative; the earlier "24" header was a miscount — ANALYSIS 6 + GROUND 6 + CONTROL 3 + VOICE 3 + INSPECT 6 + AUDIT 2 = 26)
+- Mapped to phases: 26 ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-08*
-*Last updated: 2026-06-08 after initial definition*
+*Last updated: 2026-06-08 after roadmap creation (traceability populated, v1 count corrected to 26)*
