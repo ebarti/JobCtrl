@@ -11,6 +11,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 ## Phases
 
 **Phase Numbering:**
+
 - Previous milestone v1.0 completed Phases 1-5.
 - This milestone continues numbering at Phase 6.
 - Integer phases are planned milestone work.
@@ -34,6 +35,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 **Requirements:** TOKEN-01, TOKEN-02, TOKEN-03, TOKEN-04, TOKEN-05, TOKEN-06
 
 **Success Criteria** (what must be TRUE):
+
 1. `apps/web/src/styles/tokens.css` and `apps/web/src/styles/globals.css` expose the shadcn standard semantic token set, chart/sidebar/menu tokens, font tokens, and derived radius scale for light and dark themes.
 2. Tailwind 4 can generate semantic utilities such as `bg-background`, `text-foreground`, `bg-card`, `border-border`, `ring-ring`, `bg-primary`, `text-primary-foreground`, `bg-popover`, and `text-popover-foreground` through CSS-first token mappings.
 3. `components.json`, TypeScript aliases, and Vite aliases satisfy current shadcn CLI validation and keep generated/copied components under `apps/web/src/shared/ui`.
@@ -41,6 +43,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 5. Existing `[data-theme="dark"]` and `data-density` behavior still works, and legacy aliases/utilities are absent from production styling by the Phase 6 exit state.
 
 **Verification:**
+
 - `pnpm web:check`
 - `pnpm web:build`
 - `pnpm dlx shadcn@latest info -c apps/web` or documented equivalent
@@ -48,13 +51,26 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Browser smoke of light/dark token computed values on the app shell
 
 **Plans:** 6 plans
-
 Plans:
+**Wave 1**
+
 - [ ] 06-01-PLAN.md — Approve SUS package identities before dependency installation.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 06-02-PLAN.md — Install preset dependencies and validate shadcn aliases/config.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 06-03-PLAN.md — Implement CSS-first semantic tokens, density seams, bridge removal, and token tests.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 06-04-PLAN.md — Mechanically migrate core shared primitives and Storybook wrapper utilities.
 - [ ] 06-05-PLAN.md — Mechanically migrate overlay/menu primitives and overlay story utilities.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 06-06-PLAN.md — Add browser computed-token smoke, update docs, and run final proof gate.
 
 ### Phase 7: Shared Primitive Token Migration
@@ -66,6 +82,7 @@ Plans:
 **Requirements:** PRIM-01, PRIM-02, PRIM-03, PRIM-04, PRIM-05
 
 **Success Criteria** (what must be TRUE):
+
 1. Button, badge, card, input, textarea, select, checkbox, switch, tabs, table/data-grid, skeleton, separator, scroll-area, toast, dialog, sheet/drawer, dropdown, popover, command, and tooltip primitives use standard semantic utilities instead of legacy `bg-paper`, `text-ink`, `border-rule`, `ring-info`, or direct legacy variables.
 2. Overlay primitives are readable in light and dark modes over dense content, with `popover`/surface token pairs and visible focus rings.
 3. Changed primitives preserve behavior, ARIA semantics, keyboard behavior, disabled states, loading/empty states, and stable dimensions.
@@ -73,6 +90,7 @@ Plans:
 5. `shared/ui` remains domain-agnostic and does not import context, view, API, query, or domain modules.
 
 **Verification:**
+
 - `pnpm --filter @jobhunter/web test`
 - `pnpm --filter @jobhunter/web test-d` if primitive prop/export types change
 - `pnpm web:storybook:build`
@@ -90,6 +108,7 @@ Plans:
 **Requirements:** LAYOUT-01, LAYOUT-02, LAYOUT-03, LAYOUT-04, LAYOUT-05
 
 **Success Criteria** (what must be TRUE):
+
 1. Topbar, nav links, brand mark, global search, density selector, theme toggle, connection status/banner, route tabs, and menu states use standard tokens and the preset's subtle translucent menu treatment without lowering readability.
 2. Geist body font and JetBrains Mono heading/technical font load in Vite and Storybook with fallback stacks, and dense routes still fit in compact/regular/comfy density modes.
 3. User-visible lucide imports are migrated or explicitly mapped to Tabler equivalents; icon-only controls keep accessible names and stable dimensions.
@@ -97,6 +116,7 @@ Plans:
 5. Topbar/menu surfaces remain readable over Jobs, Apply Review, artifact/PDF, and dark-mode surfaces.
 
 **Verification:**
+
 - `pnpm web:check`
 - `pnpm web:build`
 - `pnpm --filter @jobhunter/web test`
@@ -114,6 +134,7 @@ Plans:
 **Requirements:** STATUS-01, STATUS-02, STATUS-03, STATUS-04, STATUS-05
 
 **Success Criteria** (what must be TRUE):
+
 1. Pipeline stage states, score tiers, artifact statuses, apply statuses, connection statuses, discovery/source health, dashboard funnel/KPI tones, audit warnings, stale states, missing states, blocked states, running states, and failed states remain visually distinguishable in light and dark themes.
 2. Context-owned tone helpers or explicit variant maps remain the source of domain-to-visual mapping; no context defines global token variables or relies on unscannable dynamic Tailwind utility strings.
 3. Stage-state parity and status fixtures cover every discriminant/state arm that has user-visible styling.
@@ -121,6 +142,7 @@ Plans:
 5. Tailoring inspector, apply-review, audit history, missing provenance, failed workflow, stale scoring, and destructive warning states remain readable and honest.
 
 **Verification:**
+
 - `pnpm --filter @jobhunter/web test`
 - `pnpm --filter @jobhunter/web test-d` if discriminant/status types change
 - Existing parity tests, including `every-stage-state-has-badge.test.tsx`
@@ -138,6 +160,7 @@ Plans:
 **Requirements:** QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
 
 **Success Criteria** (what must be TRUE):
+
 1. Required web checks for touched surfaces pass: typecheck, build, unit/component tests, type-level tests when applicable, Storybook/a11y where primitives/stories changed, and targeted E2E/browser smoke for route-level behavior.
 2. Browser QA opens representative routes and overlays in light and dark: `/dashboard`, `/jobs`, job detail, `/artifacts`, artifact detail, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`.
 3. Compact, regular, and comfy density modes are checked on table/list-heavy surfaces, with focus rings, destructive controls, forms, menus, dialogs, sheets, popovers, and select/dropdown controls visible and usable.
@@ -146,6 +169,7 @@ Plans:
 6. QA does not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless explicitly requested by the user.
 
 **Verification:**
+
 - `pnpm web:check`
 - `pnpm web:build`
 - `pnpm --filter @jobhunter/web test`
@@ -165,6 +189,7 @@ Plans:
 **Requirements:** CLEAN-01, CLEAN-02, CLEAN-03, CLEAN-04
 
 **Success Criteria** (what must be TRUE):
+
 1. Grep proves no production references remain to legacy token variables or utility names outside intentional test fixtures or migration notes.
 2. Obsolete Tailwind color names, dead config references, and any residual compatibility artifacts are removed from token/config files, and removed classes have named replacements.
 3. Unused icon/font dependencies are removed only after import audits prove they are no longer used.
@@ -172,6 +197,7 @@ Plans:
 5. Owning docs/configs are updated narrowly for the final shadcn token, icon, font, and QA expectations.
 
 **Verification:**
+
 - Legacy audit: `rg "var\\(--bg|var\\(--paper|var\\(--ink|bg-paper|text-ink|border-rule|ring-info|--danger|--warn|--ok|--info" apps/web/src apps/web/tailwind.config.ts`
 - Icon/font/dependency import audit
 - `pnpm web:check`
@@ -189,7 +215,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Token Foundation + shadcn Preset Contract | 0/? | Pending | - |
+| 6. Token Foundation + shadcn Preset Contract | 0/6 | Planned | - |
 | 7. Shared Primitive Token Migration | 0/? | Pending | - |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 0/? | Pending | - |
 | 9. Domain And Status Surface Migration | 0/? | Pending | - |
@@ -211,11 +237,11 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 ## Next Up
 
-**Phase 6: Token Foundation + shadcn Preset Contract** - Establish the preset-backed standard token contract and shadcn config prerequisites while removing the legacy token API.
+**Phase 6: Token Foundation + shadcn Preset Contract** - Execute the verified six-plan token foundation sequence.
 
-`$gsd-discuss-phase 6`
+`$gsd-execute-phase 6`
 
-Also available: `$gsd-plan-phase 6` to skip discussion and plan directly.
+Also available: `$gsd-plan-phase 6 --force` to intentionally replan before execution.
 
 ---
 *Roadmap created: 2026-06-09*

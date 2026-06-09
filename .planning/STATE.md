@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
-status: Ready to discuss or plan Phase 6
-stopped_at: Phase 6 UI-SPEC approved
-last_updated: "2026-06-09T21:02:13.025Z"
+status: Ready to execute Phase 6
+stopped_at: Phase 6 planned
+last_updated: "2026-06-09T21:47:36.540Z"
 last_activity: 2026-06-09 - Milestone v1.1 initialized from research, requirements, and roadmap
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 0
+  total_plans: 6
   completed_plans: 0
   percent: 0
 ---
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.1 planning complete. Next phase is Phase 6: Token Foundation + shadcn Preset Contract.
+**Current focus:** Phase 6 planned and ready to execute: Token Foundation + shadcn Preset Contract.
 
 ## Current Position
 
-Phase: 6 of 11 (not started)
-Plan: -
-Status: Ready to discuss or plan Phase 6
-Last activity: 2026-06-09 - Milestone v1.1 initialized from research, requirements, and roadmap
+Phase: 6 of 11 (planned)
+Plan: 6 plans ready
+Status: Ready to execute Phase 6
+Last activity: 2026-06-09 - Phase 6 plans created and verified
 
 Progress: [----------] 0%
 
@@ -55,7 +55,7 @@ Phase order:
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 6 | Token Foundation + shadcn Preset Contract | Pending |
+| 6 | Token Foundation + shadcn Preset Contract | Planned |
 | 7 | Shared Primitive Token Migration | Pending |
 | 8 | Layout Chrome, Fonts, And Tabler Icons | Pending |
 | 9 | Domain And Status Surface Migration | Pending |
@@ -93,7 +93,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Current milestone decisi
 
 - Treat shadcn tokens as frontend shared infrastructure, not bounded-context domain data.
 - Preserve JobHunter's existing `[data-theme="dark"]` model during the migration unless a phase explicitly changes `ThemeProvider`.
-- Use compatibility aliases during the migration; remove them only after grep-clean production references and browser QA.
+- Phase 6 uses the clean-slate token decision from `06-CONTEXT.md`: remove legacy aliases/utilities by Phase 6 completion, with no compatibility-bridge handoff to later phases.
 - Avoid uncontrolled full `shadcn apply`; research showed it rewrites a larger primitive/package surface than this milestone needs.
 - Keep domain status semantics explicit in context-owned tone helpers or explicit variant maps.
 - Make browser QA in light/dark themes and density modes a gate for user-facing visual phases.
@@ -127,6 +127,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-06-09T21:02:13.017Z
-Stopped at: Phase 6 UI-SPEC approved
-Resume file: .planning/phases/06-token-foundation-shadcn-preset-contract/06-UI-SPEC.md
+Last session: 2026-06-09T21:47:36.540Z
+Stopped at: Phase 6 planned
+Resume file: .planning/phases/06-token-foundation-shadcn-preset-contract/06-01-PLAN.md
