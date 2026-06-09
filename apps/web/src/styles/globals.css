@@ -2347,6 +2347,108 @@ textarea {
   border-color: rgba(183, 126, 44, 0.45);
 }
 
+/* Phase 5 inspector — employer analysis + per-bullet provenance + diff. */
+.employer-analysis,
+.bullet-provenance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.employer-analysis-requirement-list,
+.employer-analysis-keyword-list {
+  display: grid;
+  gap: 10px;
+}
+
+.employer-analysis-requirement,
+.employer-analysis-keyword,
+.bullet-provenance,
+.employer-analysis-sub {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.employer-analysis-requirement header,
+.employer-analysis-keyword header,
+.bullet-provenance header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.employer-analysis-requirement-text,
+.employer-analysis-rationale {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.employer-analysis-evidence {
+  margin: 0;
+  border-left: 3px solid var(--rule);
+  padding: 4px 0 4px 10px;
+  color: var(--muted);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.employer-analysis-ensemble summary,
+.employer-analysis-ensemble[open] summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.employer-analysis-ensemble-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bullet-provenance-diff {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+@container (min-width: 520px) {
+  .bullet-provenance-diff {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.bullet-provenance-diff-side {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.bullet-provenance-diff-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.bullet-provenance-generated {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.bullet-provenance-tags dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 .external-link {
   color: var(--info);
   font-family: var(--mono);

@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
-import { TailoringExplanationSection } from "../../contexts/materials/components/TailoringExplanationSection.js";
-import { useArtifactDetailQuery } from "../../contexts/operations/hooks/useArtifactDetailQuery.js";
+import { ArtifactTailoringInspector } from "../../contexts/materials/components/ArtifactTailoringInspector.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -315,33 +314,6 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   );
 }
 
-function ResumeTailoringRationale({ artifactId }: { readonly artifactId: string }) {
-  const detail = useArtifactDetailQuery(artifactId);
-  const errorMessage = detail.error instanceof Error ? detail.error.message : null;
-
-  if (detail.data?.tailoringExplanation) {
-    return (
-      <TailoringExplanationSection
-        className="apply-review-preview-block apply-review-tailoring"
-        explanation={detail.data.tailoringExplanation}
-      />
-    );
-  }
-
-  return (
-    <section className="apply-review-preview-block apply-review-tailoring">
-      <h3>Tailoring rationale</h3>
-      {errorMessage ? (
-        <div className="banner inline">{errorMessage}</div>
-      ) : detail.isFetching ? (
-        <Empty title="Loading tailoring rationale." />
-      ) : (
-        <Empty title="No tailoring rationale captured for this resume yet." />
-      )}
-    </section>
-  );
-}
-
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const status = materialStatus(item);
   const evidenceGroups = evidenceValues(item).length;
@@ -437,7 +409,12 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             <h2>Tailored resume and cover</h2>
           </header>
           <div className="apply-review-pane-scroll">
-            {resumePdfArtifactId ? <ResumeTailoringRationale artifactId={resumePdfArtifactId} /> : null}
+            {resumePdfArtifactId ? (
+              <ArtifactTailoringInspector
+                artifactId={resumePdfArtifactId}
+                className="apply-review-preview-block apply-review-tailoring"
+              />
+            ) : null}
             <ResumePreview item={item} />
             <TextPreview
               title="Cover letter"
