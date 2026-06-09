@@ -343,7 +343,7 @@ generation when tailoring succeeds.
 The `analyze_job` JSON-RPC method (params `jobUrl`, optional `force`) produces or
 returns the canonical employer analysis for one job independently of a full
 tailor. Unlike the workflow-mode tailor methods, it runs synchronously: it
-executes the two-SDK analysis ensemble to completion (no wall-clock timeout) and
+executes the three-SDK analysis ensemble to completion (no wall-clock timeout) and
 persists the canonical analysis, then returns `{ jobUrl, generation, cacheKey,
 cached, legsAttempted, legsSucceeded, degraded }`. The same analysis is produced
 automatically as the front-half sub-step of tailoring, so a re-tailor reuses the

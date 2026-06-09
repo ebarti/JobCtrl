@@ -8,7 +8,7 @@ The application-layer orchestrator for Phase 1 (sits beside
   2. Cache short-circuit (D-11/D-12): if an analysis already exists for the same
      ``(snapshot_hash, PROMPT_VERSION, SDK_SET_VERSION)`` cache key and
      ``force`` is False, return it — never re-reason on re-tailor.
-  3. Run the 2-SDK merge+synthesize ensemble (grounding-gated + synthesized
+  3. Run the 3-SDK merge+synthesize ensemble (grounding-gated + synthesized
      inside the runner), surfacing partial failures (D-08).
   4. Re-validate the synthesized canonical's grounding (defense in depth) and
      persist a new generation, superseding prior ones (D-13).

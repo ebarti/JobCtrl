@@ -1,6 +1,7 @@
 """Ensemble orchestration — run the legs in parallel, merge, synthesize.
 
-Implements the D-06 merge+synthesize flow for the 2-SDK ensemble:
+Implements the D-06 merge+synthesize flow for the 3-SDK ensemble (Claude +
+Codex + Antigravity/Gemini; the orchestrator is N-leg, partial-failure safe):
 
   1. Run every ``AnalysisDraftPort`` leg concurrently with
      ``asyncio.gather(..., return_exceptions=True)`` — the key lever that stops

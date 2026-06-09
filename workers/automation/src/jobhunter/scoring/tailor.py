@@ -163,13 +163,16 @@ def _build_analyze_use_case(
 ):
     """Construct the :class:`AnalyzeJobUseCase` for the tailor sub-step (D-20).
 
-    Wires the 2-SDK ensemble (Claude + Codex draft adapters + Claude
-    synthesizer, D-03/D-07) behind the hexagonal ports. The publisher defaults
-    to ``record_employer_analyzed_event`` so a successful analysis lands an
-    ``EmployerAnalyzed`` row in ``job_events`` (read-side projection + SSE).
+    Wires the 3-SDK ensemble (Claude + Codex + Antigravity/Gemini draft
+    adapters + Claude synthesizer, D-03/D-07) behind the hexagonal ports. The
+    publisher defaults to ``record_employer_analyzed_event`` so a successful
+    analysis lands an ``EmployerAnalyzed`` row in ``job_events`` (read-side
+    projection + SSE). A missing Gemini key degrades the Antigravity leg to a
+    recorded per-leg failure (failure mode #2), never a hard fail.
     """
     from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase
     from jobhunter.infrastructure.analysis import (
+        AntigravityAnalysisAdapter,
         ClaudeAnalysisAdapter,
         ClaudeAnalysisSynthesizer,
         CodexAnalysisAdapter,
@@ -178,7 +181,11 @@ def _build_analyze_use_case(
 
     return AnalyzeJobUseCase(
         repository=SqliteEmployerAnalysisRepository(conn),
-        adapters=(ClaudeAnalysisAdapter(), CodexAnalysisAdapter()),
+        adapters=(
+            ClaudeAnalysisAdapter(),
+            CodexAnalysisAdapter(),
+            AntigravityAnalysisAdapter(),
+        ),
         synthesizer=ClaudeAnalysisSynthesizer(),
         publisher=publisher or _EmployerAnalyzedEventRecorder(conn),
     )

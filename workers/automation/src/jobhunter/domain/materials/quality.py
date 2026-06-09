@@ -372,7 +372,7 @@ def build_tailoring_plan(
     """Build the deterministic tailoring plan from the profile + canonical analysis.
 
     Phase 1 (D-21): job keywords come from the persisted, evidence-grounded
-    :class:`EmployerAnalysis` (the 2-SDK ensemble's reconciled, reasoned
+    :class:`EmployerAnalysis` (the 3-SDK ensemble's reconciled, reasoned
     keywords) — the flakey ``_extract_job_keywords`` stopword heuristic has been
     ripped out outright (no shim). The rest of the plan (evidence selection,
     seniority, verified metrics) is unchanged.
@@ -695,7 +695,7 @@ def _select_required_evidence_ids(
 def _analysis_job_keywords(employer_analysis: EmployerAnalysis) -> tuple[str, ...]:
     """Derive the tailoring plan's job keywords from the canonical analysis (D-21).
 
-    The keywords are the 2-SDK ensemble's reconciled, evidence-grounded
+    The keywords are the 3-SDK ensemble's reconciled, evidence-grounded
     ``ReasonedKeyword`` terms — each already tied to a literal JD evidence span.
     Deduplicated case-insensitively while preserving the analysis order (which
     reflects the reconciled importance ranking), capped to keep the prompt /
