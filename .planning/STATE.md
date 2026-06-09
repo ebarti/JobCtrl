@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-06-09T23:33:08.385Z"
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-06-09T23:49:35.757Z"
 last_activity: 2026-06-09 -- Phase 06 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 1
-  percent: 17
+  completed_plans: 2
+  percent: 33
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 06 (Token Foundation + shadcn Preset Contract) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-06-09 -- Phase 06 execution started
 
-Progress: [██░░░░░░░░] 17%
+Progress: [███░░░░░░░] 33%
 
 ## Active Milestone Summary
 
@@ -81,9 +81,9 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 0 for v1.1
-- Average duration: -
-- Total execution time: -
+- Total plans completed: 2 for v1.1
+- Average duration: 7 min
+- Total execution time: 13 min
 
 ## Accumulated Context
 
@@ -104,6 +104,9 @@ Prior milestone decisions that still matter:
 - Rip-and-replace is acceptable for local-first internals when the replacement is verified.
 - Existing JobHunter generated artifacts, profiles, resumes, browser profiles, logs, databases, and application data are sensitive and must not be exposed in QA evidence.
 - [Phase 06]: Approved shadcn@4.11.0, @fontsource-variable/geist@5.2.9, and @types/node@25.9.2 package identities before Plan 06-02 install — Plan 06-01 was a blocking package-legitimacy checkpoint for recent npm releases flagged by T-06-01.
+- [Phase 06 Plan 02]: Adapted shadcn generated .dark theme output to JobHunter's :root[data-theme=dark] selector.
+- [Phase 06 Plan 02]: Used a temporary pnpm minimumReleaseAge=0 window only for human-approved recent shadcn package operations, then restored the workspace policy before committing.
+- [Phase 06 Plan 02]: Kept lucide-react for compatibility while setting new shadcn output to Tabler; Phase 8 owns visible icon migration.
 
 ### Pending Todos
 
@@ -126,9 +129,10 @@ None.
 | Reporting | Charting/analytics overhaul beyond token availability | Future milestone | 2026-06-09 |
 | Motion | Motion and microinteraction system | Future milestone | 2026-06-09 |
 | Phase 06 P01 | 1min | 1 tasks | 1 files |
+| Phase 06 P02 | 12min | 2 tasks | 7 files |
 
 ## Session Continuity
 
-Last session: 2026-06-09T23:30:53.624Z
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-06-09T23:49:17.384Z
+Stopped at: Completed 06-02-PLAN.md
 Resume file: None
