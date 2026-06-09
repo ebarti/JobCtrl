@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 1 context gathered
-last_updated: "2026-06-08T21:28:35.268Z"
-last_activity: 2026-06-08 — Roadmap created (5 phases, 26 v1 requirements mapped)
+status: complete
+stopped_at: Milestone v1.0 implemented and verified (5/5 phases PASS)
+last_updated: 2026-06-09
+last_activity: 2026-06-09 — All 5 phases verified goal-backward against merged code (PASS); GSD bookkeeping reconciled to reality
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 5
   total_plans: 0
   completed_plans: 0
-  percent: 0
+  percent: 100
 ---
 
 # Project State
@@ -21,75 +21,77 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-08)
 
 **Core value:** A user can trust every line of a tailored resume — because each bullet traces, visibly, to a real profile fact *and* a specific job requirement, with the reasoning and the transform rule that produced it on display.
-**Current focus:** Phase 1 — Canonical Employer Analysis
+**Current focus:** Milestone v1.0 complete — all five phases implemented and verified.
 
 ## Current Position
 
-Phase: 1 of 5 (Canonical Employer Analysis)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-06-08 — Roadmap created (5 phases, 26 v1 requirements mapped)
+Phase: 5 of 5 (all phases verified)
+Plan: n/a — implemented outside the GSD execute loop (see Milestone Verification)
+Status: Complete (verified)
+Last activity: 2026-06-09 — goal-backward verification of all 5 phases (PASS) + bookkeeping reconciliation
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
+
+## Milestone Verification (2026-06-09)
+
+The five milestone phases were implemented via the repository PR workflow (PRs #141–#145, with
+Phase 1 hardening in #146–#148) **outside** the GSD plan/execute loop, so this STATE was stale
+(previously reported 0%). On 2026-06-09 each phase was verified **goal-backward against the merged
+code** (`main` @ e36ffb1) — every ROADMAP success criterion checked against actual code + passing
+tests, not PR titles. All five phases plus cross-phase integration returned **PASS**; per-phase
+reports live in `.planning/phases/0N-*/VERIFICATION.md`, summarized in `.planning/MILESTONE-ACCEPTANCE.md`.
+
+| Phase | PR(s) | Verdict |
+|-------|-------|---------|
+| 1 · Canonical Employer Analysis | #141 (+#146/#147/#148) | PASS (4/4) |
+| 2 · Per-Bullet Provenance + Controls | #142 | PASS (5/5) |
+| 3 · Voice Pass + Final Audit | #143 | PASS (4/4) |
+| 4 · Read-Model Cleanup (rip-and-replace) | #144 | PASS (3/3) |
+| 5 · Generate-Materials + Inspector UI | #145 | PASS (4/4) |
+| Cross-phase integration | — | PASS (5/5 seams; 26/26 requirements wired) |
+
+No Blocker/High gaps. Residual LOW/cosmetic items: stale `generate_materials` branch in
+`apps/web/.../local-actions.ts`; inspector diff "original text" sourced from `annotatedChanges`
+rather than a canonical provenance column; Phase 5 live Playwright needs a clean-env re-run
+(port-reuse artifact, not a code defect).
 
 ## Performance Metrics
 
-**Velocity:**
-
-- Total plans completed: 0
-- Average duration: — min
-- Total execution time: 0.0 hours
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| - | - | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
+- Total plans completed: 0 (implemented via PRs, not GSD plans)
+- Average duration: —
+- Total execution time: —
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
+Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecting this milestone:
 
-- Employer analysis is a sub-step of the `tailor` stage (`_run_analyze`), NOT a new top-level pipeline stage — avoids the 6-surface stage-parity change. Do not touch the stage enumeration set.
-- Dependency-forced phase ordering: A (analysis) → B+C (provenance + controls) → D (voice, before final audit) → read-model cleanup → E (inspector UI, gated on the broken generate-materials fix + canonical backend data).
-- Auditability-first: every backend canonicalization lands before the inspector UI so the UI can never mask missing audit data.
-- Provider-model fork (Phase 1 planning decision): portable JSON-Schema + validator re-ask (Gemini/Claude-compat today, codebase default is Gemini) vs adding an Anthropic Messages adapter. Pick the portable core.
-- Rip-and-replace: replace flakey keyword extraction and the sibling-file/TS-recompute read paths outright — no compatibility shims (single-user project convention).
+- Employer analysis is a sub-step of the `tailor` stage (`_run_analyze`), NOT a new top-level pipeline stage.
+- Dependency-forced phase ordering: A (analysis) → B+C (provenance + controls) → D (voice, before final audit) → read-model cleanup → E (inspector UI).
+- Auditability-first: every backend canonicalization landed before the inspector UI.
+- AI via 3-way agent-SDK ensemble (Claude + Codex gpt-5.5 + Antigravity/Gemini; Claude synthesizer); no wall-clock timeouts; quality over cost.
+- Rip-and-replace: flakey keyword extraction and the sibling-file/TS-recompute read paths removed outright — no compatibility shims.
 
 ### Pending Todos
 
-[From .planning/todos/pending/ — ideas captured during sessions]
-
-None yet.
+None.
 
 ### Blockers/Concerns
 
-[Issues that affect future work]
-
-- REQUIREMENTS.md header states "24 total" v1 requirements, but the enumerated list contains 26 distinct REQ-IDs (ANALYSIS 6, GROUND 6, CONTROL 3, VOICE 3, INSPECT 6, AUDIT 2). The roadmap maps all 26 (the enumerated list is the source of truth); the stale header count should be corrected at the next requirements touch.
-- Phase 5 is blocked until the per-job `generate-materials` path is wired (route returns 400 / button disabled / E2E `fixme`) AND canonical analysis/provenance/coverage rows from Phases 1–4 have landed.
-- Latency/cost: the multi-step LLM chain (analysis → tailor → repair → judge → voice) risks the 180s client timeout; per-stage budgets + analysis caching + bounded loops must be designed into Phases 1–3.
+- [RESOLVED 2026-06-09] REQUIREMENTS.md "24 vs 26" count — already corrected to 26 (authoritative enumerated list).
+- [RESOLVED] Latency / 180s client timeout risk — AI now runs through agent SDKs with no wall-clock timeout (cooperative cancellation only).
+- Process divergence: the milestone was built via the PR workflow, not the GSD execute loop, so no GSD `PLAN.md` artifacts were created. Verified retroactively; future work should standardize on one canonical loop.
 
 ## Deferred Items
 
-Items acknowledged and carried forward from previous milestone close:
-
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| Confidence | Live matched-job happy-path demo (provenance/coverage persistence) | Skipped by user | 2026-06-09 |
+| Test hygiene | 3 pre-existing failing tests (enrichment staleness ×2, materials suppression) | Open, unrelated to milestone | 2026-06-09 |
 
 ## Session Continuity
 
-Last session: 2026-06-08T21:28:35.263Z
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-canonical-employer-analysis/01-CONTEXT.md
+Last session: 2026-06-09
+Stopped at: Milestone v1.0 verified + reconciled
+Resume file: .planning/MILESTONE-ACCEPTANCE.md
