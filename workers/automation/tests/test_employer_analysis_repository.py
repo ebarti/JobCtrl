@@ -11,6 +11,7 @@ Runs against a tmp SQLite database via ``init_db`` so the canonical
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 
 import pytest
 
@@ -19,6 +20,7 @@ from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.analysis import (
     AnalysisAgreement,
     AnalysisFailure,
+    EeoScreenHit,
     EmployerAnalysis,
     JobAnalysis,
     JobAnalysisDraft,
@@ -32,7 +34,7 @@ JD = "Staff Backend Engineer. Requires 8+ years in Go. Kafka is a plus."
 
 
 @pytest.fixture()
-def conn(tmp_path) -> sqlite3.Connection:
+def conn(tmp_path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
     connection.execute(
@@ -126,6 +128,34 @@ def test_new_generation_supersedes_but_does_not_destroy_prior(conn: sqlite3.Conn
     # ...but the prior generation remains as audit history (D-13).
     prior = repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1)
     assert prior is not None and prior.generation == 1
+
+
+def test_round_trip_preserves_eeo_screen_hits(conn: sqlite3.Connection) -> None:
+    repo = SqliteEmployerAnalysisRepository(conn)
+    record = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(JOB_URL),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash(JD),
+        canonical=_analysis(),
+        sub_analyses=(JobAnalysisDraft(model_id="claude-opus-4-8", **_analysis().model_dump()),),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+        eeo_screen_hits=(
+            EeoScreenHit(
+                kind="requirement",
+                ref_id="r9",
+                category="age",
+                matched_text="recent grad",
+            ),
+        ),
+    )
+    repo.save(record)
+
+    loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    assert loaded is not None
+    assert loaded.eeo_screen_hits == record.eeo_screen_hits
 
 
 def test_resave_same_generation_overwrites_children(conn: sqlite3.Connection) -> None:

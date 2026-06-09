@@ -41,6 +41,7 @@ from jobhunter.domain.materials.analysis import (
     EnsembleOutcome,
     compute_snapshot_hash,
 )
+from jobhunter.domain.materials.analysis_eeo_screen import screen_eeo_red_flags
 from jobhunter.domain.materials.analysis_grounding import validate_evidence_spans
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.materials import (
@@ -160,17 +161,32 @@ class AnalyzeJobUseCase:
         # the hard boundary — never persist a fabricated span).
         validate_evidence_spans(outcome.canonical, jd_snapshot)
 
+        # EEO red-flag screen (AI-SPEC §6 Dimension 9): deterministically DROP
+        # any requirement/keyword that matches a protected-attribute signal so it
+        # never becomes something downstream tailoring satisfies, and record each
+        # drop as an audit note on the record. Never aborts the run.
+        screen = screen_eeo_red_flags(outcome.canonical)
+        canonical = screen.analysis
+        if screen.has_hits:
+            log.warning(
+                "EEO red-flag screen dropped %d item(s) for %s: %s",
+                len(screen.hits),
+                job_id,
+                [hit.describe() for hit in screen.hits],
+            )
+
         generation = self._next_generation(tenant_id, job_id)
         record = EmployerAnalysis.build(
             tenant_id=tenant_id,
             job_id=job_id,
             generation=generation,
             snapshot_hash=snapshot_hash,
-            canonical=outcome.canonical,
+            canonical=canonical,
             sub_analyses=outcome.drafts,
             failures=outcome.failures,
             agreement=outcome.agreement,
             legs_attempted=outcome.legs_attempted,
+            eeo_screen_hits=screen.hits,
             prompt_version=self._prompt_version,
             sdk_set_version=self._sdk_set_version,
         )

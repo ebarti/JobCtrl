@@ -39,6 +39,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis_eeo_screen import EeoScreenHit
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 
 # Bump whenever the analysis system prompt changes so stale cached analyses are
@@ -254,8 +255,16 @@ class EmployerAnalysis:
     Generation-versioned like :class:`MaterialsSet` (D-13): a forced/failed
     re-analyze supersedes but never destroys the last accepted analysis. The
     record carries the reconciled canonical :class:`JobAnalysis` plus the full
-    ensemble audit trail (every per-model draft, the per-leg failures, and the
-    agreement signal) so the inspector can later prove every displayed claim.
+    ensemble audit trail (every per-model draft, the per-leg failures, the
+    agreement signal, and any EEO red-flag screen hits) so the inspector can
+    later prove every displayed claim.
+
+    ``eeo_screen_hits`` records each requirement/keyword the deterministic EEO
+    red-flag screen dropped before persistence (AI-SPEC §6 Dimension 9). It is
+    persisted as canonical audit data (the ``eeo_screen_json`` column) and
+    round-trips on load; surfacing it in the projection read model + the TS
+    inspector lands with the Phase 5 inspector UI, so ``to_read_model()`` does
+    NOT yet emit it (keeping the cross-runtime projection parity intact).
     """
 
     tenant_id: TenantId
@@ -269,6 +278,10 @@ class EmployerAnalysis:
     failures: tuple[AnalysisFailure, ...]
     agreement: AnalysisAgreement
     legs_attempted: int
+    # EEO red-flag screen audit notes (AI-SPEC §6 Dimension 9). Each entry is one
+    # requirement/keyword dropped because it matched a protected-attribute signal;
+    # empty is the clean case. Persisted as canonical audit data (never a blob).
+    eeo_screen_hits: tuple[EeoScreenHit, ...] = ()
     created_at: str = field(default_factory=_utc_now)
 
     def __post_init__(self) -> None:
@@ -314,6 +327,7 @@ class EmployerAnalysis:
         failures: tuple[AnalysisFailure, ...],
         agreement: AnalysisAgreement,
         legs_attempted: int,
+        eeo_screen_hits: tuple[EeoScreenHit, ...] = (),
         prompt_version: str = PROMPT_VERSION,
         sdk_set_version: str = SDK_SET_VERSION,
         created_at: str | None = None,
@@ -330,6 +344,7 @@ class EmployerAnalysis:
             failures=failures,
             agreement=agreement,
             legs_attempted=legs_attempted,
+            eeo_screen_hits=eeo_screen_hits,
             created_at=created_at or _utc_now(),
         )
 
@@ -403,6 +418,7 @@ __all__ = [
     "JobAnalysisDraft",
     "AnalysisFailure",
     "AnalysisAgreement",
+    "EeoScreenHit",
     "EmployerAnalysis",
     "EnsembleOutcome",
     "EnsembleError",

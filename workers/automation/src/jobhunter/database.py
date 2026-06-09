@@ -1465,6 +1465,7 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
             requirements_json     TEXT NOT NULL DEFAULT '[]',
             keywords_json         TEXT NOT NULL DEFAULT '[]',
             agreement_json        TEXT NOT NULL DEFAULT '{}',
+            eeo_screen_json       TEXT NOT NULL DEFAULT '[]',
             legs_attempted        INTEGER NOT NULL,
             legs_succeeded        INTEGER NOT NULL,
             created_at            TEXT NOT NULL,
@@ -1473,6 +1474,16 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
         )
         """
     )
+    # Audit column for the EEO red-flag screen (AI-SPEC §6 Dimension 9). Added
+    # idempotently so a DB created before this column gains it without a rebuild.
+    _analysis_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(job_employer_analysis)").fetchall()
+    }
+    if "eeo_screen_json" not in _analysis_cols:
+        conn.execute(
+            "ALTER TABLE job_employer_analysis "
+            "ADD COLUMN eeo_screen_json TEXT NOT NULL DEFAULT '[]'"
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_employer_analysis_sub_analyses (

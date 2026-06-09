@@ -216,6 +216,62 @@ class TestAnalyzeJobUseCase:
             await use_case.execute_async(job=JOB, tenant_id=LOCAL_TENANT)
         assert repo.saved == []  # nothing persisted on grounding failure
 
+    async def test_eeo_red_flag_is_dropped_before_persist_and_recorded(self) -> None:
+        # The runner returns a canonical that carries a protected-class
+        # requirement whose evidence span IS grounded in the JD — so only the
+        # EEO screen (not grounding) can stop it reaching the persisted record.
+        job = {
+            "url": "https://example.com/jobs/grad",
+            "title": "Engineer",
+            "full_description": "Requires 8+ years in Go. Seeking a recent grad.",
+        }
+        canonical = JobAnalysis(
+            role_framing="Own the platform.",
+            inferred_seniority="staff",
+            ideal_candidate_narrative="A distributed-systems owner.",
+            requirements=[
+                Requirement(
+                    id="r1",
+                    text="8+ years in Go",
+                    tier="must_have",
+                    weight=0.95,
+                    evidence_span="8+ years in Go",
+                ),
+                Requirement(
+                    id="r2",
+                    text="Seeking a recent grad",
+                    tier="nice_to_have",
+                    weight=0.2,
+                    evidence_span="Seeking a recent grad",
+                ),
+            ],
+            keywords=[ReasonedKeyword(keyword="Go", evidence_span="8+ years in Go", requirement_ref="r1")],
+        )
+        outcome = EnsembleOutcome(
+            canonical=canonical,
+            drafts=(JobAnalysisDraft(model_id="m0", **canonical.model_dump()),),
+            failures=(),
+            agreement=AnalysisAgreement(score=1.0),
+            legs_attempted=1,
+        )
+        repo = _InMemoryRepo()
+        runner, _ = _runner_returning(outcome)
+        use_case = _use_case(repo=repo, runner=runner)
+
+        result = await use_case.execute_async(job=job, tenant_id=LOCAL_TENANT)
+
+        # The protected-class requirement was dropped from the persisted canonical.
+        persisted = result.analysis
+        assert [req.id for req in persisted.canonical.requirements] == ["r1"]
+        # ...and the drop is recorded as an audit note on the record.
+        assert len(persisted.eeo_screen_hits) == 1
+        hit = persisted.eeo_screen_hits[0]
+        assert hit.kind == "requirement"
+        assert hit.ref_id == "r2"
+        assert hit.category == "age"
+        # The same record is what the repository persisted.
+        assert repo.saved[0].eeo_screen_hits == persisted.eeo_screen_hits
+
 
 def test_build_jd_snapshot_is_title_plus_full_description() -> None:
     snapshot = build_jd_snapshot(JOB)

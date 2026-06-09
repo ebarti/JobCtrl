@@ -22,6 +22,7 @@ from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.materials.analysis import (
     AnalysisAgreement,
     AnalysisFailure,
+    EeoScreenHit,
     EmployerAnalysis,
     JobAnalysis,
     JobAnalysisDraft,
@@ -108,8 +109,9 @@ class SqliteEmployerAnalysisRepository:
                 job_url, generation, tenant_id, snapshot_hash, prompt_version,
                 sdk_set_version, cache_key, role_framing, inferred_seniority,
                 ideal_candidate_narrative, requirements_json, keywords_json,
-                agreement_json, legs_attempted, legs_succeeded, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                agreement_json, eeo_screen_json, legs_attempted, legs_succeeded,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_url, generation) DO UPDATE SET
                 snapshot_hash             = excluded.snapshot_hash,
                 prompt_version            = excluded.prompt_version,
@@ -121,6 +123,7 @@ class SqliteEmployerAnalysisRepository:
                 requirements_json         = excluded.requirements_json,
                 keywords_json             = excluded.keywords_json,
                 agreement_json            = excluded.agreement_json,
+                eeo_screen_json           = excluded.eeo_screen_json,
                 legs_attempted            = excluded.legs_attempted,
                 legs_succeeded            = excluded.legs_succeeded,
                 created_at                = excluded.created_at
@@ -139,6 +142,9 @@ class SqliteEmployerAnalysisRepository:
                 json.dumps([req.model_dump() for req in canonical.requirements], ensure_ascii=False),
                 json.dumps([kw.model_dump() for kw in canonical.keywords], ensure_ascii=False),
                 json.dumps(analysis.agreement.to_dict(), ensure_ascii=False),
+                json.dumps(
+                    [hit.to_dict() for hit in analysis.eeo_screen_hits], ensure_ascii=False
+                ),
                 analysis.legs_attempted,
                 analysis.legs_succeeded,
                 analysis.created_at,
@@ -238,6 +244,10 @@ class SqliteEmployerAnalysisRepository:
             )
             for f in failure_rows
         )
+        eeo_screen_hits = tuple(
+            EeoScreenHit.from_dict(item)
+            for item in _json_list(_row_get(row, "eeo_screen_json"))
+        )
         return EmployerAnalysis(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -250,6 +260,7 @@ class SqliteEmployerAnalysisRepository:
             failures=failures,
             agreement=AnalysisAgreement.from_dict(_json_or_empty(row["agreement_json"])),
             legs_attempted=int(row["legs_attempted"]),
+            eeo_screen_hits=eeo_screen_hits,
             created_at=row["created_at"],
         )
 
@@ -259,6 +270,18 @@ def _json_or_empty(value: Any) -> dict[str, Any]:
         return {}
     parsed = json.loads(value)
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(value: Any) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    parsed = json.loads(value)
+    return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+
+def _row_get(row: sqlite3.Row, key: str) -> Any:
+    """Read a column from a sqlite3.Row, tolerating its absence on older rows."""
+    return row[key] if key in row.keys() else None
 
 
 __all__ = ["SqliteEmployerAnalysisRepository"]
