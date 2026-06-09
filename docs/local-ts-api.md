@@ -38,30 +38,37 @@ local artifact projection; it returns `404` for missing metadata/files and
 `415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
 route still delegates to the local OS opener.
 Tailored resume artifact detail responses include safe tailoring evidence only:
-keyword coverage counts for actionable high-signal terms derived from the
-material audit and job scoring keywords, evidence and quality summaries,
+keyword coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,
 warning-repair status, annotated source-vs-tailored resume changes, high-fit
 persona prompt/response audit, and model selection metadata. Persona warning
 cards expose an expandable audit trail for the stored LLM request and structured
-response behind that judgment. Keyword payloads include whether resume keyword
-coverage was recorded, so callers do not have to infer missing resume matches
-from target job keywords alone. They do not expose raw generator prompts, raw
-profile payloads, or raw job text; annotation and persona prompt snippets are
-bounded excerpts of the selected source, tailored resume, and adversarial-review
-request.
+response behind that judgment. The `keywords` summary block (`planned` /
+`covered` / `missing` + counts and `coverageRecorded`) is **derived from the
+canonical coverage audit** (see below), not recomputed from the resume file or
+the job description at read time; when the generation recorded no coverage the
+block is honestly empty with `coverageRecorded: false`. Responses do not expose
+raw generator prompts, raw profile payloads, or raw job text; annotation and
+persona prompt snippets are bounded excerpts of the selected source, tailored
+resume, and adversarial-review request.
 
-The tailoring explanation also carries two canonical generation-time audit
-fields served exclusively from projection rows (never recomputed at read time):
-`coverageAudit` is the honest keyword coverage (covered + missing) computed
-against the actual rendered (voiced) resume text — a keyword counts as covered
-only when it appears in a provenance-backed grounded bullet, and `coveredBy`
-records which bullet demonstrates each covered keyword. `voicePass` is the
-voice-pass audit (whether the de-buzzword/vary-structure pass ran and was
-accepted, the model, the prompt version, and the deterministic buzzword-density /
-structural-variety proxy delta that justified it). Both are `null` for a
-generation that predates the voice/coverage backend, and a PDF artifact resolves
-them from the sibling tailored-resume row of the same generation.
+The tailoring explanation is served exclusively from canonical projection rows
+(AUDIT-01). The read model parses each artifact's own `metadata_json` projection
+column for the non-coverage audit fields and attaches the per-bullet provenance,
+coverage, and voice from their canonical projection columns. There is no
+sibling-file fallback (an artifact whose own audit metadata is a shell is
+honestly flagged incomplete rather than synthesised from a neighbouring artifact
+or a sibling `.txt` file) and no TypeScript-side keyword recompute. The two
+canonical generation-time audit fields are: `coverageAudit`, the honest keyword
+coverage (covered + missing) computed against the actual rendered (voiced) resume
+text — a keyword counts as covered only when it appears in a provenance-backed
+grounded bullet, and `coveredBy` records which bullet demonstrates each covered
+keyword; and `voicePass`, the voice-pass audit (whether the de-buzzword/vary-
+structure pass ran and was accepted, the model, the prompt version, and the
+deterministic buzzword-density / structural-variety proxy delta that justified
+it). Both are `null` for a generation that recorded none, and a PDF artifact
+resolves them (and the derived `keywords` block) from the sibling tailored-resume
+projection row of the same generation.
 
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,

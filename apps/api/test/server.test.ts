@@ -2081,6 +2081,31 @@ describe("local TypeScript API", () => {
         parsed_json: { must: "not leak" },
       },
     });
+    // Phase 4: the keyword coverage block is served from the canonical coverage
+    // audit row (computed against rendered text at generation time), NOT recomputed
+    // from the resume file / job description at read time.
+    insertBulletProvenanceRow(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-evidence",
+      artifactId: "artifact-tailoring-evidence",
+      bulletId: "experience:acme_swe#0",
+      section: "experience",
+      sourceId: "acme_swe",
+      evidenceIds: ["ev_latency"],
+      requirementIds: ["req_platform"],
+      matchedKeywords: ["platform reliability"],
+      transformType: "reframe",
+      control: "rephrase_allowed",
+      rationale: "Reframed toward platform reliability.",
+      generatedText: "Owned platform reliability across the fleet.",
+      coverage: {
+        computed_against: "rendered_text",
+        planned: ["platform reliability", "kubernetes", "observability"],
+        covered: ["platform reliability"],
+        missing: ["kubernetes", "observability"],
+        covered_by: { "platform reliability": "experience:acme_swe#0" },
+        counts: { planned: 3, covered: 1, missing: 2 },
+      },
+    });
     seedDb.close();
 
     const app = buildApp(options);
@@ -2101,52 +2126,24 @@ describe("local TypeScript API", () => {
         targetSeniority: "senior",
         claimMode: "evidence_reframing",
         validationMode: "normal",
+        // Phase 4: derived from the canonical coverage audit row, NOT recomputed.
         keywords: {
           coverageRecorded: true,
-          planned: [
-            "platform reliability",
-            "typescript",
-            "Platform Engineering",
-            "Kubernetes",
-            "AWS",
-            "GCP",
-            "CI/CD",
-            "Infrastructure as Code",
-            "Java",
-            "Node.js",
-            "Observability",
-            "Cost Optimization",
-            "Developer Productivity",
-            "Scalability",
-          ],
+          planned: ["platform reliability", "kubernetes", "observability"],
           covered: ["platform reliability"],
-          missing: [
-            "typescript",
-            "Platform Engineering",
-            "Kubernetes",
-            "AWS",
-            "GCP",
-            "CI/CD",
-            "Infrastructure as Code",
-            "Java",
-            "Node.js",
-            "Observability",
-            "Cost Optimization",
-            "Developer Productivity",
-            "Scalability",
-          ],
+          missing: ["kubernetes", "observability"],
           filtered: {
             planned: [],
             covered: [],
             missing: [],
           },
           counts: {
-            planned: 14,
+            planned: 3,
             covered: 1,
-            missing: 13,
-            displayedPlanned: 14,
+            missing: 2,
+            displayedPlanned: 3,
             displayedCovered: 1,
-            displayedMissing: 13,
+            displayedMissing: 2,
             filteredPlanned: 0,
             filteredCovered: 0,
             filteredMissing: 0,
@@ -2158,7 +2155,10 @@ describe("local TypeScript API", () => {
           verifiedMetricCount: 2,
         },
         quality: {
-          warnings: ["Low keyword coverage: covered 1/14 target keywords"],
+          // Phase 4: quality messages pass through verbatim from canonical
+          // metadata; the read model no longer synthesises coverage messages.
+          warnings: ["Low keyword coverage"],
+          notes: ["Keyword coverage: 1/2"],
           metricClaims: ["35%"],
         },
         judge: {
@@ -2241,15 +2241,13 @@ describe("local TypeScript API", () => {
       },
     });
     expect(JSON.stringify(response.json())).not.toContain("must not leak");
-    expect(response.json().tailoringExplanation.keywords.covered).not.toContain("join");
-    expect(response.json().tailoringExplanation.keywords.missing).not.toContain("join");
+    // The legacy ``keyword_coverage`` junk in metadata_json (head/2019/join/...) is
+    // never read: the keyword block now mirrors the canonical coverage row exactly.
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("head");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("2019");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("join");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("innovator");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("smile");
-    expect(JSON.stringify(response.json().tailoringExplanation.quality)).toContain("covered 1/14");
-    expect(JSON.stringify(response.json().tailoringExplanation.quality)).not.toContain("covered 6/32");
     expect(JSON.stringify(response.json())).not.toContain("5teams");
     expect(JSON.stringify(response.json())).not.toContain("2service");
     expect(JSON.stringify(response.json())).not.toContain("15engineers");
@@ -2257,13 +2255,19 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("computes resume keyword coverage when saved keyword coverage was not recorded", async () => {
-    const resumePath = path.join(tempDir, "tailoring-no-coverage-resume.txt");
+  it("derives the keyword block from the canonical coverage audit row, not the resume file", async () => {
+    // Phase 4 (AUDIT-01 / GROUND-06): the keyword block is served from the
+    // canonical coverage audit row (computed against rendered text at generation
+    // time). A resume FILE whose text happens to mention extra job keywords does
+    // NOT change the block — there is no read-time recompute against the file.
+    const resumePath = path.join(tempDir, "tailoring-canonical-coverage-resume.txt");
+    // The file mentions AWS/GCP/Java/Observability, but the canonical coverage
+    // recorded a different (smaller) set — the canonical set wins.
     fs.writeFileSync(resumePath, "tailored resume with AWS/GCP, Java, and observability");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
     insertJob(seedDb, {
-      url: "https://example.com/jobs/tailoring-no-coverage",
+      url: "https://example.com/jobs/tailoring-canonical-coverage",
       title: "Platform Engineering Lead",
       site: "EvidenceCo",
       fitScore: 9,
@@ -2271,23 +2275,36 @@ describe("local TypeScript API", () => {
       fullDescription:
         "Platform Engineering Lead with AWS, GCP, Java, Observability, Infrastructure as Code, and multi-region context.",
     });
-    insertScore(seedDb, "https://example.com/jobs/tailoring-no-coverage", 1, 9, {
+    insertScore(seedDb, "https://example.com/jobs/tailoring-canonical-coverage", 1, 9, {
       keywords: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code", "Multi-region"],
     });
     insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-no-coverage",
-      artifactId: "artifact-tailoring-no-coverage",
+      jobUrl: "https://example.com/jobs/tailoring-canonical-coverage",
+      artifactId: "artifact-tailoring-canonical-coverage",
       artifactType: "tailored_resume",
       status: "approved",
       path: resumePath,
-      metadata: {
-        ...completeTailoringAuditMetadata(),
-        quality_checks: {
-          passed: true,
-          errors: ["Keyword coverage extremely empty: no target job keywords covered"],
-          warnings: [],
-          notes: [],
-        },
+      metadata: completeTailoringAuditMetadata(),
+    });
+    insertBulletProvenanceRow(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-canonical-coverage",
+      artifactId: "artifact-tailoring-canonical-coverage",
+      bulletId: "experience:platform#0",
+      section: "experience",
+      sourceId: "platform",
+      evidenceIds: ["ev_platform"],
+      requirementIds: ["req_iac"],
+      matchedKeywords: ["infrastructure as code"],
+      transformType: "reframe",
+      control: "rephrase_allowed",
+      generatedText: "Built infrastructure as code for the platform.",
+      coverage: {
+        computed_against: "rendered_text",
+        planned: ["infrastructure as code", "platform engineering"],
+        covered: ["infrastructure as code"],
+        missing: ["platform engineering"],
+        covered_by: { "infrastructure as code": "experience:platform#0" },
+        counts: { planned: 2, covered: 1, missing: 1 },
       },
     });
     seedDb.close();
@@ -2295,58 +2312,69 @@ describe("local TypeScript API", () => {
     const app = buildApp(options);
     const response = await app.inject({
       method: "GET",
-      url: "/v1/artifacts/artifact-tailoring-no-coverage",
+      url: "/v1/artifacts/artifact-tailoring-canonical-coverage",
     });
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
       ok: true,
       tailoringExplanation: {
+        // Exactly the canonical coverage row — NOT the file's AWS/GCP/Java text.
         keywords: {
           coverageRecorded: true,
-          planned: ["AWS", "GCP", "Java", "Observability", "Infrastructure as Code", "Platform Engineering"],
-          covered: ["AWS", "GCP", "Java", "Observability"],
-          missing: ["Infrastructure as Code", "Platform Engineering"],
+          planned: ["infrastructure as code", "platform engineering"],
+          covered: ["infrastructure as code"],
+          missing: ["platform engineering"],
           counts: {
-            planned: 6,
-            covered: 4,
-            missing: 2,
+            planned: 2,
+            covered: 1,
+            missing: 1,
           },
         },
-        quality: {
-          errors: [],
-          warnings: [],
-          notes: ["Keyword coverage: 4/6"],
+        coverageAudit: {
+          computedAgainst: "rendered_text",
+          covered: ["infrastructure as code"],
+          missing: ["platform engineering"],
         },
       },
     });
+    // The file text (aws/gcp/java/observability) does NOT leak into the block.
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("aws");
+    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("gcp");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("Multi-region");
 
     await app.close();
   });
 
-  it("grounds audit keywords in job text instead of score-only inferred terms", async () => {
-    const resumePath = path.join(tempDir, "tailoring-job-text-keywords-resume.txt");
-    fs.writeFileSync(resumePath, "Resume with CI/CD developer platform delivery.");
+  it("serves an empty keyword block when no canonical coverage exists (no read-time recompute)", async () => {
+    // Phase 4 (AUDIT-01): without a canonical coverage row, the keyword block is
+    // honestly empty (coverageRecorded:false). The old code would have recomputed
+    // coverage from the resume FILE + job description — that path is deleted.
+    const resumePath = path.join(tempDir, "tailoring-no-canonical-coverage-resume.txt");
+    // The file + JD are FULL of recoverable keywords — proving the absence of any
+    // read-time recompute (none of them appear in the served block).
+    fs.writeFileSync(resumePath, "Resume with AWS, CI/CD, Developer Platform, and Observability delivery.");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
     insertJob(seedDb, {
-      url: "https://example.com/jobs/tailoring-job-text-keywords",
+      url: "https://example.com/jobs/tailoring-no-canonical-coverage",
       title: "Platform Director",
       site: "EvidenceCo",
       fitScore: 9,
       tailoredPath: resumePath,
-      fullDescription: "We need AWS, CI/CD, Developer Platform delivery, and multi-region operating context.",
+      fullDescription: "We need AWS, CI/CD, Developer Platform delivery, and Observability.",
     });
-    insertScore(seedDb, "https://example.com/jobs/tailoring-job-text-keywords", 1, 9, {
-      keywords: ["Developer Platform", "CI/CD", "Multi-region"],
+    insertScore(seedDb, "https://example.com/jobs/tailoring-no-canonical-coverage", 1, 9, {
+      keywords: ["Developer Platform", "CI/CD", "AWS", "Observability"],
     });
     insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-job-text-keywords",
-      artifactId: "artifact-tailoring-job-text-keywords",
+      jobUrl: "https://example.com/jobs/tailoring-no-canonical-coverage",
+      artifactId: "artifact-tailoring-no-canonical-coverage",
       artifactType: "tailored_resume",
       status: "approved",
       path: resumePath,
+      // Complete audit metadata so the explanation renders — but NO canonical
+      // coverage row and NO coverage in metadata.
       metadata: completeTailoringAuditMetadata(),
     });
     seedDb.close();
@@ -2354,27 +2382,26 @@ describe("local TypeScript API", () => {
     const app = buildApp(options);
     const response = await app.inject({
       method: "GET",
-      url: "/v1/artifacts/artifact-tailoring-job-text-keywords",
+      url: "/v1/artifacts/artifact-tailoring-no-canonical-coverage",
     });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(response.json()).toMatchObject({
-      ok: true,
-      tailoringExplanation: {
-        keywords: {
-          coverageRecorded: true,
-          planned: ["Developer Platform", "CI/CD", "AWS"],
-          covered: ["Developer Platform", "CI/CD"],
-          missing: ["AWS"],
-          counts: {
-            planned: 3,
-            covered: 2,
-            missing: 1,
-          },
-        },
-      },
+    const explanation = response.json().tailoringExplanation;
+    expect(explanation).not.toBeNull();
+    // Honest empty — NOT recomputed from the file/JD.
+    expect(explanation.keywords).toMatchObject({
+      coverageRecorded: false,
+      planned: [],
+      covered: [],
+      missing: [],
+      counts: { planned: 0, covered: 0, missing: 0 },
     });
-    expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("Multi-region");
+    expect(explanation.coverageAudit).toBeNull();
+    // None of the recoverable file/JD keywords leak into the served block.
+    expect(JSON.stringify(explanation.keywords)).not.toContain("AWS");
+    expect(JSON.stringify(explanation.keywords)).not.toContain("CI/CD");
+    expect(JSON.stringify(explanation.keywords)).not.toContain("Developer Platform");
+    expect(JSON.stringify(explanation.keywords)).not.toContain("Observability");
 
     await app.close();
   });
@@ -2395,6 +2422,9 @@ describe("local TypeScript API", () => {
     insertScore(seedDb, "https://example.com/jobs/tailoring-incomplete-audit", 1, 9, {
       keywords: ["AWS", "CI/CD", "Observability", "Infrastructure as Code"],
     });
+    // A shell metadata blob (no audit fields) plus a canonical coverage row: the
+    // explanation must STILL flag the incomplete audit metadata, and its keyword
+    // block reflects the canonical coverage (not a read-time recompute).
     insertMaterialsGeneration(seedDb, {
       jobUrl: "https://example.com/jobs/tailoring-incomplete-audit",
       artifactId: "artifact-tailoring-incomplete-audit",
@@ -2407,6 +2437,27 @@ describe("local TypeScript API", () => {
           warnings: [],
           notes: [],
         },
+      },
+    });
+    insertBulletProvenanceRow(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-incomplete-audit",
+      artifactId: "artifact-tailoring-incomplete-audit",
+      bulletId: "experience:aws#0",
+      section: "experience",
+      sourceId: "aws",
+      evidenceIds: ["ev_aws"],
+      requirementIds: ["req_aws"],
+      matchedKeywords: ["aws"],
+      transformType: "reframe",
+      control: "rephrase_allowed",
+      generatedText: "Ran AWS and CI/CD delivery.",
+      coverage: {
+        computed_against: "rendered_text",
+        planned: ["aws", "ci/cd", "observability"],
+        covered: ["aws", "ci/cd"],
+        missing: ["observability"],
+        covered_by: { aws: "experience:aws#0", "ci/cd": "experience:aws#0" },
+        counts: { planned: 3, covered: 2, missing: 1 },
       },
     });
     seedDb.close();
@@ -2423,9 +2474,9 @@ describe("local TypeScript API", () => {
       tailoringExplanation: {
         keywords: {
           coverageRecorded: true,
-          planned: ["AWS", "CI/CD", "Observability", "Infrastructure as Code", "Platform Engineering"],
-          covered: ["AWS", "CI/CD"],
-          missing: ["Observability", "Infrastructure as Code", "Platform Engineering"],
+          planned: ["aws", "ci/cd", "observability"],
+          covered: ["aws", "ci/cd"],
+          missing: ["observability"],
         },
       },
     });
@@ -2438,35 +2489,41 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("uses sibling tailored resume audit metadata for PDF artifacts with shell metadata", async () => {
-    const resumePath = path.join(tempDir, "tailoring-pdf-sibling-resume.txt");
-    const pdfPath = path.join(tempDir, "tailoring-pdf-sibling-resume.pdf");
+  it("does not synthesize a PDF artifact's audit from a sibling artifact's metadata", async () => {
+    // Phase 4 (AUDIT-01): the sibling-FILE / sibling-metadata fallback is deleted.
+    // A PDF artifact whose own metadata is a shell renders ONLY its own (incomplete)
+    // metadata — it does NOT borrow the sibling text resume's complete audit blob.
+    const resumePath = path.join(tempDir, "tailoring-pdf-no-synth-resume.txt");
+    const pdfPath = path.join(tempDir, "tailoring-pdf-no-synth-resume.pdf");
     fs.writeFileSync(resumePath, "Executive platform resume with AWS and CI/CD.");
     fs.writeFileSync(pdfPath, "fake pdf");
     const seedDb = new Database(options.dbPath);
     createMaterialsTables(seedDb);
     insertJob(seedDb, {
-      url: "https://example.com/jobs/tailoring-pdf-sibling",
+      url: "https://example.com/jobs/tailoring-pdf-no-synth",
       title: "Platform Director",
       site: "EvidenceCo",
       fitScore: 9,
       tailoredPath: resumePath,
       fullDescription: "Platform Director role requiring AWS, CI/CD, and Platform Engineering.",
     });
-    insertScore(seedDb, "https://example.com/jobs/tailoring-pdf-sibling", 1, 9, {
+    insertScore(seedDb, "https://example.com/jobs/tailoring-pdf-no-synth", 1, 9, {
       keywords: ["AWS", "CI/CD", "Platform Engineering"],
     });
+    // The sibling text resume carries a COMPLETE audit blob...
     insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-pdf-sibling",
-      artifactId: "artifact-tailoring-pdf-sibling-text",
+      jobUrl: "https://example.com/jobs/tailoring-pdf-no-synth",
+      artifactId: "artifact-tailoring-pdf-no-synth-text",
       artifactType: "tailored_resume",
       status: "approved",
       path: resumePath,
       metadata: completeTailoringAuditMetadata(),
     });
+    // ...but the PDF's own metadata is a shell. Its explanation must reflect ONLY
+    // the shell (so it is honestly flagged incomplete), never the sibling's audit.
     insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-pdf-sibling",
-      artifactId: "artifact-tailoring-pdf-sibling-pdf",
+      jobUrl: "https://example.com/jobs/tailoring-pdf-no-synth",
+      artifactId: "artifact-tailoring-pdf-no-synth-pdf",
       artifactType: "resume_pdf",
       status: "approved",
       path: pdfPath,
@@ -2483,23 +2540,18 @@ describe("local TypeScript API", () => {
     const app = buildApp(options);
     const response = await app.inject({
       method: "GET",
-      url: "/v1/artifacts/artifact-tailoring-pdf-sibling-pdf",
+      url: "/v1/artifacts/artifact-tailoring-pdf-no-synth-pdf",
     });
 
     expect(response.statusCode, response.body).toBe(200);
-    expect(response.json()).toMatchObject({
-      ok: true,
-      tailoringExplanation: {
-        targetSeniority: "executive",
-        claimMode: "evidence_reframing",
-        validationMode: "normal",
-        models: {
-          selectedModel: "generator-a",
-          judgeModel: "judge-a",
-        },
-      },
-    });
-    expect(JSON.stringify(response.json().tailoringExplanation.quality.errors)).not.toContain(
+    const explanation = response.json().tailoringExplanation;
+    // The PDF does NOT borrow the sibling's complete audit fields.
+    expect(explanation.targetSeniority).toBeNull();
+    expect(explanation.claimMode).toBeNull();
+    expect(explanation.models.selectedModel).toBeNull();
+    expect(explanation.models.judgeModel).toBeNull();
+    // It is honestly flagged as incomplete instead of synthesised-from-sibling.
+    expect(JSON.stringify(explanation.quality.errors)).toContain(
       "Tailoring audit metadata incomplete",
     );
 
@@ -5266,7 +5318,84 @@ function createMaterialsTables(db: Database.Database): void {
       superseded_at TEXT,
       PRIMARY KEY (job_url, generation, artifact_type)
     );
+    CREATE TABLE IF NOT EXISTS job_bullet_provenance (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      bullet_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      artifact_id TEXT NOT NULL,
+      section TEXT NOT NULL,
+      source_id TEXT,
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+      transform_type TEXT NOT NULL,
+      control TEXT NOT NULL,
+      rationale TEXT NOT NULL DEFAULT '',
+      generated_text TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      coverage_json TEXT,
+      voice_json TEXT,
+      PRIMARY KEY (job_url, generation, bullet_id)
+    );
   `);
+}
+
+/**
+ * Seed a canonical per-bullet provenance row exactly as the Python repository
+ * writes it (the projection builder reads this table to materialise the
+ * ``bullet_provenance_json`` / ``coverage_audit_json`` / ``voice_pass_json``
+ * projection columns the read model serves). The set-level ``coverage`` / ``voice``
+ * are denormalised onto every row of a generation, mirroring the Python repo.
+ */
+function insertBulletProvenanceRow(
+  db: Database.Database,
+  row: {
+    jobUrl: string;
+    artifactId: string;
+    bulletId: string;
+    section: string;
+    sourceId?: string | null;
+    evidenceIds?: string[];
+    requirementIds?: string[];
+    matchedKeywords?: string[];
+    transformType: string;
+    control: string;
+    rationale?: string;
+    generatedText: string;
+    position?: number;
+    coverage?: Record<string, unknown> | null;
+    voice?: Record<string, unknown> | null;
+    generation?: number;
+  },
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO job_bullet_provenance (
+       job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+       evidence_ids_json, requirement_ids_json, matched_keywords_json,
+       transform_type, control, rationale, generated_text, position, created_at,
+       coverage_json, voice_json
+     ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.jobUrl,
+    row.generation ?? 1,
+    row.bulletId,
+    row.artifactId,
+    row.section,
+    row.sourceId ?? null,
+    JSON.stringify(row.evidenceIds ?? []),
+    JSON.stringify(row.requirementIds ?? []),
+    JSON.stringify(row.matchedKeywords ?? []),
+    row.transformType,
+    row.control,
+    row.rationale ?? "",
+    row.generatedText,
+    row.position ?? 0,
+    "2026-05-26T10:05:00+00:00",
+    row.coverage ? JSON.stringify(row.coverage) : null,
+    row.voice ? JSON.stringify(row.voice) : null,
+  );
 }
 
 function completeTailoringAuditMetadata(): Record<string, unknown> {

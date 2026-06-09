@@ -305,6 +305,43 @@ against the voiced text.
   cross-runtime parity test covers both. This milestone lands the backend,
   contracts, and read path; the inspector UI is built in a later milestone.
 
+## Read-Model Cleanup (rip-and-replace, AUDIT-01 / AUDIT-02)
+
+With the canonical analysis, provenance, and coverage rows landed (above), the
+read model serves audit data **only** from canonical projection rows. The two
+divergent legacy read paths in `read-model.ts` are deleted (no compatibility
+shim — single-user rip-and-replace):
+
+- **Sibling-file fallback removed.** `tailoringExplanationForArtifact` previously
+  fell back to a sibling artifact's `metadata_json` (and, for coverage, a sibling
+  `.txt` file read from disk) when an artifact's own metadata was a shell. That
+  fallback is gone: each artifact's tailoring explanation is parsed from its own
+  `metadata_json` projection column for the non-coverage audit fields, and the
+  per-bullet provenance, coverage, and voice come from their canonical projection
+  columns (a PDF still resolves those from the sibling tailored-resume projection
+  **row**, which is canonical, not a file). An artifact whose own audit metadata
+  is a shell is honestly flagged incomplete rather than synthesised from a
+  neighbour — closing the "synthesized-from-sibling-files artifacts" risk.
+- **TypeScript-side keyword recompute removed.** The `keywords` summary block
+  (`planned` / `covered` / `missing` + counts) is now **derived from the canonical
+  coverage audit** (`coverage_audit_json`, computed at generation time against the
+  rendered voiced text), not recomputed in TypeScript from the resume file and the
+  job description at read time. When a generation recorded no coverage the block is
+  honestly empty (`coverageRecorded: false`); coverage is never inferred from the
+  job description. The read-time keyword-extraction machinery (job-keyword
+  extraction, resume-text matching, candidate pruning) is deleted.
+- **Genuine cross-runtime drift guard.** The Phase 1–3 parity tests asserted the
+  read shape on the TS side from hand-seeded JSON. A real TS↔Python contract test
+  now drives both runtimes from one shared fixture
+  (`packages/domain-types/test/fixtures/audit_projection_parity.json`): the Python
+  builder test (`workers/automation/tests/test_audit_projection_parity.py`) and
+  the TS builder test (`apps/api/test/audit-projection-parity.test.ts`) seed the
+  same canonical `job_employer_analysis` + `job_bullet_provenance` rows, run their
+  **own** projection builder, and assert the resulting projection-column JSON
+  equals the fixture's expectation key-for-key. A schema/serialisation drift in
+  either builder fails its test — closing the "projection duplication TS↔Python"
+  risk for the audit tables.
+
 ## Apply Review And Outcome Feedback
 
 The Apply Automation context now has a local feedback foundation in the

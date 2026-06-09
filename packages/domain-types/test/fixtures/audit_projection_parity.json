@@ -1,0 +1,232 @@
+{
+  "description": "Shared TS<->Python cross-runtime projection parity fixture for the Phase 4 audit tables (AUDIT-02). Both the Python builder test (workers/automation/tests/test_audit_projection_parity.py) and the TS builder test (apps/api/test/audit-projection-parity.test.ts) seed the SAME canonical rows, run their OWN projection builder, and assert the resulting projection-column JSON equals `expected` key-for-key. Because both builders are checked against one expectation, a schema/serialisation drift in either runtime fails its test. `rows` are the canonical SQL rows exactly as the Python repositories write them; `expected` is the projection-column JSON both builders own (snake_case, the read-model serves it verbatim for employer analysis and converts provenance/coverage/voice to camelCase DTOs).",
+  "job": {
+    "url": "https://example.com/jobs/parity-developer-platform",
+    "title": "Senior Platform Engineer",
+    "site": "ParityCo",
+    "generation": 2,
+    "createdAt": "2026-06-08T12:00:00+00:00"
+  },
+  "rows": {
+    "jobEmployerAnalysis": [
+      {
+        "generation": 1,
+        "snapshot_hash": "hash-old",
+        "prompt_version": "employer-analysis-v1",
+        "sdk_set_version": "claude+codex-v1",
+        "cache_key": "hash-old:employer-analysis-v1:claude+codex-v1",
+        "role_framing": "Old framing.",
+        "inferred_seniority": "mid",
+        "ideal_candidate_narrative": "Old narrative.",
+        "requirements_json": "[]",
+        "keywords_json": "[]",
+        "agreement_json": "{\"score\": 0.5, \"flagged_requirements\": [], \"flagged_keywords\": []}",
+        "legs_attempted": 2,
+        "legs_succeeded": 2,
+        "created_at": "2026-06-08T11:00:00+00:00"
+      },
+      {
+        "generation": 2,
+        "snapshot_hash": "hash-new",
+        "prompt_version": "employer-analysis-v1",
+        "sdk_set_version": "claude+codex-v1",
+        "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+        "role_framing": "Own the developer platform.",
+        "inferred_seniority": "senior",
+        "ideal_candidate_narrative": "A hands-on platform owner.",
+        "requirements_json": "[{\"id\": \"r1\", \"text\": \"5+ years platform engineering\", \"tier\": \"must_have\", \"weight\": 0.9, \"evidence_span\": \"5+ years building developer platforms\"}]",
+        "keywords_json": "[{\"keyword\": \"developer platform\", \"evidence_span\": \"building developer platforms\", \"requirement_ref\": \"r1\", \"rationale\": \"\", \"is_orphan\": false}]",
+        "agreement_json": "{\"score\": 0.8, \"flagged_requirements\": [], \"flagged_keywords\": [\"kafka\"]}",
+        "legs_attempted": 2,
+        "legs_succeeded": 1,
+        "created_at": "2026-06-08T12:00:00+00:00"
+      }
+    ],
+    "jobEmployerAnalysisSubAnalyses": [
+      {
+        "generation": 2,
+        "model_id": "claude-opus-4-8",
+        "analysis_json": "{\"role_framing\": \"Own the developer platform.\", \"inferred_seniority\": \"senior\", \"ideal_candidate_narrative\": \"A hands-on platform owner.\", \"requirements\": [{\"id\": \"r1\", \"text\": \"5+ years platform engineering\", \"tier\": \"must_have\", \"weight\": 0.9, \"evidence_span\": \"5+ years building developer platforms\"}], \"keywords\": [{\"keyword\": \"developer platform\", \"evidence_span\": \"building developer platforms\", \"requirement_ref\": \"r1\", \"rationale\": \"\", \"is_orphan\": false}]}"
+      }
+    ],
+    "jobEmployerAnalysisFailures": [
+      {
+        "generation": 2,
+        "model_id": "gpt-5.4",
+        "error": "codex app-server timeout",
+        "raw_output": null
+      }
+    ],
+    "artifacts": [
+      {
+        "artifact_id": "resume-1",
+        "artifact_type": "tailored_resume",
+        "status": "approved",
+        "path": "/tmp/parity-resume.txt",
+        "render_format": "text",
+        "size_bytes": 10
+      },
+      {
+        "artifact_id": "resume-pdf-1",
+        "artifact_type": "resume_pdf",
+        "status": "approved",
+        "path": "/tmp/parity-resume.pdf",
+        "render_format": "pdf",
+        "size_bytes": 20
+      }
+    ],
+    "bulletProvenance": [
+      {
+        "generation": 2,
+        "bullet_id": "executive_profile#0",
+        "artifact_id": "resume-1",
+        "section": "executive_profile",
+        "source_id": "executive_profile",
+        "evidence_ids_json": "[]",
+        "requirement_ids_json": "[]",
+        "matched_keywords_json": "[]",
+        "transform_type": "reframe",
+        "control": "rephrase_allowed",
+        "rationale": "Reframed summary.",
+        "generated_text": "Senior platform engineer.",
+        "position": 0,
+        "created_at": "2026-06-08T12:10:00+00:00",
+        "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"counts\": {\"planned\": 2, \"covered\": 1, \"missing\": 1}}",
+        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
+      },
+      {
+        "generation": 2,
+        "bullet_id": "experience:acme#0",
+        "artifact_id": "resume-1",
+        "section": "experience",
+        "source_id": "acme",
+        "evidence_ids_json": "[\"ev_platform\"]",
+        "requirement_ids_json": "[\"r1\"]",
+        "matched_keywords_json": "[\"developer platform\"]",
+        "transform_type": "voice",
+        "control": "rephrase_allowed",
+        "rationale": "Voiced.",
+        "generated_text": "Owned the developer platform across the fleet.",
+        "position": 1,
+        "created_at": "2026-06-08T12:10:00+00:00",
+        "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"counts\": {\"planned\": 2, \"covered\": 1, \"missing\": 1}}",
+        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\"}"
+      }
+    ]
+  },
+  "expected": {
+    "employerAnalysisJson": {
+      "generation": 2,
+      "snapshot_hash": "hash-new",
+      "prompt_version": "employer-analysis-v1",
+      "sdk_set_version": "claude+codex-v1",
+      "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+      "created_at": "2026-06-08T12:00:00+00:00",
+      "ensemble_completeness": "1/2",
+      "legs_attempted": 2,
+      "legs_succeeded": 1,
+      "is_degraded": true,
+      "agreement": {
+        "score": 0.8,
+        "flagged_requirements": [],
+        "flagged_keywords": ["kafka"]
+      },
+      "role_framing": "Own the developer platform.",
+      "inferred_seniority": "senior",
+      "ideal_candidate_narrative": "A hands-on platform owner.",
+      "requirements": [
+        {
+          "id": "r1",
+          "text": "5+ years platform engineering",
+          "tier": "must_have",
+          "weight": 0.9,
+          "evidence_span": "5+ years building developer platforms"
+        }
+      ],
+      "keywords": [
+        {
+          "keyword": "developer platform",
+          "evidence_span": "building developer platforms",
+          "requirement_ref": "r1",
+          "rationale": "",
+          "is_orphan": false
+        }
+      ],
+      "sub_analyses": [
+        {
+          "model_id": "claude-opus-4-8",
+          "role_framing": "Own the developer platform.",
+          "inferred_seniority": "senior",
+          "ideal_candidate_narrative": "A hands-on platform owner.",
+          "requirements": [
+            {
+              "id": "r1",
+              "text": "5+ years platform engineering",
+              "tier": "must_have",
+              "weight": 0.9,
+              "evidence_span": "5+ years building developer platforms"
+            }
+          ],
+          "keywords": [
+            {
+              "keyword": "developer platform",
+              "evidence_span": "building developer platforms",
+              "requirement_ref": "r1",
+              "rationale": "",
+              "is_orphan": false
+            }
+          ]
+        }
+      ],
+      "failures": [
+        {
+          "model_id": "gpt-5.4",
+          "error": "codex app-server timeout",
+          "raw_output": null
+        }
+      ]
+    },
+    "bulletProvenanceJson": [
+      {
+        "bullet_id": "executive_profile#0",
+        "section": "executive_profile",
+        "source_id": "executive_profile",
+        "evidence_ids": [],
+        "requirement_ids": [],
+        "matched_keywords": [],
+        "transform_type": "reframe",
+        "control": "rephrase_allowed",
+        "rationale": "Reframed summary.",
+        "generated_text": "Senior platform engineer."
+      },
+      {
+        "bullet_id": "experience:acme#0",
+        "section": "experience",
+        "source_id": "acme",
+        "evidence_ids": ["ev_platform"],
+        "requirement_ids": ["r1"],
+        "matched_keywords": ["developer platform"],
+        "transform_type": "voice",
+        "control": "rephrase_allowed",
+        "rationale": "Voiced.",
+        "generated_text": "Owned the developer platform across the fleet."
+      }
+    ],
+    "coverageAuditJson": {
+      "computed_against": "rendered_text",
+      "planned": ["developer platform", "kafka"],
+      "covered": ["developer platform"],
+      "missing": ["kafka"],
+      "covered_by": { "developer platform": "experience:acme#0" },
+      "counts": { "planned": 2, "covered": 1, "missing": 1 }
+    },
+    "voicePassJson": {
+      "ran": true,
+      "accepted": true,
+      "model": "claude-opus-4-8",
+      "prompt_version": "voice-pass-v1",
+      "proxy_delta": { "improved": true },
+      "reason": ""
+    }
+  }
+}
