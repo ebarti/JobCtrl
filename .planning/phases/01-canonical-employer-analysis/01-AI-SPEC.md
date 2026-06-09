@@ -10,7 +10,7 @@
 **System Type:** Structured Data Extraction via Multi-Model Agent Ensemble (Hybrid — extraction + light content generation for the role narrative)
 
 **Description:**
-A single-user, local-first step that reads one persisted job-description snapshot and produces a canonical, inspectable "ideal candidate" employer analysis: role framing + inferred seniority + an ideal-candidate narrative; requirements classified must-have vs nice-to-have with a 0–1 priority weight; and reasoned keywords each tied to a quoted job-description evidence span (literal substring) and linked to the requirement they support. It runs through **two agent SDKs in parallel — Claude Agent SDK + Codex SDK** (the Google/Antigravity leg is DEFERRED this milestone — see Section 3) — whose drafts are merged (cross-model agreement + literal-substring evidence validation) and reconciled by a synthesizer pass into one canonical record. "Good" = every claim traces to a real JD span, must/nice + priority reflect what the employer actually wants, the result is stable across runs (cache-backed), and both models' contributions + their agreement are persisted as audit data. It replaces the flakey `_extract_job_keywords` heuristic and becomes the single source of truth driving all downstream resume tailoring.
+A single-user, local-first step that reads one persisted job-description snapshot and produces a canonical, inspectable "ideal candidate" employer analysis: role framing + inferred seniority + an ideal-candidate narrative; requirements classified must-have vs nice-to-have with a 0–1 priority weight; and reasoned keywords each tied to a quoted job-description evidence span (literal substring) and linked to the requirement they support. It runs through **three agent SDKs in parallel — Claude Agent SDK + Codex SDK + Google Antigravity (Gemini) SDK** (see Section 3) — whose drafts are merged (cross-model agreement + literal-substring evidence validation) and reconciled by a synthesizer pass into one canonical record. "Good" = every claim traces to a real JD span, must/nice + priority reflect what the employer actually wants, the result is stable across runs (cache-backed), and both models' contributions + their agreement are persisted as audit data. It replaces the flakey `_extract_job_keywords` heuristic and becomes the single source of truth driving all downstream resume tailoring.
 
 **Critical Failure Modes:**
 <!-- The 3-5 behaviors that absolutely cannot go wrong in this system -->
@@ -124,7 +124,7 @@ Hiring is a regulated-adjacent domain. This phase produces a *candidate-side rea
 
 ## 2. Framework Decision
 
-**Selected Framework:** Agent-SDK Ensemble — **Claude Agent SDK + Codex SDK** (2 legs this milestone; the Google/Antigravity leg is DEFERRED per user directive 2026-06-09 — `AnalysisDraftPort` reserves a slot, a real `google-antigravity` SDK exists with a working reference in `~/Github/mestre`, see Section 3), run in parallel and reconciled by **merge + synthesize** (parallel drafts → cross-model agreement + literal-substring evidence validation → synthesizer reconciliation pass; synthesizer = Claude Agent SDK per CONTEXT D-07). **LOCKED** by the user (CONTEXT.md D-01..D-07); confirmed, not selected.
+**Selected Framework:** Agent-SDK Ensemble — **Claude Agent SDK + Codex SDK + Google Antigravity (Gemini) SDK** (3 legs; the Google/Antigravity leg was wired 2026-06-09 via the real `google-antigravity` SDK, working reference in `~/Github/mestre`, see Section 3), run in parallel and reconciled by **merge + synthesize** (parallel drafts → cross-model agreement + literal-substring evidence validation → synthesizer reconciliation pass; synthesizer = Claude Agent SDK per CONTEXT D-07). **LOCKED** by the user (CONTEXT.md D-01..D-07); confirmed, not selected.
 
 **Version:** To be pinned by `gsd-ai-researcher` in Section 3 (Installation) for each of the three SDKs. Hard rule: all NEW AI runs through agent SDKs — never raw model APIs / never the legacy httpx `jobhunter.llm.LLMClient`.
 
@@ -258,9 +258,9 @@ async def run_codex_draft(system_prompt: str, jd_snapshot: str) -> JobAnalysis:
 
 ---
 
-### SDK 3 — Antigravity (Google) — ⛔ DEFERRED this milestone (dropped 2026-06-09 per user)
+### SDK 3 — Antigravity (Google / Gemini) — ✅ WIRED (3-leg ensemble, 2026-06-09)
 
-> **The Google/Antigravity leg is OUT of scope for now.** The ensemble ships as a **2-SDK ensemble (Claude Agent SDK + Codex SDK)**. The `AnalysisDraftPort` keeps an open slot for a future Google leg. A real `google-antigravity` Python SDK **does** exist — working reference implementation at `~/Github/mestre/mestre/vendor_lane/backends/antigravity_sdk.py` (`pip install google-antigravity`; `from google.antigravity.agent import Agent`; `LocalAgentConfig(model=..., api_key=GEMINI/GOOGLE_API_KEY, response_schema=...)`; structured output via `response.structured_output()`). Adding it later is a drop-in adapter. **Ignore the historical "no SDK / ADK-Vertex substitute" notes below — superseded by this deferral.**
+> **The Google/Antigravity leg is LIVE.** The ensemble now ships as a **3-SDK ensemble (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK)**. It uses the real `google-antigravity` Python SDK (`google-antigravity==0.1.2`, pinned in `pyproject.toml`): `from google.antigravity.agent import Agent`; `LocalAgentConfig(model="gemini-3.5-flash", api_key=GEMINI_API_KEY/GOOGLE_API_KEY, system_instructions=..., capabilities=CapabilitiesConfig(enabled_tools=[BuiltinTools.FINISH]), response_schema=<gemini-adapted JSON>)`; drain `response.chunks`, then `await response.structured_output()`. Adapter: `infrastructure/analysis/antigravity_analysis_adapter.py` (mirrors `claude_analysis_adapter.py` / `codex_analysis_adapter.py`: injectable factories defaulting to lazy SDK imports so unit tests mock the boundary with no live auth). Model = `gemini-3.5-flash` (= `types.DEFAULT_MODEL`; `gemini-3-pro` 404s on the current key — swappable via the `model` ctor arg). **Schema nuance:** Gemini REJECTS `additionalProperties` (the opposite of Codex strict mode), so the schema is passed through `gemini_schema.py::gemini_json_schema` (strip `additionalProperties`/`$schema`, map `[T, "null"]` → `nullable`). A missing Gemini key degrades the leg to a recorded per-leg failure (failure mode #2) — the ensemble proceeds on Claude + Codex. **The historical "no SDK / ADK-Vertex substitute" notes below are superseded.**
 
 <details><summary>Historical note (superseded)</summary>
 
@@ -283,9 +283,9 @@ async def run_codex_draft(system_prompt: str, jd_snapshot: str) -> JobAnalysis:
 
 </details>
 
-### Ensemble Orchestration (D-06 merge + synthesize — 2 legs this milestone)
+### Ensemble Orchestration (D-06 merge + synthesize — 3 legs)
 
-**Common port (hexagonal).** One `AnalysisDraftPort` with three adapters (`ClaudeAnalysisAdapter`, `CodexAnalysisAdapter`, `GeminiAnalysisAdapter`), each `async def draft(system_prompt, jd_snapshot) -> JobAnalysisDraft`. The use case depends on the port, never on a concrete SDK.
+**Common port (hexagonal).** One `AnalysisDraftPort` with three adapters (`ClaudeAnalysisAdapter`, `CodexAnalysisAdapter`, `AntigravityAnalysisAdapter`), each `async def draft(system_prompt, jd_snapshot) -> JobAnalysisDraft`. The use case depends on the port, never on a concrete SDK.
 
 **Run 3 in parallel (asyncio), surface partial failures (failure mode #2).**
 ```python
@@ -349,7 +349,8 @@ workers/automation/src/jobhunter/
 ├── infrastructure/analysis/
 │   ├── claude_analysis_adapter.py    # claude-agent-sdk query() + output_format json_schema (also synthesizer)
 │   ├── codex_analysis_adapter.py     # openai-codex AsyncCodex + output_schema
-│   ├── gemini_analysis_adapter.py    # ADK/Vertex Gemini-3 leg (Antigravity substitute) + ADC auth
+│   ├── antigravity_analysis_adapter.py  # Google Antigravity (Gemini) leg via google-antigravity SDK
+│   ├── gemini_schema.py              # Gemini schema adapter (strip additionalProperties; nullable map)
 │   └── ensemble.py                   # asyncio.gather(return_exceptions=True) merge orchestration
 ├── infrastructure/rpc/handlers.py    # + analyze_job RPC (D-10)
 └── pipeline/runner.py                # + _run_analyze front-half of _run_tailor (D-20)
@@ -373,7 +374,7 @@ workers/automation/src/jobhunter/
 |-----|-----|---------------------------|--------------------|--------------------------|
 | Claude draft | `claude-agent-sdk` | `claude-opus-4-8` | `effort` defaults to `high` on Opus 4.8 (1M ctx, 128k max output, extended/adaptive thinking) | `max_turns=None`; no `max_budget_usd`; no wall-clock (D-19) |
 | Codex draft | `openai-codex` | `gpt-5.4` (top Codex model) | `config={"model_reasoning_effort":"high"}` + per-turn `effort="high"` | awaited to completion; no documented cap to disable |
-| ~~Gemini/Google draft~~ | — | — | **DEFERRED this milestone** (Antigravity leg dropped; `AnalysisDraftPort` slot reserved) | — |
+| Gemini/Google draft | `google-antigravity` (`LocalAgentConfig` + `Agent`) | `gemini-3.5-flash` (`types.DEFAULT_MODEL`) | `response_schema` (Gemini-adapted JSON; `additionalProperties` stripped) | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
 | Synthesizer (D-07) | `claude-agent-sdk` | `claude-opus-4-8` | `high` | `max_turns=None` |
 
 - **No temperature/seed determinism is relied on.** Determinism levers exist (effort is fixed high; Codex exposes effort; some surfaces expose temperature) but an agent loop is NOT byte-deterministic. Reproducibility is delivered by the cache contract (D-11), not by sampling controls. This is the "cache-as-repro-contract" stance: set effort/model deterministically, then trust the snapshot+version cache for stability.
@@ -476,7 +477,7 @@ class JobAnalysisDraft(JobAnalysis):
 **Framework integration:**
 - **Claude Agent SDK:** `output_format={"type":"json_schema","schema": JobAnalysis.model_json_schema()}`; read `ResultMessage.structured_output`; `JobAnalysis.model_validate(...)`.
 - **Codex SDK:** `thread.run(..., output_schema=JobAnalysis.model_json_schema())`; `JobAnalysis.model_validate_json(result.final_response)`.
-- **Google leg:** DEFERRED this milestone (Antigravity/Gemini leg dropped). When added later, the real `google-antigravity` SDK takes `response_schema` on `LocalAgentConfig` and exposes `response.structured_output()` (reference impl: `~/Github/mestre/mestre/vendor_lane/backends/antigravity_sdk.py`).
+- **Google leg (Antigravity/Gemini):** the real `google-antigravity` SDK takes `response_schema` on `LocalAgentConfig` (passed the Gemini-adapted schema — `additionalProperties` stripped — serialised with `json.dumps(..., sort_keys=True)`); drain `response.chunks` then `await response.structured_output()`; `JobAnalysis.model_validate(...)`. Reference impl: `~/Github/mestre/mestre/vendor_lane/backends/antigravity_sdk.py`.
 - **Grounding is NOT in the schema.** `evidence_span` being a *literal JD substring* (D-15) cannot be expressed in JSON Schema — it is enforced by the separate deterministic validator (`analysis_grounding.py`) after Pydantic validation. Schema-valid + Pydantic-valid + grounding-valid are three distinct gates.
 
 **Retry logic:** native SDK retries handle schema-shape failures (Claude exhaustion → `error_max_structured_output_retries`). On top of that, the use case retries a leg up to **2 times** on (a) Pydantic `ValidationError` or (b) grounding-validator rejection (a span that is not a literal substring). Log each retry with `model_id`, the failing span/field, and the raw output. After 2 retries that leg is recorded as a **failure** (persisted per D-08), the ensemble proceeds with the surviving legs, and the degraded state is surfaced — never masked (failure mode #2). Surface to the user only when ALL legs fail.

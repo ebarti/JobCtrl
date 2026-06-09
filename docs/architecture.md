@@ -152,11 +152,13 @@ and human-review procedures before production use.
 The Materials context owns a persisted, inspectable "ideal candidate" analysis
 that replaces the former `_extract_job_keywords` stopword heuristic and is the
 single source of truth for tailoring keyword selection. It is produced by a
-**two-SDK agent ensemble** — Claude Agent SDK + Codex SDK — running in parallel
-and reconciled by a Claude synthesizer pass (a Google/Antigravity leg is
-reserved on the port for a future milestone). This is the first AI capability on
-the agent-SDK standard: all *new* AI runs through agent SDKs, never the legacy
-httpx `jobhunter.llm.LLMClient`.
+**three-SDK agent ensemble** — Claude Agent SDK + Codex SDK + Google Antigravity
+(Gemini) SDK — running in parallel and reconciled by a Claude synthesizer pass.
+The ensemble orchestrator is N-leg and partial-failure safe
+(`asyncio.gather(return_exceptions=True)`), so a missing Gemini key degrades the
+Antigravity leg to a recorded per-leg failure (two surviving legs) rather than a
+hard fail. This is the first AI capability on the agent-SDK standard: all *new*
+AI runs through agent SDKs, never the legacy httpx `jobhunter.llm.LLMClient`.
 
 - **Domain model** (`domain/materials/analysis.py`): `JobAnalysis` /
   `JobAnalysisDraft` (Pydantic) carry role framing, inferred seniority, an
@@ -729,9 +731,10 @@ switch to sequential source execution when a cap is present, and skip remaining
 sources after the cap is reached.
 
 The employer-analysis ensemble is the first capability on the **agent-SDK**
-standard (Claude Agent SDK + Codex SDK). Those SDKs consume the existing local
-session credentials (Claude Code session, reused Codex login) — they introduce
-no new key management. The analysis run is visible through its persisted
+standard (Claude Agent SDK + Codex SDK + Google Antigravity/Gemini SDK). Those
+SDKs consume the existing local session credentials (Claude Code session, reused
+Codex login, and `GEMINI_API_KEY`/`GOOGLE_API_KEY` for the Antigravity leg) —
+they introduce no new key management. The analysis run is visible through its persisted
 `EmployerAnalyzed` `job_events` record and the read-model `ensemble_completeness`
 field today; folding the four ensemble legs (drafts + synthesizer) into the same
 Langfuse `generation`-span pipeline as the other LLM calls is the next

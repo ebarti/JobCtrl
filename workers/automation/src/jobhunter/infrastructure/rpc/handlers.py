@@ -276,7 +276,7 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
 def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     """Produce/inspect the canonical employer analysis for one job (D-10).
 
-    Synchronous: runs the 2-SDK ensemble to completion (NO wall-clock timeout —
+    Synchronous: runs the 3-SDK ensemble to completion (NO wall-clock timeout —
     D-19) and persists the canonical analysis, superseding prior generations
     (D-13). ``force`` bypasses the snapshot+version cache to recompute. Returns
     the persisted record's identity + the degraded-ensemble signal so a caller

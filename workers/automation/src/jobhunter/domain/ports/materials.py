@@ -163,7 +163,7 @@ class TailoringPolicyRepository(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Employer-analysis ports (Phase 1 — hexagonal seam for the 2-SDK ensemble)
+# Employer-analysis ports (Phase 1 — hexagonal seam for the 3-SDK ensemble)
 # ---------------------------------------------------------------------------
 
 
@@ -172,10 +172,10 @@ class AnalysisDraftPort(Protocol):
 
     The use case + ensemble orchestrator depend on this port, never on a
     concrete SDK. One adapter per provider (``ClaudeAnalysisAdapter``,
-    ``CodexAnalysisAdapter``; a Google/Antigravity slot is reserved for a
-    future leg — D-03). ``draft`` runs the leg to completion with NO wall-clock
-    timeout (D-19); the only stop is cooperative task cancellation by the
-    caller.
+    ``CodexAnalysisAdapter``, ``AntigravityAnalysisAdapter`` — the
+    Google/Gemini leg, D-03). ``draft`` runs the leg to completion with NO
+    wall-clock timeout (D-19); the only stop is cooperative task cancellation
+    by the caller.
     """
 
     @property
