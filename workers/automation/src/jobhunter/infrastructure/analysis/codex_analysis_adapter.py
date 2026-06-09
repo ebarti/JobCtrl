@@ -6,6 +6,13 @@ Node sidecar, no CLI-subprocess wrapper), forcing JSON-schema-constrained
 output via ``output_schema`` on ``thread.run`` and parsing the structured
 result off ``TurnResult.final_response``.
 
+CODEX_HOME isolation: the live factory redirects the Codex SDK's ``CODEX_HOME``
+to an isolated dir under the JobHunter runtime root (``~/.jobhunter/codex_home``)
+seeded with a copy of the user's ``~/.codex/auth.json``, so Codex session
+rollouts never land in — and pollute — the user's real ``~/.codex`` chat
+history. The SDK merges ``CodexConfig.env`` over the parent environment, so only
+``CODEX_HOME`` is overridden; PATH/HOME/etc. are preserved.
+
 Test-mockability (no live auth in tests — D-04): the ``AsyncCodex`` class is
 resolved through an injectable factory that defaults to a lazy import, so tests
 pass a fake context-manager whose thread returns a canned ``final_response``.
@@ -17,7 +24,9 @@ No timeout (D-19): ``thread.run`` is awaited to completion; effort is pinned to
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from jobhunter.domain.materials.analysis import (
@@ -32,12 +41,78 @@ AsyncCodexFactory = Callable[[], Any]
 # impl time; model ids drift.
 CODEX_ANALYSIS_MODEL = "gpt-5.4"
 
+# Disable Codex plugins/apps so the isolated home only ever holds JobHunter's
+# analysis rollouts + the copied auth token (mirrors mestre's vendor lane).
+_CODEX_CONFIG_OVERRIDES = ("features.plugins=false", "features.apps=false")
+# Isolated Codex home lives under the JobHunter runtime root, NOT ``~/.codex``.
+_CODEX_HOME_DIRNAME = "codex_home"
+
+
+def _isolated_codex_home() -> Path:
+    """Return ``<JOBHUNTER_DIR>/codex_home`` (config imported lazily to avoid cycles)."""
+    from jobhunter.config import APP_DIR
+
+    return APP_DIR / _CODEX_HOME_DIRNAME
+
+
+def _copy_newer_file(source: Path, target: Path, *, mode: int | None = None) -> bool:
+    """Copy ``source`` to ``target`` when it is newer or ``target`` is missing.
+
+    Returns ``True`` when a copy happened, ``False`` otherwise. When ``source``
+    is missing but ``target`` exists, the target is still re-chmod'd (if ``mode``
+    is given) so a stale copy keeps its locked-down permissions.
+    """
+    if not source.exists():
+        if target.exists() and mode is not None:
+            target.chmod(mode)
+        return False
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target.parent.chmod(0o700)
+    if target.exists() and target.stat().st_mtime >= source.stat().st_mtime:
+        if mode is not None:
+            target.chmod(mode)
+        return False
+    shutil.copy2(source, target)
+    if mode is not None:
+        target.chmod(mode)
+    return True
+
+
+def _prepare_isolated_codex_home() -> Path:
+    """Create the isolated Codex home and refresh auth from the user's real login."""
+    home = _isolated_codex_home()
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    home.chmod(0o700)
+    # The copied auth token is sensitive; lock it to 0600.
+    _copy_newer_file(Path.home() / ".codex" / "auth.json", home / "auth.json", mode=0o600)
+    return home
+
+
+def _isolated_codex_env(codex_home: Path) -> dict[str, str]:
+    """Return the minimal env override; the SDK merges this over ``os.environ``."""
+    return {"CODEX_HOME": str(codex_home)}
+
 
 def _load_async_codex_factory() -> AsyncCodexFactory:
-    """Lazy-import ``openai_codex.AsyncCodex`` so the package imports without it."""
-    from openai_codex import AsyncCodex  # type: ignore[import-untyped]
+    """Build an isolated ``AsyncCodex`` CM: redirect ``CODEX_HOME`` so Codex
+    session rollouts never land in the user's real ``~/.codex``.
 
-    return AsyncCodex
+    Lazy-imports ``openai_codex`` so the package imports without it installed.
+    """
+    from openai_codex import AsyncCodex, CodexConfig  # type: ignore[import-untyped]
+
+    def _make() -> Any:
+        codex_home = _prepare_isolated_codex_home()
+        config_kwargs: dict[str, Any] = {
+            "env": _isolated_codex_env(codex_home),
+            "config_overrides": _CODEX_CONFIG_OVERRIDES,
+        }
+        codex_bin = shutil.which("codex")
+        if codex_bin:
+            config_kwargs["codex_bin"] = codex_bin
+        return AsyncCodex(config=CodexConfig(**config_kwargs))
+
+    return _make
 
 
 def _load_sandbox_read_only() -> Any:
