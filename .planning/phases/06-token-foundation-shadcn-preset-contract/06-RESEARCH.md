@@ -400,17 +400,15 @@ expect(styles.getPropertyValue("color-scheme")).toContain("dark");
 | A4 | CSS output grep or a build artifact check is the best proof that Tailwind generated required semantic utilities. | Validation Architecture | Planner may use a different generated-CSS assertion, but TOKEN-02 still needs generated utility proof. |
 | A5 | Browser smoke in dark mode will expose native select/scrollbar color-scheme drift. | Common Pitfalls | Some platform/browser combinations may hide scrollbar differences, so computed `color-scheme` inspection should backstop visual smoke. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Can `apps/web/tailwind.config.ts` be deleted in the same patch that removes all legacy utilities?**
-   - What we know: shadcn components.json docs say Tailwind v4 config should be blank, and CONTEXT D-15 says delete the file if CSS-first mode fully replaces it. [CITED: https://ui.shadcn.com/docs/components-json] [VERIFIED: 06-CONTEXT.md]
-   - What's unclear: The current global CSS and shared primitives have many legacy utility references, so deletion may require broader mechanical edits. [VERIFIED: codebase grep]
-   - Recommendation: Planner should make deletion a final task after token grep and `web:build`; if not feasible, keep a short-lived config bridge only inside the implementation patch and remove before completion. [VERIFIED: 06-CONTEXT.md]
+   - RESOLVED: Yes, Phase 6 plans should delete `apps/web/tailwind.config.ts` as part of the same execution sequence, but only after CSS-first `@theme inline` mappings and all direct legacy utility replacements are in place. Plan 06-03 owns this decision by removing `@config`, updating `components.json` and `tsconfig.json`, deleting the config file, and requiring `web:build` plus legacy-token grep before completion.
+   - Fallback if execution proves deletion temporarily impossible: keep a compile bridge only inside the active implementation patch, record the deviation, then remove it before Phase 6 verification. The phase must not hand off a compatibility-bridge state to later phases. [VERIFIED: 06-CONTEXT.md]
 
 2. **How much primitive editing belongs in Phase 6?**
-   - What we know: Phase 7 owns shared primitive migration, but Phase 6 may do limited mechanical edits required to remove legacy utilities. [VERIFIED: 06-CONTEXT.md]
-   - What's unclear: Current primitive files contain many legacy classes; a grep-clean Phase 6 may need more primitive edits than originally expected. [VERIFIED: codebase grep]
-   - Recommendation: Edit primitives only for direct token-class replacement; do not introduce new variants, behavior, icons, ARIA changes, or Storybook redesign in Phase 6. [VERIFIED: 06-UI-SPEC.md]
+   - RESOLVED: Phase 6 includes only the primitive edits required for a clean-slate legacy-token exit: direct class/token substitutions in shared primitives and related stories/wrappers that currently reference `bg-paper`, `text-ink`, `border-rule`, `ring-info`, or direct legacy variables. Plans 06-04 and 06-05 own this mechanical cleanup.
+   - Out of scope remains unchanged: no new primitive variants, behavior changes, icons, ARIA changes, domain imports, route changes, or Storybook redesign. Phase 7 still owns broader primitive-system refinement after the token foundation exists. [VERIFIED: 06-CONTEXT.md] [VERIFIED: 06-UI-SPEC.md]
 
 ## Environment Availability
 
