@@ -23,6 +23,11 @@ process.env["JOBHUNTER_E2E_STYLE_PATH"] = E2E_STYLE;
 process.env["JOBHUNTER_E2E_TEMPLATE_PATH"] = E2E_TEMPLATE;
 process.env["JOBHUNTER_E2E_SETTINGS_PATH"] = E2E_SETTINGS;
 
+// Ports default to 8767/5174 (unchanged) but are overridable so parallel
+// worktrees / local stacks can run E2E without colliding on a busy port.
+const API_PORT = process.env["JOBHUNTER_E2E_API_PORT"] ?? "8767";
+const WEB_PORT = process.env["JOBHUNTER_E2E_WEB_PORT"] ?? "5174";
+
 export default defineConfig({
   testDir: "./tests",
   outputDir: path.join(repoRoot, "dist", "playwright-report"),
@@ -34,7 +39,7 @@ export default defineConfig({
   globalSetup: "./fixtures/global-setup.ts",
   globalTeardown: "./fixtures/global-teardown.ts",
   use: {
-    baseURL: "http://127.0.0.1:5174",
+    baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "off",
@@ -48,27 +53,31 @@ export default defineConfig({
   webServer: [
     {
       command: "corepack pnpm --filter @jobhunter/api dev",
-      port: 8767,
+      port: Number(API_PORT),
       cwd: repoRoot,
       env: {
-        JOBHUNTER_API_PORT: "8767",
+        JOBHUNTER_API_PORT: API_PORT,
         JOBHUNTER_DIR: E2E_DIR,
         JOBHUNTER_DB_PATH: E2E_DB,
         JOBHUNTER_PROFILE_PATH: E2E_PROFILE,
         JOBHUNTER_RESUME_STYLE_PATH: E2E_STYLE,
         JOBHUNTER_RESUME_TEMPLATE_PATH: E2E_TEMPLATE,
         JOBHUNTER_DASHBOARD_CONFIG_PATH: E2E_SETTINGS,
+        // INSPECT-01: route material-generation dispatch to the deterministic
+        // E2E stub (no worker subprocess, no LLM) while keeping the
+        // worker-readiness gate live against the seeded heartbeat.
+        JOBHUNTER_E2E_STUB_DISPATCH: "1",
       },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,
     },
     {
-      command: "corepack pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port 5174 --strictPort",
-      port: 5174,
+      command: `corepack pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
+      port: Number(WEB_PORT),
       cwd: repoRoot,
       env: {
         VITE_JOBHUNTER_API_BASE_URL: "",
-        VITE_DEV_API_PROXY_TARGET: "http://127.0.0.1:8767",
+        VITE_DEV_API_PROXY_TARGET: `http://127.0.0.1:${API_PORT}`,
       },
       reuseExistingServer: !process.env["CI"],
       timeout: 120_000,
