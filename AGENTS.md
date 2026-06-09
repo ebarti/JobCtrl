@@ -114,32 +114,6 @@ Recommended worktree setup:
 4. Create a task branch and worktree with `git worktree add <worktree-path> -b <branch-name> main`.
 5. Do all coding, testing, commits, and PR work from that task worktree.
 
-## Development Sequencing
-
-Parallelize any work that can be parallelized, but all work must still follow the development workflow and preserve clear ownership boundaries.
-
-For non-trivial implementation work, the parent agent owns orchestration, loop state, and final gate decisions. Do not delegate the entire loop unless the user explicitly asks for recursive delegation. Specialist agents must not spawn subagents unless the parent explicitly instructs them to.
-
-Start implementation by spawning `pr-feature-implementer` with the exact goal, allowed scope, files or modules owned, verification commands, and PR expectations. The implementer should create the PR and report the PR number.
-
-Run the PR review/fix loop for at most 3 iterations:
-
-1. Spawn `pr-reviewer` on the PR. The reviewer must inspect the target diff/worktree and return the machine-gated final format from its agent definition.
-2. If `pr-reviewer` returns `Gate: PASS`, continue to QA.
-3. If `pr-reviewer` returns `Gate: FAIL`, spawn `pr-fixer` with only the unresolved Blocker and High findings unless the parent intentionally includes lower severities.
-4. After `pr-fixer` finishes, repeat the review step.
-5. If Blocker or High findings remain after 3 PR fixer attempts, stop and report `Blocked` with the remaining findings unless the user explicitly authorizes continuing with known unresolved risk.
-
-Run the QA loop after the PR review gate passes:
-
-1. Spawn `qa` with the PR goal, PR number, reviewer summary, changed surfaces, and required product-level checks.
-2. If `qa` returns `Gate: PASS`, end the workflow.
-3. If `qa` returns `Gate: FAIL`, spawn `qa-fixer` with only the unresolved Blocker and High QA findings unless the parent intentionally includes lower severities.
-4. After `qa-fixer` finishes, repeat the QA step.
-5. If Blocker or High QA findings remain after 3 QA fixer attempts, stop and report `Blocked` with the remaining findings instead of marking the work complete.
-
-End only when both the PR review gate and QA gate return `PASS`. The final response must include the PR number, review/QA gate results, verification commands and results, and any remaining Medium or Low risks.
-
 ## Constraints And Do-Not Rules
 
 - Never edit code in the main branch.
