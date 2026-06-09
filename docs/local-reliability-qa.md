@@ -124,8 +124,8 @@ commands listed under the "Frontend" section of
 | --- | --- | --- |
 | Unit / hook / component (Vitest + RTL + MSW) | `*.test.ts(x)` files under `apps/web/src/` | Pure selectors, query-key factories, the invalidation router (one registered handler per `DomainEvent` variant in `DOMAIN_EVENT_TYPES`), every Operations read hook, every per-aggregate mutation hook (success path + rollback path), forms, drawers, filter bars. |
 | Type-level tests (Vitest `typecheck` mode via `vitest.types.config.ts`) | 10 `*.test-d.ts` files under `apps/web/test/types/` | Inferred shapes of the Operations read hooks plus `useActivityEventQuery` and `useWorkflowRunsListQuery`. The original plan named `tsd`; the implementation uses Vitest's typecheck mode — same artifact (typed test files), same gate, integrated runner (cf. target §10.6). |
-| End-to-end (Playwright headless) | 9 specs in `apps/web/e2e/tests/` (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `runs`, `settings`, `wizard`) | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `materials.spec.ts` is `test.fixme`'d pending the `GenerateMaterialsUseCase` backend exposure (tracked in `docs/backlog.md`). |
-| A11y suites (Vitest + `axe-core` + `jest-axe`) | 9 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, and command components — fails on critical violations (target §10.7). |
+| End-to-end (Playwright headless) | 9 specs in `apps/web/e2e/tests/` (`dashboard`, `dry-run`, `jobs-bulk`, `jobs-drawer`, `materials`, `profile-edit`, `runs`, `settings`, `wizard`) | One spec per critical flow (target §10.4) against a real `apps/api` + a seeded SQLite fixture. `materials.spec.ts` is now unskipped (INSPECT-01): it asserts the per-job generate-materials button is enabled, the route returns 202 (not 400), and the worker-confirmed `ResumeApproved` surfaces in the job audit history via the SSE realtime loop. The harness runs the real route + worker-readiness gate (seeded worker heartbeat) but routes dispatch through a deterministic stub (`JOBHUNTER_E2E_STUB_DISPATCH`) so no worker subprocess or LLM is required. E2E ports are overridable via `JOBHUNTER_E2E_API_PORT` / `JOBHUNTER_E2E_WEB_PORT` for parallel worktrees. |
+| A11y suites (Vitest + `axe-core` + `jest-axe`) | 11 `*.a11y.test.tsx` files | Form, dialog, drawer, sheet, command, and the Phase 5 inspector components (`EmployerAnalysisPanel`, `BulletProvenanceList`) — fails on critical/serious violations (target §10.7). |
 
 ### Scoring Policy Feedback Smoke
 
@@ -154,6 +154,28 @@ by application anchors, recipient, max result/window limits, and employer/ATS
 hints; that `read_email` is not called for unlinked metadata; and that the API
 scan response includes only counts plus evidence/suggestion identifiers, kinds,
 and confidence values.
+
+### Materials Generation + Inspector Smoke
+
+For UI/API changes around per-job material generation or the tailoring inspector
+(INSPECT-01..06), open a job detail drawer and verify the "generate materials"
+control is enabled, confirms before dispatching, and reports a queued/in-flight
+state; the route is `POST /v1/jobs/:jobKey/actions/generate-materials` and returns
+202 once the worker is ready (503 when the worker heartbeat is missing/stale). Do
+not run real generation against a live worker for QA automation — exercise the
+route + UI wiring with the E2E stub dispatcher and inject the terminal
+`ResumeApproved` event into SQLite to drive the realtime loop.
+
+Verify the inspector renders honestly: the employer-analysis panel shows
+requirements (must/nice tier + priority weight) and reasoned keywords with quoted
+job-description evidence spans; the per-bullet provenance list shows the
+original → tailored diff and evidence × requirement × transform × control ×
+rationale per bullet. Confirm missing audit data is never masked — a job with no
+analysis shows an explicit "not recorded" state, empty FK/keyword sets show "none
+recorded", a drafted-adjacent bullet shows an explicit "original profile bullet
+not recorded" diff side, and a null voice pass shows "no voice pass recorded".
+Confirm a re-tailor/generate-materials in flight never hides the last accepted
+artifact or its provenance (INSPECT-06).
 
 ### Parity tests
 
