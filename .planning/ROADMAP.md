@@ -47,7 +47,15 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
 - Browser smoke of light/dark token computed values on the app shell
 
-**Plans:** Create with `$gsd-plan-phase 6`.
+**Plans:** 6 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Approve SUS package identities before dependency installation.
+- [ ] 06-02-PLAN.md — Install preset dependencies and validate shadcn aliases/config.
+- [ ] 06-03-PLAN.md — Implement CSS-first semantic tokens, density seams, bridge removal, and token tests.
+- [ ] 06-04-PLAN.md — Mechanically migrate core shared primitives and Storybook wrapper utilities.
+- [ ] 06-05-PLAN.md — Mechanically migrate overlay/menu primitives and overlay story utilities.
+- [ ] 06-06-PLAN.md — Add browser computed-token smoke, update docs, and run final proof gate.
 
 ### Phase 7: Shared Primitive Token Migration
 
