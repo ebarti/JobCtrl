@@ -11,11 +11,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 ### Token Foundation
 
 - [ ] **TOKEN-01**: The web app defines shadcn standard semantic CSS variables for light and dark themes, including `background`, `foreground`, `card`, `popover`, `primary`, `secondary`, `muted`, `accent`, `destructive`, `border`, `input`, `ring`, `chart-*`, `sidebar-*`, font, and radius tokens.
-- [ ] **TOKEN-02**: Tailwind 4 can generate standard shadcn utilities from the token contract via CSS-first `@theme inline` mappings while existing JobHunter utility classes continue to work during the migration.
+- [ ] **TOKEN-02**: Tailwind 4 can generate standard shadcn utilities from the token contract via CSS-first `@theme inline` mappings while legacy JobHunter token utility names are removed or mechanically replaced before Phase 6 completion.
 - [ ] **TOKEN-03**: The decoded preset `b3F5kqmYd8` is represented in project config and tokens: `radix-luma`/luma style, neutral base, sky theme, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
 - [ ] **TOKEN-04**: `components.json`, TypeScript aliases, and Vite aliases support current shadcn CLI validation without moving generated components outside `apps/web/src/shared/ui`.
 - [ ] **TOKEN-05**: JobHunter's persisted `[data-theme="dark"]` behavior and app-shell-scoped density behavior remain compatible with the new token contract.
-- [ ] **TOKEN-06**: Temporary compatibility aliases for legacy tokens (`--bg`, `--paper`, `--ink`, `--rule`, `--info`, `--danger`, `--warn`, `--ok`, `--font`, `--mono`, `--row`) exist only as a migration bridge and are documented as temporary.
+- [ ] **TOKEN-06**: Legacy token aliases (`--bg`, `--paper`, `--ink`, `--rule`, `--info`, `--danger`, `--warn`, `--ok`, `--font`, `--mono`, `--row`) and legacy utilities are absent from the Phase 6 public token contract; any short-lived compile bridge is removed before completion.
 
 ### Shared Primitives
 
@@ -52,8 +52,8 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Cleanup And Documentation
 
-- [ ] **CLEAN-01**: Production references to legacy token variables and legacy Tailwind utilities are grep-clean before compatibility aliases are removed.
-- [ ] **CLEAN-02**: Obsolete legacy aliases, old Tailwind color names, dead global selectors, and unused icon/font dependencies are removed only after replacements are verified.
+- [ ] **CLEAN-01**: Production references to legacy token variables and legacy Tailwind utilities remain grep-clean after route, primitive, status, and QA migration work.
+- [ ] **CLEAN-02**: Dead global selectors, obsolete Tailwind config remnants, and unused icon/font dependencies are removed only after replacements are verified.
 - [ ] **CLEAN-03**: Documentation and config owners are updated narrowly for final token, icon, font, script, and QA expectations where behavior changed.
 - [ ] **CLEAN-04**: The final diff leaves no permanent styling API based on `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, or `ring-info`.
 

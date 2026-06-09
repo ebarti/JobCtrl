@@ -6,7 +6,7 @@
 
 Milestone v1.1 migrates the JobHunter web app from a bespoke token layer to the current shadcn semantic CSS-variable token system using preset `b3F5kqmYd8`. This is not a product-feature milestone. The app must continue to behave like the same local-first operational tool: dashboard, jobs, artifacts, apply review, discovery, profile/preferences/settings, runs, pipelines, debug views, audit surfaces, route behavior, TanStack state, SSE invalidation, and safety boundaries stay intact.
 
-The migration is dependency-forced. First establish the token contract and shadcn CLI/config prerequisites while preserving legacy aliases. Then migrate shared primitives, then app shell/layout, then domain/status surfaces. Only after Storybook/a11y/browser QA proves representative workflows in light/dark and density modes should the final cleanup remove compatibility aliases and dead global CSS. This ordering avoids the main risk found during research: `apps/web/src/styles/globals.css` currently has a very broad blast radius, and a hard token rename can pass typecheck while visually breaking dense operational surfaces.
+The migration is dependency-forced. First establish the token contract and shadcn CLI/config prerequisites while removing the legacy token API under the Phase 6 clean-slate decision. Then migrate shared primitives, then app shell/layout, then domain/status surfaces. Only after Storybook/a11y/browser QA proves representative workflows in light/dark and density modes should the final cleanup remove dead global CSS, obsolete config remnants, and unused dependencies. This ordering still treats `apps/web/src/styles/globals.css` as the highest-risk blast radius: a hard token rename can pass typecheck while visually breaking dense operational surfaces, so Phase 6 requires browser proof.
 
 ## Phases
 
@@ -16,18 +16,18 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Integer phases are planned milestone work.
 - Decimal phases are reserved for urgent insertions.
 
-- [ ] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and compatibility aliases.
+- [ ] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and clean-slate legacy token removal.
 - [ ] **Phase 7: Shared Primitive Token Migration** - Move shared shadcn/Radix primitives to standard semantic classes with overlay, focus, form, table, and Storybook coverage.
 - [ ] **Phase 8: Layout Chrome, Fonts, And Tabler Icons** - Apply the preset to app shell, topbar, nav, menus, theme/density controls, fonts, and visible iconography without route/workflow changes.
 - [ ] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
 - [ ] **Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
-- [ ] **Phase 11: Alias And Global CSS Cleanup** - Remove legacy compatibility aliases, old Tailwind token names, dead global selectors, and unused icon/font dependencies after grep and QA proof.
+- [ ] **Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
 
 ## Phase Details
 
 ### Phase 6: Token Foundation + shadcn Preset Contract
 
-**Goal:** The app has a standard shadcn semantic token foundation for light/dark themes and the decoded preset, while legacy token names remain as a temporary compatibility bridge.
+**Goal:** The app has a standard shadcn semantic token foundation for light/dark themes and the decoded preset, with legacy token names removed from the Phase 6 public token contract.
 
 **Depends on:** Milestone v1.0 complete.
 
@@ -38,13 +38,13 @@ The migration is dependency-forced. First establish the token contract and shadc
 2. Tailwind 4 can generate semantic utilities such as `bg-background`, `text-foreground`, `bg-card`, `border-border`, `ring-ring`, `bg-primary`, `text-primary-foreground`, `bg-popover`, and `text-popover-foreground` through CSS-first token mappings.
 3. `components.json`, TypeScript aliases, and Vite aliases satisfy current shadcn CLI validation and keep generated/copied components under `apps/web/src/shared/ui`.
 4. The decoded preset values are represented in config/tokens: luma/radix-luma style target, neutral base, sky accents, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
-5. Existing `[data-theme="dark"]` and `data-density` behavior still works, and legacy aliases remain available only as documented temporary migration aliases.
+5. Existing `[data-theme="dark"]` and `data-density` behavior still works, and legacy aliases/utilities are absent from production styling by the Phase 6 exit state.
 
 **Verification:**
 - `pnpm web:check`
 - `pnpm web:build`
 - `pnpm dlx shadcn@latest info -c apps/web` or documented equivalent
-- Token grep showing legacy names are still bridged intentionally, not removed prematurely
+- Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
 - Browser smoke of light/dark token computed values on the app shell
 
 **Plans:** Create with `$gsd-plan-phase 6`.
@@ -150,7 +150,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 
 ### Phase 11: Alias And Global CSS Cleanup
 
-**Goal:** Remove the temporary legacy token bridge and dead global CSS once production references are gone and the migrated surfaces have passed semantic, visual, and accessibility checks.
+**Goal:** Remove dead global CSS, obsolete config remnants, residual legacy references, and unused styling dependencies once migrated surfaces have passed semantic, visual, and accessibility checks.
 
 **Depends on:** Phase 10
 
@@ -158,7 +158,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 
 **Success Criteria** (what must be TRUE):
 1. Grep proves no production references remain to legacy token variables or utility names outside intentional test fixtures or migration notes.
-2. Temporary aliases and obsolete Tailwind color names are removed from token/config files, and removed classes have named replacements.
+2. Obsolete Tailwind color names, dead config references, and any residual compatibility artifacts are removed from token/config files, and removed classes have named replacements.
 3. Unused icon/font dependencies are removed only after import audits prove they are no longer used.
 4. Global CSS cleanup is mechanical and does not remove view-specific styling unless that styling has an implemented replacement.
 5. Owning docs/configs are updated narrowly for the final shadcn token, icon, font, and QA expectations.
@@ -203,7 +203,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 ## Next Up
 
-**Phase 6: Token Foundation + shadcn Preset Contract** - Establish the preset-backed standard token contract and shadcn config prerequisites while preserving compatibility aliases.
+**Phase 6: Token Foundation + shadcn Preset Contract** - Establish the preset-backed standard token contract and shadcn config prerequisites while removing the legacy token API.
 
 `$gsd-discuss-phase 6`
 

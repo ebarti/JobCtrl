@@ -46,7 +46,7 @@ Declared values (must be multiples of 4):
 Exceptions:
 
 - Icon-only controls must keep at least a 32px visible box and a 44px effective touch target where space allows.
-- Density row heights remain explicit app dimensions: compact 34px, regular 42px, comfy 50px unless implementation proves a renamed final token is safer.
+- Density row heights remain explicit app dimensions aligned to the 4px grid: compact 32px, regular 40px, comfy 48px unless implementation proves a renamed final token is safer.
 - Radius uses the preset medium value `--radius: 0.625rem` with derived shadcn radius tokens from the theme probe: `sm = radius * 0.6`, `md = radius * 0.8`, `lg = radius`, `xl = radius * 1.4`.
 
 ---
@@ -147,6 +147,8 @@ Registry rules:
 | Menus/overlays | Popover/dropdown/select/dialog/sheet/toast surfaces use `popover` or card/surface token pairs and remain readable over dense Jobs, Apply Review, artifact/PDF, and dark-mode surfaces. |
 | Status semantics | Domain status color meanings are preserved through explicit semantic extension tokens or typed tone helpers. Do not flatten success/warning/info/running/failed/blocked/stale/missing into chart tokens or generic primary/secondary colors. |
 | Safety | Browser proof uses synthetic or seeded data only. Do not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs. |
+
+Visual hierarchy: the primary visual anchor for Phase 6 is the app shell/topbar/nav token application. Secondary anchors are the theme and density controls plus one popover/dropdown surface used to prove overlays inherit the new token contract.
 
 ---
 
