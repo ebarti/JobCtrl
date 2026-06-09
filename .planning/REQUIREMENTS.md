@@ -12,8 +12,8 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 - [ ] **TOKEN-01**: The web app defines shadcn standard semantic CSS variables for light and dark themes, including `background`, `foreground`, `card`, `popover`, `primary`, `secondary`, `muted`, `accent`, `destructive`, `border`, `input`, `ring`, `chart-*`, `sidebar-*`, font, and radius tokens.
 - [ ] **TOKEN-02**: Tailwind 4 can generate standard shadcn utilities from the token contract via CSS-first `@theme inline` mappings while legacy JobHunter token utility names are removed or mechanically replaced before Phase 6 completion.
-- [ ] **TOKEN-03**: The decoded preset `b3F5kqmYd8` is represented in project config and tokens: `radix-luma`/luma style, neutral base, sky theme, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
-- [ ] **TOKEN-04**: `components.json`, TypeScript aliases, and Vite aliases support current shadcn CLI validation without moving generated components outside `apps/web/src/shared/ui`.
+- [x] **TOKEN-03**: The decoded preset `b3F5kqmYd8` is represented in project config and tokens: `radix-luma`/luma style, neutral base, sky theme, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
+- [x] **TOKEN-04**: `components.json`, TypeScript aliases, and Vite aliases support current shadcn CLI validation without moving generated components outside `apps/web/src/shared/ui`.
 - [ ] **TOKEN-05**: JobHunter's persisted `[data-theme="dark"]` behavior and app-shell-scoped density behavior remain compatible with the new token contract.
 - [ ] **TOKEN-06**: Legacy token aliases (`--bg`, `--paper`, `--ink`, `--rule`, `--info`, `--danger`, `--warn`, `--ok`, `--font`, `--mono`, `--row`) and legacy utilities are absent from the Phase 6 public token contract; any short-lived compile bridge is removed before completion.
 
@@ -91,8 +91,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | TOKEN-01 | Phase 6 | Pending |
 | TOKEN-02 | Phase 6 | Pending |
-| TOKEN-03 | Phase 6 | Pending |
-| TOKEN-04 | Phase 6 | Pending |
+| TOKEN-03 | Phase 6 | Complete |
+| TOKEN-04 | Phase 6 | Complete |
 | TOKEN-05 | Phase 6 | Pending |
 | TOKEN-06 | Phase 6 | Pending |
 | PRIM-01 | Phase 7 | Pending |
@@ -122,6 +122,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLEAN-04 | Phase 11 | Pending |
 
 **Coverage:**
+
 - v1.1 requirements: 31 total
 - Mapped to phases: 31
 - Unmapped: 0

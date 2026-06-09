@@ -50,11 +50,11 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
 - Browser smoke of light/dark token computed values on the app shell
 
-**Plans:** 6 plans
+**Plans:** 1/6 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — Approve SUS package identities before dependency installation.
+- [x] 06-01-PLAN.md — Approve SUS package identities before dependency installation.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -215,7 +215,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Token Foundation + shadcn Preset Contract | 0/6 | Planned | - |
+| 6. Token Foundation + shadcn Preset Contract | 1/6 | In Progress|  |
 | 7. Shared Primitive Token Migration | 0/? | Pending | - |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 0/? | Pending | - |
 | 9. Domain And Status Surface Migration | 0/? | Pending | - |
