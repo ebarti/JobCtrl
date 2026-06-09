@@ -31,7 +31,7 @@ Requirements covered: ANALYSIS-01, ANALYSIS-02, ANALYSIS-03, ANALYSIS-04, ANALYS
 - **D-05:** Supersedes PROJECT.md's current LLM constraint ("default to latest Claude models… keep provider selection explicit… existing 180s client timeout"). PROJECT.md must be updated to record the agent-SDK / ensemble / no-cost / no-timeout stance (flagged as a follow-up; see Deferred).
 
 ### Ensemble & Reconciliation
-- **D-06:** Mixing strategy = **merge + synthesize**. Run all 3 SDKs in parallel → compute agreement (union of requirements/keywords, flag disagreements, validate every evidence span is a literal JD substring) → a **synthesizer pass reconciles** the three drafts into the final canonical analysis, retaining the agreement/confidence signal.
+- **D-06:** Mixing strategy = **merge + synthesize**. Run all 3 SDKs in parallel → compute agreement (union of requirements/keywords, flag disagreements, validate every evidence span is locatable in the JD via the normalized substring + snap-to-source matcher — formatting-tolerant, content-exact) → a **synthesizer pass reconciles** the three drafts into the final canonical analysis, retaining the agreement/confidence signal.
 - **D-07:** The synthesizer is itself an agent-SDK call (recommended: Claude Agent SDK) — exact choice is Claude's discretion / AI-SPEC mechanism.
 
 ### Persistence & Audit Trail
@@ -46,7 +46,7 @@ Requirements covered: ANALYSIS-01, ANALYSIS-02, ANALYSIS-03, ANALYSIS-04, ANALYS
 
 ### Analysis Content & Evidence Shape
 - **D-14:** Requirement weighting = **tier + numeric weight**: classify must-have vs nice-to-have AND assign a 0–1 priority weight (rank within a tier). Both the explicit tier label and the numeric weight are persisted.
-- **D-15:** Evidence span = **quoted JD text is canonical** (a literal substring of the persisted posting snapshot); **char offsets are derived** at projection/render time for highlighting (recomputable, never drifts). The grounding validator checks substring membership against the snapshot.
+- **D-15:** Evidence span = **quoted JD text is canonical** (verbatim text from the persisted posting snapshot); **char offsets are derived** at projection/render time for highlighting (recomputable, never drifts). The grounding validator uses **normalized substring + snap-to-source** (formatting-tolerant, content-exact): it locates each span in the snapshot after folding formatting-insignificant variation (whitespace runs, Unicode hyphen/dash variants, smart quotes, case) and then **snaps** the stored span to the JD's actual text at the match, so persisted evidence is always copy-paste-findable in the posting. A span whose WORDS are absent from the snapshot (a paraphrase, synonym, or hallucination) is still rejected — the no-fabrication guarantee is unchanged.
 - **D-16:** Analysis depth = **rich ideal-candidate**: role framing/summary + must/nice requirements with priority + reasoned keywords with evidence + inferred seniority + a "what they're really looking for" narrative.
 - **D-17:** Each reasoned keyword **links to the requirement it supports** (`requirement_ref`), so later phases join bullet → keyword → requirement → JD-evidence cleanly (sets up Phase 2 provenance FKs). Orphan keywords (no clear parent requirement) are allowed but **flagged**.
 

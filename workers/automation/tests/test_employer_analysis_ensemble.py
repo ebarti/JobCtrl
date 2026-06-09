@@ -327,6 +327,51 @@ class TestEnsemble:
             )
         assert len(exc.value.failures) == 2
 
+    async def test_drafts_and_canonical_carry_snapped_spans(self) -> None:
+        # JD has a U+2011 non-breaking hyphen; both the leg and the synthesizer
+        # quote the ASCII-hyphen form. The ensemble must GROUND (formatting-
+        # tolerant) AND snap every persisted span to the JD's verbatim text so the
+        # drafts + canonical are content-exact / copy-paste-findable (D-15).
+        jd = (
+            "Head of Security Operations. You will run a high‑availability SOC "
+            "and own incident response end to end."
+        )
+        ascii_hyphen = {
+            "role_framing": "Run the SOC.",
+            "inferred_seniority": "head",
+            "ideal_candidate_narrative": "A hands-on SOC leader.",
+            "requirements": [
+                {
+                    "id": "r1",
+                    "text": "high availability",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "evidence_span": "high-availability SOC",  # ASCII hyphen
+                }
+            ],
+            "keywords": [
+                {
+                    "keyword": "HA",
+                    "evidence_span": "high-availability",  # ASCII hyphen
+                    "requirement_ref": "r1",
+                }
+            ],
+        }
+        outcome = await run_ensemble(
+            "sys",
+            jd,
+            adapters=(_StubDraftAdapter("claude-opus-4-8", returns=ascii_hyphen),),
+            synthesizer=_StubSynthesizer(returns=ascii_hyphen),
+            synthesizer_system_prompt="synth-sys",
+            max_leg_retries=0,
+        )
+        # The surviving draft's spans are snapped to the JD's U+2011 text.
+        assert outcome.drafts[0].requirements[0].evidence_span == "high‑availability SOC"
+        assert outcome.drafts[0].keywords[0].evidence_span == "high‑availability"
+        # The canonical (synthesizer output) is snapped too.
+        assert outcome.canonical.requirements[0].evidence_span == "high‑availability SOC"
+        assert outcome.canonical.keywords[0].evidence_span == "high‑availability"
+
     async def test_synthesizer_output_is_grounding_validated(self) -> None:
         # Synthesizer fabricates a span -> ensemble re-asks then propagates.
         fabricated = _grounded_dict()

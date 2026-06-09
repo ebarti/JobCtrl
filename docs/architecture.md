@@ -170,10 +170,15 @@ AI runs through agent SDKs, never the legacy httpx `jobhunter.llm.LLMClient`.
   canonical record plus every per-model sub-analysis, the per-leg failures, and
   the cross-model agreement signal.
 - **Grounding gate** (`domain/materials/analysis_grounding.py`): a deterministic
-  literal-substring validator rejects any evidence span that is not found
-  verbatim in the persisted posting snapshot — the cardinal correctness gate,
-  run on every draft and on the synthesized canonical before persistence. JSON
-  Schema cannot express this, so it is a separate hard check.
+  **normalized substring + snap-to-source** validator (formatting-tolerant,
+  content-exact). It locates each evidence span in the posting snapshot after
+  folding formatting-insignificant variation (whitespace runs, Unicode
+  hyphen/dash variants, smart quotes, case), then **snaps** the stored span to
+  the JD's verbatim text at the match so persisted evidence is always
+  copy-paste-findable. A span whose WORDS are absent from the snapshot (a
+  paraphrase, synonym, or hallucination) is still rejected — the cardinal
+  correctness gate, run on every draft and on the synthesized canonical before
+  persistence. JSON Schema cannot express this, so it is a separate hard check.
 - **Ports + adapters** (`domain/ports/materials.py`,
   `infrastructure/analysis/`): the use case depends on `AnalysisDraftPort` /
   `AnalysisSynthesizerPort`, never on a concrete SDK. The ensemble runs the legs

@@ -43,7 +43,7 @@ from jobhunter.domain.materials.analysis import (
 from jobhunter.domain.materials.analysis_grounding import (
     GroundingError,
     find_grounding_violations,
-    validate_evidence_spans,
+    ground_and_snap,
 )
 from jobhunter.domain.ports.materials import (
     AnalysisDraftPort,
@@ -64,17 +64,20 @@ async def _draft_with_retry(
 ) -> JobAnalysisDraft:
     """Run one leg, retrying on schema/grounding failure (AI-SPEC §4b).
 
-    Returns the validated, grounded draft or raises the last error (which the
-    caller records as a per-leg failure). The grounding check runs HERE so a
+    Returns the validated draft with its evidence spans SNAPPED to verbatim JD
+    text (formatting-tolerant grounding gate), or raises the last error (which
+    the caller records as a per-leg failure). The grounding check runs HERE so a
     leg that keeps fabricating spans is retried, then recorded as a failure
-    rather than poisoning the synthesizer input.
+    rather than poisoning the synthesizer input — and the snapped spans flow
+    into the synthesizer + persistence verbatim-from-the-posting (D-15).
     """
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             draft = await adapter.draft(system_prompt, jd_snapshot)
-            validate_evidence_spans(draft, jd_snapshot)
-            return draft
+            snapped = ground_and_snap(draft, jd_snapshot)
+            assert isinstance(snapped, JobAnalysisDraft)  # snap preserves the leg type
+            return snapped
         except (ValidationError, GroundingError) as exc:
             last_error = exc
             log.warning(
@@ -240,7 +243,10 @@ async def _synthesize_with_retry(
 
     A grounding failure on the synthesized canonical blocks persistence and
     triggers a synthesizer re-ask (AI-SPEC §6 online guardrail). After
-    exhaustion the error propagates (the use case surfaces it).
+    exhaustion the error propagates (the use case surfaces it). The returned
+    canonical carries its evidence spans SNAPPED to verbatim JD text so the
+    persisted record is content-exact and copy-paste-findable in the posting
+    (D-15).
     """
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
@@ -248,8 +254,7 @@ async def _synthesize_with_retry(
             canonical = await synthesizer.reconcile(
                 system_prompt, drafts=drafts, jd_snapshot=jd_snapshot
             )
-            validate_evidence_spans(canonical, jd_snapshot)
-            return canonical
+            return ground_and_snap(canonical, jd_snapshot)
         except (ValidationError, GroundingError) as exc:
             last_error = exc
             log.warning(
