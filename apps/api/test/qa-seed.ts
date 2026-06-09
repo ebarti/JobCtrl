@@ -239,7 +239,24 @@ export function seedQaDatabase(dbPath: string): void {
       duration_ms INTEGER,
       events_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE worker_runtime_heartbeats (
+      worker_id TEXT PRIMARY KEY,
+      component TEXT NOT NULL,
+      pid INTEGER NOT NULL,
+      hostname TEXT NOT NULL,
+      app_dir TEXT NOT NULL,
+      db_path TEXT NOT NULL,
+      task_queue TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
   `);
+
+  // INSPECT-01: a current worker heartbeat so the generate-materials route's
+  // worker-readiness gate passes in E2E. ``app_dir``/``db_path`` must match the
+  // API runtime (resolved paths) and ``last_seen_at`` must be within the 45s
+  // staleness window, so it is written relative to "now" at seed time.
+  seedWorkerHeartbeat(db, dbPath);
 
   insertJob(db, {
     url: "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director",
@@ -316,6 +333,24 @@ export function seedQaDatabase(dbPath: string): void {
     QA_NOW,
   );
   db.close();
+}
+
+function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
+  db.prepare(
+    `INSERT INTO worker_runtime_heartbeats
+      (worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "qa-worker-1",
+    "temporal-worker",
+    1234,
+    "localhost",
+    path.resolve(path.dirname(dbPath)),
+    path.resolve(dbPath),
+    "jobhunter-default",
+    new Date().toISOString(),
+    new Date().toISOString(),
+  );
 }
 
 function insertJob(db: Database.Database, job: QaJobSeed): void {

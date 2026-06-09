@@ -1,8 +1,20 @@
 import { resolveApiConfig } from "./config.js";
+import { e2eStubActionDispatcher, isE2eStubDispatchEnabled } from "./e2e-dispatch.js";
 import { buildApp } from "./server.js";
 
 const config = resolveApiConfig();
-const app = buildApp({ ...config, logger: true });
+// INSPECT-01 E2E: when running under the Playwright harness, swap the real
+// JSON-RPC subprocess dispatcher for a deterministic stub (no worker, no LLM)
+// while keeping the worker-readiness gate live so the seeded heartbeat is still
+// exercised. Disabled in all normal/production runs.
+const stubDispatch = isE2eStubDispatchEnabled();
+const app = buildApp({
+  ...config,
+  logger: true,
+  ...(stubDispatch
+    ? { actionDispatcher: e2eStubActionDispatcher, requireHealthyWorkerForActions: true }
+    : {}),
+});
 
 try {
   await app.listen({ host: config.host, port: config.port });

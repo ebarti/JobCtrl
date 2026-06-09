@@ -1,17 +1,76 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import type { ActionRunResponse } from "@jobhunter/contracts";
+import { screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithProviders } from "../../../test/render.js";
+import { buildTestPorts } from "../../../test/testPorts.js";
 import { GenerateMaterialsButton } from "./GenerateMaterialsButton.js";
 
+const originalConfirm = globalThis.window?.confirm;
+
+function queued(jobKey: string): ActionRunResponse {
+  return {
+    ok: true,
+    runId: "run-generate",
+    actionId: "action-generate",
+    action: "run_stage",
+    status: "queued",
+    jobKey,
+    command: { action: "run_stage", jobKey },
+  };
+}
+
+afterEach(() => {
+  if (typeof originalConfirm === "function") {
+    Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: originalConfirm });
+  }
+});
+
 describe("<GenerateMaterialsButton>", () => {
-  it("is disabled until the backend endpoint lands", () => {
-    render(<GenerateMaterialsButton jobId="job-1" />);
-    expect(screen.getByRole("button", { name: /generate materials/i })).toBeDisabled();
+  it("is enabled and exposes the job id (INSPECT-01)", () => {
+    const { container } = renderWithProviders(<GenerateMaterialsButton jobId="job-42" />);
+    const button = container.querySelector("button");
+    expect(button).not.toBeDisabled();
+    expect(button?.getAttribute("data-job-id")).toBe("job-42");
   });
 
-  it("preserves the job id as a data attribute", () => {
-    const { container } = render(<GenerateMaterialsButton jobId="job-42" />);
-    const button = container.querySelector("button");
-    expect(button?.getAttribute("data-job-id")).toBe("job-42");
+  it("dispatches per-job material generation after confirmation", async () => {
+    const user = userEvent.setup();
+    const generateMaterials = vi.fn(async () => queued("job-1"));
+    Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: () => true });
+
+    renderWithProviders(<GenerateMaterialsButton jobId="job-1" />, {
+      ports: buildTestPorts({ api: { generateMaterials } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "generate materials" }));
+
+    await waitFor(() =>
+      expect(generateMaterials).toHaveBeenCalledWith("job-1", {
+        stages: ["tailor", "cover"],
+        dryRun: false,
+        limit: 1,
+      }),
+    );
+  });
+
+  it("does not dispatch when the confirmation is declined", async () => {
+    const user = userEvent.setup();
+    const generateMaterials = vi.fn(async () => queued("job-1"));
+    Object.defineProperty(window, "confirm", { configurable: true, writable: true, value: () => false });
+
+    renderWithProviders(<GenerateMaterialsButton jobId="job-1" />, {
+      ports: buildTestPorts({ api: { generateMaterials } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "generate materials" }));
+
+    expect(generateMaterials).not.toHaveBeenCalled();
+  });
+
+  it("respects the disabled prop", () => {
+    renderWithProviders(<GenerateMaterialsButton jobId="job-1" disabled />);
+    expect(screen.getByRole("button", { name: "generate materials" })).toBeDisabled();
   });
 });

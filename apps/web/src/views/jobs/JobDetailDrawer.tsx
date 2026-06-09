@@ -1,9 +1,11 @@
 import { JobHunterApiError } from "@jobhunter/api-client";
-import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
+import type { ArtifactSummary, JobAuditEntry, StageSummary } from "@jobhunter/contracts";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
+import { ArtifactTailoringInspector } from "../../contexts/materials/components/ArtifactTailoringInspector.js";
+import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
@@ -40,6 +42,17 @@ function canRetryStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && ["failed", "exhausted"].includes(stage.state));
 }
 
+// Prefer the rendered PDF (provenance/coverage hang off it), else the text resume.
+const TAILORED_RESUME_TYPES = ["tailored_resume_pdf", "resume_pdf", "tailored_resume", "tailored_resume_txt"];
+
+function tailoredResumeArtifact(artifacts: readonly ArtifactSummary[]): ArtifactSummary | undefined {
+  for (const type of TAILORED_RESUME_TYPES) {
+    const match = artifacts.find((artifact) => artifact.type === type);
+    if (match) return match;
+  }
+  return undefined;
+}
+
 function JobAuditHistorySection({
   entries,
 }: {
@@ -66,6 +79,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const currentSubstage = detail?.stages.find(
     (stage) => stage.stage === detail.job.currentSubstage,
   );
+  const resumeArtifact = detail ? tailoredResumeArtifact(detail.artifacts) : undefined;
 
   return (
     <DetailDrawerBackdrop onDismiss={onClose}>
@@ -112,6 +126,13 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <Empty title="No active apply-ready artifacts." />
               )}
             </Section>
+            <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section" />
+            {resumeArtifact ? (
+              <ArtifactTailoringInspector
+                artifactId={resumeArtifact.artifactId}
+                className="section"
+              />
+            ) : null}
             <Section title="Apply history">
               <ApplyHistory jobId={detail.job.jobKey} />
             </Section>

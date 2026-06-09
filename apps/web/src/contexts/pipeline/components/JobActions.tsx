@@ -4,6 +4,7 @@ import type { Stage } from "@jobhunter/contracts";
 import { ApplyButton } from "../../apply/components/ApplyButton.js";
 import { CancelApplyButton } from "../../apply/components/CancelApplyButton.js";
 import { DryRunButton } from "../../apply/components/DryRunButton.js";
+import { GenerateMaterialsButton } from "../../materials/components/GenerateMaterialsButton.js";
 import { RetailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
 import { RescoreJobButton } from "../../scoring/components/RescoreCurrentPolicyButton.js";
 import { CancelStageButton } from "./CancelStageButton.js";
@@ -35,6 +36,7 @@ export function JobActions({
       ) : null}
       <CancelStageButton jobId={jobId} stage={currentStage} />
       <RescoreJobButton jobId={jobId} />
+      <GenerateMaterialsButton jobId={jobId} />
       {canRetailor ? <RetailorJobButton jobId={jobId} /> : null}
       <DryRunButton jobId={jobId} />
       <ApplyButton jobId={jobId} />

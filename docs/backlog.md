@@ -167,10 +167,11 @@ Out of scope for the local stack (stays in [`TODO_FUTURE.md`](../TODO_FUTURE.md)
 - Add browser smoke for action-status polling. Bulk action buttons are
   covered by `apps/web/e2e/tests/jobs-bulk.spec.ts`, `dry-run.spec.ts` covers
   the SSE connection/activity path, and `runs.spec.ts` covers the Workflow
-  Runs list. No browser flow starts a stage and observes the action-status
-  loop from queued/running to terminal. `apps/web/e2e/tests/materials.spec.ts`
-  remains `test.fixme`'d pending the generate-materials backend enablement
-  below.
+  Runs list. `apps/web/e2e/tests/materials.spec.ts` now (INSPECT-01) starts
+  per-job material generation, asserts the 202 dispatch, and observes the
+  worker-confirmed `ResumeApproved` through the SSE realtime loop (via a
+  deterministic stub dispatcher). A spec that observes a genuine queued →
+  running → terminal transition driven by a live worker is still missing.
 - Decide whether row selection should be URL-persisted or kept as client
   state. Filters, sort, and page already survive live updates by virtue
   of the TanStack Router URL-state architecture; selection lives in
@@ -362,12 +363,14 @@ and are tracked here per the migration plan §"Deferred follow-ups":
   `job_enrichments`. The seeded `job_stage_states` row also omits
   `metadata_json` and `version`, so it no longer represents the production
   projection schema closely enough.
-- **Generate-materials backend enablement** — `docs/frontend-target.md`
-  §3.6 / migration plan §7. The `useGenerateMaterialsMutation` hook
-  still throws `NotImplementedError`, the button is disabled, and the HTTP
-  route exists only to return `unsupported_per_job_material_action` (400).
-  The gating dependency is a real targeted materials generation workflow /
-  JSON-RPC command plus a 202 HTTP surface that the hook can call.
+- **Generate-materials backend enablement** — DONE (INSPECT-01). The
+  `POST /v1/jobs/:jobKey/actions/generate-materials` route now dispatches a
+  `run_stage` command over the canonical material stages (tailor → cover) and
+  returns 202 when the worker is ready; `useGenerateMaterialsMutation` calls it
+  with an optimistic queued patch + rollback, and `<GenerateMaterialsButton>` is
+  enabled. A dedicated targeted `GenerateMaterialsUseCase`/RPC (instead of
+  reusing the `run_stage` pickup path) remains a possible future refinement but
+  is not required for the per-job product surface.
 - **`DryRunCompleted` event addition to `DomainEventUnion`** — Phase 6
   reviewer note. The worker emits `DryRunCompleted`, and the apply-run
   projection maps it to `dry_run_complete`, but the frontend

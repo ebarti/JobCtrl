@@ -436,19 +436,32 @@ available. Queued or running Discover and Apply workflows expose stop controls
 from the Pipelines and Workflow Runs views, and active per-job apply runs can be
 stopped from Apply review when a latest apply run is attached to the job.
 Jobs whose first-time tailoring is skipped by the default low-fit gate can still
-be tailored explicitly from the job detail tailor stage. Re-tailor controls are
+be tailored explicitly from the job detail tailor stage. The job detail panel
+also has a "generate materials" control that runs the canonical material stages
+(tailor → cover) for a single job on demand; it confirms before dispatching,
+shows a queued/in-flight state, and never discards the last accepted materials —
+the prior accepted artifact is superseded only after a replacement is approved, so
+a failed regeneration stays as inspectable audit history. Re-tailor controls are
 reserved for jobs that already have tailored artifacts and need current-policy
 regeneration.
-Apply review shows the safe tailoring rationale under the selected tailored
-resume when a resume PDF artifact is available. The same rationale remains
-available from the Artifacts drawer for audit/detail review. It includes keyword
+The job detail drawer and Apply review both surface an in-app inspector for the
+tailored resume. The employer-analysis panel shows the reasoned "ideal candidate"
+analysis — requirements classified must-have vs nice-to-have with a priority
+weight, and reasoned keywords each tied to a quoted job-description evidence span,
+plus the ensemble audit trail and a degraded-ensemble indicator. The per-bullet
+provenance list shows, for each generated bullet, the original-profile-bullet →
+tailored-bullet diff and the evidence × requirement × transform × control ×
+rationale that produced it. The tailoring rationale also includes keyword
 coverage counts for actionable high-signal terms derived from the material audit
-and job scoring keywords, evidence support, quality gates, review outcome,
+and job scoring keywords, the voice-pass status (whether the de-buzzword pass ran,
+was accepted, and why), evidence support, quality gates, review outcome,
 warning-repair status,
 annotated source-vs-tailored resume changes, high-fit persona prompt/response
 audit, and model summary. Persona warnings include an expandable audit trail for
-the stored LLM request and structured response behind that judgment. The
-keyword section marks when a resume keyword match audit was not recorded, instead
+the stored LLM request and structured response behind that judgment. Missing audit
+data is rendered explicitly: a job with no analysis shows a "not recorded" state,
+empty requirement/keyword/evidence sets show "none recorded", and the keyword
+section marks when a resume keyword match audit was not recorded, instead
 of treating target terms as missing from the resume.
 rationale does not expose raw generator prompts, raw profile payloads, or raw job
 text; annotated changes and persona prompts are bounded excerpts explaining what

@@ -16,6 +16,18 @@ export {
   type ArtifactStatusBadgeProps,
 } from "./components/ArtifactStatusBadge.js";
 export {
+  ArtifactTailoringInspector,
+  type ArtifactTailoringInspectorProps,
+} from "./components/ArtifactTailoringInspector.js";
+export {
+  BulletProvenanceList,
+  type BulletProvenanceListProps,
+} from "./components/BulletProvenanceList.js";
+export {
+  EmployerAnalysisPanel,
+  type EmployerAnalysisPanelProps,
+} from "./components/EmployerAnalysisPanel.js";
+export {
   ArtifactTypeBadge,
   type ArtifactTypeBadgeProps,
 } from "./components/ArtifactTypeBadge.js";

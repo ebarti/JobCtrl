@@ -819,9 +819,39 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
       }
-      void body;
-      void reply.code(400);
-      return unsupportedPerJobMaterialAction(jobUrl);
+      refreshProjections(db);
+      // INSPECT-01: per-job material generation runs the canonical material
+      // stages (tailor → cover) through the same run_stage path the pipeline
+      // pickup uses. The tailor stage runs the Phase 1-4 analyze → tailor →
+      // voice → audit flow and supersedes the prior accepted artifact only after
+      // a replacement is approved (INSPECT-06 is enforced by the worker's
+      // generation-versioning, not the read side). Unlike scheduled pickup this
+      // is an explicit user re-generation, so it is not gated on the stage being
+      // pending — a user may regenerate materials for a job whose tailor stage
+      // already succeeded.
+      const primaryStage = body.stages[0] as Stage | undefined;
+      if (!primaryStage) {
+        void reply.code(400);
+        return { ok: false, error: "no_material_stage_requested" };
+      }
+      const command: ActionCommandPayload = {
+        action: "run_stage",
+        jobKey: jobUrl,
+        stage: primaryStage,
+        stages: body.stages,
+        dryRun: body.dryRun,
+        limit: body.limit,
+      };
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+      const dispatch = await actionDispatcher(command, actionContext);
+      if (dispatch.workflowId) {
+        recordPipelineWorkflowStarted(options.dbPath, primaryStage, dispatch.workflowId, dispatch.runId);
+      }
+      void reply.code(dispatch.status === "queued" ? 202 : 200);
+      return buildActionResponse(command, dispatch);
     });
   });
 
@@ -1608,22 +1638,6 @@ function eligiblePickup(): PreparationPickupEligibility {
 
 function ineligiblePickup(reason: string, message: string): PreparationPickupEligibility {
   return { eligible: false, reason, message };
-}
-
-function unsupportedPerJobMaterialAction(jobKey?: string): {
-  ok: false;
-  accepted: false;
-  error: string;
-  jobKey?: string;
-  message: string;
-} {
-  return {
-    ok: false,
-    accepted: false,
-    error: "unsupported_per_job_material_action",
-    ...(jobKey ? { jobKey } : {}),
-    message: "Per-job material generation is disabled until targeted stage execution is implemented.",
-  };
 }
 
 function withDb<T>(

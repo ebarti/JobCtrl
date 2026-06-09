@@ -95,4 +95,36 @@ describe("<TailoringExplanationSection>", () => {
     expect(screen.queryByText("Generation context")).not.toBeInTheDocument();
     expect(screen.queryByText("Selected model")).not.toBeInTheDocument();
   });
+
+  it("renders an honest not-recorded voice pass and empty provenance (INSPECT-05)", () => {
+    render(<TailoringExplanationSection explanation={keywordOnlyExplanation} />);
+
+    expect(screen.getByText("Voice pass")).toBeInTheDocument();
+    expect(screen.getByText("No voice pass was recorded for this artifact.")).toBeInTheDocument();
+    expect(screen.getByText("Per-bullet provenance")).toBeInTheDocument();
+    expect(
+      screen.getByText(/No per-bullet provenance was recorded for this artifact/i),
+    ).toBeInTheDocument();
+  });
+
+  it("labels a voice pass that ran but was not accepted, with its reason (INSPECT-05)", () => {
+    const explanation: ArtifactTailoringExplanation = {
+      ...keywordOnlyExplanation,
+      voicePass: {
+        ran: true,
+        accepted: false,
+        model: "voice-model",
+        promptVersion: "voice-v1",
+        proxyDelta: { buzzword_density: -0.2 },
+        reason: "Voice edit introduced an unsourced metric and was rejected.",
+      },
+    };
+    render(<TailoringExplanationSection explanation={explanation} />);
+
+    expect(screen.getByText("not accepted")).toBeInTheDocument();
+    expect(
+      screen.getByText("Voice edit introduced an unsourced metric and was rejected."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Buzzword Density: -0.2/)).toBeInTheDocument();
+  });
 });

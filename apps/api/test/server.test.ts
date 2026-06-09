@@ -3563,8 +3563,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects unsupported per-job material generation but runs cover retry continuation", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+  it("dispatches per-job material generation over the material stages (INSPECT-01)", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test", runId: "run-materials" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
 
@@ -3573,38 +3573,84 @@ describe("local TypeScript API", () => {
       url: `/v1/jobs/${jobKey}/actions/generate-materials`,
       payload: { stages: ["tailor", "cover"], dryRun: true, limit: 1 },
     });
-    const retryResponse = await app.inject({
-      method: "POST",
-      url: `/v1/jobs/${jobKey}/actions/retry-stage`,
-      payload: { stage: "cover", runAfter: true, dryRun: true },
-    });
 
-    expect(generateResponse.statusCode, generateResponse.body).toBe(400);
+    expect(generateResponse.statusCode, generateResponse.body).toBe(202);
     expect(generateResponse.json()).toMatchObject({
-      ok: false,
-      accepted: false,
-      error: "unsupported_per_job_material_action",
+      ok: true,
+      action: "run_stage",
+      status: "queued",
       jobKey: "https://example.com/jobs/ready",
     });
-    expect(retryResponse.statusCode, retryResponse.body).toBe(202);
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "retry_stage",
+        action: "run_stage",
         jobKey: "https://example.com/jobs/ready",
-        stage: "cover",
-        stages: ["cover"],
-        runAfter: true,
+        stage: "tailor",
+        stages: ["tailor", "cover"],
         dryRun: true,
+        limit: 1,
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
 
-    const db = new Database(options.dbPath);
-    const coverStage = db
-      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?")
-      .get("https://example.com/jobs/ready", "cover") as { state: string };
-    db.close();
-    expect(coverStage.state).toBe("pending");
+    await app.close();
+  });
+
+  it("defaults per-job material generation to the tailor+cover stages", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test", runId: "run-materials" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-materials`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        stage: "tailor",
+        stages: ["tailor", "cover"],
+      }),
+      expect.anything(),
+    );
+
+    await app.close();
+  });
+
+  it("rejects per-job material generation for missing jobs", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobKey = encodeURIComponent("https://example.com/jobs/missing");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-materials`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(404);
+    expect(response.json()).toMatchObject({ ok: false, error: "job_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("guards per-job material generation behind worker readiness", async () => {
+    const { actionDispatcher: _ignored, ...optionsWithoutDispatcher } = options;
+    const app = buildApp({ ...optionsWithoutDispatcher, requireHealthyWorkerForActions: true });
+    const jobKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobKey}/actions/generate-materials`,
+      payload: {},
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({ ok: false, error: "worker_runtime_unavailable" });
 
     await app.close();
   });

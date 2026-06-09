@@ -1,6 +1,8 @@
 import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import type { ReactNode } from "react";
 
+import { BulletProvenanceList } from "./BulletProvenanceList.js";
+
 export interface TailoringExplanationSectionProps {
   readonly explanation: ArtifactTailoringExplanation | null;
   readonly className?: string;
@@ -242,6 +244,71 @@ function PromptMessageList({
   );
 }
 
+function VoicePassBlock({
+  voicePass,
+}: {
+  readonly voicePass: ArtifactTailoringExplanation["voicePass"];
+}) {
+  // INSPECT-05 honest lifecycle labeling: distinguish "no voice pass recorded"
+  // (null) from "ran but not accepted" (with reason) from "ran and accepted".
+  if (!voicePass) {
+    return (
+      <div className="evidence-block">
+        <h4>Voice pass</h4>
+        <p className="muted">No voice pass was recorded for this artifact.</p>
+      </div>
+    );
+  }
+  const proxyEntries = Object.entries(voicePass.proxyDelta ?? {});
+  return (
+    <div className="evidence-block">
+      <h4>Voice pass</h4>
+      <dl className="detail-list compact">
+        <div>
+          <dt>Ran</dt>
+          <dd>{yesNo(voicePass.ran)}</dd>
+        </div>
+        <div>
+          <dt>Outcome</dt>
+          <dd>
+            {voicePass.accepted ? (
+              <span className="tag ok">accepted</span>
+            ) : (
+              <span className="tag warn">not accepted</span>
+            )}
+          </dd>
+        </div>
+        {voicePass.model ? (
+          <div>
+            <dt>Model</dt>
+            <dd>{voicePass.model}</dd>
+          </div>
+        ) : null}
+        {voicePass.reason ? (
+          <div>
+            <dt>Reason</dt>
+            <dd>{voicePass.reason}</dd>
+          </div>
+        ) : null}
+        {proxyEntries.length ? (
+          <div>
+            <dt>Proxy delta</dt>
+            <dd>
+              <ul className="compact-list">
+                {proxyEntries.map(([key, value]) => (
+                  <li key={key}>
+                    {formatToken(key)}: {String(value)}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </div>
+  );
+}
+
 export function TailoringExplanationSection({
   explanation,
   className = "section",
@@ -412,6 +479,14 @@ export function TailoringExplanationSection({
             </dl>
           </div>
         ) : null}
+
+        <VoicePassBlock voicePass={explanation.voicePass} />
+
+        <BulletProvenanceList
+          className="evidence-block"
+          provenance={explanation.bulletProvenance}
+          annotatedChanges={explanation.annotatedChanges}
+        />
 
         {hasSafetyData ? (
           <div className="evidence-block">
