@@ -42,7 +42,7 @@ from jobhunter.domain.materials.analysis import (
     compute_snapshot_hash,
 )
 from jobhunter.domain.materials.analysis_eeo_screen import screen_eeo_red_flags
-from jobhunter.domain.materials.analysis_grounding import validate_evidence_spans
+from jobhunter.domain.materials.analysis_grounding import ground_and_snap
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.materials import (
     AnalysisDraftPort,
@@ -156,16 +156,19 @@ class AnalyzeJobUseCase:
 
         outcome = await self._run_ensemble(jd_snapshot)
 
-        # Defense in depth: re-validate the synthesized canonical's grounding
-        # before persistence (the runner already validated, but persistence is
-        # the hard boundary — never persist a fabricated span).
-        validate_evidence_spans(outcome.canonical, jd_snapshot)
+        # Defense in depth: re-validate the synthesized canonical's grounding AND
+        # snap its evidence spans to verbatim JD text before persistence (the
+        # runner already grounds+snaps, but persistence is the hard boundary —
+        # never persist a fabricated span, and the persisted spans must be
+        # content-exact / copy-paste-findable in the posting per D-15). Idempotent
+        # on an already-snapped canonical; raises GroundingError on any absent span.
+        grounded_canonical = ground_and_snap(outcome.canonical, jd_snapshot)
 
         # EEO red-flag screen (AI-SPEC §6 Dimension 9): deterministically DROP
         # any requirement/keyword that matches a protected-attribute signal so it
         # never becomes something downstream tailoring satisfies, and record each
         # drop as an audit note on the record. Never aborts the run.
-        screen = screen_eeo_red_flags(outcome.canonical)
+        screen = screen_eeo_red_flags(grounded_canonical)
         canonical = screen.analysis
         if screen.has_hits:
             log.warning(

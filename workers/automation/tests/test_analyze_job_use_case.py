@@ -216,6 +216,53 @@ class TestAnalyzeJobUseCase:
             await use_case.execute_async(job=JOB, tenant_id=LOCAL_TENANT)
         assert repo.saved == []  # nothing persisted on grounding failure
 
+    async def test_persisted_canonical_spans_are_snapped_to_verbatim_jd(self) -> None:
+        # The JD uses a U+2011 non-breaking hyphen; the runner returns a canonical
+        # quoting the ASCII-hyphen form. The persistence boundary must ground
+        # (formatting-tolerant) AND snap, so the saved record's spans are the JD's
+        # verbatim text (D-15) even if a runner skipped snapping.
+        repo = _InMemoryRepo()
+        job = {
+            "url": "https://example.com/jobs/soc",
+            "title": "Head of Security Operations",
+            "full_description": "You will run a high‑availability SOC and own IR.",
+        }
+        ascii_canonical = JobAnalysis(
+            role_framing="Run the SOC.",
+            inferred_seniority="head",
+            ideal_candidate_narrative="A SOC leader.",
+            requirements=[
+                Requirement(
+                    id="r1",
+                    text="HA",
+                    tier="must_have",
+                    weight=0.9,
+                    evidence_span="high-availability SOC",  # ASCII hyphen
+                )
+            ],
+            keywords=[
+                ReasonedKeyword(
+                    keyword="HA", evidence_span="high-availability", requirement_ref="r1"
+                )
+            ],
+        )
+        outcome = EnsembleOutcome(
+            canonical=ascii_canonical,
+            drafts=(JobAnalysisDraft(model_id="m0", **ascii_canonical.model_dump()),),
+            failures=(),
+            agreement=AnalysisAgreement(score=1.0),
+            legs_attempted=1,
+        )
+        runner, _ = _runner_returning(outcome)
+        use_case = _use_case(repo=repo, runner=runner)
+
+        result = await use_case.execute_async(job=job, tenant_id=LOCAL_TENANT)
+
+        saved = result.analysis.canonical
+        assert saved.requirements[0].evidence_span == "high‑availability SOC"  # U+2011
+        assert saved.keywords[0].evidence_span == "high‑availability"
+        assert len(repo.saved) == 1
+
     async def test_eeo_red_flag_is_dropped_before_persist_and_recorded(self) -> None:
         # The runner returns a canonical that carries a protected-class
         # requirement whose evidence span IS grounded in the JD — so only the

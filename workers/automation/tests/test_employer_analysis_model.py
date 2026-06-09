@@ -31,7 +31,9 @@ from jobhunter.domain.materials.analysis import (
 from jobhunter.domain.materials.analysis_grounding import (
     GroundingError,
     find_grounding_violations,
+    ground_and_snap,
     is_grounded,
+    locate_grounded_span,
     validate_evidence_spans,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
@@ -125,7 +127,7 @@ class TestSchemaInvariants:
 
 
 class TestGrounding:
-    def test_literal_substring_is_grounded(self) -> None:
+    def test_verbatim_substring_is_grounded(self) -> None:
         assert is_grounded("5+ years of Python", JD_SNAPSHOT) is True
 
     def test_whitespace_normalized_span_is_grounded(self) -> None:
@@ -160,6 +162,149 @@ class TestGrounding:
         violations = find_grounding_violations(bad, JD_SNAPSHOT)
         assert [v.kind for v in violations] == ["keyword"]
         assert violations[0].ref_id == "Rust"
+
+
+# --------------------------------------------------------------------------- #
+# Formatting-tolerant grounding + snap-to-source (Dimension 1, D-15)
+#
+# The matcher is normalize -> locate -> snap-to-source: formatting-insignificant
+# differences (Unicode hyphen/dash variants, whitespace/newlines, smart quotes,
+# case) GROUND, and the stored span is rewritten to the JD's verbatim text. The
+# no-fabrication guarantee is UNCHANGED — different WORDS (paraphrase / synonym /
+# hallucination) are still rejected. These tests pin both halves.
+# --------------------------------------------------------------------------- #
+
+# U+2011 NON-BREAKING HYPHEN — the exact char that wrongly rejected a real span
+# in the live E2E ("high‑availability" in the JD vs ASCII "high-availability").
+_JD_UNICODE_HYPHEN = (
+    "Head of Security Operations\n\n"
+    "You will run a high‑availability SOC and own incident response."
+)
+
+
+class TestNormalizedGroundingAndSnap:
+    # --- Unicode hyphen variant (the regression that motivated this change) --- #
+
+    def test_unicode_hyphen_span_grounds(self) -> None:
+        # JD has U+2011; the model quoted ASCII "-". Genuinely present -> grounds.
+        assert is_grounded("high-availability", _JD_UNICODE_HYPHEN) is True
+
+    def test_unicode_hyphen_snaps_to_verbatim_jd_text(self) -> None:
+        # Snap-to-source returns the JD's ACTUAL text — the U+2011 variant, not
+        # the model's ASCII hyphen.
+        snapped = locate_grounded_span("high-availability", _JD_UNICODE_HYPHEN)
+        assert snapped == "high‑availability"  # contains U+2011
+        assert "‑" in snapped and "-" not in snapped
+
+    def test_en_and_em_dash_variants_ground(self) -> None:
+        jd = "Coverage is 24/7 — on‑call rotation with end–to–end ownership."
+        assert is_grounded("on-call rotation", jd) is True
+        assert is_grounded("end-to-end ownership", jd) is True
+        assert locate_grounded_span("end-to-end ownership", jd) == "end–to–end ownership"
+
+    # --- Whitespace / newline tolerance --- #
+
+    def test_span_split_across_newline_grounds_and_snaps(self) -> None:
+        # The phrase is split across a line break + multiple spaces in the JD; the
+        # model quoted it with single spaces. It grounds and snaps to the JD's
+        # actual (multi-line) text so highlighting offsets are exact.
+        jd = "You will operate production\n   Kubernetes clusters at scale."
+        assert is_grounded("production Kubernetes clusters", jd) is True
+        assert locate_grounded_span("production Kubernetes clusters", jd) == (
+            "production\n   Kubernetes clusters"
+        )
+
+    # --- Smart vs straight quotes --- #
+
+    def test_smart_quotes_ground_and_snap_to_jd_quotes(self) -> None:
+        jd = "Maintain the team’s “PostgreSQL” fleet and its uptime SLOs."
+        # Model quoted with straight ASCII quotes; JD uses curly quotes.
+        assert is_grounded("team's \"PostgreSQL\" fleet", jd) is True
+        assert locate_grounded_span("team's \"PostgreSQL\" fleet", jd) == (
+            "team’s “PostgreSQL” fleet"
+        )
+
+    # --- Case-insensitive --- #
+
+    def test_case_insensitive_grounds_and_snaps_to_jd_case(self) -> None:
+        jd = "Deep PostgreSQL tuning and Kafka streaming required."
+        assert is_grounded("postgresql tuning", jd) is True
+        # Snaps to the JD's actual casing, not the model's lowercase quote.
+        assert locate_grounded_span("postgresql tuning", jd) == "PostgreSQL tuning"
+
+    # --- THE GUARANTEE: different WORDS are still rejected --- #
+
+    def test_paraphrase_with_different_words_is_still_rejected(self) -> None:
+        # JD says "high availability"; "99.9999% uptime" is a synonym/paraphrase
+        # whose WORDS are not in the JD. Formatting tolerance must NOT relax this.
+        jd = "We need high availability and resilient systems."
+        assert is_grounded("99.9999% uptime", jd) is False
+
+    def test_invented_technology_is_still_rejected(self) -> None:
+        # Classic hallucination: a concrete tool the JD never names.
+        jd = "We need high availability and resilient systems."
+        assert is_grounded("Kubernetes", jd) is False
+
+    def test_ground_and_snap_raises_for_paraphrased_requirement(self) -> None:
+        jd = "We need high availability and resilient systems."
+        bad = _analysis(
+            requirements=[
+                _requirement(id="r1", text="HA", evidence_span="99.9999% uptime")
+            ],
+            keywords=[],
+        )
+        with pytest.raises(GroundingError) as exc:
+            ground_and_snap(bad, jd)
+        assert any(v.kind == "requirement" and v.span == "99.9999% uptime" for v in exc.value.violations)
+
+    # --- Snap-to-source on the whole analysis + idempotence --- #
+
+    def test_ground_and_snap_rewrites_spans_to_verbatim_source(self) -> None:
+        analysis = _analysis(
+            requirements=[
+                _requirement(id="r1", text="HA", evidence_span="high-availability")
+            ],
+            keywords=[
+                ReasonedKeyword(
+                    keyword="HA",
+                    evidence_span="high-availability",
+                    requirement_ref="r1",
+                )
+            ],
+        )
+        snapped = ground_and_snap(analysis, _JD_UNICODE_HYPHEN)
+        # Every span now equals the JD's verbatim (U+2011) text.
+        assert snapped.requirements[0].evidence_span == "high‑availability"
+        assert snapped.keywords[0].evidence_span == "high‑availability"
+        # Non-span fields are preserved unchanged.
+        assert snapped.requirements[0].id == "r1"
+        assert snapped.keywords[0].requirement_ref == "r1"
+        # The input is never mutated (returns a copy when spans change).
+        assert analysis.requirements[0].evidence_span == "high-availability"
+
+    def test_ground_and_snap_is_idempotent_on_verbatim_spans(self) -> None:
+        # An already-verbatim analysis is returned unchanged (no-op) — snapping a
+        # snapped analysis is a no-op.
+        analysis = _analysis()  # spans are already exact JD substrings
+        once = ground_and_snap(analysis, JD_SNAPSHOT)
+        twice = ground_and_snap(once, JD_SNAPSHOT)
+        assert once is analysis  # same object: nothing to rewrite
+        assert twice is once
+        assert once.requirements[0].evidence_span == "5+ years of Python"
+
+    def test_ground_and_snap_preserves_draft_model_id(self) -> None:
+        # Snapping a JobAnalysisDraft must keep its model_id tag and return a draft.
+        draft = JobAnalysisDraft(
+            model_id="gpt-5.4",
+            **_analysis(
+                requirements=[_requirement(id="r1", text="HA", evidence_span="high-availability")],
+                keywords=[],
+            ).model_dump(),
+        )
+        snapped = ground_and_snap(draft, _JD_UNICODE_HYPHEN)
+        assert isinstance(snapped, JobAnalysisDraft)
+        assert snapped.model_id == "gpt-5.4"
+        assert snapped.requirements[0].evidence_span == "high‑availability"
 
 
 # --------------------------------------------------------------------------- #
