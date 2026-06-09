@@ -62,6 +62,8 @@ Important local files include:
   profile/rendering seed files imported into SQLite when no profile row exists.
 - `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts.
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
+- `codex_home/`: isolated Codex SDK home (session rollouts plus a copied auth
+  token; sensitive, never commit).
 
 Do not commit profile data, keys, generated resumes, cover letters, PDFs,
 browser profiles, logs, or SQLite databases.
