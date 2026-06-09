@@ -11,7 +11,11 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const DisabledByDefault: Story = {};
+export const Enabled: Story = {};
+
+export const Disabled: Story = {
+  args: { disabled: true },
+};
 
 export const CustomLabel: Story = {
   args: { label: "rebuild materials" },

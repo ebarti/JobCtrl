@@ -1,32 +1,49 @@
+import { WandSparkles } from "lucide-react";
 import type { JSX } from "react";
+
+import { useGenerateMaterialsMutation } from "../hooks/useGenerateMaterialsMutation.js";
 
 export interface GenerateMaterialsButtonProps {
   jobId: string;
   className?: string;
   label?: string;
+  disabled?: boolean;
 }
 
-const DISABLED_REASON =
-  "Materials generation backend endpoint is not yet wired (per frontend-target.md §7 Out-of-Scope). Use the local CLI workflow or wait for the materials endpoint to land.";
-
-// Disabled-by-default per spec §5 Phase 4 S-17 file list. When the backend
-// generate-materials endpoint lands, swap in `useGenerateMaterialsMutation` +
-// remove `disabled`; the §7.4 R12/R14 in-flight pattern carries the rest with
-// no further frontend change.
+// INSPECT-01: per-job material generation is wired (route + mutation hook). The
+// click confirms, then dispatches the canonical tailor → cover material stages.
+// The async (202) result arrives via the SSE invalidation router; the mutation's
+// optimistic queued patch carries the in-flight state until then.
 export function GenerateMaterialsButton({
   jobId,
   className = "tab",
   label = "generate materials",
+  disabled = false,
 }: GenerateMaterialsButtonProps): JSX.Element {
+  const mutation = useGenerateMaterialsMutation();
+  const blocked = disabled || mutation.isPending;
+
   return (
     <button
-      type="button"
+      aria-label={label}
       className={className}
-      disabled
-      title={DISABLED_REASON}
+      disabled={blocked}
+      type="button"
       data-job-id={jobId}
+      onClick={() => {
+        if (
+          blocked ||
+          !window.confirm(
+            "Generate materials for this job now? Existing accepted materials are retained until a replacement is approved.",
+          )
+        ) {
+          return;
+        }
+        mutation.mutate({ jobId });
+      }}
     >
-      {label}
+      <WandSparkles aria-hidden="true" size={14} />
+      <span>{mutation.isPending ? "generating" : label}</span>
     </button>
   );
 }
