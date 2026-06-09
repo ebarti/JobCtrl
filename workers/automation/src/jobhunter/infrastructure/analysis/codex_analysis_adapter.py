@@ -24,6 +24,7 @@ from jobhunter.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobhunter.infrastructure.analysis.strict_schema import strict_json_schema
 
 AsyncCodexFactory = Callable[[], Any]
 
@@ -79,10 +80,17 @@ class CodexAnalysisAdapter:
             )
             result = await thread.run(
                 prompt,
-                output_schema=JobAnalysis.model_json_schema(),
+                # Codex/OpenAI strict structured output requires every object to
+                # set additionalProperties:false and list all props in required;
+                # Pydantic's model_json_schema() emits neither (live 400 otherwise).
+                output_schema=strict_json_schema(JobAnalysis.model_json_schema()),
                 effort="high",
             )
-        status = str(getattr(result, "status", "") or "")
+        # ``status`` is a ``TurnStatus`` enum whose ``str()`` is
+        # "TurnStatus.completed" — compare its ``.value`` ("completed"), not the
+        # enum repr, or a successful turn is wrongly rejected (live-caught bug).
+        status_obj = getattr(result, "status", None)
+        status = str(getattr(status_obj, "value", status_obj) or "")
         final_response = getattr(result, "final_response", None)
         if (status and status != "completed") or not final_response:
             error = getattr(result, "error", None)
