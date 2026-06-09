@@ -101,6 +101,15 @@ class TransformType(str, Enum):
     ``QUANTIFY_FROM_EVIDENCE`` — surfaces a metric that is already recorded in
                                   profile evidence (NEVER an invented number — the
                                   deterministic detector enforces this).
+    ``VOICE``                  — the explicit voice pass (VOICE-01/02) rewrote this
+                                  line to de-buzzword it / vary its structure AFTER
+                                  the selected candidate was chosen and BEFORE the
+                                  final audit. It is the OUTERMOST transform: it
+                                  records that the shipped wording is the voiced
+                                  wording, not a hidden prompt tweak. Provenance +
+                                  the never-fabricate detector are re-run against the
+                                  voiced text (VOICE-03), so a voiced line is held to
+                                  the same grounding floor as any other transform.
     """
 
     VERBATIM = "verbatim"
@@ -108,6 +117,7 @@ class TransformType(str, Enum):
     REFRAME = "reframe"
     SYNTHESIZE_FROM_RELATED = "synthesize_from_related"
     QUANTIFY_FROM_EVIDENCE = "quantify_from_evidence"
+    VOICE = "voice"
 
 
 class ControlRule(str, Enum):

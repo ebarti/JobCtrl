@@ -339,7 +339,9 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       created_at             TEXT,
       generation             INTEGER,
       metadata_json          TEXT,
-      bullet_provenance_json TEXT
+      bullet_provenance_json TEXT,
+      coverage_audit_json    TEXT,
+      voice_pass_json        TEXT
     );
     CREATE TABLE IF NOT EXISTS apply_run_projections (
       run_id                 TEXT PRIMARY KEY,
@@ -458,6 +460,10 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "artifact_list_projections", "bullet_provenance_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "artifact_list_projections", "coverage_audit_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "artifact_list_projections", "voice_pass_json", "TEXT") || schemaChanged;
   return schemaChanged;
 }
 
@@ -834,6 +840,53 @@ function loadBulletProvenanceByArtifact(
     result.set(artifactId, JSON.stringify(entries));
   }
   return result;
+}
+
+/**
+ * Phase 3 — load the latest generation's set-level coverage + voice read shapes,
+ * keyed by artifact.
+ *
+ * Coverage (GROUND-06) and the voice-pass audit (VOICE-02) are set-level facts
+ * denormalised onto every ``job_bullet_provenance`` row (the Python repo writes
+ * the same value on every row of a generation), so we read them off ANY row of the
+ * latest generation. Returns ``{ coverage, voice }`` maps mirroring the Python
+ * projection builder so the cross-runtime parity test asserts both agree. Empty
+ * maps when no provenance exists or the columns predate Phase 3.
+ */
+function loadProvenanceAuxByArtifact(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): { coverage: Map<string, string>; voice: Map<string, string> } {
+  const coverage = new Map<string, string>();
+  const voice = new Map<string, string>();
+  if (!tableExists(db, "job_bullet_provenance")) return { coverage, voice };
+  const genRow = getRow<{ generation: number | null }>(
+    db,
+    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
+      WHERE job_url = ? AND tenant_id = ?`,
+    [jobUrl, tenantId],
+  );
+  const generation = genRow?.generation;
+  if (generation === null || generation === undefined) return { coverage, voice };
+  let row: { artifact_id: string; coverage_json: string | null; voice_json: string | null } | undefined;
+  try {
+    row = getRow<{ artifact_id: string; coverage_json: string | null; voice_json: string | null }>(
+      db,
+      `SELECT artifact_id, coverage_json, voice_json FROM job_bullet_provenance
+        WHERE job_url = ? AND tenant_id = ? AND generation = ?
+        ORDER BY position, bullet_id
+        LIMIT 1`,
+      [jobUrl, tenantId, Number(generation)],
+    );
+  } catch {
+    // Columns predate Phase 3 (a DB written before this migration ran) — no aux data.
+    return { coverage, voice };
+  }
+  if (!row) return { coverage, voice };
+  if (row.coverage_json && row.coverage_json.trim()) coverage.set(row.artifact_id, row.coverage_json);
+  if (row.voice_json && row.voice_json.trim()) voice.set(row.artifact_id, row.voice_json);
+  return { coverage, voice };
 }
 
 function parseAnalysisAgreement(value: string | null): {
@@ -1359,6 +1412,11 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
 
   const artifacts = collectArtifacts(db, jobUrl, materials);
   const provenanceByArtifact = loadBulletProvenanceByArtifact(db, tenantId, jobUrl);
+  const { coverage: coverageByArtifact, voice: voiceByArtifact } = loadProvenanceAuxByArtifact(
+    db,
+    tenantId,
+    jobUrl,
+  );
   const activeArtifacts = artifacts.filter(isDefaultVisibleArtifact);
 
   db.prepare(
@@ -1489,8 +1547,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     `INSERT INTO artifact_list_projections (
        artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
        status, local_path, size_bytes, created_at, generation, metadata_json,
-       bullet_provenance_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       bullet_provenance_json, coverage_audit_json, voice_pass_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const a of artifacts) {
     insertArtifact.run(
@@ -1507,6 +1565,8 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
       a.generation,
       a.metadataJson,
       provenanceByArtifact.get(a.artifactId) ?? null,
+      coverageByArtifact.get(a.artifactId) ?? null,
+      voiceByArtifact.get(a.artifactId) ?? null,
     );
   }
 }

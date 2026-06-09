@@ -1406,6 +1406,52 @@ export interface BulletProvenanceEntry {
   generatedText: string;
 }
 
+/**
+ * Phase 3 — honest generation-time keyword coverage (GROUND-06 / success
+ * criterion 4).
+ *
+ * Mirrors the Python ``KeywordCoverage.to_read_model()`` projection: covered +
+ * missing computed against the actual rendered (voiced) resume text both renderers
+ * consume, where a keyword counts as covered ONLY when it appears in a
+ * provenance-backed grounded bullet. ``coveredBy`` maps each covered keyword to the
+ * ``bulletId`` that demonstrates it (per-keyword, per-bullet inspectability).
+ * ``computedAgainst`` records that coverage was computed against rendered text, not
+ * the job description. Served exclusively from the canonical ``coverage_audit_json``
+ * projection column.
+ */
+export interface BulletCoverageAudit {
+  computedAgainst: string;
+  planned: string[];
+  covered: string[];
+  missing: string[];
+  coveredBy: Record<string, string>;
+  counts: {
+    planned: number;
+    covered: number;
+    missing: number;
+  };
+}
+
+/**
+ * Phase 3 — the voice-pass audit (VOICE-02): the de-buzzword/vary-structure pass
+ * is inspectable, not a hidden prompt tweak.
+ *
+ * Mirrors the Python ``VoicePassRecord.to_dict()``: whether the pass ``ran``, was
+ * ``accepted`` (kept over the pre-voice candidate because the deterministic proxies
+ * improved AND grounding re-validated), the ``model`` that produced it, the prompt
+ * version, the deterministic ``proxyDelta`` (buzzword density + structural variety
+ * before/after), and a ``reason`` when it was not accepted (e.g. a voice edit that
+ * introduced an unsourced metric was rejected — VOICE-03).
+ */
+export interface VoicePassAudit {
+  ran: boolean;
+  accepted: boolean;
+  model: string;
+  promptVersion: string;
+  proxyDelta: Record<string, unknown>;
+  reason: string;
+}
+
 export interface ArtifactTailoringExplanation {
   targetSeniority: string | null;
   claimMode: string | null;
@@ -1536,6 +1582,17 @@ export interface ArtifactTailoringExplanation {
   // projection rows (evidence × requirement × transform × control × rationale),
   // or [] when no provenance was recorded for this artifact's generation.
   bulletProvenance: BulletProvenanceEntry[];
+  // Phase 3: honest generation-time keyword coverage computed against the actual
+  // rendered (voiced) resume text both renderers consume — covered counts only
+  // when a keyword appears in a provenance-backed grounded bullet (GROUND-06 /
+  // success criterion 4). ``null`` when no Phase-3 coverage was recorded for this
+  // artifact's generation. Served from the canonical ``coverage_audit_json``
+  // projection column — never recomputed from the JD at read time.
+  coverageAudit: BulletCoverageAudit | null;
+  // Phase 3: the voice-pass audit (VOICE-02) — whether the de-buzzword/vary pass
+  // ran, was accepted, the model that produced it, and the deterministic proxy
+  // delta that justified it. ``null`` when no voice pass was recorded.
+  voicePass: VoicePassAudit | null;
   models: {
     candidateModels: string[];
     selectedModel: string | null;

@@ -1414,6 +1414,155 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("serves canonical coverage + voice audit from projection rows (Phase 3 TS↔Python parity)", async () => {
+    // AUDIT-02-style cross-runtime parity for Phase 3: seed the canonical
+    // ``job_bullet_provenance`` rows WITH the set-level ``coverage_json`` +
+    // ``voice_json`` the Python repo denormalises onto every row, then assert the
+    // TS read model serves the SAME ``coverageAudit`` (GROUND-06) + ``voicePass``
+    // (VOICE-02) shapes — for the text resume AND, via the sibling row, the PDF.
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL, generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local', status TEXT NOT NULL,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          last_validation_json TEXT, last_verdict_json TEXT, metadata_json TEXT,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL, generation INTEGER NOT NULL, artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL, status TEXT NOT NULL, path TEXT NOT NULL,
+          render_format TEXT NOT NULL, size_bytes INTEGER, metadata_json TEXT,
+          created_at TEXT NOT NULL, superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+        CREATE TABLE job_bullet_provenance (
+          job_url TEXT NOT NULL, generation INTEGER NOT NULL, bullet_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local', artifact_id TEXT NOT NULL,
+          section TEXT NOT NULL, source_id TEXT,
+          evidence_ids_json TEXT NOT NULL DEFAULT '[]', requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+          matched_keywords_json TEXT NOT NULL DEFAULT '[]', transform_type TEXT NOT NULL,
+          control TEXT NOT NULL, rationale TEXT NOT NULL DEFAULT '', generated_text TEXT NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+          coverage_json TEXT, voice_json TEXT,
+          PRIMARY KEY (job_url, generation, bullet_id)
+        );
+      `);
+      const completeMetadata = JSON.stringify({
+        validation_mode: "normal",
+        attempts: 1,
+        quality_plan: {
+          target_seniority: "senior",
+          claim_mode: "evidence_reframing",
+          auto_approvable_claim_modes: ["evidence_reframing"],
+          allow_adjacent_achievement_drafts: false,
+          required_evidence_ids: ["ev_latency"],
+          seniority_evidence_ids: ["ev_latency"],
+          verified_metric_count: 1,
+          job_keywords: ["latency"],
+        },
+        quality_checks: { passed: true },
+        judge: { passed: true, verdict: "PASS", score: 0.9 },
+        judge_min_score: 0.7,
+        selected_model: "generator-a",
+        selected_candidate: "candidate-1",
+        judge_model: "judge-a",
+        candidate_models: ["generator-a"],
+        adversarial_review: { ran: false, skipped_reason: "below_threshold" },
+        change_annotations: [],
+      });
+      db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
+      ).run(jobUrl);
+      const insertArtifact = db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
+      );
+      insertArtifact.run(jobUrl, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
+      insertArtifact.run(jobUrl, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
+
+      // The set-level coverage + voice, denormalised onto every row (the Python
+      // repo writes the SAME value on each row of the generation).
+      const coverageJson = JSON.stringify({
+        computed_against: "rendered_text",
+        planned: ["latency", "python"],
+        covered: ["latency"],
+        missing: ["python"],
+        covered_by: { latency: "experience:acme_swe#0" },
+        counts: { planned: 2, covered: 1, missing: 1 },
+      });
+      const voiceJson = JSON.stringify({
+        ran: true,
+        accepted: true,
+        model: "claude-opus-4-8",
+        prompt_version: "voice-pass-v1",
+        proxy_delta: { improved: true, buzzword_density_reduced: true },
+        reason: "",
+      });
+      const insertProvenance = db.prepare(
+        `INSERT INTO job_bullet_provenance (
+          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          evidence_ids_json, requirement_ids_json, matched_keywords_json,
+          transform_type, control, rationale, generated_text, position, created_at,
+          coverage_json, voice_json
+        ) VALUES (?, 1, ?, 'local', 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00', ?, ?)`,
+      );
+      insertProvenance.run(
+        jobUrl, "experience:acme_swe#0", "experience", "acme_swe",
+        JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
+        "voice", "rephrase_allowed", "Voiced bullet.",
+        "Owned the API and cut latency 40%.", 0, coverageJson, voiceJson,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const resumeRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-1" });
+        expect(resumeRes.statusCode, resumeRes.body).toBe(200);
+        const explanation = resumeRes.json().tailoringExplanation;
+        expect(explanation.coverageAudit).toMatchObject({
+          computedAgainst: "rendered_text",
+          covered: ["latency"],
+          missing: ["python"],
+          coveredBy: { latency: "experience:acme_swe#0" },
+          counts: { planned: 2, covered: 1, missing: 1 },
+        });
+        expect(explanation.voicePass).toMatchObject({
+          ran: true,
+          accepted: true,
+          model: "claude-opus-4-8",
+          promptVersion: "voice-pass-v1",
+        });
+        // The voiced bullet is served with transformType "voice".
+        expect(explanation.bulletProvenance[0].transformType).toBe("voice");
+
+        // The PDF artifact resolves coverage + voice from the sibling text row.
+        const pdfRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-pdf-1" });
+        expect(pdfRes.statusCode, pdfRes.body).toBe(200);
+        const pdfExplanation = pdfRes.json().tailoringExplanation;
+        expect(pdfExplanation.coverageAudit?.covered).toEqual(["latency"]);
+        expect(pdfExplanation.voicePass?.accepted).toBe(true);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("rebuilds source health from discovery, enrichment, and content events", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

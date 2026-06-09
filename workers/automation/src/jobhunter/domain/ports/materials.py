@@ -32,6 +32,7 @@ from jobhunter.domain.materials.value_objects import (
     ArtifactType,
     RenderFormat,
 )
+from jobhunter.domain.materials.voice import VoiceRequest, VoiceResult
 from jobhunter.domain.tenant import TenantId
 
 
@@ -267,6 +268,39 @@ class BulletProvenanceRepository(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# VoicePort (Phase 3 — the de-buzzword / vary-structure voice pass)
+# ---------------------------------------------------------------------------
+
+
+class VoicePort(Protocol):
+    """Humanise the SELECTED candidate's prose — de-buzzword + vary structure.
+
+    The voice pass (VOICE-01/02/03) is a NEW AI transform implemented via an agent
+    SDK (Claude Agent SDK), mirroring the employer-analysis adapters — NOT the
+    legacy httpx client (the all-new-AI-via-SDK directive). The use case + the
+    tailor flow depend on this port, never on a concrete SDK; the local adapter is
+    :class:`~jobhunter.infrastructure.materials.voice_adapter.ClaudeVoiceAdapter`.
+
+    ``rewrite`` runs the leg to completion with NO wall-clock timeout (mirrors the
+    analysis adapters' D-19); the only stop is cooperative task cancellation by the
+    caller. It returns the voiced prose as a typed :class:`VoiceResult`; the use
+    case then RE-RUNS the deterministic never-fabricate detector + provenance
+    builder against the voiced text (VOICE-03), so the prompt is never trusted — the
+    gate is. An adapter that errors must raise so the use case can fall back to the
+    pre-voice candidate rather than ship an un-voiced/partly-voiced resume silently.
+    """
+
+    @property
+    def model_id(self) -> str:
+        """The SDK/model id this adapter drives (tags the voice audit record)."""
+        ...
+
+    async def rewrite(self, system_prompt: str, request: VoiceRequest) -> VoiceResult:
+        """Return the voiced prose, or raise on SDK/parse failure."""
+        ...
+
+
+# ---------------------------------------------------------------------------
 # PdfRendererPort
 # ---------------------------------------------------------------------------
 
@@ -327,9 +361,10 @@ __all__ = [
     "PdfRendererPort",
     "RenderFormat",
     "TailoringPolicyRepository",
+    "VoicePort",
 ]
 
 
 # Re-export to silence unused-import warnings for the schema types referenced
 # only in port signatures above.
-_ = (EmployerAnalysis, JobAnalysis, JobAnalysisDraft, BulletProvenanceSet)
+_ = (EmployerAnalysis, JobAnalysis, JobAnalysisDraft, BulletProvenanceSet, VoiceRequest, VoiceResult)

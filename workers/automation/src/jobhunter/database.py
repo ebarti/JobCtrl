@@ -1580,12 +1580,27 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
             generated_text      TEXT NOT NULL,
             position            INTEGER NOT NULL DEFAULT 0,
             created_at          TEXT NOT NULL,
+            coverage_json       TEXT,
+            voice_json          TEXT,
             PRIMARY KEY (job_url, generation, bullet_id),
             FOREIGN KEY (job_url, generation)
                 REFERENCES job_materials(job_url, generation) ON DELETE CASCADE
         )
         """
     )
+    # Phase 3: generation-time keyword coverage (GROUND-06) + voice-pass audit
+    # (VOICE-02) are set-level facts stored alongside the bullets they were
+    # computed against. They are denormalised onto every row of the generation
+    # (like ``artifact_id`` / ``created_at``); the read path reads them off any
+    # row of the set. Idempotent migration for tables created by Phase 2 before
+    # these columns existed (single-user rip-and-replace, no compat shim).
+    existing_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(job_bullet_provenance)").fetchall()
+    }
+    if "coverage_json" not in existing_cols:
+        conn.execute("ALTER TABLE job_bullet_provenance ADD COLUMN coverage_json TEXT")
+    if "voice_json" not in existing_cols:
+        conn.execute("ALTER TABLE job_bullet_provenance ADD COLUMN voice_json TEXT")
     # Selector for the read path: latest generation's rows for a job/artifact.
     conn.execute(
         """

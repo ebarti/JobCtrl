@@ -24,6 +24,7 @@ import type {
   ArtifactListQuery,
   ArtifactSummary,
   ArtifactTailoringExplanation,
+  BulletCoverageAudit,
   BulletProvenanceEntry,
   BulkJobMutationFilter,
   DashboardSettings,
@@ -42,6 +43,7 @@ import type {
   Stage,
   StageState,
   StageSummary,
+  VoicePassAudit,
   WorkflowRunStatus,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
@@ -171,6 +173,8 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   generation: number | null;
   metadata_json: string | null;
   bullet_provenance_json: string | null;
+  coverage_audit_json: string | null;
+  voice_pass_json: string | null;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -2082,6 +2086,12 @@ function tailoringExplanationForArtifact(
   // projection column (this row for a text resume; the sibling tailored-resume row
   // for a PDF). Served exclusively from canonical rows — never derived from metadata.
   explanation.bulletProvenance = bulletProvenanceForArtifact(db, row);
+  // Phase 3: attach the canonical generation-time keyword coverage (GROUND-06) +
+  // voice-pass audit (VOICE-02) from their own projection columns (same row for a
+  // text resume; the sibling tailored-resume row for a PDF). ``null`` when the
+  // generation predates Phase 3 or recorded none.
+  explanation.coverageAudit = coverageAuditForArtifact(db, row);
+  explanation.voicePass = voicePassForArtifact(db, row);
   return explanation;
 }
 
@@ -2187,6 +2197,110 @@ function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
     });
   }
   return entries;
+}
+
+/**
+ * Read an artifact's value for a set-level provenance projection column
+ * (``coverage_audit_json`` / ``voice_pass_json``), falling back to the sibling
+ * tailored-resume row of the same generation for a PDF artifact (whose own row
+ * carries no provenance) — mirroring ``bulletProvenanceForArtifact``.
+ */
+function provenanceSetColumnForArtifact(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+  column: "coverage_audit_json" | "voice_pass_json",
+): string | null {
+  const direct = row[column];
+  if (typeof direct === "string" && direct.trim()) return direct;
+  if (direct || !TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) return null;
+  const sibling = getRow<Record<string, string | null>>(
+    db,
+    `SELECT ${column}
+       FROM artifact_list_projections
+      WHERE tenant_id = ?
+        AND job_id = ?
+        AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+        AND ${column} IS NOT NULL
+        AND TRIM(${column}) != ''
+        AND (? IS NULL OR generation = ? OR generation IS NULL)
+      ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+      LIMIT 1`,
+    [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+  );
+  return sibling?.[column] ?? null;
+}
+
+/**
+ * Phase 3 — read canonical generation-time keyword coverage (GROUND-06) for an
+ * artifact from the ``coverage_audit_json`` projection column. Returns ``null``
+ * when no Phase-3 coverage was recorded for this generation.
+ */
+function coverageAuditForArtifact(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+): BulletCoverageAudit | null {
+  return parseCoverageAudit(provenanceSetColumnForArtifact(db, row, "coverage_audit_json"));
+}
+
+function parseCoverageAudit(value: string | null): BulletCoverageAudit | null {
+  if (!value || !value.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  const record = metadataRecord(parsed);
+  const covered = metadataTextList(record.covered, 256, 160);
+  const missing = metadataTextList(record.missing, 256, 160);
+  const planned = metadataTextList(record.planned, 256, 160);
+  const coveredByRaw = metadataRecord(record.covered_by);
+  const coveredBy: Record<string, string> = {};
+  for (const [key, val] of Object.entries(coveredByRaw)) {
+    const text = metadataText(val, 160);
+    if (text) coveredBy[key] = text;
+  }
+  return {
+    computedAgainst: metadataText(record.computed_against, 64) ?? "rendered_text",
+    planned,
+    covered,
+    missing,
+    coveredBy,
+    counts: {
+      planned: planned.length,
+      covered: covered.length,
+      missing: missing.length,
+    },
+  };
+}
+
+/**
+ * Phase 3 — read the canonical voice-pass audit (VOICE-02) for an artifact from
+ * the ``voice_pass_json`` projection column. Returns ``null`` when no voice pass
+ * was recorded for this generation.
+ */
+function voicePassForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): VoicePassAudit | null {
+  return parseVoicePass(provenanceSetColumnForArtifact(db, row, "voice_pass_json"));
+}
+
+function parseVoicePass(value: string | null): VoicePassAudit | null {
+  if (!value || !value.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  const record = metadataRecord(parsed);
+  const proxyDelta = metadataRecord(record.proxy_delta);
+  return {
+    ran: record.ran === true,
+    accepted: record.accepted === true,
+    model: metadataText(record.model, 120) ?? "",
+    promptVersion: metadataText(record.prompt_version, 64) ?? "",
+    proxyDelta,
+    reason: metadataText(record.reason, 600) ?? "",
+  };
 }
 
 function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
@@ -2359,9 +2473,12 @@ function parseTailoringExplanation(
       acceptedWarnings: metadataTextList(reviewFeedback.accepted_warning_notes, 8, 220),
     },
     annotatedChanges: parseTailoringChangeAnnotations(metadata.change_annotations),
-    // Phase 2: populated from canonical ``bullet_provenance_json`` projection rows
+    // Phase 2/3: populated from canonical projection columns
+    // (``bullet_provenance_json`` / ``coverage_audit_json`` / ``voice_pass_json``)
     // by ``tailoringExplanationForArtifact`` — never derived from ``metadata_json``.
     bulletProvenance: [],
+    coverageAudit: null,
+    voicePass: null,
     models: {
       candidateModels: metadataTextList(metadata.candidate_models, 6, 120),
       selectedModel: metadataText(metadata.selected_model, 120),

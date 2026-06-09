@@ -184,6 +184,18 @@ def _build_analyze_use_case(
     )
 
 
+def _build_voice_port():
+    """Construct the Phase-3 voice pass adapter (Claude Agent SDK).
+
+    Mirrors ``_build_analyze_use_case``'s SDK wiring: the voice pass is a NEW AI
+    transform, so it runs through the Claude Agent SDK behind the ``VoicePort``
+    seam, not the legacy httpx client (the all-new-AI-via-SDK directive).
+    """
+    from jobhunter.infrastructure.materials.voice_adapter import ClaudeVoiceAdapter
+
+    return ClaudeVoiceAdapter()
+
+
 def _build_use_case(
     *,
     repository: MaterialsRepository | None = None,
@@ -195,6 +207,7 @@ def _build_use_case(
     policy_repository: TailoringPolicyRepository | None = None,
     provenance_repository: BulletProvenanceRepository | None = None,
     analyze_use_case=None,
+    voice=None,
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
     conn = get_connection()
@@ -214,6 +227,8 @@ def _build_use_case(
         llm_policy = _build_llm_policy()
     if analyze_use_case is None:
         analyze_use_case = _build_analyze_use_case(conn=conn, publisher=publisher)
+    if voice is None:
+        voice = _build_voice_port()
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
@@ -224,6 +239,7 @@ def _build_use_case(
         policy_repository=policy_repository,
         provenance_repository=provenance_repository,
         analyze_use_case=analyze_use_case,
+        voice=voice,
     )
 
 
@@ -316,7 +332,12 @@ def _tailor_one_job(
         # ``pdf_path`` (downstream callers and the apply launcher
         # immediately pick it up via the joined ``jm_resume_pdf_path`` /
         # legacy fallback).
-        parsed_payload = _selected_candidate_payload(outcome.report)
+        # Phase 3: render the PDF from the FINAL (voiced) payload so the LaTeX/HTML
+        # PDF matches the plain-text resume, the provenance ``generated_text``, and
+        # the coverage audit — all the same final canonical text (GROUND-06). Fall
+        # back to the selected candidate only when the use case did not surface a
+        # final payload (e.g. an older outcome shape).
+        parsed_payload = outcome.final_payload or _selected_candidate_payload(outcome.report)
         if parsed_payload and outcome.materials.tailored_resume is not None:
             try:
                 text_path = Path(outcome.materials.tailored_resume.path)

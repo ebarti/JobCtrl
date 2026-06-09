@@ -36,7 +36,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.coverage_audit import KeywordCoverage
 from jobhunter.domain.materials.value_objects import ControlRule, TransformType
+from jobhunter.domain.materials.voice import VoicePassRecord
 from jobhunter.domain.tenant import TenantId
 
 
@@ -132,6 +134,21 @@ class BulletProvenanceSet:
     are retained as audit history — never deleted. The set is bound to the
     artifact it explains via ``artifact_id`` so the read model can join an
     artifact to its exact provenance.
+
+    Phase 3 attaches two generation-time audit artifacts computed against the
+    SELECTED, voiced candidate's rendered text (the same text the rows'
+    ``generated_text`` anchors to):
+
+      * ``coverage`` — honest keyword coverage (covered + missing) computed against
+        the rendered text where a keyword counts as covered only when it appears in
+        a provenance-backed grounded bullet (GROUND-06 / success criterion 4).
+      * ``voice`` — the audit record of the voice pass that produced the shipped
+        wording (VOICE-02): whether it ran/was accepted, by which model, and the
+        deterministic proxy delta that justified it.
+
+    Both are optional so a generation produced without the Phase-3 path (or before
+    it) still constructs; they ride alongside the bullet list, each in its own
+    serialised read shape (the projection keeps them in dedicated columns).
     """
 
     tenant_id: TenantId
@@ -139,6 +156,8 @@ class BulletProvenanceSet:
     generation: int
     artifact_id: str
     bullets: tuple[BulletProvenance, ...]
+    coverage: KeywordCoverage | None = None
+    voice: VoicePassRecord | None = None
     created_at: str = field(default_factory=_utc_now)
 
     def __post_init__(self) -> None:
@@ -151,20 +170,34 @@ class BulletProvenanceSet:
         for bullet in self.bullets:
             if not isinstance(bullet, BulletProvenance):
                 raise TypeError("BulletProvenanceSet.bullets entries must be BulletProvenance")
+        if self.coverage is not None and not isinstance(self.coverage, KeywordCoverage):
+            raise TypeError("BulletProvenanceSet.coverage must be a KeywordCoverage or None")
+        if self.voice is not None and not isinstance(self.voice, VoicePassRecord):
+            raise TypeError("BulletProvenanceSet.voice must be a VoicePassRecord or None")
 
     @property
     def is_empty(self) -> bool:
         return not self.bullets
 
     def to_read_model(self) -> list[dict[str, Any]]:
-        """Serialise the inspectable read shape (the projection/DTO source).
+        """Serialise the inspectable per-bullet read shape (the projection/DTO source).
 
         The single owner of the provenance read shape: the Python projection
         builder and (mirrored) the TS projection builder both materialise this
         exact list so the read model is parity-checked. Ordered as produced so the
-        inspector renders bullets section-by-section in document order.
+        inspector renders bullets section-by-section in document order. Coverage +
+        voice are serialised separately (:meth:`coverage_to_read_model` /
+        :meth:`voice_to_read_model`) into their own projection columns.
         """
         return [bullet.to_dict() for bullet in self.bullets]
+
+    def coverage_to_read_model(self) -> dict[str, Any] | None:
+        """Serialise the canonical keyword-coverage read shape (GROUND-06), or None."""
+        return self.coverage.to_read_model() if self.coverage is not None else None
+
+    def voice_to_read_model(self) -> dict[str, Any] | None:
+        """Serialise the canonical voice-pass audit read shape (VOICE-02), or None."""
+        return self.voice.to_dict() if self.voice is not None else None
 
 
 __all__ = [
