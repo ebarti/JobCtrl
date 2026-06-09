@@ -39,6 +39,7 @@ from jobhunter.domain.materials.provenance_builder import (
     build_bullet_provenance,
 )
 from jobhunter.domain.materials.quality import build_tailoring_plan
+from jobhunter.domain.materials.services import ResumeAssembler
 from jobhunter.domain.materials.value_objects import ControlRule, TransformType
 from jobhunter.infrastructure.materials.bullet_provenance_repository import (
     SqliteBulletProvenanceRepository,
@@ -247,6 +248,73 @@ def test_provenance_has_one_row_per_rendered_bullet_with_closed_taxonomy() -> No
     assert experience.bullet_id == "experience:acme_swe#0"
 
 
+def _assembled_summary_line(profile: dict, payload: dict) -> str:
+    """The exact summary line the assembler ships (line after EXECUTIVE PROFILE)."""
+    text = ResumeAssembler().assemble_resume_text(payload, profile)
+    lines = text.splitlines()
+    idx = lines.index("EXECUTIVE PROFILE")
+    return lines[idx + 1].strip()
+
+
+def test_executive_provenance_anchors_to_shipped_summary_when_rewrite_disabled() -> None:
+    """Regression (Pattern 2 / GROUND-06): with ``allow_summary_rewrite`` off the
+    resume ships the profile baseline, so the executive-profile provenance
+    ``generated_text`` MUST equal the assembled summary line — not the model's
+    proposed (never-rendered) rewrite. Without the policy gate the provenance
+    anchor and the deterministic detector scan text the user never received."""
+    profile = _profile()
+    profile["resume"]["tailoring_rules"]["tailoring_policy"]["allow_summary_rewrite"] = False
+    # The model proposes a rewrite the resume will NOT ship under this policy.
+    proposed = "Backend engineer who delivered 99.99% uptime."
+    payload = _payload(
+        bullets=["Reduced API latency 35% by replacing synchronous calls."],
+        summary=proposed,
+    )
+
+    shipped_summary = _assembled_summary_line(profile, payload)
+    # Sanity: the assembler ships the baseline, not the proposed rewrite.
+    assert shipped_summary == "Senior backend engineer."
+    assert shipped_summary != proposed
+
+    rows = _build(profile, payload, _analysis())
+    executive = next(row for row in rows if row.section == "executive_profile")
+    # Provenance is anchored to the SHIPPED line (byte-identical), never the rewrite.
+    assert executive.generated_text == shipped_summary
+    assert executive.generated_text != proposed
+    # Baseline == shipped -> the transform is VERBATIM, not a phantom REFRAME.
+    assert executive.transform_type is TransformType.VERBATIM
+
+    # And the deterministic detector now scans the SHIPPED text: the rewrite's
+    # "99.99%" (absent from the profile) must NOT appear in any scanned bullet,
+    # so a clean baseline resume is not falsely rejected for the dropped rewrite.
+    corpus = build_evidence_corpus(profile)
+    findings = scan_resume_bullets(
+        [(row.bullet_id, row.generated_text) for row in rows],
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    assert all("99.99" not in f.generated_text for f in findings)
+
+
+def test_executive_provenance_anchors_to_rewrite_when_rewrite_enabled() -> None:
+    """The complementary arm: with rewrite ON the shipped summary is the model's
+    summary, and provenance anchors to it (still equal to the assembled line)."""
+    profile = _profile()
+    profile["resume"]["tailoring_rules"]["tailoring_policy"]["allow_summary_rewrite"] = True
+    proposed = "Senior backend engineer who owns Python latency."
+    payload = _payload(
+        bullets=["Reduced API latency 35% by replacing synchronous calls."],
+        summary=proposed,
+    )
+
+    shipped_summary = _assembled_summary_line(profile, payload)
+    assert shipped_summary == proposed
+
+    rows = _build(profile, payload, _analysis())
+    executive = next(row for row in rows if row.section == "executive_profile")
+    assert executive.generated_text == shipped_summary
+
+
 def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
     rows = _build(
         _profile(),
@@ -361,6 +429,61 @@ def test_detector_flags_invented_metric() -> None:
     assert all(f.control is ControlRule.NEVER_FABRICATE_METRICS for f in findings if f.kind == "numeric")
 
 
+def test_detector_flags_digit_colliding_fabrication_with_different_unit() -> None:
+    """Regression (Pitfall 3 / criterion 4): a fabricated number that merely shares
+    a digit run with an unrelated profile number — but has a different unit or
+    magnitude — must be flagged. The profile's only number is ``35%``; a bullet
+    claiming ``$35M`` or ``35 million`` reuses the digits ``35`` yet states a
+    different KIND/magnitude, so digit-run membership would wrongly ground it."""
+    profile = _profile()  # only number anywhere is "35% latency reduction"
+    corpus = build_evidence_corpus(profile)
+    employers = employer_name_set(profile)
+
+    # Currency fabrication: $35M is money, the profile's 35 is a percentage.
+    money = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Drove $35M in revenue.",
+        corpus,
+        employers=employers,
+    )
+    assert any(f.kind == "numeric" and "$35" in f.token.lower() for f in money), money
+
+    # Magnitude fabrication: "35 million" is a bare magnitude, not 35%.
+    magnitude = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Scaled to 35 million users.",
+        corpus,
+        employers=employers,
+    )
+    assert any(f.kind == "numeric" for f in magnitude), magnitude
+
+    # Control: the real, same-kind number (35%) still grounds cleanly.
+    clean = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Reduced API latency 35% by replacing synchronous calls.",
+        corpus,
+        employers=employers,
+    )
+    assert [f for f in clean if f.kind == "numeric"] == []
+
+
+def test_detector_grounds_equivalent_money_renderings() -> None:
+    """The tightened numeric key must NOT over-flag: equivalent renderings of the
+    same recorded quantity (``$1.2M`` / ``$1.2 million`` / ``$1,200,000``) collapse
+    to one key, so a bullet rendering differs only in format is still grounded."""
+    profile = _profile()
+    profile["resume_constraints"] = {"real_metrics": ["$1.2M ARR"]}
+    corpus = build_evidence_corpus(profile)
+    for rendering in ("$1.2M", "$1.2 million", "$1,200,000"):
+        findings = find_fabricated_tokens(
+            "experience:acme_swe#0",
+            f"Grew the book of business to {rendering}.",
+            corpus,
+            employers=employer_name_set(profile),
+        )
+        assert [f for f in findings if f.kind == "numeric"] == [], (rendering, findings)
+
+
 def test_metrics_hungry_job_with_numberless_profile_yields_zero_unsourced_numerics() -> None:
     """Success criterion 4: a metrics-hungry job + a numberless profile must not
     let any unsourced numeric survive into the resume."""
@@ -404,6 +527,40 @@ def test_detector_flags_fabricated_title_and_employer() -> None:
     kinds = {f.kind for f in findings}
     assert "title" in kinds  # "Chief"/"CTO"-class token absent from profile
     assert "employer" in kinds  # "Globex Corporation" is not a real employer
+
+
+def test_detector_defers_bare_name_employer_to_judge() -> None:
+    """Pins the INTENTIONAL suffix-anchored employer limitation (precision-over-
+    recall by design): a suffixed fabricated employer ("Globex Corporation") is
+    flagged deterministically, but a bare-name fabricated employer ("at Netflix")
+    is deliberately NOT flagged at this layer — it is deferred to the prose-aware
+    LLM judge. The structured employer field is code-injected from the master
+    resume, so it cannot be fabricated through this path; flagging every bare
+    capitalised token would over-flag tools/products ("Python", "Docker")."""
+    profile = _profile()  # real employer: Acme Corp
+    corpus = build_evidence_corpus(profile)
+    employers = employer_name_set(profile)
+
+    # Suffixed fabricated employer: flagged here.
+    suffixed = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Led platform work at Globex Corporation.",
+        corpus,
+        employers=employers,
+    )
+    assert any(f.kind == "employer" for f in suffixed)
+
+    # Bare-name fabricated employer: deliberately NOT flagged at this layer
+    # (covered by the judge). "netflix" is also absent from the title/numeric/date
+    # arms, so the whole bullet passes the deterministic detector.
+    bare = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Owned the API at Netflix.",
+        corpus,
+        employers=employers,
+    )
+    assert [f for f in bare if f.kind == "employer"] == []
+    assert bare == []
 
 
 def test_detector_flags_fabricated_date() -> None:

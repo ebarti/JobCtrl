@@ -783,22 +783,31 @@ function loadEmployerAnalysisJson(db: SqliteDatabase, jobUrl: string): string | 
  * TS API and Python builder materialise the SAME read shape — the cross-runtime
  * parity test asserts both agree. Returns an empty map when no provenance exists.
  */
-function loadBulletProvenanceByArtifact(db: SqliteDatabase, jobUrl: string): Map<string, string> {
+function loadBulletProvenanceByArtifact(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): Map<string, string> {
   const result = new Map<string, string>();
   if (!tableExists(db, "job_bullet_provenance")) return result;
+  // Tenant-scope BOTH the MAX(generation) probe and the row fetch so this matches
+  // the Python repo (``bullet_provenance_repository.py`` filters job_url AND
+  // tenant_id AND generation). Benign today under LOCAL_TENANT, but keeps the
+  // cross-runtime read path symmetric before any multi-tenant work.
   const genRow = getRow<{ generation: number | null }>(
     db,
-    `SELECT MAX(generation) AS generation FROM job_bullet_provenance WHERE job_url = ?`,
-    [jobUrl],
+    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
+      WHERE job_url = ? AND tenant_id = ?`,
+    [jobUrl, tenantId],
   );
   const generation = genRow?.generation;
   if (generation === null || generation === undefined) return result;
   const rows = allRows<BulletProvenanceRow>(
     db,
     `SELECT * FROM job_bullet_provenance
-      WHERE job_url = ? AND generation = ?
+      WHERE job_url = ? AND tenant_id = ? AND generation = ?
       ORDER BY position, bullet_id`,
-    [jobUrl, Number(generation)],
+    [jobUrl, tenantId, Number(generation)],
   );
   if (rows.length === 0) return result;
   // All rows of one generation share the artifact they explain (the writer binds
@@ -1349,7 +1358,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const lastUpdatedAt = new Date().toISOString();
 
   const artifacts = collectArtifacts(db, jobUrl, materials);
-  const provenanceByArtifact = loadBulletProvenanceByArtifact(db, jobUrl);
+  const provenanceByArtifact = loadBulletProvenanceByArtifact(db, tenantId, jobUrl);
   const activeArtifacts = artifacts.filter(isDefaultVisibleArtifact);
 
   db.prepare(

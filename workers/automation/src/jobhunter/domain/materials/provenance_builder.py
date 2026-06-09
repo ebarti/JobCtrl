@@ -47,6 +47,7 @@ from jobhunter.resume_profile import (
     get_experience_entries,
     get_resume_master,
     get_skill_categories,
+    get_tailoring_policy,
     tailored_experience_bullets,
     tailored_experience_title,
     tailored_skill_items,
@@ -237,18 +238,27 @@ def build_bullet_provenance(
     rows: list[BulletProvenance] = []
 
     # ---- Executive profile (single line) --------------------------------
+    # The shipped summary is policy-gated EXACTLY as the assembler renders it
+    # (``services.py`` ``assemble_resume_text``): when ``allow_summary_rewrite``
+    # is off the resume ships the profile baseline, not the model's proposed
+    # rewrite. Provenance must anchor to the SHIPPED line — computing it against
+    # the never-rendered rewrite would break the "generated_text is byte-identical
+    # to what ResumeAssembler renders" invariant (Pattern 2 / GROUND-06) and feed
+    # the deterministic detector text that never reaches the user.
     baseline_summary = _normalize_space(
         str(resume.get("executive_profile", {}).get("baseline_text", ""))
     )
-    tailored_summary = _normalize_space(str(tailored_payload.get("executive_profile") or ""))
-    if tailored_summary:
+    allow_summary_rewrite = bool(get_tailoring_policy(profile)["allow_summary_rewrite"])
+    proposed_summary = _normalize_space(str(tailored_payload.get("executive_profile") or ""))
+    shipped_summary = proposed_summary if allow_summary_rewrite else baseline_summary
+    if shipped_summary:
         base = (
             TransformType.REFRAME
-            if _normalize_phrase(baseline_summary) != _normalize_phrase(tailored_summary)
+            if _normalize_phrase(baseline_summary) != _normalize_phrase(shipped_summary)
             else TransformType.VERBATIM
         )
-        transform = _bullet_transform(baseline_summary, tailored_summary, base=base, plan=plan)
-        served, matched = _served_requirements(tailored_summary.lower(), analysis)
+        transform = _bullet_transform(baseline_summary, shipped_summary, base=base, plan=plan)
+        served, matched = _served_requirements(shipped_summary.lower(), analysis)
         evidence_ids = _validated_evidence_ids(
             tuple(plan.seniority_evidence_ids[:6]), sources
         )
@@ -263,7 +273,7 @@ def build_bullet_provenance(
                 transform_type=transform,
                 control=_resolve_control(transform, claim_mode=claim_mode),
                 rationale=_summary_rationale(plan, transform, matched),
-                generated_text=tailored_summary,
+                generated_text=shipped_summary,
             )
         )
 

@@ -76,6 +76,24 @@ _TITLE_TOKEN_RE = re.compile(
 # the suffix keeps the employer check PRECISE: it fires on "Globex Corporation" /
 # "Initech Inc." but never on ordinary prose like "with Python" or "for Docker",
 # which a bare "<preposition> <Capitalized word>" heuristic would wrongly flag.
+#
+# KNOWN, INTENTIONAL LIMITATION (precision-over-recall, by design): a *bare-name*
+# fabricated employer with no corporate suffix — e.g. "Owned the API at Netflix."
+# — is deliberately NOT flagged at this deterministic layer, and that gap is
+# acceptable for three concrete reasons:
+#   1. The resume's per-entry employer is CODE-INJECTED from the master resume in
+#      the assembler (``services.py`` ``entry.get("company")``), never authored by
+#      the model, so the structured employer field cannot be fabricated through
+#      this path. The model only authors bullet / summary / title prose.
+#   2. A bare capitalised token is genuinely ambiguous with tools, products, and
+#      methodologies ("Python", "Docker", "Kafka"); a non-suffix heuristic would
+#      over-flag ordinary prose and falsely reject clean resumes.
+#   3. The LLM judge is a second, prose-aware gate that explicitly fails
+#      "unsupported ... employers" (see ``use_cases.py`` judge prompt), so a model
+#      inventing a bare-name employer inside prose is caught there, not silently.
+# The residual risk is therefore deferred to the judge by design — do NOT try to
+# flag all bare names here. ``test_detector_defers_bare_name_employer_to_judge``
+# pins this contract.
 _EMPLOYER_RE = re.compile(
     r"\b([A-Z][A-Za-z0-9&.\-]*(?:\s+[A-Z][A-Za-z0-9&.\-]*)*"
     r"\s+(?:Inc|Incorporated|LLC|Ltd|Limited|Corp|Corporation|Co|Company|GmbH|PLC|AG|SA|NV|LLP)\.?)\b"
@@ -97,14 +115,70 @@ def _normalize(text: str) -> str:
 
 
 def _digits_only(token: str) -> str:
-    """Return only the digit/decimal characters of a token for numeric matching.
+    """Return only the digit/decimal characters of a token for date matching.
 
-    A bullet may render ``$1.2M`` while the evidence records ``1,200,000`` or
-    ``1.2 million``; matching on the run of significant digits avoids false
-    fabrication flags on equivalent renderings while still catching invented
-    numbers (whose digits appear nowhere in the corpus).
+    A four-digit year renders identically everywhere, so dates ground on the bare
+    digit run (numbers use the stricter :func:`_normalize_numeric` instead).
     """
     return re.sub(r"[^\d.]", "", token).strip(".")
+
+
+# Magnitude words/suffixes a money token may carry, resolved to a multiplier so a
+# bullet's ``$1.2M`` and the evidence's ``1.2 million`` collapse to the same value.
+_MAGNITUDE_FACTORS: dict[str, int] = {
+    "k": 1_000,
+    "m": 1_000_000,
+    "b": 1_000_000_000,
+    "million": 1_000_000,
+    "billion": 1_000_000_000,
+}
+_MAGNITUDE_RE = re.compile(r"(?i)(k|m|b|million|billion)\b\.?$")
+
+
+def _normalize_numeric(token: str) -> str | None:
+    """Canonicalise a numeric token to a ``kind:value`` key for grounding.
+
+    Grounding on the bare digit run is unsafe: a fabricated ``$35M`` or
+    ``35 million`` would "match" an unrelated profile ``35%`` because all three
+    share the digit run ``35`` (the reviewer's digit-collision case). Instead we
+    key on the token's KIND (percentage / currency / multiplier / bare number)
+    *and* its magnitude-resolved value, so a number with a different unit or
+    magnitude than any profile number is no longer silently grounded.
+
+    Equivalent renderings of the SAME quantity still collapse: ``$1.2M`` /
+    ``$1.2 million`` / ``$1,200,000`` all key to ``money:1200000``, so genuine
+    formatting differences do not produce false fabrication flags.
+
+    Returns ``None`` when the token carries no significant digits.
+    """
+    lowered = token.strip().lower()
+    # Commas are thousands separators (US format); drop them so ``1,200,000``
+    # parses as a number while ``1.2`` keeps its decimal point.
+    number_text = re.sub(r"[^\d.]", "", lowered.replace(",", "")).strip(".")
+    if not number_text:
+        return None
+
+    if lowered.startswith("$"):
+        kind = "money"
+    elif "%" in lowered:
+        kind = "pct"
+    elif re.search(r"\dx\b", lowered) or lowered.endswith("x"):
+        kind = "mult"
+    else:
+        kind = "bare"
+
+    try:
+        value = float(number_text)
+    except ValueError:
+        return None
+    magnitude = _MAGNITUDE_RE.search(lowered)
+    if magnitude:
+        value *= _MAGNITUDE_FACTORS[magnitude.group(1).lower()]
+
+    # Render the value canonically: integers without a trailing ``.0`` so the
+    # corpus key for ``5`` and the bullet key for ``5`` are byte-equal.
+    canonical = format(value, ".4f").rstrip("0").rstrip(".") if value % 1 else str(int(value))
+    return f"{kind}:{canonical}"
 
 
 @dataclass(frozen=True)
@@ -117,7 +191,7 @@ class EvidenceCorpus:
     """
 
     text: str
-    numeric_digits: frozenset[str]
+    numeric_keys: frozenset[str]
     title_tokens: frozenset[str]
     date_tokens: frozenset[str]
 
@@ -126,10 +200,13 @@ class EvidenceCorpus:
         return bool(normalized) and normalized in self.text
 
     def has_numeric(self, token: str) -> bool:
-        digits = _digits_only(token)
-        if not digits:
+        key = _normalize_numeric(token)
+        if key is None:
             return True  # nothing numeric to ground
-        return digits in self.numeric_digits
+        # Grounded only when a profile number of the SAME kind + magnitude exists
+        # — a different-unit/different-magnitude number sharing the digit run
+        # (``$35M`` vs a profile ``35%``) is no longer silently grounded.
+        return key in self.numeric_keys
 
     def has_title(self, token: str) -> bool:
         return _normalize(token) in self.title_tokens
@@ -215,8 +292,8 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
             )
 
     text = _normalize("\n".join(fragments))
-    numeric_digits = frozenset(
-        digits for token in _NUMERIC_RE.findall(text) if (digits := _digits_only(token))
+    numeric_keys = frozenset(
+        key for token in _NUMERIC_RE.findall(text) if (key := _normalize_numeric(token))
     )
     date_tokens = frozenset(
         digits for token in _DATE_RE.findall(text) if (digits := _digits_only(token))
@@ -224,7 +301,7 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
     title_tokens = frozenset(_normalize(token) for token in _TITLE_TOKEN_RE.findall(text))
     return EvidenceCorpus(
         text=text,
-        numeric_digits=numeric_digits,
+        numeric_keys=numeric_keys,
         title_tokens=title_tokens,
         date_tokens=date_tokens,
     )
@@ -301,6 +378,8 @@ def find_fabricated_tokens(
     # is neither one of the user's real employers nor present in the evidence
     # corpus is a fabricated employer. Suffix-anchoring avoids false positives on
     # ordinary prose ("with Python") that a bare preposition heuristic would hit.
+    # Bare-name fabricated employers ("at Netflix") are deliberately deferred to
+    # the LLM judge — see the ``_EMPLOYER_RE`` limitation note above.
     for match in _EMPLOYER_RE.finditer(generated_text):
         candidate = _normalize(match.group(1))
         if candidate and candidate not in corpus.text and candidate not in employers:
