@@ -244,6 +244,7 @@ describe("<ArtifactDetailPanel>", () => {
           evidenceNotes: ["ev_scope: technical ownership"],
         },
       ],
+      bulletProvenance: [],
       models: {
         candidateModels: ["generator-a"],
         selectedModel: "generator-a",
@@ -361,6 +362,7 @@ describe("<ArtifactDetailPanel>", () => {
         acceptedWarnings: [],
       },
       annotatedChanges: [],
+      bulletProvenance: [],
       models: {
         candidateModels: [],
         selectedModel: null,

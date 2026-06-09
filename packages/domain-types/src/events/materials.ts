@@ -109,6 +109,32 @@ export function createEmployerAnalyzed(tenantId: TenantId, payload: EmployerAnal
   return createDomainEvent("EmployerAnalyzed", tenantId, payload);
 }
 
+// -- BulletProvenanceRecorded ----------------------------------------------
+
+/**
+ * Phase 2 — canonical per-bullet provenance was recorded for an artifact.
+ *
+ * Emitted when an accepted tailored resume's provenance rows are persisted
+ * (generation-versioned, bound to the `artifactId` they explain). Carries the
+ * bullet count so the read-side projection rebuilds and the inspector refreshes.
+ */
+export interface BulletProvenanceRecordedPayload {
+  readonly jobId: string;
+  readonly artifactId: string;
+  readonly generation: number;
+  readonly bulletCount: number;
+  readonly recordedAt: string;
+}
+
+export type BulletProvenanceRecorded = DomainEvent<"BulletProvenanceRecorded", BulletProvenanceRecordedPayload>;
+
+export function createBulletProvenanceRecorded(
+  tenantId: TenantId,
+  payload: BulletProvenanceRecordedPayload,
+): BulletProvenanceRecorded {
+  return createDomainEvent("BulletProvenanceRecorded", tenantId, payload);
+}
+
 // -- TailorRetailorRequested -----------------------------------------------
 
 export const RETAILOR_REQUEST_KINDS = ["single_job", "bulk_current_policy", "policy_update", "repair"] as const;

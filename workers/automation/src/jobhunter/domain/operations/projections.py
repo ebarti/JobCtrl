@@ -166,6 +166,13 @@ class ArtifactListProjection:
     created_at: str | None = None
     generation: int | None = None
     metadata_json: str | None = None
+    # Phase 2: the canonical per-bullet provenance read shape (JSON of the
+    # generation's ``BulletProvenanceSet.to_read_model()``), or None when no
+    # provenance was recorded (e.g. PDF artifacts, or a legacy generation tailored
+    # before Phase 2). Built by the single projection owner from canonical rows so
+    # the inspector read path has one source of truth — never derived from
+    # ``metadata_json``.
+    bullet_provenance_json: str | None = None
 
 
 @dataclass(frozen=True)

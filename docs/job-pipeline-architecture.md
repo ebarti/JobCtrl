@@ -595,8 +595,10 @@ sequenceDiagram
     alt eligible and no current active artifact
         Discover->>Queue: enqueue tailor_resume(target=tailoring policy version)
         Queue->>Materials: tailor_job_by_url(job, current policy)
+        Note over Materials: _run_analyze (canonical employer analysis, EmployerAnalyzed)<br/>then candidates -> validate -> judge -> adversarial<br/>then per-bullet provenance vs generated text + never-fabricate detector
         Materials-->>Ops: ResumeApproved / ResumeFailed
         opt resume approved
+            Materials-->>Ops: BulletProvenanceRecorded
             Queue->>Materials: run_cover_letters(job)
             Materials-->>Ops: CoverLetterGenerated / CoverLetterFailed
         end

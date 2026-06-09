@@ -38,6 +38,7 @@ import {
   postingContentSnapshotFailedHandler,
 } from "../enrichment/handlers.js";
 import {
+  bulletProvenanceRecordedHandler,
   coverLetterGeneratedHandler,
   employerAnalyzedHandler,
   materialsExhaustedHandler,
@@ -143,6 +144,7 @@ export const handlers: HandlerMap = {
   PdfRendered: pdfRenderedHandler,
   MaterialsExhausted: materialsExhaustedHandler,
   EmployerAnalyzed: employerAnalyzedHandler,
+  BulletProvenanceRecorded: bulletProvenanceRecordedHandler,
   TailoringPolicyUpdated: tailoringPolicyUpdatedHandler,
   TailorRetailorRequested: tailorRetailorRequestedHandler,
   TailoredArtifactsSuppressed: tailoredArtifactsSuppressedHandler,

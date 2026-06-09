@@ -84,6 +84,61 @@ class RenderFormat(str, Enum):
     TEXT = "text"
 
 
+class TransformType(str, Enum):
+    """The closed taxonomy of how a tailored bullet relates to its source (GROUND-04).
+
+    Every :class:`~jobhunter.domain.materials.provenance.BulletProvenance` row
+    records exactly one of these. The taxonomy is the user-facing contract — the
+    inspector shows it per bullet — so it is a closed enumeration the read model,
+    projection, and detector all read as the source of truth.
+
+    ``VERBATIM``               — the line is the profile fact unchanged (preserved).
+    ``REPHRASE``               — same fact, reworded for the target (always allowed).
+    ``REFRAME``                — same fact, re-angled to emphasise a job requirement.
+    ``SYNTHESIZE_FROM_RELATED`` — drafted from closely-related profile evidence
+                                  (permitted only under the invent-closely-related
+                                  control; never invents facts wholesale).
+    ``QUANTIFY_FROM_EVIDENCE`` — surfaces a metric that is already recorded in
+                                  profile evidence (NEVER an invented number — the
+                                  deterministic detector enforces this).
+    """
+
+    VERBATIM = "verbatim"
+    REPHRASE = "rephrase"
+    REFRAME = "reframe"
+    SYNTHESIZE_FROM_RELATED = "synthesize_from_related"
+    QUANTIFY_FROM_EVIDENCE = "quantify_from_evidence"
+
+
+class ControlRule(str, Enum):
+    """The granular tailoring rule that GOVERNED one bullet decision (CONTROL-01/02).
+
+    Recorded per bullet so the user can see what policy produced each line. The
+    rules encode the never-fabricate trust floor:
+
+    ``REPHRASE_ALLOWED``        — rewording a real profile fact is always permitted.
+    ``INVENT_CLOSELY_RELATED``  — drafting from closely-related experience is
+                                  permitted (governs ``SYNTHESIZE_FROM_RELATED``);
+                                  only reachable when the active policy allows
+                                  adjacent achievement drafts.
+    ``NEVER_FABRICATE_METRICS`` — metrics must trace to recorded evidence
+                                  (governs ``QUANTIFY_FROM_EVIDENCE``).
+    ``NEVER_FABRICATE_TITLES``  — titles/seniority must trace to the profile.
+    ``NEVER_FABRICATE_DATES``   — dates/durations must trace to the profile.
+    ``NEVER_FABRICATE_EMPLOYERS`` — employers/companies must trace to the profile.
+
+    The ``NEVER_FABRICATE_*`` rules are the ones the deterministic
+    ``fabrication_detector`` enforces independently of the prompt (CONTROL-03).
+    """
+
+    REPHRASE_ALLOWED = "rephrase_allowed"
+    INVENT_CLOSELY_RELATED = "invent_closely_related"
+    NEVER_FABRICATE_METRICS = "never_fabricate_metrics"
+    NEVER_FABRICATE_TITLES = "never_fabricate_titles"
+    NEVER_FABRICATE_DATES = "never_fabricate_dates"
+    NEVER_FABRICATE_EMPLOYERS = "never_fabricate_employers"
+
+
 # ---------------------------------------------------------------------------
 # ValidationResult
 # ---------------------------------------------------------------------------
@@ -400,9 +455,11 @@ class LlmModelSpec:
 __all__ = [
     "ArtifactStatus",
     "ArtifactType",
+    "ControlRule",
     "JudgeVerdict",
     "LlmModelSpec",
     "RenderFormat",
+    "TransformType",
     "ValidationResult",
 ]
 

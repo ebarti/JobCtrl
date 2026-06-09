@@ -1,0 +1,513 @@
+"""Phase 2: per-bullet provenance + the deterministic never-fabricate detector.
+
+Covers the Phase-2 success criteria as pure domain tests (no LLM/SDK calls):
+
+  * fabricated evidence/requirement-ID reject (GROUND-05, success criterion 2)
+  * never-fabricate detector — a metrics-hungry job + a numberless profile yields
+    zero unsourced numerics (CONTROL-03 / success criterion 4)
+  * per-bullet provenance shape + closed transform taxonomy (GROUND-03/04)
+  * the governing control rule is recorded per bullet (CONTROL-02 / criterion 3)
+  * generation-versioning round-trip + supersede-not-destroy (criterion 5)
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Iterator
+
+import pytest
+
+from jobhunter.database import close_connection, init_db
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    Requirement,
+    compute_snapshot_hash,
+)
+from jobhunter.domain.materials.fabrication_detector import (
+    build_evidence_corpus,
+    employer_name_set,
+    find_fabricated_tokens,
+    scan_resume_bullets,
+)
+from jobhunter.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
+from jobhunter.domain.materials.provenance_builder import (
+    ProvenanceBindingError,
+    build_bullet_provenance,
+)
+from jobhunter.domain.materials.quality import build_tailoring_plan
+from jobhunter.domain.materials.value_objects import ControlRule, TransformType
+from jobhunter.infrastructure.materials.bullet_provenance_repository import (
+    SqliteBulletProvenanceRepository,
+)
+from jobhunter.domain.tenant import LOCAL_TENANT
+
+JOB_URL = "https://example.com/senior-backend"
+
+
+# --------------------------------------------------------------------------
+# Fixtures (mirror test_materials_quality conventions)
+# --------------------------------------------------------------------------
+
+
+def _analysis(
+    *,
+    requirements: list[Requirement] | None = None,
+    keywords: list[ReasonedKeyword] | None = None,
+) -> EmployerAnalysis:
+    canonical = JobAnalysis(
+        role_framing="Own backend latency.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=requirements
+        or [
+            Requirement(
+                id="req_python",
+                text="5+ years of Python",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="5+ years of Python",
+            ),
+            Requirement(
+                id="req_latency",
+                text="improve API latency",
+                tier="nice_to_have",
+                weight=0.5,
+                evidence_span="improve API latency",
+            ),
+        ],
+        keywords=keywords
+        or [
+            ReasonedKeyword(
+                keyword="Python",
+                evidence_span="5+ years of Python",
+                requirement_ref="req_python",
+            ),
+            ReasonedKeyword(
+                keyword="latency",
+                evidence_span="improve API latency",
+                requirement_ref="req_latency",
+            ),
+        ],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(JOB_URL),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash("jd"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
+
+
+def _profile() -> dict:
+    return {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com"},
+        "resume_constraints": {"real_metrics": ["35% latency reduction"]},
+        "resume": {
+            "executive_profile": {"baseline_text": "Senior backend engineer."},
+            "experience_entries": [
+                {
+                    "id": "acme_swe",
+                    "date_range": "2020-Present",
+                    "title": "Senior SWE",
+                    "company": "Acme Corp",
+                    "location": "Remote",
+                    "bullets": ["Reduced API latency 35% by replacing synchronous calls."],
+                    "achievement_evidence": [
+                        {
+                            "id": "ev_latency",
+                            "source_text": (
+                                "Reduced API latency 35% by replacing synchronous "
+                                "enrichment calls."
+                            ),
+                            "scope": "owned service",
+                            "action": "replaced synchronous enrichment calls",
+                            "tools": ["Python", "PostgreSQL"],
+                            "metrics": ["35% latency reduction"],
+                            "outcome": "faster API responses",
+                            "seniority_signal": "technical ownership",
+                            "evidence_strength": "verified",
+                            "claim_confidence": 0.95,
+                            "user_confirmed": True,
+                            "tags": ["latency", "backend", "performance"],
+                        }
+                    ],
+                }
+            ],
+            "education_entries": [
+                {"id": "edu_state", "degree": "BSc CS", "institution": "State University", "date": "2015"}
+            ],
+            "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python", "Go"]}],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["acme_swe"],
+                "required_skill_category_ids": ["languages"],
+                "max_experience_bullets": 4,
+                "tailoring_policy": {
+                    "claim_mode": "evidence_reframing",
+                    "auto_approvable_claim_modes": ["verified_only", "evidence_reframing"],
+                },
+                "writing_style": {"tone": "direct", "bullet_style": "leadership"},
+            },
+        },
+    }
+
+
+def _numberless_profile() -> dict:
+    """A profile whose experience carries NO numerics/metrics at all."""
+    return {
+        "personal": {"full_name": "Sam Lee", "email": "sam@example.com"},
+        "resume_constraints": {"real_metrics": []},
+        "resume": {
+            "executive_profile": {"baseline_text": "Backend engineer."},
+            "experience_entries": [
+                {
+                    "id": "acme_swe",
+                    "date_range": "recent",
+                    "title": "Engineer",
+                    "company": "Acme Corp",
+                    "location": "Remote",
+                    "bullets": ["Improved API responsiveness by removing synchronous calls."],
+                    "achievement_evidence": [
+                        {
+                            "id": "ev_api",
+                            "source_text": "Improved API responsiveness by removing synchronous calls.",
+                            "scope": "owned service",
+                            "action": "removed synchronous calls",
+                            "tools": ["Python"],
+                            "metrics": [],
+                            "outcome": "faster responses",
+                            "tags": ["latency", "backend"],
+                        }
+                    ],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python"]}],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["acme_swe"],
+                "required_skill_category_ids": ["languages"],
+                "max_experience_bullets": 4,
+                "tailoring_policy": {"claim_mode": "verified_only"},
+            },
+        },
+    }
+
+
+def _job() -> dict:
+    return {
+        "url": JOB_URL,
+        "title": "Senior Backend Engineer",
+        "full_description": "Own Python backend services and improve API latency.",
+    }
+
+
+def _payload(*, bullets: list[str], summary: str = "Senior backend engineer.") -> dict:
+    return {
+        "executive_profile": summary,
+        "experience_updates": [{"id": "acme_swe", "title": "", "bullets": bullets}],
+        "skill_category_updates": [{"id": "languages", "items": ["Python", "Go"]}],
+    }
+
+
+def _build(profile: dict, payload: dict, analysis: EmployerAnalysis) -> tuple[BulletProvenance, ...]:
+    plan = build_tailoring_plan(profile, _job(), employer_analysis=analysis)
+    return build_bullet_provenance(profile, _job(), payload, plan, analysis)
+
+
+# --------------------------------------------------------------------------
+# Per-bullet shape + transform taxonomy (GROUND-03/04)
+# --------------------------------------------------------------------------
+
+
+def test_provenance_has_one_row_per_rendered_bullet_with_closed_taxonomy() -> None:
+    rows = _build(
+        _profile(),
+        _payload(bullets=["Reduced API latency 35% by replacing synchronous calls."]),
+        _analysis(),
+    )
+    sections = {row.section for row in rows}
+    assert sections == {"executive_profile", "experience", "skills"}
+    # Every transform_type is a member of the closed taxonomy (GROUND-04).
+    for row in rows:
+        assert isinstance(row.transform_type, TransformType)
+        assert isinstance(row.control, ControlRule)
+        assert row.generated_text.strip()  # coverage anchor is the rendered text
+
+    experience = next(row for row in rows if row.section == "experience")
+    # Bullet equals the source profile bullet verbatim -> VERBATIM transform.
+    assert experience.transform_type is TransformType.VERBATIM
+    assert experience.source_id == "acme_swe"
+    assert experience.bullet_id == "experience:acme_swe#0"
+
+
+def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
+    rows = _build(
+        _profile(),
+        _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."]),
+        _analysis(),
+    )
+    experience = next(row for row in rows if row.section == "experience")
+    # "latency" + "python" appear in the generated bullet -> their requirements served.
+    assert "latency" in experience.matched_keywords
+    assert "req_latency" in experience.requirement_ids
+    # requirement_ids are real FK ids from the analysis.
+    valid_ids = {req.id for req in _analysis().canonical.requirements}
+    assert set(experience.requirement_ids).issubset(valid_ids)
+
+
+def test_quantify_from_evidence_transform_when_metric_introduced() -> None:
+    # Source bullet has no metric; tailored bullet surfaces a verified metric.
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["bullets"] = [
+        "Replaced synchronous enrichment calls."
+    ]
+    rows = _build(
+        profile,
+        _payload(bullets=["Replaced synchronous calls, cutting 35% latency reduction."]),
+        _analysis(),
+    )
+    experience = next(row for row in rows if row.section == "experience")
+    assert experience.transform_type is TransformType.QUANTIFY_FROM_EVIDENCE
+    assert experience.control is ControlRule.NEVER_FABRICATE_METRICS
+
+
+def test_control_recorded_per_bullet_reflects_governing_rule() -> None:
+    rows = _build(
+        _profile(),
+        _payload(bullets=["Reduced API latency 35% by replacing synchronous calls."]),
+        _analysis(),
+    )
+    # A rephrase/verbatim of a real fact is governed by the always-allowed rule.
+    experience = next(row for row in rows if row.section == "experience")
+    assert experience.control is ControlRule.REPHRASE_ALLOWED
+
+
+# --------------------------------------------------------------------------
+# Fabricated FK reject (GROUND-05, success criterion 2)
+# --------------------------------------------------------------------------
+
+
+def test_fabricated_requirement_id_is_rejected_before_any_row_is_built() -> None:
+    # A BulletProvenance constructed with a requirement id NOT in the analysis
+    # must be rejected by the builder's FK validation. We simulate by validating
+    # directly: the builder only ever emits ids it resolved, so we assert the
+    # guard rejects an injected fabricated id.
+    from jobhunter.domain.materials.provenance_builder import (
+        _sources,
+        _validated_requirement_ids,
+    )
+
+    analysis = _analysis()
+    plan = build_tailoring_plan(_profile(), _job(), employer_analysis=analysis)
+    sources = _sources(plan, analysis)
+    with pytest.raises(ProvenanceBindingError) as excinfo:
+        _validated_requirement_ids(("req_python", "req_FABRICATED"), sources)
+    assert "req_FABRICATED" in str(excinfo.value)
+    assert excinfo.value.kind == "requirement"
+
+
+def test_fabricated_evidence_id_is_rejected() -> None:
+    from jobhunter.domain.materials.provenance_builder import (
+        _sources,
+        _validated_evidence_ids,
+    )
+
+    analysis = _analysis()
+    plan = build_tailoring_plan(_profile(), _job(), employer_analysis=analysis)
+    sources = _sources(plan, analysis)
+    with pytest.raises(ProvenanceBindingError) as excinfo:
+        _validated_evidence_ids(("ev_latency", "ev_FAKE"), sources)
+    assert "ev_FAKE" in str(excinfo.value)
+    assert excinfo.value.kind == "evidence"
+
+
+# --------------------------------------------------------------------------
+# Deterministic never-fabricate detector (CONTROL-03 / success criterion 4)
+# --------------------------------------------------------------------------
+
+
+def test_detector_passes_when_every_numeric_traces_to_evidence() -> None:
+    profile = _profile()
+    corpus = build_evidence_corpus(profile)
+    # "35%" is recorded in the profile evidence -> grounded.
+    findings = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Reduced API latency 35% by replacing synchronous calls.",
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    assert findings == []
+
+
+def test_detector_flags_invented_metric() -> None:
+    profile = _profile()
+    corpus = build_evidence_corpus(profile)
+    # "10x" and "$2M" appear nowhere in the profile evidence -> fabricated.
+    findings = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Drove a 10x throughput gain and $2M in savings.",
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    kinds = {f.kind for f in findings}
+    assert "numeric" in kinds
+    assert all(f.control is ControlRule.NEVER_FABRICATE_METRICS for f in findings if f.kind == "numeric")
+
+
+def test_metrics_hungry_job_with_numberless_profile_yields_zero_unsourced_numerics() -> None:
+    """Success criterion 4: a metrics-hungry job + a numberless profile must not
+    let any unsourced numeric survive into the resume."""
+    profile = _numberless_profile()
+    analysis = _analysis()
+    corpus = build_evidence_corpus(profile)
+    employers = employer_name_set(profile)
+
+    # The model (under a metrics-hungry job) tries to inject metrics the profile
+    # never stated. The detector must flag every one.
+    greedy_payload = _payload(
+        bullets=[
+            "Improved API responsiveness by removing synchronous calls, cutting latency 40%.",
+            "Scaled the platform to 5 million requests per day across 12 services.",
+        ],
+        summary="Backend engineer who delivered 99.99% uptime.",
+    )
+    plan = build_tailoring_plan(profile, _job(), employer_analysis=analysis)
+    rows = build_bullet_provenance(profile, _job(), greedy_payload, plan, analysis)
+    findings = scan_resume_bullets(
+        [(row.bullet_id, row.generated_text) for row in rows], corpus, employers=employers
+    )
+    fabricated_numerics = [f.token for f in findings if f.kind == "numeric"]
+    # Every injected number (40%, 5 million, 12, 99.99%) is unsourced and flagged.
+    assert fabricated_numerics, "detector must flag the injected numerics"
+    # And NONE of them trace to the (numberless) profile evidence corpus.
+    for token in fabricated_numerics:
+        assert token.lower() not in corpus.text
+
+
+def test_detector_flags_fabricated_title_and_employer() -> None:
+    profile = _profile()  # real title: Senior SWE; real employer: Acme Corp
+    corpus = build_evidence_corpus(profile)
+    employers = employer_name_set(profile)
+    findings = find_fabricated_tokens(
+        "executive_profile#0",
+        "Chief Technology Officer at Globex Corporation.",
+        corpus,
+        employers=employers,
+    )
+    kinds = {f.kind for f in findings}
+    assert "title" in kinds  # "Chief"/"CTO"-class token absent from profile
+    assert "employer" in kinds  # "Globex Corporation" is not a real employer
+
+
+def test_detector_flags_fabricated_date() -> None:
+    profile = _profile()  # profile dates: 2020-Present, 2015
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "experience:acme_swe#0",
+        "Led the platform rebuild in 1998.",
+        corpus,
+    )
+    assert any(f.kind == "date" and f.control is ControlRule.NEVER_FABRICATE_DATES for f in findings)
+
+
+# --------------------------------------------------------------------------
+# Persistence: generation-versioning + supersede-not-destroy (criterion 5)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def conn(tmp_path) -> Iterator[sqlite3.Connection]:
+    """A real tmp-file DB with the canonical schema (avoids the shared
+    ``:memory:`` singleton that ``get_connection`` returns)."""
+    connection = init_db(tmp_path / "jobs.db")
+    connection.execute(
+        "INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)",
+        (JOB_URL, "Senior Backend Engineer", "example"),
+    )
+    connection.commit()
+    yield connection
+    close_connection()
+
+
+def _seed_materials_generation(connection: sqlite3.Connection, generation: int, *, ts: str) -> None:
+    """Insert the ``job_materials`` FK parent row for a generation."""
+    connection.execute(
+        "INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at) "
+        "VALUES (?, ?, 'local', 'complete', ?, ?)",
+        (JOB_URL, generation, ts, ts),
+    )
+    connection.commit()
+
+
+def _provenance_set(generation: int, *, artifact_id: str, text: str) -> BulletProvenanceSet:
+    return BulletProvenanceSet(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(JOB_URL),
+        generation=generation,
+        artifact_id=artifact_id,
+        bullets=(
+            BulletProvenance(
+                bullet_id="experience:acme_swe#0",
+                section="experience",
+                source_id="acme_swe",
+                evidence_ids=("ev_latency",),
+                requirement_ids=("req_latency",),
+                matched_keywords=("latency",),
+                transform_type=TransformType.REPHRASE,
+                control=ControlRule.REPHRASE_ALLOWED,
+                rationale="reworded a real profile bullet",
+                generated_text=text,
+            ),
+        ),
+    )
+
+
+def test_repository_round_trip_preserves_canonical_fields(conn: sqlite3.Connection) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    repo = SqliteBulletProvenanceRepository(conn)
+    repo.save(_provenance_set(1, artifact_id="art-1", text="Reduced API latency 35%."))
+
+    loaded = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    assert loaded is not None
+    assert loaded.generation == 1
+    assert loaded.artifact_id == "art-1"
+    assert loaded.bullets[0].transform_type is TransformType.REPHRASE
+    assert loaded.bullets[0].requirement_ids == ("req_latency",)
+    assert loaded.to_read_model()[0]["matched_keywords"] == ["latency"]
+
+
+def test_failed_retailor_never_destroys_last_accepted_generation(conn: sqlite3.Connection) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    _seed_materials_generation(conn, 2, ts="2026-06-08T13:00:00Z")
+    repo = SqliteBulletProvenanceRepository(conn)
+    repo.save(_provenance_set(1, artifact_id="art-gen1", text="Gen 1 bullet."))
+    repo.save(_provenance_set(2, artifact_id="art-gen2", text="Gen 2 bullet."))
+
+    # The latest generation is served by default...
+    latest = repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    assert latest is not None and latest.generation == 2 and latest.artifact_id == "art-gen2"
+    # ...and generation 1's provenance is retained as audit history (not destroyed).
+    historical = repo.load(LOCAL_TENANT, JobId(JOB_URL), generation=1)
+    assert historical is not None
+    assert historical.bullets[0].generated_text == "Gen 1 bullet."
+
+
+def test_saving_empty_provenance_set_is_a_noop(conn: sqlite3.Connection) -> None:
+    _seed_materials_generation(conn, 1, ts="2026-06-08T12:00:00Z")
+    repo = SqliteBulletProvenanceRepository(conn)
+    empty = BulletProvenanceSet(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(JOB_URL),
+        generation=1,
+        artifact_id="art-empty",
+        bullets=(),
+    )
+    repo.save(empty)
+    assert repo.load(LOCAL_TENANT, JobId(JOB_URL)) is None

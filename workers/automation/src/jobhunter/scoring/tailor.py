@@ -46,6 +46,7 @@ from jobhunter.domain.materials.use_cases import (
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmPort
 from jobhunter.domain.ports.materials import (
+    BulletProvenanceRepository,
     MaterialsRepository,
     PdfRendererPort,
     TailoringPolicyRepository,
@@ -55,6 +56,7 @@ from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import get_llm_adapter
 from jobhunter.infrastructure.materials import (
     LatexPdfAdapter,
+    SqliteBulletProvenanceRepository,
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
 )
@@ -191,6 +193,7 @@ def _build_use_case(
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
+    provenance_repository: BulletProvenanceRepository | None = None,
     analyze_use_case=None,
 ) -> TailorResumeUseCase:
     """Construct a :class:`TailorResumeUseCase` using local-mode defaults."""
@@ -199,6 +202,8 @@ def _build_use_case(
         repository = SqliteMaterialsRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteTailoringPolicyRepository(conn)
+    if provenance_repository is None:
+        provenance_repository = SqliteBulletProvenanceRepository(conn)
     if llm_port is None:
         llm_port = get_llm_adapter()
     if validator is None:
@@ -217,6 +222,7 @@ def _build_use_case(
         publisher=publisher,
         llm_policy=llm_policy,
         policy_repository=policy_repository,
+        provenance_repository=provenance_repository,
         analyze_use_case=analyze_use_case,
     )
 

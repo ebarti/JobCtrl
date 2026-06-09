@@ -371,6 +371,7 @@ class ProjectionBuilder:
         score = self._load_latest_score(job_url)
         materials = self._load_latest_materials(job_url)
         employer_analysis_json = self._load_employer_analysis(job_url)
+        provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
         enrichment = self._load_enrichment(job_url)
         apply_run = self._load_latest_apply_run(job_url)
         deleted_at = self._load_deleted_at(job_url)
@@ -522,6 +523,7 @@ class ProjectionBuilder:
                 created_at=a.get("created_at"),
                 generation=a.get("generation"),
                 metadata_json=a.get("metadata_json"),
+                bullet_provenance_json=provenance_by_artifact.get(a["artifact_id"]),
             )
             for a in artifacts
         ]
@@ -677,6 +679,30 @@ class ProjectionBuilder:
         if record is None:
             return None
         return json.dumps(record.to_read_model(), ensure_ascii=False)
+
+    def _load_bullet_provenance_by_artifact(self, job_url: str) -> dict[str, str]:
+        """Project the latest per-bullet provenance read shape, keyed by artifact (Phase 2).
+
+        The single owner of the provenance read shape: it loads the latest
+        ``BulletProvenanceSet`` generation from canonical rows and serialises
+        ``to_read_model()`` to JSON, mapped to the ``artifact_id`` it explains so
+        the artifact projection can carry it directly. Returns an empty mapping
+        when no provenance exists (the common case before Phase 2 tailoring, or
+        for PDF artifacts).
+        """
+        from jobhunter.infrastructure.materials.bullet_provenance_repository import (
+            SqliteBulletProvenanceRepository,
+        )
+
+        try:
+            record = SqliteBulletProvenanceRepository(self._conn).load(
+                self._tenant_id, JobId(job_url)
+            )
+        except sqlite3.OperationalError:
+            return {}
+        if record is None or record.is_empty:
+            return {}
+        return {record.artifact_id: json.dumps(record.to_read_model(), ensure_ascii=False)}
 
     def _load_enrichment(self, job_url: str) -> dict:
         try:

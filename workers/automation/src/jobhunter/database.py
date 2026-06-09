@@ -148,6 +148,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_tailoring_policy_tables(conn)
     ensure_materials_tables(conn)
     ensure_employer_analysis_tables(conn)
+    ensure_bullet_provenance_tables(conn)
     ensure_preparation_work_item_tables(conn)
     ensure_enrichment_tables(conn)
     ensure_posting_snapshot_tables(conn)
@@ -1532,6 +1533,74 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
         "job_employer_analysis_sub_analyses",
         "job_employer_analysis_failures",
     ]
+
+
+def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create the canonical per-bullet provenance table (Phase 2).
+
+    Every generated resume bullet records one canonical row binding it to the
+    profile evidence it derives from, the job requirement it serves (FK into the
+    persisted employer analysis), the transform that produced it, and the granular
+    control that governed it. Per the auditability discipline (Anti-Pattern 1) the
+    audit data is stored as CANONICAL ROWS — never inside an artifact
+    ``metadata_json`` blob:
+
+      * ``job_bullet_provenance`` — one row per ``(job_url, generation, bullet_id)``.
+        Bound to the ``job_materials`` generation it explains and to the specific
+        ``artifact_id`` (the tailored resume) it was computed against. FK ids
+        (``evidence_ids_json`` / ``requirement_ids_json``) reference real profile
+        evidence + ``job_employer_analysis`` requirements — the builder rejects
+        fabricated ids before a row is ever written (GROUND-05). ``generated_text``
+        is the actual rendered line, the anchor for coverage (Anti-Pattern 2).
+
+    Generation-versioned like ``job_materials`` (Anti-Pattern 4 / success
+    criterion 5): a forced/failed re-tailor writes a higher generation; prior
+    generations are retained as audit history (never deleted), so a failed refresh
+    never destroys the last accepted generation's provenance.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_bullet_provenance (
+            job_url             TEXT NOT NULL,
+            generation          INTEGER NOT NULL,
+            bullet_id           TEXT NOT NULL,
+            tenant_id           TEXT NOT NULL DEFAULT 'local',
+            artifact_id         TEXT NOT NULL,
+            section             TEXT NOT NULL,
+            source_id           TEXT,
+            evidence_ids_json   TEXT NOT NULL DEFAULT '[]',
+            requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+            matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+            transform_type      TEXT NOT NULL,
+            control             TEXT NOT NULL,
+            rationale           TEXT NOT NULL DEFAULT '',
+            generated_text      TEXT NOT NULL,
+            position            INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL,
+            PRIMARY KEY (job_url, generation, bullet_id),
+            FOREIGN KEY (job_url, generation)
+                REFERENCES job_materials(job_url, generation) ON DELETE CASCADE
+        )
+        """
+    )
+    # Selector for the read path: latest generation's rows for a job/artifact.
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_bullet_provenance_tenant_job_gen
+        ON job_bullet_provenance(tenant_id, job_url, generation DESC)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_bullet_provenance_artifact
+        ON job_bullet_provenance(tenant_id, artifact_id)
+        """
+    )
+    conn.commit()
+    return ["job_bullet_provenance"]
 
 
 def ensure_enrichment_tables(conn: sqlite3.Connection | None = None) -> list[str]:
