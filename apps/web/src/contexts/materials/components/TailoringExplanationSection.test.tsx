@@ -69,6 +69,8 @@ const keywordOnlyExplanation: ArtifactTailoringExplanation = {
   },
   annotatedChanges: [],
   bulletProvenance: [],
+  coverageAudit: null,
+  voicePass: null,
   models: {
     candidateModels: [],
     selectedModel: null,

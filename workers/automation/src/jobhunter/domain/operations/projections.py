@@ -173,6 +173,14 @@ class ArtifactListProjection:
     # the inspector read path has one source of truth — never derived from
     # ``metadata_json``.
     bullet_provenance_json: str | None = None
+    # Phase 3: the canonical generation-time keyword-coverage read shape (JSON of
+    # ``BulletProvenanceSet.coverage_to_read_model()``, GROUND-06) and the voice-pass
+    # audit read shape (JSON of ``voice_to_read_model()``, VOICE-02), or None when
+    # not recorded. Same single-owner, canonical-rows discipline as provenance —
+    # coverage is computed against the rendered text at generation time, never
+    # recomputed from the JD at read time.
+    coverage_audit_json: str | None = None
+    voice_pass_json: str | None = None
 
 
 @dataclass(frozen=True)

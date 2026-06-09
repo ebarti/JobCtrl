@@ -62,6 +62,8 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "employer_analysis_json", "TEXT"),
     ("artifact_list_projections", "metadata_json", "TEXT"),
     ("artifact_list_projections", "bullet_provenance_json", "TEXT"),
+    ("artifact_list_projections", "coverage_audit_json", "TEXT"),
+    ("artifact_list_projections", "voice_pass_json", "TEXT"),
 )
 
 
@@ -163,7 +165,9 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             created_at             TEXT,
             generation             INTEGER,
             metadata_json          TEXT,
-            bullet_provenance_json TEXT
+            bullet_provenance_json TEXT,
+            coverage_audit_json    TEXT,
+            voice_pass_json        TEXT
         )
         """
     )
@@ -527,8 +531,9 @@ class SqliteProjectionStore:
             INSERT INTO artifact_list_projections (
                 artifact_id, tenant_id, job_id, job_title, job_employer,
                 artifact_type, status, local_path, size_bytes, created_at,
-                generation, metadata_json, bullet_provenance_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                generation, metadata_json, bullet_provenance_json,
+                coverage_audit_json, voice_pass_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(artifact_id) DO UPDATE SET
                 job_id        = excluded.job_id,
                 job_title     = excluded.job_title,
@@ -540,7 +545,9 @@ class SqliteProjectionStore:
                 created_at    = excluded.created_at,
                 generation    = excluded.generation,
                 metadata_json = excluded.metadata_json,
-                bullet_provenance_json = excluded.bullet_provenance_json
+                bullet_provenance_json = excluded.bullet_provenance_json,
+                coverage_audit_json = excluded.coverage_audit_json,
+                voice_pass_json = excluded.voice_pass_json
             """,
             (
                 projection.artifact_id,
@@ -556,6 +563,8 @@ class SqliteProjectionStore:
                 projection.generation,
                 projection.metadata_json,
                 projection.bullet_provenance_json,
+                projection.coverage_audit_json,
+                projection.voice_pass_json,
             ),
         )
 

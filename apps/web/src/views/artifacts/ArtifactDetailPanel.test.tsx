@@ -245,6 +245,8 @@ describe("<ArtifactDetailPanel>", () => {
         },
       ],
       bulletProvenance: [],
+      coverageAudit: null,
+      voicePass: null,
       models: {
         candidateModels: ["generator-a"],
         selectedModel: "generator-a",
@@ -363,6 +365,8 @@ describe("<ArtifactDetailPanel>", () => {
       },
       annotatedChanges: [],
       bulletProvenance: [],
+      coverageAudit: null,
+      voicePass: null,
       models: {
         candidateModels: [],
         selectedModel: null,

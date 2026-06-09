@@ -51,6 +51,18 @@ profile payloads, or raw job text; annotation and persona prompt snippets are
 bounded excerpts of the selected source, tailored resume, and adversarial-review
 request.
 
+The tailoring explanation also carries two canonical generation-time audit
+fields served exclusively from projection rows (never recomputed at read time):
+`coverageAudit` is the honest keyword coverage (covered + missing) computed
+against the actual rendered (voiced) resume text — a keyword counts as covered
+only when it appears in a provenance-backed grounded bullet, and `coveredBy`
+records which bullet demonstrates each covered keyword. `voicePass` is the
+voice-pass audit (whether the de-buzzword/vary-structure pass ran and was
+accepted, the model, the prompt version, and the deterministic buzzword-density /
+structural-variety proxy delta that justified it). Both are `null` for a
+generation that predates the voice/coverage backend, and a PDF artifact resolves
+them from the sibling tailored-resume row of the same generation.
+
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, `scoredAt`, `scoreTrace`, and

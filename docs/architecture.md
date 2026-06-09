@@ -254,6 +254,57 @@ governed it. Like the analysis, this is canonical rows, not `metadata_json`.
   read path; the divergent legacy read paths are retired and the inspector UI is
   built in later milestones.
 
+## Voice Pass + Final Audit Against Rendered Text (Materials sub-step)
+
+An explicit voice pass runs **after** the selected candidate is chosen and
+**before** the final audit, so the audited text — provenance and keyword coverage
+— equals the rendered/PDF text both renderers consume. Grounding is the floor:
+the voice pass rewords, it never invents, and the deterministic gates are re-run
+against the voiced text.
+
+- **Voice transform** (`VoicePort` + `infrastructure/materials/voice_adapter.py`):
+  a NEW AI transform implemented via the **Claude Agent SDK** (native structured
+  output, no timeout / no turn cap), mirroring the employer-analysis adapters —
+  not the legacy httpx client (the all-new-AI-via-SDK directive). It de-buzzwords
+  and varies bullet structure on the selected candidate's prose (executive profile
+  + experience bullets only; skill term lists are left untouched). The SDK boundary
+  is mocked in tests.
+- **Deterministic voice proxies** (`domain/materials/voice_metrics.py`): the
+  measurable gate (VOICE-01). Buzzword density (a focused lexicon built from
+  `BANNED_WORDS` + the quality evaluator's AI-stock markers) and structural variety
+  (opening-token diversity + bullet-length variance). The voiced payload is adopted
+  only when it **measurably reduces buzzword density OR raises structural variety**
+  vs the input; a no-op or a regression keeps the pre-voice candidate.
+- **Re-validation after voice** (VOICE-03): `TailorResumeUseCase` re-runs the
+  provenance builder + the deterministic never-fabricate detector against the
+  voiced text. A voice edit that introduces an unsourced numeric/date/title/
+  employer is **hard-rejected exactly like a generator fabrication**: the voiced
+  payload is discarded, the clean pre-voice candidate ships, and the failed voice
+  stays as audit history. A reworded bullet is recorded with `transform_type =
+  voice` (the outermost transform) so the shipped wording is inspectable, not a
+  hidden prompt tweak (VOICE-02).
+- **Final coverage audit** (`domain/materials/coverage_audit.py`, GROUND-06):
+  keyword coverage (covered + missing) is computed at generation time against the
+  actual rendered (voiced) bullet text — never inferred from the job description —
+  and a keyword counts as covered **only when it appears in a provenance-backed
+  grounded bullet** (a bullet carrying an evidence/requirement FK). Keyword-
+  stuffing an ungrounded skills line and substring false positives do not count.
+- **Final canonical text** is the single voiced payload: `TailorResumeUseCase`
+  assembles the plain-text resume from it, the provenance rows anchor to it, and
+  `scoring/tailor.py` renders the LaTeX/HTML PDF from `TailorOutcome.final_payload`
+  — so the two render paths cannot diverge. A round-trip fixture asserts the
+  audited bullet text equals the rendered text.
+- **Persistence + read path**: the generation-time coverage and the voice-pass
+  audit ride on the `BulletProvenanceSet` (denormalised onto the
+  `job_bullet_provenance` rows as `coverage_json` / `voice_json`). The single
+  projection owner serves them on the artifact's tailoring explanation
+  (`artifact_list_projections.coverage_audit_json` / `voice_pass_json`), built
+  identically by the Python builder and `apps/api/src/projections.ts` and served by
+  `read-model.ts` as `ArtifactTailoringExplanation.coverageAudit` /
+  `.voicePass` (a PDF resolves them from the sibling tailored-resume row). A
+  cross-runtime parity test covers both. This milestone lands the backend,
+  contracts, and read path; the inspector UI is built in a later milestone.
+
 ## Apply Review And Outcome Feedback
 
 The Apply Automation context now has a local feedback foundation in the

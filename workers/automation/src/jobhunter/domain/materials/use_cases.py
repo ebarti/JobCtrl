@@ -31,7 +31,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from hashlib import sha1
 from pathlib import Path
@@ -67,6 +67,10 @@ from jobhunter.domain.materials.adversarial import (
     normalized_job_fit_score,
     should_run_adversarial_review,
 )
+from jobhunter.domain.materials.coverage_audit import (
+    KeywordCoverage,
+    compute_keyword_coverage,
+)
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.fabrication_detector import (
     FabricationError,
@@ -75,11 +79,18 @@ from jobhunter.domain.materials.fabrication_detector import (
     scan_resume_bullets,
 )
 from jobhunter.domain.materials.policy import TailoringPolicy
-from jobhunter.domain.materials.provenance import BulletProvenanceSet
+from jobhunter.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
 from jobhunter.domain.materials.provenance_builder import (
     ProvenanceBindingError,
     build_bullet_provenance,
 )
+from jobhunter.domain.materials.voice import (
+    VoicePassRecord,
+    VoiceResult,
+    apply_voice_to_payload,
+    build_voice_request,
+)
+from jobhunter.domain.materials.voice_metrics import measure_voice_delta
 from jobhunter.domain.materials.quality import (
     TailoringPlan,
     build_tailoring_change_annotations,
@@ -100,6 +111,7 @@ from jobhunter.domain.materials.value_objects import (
     JudgeVerdict,
     LlmModelSpec,
     RenderFormat,
+    TransformType,
     ValidationResult,
 )
 from jobhunter.domain.ports.events import EventPublisher
@@ -109,6 +121,7 @@ from jobhunter.domain.ports.materials import (
     MaterialsRepository,
     PdfRendererPort,
     TailoringPolicyRepository,
+    VoicePort,
 )
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -441,6 +454,42 @@ def _safe_candidate_summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _voice_system_prompt() -> str:
+    """Resolve the voice system prompt lazily (domain stays import-clean of infra).
+
+    Mirrors ``AnalyzeJobUseCase._resolve_prompts``: the prompt text lives in the
+    infrastructure layer, so it is imported inside the call path rather than at
+    module import time, keeping the domain use case importable without infra.
+    """
+    from jobhunter.infrastructure.materials.voice_prompts import VOICE_SYSTEM_PROMPT
+
+    return VOICE_SYSTEM_PROMPT
+
+
+def _mark_voiced_rows(
+    base_rows: tuple[BulletProvenance, ...],
+    voiced_rows: tuple[BulletProvenance, ...],
+) -> tuple[BulletProvenance, ...]:
+    """Re-mark every bullet the voice pass reworded as ``transform_type == voice``.
+
+    Compares the voiced rows against the pre-voice rows by ``bullet_id``: a voiced
+    row whose ``generated_text`` differs from its pre-voice counterpart had its
+    wording changed by the voice pass, so its transform becomes ``VOICE`` (the
+    outermost transform — the shipped wording is the voiced wording, VOICE-02). A
+    row whose text is unchanged keeps its original transform (the voice pass left
+    it alone). Rows with no pre-voice counterpart keep their computed transform.
+    """
+    base_text_by_id = {row.bullet_id: row.generated_text for row in base_rows}
+    marked: list[BulletProvenance] = []
+    for row in voiced_rows:
+        previous = base_text_by_id.get(row.bullet_id)
+        if previous is not None and previous != row.generated_text:
+            marked.append(replace(row, transform_type=TransformType.VOICE))
+        else:
+            marked.append(row)
+    return tuple(marked)
+
+
 # ---------------------------------------------------------------------------
 # Prompt builders (snapshot-driven)
 # ---------------------------------------------------------------------------
@@ -771,6 +820,13 @@ class TailorOutcome:
     pdf_path: str | None = None
     report: dict = field(default_factory=dict)
     error: str = ""
+    # Phase 3: the FINAL payload that actually ships — the voiced payload when the
+    # voice pass was accepted, else the selected pre-voice candidate. The PDF
+    # renderer MUST consume this (not the raw selected candidate) so the LaTeX/HTML
+    # PDF, the plain-text resume, the provenance ``generated_text``, and the
+    # coverage audit are all computed against the SAME final canonical text
+    # (GROUND-06 / Pitfall 4 — the two render paths must not diverge).
+    final_payload: dict | None = None
 
 
 class TailorResumeUseCase:
@@ -794,6 +850,7 @@ class TailorResumeUseCase:
         policy_repository: TailoringPolicyRepository | None = None,
         provenance_repository: BulletProvenanceRepository | None = None,
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
+        voice: VoicePort | None = None,
     ) -> None:
         self._repository = repository
         self._llm = llm
@@ -813,6 +870,15 @@ class TailorResumeUseCase:
         # ``_run_analyze`` to produce/reuse it before tailoring; otherwise the
         # caller must pass ``employer_analysis`` into ``execute`` directly.
         self._analyze_use_case = analyze_use_case
+        # Phase 3: the explicit voice pass (VOICE-01/02/03). When injected, the
+        # SELECTED candidate's prose is de-buzzworded/varied BEFORE the final audit
+        # so the audited + coverage text equals the rendered text; provenance + the
+        # never-fabricate detector are re-run against the voiced text, and the
+        # voiced payload is kept only when the deterministic voice proxies improve
+        # AND grounding re-validates — otherwise the clean pre-voice candidate
+        # ships. When absent, the use case is exactly the Phase-2 flow (coverage is
+        # still computed canonically, just over the un-voiced candidate).
+        self._voice = voice
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -896,8 +962,37 @@ class TailorResumeUseCase:
                 error="No parseable JSON in any attempt",
             )
 
-        # Assemble the rendered resume text from the last successful payload.
-        tailored_text = self._assembler.assemble_resume_text(parsed_payload, profile_snapshot)
+        # Phase 3: run the explicit voice pass on the SELECTED candidate BEFORE the
+        # final audit (VOICE-03), then compute provenance + coverage against the
+        # text that actually ships. ``final_payload`` is the voiced payload when the
+        # voice pass improved the deterministic proxies AND grounding re-validated;
+        # otherwise it is the clean pre-voice candidate (a voice that introduced a
+        # fabrication, regressed the proxies, or errored never reaches the user).
+        # ``provenance_rows`` are computed against ``final_payload`` so their
+        # ``generated_text`` is byte-identical to the rendered/PDF text, and
+        # ``coverage`` is the honest generation-time keyword coverage over that same
+        # grounded text (GROUND-06 / success criterion 4).
+        (
+            final_payload,
+            provenance_rows,
+            coverage,
+            voice_record,
+            fabrication_error,
+        ) = self._voice_and_audit(
+            profile_snapshot=profile_snapshot,
+            job=job,
+            tailored_payload=parsed_payload,
+            employer_analysis=employer_analysis,
+        )
+        if fabrication_error is not None:
+            validation = ValidationResult.failure(
+                (*validation.errors, fabrication_error),
+                warnings=validation.warnings,
+            )
+
+        # Assemble the rendered resume text from the FINAL (voiced) payload so the
+        # shipped text == the audited text == the provenance ``generated_text``.
+        tailored_text = self._assembler.assemble_resume_text(final_payload, profile_snapshot)
         prefix = f"{_safe_filename_prefix(job)}_g{materials.generation}"
         tailored_dir.mkdir(parents=True, exist_ok=True)
         text_path = tailored_dir / f"{prefix}.txt"
@@ -911,24 +1006,6 @@ class TailorResumeUseCase:
             size_bytes = text_path.stat().st_size
         except OSError:
             size_bytes = None
-
-        # Phase 2: compute canonical per-bullet provenance against the GENERATED
-        # text and run the deterministic never-fabricate detector independently of
-        # the prompt. A fabricated metric/title/date/employer token — or a
-        # fabricated evidence/requirement FK — is a HARD reject at generation time:
-        # ``validation`` is downgraded to a failure so the resume is NOT approved
-        # and the last accepted generation's artifact + provenance are preserved.
-        provenance_rows, fabrication_error = self._compute_provenance(
-            profile_snapshot=profile_snapshot,
-            job=job,
-            tailored_payload=parsed_payload,
-            employer_analysis=employer_analysis,
-        )
-        if fabrication_error is not None:
-            validation = ValidationResult.failure(
-                (*validation.errors, fabrication_error),
-                warnings=validation.warnings,
-            )
 
         judge_record = self._judge_record(verdict)
         tailoring_policy = self._resolve_tailoring_policy(
@@ -958,6 +1035,10 @@ class TailorResumeUseCase:
             "change_annotations": report.get("change_annotations") or [],
             "candidate_summaries": report.get("candidate_summaries") or [],
             "judge": judge_record,
+            # Phase 3 audit signals (canonical home is the provenance set; mirrored
+            # here so the artifact report is self-contained for inspection).
+            "voice_pass": voice_record.to_dict(),
+            "keyword_coverage_v2": coverage.to_read_model() if coverage is not None else None,
         }
         report["tailoring_quality"] = tailoring_metadata
 
@@ -992,12 +1073,15 @@ class TailorResumeUseCase:
         # transactionally after the artifact is saved (so they share the
         # generation). A failed re-tailor writes no provenance rows — the prior
         # accepted generation's rows survive untouched (Anti-Pattern 4 / success
-        # criterion 5).
+        # criterion 5). The Phase-3 generation-time coverage (GROUND-06) + voice
+        # audit (VOICE-02) ride on the same set.
         if materials.is_resume_approved and provenance_rows:
             self._record_provenance(
                 materials=materials,
                 artifact_id=artifact.artifact_id,
                 bullets=provenance_rows,
+                coverage=coverage,
+                voice=voice_record,
             )
 
         status = self._derive_status(report, validation, verdict)
@@ -1042,6 +1126,7 @@ class TailorResumeUseCase:
             attempts=attempts,
             text_path=str(text_path),
             report=report,
+            final_payload=final_payload,
         )
 
     # ------------------------------------------------------------------
@@ -1757,7 +1842,7 @@ class TailorResumeUseCase:
         job: dict,
         tailored_payload: dict,
         employer_analysis: EmployerAnalysis,
-    ) -> tuple[tuple[Any, ...], str | None]:
+    ) -> tuple[tuple[BulletProvenance, ...], str | None]:
         """Compute per-bullet provenance + run the deterministic fabrication gate.
 
         Returns ``(provenance_rows, fabrication_error)``. ``fabrication_error`` is
@@ -1796,18 +1881,193 @@ class TailorResumeUseCase:
                 return (), f"Never-fabricate detector failed: {exc}"
         return rows, None
 
+    # ------------------------------------------------------------------
+    # Phase 3 — voice pass → re-validate → final audit (coverage vs rendered text)
+    # ------------------------------------------------------------------
+
+    def _voice_and_audit(
+        self,
+        *,
+        profile_snapshot: ProfileSnapshot,
+        job: dict,
+        tailored_payload: dict,
+        employer_analysis: EmployerAnalysis,
+    ) -> tuple[
+        dict,
+        tuple[BulletProvenance, ...],
+        KeywordCoverage | None,
+        VoicePassRecord,
+        str | None,
+    ]:
+        """Run the voice pass before the final audit (VOICE-01/02/03 + GROUND-06).
+
+        Returns ``(final_payload, provenance_rows, coverage, voice_record,
+        fabrication_error)``:
+
+          * ``final_payload`` — the payload that actually ships: the voiced payload
+            when the voice pass improved the deterministic proxies AND grounding
+            re-validated against the voiced text, else the clean pre-voice candidate.
+          * ``provenance_rows`` — provenance computed against ``final_payload`` (so
+            ``generated_text`` is byte-identical to the rendered/PDF text), with any
+            bullet the voice pass reworded re-marked ``transform_type == voice``.
+          * ``coverage`` — honest generation-time keyword coverage over the grounded
+            rows (GROUND-06 / success criterion 4), or ``None`` only when provenance
+            could not be built.
+          * ``voice_record`` — the inspectable audit of the voice pass (VOICE-02).
+          * ``fabrication_error`` — set when the SHIPPED payload still fails the
+            deterministic detector / FK gate (the pre-voice candidate itself was
+            ungrounded), so ``execute`` hard-rejects it exactly as in Phase 2.
+
+        The pre-voice candidate is always audited first; the voiced payload is only
+        adopted when it both improves voice AND survives the SAME grounding gate, so
+        a voice edit that injects an unsourced metric/title/date/employer (VOICE-03)
+        or regresses voice never reaches the user.
+        """
+        base_rows, base_error = self._compute_provenance(
+            profile_snapshot=profile_snapshot,
+            job=job,
+            tailored_payload=tailored_payload,
+            employer_analysis=employer_analysis,
+        )
+
+        # No voice port, or the pre-voice candidate is already ungrounded: keep the
+        # pre-voice payload (the fabrication gate will reject it upstream if needed).
+        # Coverage is still computed canonically over whatever grounded rows exist.
+        if self._voice is None or base_error is not None:
+            coverage = self._coverage_for(base_rows, employer_analysis, base_error)
+            record = (
+                VoicePassRecord.skipped("no_voice_port")
+                if self._voice is None
+                else VoicePassRecord.skipped("pre_voice_candidate_rejected")
+            )
+            return tailored_payload, base_rows, coverage, record, base_error
+
+        voiced_payload, voice_record = self._run_voice(
+            tailored_payload=tailored_payload, base_rows=base_rows
+        )
+        if voiced_payload is None:
+            # Voice did not run / errored / no-op — ship the pre-voice candidate.
+            coverage = self._coverage_for(base_rows, employer_analysis, None)
+            return tailored_payload, base_rows, coverage, voice_record, None
+
+        voiced_rows, voiced_error = self._compute_provenance(
+            profile_snapshot=profile_snapshot,
+            job=job,
+            tailored_payload=voiced_payload,
+            employer_analysis=employer_analysis,
+        )
+        if voiced_error is not None:
+            # VOICE-03: the voice pass introduced a fabrication / broke a binding.
+            # Discard the voiced payload and ship the clean pre-voice candidate; the
+            # failed voice stays as audit history (never destroys the good material).
+            log.warning("Voice pass rejected for %s (re-validation failed): %s", job.get("url"), voiced_error)
+            rejected = VoicePassRecord(
+                ran=True,
+                accepted=False,
+                model=voice_record.model,
+                proxy_delta=voice_record.proxy_delta,
+                reason=f"voice_introduced_fabrication: {voiced_error}",
+            )
+            coverage = self._coverage_for(base_rows, employer_analysis, None)
+            return tailored_payload, base_rows, coverage, rejected, None
+
+        # The voiced payload is grounded AND improved the proxies — adopt it. Mark
+        # every reworded bullet ``transform_type == voice`` so the inspector shows
+        # the shipped wording is the voiced wording (VOICE-02), then compute coverage
+        # over the voiced grounded rows (the text that actually ships).
+        marked_rows = _mark_voiced_rows(base_rows, voiced_rows)
+        coverage = self._coverage_for(marked_rows, employer_analysis, None)
+        return voiced_payload, marked_rows, coverage, voice_record, None
+
+    def _run_voice(
+        self,
+        *,
+        tailored_payload: dict,
+        base_rows: tuple[BulletProvenance, ...],
+    ) -> tuple[dict | None, VoicePassRecord]:
+        """Call the voice SDK + gate the result on the deterministic proxies.
+
+        Returns ``(voiced_payload, record)``. ``voiced_payload`` is ``None`` when
+        the voice pass should be skipped (errored, returned nothing usable, or did
+        not measurably improve the voice proxies) — in which case the caller keeps
+        the pre-voice candidate. The record always captures what happened so the
+        voice decision is inspectable, even on the fallback paths.
+        """
+        assert self._voice is not None
+        request = build_voice_request(tailored_payload, banned_terms=tuple(BANNED_WORDS))
+        try:
+            result = self._run_voice_sdk(request)
+        except Exception as exc:  # noqa: BLE001 — a voice failure must not sink the resume
+            log.warning("Voice pass SDK failed: %s", exc)
+            return None, VoicePassRecord(
+                ran=True, accepted=False, model=self._voice.model_id, reason=f"voice_error: {exc}"
+            )
+
+        voiced_payload = apply_voice_to_payload(tailored_payload, result)
+        # Deterministic acceptance gate (VOICE-01): voice must MEASURABLY reduce
+        # buzzword density OR raise structural variety over the bullets that ship.
+        before_bullets = [row.generated_text for row in base_rows if row.section == "experience"]
+        after_request = build_voice_request(voiced_payload)
+        after_bullets = [
+            bullet for _entry_id, bullets in after_request.experience_bullets for bullet in bullets
+        ]
+        delta = measure_voice_delta(before_bullets, after_bullets)
+        record = VoicePassRecord(
+            ran=True,
+            accepted=delta.improved,
+            model=self._voice.model_id,
+            proxy_delta=delta.to_dict(),
+            reason="" if delta.improved else "voice_did_not_improve_proxies",
+        )
+        if not delta.improved:
+            return None, record
+        return voiced_payload, record
+
+    def _run_voice_sdk(self, request: Any) -> VoiceResult:
+        """Bridge the async ``VoicePort.rewrite`` to the synchronous tailor flow.
+
+        The voice adapter is an agent-SDK call (async). The tailor path is
+        synchronous (thread-pool), so this is a true top-level sync bridge via
+        ``asyncio.run`` — there is NO wall-clock timeout on the voice call (the SDK
+        runs to completion; only cooperative cancellation stops it).
+        """
+        import asyncio
+
+        assert self._voice is not None
+        system_prompt = _voice_system_prompt()
+        return asyncio.run(self._voice.rewrite(system_prompt, request))
+
+    def _coverage_for(
+        self,
+        rows: tuple[BulletProvenance, ...],
+        employer_analysis: EmployerAnalysis,
+        error: str | None,
+    ) -> KeywordCoverage | None:
+        """Compute generation-time coverage over the rows, or None when ungrounded.
+
+        Coverage is meaningful only when there is grounded text to compute it
+        against; a rejected candidate (``error`` set) has no shippable rows, so
+        coverage is ``None`` rather than a misleading zero.
+        """
+        if error is not None or not rows:
+            return None
+        return compute_keyword_coverage(employer_analysis, rows)
+
     def _record_provenance(
         self,
         *,
         materials: MaterialsSet,
         artifact_id: str,
-        bullets: tuple[Any, ...],
+        bullets: tuple[BulletProvenance, ...],
+        coverage: KeywordCoverage | None = None,
+        voice: VoicePassRecord | None = None,
     ) -> None:
         """Persist the accepted generation's provenance rows + publish the event.
 
-        Generation-versioned and bound to the artifact it explains. Persistence
-        and event publication never raise into the tailor flow — a provenance
-        write failure must not undo an accepted resume.
+        Generation-versioned and bound to the artifact it explains. The Phase-3
+        generation-time coverage (GROUND-06) + voice audit (VOICE-02) ride on the
+        same set. Persistence and event publication never raise into the tailor
+        flow — a provenance write failure must not undo an accepted resume.
         """
         if self._provenance_repository is None:
             return
@@ -1818,6 +2078,8 @@ class TailorResumeUseCase:
                 generation=materials.generation,
                 artifact_id=artifact_id,
                 bullets=tuple(bullets),
+                coverage=coverage,
+                voice=voice,
                 created_at=materials.updated_at,
             )
             self._provenance_repository.save(provenance_set)

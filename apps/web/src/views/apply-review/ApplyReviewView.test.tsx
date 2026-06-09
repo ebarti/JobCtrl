@@ -177,6 +177,8 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     },
   ],
   bulletProvenance: [],
+  coverageAudit: null,
+  voicePass: null,
   models: {
     candidateModels: ["generator-a"],
     selectedModel: "generator-a",
