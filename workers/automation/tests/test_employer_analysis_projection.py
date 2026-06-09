@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 
 import pytest
 
@@ -37,7 +38,7 @@ JD = "Senior Event Engineer. Requires 5+ years Python. Kafka is a plus."
 
 
 @pytest.fixture()
-def conn(tmp_path) -> sqlite3.Connection:
+def conn(tmp_path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobs.db"
     connection = init_db(db_path)
     connection.execute(

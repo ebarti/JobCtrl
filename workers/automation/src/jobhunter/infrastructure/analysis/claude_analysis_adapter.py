@@ -79,6 +79,10 @@ def _structured_output_from_messages(messages: list[Any]) -> dict[str, Any]:
     if not isinstance(structured, dict):
         # Some SDK shapes hand back a JSON string; tolerate that.
         structured = json.loads(structured)
+    if not isinstance(structured, dict):
+        # json.loads of a JSON array/scalar yields a non-dict; the contract here
+        # is a JSON object, so fail precisely rather than returning a bad type.
+        raise RuntimeError("Claude Agent SDK structured output was not a JSON object")
     return structured
 
 

@@ -122,8 +122,8 @@ def compute_agreement(drafts: tuple[JobAnalysisDraft, ...]) -> AnalysisAgreement
     kw_overlap = _mean_pairwise_jaccard(keyword_sets)
     score = round((req_overlap + kw_overlap) / 2, 4)
 
-    flagged_requirements = _flag_non_unanimous(drafts, requirement_sets, kind="requirement")
-    flagged_keywords = _flag_non_unanimous(drafts, keyword_sets, kind="keyword")
+    flagged_requirements = _flag_non_unanimous(requirement_sets)
+    flagged_keywords = _flag_non_unanimous(keyword_sets)
     return AnalysisAgreement(
         score=score,
         flagged_requirements=flagged_requirements,
@@ -151,14 +151,12 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(union)
 
 
-def _flag_non_unanimous(
-    drafts: tuple[JobAnalysisDraft, ...],
-    sets: list[set[str]],
-    *,
-    kind: str,
-) -> tuple[str, ...]:
-    """Flag items that are NOT present in every draft (low-agreement items)."""
-    del kind  # symmetric for requirements/keywords; kept for call-site clarity
+def _flag_non_unanimous(sets: list[set[str]]) -> tuple[str, ...]:
+    """Flag items that are NOT present in every draft (low-agreement items).
+
+    Symmetric for requirements and keywords — it operates purely on the
+    lowercased-text sets the caller already computed.
+    """
     if len(sets) < 2:
         return ()
     everywhere = set.intersection(*sets) if sets else set()
