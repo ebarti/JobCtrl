@@ -116,6 +116,9 @@ export {
   type EmployerAnalyzedPayload,
   type EmployerAnalyzed,
   createEmployerAnalyzed,
+  type BulletProvenanceRecordedPayload,
+  type BulletProvenanceRecorded,
+  createBulletProvenanceRecorded,
   RETAILOR_REQUEST_KINDS,
   type RetailorRequestKind,
   type TailorRetailorRequestedPayload,
@@ -229,6 +232,7 @@ import type {
 } from "./enrichment.js";
 import type { JobScored, ScoreCorrected, ScoreRescoreRequested } from "./scoring.js";
 import type {
+  BulletProvenanceRecorded,
   CoverLetterGenerated,
   EmployerAnalyzed,
   MaterialsExhausted,
@@ -296,6 +300,7 @@ export type DomainEventUnion =
   | PdfRendered
   | MaterialsExhausted
   | EmployerAnalyzed
+  | BulletProvenanceRecorded
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
   | PreparationWorkItemQueued
@@ -354,6 +359,7 @@ export const DOMAIN_EVENT_TYPES = [
   "PdfRendered",
   "MaterialsExhausted",
   "EmployerAnalyzed",
+  "BulletProvenanceRecorded",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
   "PreparationWorkItemQueued",

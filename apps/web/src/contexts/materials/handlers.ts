@@ -1,4 +1,5 @@
 import type {
+  BulletProvenanceRecorded,
   CoverLetterGenerated,
   EmployerAnalyzed,
   MaterialsExhausted,
@@ -58,6 +59,17 @@ export const employerAnalyzedHandler = (
 ): readonly InvalidationItem[] => [
   // The canonical employer analysis is served on the job detail; refresh it so
   // the inspector (Phase 5) shows the latest generation.
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];
+
+export const bulletProvenanceRecordedHandler = (
+  event: BulletProvenanceRecorded,
+): readonly InvalidationItem[] => [
+  // Per-bullet provenance is served on the artifact's tailoring explanation
+  // (Phase 2) and surfaces in the job detail; refresh both so the inspector
+  // (Phase 5) shows the latest generation's provenance.
+  invalidate(artifactsKeys.detail(event.tenantId, event.payload.artifactId)),
+  invalidate(artifactsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
 

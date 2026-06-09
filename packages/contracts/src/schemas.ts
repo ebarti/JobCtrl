@@ -1381,6 +1381,31 @@ export interface ArtifactDetail {
   tailoringExplanation: ArtifactTailoringExplanation | null;
 }
 
+/**
+ * Phase 2 — one canonical per-bullet provenance record served on the artifact's
+ * tailoring explanation.
+ *
+ * Mirrors the Python ``BulletProvenance.to_dict()`` projection: the profile
+ * evidence the bullet derives from (``evidenceIds``), the job requirement it
+ * serves (``requirementIds``, FK into the employer analysis), the transform that
+ * produced it (``transformType``), the granular control that governed it
+ * (``control``), a human rationale, and the actual rendered bullet text
+ * (``generatedText``) — the coverage anchor. Served exclusively from canonical
+ * ``job_bullet_provenance`` projection rows, never derived from ``metadata_json``.
+ */
+export interface BulletProvenanceEntry {
+  bulletId: string;
+  section: string;
+  sourceId: string | null;
+  evidenceIds: string[];
+  requirementIds: string[];
+  matchedKeywords: string[];
+  transformType: string;
+  control: string;
+  rationale: string;
+  generatedText: string;
+}
+
 export interface ArtifactTailoringExplanation {
   targetSeniority: string | null;
   claimMode: string | null;
@@ -1507,6 +1532,10 @@ export interface ArtifactTailoringExplanation {
     evidenceIds: string[];
     evidenceNotes: string[];
   }>;
+  // Phase 2: canonical per-bullet provenance served from ``job_bullet_provenance``
+  // projection rows (evidence × requirement × transform × control × rationale),
+  // or [] when no provenance was recorded for this artifact's generation.
+  bulletProvenance: BulletProvenanceEntry[];
   models: {
     candidateModels: string[];
     selectedModel: string | null;

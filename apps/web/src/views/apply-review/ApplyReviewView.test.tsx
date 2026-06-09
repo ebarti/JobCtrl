@@ -176,6 +176,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
       evidenceNotes: ["ev_platform_reliability: platform ownership"],
     },
   ],
+  bulletProvenance: [],
   models: {
     candidateModels: ["generator-a"],
     selectedModel: "generator-a",

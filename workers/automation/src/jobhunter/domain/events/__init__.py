@@ -73,6 +73,8 @@ from jobhunter.domain.events.materials import (
     create_materials_exhausted,
     EmployerAnalyzedPayload,
     create_employer_analyzed,
+    BulletProvenanceRecordedPayload,
+    create_bullet_provenance_recorded,
 )
 from jobhunter.domain.events.apply import (
     ApplicationEmailFeedbackIngestedPayload,
@@ -144,6 +146,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "PdfRendered",
     "MaterialsExhausted",
     "EmployerAnalyzed",
+    "BulletProvenanceRecorded",
     "TailorRetailorRequested",
     "TailoredArtifactsSuppressed",
     "PreparationWorkItemQueued",
@@ -242,6 +245,8 @@ __all__ = [
     "create_materials_exhausted",
     "EmployerAnalyzedPayload",
     "create_employer_analyzed",
+    "BulletProvenanceRecordedPayload",
+    "create_bullet_provenance_recorded",
     # Apply
     "ApplicationSubmittedPayload",
     "create_application_submitted",

@@ -338,7 +338,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       size_bytes             INTEGER,
       created_at             TEXT,
       generation             INTEGER,
-      metadata_json          TEXT
+      metadata_json          TEXT,
+      bullet_provenance_json TEXT
     );
     CREATE TABLE IF NOT EXISTS apply_run_projections (
       run_id                 TEXT PRIMARY KEY,
@@ -455,6 +456,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "employer_analysis_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "artifact_list_projections", "bullet_provenance_json", "TEXT") || schemaChanged;
   return schemaChanged;
 }
 
@@ -695,6 +698,21 @@ interface EmployerAnalysisRow extends Record<string, unknown> {
   created_at: string;
 }
 
+interface BulletProvenanceRow extends Record<string, unknown> {
+  artifact_id: string;
+  bullet_id: string;
+  section: string;
+  source_id: string | null;
+  evidence_ids_json: string;
+  requirement_ids_json: string;
+  matched_keywords_json: string;
+  transform_type: string;
+  control: string;
+  rationale: string | null;
+  generated_text: string;
+  position: number;
+}
+
 /**
  * Phase 1: rebuild the canonical employer-analysis read shape from canonical
  * rows. This MUST stay byte-equivalent to the Python
@@ -756,6 +774,66 @@ function loadEmployerAnalysisJson(db: SqliteDatabase, jobUrl: string): string | 
     })),
   };
   return JSON.stringify(readModel);
+}
+
+/**
+ * Phase 2 — load the latest per-bullet provenance read shape keyed by artifact.
+ *
+ * Mirrors the Python ``BulletProvenanceSet.to_read_model()`` projection so the
+ * TS API and Python builder materialise the SAME read shape — the cross-runtime
+ * parity test asserts both agree. Returns an empty map when no provenance exists.
+ */
+function loadBulletProvenanceByArtifact(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!tableExists(db, "job_bullet_provenance")) return result;
+  // Tenant-scope BOTH the MAX(generation) probe and the row fetch so this matches
+  // the Python repo (``bullet_provenance_repository.py`` filters job_url AND
+  // tenant_id AND generation). Benign today under LOCAL_TENANT, but keeps the
+  // cross-runtime read path symmetric before any multi-tenant work.
+  const genRow = getRow<{ generation: number | null }>(
+    db,
+    `SELECT MAX(generation) AS generation FROM job_bullet_provenance
+      WHERE job_url = ? AND tenant_id = ?`,
+    [jobUrl, tenantId],
+  );
+  const generation = genRow?.generation;
+  if (generation === null || generation === undefined) return result;
+  const rows = allRows<BulletProvenanceRow>(
+    db,
+    `SELECT * FROM job_bullet_provenance
+      WHERE job_url = ? AND tenant_id = ? AND generation = ?
+      ORDER BY position, bullet_id`,
+    [jobUrl, tenantId, Number(generation)],
+  );
+  if (rows.length === 0) return result;
+  // All rows of one generation share the artifact they explain (the writer binds
+  // the whole set to one artifact_id). Group defensively by artifact_id anyway.
+  const byArtifact = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const entry = {
+      bullet_id: row.bullet_id,
+      section: row.section,
+      source_id: row.source_id ?? null,
+      evidence_ids: parseJsonArray(row.evidence_ids_json),
+      requirement_ids: parseJsonArray(row.requirement_ids_json),
+      matched_keywords: parseJsonArray(row.matched_keywords_json),
+      transform_type: row.transform_type,
+      control: row.control,
+      rationale: row.rationale ?? "",
+      generated_text: row.generated_text,
+    };
+    const list = byArtifact.get(row.artifact_id) ?? [];
+    list.push(entry);
+    byArtifact.set(row.artifact_id, list);
+  }
+  for (const [artifactId, entries] of byArtifact) {
+    result.set(artifactId, JSON.stringify(entries));
+  }
+  return result;
 }
 
 function parseAnalysisAgreement(value: string | null): {
@@ -1280,6 +1358,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const lastUpdatedAt = new Date().toISOString();
 
   const artifacts = collectArtifacts(db, jobUrl, materials);
+  const provenanceByArtifact = loadBulletProvenanceByArtifact(db, tenantId, jobUrl);
   const activeArtifacts = artifacts.filter(isDefaultVisibleArtifact);
 
   db.prepare(
@@ -1409,8 +1488,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const insertArtifact = db.prepare(
     `INSERT INTO artifact_list_projections (
        artifact_id, tenant_id, job_id, job_title, job_employer, artifact_type,
-       status, local_path, size_bytes, created_at, generation, metadata_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       status, local_path, size_bytes, created_at, generation, metadata_json,
+       bullet_provenance_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const a of artifacts) {
     insertArtifact.run(
@@ -1426,6 +1506,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
       a.createdAt,
       a.generation,
       a.metadataJson,
+      provenanceByArtifact.get(a.artifactId) ?? null,
     );
   }
 }

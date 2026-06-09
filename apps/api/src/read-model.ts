@@ -24,6 +24,7 @@ import type {
   ArtifactListQuery,
   ArtifactSummary,
   ArtifactTailoringExplanation,
+  BulletProvenanceEntry,
   BulkJobMutationFilter,
   DashboardSettings,
   DashboardSummary,
@@ -169,6 +170,7 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   created_at: string | null;
   generation: number | null;
   metadata_json: string | null;
+  bullet_provenance_json: string | null;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -2074,6 +2076,19 @@ function tailoringExplanationForArtifact(
 ): ArtifactTailoringExplanation | null {
   if (!TAILORING_ARTIFACT_TYPES.has(row.artifact_type)) return null;
 
+  const explanation = tailoringExplanationBaseForArtifact(db, row);
+  if (explanation === null) return null;
+  // Phase 2: attach canonical per-bullet provenance from the ``job_bullet_provenance``
+  // projection column (this row for a text resume; the sibling tailored-resume row
+  // for a PDF). Served exclusively from canonical rows — never derived from metadata.
+  explanation.bulletProvenance = bulletProvenanceForArtifact(db, row);
+  return explanation;
+}
+
+function tailoringExplanationBaseForArtifact(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+): ArtifactTailoringExplanation | null {
   const jobKeywords = tailoringJobKeywordsForArtifact(db, row);
   const resumeText = tailoringResumeTextForArtifact(db, row);
   const direct = parseTailoringExplanation(row.metadata_json, { jobKeywords, resumeText });
@@ -2105,6 +2120,73 @@ function tailoringExplanationForArtifact(
   return missingTailoringAuditFields(siblingExplanation).length < missingTailoringAuditFields(direct).length
     ? siblingExplanation
     : direct;
+}
+
+/**
+ * Phase 2 — read canonical per-bullet provenance for an artifact from the
+ * ``bullet_provenance_json`` projection column. For a text resume the rows live
+ * on the row itself; for a PDF they live on the sibling tailored-resume row of
+ * the same generation. Returns [] when no provenance was recorded.
+ */
+function bulletProvenanceForArtifact(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+): BulletProvenanceEntry[] {
+  let provenanceJson = row.bullet_provenance_json;
+  if (!provenanceJson && TAILORING_PDF_ARTIFACT_TYPES.has(row.artifact_type)) {
+    const sibling = getRow<{ bullet_provenance_json: string | null }>(
+      db,
+      `SELECT bullet_provenance_json
+         FROM artifact_list_projections
+        WHERE tenant_id = ?
+          AND job_id = ?
+          AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
+          AND bullet_provenance_json IS NOT NULL
+          AND TRIM(bullet_provenance_json) != ''
+          AND (? IS NULL OR generation = ? OR generation IS NULL)
+        ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+        LIMIT 1`,
+      [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+    );
+    provenanceJson = sibling?.bullet_provenance_json ?? null;
+  }
+  return parseBulletProvenance(provenanceJson);
+}
+
+function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
+  if (!value || !value.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const entries: BulletProvenanceEntry[] = [];
+  for (const raw of parsed) {
+    const record = metadataRecord(raw);
+    const bulletId = metadataText(record.bullet_id, 160);
+    const section = metadataText(record.section, 80);
+    const generatedText = metadataText(record.generated_text, 2000);
+    const transformType = metadataText(record.transform_type, 80);
+    const control = metadataText(record.control, 80);
+    // Drop structurally-invalid rows rather than emit a half-populated entry: the
+    // canonical writer always supplies these fields, so a missing one means junk.
+    if (!bulletId || !section || !generatedText || !transformType || !control) continue;
+    entries.push({
+      bulletId,
+      section,
+      sourceId: metadataText(record.source_id, 160),
+      evidenceIds: metadataTextList(record.evidence_ids, 32, 160),
+      requirementIds: metadataTextList(record.requirement_ids, 32, 160),
+      matchedKeywords: metadataTextList(record.matched_keywords, 32, 160),
+      transformType,
+      control,
+      rationale: metadataText(record.rationale, 600) ?? "",
+      generatedText,
+    });
+  }
+  return entries;
 }
 
 function tailoringJobKeywordsForArtifact(db: SqliteDatabase, row: ArtifactProjectionRow): string[] {
@@ -2277,6 +2359,9 @@ function parseTailoringExplanation(
       acceptedWarnings: metadataTextList(reviewFeedback.accepted_warning_notes, 8, 220),
     },
     annotatedChanges: parseTailoringChangeAnnotations(metadata.change_annotations),
+    // Phase 2: populated from canonical ``bullet_provenance_json`` projection rows
+    // by ``tailoringExplanationForArtifact`` — never derived from ``metadata_json``.
+    bulletProvenance: [],
     models: {
       candidateModels: metadataTextList(metadata.candidate_models, 6, 120),
       selectedModel: metadataText(metadata.selected_model, 120),

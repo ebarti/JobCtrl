@@ -26,6 +26,7 @@ from jobhunter.domain.materials.analysis import (
 )
 from jobhunter.domain.materials.entities import Artifact
 from jobhunter.domain.materials.policy import TailoringPolicy
+from jobhunter.domain.materials.provenance import BulletProvenanceSet
 from jobhunter.domain.materials.value_objects import (
     ArtifactStatus,
     ArtifactType,
@@ -240,6 +241,31 @@ class EmployerAnalysisRepository(Protocol):
         ...
 
 
+class BulletProvenanceRepository(Protocol):
+    """Persistence port for the :class:`BulletProvenanceSet` (Phase 2).
+
+    Generation-versioned exactly like :class:`MaterialsRepository`: :meth:`save`
+    writes the rows for the set's generation; prior generations are NEVER deleted
+    (Anti-Pattern 4 / success criterion 5), so a failed re-tailor that writes a
+    fresh generation leaves the last accepted generation's provenance intact.
+    :meth:`load` returns the latest generation's rows by default.
+    """
+
+    def load(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        generation: int | None = None,
+    ) -> BulletProvenanceSet | None:
+        """Return the requested provenance set (latest generation by default)."""
+        ...
+
+    def save(self, provenance: BulletProvenanceSet) -> None:
+        """Persist the rows for ``provenance.generation`` (idempotent re-save)."""
+        ...
+
+
 # ---------------------------------------------------------------------------
 # PdfRendererPort
 # ---------------------------------------------------------------------------
@@ -295,6 +321,7 @@ __all__ = [
     "AnalysisSynthesizerPort",
     "ArtifactStatus",
     "ArtifactType",
+    "BulletProvenanceRepository",
     "EmployerAnalysisRepository",
     "MaterialsRepository",
     "PdfRendererPort",
@@ -305,4 +332,4 @@ __all__ = [
 
 # Re-export to silence unused-import warnings for the schema types referenced
 # only in port signatures above.
-_ = (EmployerAnalysis, JobAnalysis, JobAnalysisDraft)
+_ = (EmployerAnalysis, JobAnalysis, JobAnalysisDraft, BulletProvenanceSet)

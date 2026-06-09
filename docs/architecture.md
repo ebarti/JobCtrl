@@ -200,6 +200,60 @@ httpx `jobhunter.llm.LLMClient`.
   analysis is deferred to a later milestone; this milestone lands the backend,
   contracts, and read path only.
 
+## Per-Bullet Provenance + Granular Controls (Materials sub-step)
+
+Building on the persisted employer analysis, every generated resume bullet (and
+the executive-profile / skills lines) carries a canonical provenance record so
+the user can trust each line — what real profile fact it derives from, which job
+requirement it serves, the transform that produced it, and the granular rule that
+governed it. Like the analysis, this is canonical rows, not `metadata_json`.
+
+- **Domain model** (`domain/materials/provenance.py`): `BulletProvenance` is one
+  record per rendered line — `bullet_id` (stable within job/generation/section/
+  index), `section`, `source_id`, `evidence_ids` (canonical profile evidence),
+  `requirement_ids` (FK into `EmployerAnalysis` requirements), `matched_keywords`
+  (verified against the generated text), `transform_type`, `control`, a human
+  `rationale`, and `generated_text` (the rendered line — the coverage anchor).
+  `BulletProvenanceSet` is generation-versioned and bound to the artifact it
+  explains; a forced/failed re-tailor writes a higher generation and never
+  destroys the prior one. `transform_type` and `control` are closed enums in
+  `value_objects.py`: `TransformType` (verbatim / rephrase / reframe /
+  synthesize_from_related / quantify_from_evidence) and `ControlRule` (rephrase
+  always allowed; invent only for closely-related experience; never fabricate
+  metrics/titles/dates/employers).
+- **Provenance builder** (`domain/materials/provenance_builder.py`): computes one
+  `BulletProvenance` per bullet **against the selected candidate's rendered text**
+  (using the same `resume_profile` rendering helpers the assembler uses, so the
+  text is identical), maps the existing change-type vocabulary to the closed
+  `TransformType`, and binds `requirement_ids` as real foreign keys by matching
+  the bullet against the analysis keywords. A fabricated evidence/requirement id
+  is rejected before any row is built — provenance is FK bindings, not
+  model-authored free text.
+- **Deterministic never-fabricate detector** (`domain/materials/fabrication_detector.py`):
+  a pure check that runs **independently of the prompt** (the Phase-2 analogue of
+  the analysis grounding gate). Every numeric, date, percentage, money, title, and
+  company-suffixed employer token in a generated bullet must trace to recorded
+  profile evidence; a token that does not is a fabrication and is **hard-rejected
+  at generation time**. A metrics-hungry job paired with a numberless profile
+  yields zero unsourced numerics in the output.
+- **Lifecycle**: `TailorResumeUseCase` computes provenance + runs the detector
+  after assembling the selected candidate's text. A fabrication downgrades
+  validation so the resume is **not approved** (the last accepted generation's
+  artifact + provenance are preserved); an accepted generation persists its rows
+  through `BulletProvenanceRepository` transactionally with the artifact and
+  publishes `BulletProvenanceRecorded` (a `job_events` row → projection rebuild →
+  SSE invalidation). Persistence is canonical rows (`job_bullet_provenance`),
+  never `metadata_json`.
+- **Read path**: the single projection owner serves provenance on the artifact's
+  tailoring explanation (`artifact_list_projections.bullet_provenance_json`),
+  built identically by the Python projection builder and
+  `apps/api/src/projections.ts` and served by `read-model.ts` as
+  `ArtifactTailoringExplanation.bulletProvenance` (a PDF artifact resolves it from
+  the sibling tailored-resume row). A cross-runtime projection parity test covers
+  the table on both runtimes. This milestone lands the backend, contracts, and
+  read path; the divergent legacy read paths are retired and the inspector UI is
+  built in later milestones.
+
 ## Apply Review And Outcome Feedback
 
 The Apply Automation context now has a local feedback foundation in the

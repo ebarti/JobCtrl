@@ -24,6 +24,7 @@ import {
   createJobScored,
   createJobSourceObserved,
   createJobUpdated,
+  createBulletProvenanceRecorded,
   createEmployerAnalyzed,
   createMaterialsExhausted,
   createPdfRendered,
@@ -285,6 +286,13 @@ export const eventByType = {
     legsSucceeded: 2,
     analyzedAt: NOW,
     cached: false,
+  }),
+  BulletProvenanceRecorded: createBulletProvenanceRecorded(LOCAL_TENANT, {
+    jobId: JOB_ID,
+    artifactId: ARTIFACT_ID,
+    generation: 1,
+    bulletCount: 7,
+    recordedAt: NOW,
   }),
   TailoringPolicyUpdated: createTailoringPolicyUpdated(LOCAL_TENANT, {
     policyId: "tailoring:default",

@@ -41,10 +41,12 @@ if TYPE_CHECKING:  # pragma: no cover — type-only import, avoids any import cy
     from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase
 
 from jobhunter.domain.events import (
+    BulletProvenanceRecordedPayload,
     CoverLetterGeneratedPayload,
     PdfRenderedPayload,
     ResumeApprovedPayload,
     ResumeFailedPayload,
+    create_bullet_provenance_recorded,
     create_cover_letter_generated,
     create_pdf_rendered,
     create_resume_approved,
@@ -66,7 +68,18 @@ from jobhunter.domain.materials.adversarial import (
     should_run_adversarial_review,
 )
 from jobhunter.domain.materials.entities import Artifact
+from jobhunter.domain.materials.fabrication_detector import (
+    FabricationError,
+    build_evidence_corpus,
+    employer_name_set,
+    scan_resume_bullets,
+)
 from jobhunter.domain.materials.policy import TailoringPolicy
+from jobhunter.domain.materials.provenance import BulletProvenanceSet
+from jobhunter.domain.materials.provenance_builder import (
+    ProvenanceBindingError,
+    build_bullet_provenance,
+)
 from jobhunter.domain.materials.quality import (
     TailoringPlan,
     build_tailoring_change_annotations,
@@ -92,6 +105,7 @@ from jobhunter.domain.materials.value_objects import (
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage, LlmPort
 from jobhunter.domain.ports.materials import (
+    BulletProvenanceRepository,
     MaterialsRepository,
     PdfRendererPort,
     TailoringPolicyRepository,
@@ -778,6 +792,7 @@ class TailorResumeUseCase:
         max_retries: int = 3,
         llm_policy: TailoringLlmPolicy | None = None,
         policy_repository: TailoringPolicyRepository | None = None,
+        provenance_repository: BulletProvenanceRepository | None = None,
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
     ) -> None:
         self._repository = repository
@@ -788,6 +803,11 @@ class TailorResumeUseCase:
         self._max_retries = max_retries
         self._llm_policy = llm_policy or TailoringLlmPolicy.from_env()
         self._policy_repository = policy_repository
+        # Phase 2: the canonical per-bullet provenance repository. When injected,
+        # an accepted generation emits one ``BulletProvenance`` row per rendered
+        # bullet (computed vs the generated text), gated by the deterministic
+        # never-fabricate detector, and publishes ``BulletProvenanceRecorded``.
+        self._provenance_repository = provenance_repository
         # D-20: the canonical employer analysis is the front-half sub-step of
         # tailor. When an ``analyze_use_case`` is injected, ``execute`` runs
         # ``_run_analyze`` to produce/reuse it before tailoring; otherwise the
@@ -892,6 +912,24 @@ class TailorResumeUseCase:
         except OSError:
             size_bytes = None
 
+        # Phase 2: compute canonical per-bullet provenance against the GENERATED
+        # text and run the deterministic never-fabricate detector independently of
+        # the prompt. A fabricated metric/title/date/employer token — or a
+        # fabricated evidence/requirement FK — is a HARD reject at generation time:
+        # ``validation`` is downgraded to a failure so the resume is NOT approved
+        # and the last accepted generation's artifact + provenance are preserved.
+        provenance_rows, fabrication_error = self._compute_provenance(
+            profile_snapshot=profile_snapshot,
+            job=job,
+            tailored_payload=parsed_payload,
+            employer_analysis=employer_analysis,
+        )
+        if fabrication_error is not None:
+            validation = ValidationResult.failure(
+                (*validation.errors, fabrication_error),
+                warnings=validation.warnings,
+            )
+
         judge_record = self._judge_record(verdict)
         tailoring_policy = self._resolve_tailoring_policy(
             profile_snapshot=profile_snapshot,
@@ -949,6 +987,18 @@ class TailorResumeUseCase:
         if materials.is_resume_approved and prior_generation is not None:
             self._repository.save(prior_generation)
         self._repository.save(materials)
+
+        # Persist the canonical provenance rows only for an ACCEPTED generation,
+        # transactionally after the artifact is saved (so they share the
+        # generation). A failed re-tailor writes no provenance rows — the prior
+        # accepted generation's rows survive untouched (Anti-Pattern 4 / success
+        # criterion 5).
+        if materials.is_resume_approved and provenance_rows:
+            self._record_provenance(
+                materials=materials,
+                artifact_id=artifact.artifact_id,
+                bullets=provenance_rows,
+            )
 
         status = self._derive_status(report, validation, verdict)
         if materials.is_resume_approved:
@@ -1695,6 +1745,110 @@ class TailorResumeUseCase:
             self._publisher.publish(event)
         except Exception:  # noqa: BLE001
             log.exception("Failed to publish ResumeFailed for %s", materials.job_id)
+
+    # ------------------------------------------------------------------
+    # Phase 2 — per-bullet provenance + deterministic never-fabricate gate
+    # ------------------------------------------------------------------
+
+    def _compute_provenance(
+        self,
+        *,
+        profile_snapshot: ProfileSnapshot,
+        job: dict,
+        tailored_payload: dict,
+        employer_analysis: EmployerAnalysis,
+    ) -> tuple[tuple[Any, ...], str | None]:
+        """Compute per-bullet provenance + run the deterministic fabrication gate.
+
+        Returns ``(provenance_rows, fabrication_error)``. ``fabrication_error`` is
+        a non-empty message when the candidate must be HARD-REJECTED — either it
+        fabricated a numeric/date/title/employer token (CONTROL-03 / GROUND-05) or
+        a provenance binding referenced a non-existent evidence/requirement id
+        (GROUND-05: FK bindings, not free text). On reject the rows are dropped so
+        no provenance is persisted for an unaccepted candidate.
+
+        The detector runs INDEPENDENTLY of the tailoring prompt — it checks the
+        actual generated bullet text against the canonical profile evidence corpus,
+        never the model's self-reported provenance.
+        """
+        profile = profile_snapshot.as_dict()
+        plan = build_tailoring_plan(profile, job, employer_analysis=employer_analysis)
+        try:
+            rows = build_bullet_provenance(
+                profile, job, tailored_payload, plan, employer_analysis
+            )
+        except ProvenanceBindingError as exc:
+            log.warning("Provenance binding rejected for %s: %s", job.get("url"), exc)
+            return (), f"Provenance grounding failed: {exc}"
+
+        corpus = build_evidence_corpus(profile)
+        employers = employer_name_set(profile)
+        findings = scan_resume_bullets(
+            [(row.bullet_id, row.generated_text) for row in rows],
+            corpus,
+            employers=employers,
+        )
+        if findings:
+            try:
+                raise FabricationError(findings)
+            except FabricationError as exc:
+                log.warning("Never-fabricate detector rejected %s: %s", job.get("url"), exc)
+                return (), f"Never-fabricate detector failed: {exc}"
+        return rows, None
+
+    def _record_provenance(
+        self,
+        *,
+        materials: MaterialsSet,
+        artifact_id: str,
+        bullets: tuple[Any, ...],
+    ) -> None:
+        """Persist the accepted generation's provenance rows + publish the event.
+
+        Generation-versioned and bound to the artifact it explains. Persistence
+        and event publication never raise into the tailor flow — a provenance
+        write failure must not undo an accepted resume.
+        """
+        if self._provenance_repository is None:
+            return
+        try:
+            provenance_set = BulletProvenanceSet(
+                tenant_id=materials.tenant_id,
+                job_id=materials.job_id,
+                generation=materials.generation,
+                artifact_id=artifact_id,
+                bullets=tuple(bullets),
+                created_at=materials.updated_at,
+            )
+            self._provenance_repository.save(provenance_set)
+        except Exception:  # noqa: BLE001 — persistence must not break the use case
+            log.exception("Failed to persist bullet provenance for %s", materials.job_id)
+            return
+        self._publish_provenance(materials, artifact_id=artifact_id, bullet_count=len(bullets))
+
+    def _publish_provenance(
+        self,
+        materials: MaterialsSet,
+        *,
+        artifact_id: str,
+        bullet_count: int,
+    ) -> None:
+        if self._publisher is None:
+            return
+        try:
+            event = create_bullet_provenance_recorded(
+                materials.tenant_id,
+                BulletProvenanceRecordedPayload(
+                    job_id=str(materials.job_id),
+                    artifact_id=artifact_id,
+                    generation=materials.generation,
+                    bullet_count=bullet_count,
+                    recorded_at=materials.updated_at,
+                ),
+            )
+            self._publisher.publish(event)
+        except Exception:  # noqa: BLE001 — publishing must not break the use case
+            log.exception("Failed to publish BulletProvenanceRecorded for %s", materials.job_id)
 
 
 # ---------------------------------------------------------------------------

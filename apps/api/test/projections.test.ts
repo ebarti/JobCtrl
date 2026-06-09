@@ -1231,6 +1231,189 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("serves canonical per-bullet provenance from projection rows (TS↔Python parity)", async () => {
+    // AUDIT-02-style cross-runtime parity for Phase 2: seed the canonical
+    // ``job_bullet_provenance`` rows exactly as the Python repository writes
+    // them, then assert the TS projection builder + read model reconstruct the
+    // same ``bulletProvenance`` shape the Python ``BulletProvenanceSet
+    // .to_read_model()`` produces — served on the artifact's tailoring
+    // explanation, exclusively from canonical rows.
+    const { dbPath, cleanup } = withTempDb();
+    // Reuse the job ``seedSchema`` already inserts, so the artifact projection
+    // builds (the builder drops projections for jobs with no ``jobs`` row).
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_materials (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_validation_json TEXT,
+          last_verdict_json TEXT,
+          metadata_json TEXT,
+          PRIMARY KEY (job_url, generation)
+        );
+        CREATE TABLE job_materials_artifacts (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          artifact_type TEXT NOT NULL,
+          artifact_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          path TEXT NOT NULL,
+          render_format TEXT NOT NULL,
+          size_bytes INTEGER,
+          metadata_json TEXT,
+          created_at TEXT NOT NULL,
+          superseded_at TEXT,
+          PRIMARY KEY (job_url, generation, artifact_type)
+        );
+        CREATE TABLE job_bullet_provenance (
+          job_url TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          bullet_id TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          artifact_id TEXT NOT NULL,
+          section TEXT NOT NULL,
+          source_id TEXT,
+          evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+          requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+          matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+          transform_type TEXT NOT NULL,
+          control TEXT NOT NULL,
+          rationale TEXT NOT NULL DEFAULT '',
+          generated_text TEXT NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, generation, bullet_id)
+        );
+      `);
+      // A complete metadata blob so the tailoring explanation has its audit fields
+      // (the explanation must exist for bulletProvenance to attach to it).
+      const completeMetadata = JSON.stringify({
+        validation_mode: "normal",
+        attempts: 1,
+        quality_plan: {
+          target_seniority: "senior",
+          claim_mode: "evidence_reframing",
+          auto_approvable_claim_modes: ["evidence_reframing"],
+          allow_adjacent_achievement_drafts: false,
+          required_evidence_ids: ["ev_latency"],
+          seniority_evidence_ids: ["ev_latency"],
+          verified_metric_count: 1,
+          job_keywords: ["latency"],
+        },
+        quality_checks: { passed: true, keyword_coverage: { covered: ["latency"], missing: [] } },
+        judge: { passed: true, verdict: "PASS", score: 0.9 },
+        judge_min_score: 0.7,
+        selected_model: "generator-a",
+        selected_candidate: "candidate-1",
+        judge_model: "judge-a",
+        candidate_models: ["generator-a"],
+        adversarial_review: { ran: false, skipped_reason: "below_threshold" },
+        change_annotations: [
+          {
+            section: "experience",
+            label: "Senior SWE at Acme Corp",
+            change_type: "achievement_reframed",
+            source_id: "acme_swe",
+            source_text: ["Built distributed systems."],
+            tailored_text: ["Owned the API and cut latency 40%."],
+            rationale: "Reframed for the target.",
+            job_signals: ["latency"],
+            controls: ["claim mode: evidence_reframing"],
+            evidence_ids: ["ev_latency"],
+            evidence_notes: [],
+          },
+        ],
+      });
+      db.prepare(
+        `INSERT INTO job_materials (job_url, generation, tenant_id, status, created_at, updated_at)
+         VALUES (?, 1, 'local', 'complete', '2026-06-08T12:00:00+00:00', '2026-06-08T12:10:00+00:00')`,
+      ).run(jobUrl);
+      const insertArtifact = db.prepare(
+        `INSERT INTO job_materials_artifacts (
+          job_url, generation, artifact_type, artifact_id, status, path,
+          render_format, size_bytes, metadata_json, created_at
+        ) VALUES (?, 1, ?, ?, 'approved', ?, ?, ?, ?, '2026-06-08T12:05:00+00:00')`,
+      );
+      insertArtifact.run(jobUrl, "tailored_resume", "resume-1", "/tmp/resume.txt", "text", 10, completeMetadata);
+      insertArtifact.run(jobUrl, "resume_pdf", "resume-pdf-1", "/tmp/resume.pdf", "pdf", 20, "{}");
+
+      // Provenance rows (as the Python repo writes them): bound to the text
+      // resume artifact, ordered by position.
+      const insertProvenance = db.prepare(
+        `INSERT INTO job_bullet_provenance (
+          job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+          evidence_ids_json, requirement_ids_json, matched_keywords_json,
+          transform_type, control, rationale, generated_text, position, created_at
+        ) VALUES (?, 1, ?, 'local', 'resume-1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-06-08T12:10:00+00:00')`,
+      );
+      insertProvenance.run(
+        jobUrl, "executive_profile#0", "executive_profile", "executive_profile",
+        "[]", "[]", "[]", "reframe", "rephrase_allowed", "Reframed summary.",
+        "Senior backend engineer focused on Python.", 0,
+      );
+      insertProvenance.run(
+        jobUrl, "experience:acme_swe#0", "experience", "acme_swe",
+        JSON.stringify(["ev_latency"]), JSON.stringify(["req_latency"]), JSON.stringify(["latency"]),
+        "quantify_from_evidence", "never_fabricate_metrics", "Surfaced a recorded metric.",
+        "Owned the API and cut latency 40%.", 1,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        profilePath: path.join(path.dirname(dbPath), "profile.json"),
+        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
+        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        // The text resume serves provenance directly from its own row.
+        const resumeRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-1" });
+        expect(resumeRes.statusCode, resumeRes.body).toBe(200);
+        const explanation = resumeRes.json().tailoringExplanation;
+        expect(explanation).not.toBeNull();
+        expect(explanation.bulletProvenance).toHaveLength(2);
+        // Ordered by position; FK bindings + transform/control round-trip exactly.
+        expect(explanation.bulletProvenance[0]).toMatchObject({
+          bulletId: "executive_profile#0",
+          section: "executive_profile",
+          transformType: "reframe",
+          control: "rephrase_allowed",
+        });
+        expect(explanation.bulletProvenance[1]).toMatchObject({
+          bulletId: "experience:acme_swe#0",
+          section: "experience",
+          sourceId: "acme_swe",
+          evidenceIds: ["ev_latency"],
+          requirementIds: ["req_latency"],
+          matchedKeywords: ["latency"],
+          transformType: "quantify_from_evidence",
+          control: "never_fabricate_metrics",
+          generatedText: "Owned the API and cut latency 40%.",
+        });
+
+        // The PDF artifact resolves provenance from the sibling text resume row.
+        const pdfRes = await app.inject({ method: "GET", url: "/v1/artifacts/resume-pdf-1" });
+        expect(pdfRes.statusCode, pdfRes.body).toBe(200);
+        const pdfExplanation = pdfRes.json().tailoringExplanation;
+        expect(pdfExplanation).not.toBeNull();
+        expect(pdfExplanation.bulletProvenance).toHaveLength(2);
+        expect(pdfExplanation.bulletProvenance[1].requirementIds).toEqual(["req_latency"]);
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("rebuilds source health from discovery, enrichment, and content events", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {

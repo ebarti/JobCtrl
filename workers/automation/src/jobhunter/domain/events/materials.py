@@ -90,3 +90,26 @@ class EmployerAnalyzedPayload:
 
 def create_employer_analyzed(tenant_id: TenantId, payload: EmployerAnalyzedPayload) -> DomainEvent:
     return create_domain_event("EmployerAnalyzed", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
+class BulletProvenanceRecordedPayload:
+    """Phase 2 — canonical per-bullet provenance was recorded for an artifact.
+
+    Emitted when an accepted tailored resume's provenance rows are persisted
+    (generation-versioned, bound to the ``artifact_id`` they explain). Carries
+    the bullet count so the read-side projection rebuilds and the SSE invalidation
+    router refreshes the inspector immediately.
+    """
+
+    job_id: str
+    artifact_id: str
+    generation: int
+    bullet_count: int
+    recorded_at: str
+
+
+def create_bullet_provenance_recorded(
+    tenant_id: TenantId, payload: BulletProvenanceRecordedPayload
+) -> DomainEvent:
+    return create_domain_event("BulletProvenanceRecorded", tenant_id, asdict(payload))

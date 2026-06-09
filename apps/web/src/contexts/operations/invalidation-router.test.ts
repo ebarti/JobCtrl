@@ -19,6 +19,7 @@ type ExpectedKeys = readonly QueryKey[];
 
 const JOB_ID = "job-1";
 const RUN_ID = "run-1";
+const ARTIFACT_ID = "artifact-1";
 
 const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys> = {
   JobDiscovered: [jobsKeys.lists(LOCAL_TENANT), dashboardKeys.summary(LOCAL_TENANT)],
@@ -170,6 +171,11 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   EmployerAnalyzed: [jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  BulletProvenanceRecorded: [
+    artifactsKeys.detail(LOCAL_TENANT, ARTIFACT_ID),
+    artifactsKeys.lists(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+  ],
   TailoringPolicyUpdated: [
     profileKeys.profile(LOCAL_TENANT),
     jobsKeys.all(LOCAL_TENANT),
