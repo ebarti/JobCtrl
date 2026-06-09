@@ -47,6 +47,10 @@ from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.materials.latex_pdf import (
+    _escape_latex_light,
+    build_latex,
+)
 
 JOB_URL = "https://example.com/job/voice"
 
@@ -480,6 +484,87 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
             assert row.generated_text in rendered_lines, (
                 f"audited bullet not found verbatim in rendered resume: {row.generated_text!r}"
             )
+
+
+def test_round_trip_audited_bullet_text_equals_rendered_latex(tmp_path: Path) -> None:
+    """GROUND-06 / success criterion 3 against the ACTUAL renderer.
+
+    The plain-text round-trip above pins "audited == rendered" for the
+    ``ResumeAssembler`` text. But the LaTeX path is the only resume renderer the
+    user actually ships (``PlaywrightHtmlPdfAdapter.render_resume_to_pdf`` raises
+    ``NotImplementedError``), and ``build_latex`` runs a SEPARATE bullet pipeline:
+    ``tailored_experience_bullets`` ⇒ ``sanitize_text`` ⇒ ``_escape_latex_light``.
+    This fixture renders the accepted ``TailorOutcome.final_payload`` through the
+    real ``build_latex`` and asserts every accepted provenance row's
+    ``generated_text`` — LaTeX-escaped with the SAME escaper the renderer uses —
+    appears in the rendered LaTeX body. A future change to the LaTeX bullet
+    pipeline (a reorder, a transform applied only in ``build_latex``) that broke
+    "audited == rendered" for the shipped PDF would now fail here, not silently
+    ship a resume whose text diverges from the audit trail.
+
+    Deterministic by design: it asserts on the generated LaTeX SOURCE string, so
+    no ``pdflatex``/Playwright/real PDF is required.
+    """
+
+    def voice_fn(request: VoiceRequest) -> VoiceResult:
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            experience_bullets=(
+                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
+            ),
+        )
+
+    voice = _FunctionVoice(voice_fn)
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    publisher = _RecordingPublisher()
+    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass()] * 4)
+    profile_snapshot = _snapshot()
+    outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
+        job=_job(), profile_snapshot=profile_snapshot, tailored_dir=tmp_path
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.final_payload is not None
+
+    saved = provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL))
+    assert saved is not None and saved.bullets
+
+    # Render the ACCEPTED (voiced) payload through the only resume renderer the
+    # user ships — the LaTeX builder — and assert on its source string.
+    rendered_latex = build_latex(outcome.final_payload, profile_snapshot.as_dict())
+
+    for row in saved.bullets:
+        # The renderer escapes every line via ``_escape_latex_light(sanitize_text(...))``;
+        # provenance already holds the sanitised line, so escaping it the same way
+        # yields exactly the presentation the LaTeX body carries.
+        escaped = _escape_latex_light(row.generated_text)
+        if row.section == "skills":
+            # Skills render as ``\item \textbf{Label:} a, b.`` — the label is bolded
+            # and the items follow. Assert both the bolded label and the escaped
+            # item list (the audited content) are present in the rendered LaTeX.
+            label, _, items = row.generated_text.partition(": ")
+            assert f"\\textbf{{{_escape_latex_light(label)}:}}" in rendered_latex, (
+                f"audited skills label not bolded in rendered LaTeX: {label!r}"
+            )
+            assert _escape_latex_light(items) in rendered_latex, (
+                f"audited skills items not found in rendered LaTeX: {items!r}"
+            )
+        else:
+            # Executive profile + experience bullets must appear verbatim (escaped)
+            # in the rendered LaTeX body — this is the "audited == rendered" anchor
+            # for the text the shipped PDF actually contains.
+            assert escaped in rendered_latex, (
+                f"audited {row.section} text not found in rendered LaTeX: {escaped!r}"
+            )
+
+    # Guard the invariant from the other side: the pre-voice buzzword DRAFT must
+    # NOT be in the rendered LaTeX, proving the renderer consumed the SAME accepted
+    # ``final_payload`` the audit trail anchors to (not the raw selected candidate).
+    assert "spearheaded" not in rendered_latex.lower()
+    # And the ``%`` in the voiced metric is genuinely LaTeX-escaped in the output,
+    # confirming we asserted against renderer presentation, not the plain text.
+    assert "cut latency 40\\% with Python." in rendered_latex
 
 
 def test_voice_failure_falls_back_to_pre_voice_candidate(tmp_path: Path) -> None:
