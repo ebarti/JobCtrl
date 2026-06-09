@@ -37,9 +37,9 @@ from jobhunter.infrastructure.analysis.strict_schema import strict_json_schema
 
 AsyncCodexFactory = Callable[[], Any]
 
-# Top current Codex model + max reasoning effort (D-18). Re-confirm the id at
-# impl time; model ids drift.
-CODEX_ANALYSIS_MODEL = "gpt-5.4"
+# Top current Codex model (gpt-5.5) + max reasoning effort (D-18). Matches
+# mestre's vendor-lane default for the Codex leg.
+CODEX_ANALYSIS_MODEL = "gpt-5.5"
 
 # Disable Codex plugins/apps so the isolated home only ever holds JobHunter's
 # analysis rollouts + the copied auth token (mirrors mestre's vendor lane).

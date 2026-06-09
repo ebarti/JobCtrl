@@ -234,7 +234,7 @@ from jobhunter.domain.materials.analysis import JobAnalysis
 async def run_codex_draft(system_prompt: str, jd_snapshot: str) -> JobAnalysis:
     async with AsyncCodex() as codex:                      # reuses existing Codex login (D-04)
         thread = await codex.thread_start(
-            model="gpt-5.4",                               # top current Codex model (verify id at impl)
+            model="gpt-5.5",                               # top current Codex model
             config={"model_reasoning_effort": "high"},     # max effort (D-18)
             sandbox=Sandbox.read_only,                     # analysis reads the JD; no FS writes
         )
@@ -373,7 +373,7 @@ workers/automation/src/jobhunter/
 | Leg | SDK | Model (verify id at impl) | Effort / reasoning | Turn / token / time cap |
 |-----|-----|---------------------------|--------------------|--------------------------|
 | Claude draft | `claude-agent-sdk` | `claude-opus-4-8` | `effort` defaults to `high` on Opus 4.8 (1M ctx, 128k max output, extended/adaptive thinking) | `max_turns=None`; no `max_budget_usd`; no wall-clock (D-19) |
-| Codex draft | `openai-codex` | `gpt-5.4` (top Codex model) | `config={"model_reasoning_effort":"high"}` + per-turn `effort="high"` | awaited to completion; no documented cap to disable |
+| Codex draft | `openai-codex` | `gpt-5.5` (top Codex model) | `config={"model_reasoning_effort":"high"}` + per-turn `effort="high"` | awaited to completion; no documented cap to disable |
 | Gemini/Google draft | `google-antigravity` (`LocalAgentConfig` + `Agent`) | `gemini-3.5-flash` (`types.DEFAULT_MODEL`) | `response_schema` (Gemini-adapted JSON; `additionalProperties` stripped) | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
 | Synthesizer (D-07) | `claude-agent-sdk` | `claude-opus-4-8` | `high` | `max_turns=None` |
 
