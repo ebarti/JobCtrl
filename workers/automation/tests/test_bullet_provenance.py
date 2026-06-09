@@ -315,6 +315,56 @@ def test_executive_provenance_anchors_to_rewrite_when_rewrite_enabled() -> None:
     assert executive.generated_text == shipped_summary
 
 
+def _assembled_section_line(profile: dict, payload: dict, *, prefix: str) -> str:
+    """Return the first assembled line beginning with ``prefix`` (e.g. ``"- "``)."""
+    text = ResumeAssembler().assemble_resume_text(payload, profile)
+    line = next(line for line in text.splitlines() if line.startswith(prefix))
+    return line.removeprefix(prefix).strip()
+
+
+def test_provenance_generated_text_is_byte_identical_to_sanitized_shipped_line() -> None:
+    """Regression (Finding 3 / Pattern 2 / GROUND-06): the assembler runs
+    ``sanitize_text`` on every rendered line — rewriting curly quotes and smart
+    punctuation to ASCII — but the provenance builder previously normalised only
+    whitespace, so a bullet with a curly apostrophe shipped as ``team's`` while its
+    provenance ``generated_text`` kept the curly ``team’s``. The coverage anchor (and
+    the deterministic detector that scans it) then saw text the user never received.
+    Provenance ``generated_text`` MUST now byte-match the assembled shipped line."""
+    profile = _profile()
+    profile["resume"]["tailoring_rules"]["tailoring_policy"]["allow_summary_rewrite"] = True
+    # Curly apostrophe + curly double quotes in the summary; curly apostrophe +
+    # em dash in the bullet; curly apostrophe in a skill item.
+    curly_summary = "Senior engineer who led the company’s “core” platform."
+    curly_bullet = "Owned the team’s API roadmap — reduced API latency 35%."
+    payload = _payload(bullets=[curly_bullet], summary=curly_summary)
+    payload["skill_category_updates"] = [{"id": "languages", "items": ["C’s", "Python"]}]
+
+    rows = _build(profile, payload, _analysis())
+
+    summary_row = next(r for r in rows if r.section == "executive_profile")
+    assert summary_row.generated_text == _assembled_summary_line(profile, payload)
+    # The smart punctuation was rewritten exactly as the assembler ships it.
+    assert summary_row.generated_text == 'Senior engineer who led the company\'s "core" platform.'
+
+    experience_row = next(r for r in rows if r.section == "experience")
+    assert experience_row.generated_text == _assembled_section_line(profile, payload, prefix="- ")
+    assert experience_row.generated_text == "Owned the team's API roadmap, reduced API latency 35%."
+
+    # Skills: the provenance row holds the whole "Label: items" line; compare to the
+    # full assembled SKILLS line (no prefix stripped).
+    assembled = ResumeAssembler().assemble_resume_text(payload, profile).splitlines()
+    shipped_skills = next(line for line in assembled if line.startswith("Languages:"))
+    skills_row = next(r for r in rows if r.section == "skills")
+    assert skills_row.generated_text == shipped_skills
+    assert skills_row.generated_text == "Languages: C's, Python"
+
+    # And no smart punctuation survives into ANY provenance row (the detector now
+    # scans the sanitised shipped text, never the model's pre-sanitised draft).
+    import re as _re
+
+    assert all(not _re.search(r"[‘’“”—–]", r.generated_text) for r in rows)
+
+
 def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
     rows = _build(
         _profile(),
@@ -482,6 +532,58 @@ def test_detector_grounds_equivalent_money_renderings() -> None:
             employers=employer_name_set(profile),
         )
         assert [f for f in findings if f.kind == "numeric"] == [], (rendering, findings)
+
+
+@pytest.mark.parametrize(
+    ("bullet", "needle"),
+    [
+        ("Scaled the platform to 10M users.", "10m"),
+        ("Cut infra cost by 5K monthly.", "5k"),
+        ("Grew the user base to 2B accounts.", "2b"),
+        ("Onboarded 100K accounts in a quarter.", "100k"),
+        ("Drove 3.5M ARR in new revenue.", "3.5m"),
+        ("Scaled to 35 million users.", "35 million"),
+    ],
+)
+def test_detector_flags_suffixed_bare_magnitude_against_numberless_profile(
+    bullet: str, needle: str
+) -> None:
+    """Regression (criterion 4 / CONTROL-03): a bare magnitude with a suffix and NO
+    leading ``$`` (``10M`` / ``5K`` / ``2B`` / ``100K`` / ``3.5M`` / ``35 million``)
+    is a numeric the model invented. Before the fix the trailing ``\\b`` of the
+    bare-number branch failed between the digit and the suffix letter, so these were
+    NOT extracted at all and an unsourced metric sailed past the deterministic gate
+    against a numberless profile. Each must now be flagged."""
+    profile = _numberless_profile()  # the profile carries NO numerics at all
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "experience:acme_swe#0", bullet, corpus, employers=employer_name_set(profile)
+    )
+    numeric = [f for f in findings if f.kind == "numeric"]
+    assert numeric, (bullet, findings)
+    assert all(f.control is ControlRule.NEVER_FABRICATE_METRICS for f in numeric)
+    # The flagged token carries the magnitude suffix (proves the suffix was
+    # consumed WITH the digits, not dropped as a bare integer).
+    assert any(needle in f.token.lower() for f in numeric), (needle, [f.token for f in numeric])
+
+
+def test_detector_does_not_eat_kmb_initial_word_after_grounded_money() -> None:
+    """Regression (Finding 2): a grounded money figure followed by a word that
+    starts with k/m/b (``$1,200,000 budget``) must stay grounded. Before the fix
+    the money branch's optional space + single-letter suffix ate the ``b`` of
+    ``budget`` into the token, minting a phantom ``money:1.2e15`` and hard-rejecting
+    a real figure. The single-letter magnitude suffix is now adjacency-only."""
+    profile = _profile()
+    profile["resume_constraints"] = {"real_metrics": ["$1.2M budget", "$5K monthly"]}
+    corpus = build_evidence_corpus(profile)
+    employers = employer_name_set(profile)
+    for bullet in (
+        "Managed a $1,200,000 budget across three teams.",
+        "Owned a $1.2 million budget.",
+        "Trimmed a $5K monthly spend.",
+    ):
+        findings = find_fabricated_tokens("experience:acme_swe#0", bullet, corpus, employers=employers)
+        assert [f for f in findings if f.kind == "numeric"] == [], (bullet, findings)
 
 
 def test_metrics_hungry_job_with_numberless_profile_yields_zero_unsourced_numerics() -> None:

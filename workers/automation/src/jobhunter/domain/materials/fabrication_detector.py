@@ -45,12 +45,24 @@ _WHITESPACE_RE = re.compile(r"\s+")
 # Numeric/metric tokens: money, percentages, multipliers, and bare numbers with a
 # unit or magnitude. Mirrors the metric grammar used by the quality evaluator so
 # the detector and the validator agree on what counts as a "number" in a bullet.
+#
+# Magnitude-suffix adjacency is deliberate (CONTROL-03 precision):
+#   * a SINGLE-LETTER suffix (k/m/b) is consumed ONLY when it directly abuts the
+#     digits — ``$5K`` / ``10M`` — never across a space, so a grounded ``$1,200,000
+#     budget`` does NOT have the "b" of "budget" eaten into the token (which would
+#     mint a phantom ``money:1.2e15`` and hard-reject a real figure);
+#   * the SPELLED-OUT words (million/billion) may take one optional space —
+#     ``$1.2 million`` / ``35 million`` — because a whole magnitude word cannot be
+#     the accidental first letter of an ordinary following word.
+# The bare-magnitude branch comes BEFORE the plain bare-number branch so the
+# suffix is consumed with its digits (``10M`` keys ``bare:10000000``, not ``10``).
 _NUMERIC_RE = re.compile(
     r"(?ix)"
-    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?)"  # money
+    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?(?:k|m|b|\s?million|\s?billion)?)"  # money (suffix adjacent unless spelled out)
     r"|(?:\b\d+(?:\.\d+)?\s?%)"  # percentage
     r"|(?:\b\d+(?:\.\d+)?\s?x\b)"  # multiplier
-    r"|(?:\b\d[\d,]*(?:\.\d+)?\+?\b)"  # bare integer/decimal (incl. "10k", "5+")
+    r"|(?:\b\d[\d,]*(?:\.\d+)?(?:k|m|b|\s?million|\s?billion)\b)"  # bare magnitude (no $): "10M", "5K", "35 million"
+    r"|(?:\b\d[\d,]*(?:\.\d+)?\+?\b)"  # bare integer/decimal (incl. "5+")
 )
 
 # Four-digit years and explicit month/day-month-year date spans. Standalone small

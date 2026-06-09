@@ -41,6 +41,7 @@ from jobhunter.domain.materials.quality import (
     _normalize_phrase,
     _normalize_space,
 )
+from jobhunter.domain.materials.services import sanitize_text
 from jobhunter.domain.materials.value_objects import ControlRule, TransformType
 from jobhunter.resume_profile import (
     get_claim_mode,
@@ -67,6 +68,24 @@ _CHANGE_TYPE_TO_TRANSFORM: dict[str, TransformType] = {
     "skills_reordered": TransformType.REPHRASE,
     "skills_preserved": TransformType.VERBATIM,
 }
+
+
+def _rendered_line(text: str) -> str:
+    """Render one line EXACTLY as ``ResumeAssembler`` ships it (Pattern 2 / GROUND-06).
+
+    The assembler applies :func:`sanitize_text` to every summary/bullet/skill line
+    it renders (``services.py`` ``_assemble_resume_text``), which rewrites smart
+    punctuation — curly quotes ``’“”`` to ASCII and em/en dashes to commas/hyphens.
+    Provenance is a coverage anchor only when its ``generated_text`` is
+    byte-identical to that shipped line, so the row — and the deterministic
+    never-fabricate detector that scans it — sees the text the user actually
+    received, not the model's pre-sanitised draft.
+
+    Keyword/FK matching is unaffected: every match path runs through
+    :func:`_normalize_phrase` (``_WORD_RE``), which already strips quote forms, so
+    ``team’s`` and ``team's`` normalise identically.
+    """
+    return _normalize_space(sanitize_text(text))
 
 
 class ProvenanceBindingError(ValueError):
@@ -245,11 +264,11 @@ def build_bullet_provenance(
     # the never-rendered rewrite would break the "generated_text is byte-identical
     # to what ResumeAssembler renders" invariant (Pattern 2 / GROUND-06) and feed
     # the deterministic detector text that never reaches the user.
-    baseline_summary = _normalize_space(
+    baseline_summary = _rendered_line(
         str(resume.get("executive_profile", {}).get("baseline_text", ""))
     )
     allow_summary_rewrite = bool(get_tailoring_policy(profile)["allow_summary_rewrite"])
-    proposed_summary = _normalize_space(str(tailored_payload.get("executive_profile") or ""))
+    proposed_summary = _rendered_line(str(tailored_payload.get("executive_profile") or ""))
     shipped_summary = proposed_summary if allow_summary_rewrite else baseline_summary
     if shipped_summary:
         base = (
@@ -291,7 +310,7 @@ def build_bullet_provenance(
         source_bullets = [str(b).strip() for b in (entry.get("bullets") or []) if str(b).strip()]
         tailored_bullets = tailored_experience_bullets(entry, update, profile)
         for index, bullet in enumerate(tailored_bullets):
-            generated_text = _normalize_space(str(bullet))
+            generated_text = _rendered_line(str(bullet))
             if not generated_text:
                 continue
             source_text = source_bullets[index] if index < len(source_bullets) else ""
@@ -341,12 +360,18 @@ def build_bullet_provenance(
         tailored_items = tailored_skill_items(category, update, profile)
         if not tailored_items:
             continue
-        generated_text = f"{category.get('label', 'Skills')}: {', '.join(tailored_items)}"
+        # Mirror the assembler's per-item ``sanitize_text`` + filter so the skills
+        # line is byte-identical to what ``ResumeAssembler`` ships (the label is
+        # code-injected profile data and is rendered raw there, so it stays raw).
+        sanitized_items = [sanitize_text(str(i)) for i in tailored_items if str(i).strip()]
+        generated_text = _normalize_space(
+            f"{category.get('label', 'Skills')}: {', '.join(sanitized_items)}"
+        )
         reordered = [_normalize_phrase(i) for i in tailored_items] != [
             _normalize_phrase(i) for i in source_items
         ]
         transform = TransformType.REPHRASE if reordered else TransformType.VERBATIM
-        served, matched = _served_requirements(_normalize_space(generated_text).lower(), analysis)
+        served, matched = _served_requirements(generated_text.lower(), analysis)
         rows.append(
             BulletProvenance(
                 bullet_id=f"skills:{category_id}#0",
@@ -358,7 +383,7 @@ def build_bullet_provenance(
                 transform_type=transform,
                 control=_resolve_control(transform, claim_mode=claim_mode),
                 rationale=_skills_rationale(transform, matched),
-                generated_text=_normalize_space(generated_text),
+                generated_text=generated_text,
             )
         )
 

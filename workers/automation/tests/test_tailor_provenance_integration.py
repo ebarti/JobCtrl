@@ -325,6 +325,43 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
     assert provenance_events[0].payload["artifact_id"] == saved.artifact_id
 
 
+def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_provenance(
+    tmp_path: Path,
+) -> None:
+    """Regression for the High finding (criterion 4 / CONTROL-03): a metrics-hungry
+    job tempts the model to invent a bare magnitude with no leading ``$`` (``10M``).
+    The profile carries no such number, the base quality gate accepts the line
+    (it also has the grounded ``40%`` + a seniority signal) and the scripted judge
+    passes — so ONLY the deterministic never-fabricate detector can catch it. Before
+    the regex fix ``10M`` was not even extracted, so the unsourced metric was
+    approved and persisted with zero findings. It must now HARD-REJECT the resume
+    and persist no provenance."""
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    publisher = _RecordingPublisher()
+    # "40%" is grounded; "10M users" is the invented bare magnitude.
+    fabricated = _payload(
+        "Owned the API, cut latency 40% with Python, and scaled it to 10M users."
+    )
+    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)  # responses for every retry
+    outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
+        job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
+    )
+
+    # The resume is NOT approved despite the judge pass — the detector gated it.
+    assert outcome.materials is not None
+    assert not outcome.materials.is_resume_approved
+    # No provenance was persisted for the rejected candidate.
+    assert provenance_repo.load(LOCAL_TENANT, JobId(JOB_URL)) is None
+    assert not any(
+        getattr(e, "event_type", "") == "BulletProvenanceRecorded" for e in publisher.events
+    )
+    # The fabrication is surfaced as the rejection reason, naming the bare magnitude.
+    errors = " ".join(outcome.materials.last_validation.errors)
+    assert "fabricate" in errors.lower() or "fabrication" in errors.lower()
+    assert "10m" in errors.lower()
+
+
 def test_fabricated_employer_is_hard_rejected_by_detector_and_writes_no_provenance(
     tmp_path: Path,
 ) -> None:
