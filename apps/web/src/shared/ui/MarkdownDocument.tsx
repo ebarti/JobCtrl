@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { descriptionBlocks } from "../../contexts/operations/selectors/jobDescriptionSelectors.js";
+import { descriptionBlocks } from "../lib/job-description-blocks.js";
 
 type DescriptionBlock =
   | { kind: "heading"; text: string }

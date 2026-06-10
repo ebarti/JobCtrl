@@ -17,8 +17,8 @@ describe("descriptionBlocks", () => {
     const thirdSentence = `${"C".repeat(120)}.`;
 
     expect(descriptionBlocks(`${firstSentence} ${secondSentence} ${thirdSentence}`)).toEqual([
-      `${firstSentence} ${secondSentence}`,
-      thirdSentence,
+      firstSentence,
+      `${secondSentence} ${thirdSentence}`,
     ]);
   });
 
