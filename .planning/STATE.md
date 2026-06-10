@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed 06-02-PLAN.md
-last_updated: "2026-06-09T23:49:35.757Z"
+stopped_at: Completed 06-03-PLAN.md
+last_updated: "2026-06-10T00:06:05.592Z"
 last_activity: 2026-06-09 -- Phase 06 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
-  percent: 33
+  completed_plans: 3
+  percent: 50
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 06 (Token Foundation + shadcn Preset Contract) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-06-09 -- Phase 06 execution started
 
-Progress: [███░░░░░░░] 33%
+Progress: [█████░░░░░] 50%
 
 ## Active Milestone Summary
 
@@ -81,9 +81,9 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 2 for v1.1
-- Average duration: 7 min
-- Total execution time: 13 min
+- Total plans completed: 3 for v1.1
+- Average duration: 8 min
+- Total execution time: 24 min
 
 ## Accumulated Context
 
@@ -107,6 +107,9 @@ Prior milestone decisions that still matter:
 - [Phase 06 Plan 02]: Adapted shadcn generated .dark theme output to JobHunter's :root[data-theme=dark] selector.
 - [Phase 06 Plan 02]: Used a temporary pnpm minimumReleaseAge=0 window only for human-approved recent shadcn package operations, then restored the workspace policy before committing.
 - [Phase 06 Plan 02]: Kept lucide-react for compatibility while setting new shadcn output to Tabler; Phase 8 owns visible icon migration.
+- [Phase 06]: [Phase 06 Plan 03]: Moved semantic token definitions into tokens.css and kept Tailwind @theme inline mappings in globals.css.
+- [Phase 06]: [Phase 06 Plan 03]: Deleted the legacy Tailwind config bridge after shadcn info and web checks passed.
+- [Phase 06]: [Phase 06 Plan 03]: Used corrected Vitest file-filter command for token-contract.test.ts because the planned -- separator runs the full web suite.
 
 ### Pending Todos
 
@@ -130,9 +133,10 @@ None.
 | Motion | Motion and microinteraction system | Future milestone | 2026-06-09 |
 | Phase 06 P01 | 1min | 1 tasks | 1 files |
 | Phase 06 P02 | 12min | 2 tasks | 7 files |
+| Phase 06 P03 | 11min | 3 tasks | 7 files |
 
 ## Session Continuity
 
-Last session: 2026-06-09T23:49:17.384Z
-Stopped at: Completed 06-02-PLAN.md
+Last session: 2026-06-10T00:05:44.729Z
+Stopped at: Completed 06-03-PLAN.md
 Resume file: None
