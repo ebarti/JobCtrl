@@ -35,11 +35,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Domain And Status Semantics
 
-- [ ] **STATUS-01**: Pipeline stage states, scoring tiers, artifact states, apply states, connection states, discovery/source health, dashboard funnel segments, warnings, stale states, and missing audit states remain visually distinct after migration.
-- [ ] **STATUS-02**: Domain components keep typed tone helpers or explicit variant maps as the source of product meaning; they do not define global CSS variables or rely on computed Tailwind class names that Tailwind cannot scan.
-- [ ] **STATUS-03**: Success, warning, info/running, destructive/failed, blocked, muted/pending, stale, skipped, canceled, and missing states meet practical contrast in light and dark themes.
-- [ ] **STATUS-04**: Chart/data-series tokens are available and used only for chart/data emphasis; lifecycle/status colors are not flattened into positional `chart-*` tokens.
-- [ ] **STATUS-05**: Tailoring inspector, apply-review, audit history, missing provenance, failed workflow, stale scoring, and destructive warning states remain honest and inspectable; visual polish never hides awkward data.
+- [x] **STATUS-01**: Pipeline stage states, scoring tiers, artifact states, apply states, connection states, discovery/source health, dashboard funnel segments, warnings, stale states, and missing audit states remain visually distinct after migration.
+- [x] **STATUS-02**: Domain components keep typed tone helpers or explicit variant maps as the source of product meaning; they do not define global CSS variables or rely on computed Tailwind class names that Tailwind cannot scan.
+- [x] **STATUS-03**: Success, warning, info/running, destructive/failed, blocked, muted/pending, stale, skipped, canceled, and missing states meet practical contrast in light and dark themes.
+- [x] **STATUS-04**: Chart/data-series tokens are available and used only for chart/data emphasis; lifecycle/status colors are not flattened into positional `chart-*` tokens.
+- [x] **STATUS-05**: Tailoring inspector, apply-review, audit history, missing provenance, failed workflow, stale scoring, and destructive warning states remain honest and inspectable; visual polish never hides awkward data.
 
 ### QA And Accessibility
 
@@ -105,11 +105,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | LAYOUT-03 | Phase 8 | Complete |
 | LAYOUT-04 | Phase 8 | Complete |
 | LAYOUT-05 | Phase 8 | Complete |
-| STATUS-01 | Phase 9 | Pending |
-| STATUS-02 | Phase 9 | Pending |
-| STATUS-03 | Phase 9 | Pending |
-| STATUS-04 | Phase 9 | Pending |
-| STATUS-05 | Phase 9 | Pending |
+| STATUS-01 | Phase 9 | Complete |
+| STATUS-02 | Phase 9 | Complete |
+| STATUS-03 | Phase 9 | Complete |
+| STATUS-04 | Phase 9 | Complete |
+| STATUS-05 | Phase 9 | Complete |
 | QA-01 | Phase 10 | Pending |
 | QA-02 | Phase 10 | Pending |
 | QA-03 | Phase 10 | Pending |

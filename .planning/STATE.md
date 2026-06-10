@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed Phase 08
-last_updated: "2026-06-10T12:23:42.000Z"
-last_activity: 2026-06-10 -- Phase 08 completed; Phase 09 ready for discussion
+stopped_at: Completed Phase 09
+last_updated: "2026-06-10T15:25:00.000Z"
+last_activity: 2026-06-10 -- Phase 09 completed; Phase 10 ready for discussion
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 15
-  completed_plans: 15
-  percent: 50
+  completed_phases: 4
+  total_plans: 19
+  completed_plans: 19
+  percent: 67
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 08 — layout-chrome-fonts-and-tabler-icons
+**Current focus:** Phase 10 — route-visual-qa-storybook-a11y-hardening
 
 ## Current Position
 
-Phase: 09 (domain-and-status-surface-migration) — READY FOR DISCUSSION
+Phase: 10 (route-visual-qa-storybook-a11y-hardening) — READY FOR DISCUSSION
 Plan: none yet
-Status: Phase 08 complete; ready to discuss Phase 09
-Last activity: 2026-06-10 -- Phase 08 completed; Phase 09 ready for discussion
+Status: Phase 09 complete; ready to discuss Phase 10
+Last activity: 2026-06-10 -- Phase 09 completed; Phase 10 ready for discussion
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 67%
 
 ## Active Milestone Summary
 
@@ -58,7 +58,7 @@ Phase order:
 | 6 | Token Foundation + shadcn Preset Contract | Completed |
 | 7 | Shared Primitive Token Migration | Completed |
 | 8 | Layout Chrome, Fonts, And Tabler Icons | Completed |
-| 9 | Domain And Status Surface Migration | Pending |
+| 9 | Domain And Status Surface Migration | Completed |
 | 10 | Route Visual QA + Storybook/A11y Hardening | Pending |
 | 11 | Alias And Global CSS Cleanup | Pending |
 
@@ -81,7 +81,7 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 15 for v1.1
+- Total plans completed: 19 for v1.1
 - Average duration: 9 min
 - Total execution time: 96 min
 
@@ -123,6 +123,10 @@ Prior milestone decisions that still matter:
 - [Phase 08]: Kept shell behavior unchanged while retokenizing app chrome; route labels, search navigation, theme store, density store, and connection status semantics remain the source of behavior.
 - [Phase 08]: Migrated only shell/shared affordance icons to Tabler; remaining lucide imports are domain/view deferrals for Phase 9 or Phase 11, and `lucide-react` remains until imports reach zero.
 - [Phase 08]: Used isolated E2E ports for final browser proof after a default-port retry observed stale dev-server CSS.
+- [Phase 09]: Centralized shared status vocabularies in `shared/ui/status-tokens.ts` and kept domain meaning in context/view tone helpers or explicit maps.
+- [Phase 09]: Retokenized lifecycle/status CSS with standard semantic tokens and local `color-mix()` derivations; status colors are not backed by positional `chart-*` tokens.
+- [Phase 09]: Removed source-level `lucide-react` imports; the package dependency remains for Phase 11 cleanup after final import/dependency audit.
+- [Phase 09]: Extended token-foundation E2E with route-level painted status proof across seeded Dashboard, Jobs, Apply Review, Artifacts, Runs, and Debug.
 
 ### Pending Todos
 
@@ -134,6 +138,7 @@ None.
 - Research risk: `apps/web/src/styles/globals.css` has broad blast radius; phase plans must avoid broad visual rewrites without route/browser QA.
 - Research risk: full shadcn CLI apply rewrites too many UI files; use targeted application and manual edits unless a phase explicitly expands scope.
 - Carry-forward test hygiene: 3 pre-existing unrelated failing tests were noted at v1.0 close (enrichment staleness x2, materials suppression).
+- Phase 10 should run the broader route visual QA matrix, including overlays, all representative routes, density coverage, Storybook/a11y, and seeded-data safety proof.
 
 ## Deferred Items
 
@@ -156,6 +161,10 @@ None.
 | Phase 08 P02 | 7min | 3 tasks | 10 files |
 | Phase 08 P03 | 12min | 3 tasks | 4 files |
 | Phase 08 P04 | 18min | 3 tasks | 7 files |
+| Phase 09 P01 | 18min | 4 tasks | 7 files |
+| Phase 09 P02 | 24min | 4 tasks | 16 files |
+| Phase 09 P03 | 9min | 3 tasks | 10 files |
+| Phase 09 P04 | 21min | 4 tasks | 10 files |
 
 ## Session Continuity
 
