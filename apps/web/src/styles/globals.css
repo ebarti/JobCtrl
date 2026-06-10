@@ -1363,6 +1363,12 @@ textarea {
   color: var(--foreground);
 }
 
+.data-grid-column-filter-button:focus-visible {
+  border-color: var(--ring);
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 .data-grid-column-filter-button.active {
   color: var(--status-info);
 }
@@ -1381,6 +1387,11 @@ textarea {
 .filterable-data-grid-table tbody tr[tabindex]:hover,
 .filterable-data-grid-table tbody tr[tabindex]:focus-visible {
   background: var(--muted);
+}
+
+.filterable-data-grid-table tbody tr[tabindex]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 .filterable-data-grid-table tbody tr[aria-selected="true"] {
