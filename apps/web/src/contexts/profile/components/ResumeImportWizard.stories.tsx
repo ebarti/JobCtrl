@@ -30,17 +30,17 @@ function WizardHost({ initialPath }: { initialPath: string }) {
     const upload = createRoute({
       getParentRoute: () => profileImport,
       path: "upload",
-      component: () => <p className="text-sm text-muted">Drop a resume PDF to start.</p>,
+      component: () => <p className="text-sm text-muted-foreground">Drop a resume PDF to start.</p>,
     });
     const preview = createRoute({
       getParentRoute: () => profileImport,
       path: "preview",
-      component: () => <p className="text-sm text-muted">Review the parsed sections.</p>,
+      component: () => <p className="text-sm text-muted-foreground">Review the parsed sections.</p>,
     });
     const confirm = createRoute({
       getParentRoute: () => profileImport,
       path: "confirm",
-      component: () => <p className="text-sm text-muted">Confirm and apply.</p>,
+      component: () => <p className="text-sm text-muted-foreground">Confirm and apply.</p>,
     });
     return createRouter({
       routeTree: root.addChildren([

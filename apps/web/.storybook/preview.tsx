@@ -97,7 +97,7 @@ const withProviders: Decorator = (Story, context) => {
               <DensityProvider>
                 <TooltipProvider>
                   <ToasterProvider>
-                    <div className="min-h-[80vh] bg-bg p-6 text-ink">{inner}</div>
+                    <div className="min-h-[80vh] bg-background p-6 text-foreground">{inner}</div>
                   </ToasterProvider>
                 </TooltipProvider>
               </DensityProvider>
