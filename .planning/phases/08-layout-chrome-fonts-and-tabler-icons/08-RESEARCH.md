@@ -346,17 +346,17 @@ await expect(page.locator(".app-shell")).toHaveAttribute("data-density", "compac
 | A3 | Build artifacts may contain old CSS/icon output until rebuilt. | Runtime State Inventory | Low; build command will regenerate artifacts. |
 | A4 | Provider/health mocking is available for focused `ConnectionStatusPill` tests. | Common Pitfalls | If no harness exists, planner should use Playwright or add a small provider test wrapper. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **How broad should Priority B icon migration be?**
    - What we know: Shell and shared UI affordances are clearly in Phase 8; domain/status semantics remain Phase 9. [CITED: 08-CONTEXT.md; VERIFIED: source grep]
-   - What's unclear: Whether the planner should migrate every obvious domain control icon now or defer some to avoid broad route churn. [ASSUMED]
-   - Recommendation: Migrate all Priority A icons, migrate small obvious Priority B files with existing tests, and record explicit deferrals for broad Discovery/Profile edits if they expand scope. [ASSUMED]
+   - Decision: Phase 8 migrates Priority A shell/shared affordance icons. Priority B domain/view icons are migrated only when they are import-only, covered by existing tests, and do not expand domain/status review scope; otherwise they are recorded in `08-ICON-AUDIT.md` as Phase 9 or Phase 11 deferrals. [RESOLVED: 2026-06-10]
+   - Rationale: This satisfies LAYOUT-03's explicit map/deferral requirement without pulling STATUS-01 through STATUS-05 into Phase 8. [CITED: .planning/ROADMAP.md; CITED: 08-CONTEXT.md]
 
 2. **Should Phase 8 add shell stories?**
    - What we know: No existing `shared/layout` tests or stories were found. [VERIFIED: find apps/web/src/shared/layout]
-   - What's unclear: Whether Storybook shell stories are worth the provider/router setup cost. [ASSUMED]
-   - Recommendation: Prefer focused Vitest plus Playwright browser proof unless shell stories become necessary for visual review. [ASSUMED]
+   - Decision: Phase 8 does not add shell stories by default. It adds focused Vitest layout tests plus Playwright browser proof; Storybook build/test is conditional only if implementation changes stories, Storybook providers, or shared primitive story-visible behavior. [RESOLVED: 2026-06-10]
+   - Rationale: The shell is router/provider-heavy and the required acceptance surface is runtime browser behavior over representative routes, not isolated story rendering. [CITED: 08-UI-SPEC.md; CITED: docs/local-reliability-qa.md]
 
 ## Environment Availability
 
