@@ -3,123 +3,93 @@
 **Checked:** 2026-06-10
 **Result:** ISSUES FOUND
 **Plans checked:** 4
-**Blockers:** 7
-**Warnings:** 1
+**Blockers:** 2
+**Warnings:** 0
 
 ## Summary
 
-The plan set is directionally aligned with LAYOUT-01 through LAYOUT-05, but it does not pass the pre-execution revision gate. The main problem is structural: the four `08-*-PLAN.md` files are prose task lists rather than GSD executable plans with frontmatter, `must_haves`, dependency metadata, and task-level `files/action/verify/done` fields. Because of that, coverage and verification cannot be deterministically enforced by the execution workflow.
+The repaired plans now satisfy the major goal-backward structure for LAYOUT-01 through LAYOUT-05: all four plans have executable frontmatter, requirement traces, `must_haves`, task-level actions, automated checks, explicit dependencies, resolved research questions, `08-VALIDATION.md`, an icon audit artifact, browser proof for Jobs/Apply Review/artifact-adjacent surfaces, and phase closeout gated on review/QA evidence.
 
-There are also substantive coverage gaps: Phase 8 research has a `Validation Architecture` section but no `08-VALIDATION.md`, research open questions remain unresolved, and Plan 04 narrows LAYOUT-05 browser proof to `/dashboard` and `/jobs` instead of Jobs, Apply Review, artifact/PDF-adjacent surfaces, and dark-mode surfaces required by the phase contract.
+The remaining blockers are both in Plan 08-02's automated verification contract. One planned Tabler export check is not runnable from the repository root, where plan commands are normally executed. Another planned absence audit is written with `|| true`, so it cannot fail if `lucide-react` imports remain in shell/shared UI after the migration. These are execution blockers because LAYOUT-03 depends on deterministic icon verification, not best-effort output.
 
 ## Coverage Summary
 
-| Requirement | Claimed Plans | Checker Status |
-|-------------|---------------|----------------|
-| LAYOUT-01 | 08-01, 08-02, 08-03, 08-04 | Blocked by missing executable plan schema and dependency ordering |
-| LAYOUT-02 | 08-01, 08-03, 08-04 | Blocked by missing `must_haves`; Storybook font parity proof is not explicit |
-| LAYOUT-03 | 08-02, 08-04 | Mostly covered, but no frontmatter requirement trace and deferral audit depends on Plan 04 ordering |
-| LAYOUT-04 | 08-01, 08-03, 08-04 | Covered in prose, but blocked by missing automated task structure |
-| LAYOUT-05 | 08-01, 08-03, 08-04 | Blocker: browser route proof scope is reduced below the requirement |
+| Requirement | Plans | Status |
+|-------------|-------|--------|
+| LAYOUT-01 | 08-01, 08-02, 08-03, 08-04 | Covered |
+| LAYOUT-02 | 08-01, 08-03, 08-04 | Covered |
+| LAYOUT-03 | 08-02, 08-03, 08-04 | Blocked by non-runnable / non-failing icon verification commands in 08-02 |
+| LAYOUT-04 | 08-01, 08-03, 08-04 | Covered |
+| LAYOUT-05 | 08-01, 08-04 | Covered |
+
+## Evidence Summary
+
+- `08-01-PLAN.md` covers shell chrome, token/font/density seams, and connection status visual treatment with token contract, `web:check`, and `git diff --check` verification.
+- `08-02-PLAN.md` covers shell/shared Tabler icon migration and `08-ICON-AUDIT.md`, but two automated commands need repair before execution.
+- `08-03-PLAN.md` adds focused shell behavior tests for global search, theme toggle, density control, and connection status semantics.
+- `08-04-PLAN.md` extends Playwright browser proof for theme/density persistence, global search URL behavior, nav active state, and LAYOUT-05 route readability over `/jobs`, `/apply-review`, and `/artifacts` or another artifact/PDF-adjacent surface.
+- `08-RESEARCH.md` has `## Open Questions (RESOLVED)`.
+- `08-VALIDATION.md` exists and maps LAYOUT-01 through LAYOUT-05 to automated checks, Wave 0 gaps, sampling continuity, and safety gates.
+- `08-PATTERNS.md` maps all modified files to same-file analogs and shared accessibility, persistence, styling, and verification patterns.
+- `AGENTS.md` constraints are reflected: no auto-apply/submission/destructive QA, synthetic/seeded evidence only, user-facing QA beyond unit tests, and no route/API/SSE behavior changes.
+
+## Dimension Results
+
+| Dimension | Status | Notes |
+|-----------|--------|-------|
+| Requirement Coverage | FAIL | LAYOUT-03 is blocked until 08-02 verification commands are deterministic. |
+| Task Completeness | PASS | All implementation tasks have files, action/behavior, automated verify, and done criteria. |
+| Dependency Correctness | PASS | 08-01 and 08-02 are Wave 1; 08-03 depends on both; 08-04 depends on 08-01 through 08-03. No cycles or missing references found. |
+| Key Links Planned | PASS | Component/CSS/test/audit/browser-proof links are represented in `must_haves.key_links` and task actions. |
+| Scope Sanity | PASS | Each plan has 3 tasks and scoped file sets appropriate for this phase. |
+| Verification Derivation | PASS | `must_haves.truths` are user-observable and tied to artifacts/key links. |
+| Context Compliance | PASS | Locked decisions D-01 through D-18 are covered; deferred Phase 9/10/11 work is excluded except for explicit closeout deferrals. |
+| Scope Reduction Detection | PASS | No remaining `v1`, `static for now`, placeholder, stub, or future-enhancement language reduces locked decisions. |
+| Architectural Tier Compliance | PASS | Work stays in browser/client shell, static CSS, tests, and planning artifacts per `08-RESEARCH.md` responsibility map. |
+| Nyquist Compliance | FAIL | Automated verification exists, but two 08-02 commands cannot enforce the intended signal. |
+| Cross-Plan Data Contracts | PASS | Theme/density store, pre-paint shape, search URL contract, and icon audit handoffs are consistent across plans. |
+| AGENTS.md Compliance | FAIL | Repo QA rules require exact runnable verification; 08-02 has one command that fails from root and one command that masks failure. |
+| Research Resolution | PASS | Open questions are marked resolved. |
+| Pattern Compliance | PASS | Plans reference and preserve the analog patterns from `08-PATTERNS.md`. |
 
 ## Blockers
 
-**1. [task_completeness] Plans are not in executable GSD PLAN format**
-- Plan: `08-01`, `08-02`, `08-03`, `08-04`
-- Evidence: Plans use Markdown sections (`## Requirements Covered`, `## Files`, numbered `## Tasks`) instead of structured task elements with per-task `files`, `action`, `verify`, and `done`.
-- Impact: Execution cannot deterministically assign files, run per-task checks, or know acceptance criteria.
-- Fix: Rewrite each plan with required frontmatter and task blocks. Each implementation task needs explicit files, action, automated verify commands, and measurable done criteria.
+**1. [nyquist_compliance] Plan 08-02 Tabler export check fails from the repository root**
+- Plan: `08-02`
+- Task: 1
+- Evidence: The planned command `node -e "const icons=require('@tabler/icons-react'); ..."` fails in `/private/tmp/JobHunter-shadcn-standard-token-milestone` with `Error: Cannot find module '@tabler/icons-react'`. The same check succeeds from `apps/web`.
+- Impact: The first automated check in the icon migration plan will fail before validating anything, blocking execution or forcing ad hoc executor repair.
+- Fix: Replace the root-resolution command with a workspace-aware command, for example:
+  - `corepack pnpm --dir apps/web exec node -e "const icons=require('@tabler/icons-react'); for (const n of ['IconMoon','IconSun']) if (!icons[n]) throw new Error(n)"`
+  - Also update the aggregate verification command in Plan 08-02 to use the same workspace-aware form for all listed Tabler exports.
 
-**2. [requirement_coverage] Roadmap requirements are absent from required plan frontmatter**
-- Plan: `08-01`, `08-02`, `08-03`, `08-04`
-- Evidence: None of the plans has a `requirements:` frontmatter field.
-- Impact: The gate requires every roadmap requirement ID (`LAYOUT-01` through `LAYOUT-05`) to appear in at least one plan frontmatter field; prose headings do not satisfy the traceability contract.
-- Fix: Add frontmatter `requirements:` arrays to each plan and ensure all five LAYOUT requirements are covered.
-
-**3. [verification_derivation] `must_haves` are missing from all plans**
-- Plan: `08-01`, `08-02`, `08-03`, `08-04`
-- Evidence: No plan defines `must_haves.truths`, `must_haves.artifacts`, or `must_haves.key_links`.
-- Impact: The checker cannot verify that user-observable truths, artifacts, and wiring derive from the phase goal.
-- Fix: Add `must_haves` to every plan. Include truths such as unchanged global search navigation, persisted theme/density behavior, migrated/deferred icons, and readable shell chrome; list artifacts and key links tying components, CSS, tests, and browser proof together.
-
-**4. [dependency_correctness] Plan ordering is implied, not enforceable**
-- Plan: `08-01`, `08-02`, `08-03`, `08-04`
-- Evidence: No plan has `depends_on:` metadata. Plan 03 depends on implementation from Plans 01-02; Plan 04 depends on Plans 01-03 and closes the phase.
-- Impact: The executor could run browser closeout or tests before implementation/icon migration is complete.
-- Fix: Add explicit dependencies, for example `08-03` depends on `08-01` and `08-02`; `08-04` depends on `08-01`, `08-02`, and `08-03`.
-
-**5. [nyquist_compliance] Validation architecture exists but `08-VALIDATION.md` is missing**
-- Plan: phase-level
-- Evidence: `08-RESEARCH.md` contains `## Validation Architecture`; no `*-VALIDATION.md` exists in the phase directory.
-- Impact: Dimension 8 requires a blocking fail when validation architecture is present but the validation artifact is missing.
-- Fix: Re-run planning with research validation output or create `08-VALIDATION.md` mapping each task to automated checks, wave 0 test gaps, and sampling continuity.
-
-**6. [research_resolution] Research open questions are unresolved**
-- Plan: phase-level
-- Evidence: `08-RESEARCH.md` has `## Open Questions` without `(RESOLVED)` and the two questions are recommendations, not resolved decisions.
-- Impact: Planning proceeds with unresolved scope questions around Priority B icon breadth and shell Storybook stories.
-- Fix: Resolve the section as `## Open Questions (RESOLVED)` and record the chosen scope before finalizing plans.
-
-**7. [requirement_coverage] LAYOUT-05 browser proof scope is reduced**
-- Plan: `08-04`
-- Evidence: Plan 04 says route fit proof should cover "at least `/dashboard` and `/jobs`" and "Do not attempt the full Phase 10 route matrix." LAYOUT-05 and the UI/QA contract require topbar/menu readability over dense Jobs, Apply Review, artifact/PDF-adjacent surfaces, and dark-mode surfaces.
-- Impact: Phase 8 can pass while missing required Apply Review and artifact/PDF readability proof.
-- Fix: Keep Phase 10 route-wide QA out of scope, but add Phase 8 browser proof for `/jobs`, `/apply-review`, and an artifact/PDF-adjacent surface in light/dark where synthetic fixtures support it.
-
-## Warnings
-
-**1. [scope_sanity] Plans exceed recommended task count**
-- Plan: `08-01`, `08-02`, `08-04`
-- Evidence: Plan 01 has 5 tasks, Plan 02 has 5 tasks, and Plan 04 has 6 tasks.
-- Impact: This increases execution risk and review burden, especially for broad CSS and icon migration.
-- Fix: Split executable plans so each has 2-3 implementation tasks, or make the task blocks narrower with explicit file and verify scope.
+**2. [nyquist_compliance] Plan 08-02 shared/layout lucide absence audit cannot fail**
+- Plan: `08-02`
+- Task: 2
+- Evidence: The planned command `rg -n "lucide-react" apps/web/src/shared/ui apps/web/src/shared/layout || true` exits successfully whether matches exist or not. Current source contains `lucide-react` imports in `ThemeToggle.tsx` and multiple `shared/ui` files, so this command would not enforce the task's acceptance criterion after migration.
+- Impact: LAYOUT-03 can appear verified while shell/shared user-visible chrome still silently mixes lucide and Tabler.
+- Fix: Replace it with a failing absence check, for example:
+  - `! rg -n "lucide-react" apps/web/src/shared/ui apps/web/src/shared/layout`
+  - Keep the broader `rg "lucide-react|@tabler/icons-react" apps/web/src apps/web/package.json` audit in Task 3 for the explicit domain deferral ledger.
 
 ## Structured Issues
 
 ```yaml
 issues:
-  - plan: "08-01,08-02,08-03,08-04"
-    dimension: task_completeness
-    severity: blocker
-    description: "Plans are prose Markdown, not executable GSD plans with task-level files/action/verify/done."
-    fix_hint: "Rewrite each plan with required frontmatter and structured task blocks."
-  - plan: "08-01,08-02,08-03,08-04"
-    dimension: requirement_coverage
-    severity: blocker
-    description: "LAYOUT-01 through LAYOUT-05 appear only in prose; no plan has required requirements frontmatter."
-    fix_hint: "Add requirements arrays and map each roadmap requirement to concrete tasks."
-  - plan: "08-01,08-02,08-03,08-04"
-    dimension: verification_derivation
-    severity: blocker
-    description: "All plans are missing must_haves.truths, must_haves.artifacts, and must_haves.key_links."
-    fix_hint: "Add user-observable truths, artifacts, and key links for each plan."
-  - plan: "08-01,08-02,08-03,08-04"
-    dimension: dependency_correctness
-    severity: blocker
-    description: "Plan ordering is implied but no depends_on metadata enforces implementation, test, and closeout order."
-    fix_hint: "Add dependency metadata, with closeout depending on implementation and test plans."
-  - plan: null
-    dimension: nyquist_compliance
-    severity: blocker
-    description: "08-RESEARCH.md has Validation Architecture but no 08-VALIDATION.md exists."
-    fix_hint: "Create 08-VALIDATION.md with automated verification and sampling continuity."
-  - plan: null
-    dimension: research_resolution
-    severity: blocker
-    description: "08-RESEARCH.md has unresolved Open Questions."
-    fix_hint: "Resolve the open questions before final planning."
-  - plan: "08-04"
-    dimension: requirement_coverage
-    severity: blocker
-    description: "Plan 04 reduces LAYOUT-05 browser proof to dashboard/jobs and omits Apply Review plus artifact/PDF-adjacent readability proof."
-    fix_hint: "Add focused Phase 8 browser proof for jobs, apply-review, and artifact/PDF-adjacent surfaces in light/dark."
-  - plan: "08-01,08-02,08-04"
-    dimension: scope_sanity
-    severity: warning
-    description: "Plans have 5, 5, and 6 tasks respectively, above the recommended 2-3 task range."
-    fix_hint: "Split or narrow tasks to reduce execution risk."
+  - plan: "08-02"
+    dimension: "nyquist_compliance"
+    severity: "blocker"
+    task: 1
+    description: "Tabler export verification command uses root Node resolution and cannot find @tabler/icons-react from the repo root."
+    fix_hint: "Run the node export check through the apps/web workspace, e.g. corepack pnpm --dir apps/web exec node -e ..."
+  - plan: "08-02"
+    dimension: "nyquist_compliance"
+    severity: "blocker"
+    task: 2
+    description: "Shared/layout lucide absence audit is masked with || true, so it cannot fail when lucide imports remain."
+    fix_hint: "Use a failing absence check such as ! rg -n \"lucide-react\" apps/web/src/shared/ui apps/web/src/shared/layout."
 ```
 
 ## Recommendation
 
-Do not execute Phase 8 yet. Return to the planner to regenerate the four plans in the executable GSD schema, add `08-VALIDATION.md`, resolve research open questions, add explicit dependencies, and expand LAYOUT-05 browser proof to the required Phase 8 surfaces without taking on the full Phase 10 matrix.
+Do not execute Phase 8 yet. Return to the planner for a narrow 08-02 verification-command repair only. After those two command fixes, this plan set should be ready to pass the revision gate without changing scope.
