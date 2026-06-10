@@ -81,10 +81,10 @@ The plan set covers LAYOUT-01 through LAYOUT-05 with shell chrome token work, fo
 | Task 2 | 08-04 | 3 | `corepack pnpm --filter @jobhunter/web e2e -- tests/token-foundation.spec.ts`; `corepack pnpm web:build` | PASS |
 | Task 3 | 08-04 | 3 | unit/static/build/e2e/icon audit/`git diff --check` closeout commands | PASS |
 
-Sampling: Wave 1: 6/6 verified -> PASS  
-Sampling: Wave 2: 3/3 verified -> PASS  
-Sampling: Wave 3: 3/3 verified -> PASS  
-Wave 0: covered by `08-VALIDATION.md`; missing layout tests, E2E extension, and icon audit are created by implementation plans before dependent closeout -> PASS  
+Sampling: Wave 1: 6/6 verified -> PASS
+Sampling: Wave 2: 3/3 verified -> PASS
+Sampling: Wave 3: 3/3 verified -> PASS
+Wave 0: covered by `08-VALIDATION.md`; missing layout tests, E2E extension, and icon audit are created by implementation plans before dependent closeout -> PASS
 Overall: PASS
 
 ## Structured Issues

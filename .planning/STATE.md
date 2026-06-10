@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed Phase 07
-last_updated: "2026-06-10T11:11:51.000Z"
-last_activity: 2026-06-10 -- Phase 07 completed; Phase 08 ready for discussion
+stopped_at: Completed Phase 08
+last_updated: "2026-06-10T12:23:42.000Z"
+last_activity: 2026-06-10 -- Phase 08 completed; Phase 09 ready for discussion
 progress:
   total_phases: 6
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 11
-  percent: 33
+  completed_phases: 3
+  total_plans: 15
+  completed_plans: 15
+  percent: 50
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 ## Current Position
 
-Phase: 08 (layout-chrome-fonts-and-tabler-icons) — READY FOR DISCUSSION
+Phase: 09 (domain-and-status-surface-migration) — READY FOR DISCUSSION
 Plan: none yet
-Status: Phase 07 complete; ready to discuss Phase 08
-Last activity: 2026-06-10 -- Phase 07 completed; Phase 08 ready for discussion
+Status: Phase 08 complete; ready to discuss Phase 09
+Last activity: 2026-06-10 -- Phase 08 completed; Phase 09 ready for discussion
 
 Progress: [██████████] 100%
 
@@ -57,7 +57,7 @@ Phase order:
 |-------|------|--------|
 | 6 | Token Foundation + shadcn Preset Contract | Completed |
 | 7 | Shared Primitive Token Migration | Completed |
-| 8 | Layout Chrome, Fonts, And Tabler Icons | Pending |
+| 8 | Layout Chrome, Fonts, And Tabler Icons | Completed |
 | 9 | Domain And Status Surface Migration | Pending |
 | 10 | Route Visual QA + Storybook/A11y Hardening | Pending |
 | 11 | Alias And Global CSS Cleanup | Pending |
@@ -81,9 +81,9 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 11 for v1.1
-- Average duration: 8 min
-- Total execution time: 50 min
+- Total plans completed: 15 for v1.1
+- Average duration: 9 min
+- Total execution time: 96 min
 
 ## Accumulated Context
 
@@ -120,6 +120,9 @@ Prior milestone decisions that still matter:
 - [Phase 07]: [Phase 07 Plan 04]: Kept changes story-only because no production primitive defect blocked truthful rendering.
 - [Phase 07]: [Phase 07 Plan 04]: Kept the existing scroll-area a11y deferral because it maps to the tracked Radix ScrollArea backlog row.
 - [Phase 07]: [Phase 07 Plan 04]: Did not change badge.stories.tsx because it already covered the supported default, secondary, destructive, and outline variants.
+- [Phase 08]: Kept shell behavior unchanged while retokenizing app chrome; route labels, search navigation, theme store, density store, and connection status semantics remain the source of behavior.
+- [Phase 08]: Migrated only shell/shared affordance icons to Tabler; remaining lucide imports are domain/view deferrals for Phase 9 or Phase 11, and `lucide-react` remains until imports reach zero.
+- [Phase 08]: Used isolated E2E ports for final browser proof after a default-port retry observed stale dev-server CSS.
 
 ### Pending Todos
 
@@ -149,9 +152,13 @@ None.
 | Phase 06 P06 | 14min | 3 tasks | 6 files |
 | Phase 07 P04 | 10min | 2 tasks | 11 files |
 | Phase 07 P05 | 16min | 3 tasks | 8 files |
+| Phase 08 P01 | 9min | 3 tasks | 2 files |
+| Phase 08 P02 | 7min | 3 tasks | 10 files |
+| Phase 08 P03 | 12min | 3 tasks | 4 files |
+| Phase 08 P04 | 18min | 3 tasks | 7 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T11:11:51.000Z
-Stopped at: Completed Phase 07
+Last session: 2026-06-10T12:23:42.000Z
+Stopped at: Completed Phase 08
 Resume file: None

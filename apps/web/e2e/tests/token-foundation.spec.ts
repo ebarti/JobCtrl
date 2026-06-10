@@ -113,6 +113,23 @@ async function expectThemeIconDimensions(themeButton: Locator): Promise<void> {
   expect(dimensions.height, "theme icon should not inflate the shell control").toBeLessThanOrEqual(18);
 }
 
+async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
+  const layout = await page.evaluate(() => {
+    const root = document.documentElement;
+    const nav = document.querySelector(".nav");
+    return {
+      clientWidth: root.clientWidth,
+      navWidth: nav?.getBoundingClientRect().width ?? 0,
+      scrollWidth: root.scrollWidth,
+    };
+  });
+
+  expect(layout.scrollWidth, "shell should not create horizontal document overflow").toBeLessThanOrEqual(
+    layout.clientWidth + 1,
+  );
+  expect(layout.navWidth, "main nav should stay within the viewport").toBeLessThanOrEqual(layout.clientWidth);
+}
+
 async function expectShellChromePainted(page: Page, route: string, activeLink: string): Promise<void> {
   await page.goto(route);
 
@@ -161,6 +178,7 @@ test("token foundation computes light/dark app-shell tokens and density values",
   await expect(themeButton).toBeVisible({ timeout: 30_000 });
   await expect(page.locator(".topbar")).toBeVisible();
   await expectThemeIconDimensions(themeButton);
+  await expectNoDocumentInlineOverflow(page);
 
   const lightTokens = await readRootTokensWhenReady(page);
   await expectColorScheme(page, "light");
@@ -213,17 +231,37 @@ test("token foundation computes light/dark app-shell tokens and density values",
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.locator(".app-shell")).toHaveAttribute("data-density", "comfy");
   await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({ timeout: 30_000 });
+  await expectNoDocumentInlineOverflow(page);
 });
 
 test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) => {
   await expectShellChromePainted(page, "/jobs", "Jobs");
   await expectShellChromePainted(page, "/apply-review", "Apply review");
-  await expectShellChromePainted(page, "/artifacts", "Artifacts");
+  await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
+  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Artifact PDF preview" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
 
+  await page.goto("/jobs");
   await page.getByRole("button", { name: /Switch to dark theme/i }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
   await expectShellChromePainted(page, "/jobs", "Jobs");
   await expectShellChromePainted(page, "/apply-review", "Apply review");
-  await expectShellChromePainted(page, "/artifacts", "Artifacts");
+  await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
+  await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Artifact PDF preview" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "open PDF" })).toBeVisible();
+});
+
+test("shell chrome does not overflow the mobile viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/jobs");
+
+  await expect(page.locator(".topbar")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("link", { name: "Jobs" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Global search" })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Row density" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Switch to dark theme/i })).toBeVisible();
+  await expectNoDocumentInlineOverflow(page);
 });

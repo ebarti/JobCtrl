@@ -50,6 +50,7 @@ code,
   z-index: 20;
   display: flex;
   flex-wrap: wrap;
+  min-inline-size: 0;
   align-items: center;
   gap: 8px 16px;
   padding: 12px 24px;
@@ -93,9 +94,11 @@ code,
 
 .nav {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 520px;
   flex-wrap: wrap;
   gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .global-search {

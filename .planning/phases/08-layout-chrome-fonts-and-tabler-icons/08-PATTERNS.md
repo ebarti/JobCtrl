@@ -533,6 +533,6 @@ No unmatched files. Phase 8 work maps directly to existing shell, provider, toke
 
 ## Metadata
 
-**Analog search scope:** `apps/web/src/shared`, `apps/web/src/styles`, `apps/web/e2e/tests`, `apps/web/.storybook`, `apps/web/package.json`, `package.json`, local `@tabler/icons-react` type declarations  
-**Files scanned:** 15 focused files plus lucide/Tabler import audit  
+**Analog search scope:** `apps/web/src/shared`, `apps/web/src/styles`, `apps/web/e2e/tests`, `apps/web/.storybook`, `apps/web/package.json`, `package.json`, local `@tabler/icons-react` type declarations
+**Files scanned:** 15 focused files plus lucide/Tabler import audit
 **Pattern extraction date:** 2026-06-10
