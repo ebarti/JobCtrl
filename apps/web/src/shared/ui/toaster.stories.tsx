@@ -5,16 +5,9 @@ import { useToastStore } from "../stores/toasts.js";
 import { Toaster } from "./toaster.js";
 import { Button } from "./button.js";
 
-// Renders <Toast> rows whose Close button has no discernible text
-// (button-name) — same Phase 1 production-primitive defect as toast
-// stories. Deferred.
 const meta = {
   title: "Shared/UI/Toaster",
   component: Toaster,
-  parameters: {
-    // a11y deferred — toast.tsx ToastClose icon-only button-name defect; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof Toaster>;
 
 export default meta;

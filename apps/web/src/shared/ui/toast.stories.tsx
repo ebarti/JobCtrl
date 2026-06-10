@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import {
   Toast,
+  ToastAction,
   ToastClose,
   ToastDescription,
   ToastProvider,
@@ -9,16 +10,9 @@ import {
   ToastViewport,
 } from "./toast.js";
 
-// ToastClose in toast.tsx renders an icon-only <button> without an
-// sr-only label or aria-label (button-name violation). Production
-// primitive defect from Phase 1; deferred.
 const meta = {
   title: "Shared/UI/Toast",
   component: Toast,
-  parameters: {
-    // a11y deferred — toast.tsx ToastClose icon-only button-name defect; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof Toast>;
 
 export default meta;
@@ -48,6 +42,37 @@ export const DestructiveToast: Story = {
           <ToastDescription>Materials missing — generate before retrying.</ToastDescription>
         </div>
         <ToastClose />
+      </Toast>
+      <ToastViewport />
+    </ToastProvider>
+  ),
+};
+
+export const ActionToast: Story = {
+  render: () => (
+    <ToastProvider>
+      <Toast open>
+        <div className="grid gap-1">
+          <ToastTitle>Sync paused</ToastTitle>
+          <ToastDescription>Synthetic export paused before publishing.</ToastDescription>
+        </div>
+        <ToastAction altText="Resume sync">Resume</ToastAction>
+        <ToastClose />
+      </Toast>
+      <ToastViewport />
+    </ToastProvider>
+  ),
+};
+
+export const CustomCloseLabel: Story = {
+  render: () => (
+    <ToastProvider>
+      <Toast open>
+        <div className="grid gap-1">
+          <ToastTitle>Review ready</ToastTitle>
+          <ToastDescription>Synthetic summary can be inspected.</ToastDescription>
+        </div>
+        <ToastClose aria-label="Dismiss review notice" />
       </Toast>
       <ToastViewport />
     </ToastProvider>
