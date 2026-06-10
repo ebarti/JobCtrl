@@ -43,12 +43,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### QA And Accessibility
 
-- [ ] **QA-01**: Required web checks pass for the touched surface: `pnpm web:check`, `pnpm web:build`, `pnpm --filter @jobhunter/web test`, plus `test-d`, Storybook, a11y, or E2E commands where the phase touches those surfaces.
-- [ ] **QA-02**: Browser QA covers representative routes and overlays in light and dark themes: `/dashboard`, `/jobs`, job detail, `/artifacts`, artifact detail, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`.
-- [ ] **QA-03**: Browser QA covers compact, regular, and comfy density for table/list-heavy views and verifies focus rings, menus, overlays, forms, and destructive controls.
-- [ ] **QA-04**: Storybook a11y introduces no new critical or serious axe violations for changed primitives and stateful components; any pre-existing deferral remains documented per repo policy.
-- [ ] **QA-05**: QA fixtures, screenshots, stories, and docs use synthetic or seeded data only and do not expose profile data, resumes, generated PDFs, application data, browser profiles, logs, SQLite databases, API keys, or OAuth tokens.
-- [ ] **QA-06**: No QA stage runs auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks for that behavior.
+- [x] **QA-01**: Required web checks pass for the touched surface: `pnpm web:check`, `pnpm web:build`, `pnpm --filter @jobhunter/web test`, plus `test-d`, Storybook, a11y, or E2E commands where the phase touches those surfaces.
+- [x] **QA-02**: Browser QA covers representative routes and overlays in light and dark themes: `/dashboard`, `/jobs`, job detail, `/artifacts`, artifact detail, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`.
+- [x] **QA-03**: Browser QA covers compact, regular, and comfy density for table/list-heavy views and verifies focus rings, menus, overlays, forms, and destructive controls.
+- [x] **QA-04**: Storybook a11y introduces no new critical or serious axe violations for changed primitives and stateful components; any pre-existing deferral remains documented per repo policy.
+- [x] **QA-05**: QA fixtures, screenshots, stories, and docs use synthetic or seeded data only and do not expose profile data, resumes, generated PDFs, application data, browser profiles, logs, SQLite databases, API keys, or OAuth tokens.
+- [x] **QA-06**: No QA stage runs auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks for that behavior.
 
 ### Cleanup And Documentation
 
@@ -110,12 +110,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | STATUS-03 | Phase 9 | Complete |
 | STATUS-04 | Phase 9 | Complete |
 | STATUS-05 | Phase 9 | Complete |
-| QA-01 | Phase 10 | Pending |
-| QA-02 | Phase 10 | Pending |
-| QA-03 | Phase 10 | Pending |
-| QA-04 | Phase 10 | Pending |
-| QA-05 | Phase 10 | Pending |
-| QA-06 | Phase 10 | Pending |
+| QA-01 | Phase 10 | Complete |
+| QA-02 | Phase 10 | Complete |
+| QA-03 | Phase 10 | Complete |
+| QA-04 | Phase 10 | Complete |
+| QA-05 | Phase 10 | Complete |
+| QA-06 | Phase 10 | Complete |
 | CLEAN-01 | Phase 11 | Pending |
 | CLEAN-02 | Phase 11 | Pending |
 | CLEAN-03 | Phase 11 | Pending |
@@ -129,4 +129,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-09*
-*Last updated: 2026-06-09 after roadmap creation*
+*Last updated: 2026-06-10 after Phase 10 completion*
