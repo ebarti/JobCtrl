@@ -27,11 +27,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Layout, Fonts, And Icons
 
-- [ ] **LAYOUT-01**: App shell, topbar, navigation, global search, theme toggle, density control, connection status, tabs, and menu surfaces adopt the preset visual language without changing route behavior or user workflows.
-- [ ] **LAYOUT-02**: Geist body font and JetBrains Mono heading/technical font load in the Vite app and Storybook with sensible fallbacks and without breaking dense table/list layouts.
-- [ ] **LAYOUT-03**: User-visible lucide icons are migrated or explicitly mapped to Tabler equivalents without changing action meaning, accessible labels, or stable control dimensions.
-- [ ] **LAYOUT-04**: Compact, regular, and comfy density modes still affect row height and dense operational scanning after the radius/font/icon changes.
-- [ ] **LAYOUT-05**: Topbar/menu translucency remains readable over dense Jobs, Apply Review, PDF preview, and dark-mode surfaces.
+- [x] **LAYOUT-01**: App shell, topbar, navigation, global search, theme toggle, density control, connection status, tabs, and menu surfaces adopt the preset visual language without changing route behavior or user workflows.
+- [x] **LAYOUT-02**: Geist body font and JetBrains Mono heading/technical font load in the Vite app and Storybook with sensible fallbacks and without breaking dense table/list layouts.
+- [x] **LAYOUT-03**: User-visible lucide icons are migrated or explicitly mapped to Tabler equivalents without changing action meaning, accessible labels, or stable control dimensions.
+- [x] **LAYOUT-04**: Compact, regular, and comfy density modes still affect row height and dense operational scanning after the radius/font/icon changes.
+- [x] **LAYOUT-05**: Topbar/menu translucency remains readable over dense Jobs, Apply Review, PDF preview, and dark-mode surfaces.
 
 ### Domain And Status Semantics
 
@@ -100,11 +100,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PRIM-03 | Phase 7 | Complete |
 | PRIM-04 | Phase 7 | Complete |
 | PRIM-05 | Phase 7 | Complete |
-| LAYOUT-01 | Phase 8 | Pending |
-| LAYOUT-02 | Phase 8 | Pending |
-| LAYOUT-03 | Phase 8 | Pending |
-| LAYOUT-04 | Phase 8 | Pending |
-| LAYOUT-05 | Phase 8 | Pending |
+| LAYOUT-01 | Phase 8 | Complete |
+| LAYOUT-02 | Phase 8 | Complete |
+| LAYOUT-03 | Phase 8 | Complete |
+| LAYOUT-04 | Phase 8 | Complete |
+| LAYOUT-05 | Phase 8 | Complete |
 | STATUS-01 | Phase 9 | Pending |
 | STATUS-02 | Phase 9 | Pending |
 | STATUS-03 | Phase 9 | Pending |

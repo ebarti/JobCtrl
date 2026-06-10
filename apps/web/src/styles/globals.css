@@ -50,20 +50,32 @@ code,
   z-index: 20;
   display: flex;
   flex-wrap: wrap;
+  min-inline-size: 0;
   align-items: center;
-  gap: 12px 16px;
-  padding: 14px 24px;
-  background: var(--card);
+  gap: 8px 16px;
+  padding: 12px 24px;
+  background: color-mix(in oklch, var(--card) 96%, transparent);
   border-bottom: 1px solid var(--border);
+  color: var(--foreground);
 }
 
 .brand {
-  display: flex;
+  display: inline-flex;
+  min-height: 34px;
   align-items: center;
   gap: 8px;
   border: 0;
+  border-radius: calc(var(--radius) * 0.8);
   background: transparent;
-  font-weight: 700;
+  color: var(--foreground);
+  font-weight: 600;
+  padding: 4px 6px;
+  text-decoration: none;
+}
+
+.brand:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .brand-mark {
@@ -72,23 +84,28 @@ code,
   height: 18px;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
-  background: var(--foreground);
-  color: var(--card);
+  border-radius: calc(var(--radius) * 0.6);
+  background: var(--primary);
+  color: var(--primary-foreground);
   font-family: var(--font-mono);
   font-size: 10px;
+  font-weight: 600;
 }
 
 .nav {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 520px;
+  flex-wrap: wrap;
   gap: 4px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .global-search {
   min-width: 280px;
   max-width: 560px;
   flex: 1 1 320px;
+  min-height: 34px;
 }
 
 .connection-pill-group {
@@ -106,20 +123,26 @@ code,
   right: 0;
   width: max-content;
   max-width: min(420px, 90vw);
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--destructive);
-  border-radius: 6px;
-  background: var(--card);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--popover);
   color: var(--destructive);
-  box-shadow: 0 10px 32px rgb(0 0 0 / 10%);
+  box-shadow: 0 12px 28px color-mix(in oklch, var(--foreground) 12%, transparent);
+  font-size: 12px;
 }
 
 .nav a,
 .nav button,
 .tab {
   border: 0;
-  border-radius: 5px;
+  border-radius: calc(var(--radius) * 0.8);
   background: transparent;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   padding: 6px 10px;
   color: var(--muted-foreground);
   text-decoration: none;
@@ -131,8 +154,14 @@ code,
 .nav button.on,
 .tab:hover,
 .tab.on {
-  background: var(--muted);
-  color: var(--foreground);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.nav a.on,
+.nav button.on,
+.tab.on {
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .tab:disabled {
@@ -145,9 +174,16 @@ select,
 input,
 textarea {
   border: 1px solid var(--input);
-  border-radius: 6px;
-  background: var(--card);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--popover);
+  color: var(--foreground);
   padding: 7px 9px;
+}
+
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  border-color: var(--ring);
 }
 
 .pulse {
@@ -464,6 +500,7 @@ textarea {
 
 .tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
@@ -933,6 +970,7 @@ textarea {
 }
 
 .discovery-tabs {
+  background: var(--card);
   padding: 12px;
 }
 
@@ -1646,6 +1684,7 @@ textarea {
 }
 
 .stage-trigger-tabs {
+  background: var(--card);
   padding: 14px 16px 0;
 }
 
@@ -3052,9 +3091,11 @@ textarea {
 
 .profile-mode-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
+  background: var(--card);
 }
 
 .profile-sections {
@@ -3682,11 +3723,13 @@ textarea {
 
 .connection-pill {
   display: inline-flex;
+  min-height: 28px;
   align-items: center;
   gap: 6px;
+  border: 1px solid var(--border);
   padding: 4px 10px;
   border-radius: 999px;
-  background: var(--muted);
+  background: var(--popover);
   color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -3715,6 +3758,19 @@ textarea {
 
 .connection-pill[data-status="lost"]::before {
   background: var(--destructive);
+}
+
+.connection-pill[data-status="open"] {
+  color: var(--foreground);
+}
+
+.connection-pill[data-status="connecting"] {
+  color: var(--warning);
+}
+
+.connection-pill[data-status="closed"],
+.connection-pill[data-status="lost"] {
+  color: var(--destructive);
 }
 
 @theme inline {
