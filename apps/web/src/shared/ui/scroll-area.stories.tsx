@@ -21,8 +21,8 @@ const ROWS = Array.from({ length: 40 }, (_, index) => `Activity event #${index +
 
 export const ActivityFeed: Story = {
   render: () => (
-    <ScrollArea className="h-64 w-72 rounded-md border border-rule">
-      <ul className="divide-y divide-rule">
+    <ScrollArea className="h-64 w-72 rounded-md border border-border">
+      <ul className="divide-y divide-border">
         {ROWS.map((row) => (
           <li key={row} className="px-3 py-2 text-sm">
             {row}

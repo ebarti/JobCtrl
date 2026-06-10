@@ -1,8 +1,15 @@
 {
   "extends": "../../packages/tsconfig/react.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true
+    "ignoreDeprecations": "6.0",
+    "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@/*": [
+        "src/*"
+      ]
+    }
   },
   "include": [
     "src/**/*.ts",
@@ -15,7 +22,6 @@
     ".storybook/**/*.tsx",
     "vite.config.ts",
     "vitest.config.ts",
-    "vitest.types.config.ts",
-    "tailwind.config.ts"
+    "vitest.types.config.ts"
   ]
 }

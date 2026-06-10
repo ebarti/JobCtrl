@@ -1,90 +1,248 @@
-# Roadmap: JobHunter — Grounded Resume Tailoring
+# Roadmap: v1.1 shadcn standard-token migration + preset b3F5kqmYd8
+
+## v1.1 shadcn standard-token migration + preset b3F5kqmYd8
 
 ## Overview
 
-This milestone turns resume tailoring into a flagship, trustworthy feature on the existing JobHunter codebase. The work is largely **relocation + canonicalization**, not greenfield: the domain already has the right shapes (`TailoringPlan`, `TailoringChangeAnnotation`, `ArtifactTailoringExplanation`), but they live in opaque `metadata_json`, are recomputed divergently in TypeScript vs Python, and back-fill from sibling files. The journey is dependency-forced: first land a canonical, reasoned **employer analysis** (the root-cause fix for flakey keywords), then attach **per-bullet provenance + granular controls** anchored to that analysis, then run an explicit **voice pass before the final audit** so audited/coverage text equals rendered text, then **rip out the divergent read paths** so the read model serves only canonical rows, and finally — only once all backend audit data is canonical and the broken `generate-materials` path is wired — build the **inspector UI** so it can never mask missing data. Every backend canonicalization lands before any UI, honoring the CLAUDE.md auditability discipline.
+Milestone v1.1 migrates the JobHunter web app from a bespoke token layer to the current shadcn semantic CSS-variable token system using preset `b3F5kqmYd8`. This is not a product-feature milestone. The app must continue to behave like the same local-first operational tool: dashboard, jobs, artifacts, apply review, discovery, profile/preferences/settings, runs, pipelines, debug views, audit surfaces, route behavior, TanStack state, SSE invalidation, and safety boundaries stay intact.
+
+The migration is dependency-forced. First establish the token contract and shadcn CLI/config prerequisites while removing the legacy token API under the Phase 6 clean-slate decision. Then migrate shared primitives, then app shell/layout, then domain/status surfaces. Only after Storybook/a11y/browser QA proves representative workflows in light/dark and density modes should the final cleanup remove dead global CSS, obsolete config remnants, and unused dependencies. This ordering still treats `apps/web/src/styles/globals.css` as the highest-risk blast radius: a hard token rename can pass typecheck while visually breaking dense operational surfaces, so Phase 6 requires browser proof.
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-Decimal phases appear between their surrounding integers in numeric order.
+- Previous milestone v1.0 completed Phases 1-5.
+- This milestone continues numbering at Phase 6.
+- Integer phases are planned milestone work.
+- Decimal phases are reserved for urgent insertions.
 
-- [x] **Phase 1: Canonical Employer Analysis** - Reasoned, reproducible, persisted "ideal candidate" analysis that replaces flakey keyword extraction and drives all tailoring
-- [x] **Phase 2: Per-Bullet Provenance + Granular Controls** - Every bullet records FK-bound evidence × requirement × transform × control × rationale, with never-fabricate enforced deterministically
-- [x] **Phase 3: Voice Pass + Final Audit Against Rendered Text** - De-buzzword/voice transform runs before a final audit so coverage and provenance are computed against the exact rendered text
-- [x] **Phase 4: Read-Model Cleanup (rip-and-replace)** - Retire the sibling-file fallback and TS coverage recompute; read model serves canonical projection rows with cross-runtime parity
-- [x] **Phase 5: Generate-Materials Wiring + Inspector UI** - Fix the broken per-job generation path and expose analysis + provenance + diff + honest missing-state inspection in-app
+- [x] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and clean-slate legacy token removal.
+- [ ] **Phase 7: Shared Primitive Token Migration** - Move shared shadcn/Radix primitives to standard semantic classes with overlay, focus, form, table, and Storybook coverage.
+- [ ] **Phase 8: Layout Chrome, Fonts, And Tabler Icons** - Apply the preset to app shell, topbar, nav, menus, theme/density controls, fonts, and visible iconography without route/workflow changes.
+- [ ] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
+- [ ] **Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
+- [ ] **Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
 
 ## Phase Details
 
-### Phase 1: Canonical Employer Analysis
-**Goal**: A reasoned, reproducible, persisted employer "ideal candidate" analysis becomes the single source of truth that replaces the flakey hardcoded keyword extraction and drives all downstream tailoring.
-**Depends on**: Nothing (first phase)
-**Requirements**: ANALYSIS-01, ANALYSIS-02, ANALYSIS-03, ANALYSIS-04, ANALYSIS-05, ANALYSIS-06
-**Success Criteria** (what must be TRUE):
-  1. Running tailoring on a job produces a persisted `job_employer_analysis` record with structured requirements classified must-have vs nice-to-have and assigned priority/weighting.
-  2. Every keyword in the analysis is tied to a quoted job-description evidence span that is a literal substring of the persisted posting snapshot — the old `_extract_job_keywords` heuristic no longer runs.
-  3. Running analysis twice on the same job snapshot yields a stable requirement and keyword set (reproducibility fixture passes), and the analysis is reused/cached on re-tailor (keyed by snapshot hash) rather than re-reasoned.
-  4. The persisted analysis is served through the canonical read path (projection + DTO, parity across Python and TypeScript builders) and can be read back as an inspectable artifact.
-**Plans**: Implemented outside the GSD loop (PRs #141–#145); verified — see the phase VERIFICATION.md
+### Phase 6: Token Foundation + shadcn Preset Contract
 
-### Phase 2: Per-Bullet Provenance + Granular Controls
-**Goal**: Every generated resume bullet carries a canonical, FK-bound provenance record (evidence × requirement × transform × control × rationale) consuming Phase 1's analysis, with never-fabricate enforced by a deterministic detector independent of the prompt.
-**Depends on**: Phase 1
-**Requirements**: GROUND-01, GROUND-02, GROUND-03, GROUND-04, GROUND-05, CONTROL-01, CONTROL-02, CONTROL-03
-**Success Criteria** (what must be TRUE):
-  1. Each generated bullet has a `job_bullet_provenance` row linking to the canonical profile-evidence item it derives from and the job requirement it serves, recording a transform type from the explicit taxonomy (verbatim / rephrase / reframe / synthesize-from-related / quantify-from-evidence) and a human-readable rationale.
-  2. Provenance is stored as foreign-key bindings, not model-authored free text — a fabricated evidence or requirement ID is hard-rejected at generation time (fabricated-ID fixture proves the reject).
-  3. The governing control rule (rephrase always allowed; invent only for closely-related experience; never fabricate metrics/titles/dates/employers) is recorded per bullet so the user can see what policy produced each line.
-  4. A deterministic numeric/date/title detector runs independently of the prompt: a metrics-hungry job + a numberless profile yields zero unsourced numerics in the output, and every numeric/date/title token traces to recorded profile evidence.
-  5. Provenance is generation-versioned and superseded with its artifact — a failed re-tailor never destroys the last accepted generation's provenance.
-**Plans**: Implemented outside the GSD loop (PRs #141–#145); verified — see the phase VERIFICATION.md
+**Goal:** The app has a standard shadcn semantic token foundation for light/dark themes and the decoded preset, with legacy token names removed from the Phase 6 public token contract.
 
-### Phase 3: Voice Pass + Final Audit Against Rendered Text
-**Goal**: An explicit voice/de-buzzword transform runs before the final audit so the audited and coverage text equals the rendered/PDF text, with provenance and fabrication re-validated after voice and coverage computed honestly against the final canonical text.
-**Depends on**: Phase 2
-**Requirements**: GROUND-06, VOICE-01, VOICE-02, VOICE-03
-**Success Criteria** (what must be TRUE):
-  1. An explicit voice pass de-buzzwords and varies bullet structure, measured by deterministic proxies (buzzword density, structure/length variance), and runs before the final audit.
-  2. Voice edits are recorded as a transform class within provenance — inspectable, not a hidden prompt tweak — and provenance + fabrication checks are re-validated after the voice pass.
-  3. Keyword coverage (covered + missing) is computed against the actual final rendered resume text both renderers consume — a round-trip fixture asserts the audited bullet text equals the rendered text — and the missing list is never suppressed nor inferred from the job description.
-  4. A keyword counts as covered only when it appears in a provenance-backed grounded bullet; unsourced keyword-stuffing and substring false positives do not count as covered.
-**Plans**: Implemented outside the GSD loop (PRs #141–#145); verified — see the phase VERIFICATION.md
+**Depends on:** Milestone v1.0 complete.
 
-### Phase 4: Read-Model Cleanup (rip-and-replace)
-**Goal**: With canonical analysis and provenance rows landed, retire the divergent read paths so the read model serves only canonical projection rows, with cross-runtime projection parity guaranteed.
-**Depends on**: Phase 3
-**Requirements**: AUDIT-01, AUDIT-02
-**Success Criteria** (what must be TRUE):
-  1. The `tailoringExplanationForArtifact` sibling-file fallback and the TypeScript-side coverage recompute are deleted; `read-model.ts` serves analysis, provenance, and coverage exclusively from canonical projection rows.
-  2. A regression fixture reproduces the old embarrassing/synthesized state from canonical data and proves the new path serves correct audit data without any file-heuristic or legacy-column source.
-  3. A cross-runtime projection parity/contract test covers the new audit tables, proving the Python and TypeScript projection builders agree (no schema drift).
-**Plans**: Implemented outside the GSD loop (PRs #141–#145); verified — see the phase VERIFICATION.md
+**Requirements:** TOKEN-01, TOKEN-02, TOKEN-03, TOKEN-04, TOKEN-05, TOKEN-06
 
-### Phase 5: Generate-Materials Wiring + Inspector UI
-**Goal**: Fix the currently-broken per-job generate-materials path and expose the employer analysis, per-bullet provenance, controls, and a diff view in an in-app inspector that renders every missing/covered/unmet state explicitly and never destroys the last accepted artifact.
-**Depends on**: Phase 4
-**Requirements**: INSPECT-01, INSPECT-02, INSPECT-03, INSPECT-04, INSPECT-05, INSPECT-06
 **Success Criteria** (what must be TRUE):
-  1. The user can invoke per-job materials generation from the product surface — the `generate-materials` route no longer returns 400, the button is enabled, and the previously `fixme`'d E2E spec is unskipped and passing.
-  2. The inspector exposes the employer "ideal candidate" analysis (requirements, priorities, reasoned keywords with evidence spans) and per-bullet provenance (evidence × requirement × transform × control × rationale) in-app.
-  3. The inspector shows a diff view (original profile bullet → tailored bullet) and renders missing/empty/covered/unmet states explicitly, with per-state Storybook stories proving missing/embarrassing data is never masked.
-  4. Re-tailor/retry preserves the last accepted artifact: a failed refresh becomes inspectable audit history and never destroys the current reviewable resume.
-**Plans**: Implemented outside the GSD loop (PRs #141–#145); verified — see the phase VERIFICATION.md
-**UI hint**: yes
+
+1. `apps/web/src/styles/tokens.css` and `apps/web/src/styles/globals.css` expose the shadcn standard semantic token set, chart/sidebar/menu tokens, font tokens, and derived radius scale for light and dark themes.
+2. Tailwind 4 can generate semantic utilities such as `bg-background`, `text-foreground`, `bg-card`, `border-border`, `ring-ring`, `bg-primary`, `text-primary-foreground`, `bg-popover`, and `text-popover-foreground` through CSS-first token mappings.
+3. `components.json`, TypeScript aliases, and Vite aliases satisfy current shadcn CLI validation and keep generated/copied components under `apps/web/src/shared/ui`.
+4. The decoded preset values are represented in config/tokens: luma/radix-luma style target, neutral base, sky accents, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
+5. Existing `[data-theme="dark"]` and `data-density` behavior still works, and legacy aliases/utilities are absent from production styling by the Phase 6 exit state.
+
+**Verification:**
+
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm dlx shadcn@latest info -c apps/web` or documented equivalent
+- Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
+- Browser smoke of light/dark token computed values on the app shell
+
+**Plans:** 6/6 plans executed
+Plans:
+**Wave 1**
+
+- [x] 06-01-PLAN.md — Approve SUS package identities before dependency installation.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 06-02-PLAN.md — Install preset dependencies and validate shadcn aliases/config.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 06-03-PLAN.md — Implement CSS-first semantic tokens, density seams, bridge removal, and token tests.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 06-04-PLAN.md — Mechanically migrate core shared primitives and Storybook wrapper utilities.
+- [x] 06-05-PLAN.md — Mechanically migrate overlay/menu primitives and overlay story utilities.
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 06-06-PLAN.md — Add browser computed-token smoke, update docs, and run final proof gate.
+
+### Phase 7: Shared Primitive Token Migration
+
+**Goal:** Shared UI primitives speak the shadcn standard token language, so views and context components can inherit consistent surfaces, borders, focus rings, actions, forms, tables, overlays, and disabled states.
+
+**Depends on:** Phase 6
+
+**Requirements:** PRIM-01, PRIM-02, PRIM-03, PRIM-04, PRIM-05
+
+**Success Criteria** (what must be TRUE):
+
+1. Button, badge, card, input, textarea, select, checkbox, switch, tabs, table/data-grid, skeleton, separator, scroll-area, toast, dialog, sheet/drawer, dropdown, popover, command, and tooltip primitives use standard semantic utilities instead of legacy `bg-paper`, `text-ink`, `border-rule`, `ring-info`, or direct legacy variables.
+2. Overlay primitives are readable in light and dark modes over dense content, with `popover`/surface token pairs and visible focus rings.
+3. Changed primitives preserve behavior, ARIA semantics, keyboard behavior, disabled states, loading/empty states, and stable dimensions.
+4. Colocated tests and/or Storybook stories cover changed variants and open overlay states.
+5. `shared/ui` remains domain-agnostic and does not import context, view, API, query, or domain modules.
+
+**Verification:**
+
+- `pnpm --filter @jobhunter/web test`
+- `pnpm --filter @jobhunter/web test-d` if primitive prop/export types change
+- `pnpm web:storybook:build`
+- `pnpm web:storybook:test` where changed stories are covered
+- Targeted browser smoke for open overlays and keyboard focus in light/dark
+
+**Plans:** Create with `$gsd-plan-phase 7`.
+
+### Phase 8: Layout Chrome, Fonts, And Tabler Icons
+
+**Goal:** The app shell and user-visible chrome adopt the preset visual language while preserving route behavior, theme/density controls, navigation meaning, and operational density.
+
+**Depends on:** Phase 7
+
+**Requirements:** LAYOUT-01, LAYOUT-02, LAYOUT-03, LAYOUT-04, LAYOUT-05
+
+**Success Criteria** (what must be TRUE):
+
+1. Topbar, nav links, brand mark, global search, density selector, theme toggle, connection status/banner, route tabs, and menu states use standard tokens and the preset's subtle translucent menu treatment without lowering readability.
+2. Geist body font and JetBrains Mono heading/technical font load in Vite and Storybook with fallback stacks, and dense routes still fit in compact/regular/comfy density modes.
+3. User-visible lucide imports are migrated or explicitly mapped to Tabler equivalents; icon-only controls keep accessible names and stable dimensions.
+4. Navigation, route search params, loaders, mutations, theme persistence, density persistence, and local-first safety behavior are unchanged.
+5. Topbar/menu surfaces remain readable over Jobs, Apply Review, artifact/PDF, and dark-mode surfaces.
+
+**Verification:**
+
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test`
+- Icon import audit: `rg "lucide-react|@tabler/icons-react" apps/web/src apps/web/package.json`
+- Browser smoke for topbar/nav/theme/density in light/dark and compact/regular/comfy modes
+
+**Plans:** Create with `$gsd-plan-phase 8`.
+
+### Phase 9: Domain And Status Surface Migration
+
+**Goal:** JobHunter's domain states remain semantically distinct after the token migration, with typed tone helpers or explicit variant maps preserving product meaning.
+
+**Depends on:** Phase 8
+
+**Requirements:** STATUS-01, STATUS-02, STATUS-03, STATUS-04, STATUS-05
+
+**Success Criteria** (what must be TRUE):
+
+1. Pipeline stage states, score tiers, artifact statuses, apply statuses, connection statuses, discovery/source health, dashboard funnel/KPI tones, audit warnings, stale states, missing states, blocked states, running states, and failed states remain visually distinguishable in light and dark themes.
+2. Context-owned tone helpers or explicit variant maps remain the source of domain-to-visual mapping; no context defines global token variables or relies on unscannable dynamic Tailwind utility strings.
+3. Stage-state parity and status fixtures cover every discriminant/state arm that has user-visible styling.
+4. Chart/data-series tokens are not used as lifecycle/status colors unless the component is actually a data-series chart.
+5. Tailoring inspector, apply-review, audit history, missing provenance, failed workflow, stale scoring, and destructive warning states remain readable and honest.
+
+**Verification:**
+
+- `pnpm --filter @jobhunter/web test`
+- `pnpm --filter @jobhunter/web test-d` if discriminant/status types change
+- Existing parity tests, including `every-stage-state-has-badge.test.tsx`
+- Browser smoke for Dashboard, Jobs, Apply Review, Artifacts, Pipelines, and Debug status surfaces
+- Legacy/dynamic class audit for status components and global status selectors
+
+**Plans:** Create with `$gsd-plan-phase 9`.
+
+### Phase 10: Route Visual QA + Storybook/A11y Hardening
+
+**Goal:** The migration is proven across representative JobHunter workflows, overlays, themes, density modes, Storybook states, and accessibility gates using synthetic or seeded data only.
+
+**Depends on:** Phase 9
+
+**Requirements:** QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
+
+**Success Criteria** (what must be TRUE):
+
+1. Required web checks for touched surfaces pass: typecheck, build, unit/component tests, type-level tests when applicable, Storybook/a11y where primitives/stories changed, and targeted E2E/browser smoke for route-level behavior.
+2. Browser QA opens representative routes and overlays in light and dark: `/dashboard`, `/jobs`, job detail, `/artifacts`, artifact detail, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`.
+3. Compact, regular, and comfy density modes are checked on table/list-heavy surfaces, with focus rings, destructive controls, forms, menus, dialogs, sheets, popovers, and select/dropdown controls visible and usable.
+4. Changed Storybook stories introduce no new critical or serious axe violations; any pre-existing a11y deferral remains documented in the owning backlog.
+5. QA evidence uses only synthetic or seeded data and does not expose sensitive profile/application/material/log/database/browser data.
+6. QA does not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless explicitly requested by the user.
+
+**Verification:**
+
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test`
+- `pnpm web:storybook:build`
+- `pnpm web:storybook:test`
+- Targeted `pnpm --filter @jobhunter/web e2e` specs or documented browser QA with screenshots
+- `git diff --check`
+
+**Plans:** Create with `$gsd-plan-phase 10`.
+
+### Phase 11: Alias And Global CSS Cleanup
+
+**Goal:** Remove dead global CSS, obsolete config remnants, residual legacy references, and unused styling dependencies once migrated surfaces have passed semantic, visual, and accessibility checks.
+
+**Depends on:** Phase 10
+
+**Requirements:** CLEAN-01, CLEAN-02, CLEAN-03, CLEAN-04
+
+**Success Criteria** (what must be TRUE):
+
+1. Grep proves no production references remain to legacy token variables or utility names outside intentional test fixtures or migration notes.
+2. Obsolete Tailwind color names, dead config references, and any residual compatibility artifacts are removed from token/config files, and removed classes have named replacements.
+3. Unused icon/font dependencies are removed only after import audits prove they are no longer used.
+4. Global CSS cleanup is mechanical and does not remove view-specific styling unless that styling has an implemented replacement.
+5. Owning docs/configs are updated narrowly for the final shadcn token, icon, font, and QA expectations.
+
+**Verification:**
+
+- Legacy audit: `rg "var\\(--bg|var\\(--paper|var\\(--ink|bg-paper|text-ink|border-rule|ring-info|--danger|--warn|--ok|--info" apps/web/src apps/web/tailwind.config.ts`
+- Icon/font/dependency import audit
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test`
+- Targeted browser smoke proving cleanup did not regress light/dark/density surfaces
+- `git diff --check`
+
+**Plans:** Create with `$gsd-plan-phase 11`.
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Canonical Employer Analysis | via PR | Complete (verified) | 2026-06-09 |
-| 2. Per-Bullet Provenance + Granular Controls | via PR | Complete (verified) | 2026-06-09 |
-| 3. Voice Pass + Final Audit Against Rendered Text | via PR | Complete (verified) | 2026-06-09 |
-| 4. Read-Model Cleanup (rip-and-replace) | via PR | Complete (verified) | 2026-06-09 |
-| 5. Generate-Materials Wiring + Inspector UI | via PR | Complete (verified) | 2026-06-09 |
+| 6. Token Foundation + shadcn Preset Contract | 6/6 | Complete | 2026-06-10 |
+| 7. Shared Primitive Token Migration | 0/? | Pending | - |
+| 8. Layout Chrome, Fonts, And Tabler Icons | 0/? | Pending | - |
+| 9. Domain And Status Surface Migration | 0/? | Pending | - |
+| 10. Route Visual QA + Storybook/A11y Hardening | 0/? | Pending | - |
+| 11. Alias And Global CSS Cleanup | 0/? | Pending | - |
+
+## Coverage
+
+| Requirement Group | Requirements | Phase |
+|-------------------|--------------|-------|
+| Token Foundation | TOKEN-01 through TOKEN-06 | Phase 6 |
+| Shared Primitives | PRIM-01 through PRIM-05 | Phase 7 |
+| Layout, Fonts, Icons | LAYOUT-01 through LAYOUT-05 | Phase 8 |
+| Domain/Status Semantics | STATUS-01 through STATUS-05 | Phase 9 |
+| QA and Accessibility | QA-01 through QA-06 | Phase 10 |
+| Cleanup and Documentation | CLEAN-01 through CLEAN-04 | Phase 11 |
+
+**Coverage summary:** 31 of 31 v1.1 requirements mapped. Unmapped: 0.
+
+## Next Up
+
+**Phase 7: Shared Primitive Token Migration** - Discuss and plan the next migration slice on top of the completed Phase 6 token foundation.
+
+`$gsd-discuss-phase 7`
+
+Also available: `$gsd-plan-phase 7` after the Phase 7 discussion context is complete.
+
+---
+*Roadmap created: 2026-06-09*
+*Last updated: 2026-06-09 after milestone v1.1 initialization*

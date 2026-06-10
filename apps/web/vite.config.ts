@@ -14,6 +14,11 @@ export default defineConfig({
     tailwindcss(),
   ],
   root: fileURLToPath(new URL(".", import.meta.url)),
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   envPrefix: "VITE_",
   server: {
     port: 5173,

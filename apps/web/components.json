@@ -1,10 +1,10 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "default",
+  "style": "radix-luma",
   "rsc": false,
   "tsx": true,
   "tailwind": {
-    "config": "tailwind.config.ts",
+    "config": "",
     "css": "src/styles/globals.css",
     "baseColor": "neutral",
     "cssVariables": true,
@@ -17,5 +17,9 @@
     "lib": "@/shared/lib",
     "hooks": "@/shared/hooks"
   },
-  "iconLibrary": "lucide"
+  "iconLibrary": "tabler",
+  "menuColor": "default-translucent",
+  "menuAccent": "subtle",
+  "rtl": false,
+  "registries": {}
 }

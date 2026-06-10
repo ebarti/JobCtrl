@@ -27,7 +27,7 @@ type Story = StoryObj<typeof meta>;
 
 export const Palette: Story = {
   render: () => (
-    <Command className="w-72 rounded-md border border-rule">
+    <Command className="w-72 rounded-md border border-border">
       <CommandInput placeholder="Search jobs, companies, runs..." />
       <CommandList>
         <CommandEmpty>No matches.</CommandEmpty>
@@ -46,7 +46,7 @@ export const Palette: Story = {
 
 export const EmptyState: Story = {
   render: () => (
-    <Command className="w-72 rounded-md border border-rule">
+    <Command className="w-72 rounded-md border border-border">
       <CommandInput placeholder="Search jobs..." defaultValue="zzzzzzzz" />
       <CommandList>
         <CommandEmpty>No matches.</CommandEmpty>

@@ -18,7 +18,7 @@ Table.displayName = "Table";
 
 export const TableHeader = forwardRef<HTMLTableSectionElement, HTMLAttributes<HTMLTableSectionElement>>(
   ({ className, ...props }, ref) => (
-    <thead ref={ref} className={cn("[&_tr]:border-b border-rule", className)} {...props} />
+    <thead ref={ref} className={cn("[&_tr]:border-b border-border", className)} {...props} />
   ),
 );
 TableHeader.displayName = "TableHeader";
@@ -32,14 +32,14 @@ TableBody.displayName = "TableBody";
 
 export const TableFooter = forwardRef<HTMLTableSectionElement, HTMLAttributes<HTMLTableSectionElement>>(
   ({ className, ...props }, ref) => (
-    <tfoot ref={ref} className={cn("border-t border-rule bg-paper-2 font-medium", className)} {...props} />
+    <tfoot ref={ref} className={cn("border-t border-border bg-muted/50 font-medium", className)} {...props} />
   ),
 );
 TableFooter.displayName = "TableFooter";
 
 export const TableRow = forwardRef<HTMLTableRowElement, HTMLAttributes<HTMLTableRowElement>>(
   ({ className, ...props }, ref) => (
-    <tr ref={ref} className={cn("border-b border-rule transition-colors hover:bg-paper-2", className)} {...props} />
+    <tr ref={ref} className={cn("border-b border-border transition-colors hover:bg-muted/50", className)} {...props} />
   ),
 );
 TableRow.displayName = "TableRow";
@@ -49,7 +49,7 @@ export const TableHead = forwardRef<HTMLTableCellElement, ThHTMLAttributes<HTMLT
     <th
       ref={ref}
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium text-muted [&:has([role=checkbox])]:pr-0",
+        "h-10 px-2 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
         className,
       )}
       {...props}
@@ -71,7 +71,7 @@ TableCell.displayName = "TableCell";
 
 export const TableCaption = forwardRef<HTMLTableCaptionElement, HTMLAttributes<HTMLTableCaptionElement>>(
   ({ className, ...props }, ref) => (
-    <caption ref={ref} className={cn("mt-4 text-sm text-muted", className)} {...props} />
+    <caption ref={ref} className={cn("mt-4 text-sm text-muted-foreground", className)} {...props} />
   ),
 );
 TableCaption.displayName = "TableCaption";

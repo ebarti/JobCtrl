@@ -1,169 +1,221 @@
-# Project Research Summary
+# Research Summary: shadcn Standard-Token Migration
 
-**Project:** JobHunter — Grounded Resume Tailoring
-**Domain:** Grounded, inspectable, provenance-tracked LLM resume tailoring on an existing DDD/hexagonal local-first pipeline
-**Researched:** 2026-06-08
-**Confidence:** HIGH (stack + architecture), MEDIUM-HIGH (pitfalls), MEDIUM (features — competitor specifics directional)
+**Milestone:** shadcn standard-token migration + preset `b3F5kqmYd8`
+**Decoded preset:** `menuColor=default-translucent`, `menuAccent=subtle`, `radius=medium`, `font=geist`, `iconLibrary=tabler`, `theme=sky`, `baseColor=neutral`, `style=luma`, `chartColor=amber`, `fontHeading=jetbrains-mono`
+**Synthesized:** 2026-06-09
+**Overall confidence:** HIGH for stack/config direction and architecture placement; MEDIUM-HIGH for exact visual QA scope because the current global CSS blast radius is large.
 
 ## Executive Summary
 
-This is a **subsequent milestone on a mapped, shipping codebase**, not a greenfield build. The repo already contains almost the exact data shapes this milestone needs — `TailoringPlan`, `TailoringChangeAnnotation`, and the `ArtifactTailoringExplanation` contract are near-perfect — but they live in the wrong place: serialized into opaque `metadata_json` blobs, recomputed divergently in TypeScript vs Python, and back-filled from sibling files on disk. The flakey keyword extraction users complain about is a pair of hardcoded stopword/high-signal lists in `quality.py::_extract_job_keywords`. So the dominant character of the work is **relocation + canonicalization**: make the existing domain structures first-class persisted rows (`job_employer_analysis`, `job_bullet_provenance`), project them once, and rip out the file-heuristic and TS-side recompute (single-user rip-and-replace, no compat shims).
+This milestone is a visual-system and shared-UI infrastructure migration, not a new JobHunter product feature. JobHunter should keep its existing local-first workflows, DDD/frontend bounded-context architecture, TanStack state model, routes, query keys, SSE invalidation behavior, audit surfaces, and safety constraints. The visible outcome should be a coherent shadcn standard-token skin matching preset `b3F5kqmYd8`: neutral base surfaces, sky action/accent language, amber chart/data emphasis, medium radii, Geist body text, JetBrains Mono headings/technical labels, subtle translucent menu treatment, and Tabler iconography.
 
-The recommended technique stack is deliberately minimal and provider-agnostic: keep the existing hand-rolled `LlmPort`/`httpx` client (no LangChain/agent frameworks), add **Pydantic v2** typed models feeding the already-supported `response_schema`, **validator-driven re-ask** to make "never fabricate" a machine-checked invariant, **quote-first/span-anchored extraction** to cure flakey keywords, and **rapidfuzz** for deterministic coverage/provenance verification against the actual generated text. A critical fork must be decided up front: the codebase default model is **Gemini (`gemini:gemini-3.5-flash`), not Claude** as PROJECT.md's constraint assumed. Claude's two strongest grounding features (native Structured Outputs and Citations) require adding an Anthropic Messages adapter, **cannot be combined in one call**, and prefill is removed on Claude 4.6+. The research recommends the **portable validator-based path** as the core (works on Gemini and Claude-via-compat today), with the Anthropic adapter as an optional accelerator for the high-stakes analysis/provenance calls.
+The recommended approach is compatibility first. Introduce shadcn semantic CSS variables and Tailwind v4 `@theme inline` mappings before removing the old JobHunter token vocabulary. Keep temporary aliases for `--bg`, `--paper`, `--ink`, `--rule`, `--info`, `--danger`, `--warn`, `--ok`, `--font`, `--mono`, and `--row` until shared primitives, layout chrome, views, and status components are migrated and grep-clean. A hard switch to `bg-background`, `text-foreground`, `border-border`, and `ring-ring` without aliases will compile selectively but visually break global CSS, dynamic status classes, and dense operational surfaces.
 
-The risk profile is dominated by **auditability integrity** — exactly the discipline CLAUDE.md mandates. The five must-not-violate invariants: (1) provenance is FK bindings to canonical profile-evidence and requirement IDs, never model-authored free text; (2) coverage = analysis-keywords minus present-in-final-rendered-text, computed at generation time, never inferred from the JD; (3) the voice pass must run **before** the final audit so audited text equals rendered text; (4) re-tailor must version generations and never destroy the last accepted artifact; (5) the inspector must render missing/embarrassing states explicitly, never mask them. A hard prerequisite blocks everything user-facing: per-job `generate-materials` currently returns 400 / button disabled / E2E fixme'd — the inspector UI is unreachable until that vertical slice is wired.
+The main risk is broad visual regression hidden inside a mechanically simple token rename. `apps/web/src/styles/globals.css` currently owns much more than base CSS: topbar, cards, dashboards, tables, drawers, apply review, scoring, pipeline, artifacts, source registry, and forms. Roadmap phases should therefore establish the token contract first, migrate shared primitives second, preserve domain/status semantics third, harden Storybook/a11y/visual QA fourth, and only then remove compatibility aliases and dead global CSS.
 
-## Key Findings
+## Stack Additions
 
-### Recommended Stack
+Recommended package/config additions are narrow and frontend-only:
 
-The existing TS/React/Fastify/Python/Temporal/SQLite stack is out of scope. This milestone adds only *techniques and lightweight libraries* to the Python LLM pipeline. The client already supports JSON-Schema structured output (`chat_json(response_schema=...)`) over OpenAI-compat and Gemini-native paths — harden and use it, do not replace the transport. See `STACK.md`.
+| Addition | Why |
+| --- | --- |
+| `shadcn` | Needed if importing `shadcn/tailwind.css`; use CLI as generator/probe, not as uncontrolled rewrite. |
+| `tw-animate-css` | Current shadcn Tailwind 4 animation path; `tailwindcss-animate` is deprecated for this path. |
+| `@fontsource-variable/geist` | Preset body font. |
+| `@fontsource-variable/jetbrains-mono` | Preset heading/technical font. |
+| `@tabler/icons-react` | Preset icon library. Keep `lucide-react` until all imports are migrated. |
+| `@types/node` dev dependency | Needed for Vite alias setup using Node path imports. |
 
-**Core technologies:**
-- **Pydantic v2**: typed models for job-analysis, provenance, and tailoring-decision records — `model_json_schema()` feeds the existing `response_schema`; validators enforce grounding. Already idiomatic in the DDD code.
-- **Validator-driven re-ask** (hand-rolled, or optionally **Instructor**): rejects ungrounded output and re-asks — turns "never fabricate metrics/dates" into a machine-checked invariant, not a prompt hope.
-- **rapidfuzz**: deterministic verification that a bullet's cited span exists in profile/JD text, and that coverage is computed against the *actual generated resume text*.
-- **Quote-first / span-anchored extraction + temperature=0 + XML-tagged prompts**: Anthropic's grounding recipe; the direct cure for "flakey/random" keywords.
-- **Optional Anthropic Messages adapter** (Claude Structured Outputs + Citations): strongest provenance fidelity, but provider-locked, two features cannot share a call, and not reachable through today's transport.
+Required config shape:
 
-**Do NOT use:** LangChain/agent frameworks; Claude response **prefilling** (400 on 4.6+); `budget_tokens` (deprecated, use `effort`); combining Citations + Structured Outputs in one call (400); inferring coverage from the JD alone; provider-default temperature for extraction.
+- `apps/web/components.json` should target `style: "radix-luma"`, `iconLibrary: "tabler"`, `baseColor: "neutral"`, CSS variables enabled, aliases still pointing at `@/shared/ui`, `@/shared/lib`, and `@/shared/hooks`.
+- Add `@/* -> ./src/*` to `apps/web/tsconfig.json` and Vite `resolve.alias["@"]`; the shadcn CLI currently fails alias validation without this.
+- Use `corepack pnpm dlx shadcn@latest apply b3F5kqmYd8 --only theme -y -c apps/web` only after alias setup. Avoid full `apply`; the probe rewrote 22 UI files, created new files, and added broader package changes including `radix-ui`.
+- Final Tailwind v4 target should be CSS-first with standard shadcn variables exposed through `@theme inline`. Keep existing Tailwind config legacy mappings only as an interim bridge.
 
-### Expected Features
+Do not add `radix-ui` or run `shadcn migrate radix` unless the milestone expands to regenerating local primitives. The current architecture already owns shadcn/Radix primitives under `apps/web/src/shared/ui/`.
 
-The category baseline is "keyword match + rewrite"; JobHunter's moat is **inspectability-first** — exposing *why* each line exists and *how aggressively* it may transform. See `FEATURES.md`.
+## Feature Table Stakes
 
-**Must have (table stakes):**
-- Structured, reasoned JD requirement extraction (must-have vs nice-to-have) replacing the flakey scrape
-- Reasoned keywords tied to JD evidence; coverage computed on actual generated text
-- Per-bullet rewrite anchored to a real profile fact + the JD requirement it serves
-- Never-fabricate guardrail recorded as the *rule that produced the bullet*
-- Diff view (original → tailored); editable output; PDF render (exists)
-- Preserve last accepted artifact across re-tailor (CLAUDE.md mandate)
-- **Per-job generate-materials wiring — currently broken; prerequisite for the inspector to be reachable**
+This milestone succeeds if existing JobHunter workflows are preserved while the visual language becomes consistent.
 
-**Should have (competitive differentiators):**
-- Persisted, inspectable "ideal candidate" employer analysis (the flagship upstream fix)
-- Full per-bullet provenance card: evidence × requirement × transform-type × human rationale
-- Transform-type taxonomy + granular control model with the governing rule recorded per decision
-- Voice/authenticity controls as recorded transforms; in-app inspector exposing analysis + provenance + policy
+Must-have behavior:
 
-**Defer (v2+):**
-- Formal eval / golden-fixture harness (explicitly the planned *next* milestone)
-- Cover-letter tailoring on the shared analysis; voice calibration from user samples; multi-resume variants
-- Anti-features to refuse: auto-invented metrics, keyword stuffing, single ATS headline score, mass auto-apply, suppressing missing-keyword lists, sibling-file synthesized artifacts
+- Standard semantic token coverage for backgrounds, foreground text, cards, popovers, inputs, focus rings, borders, destructive actions, chart tokens, sidebar/menu tokens, and radius scale.
+- Preset fidelity visible in the real app, not only config: sky primary/accent, amber chart/data emphasis, neutral base, medium radius, Geist/JetBrains typography, subtle translucent menu treatment, and Tabler icons.
+- Workflow preservation across dashboard, jobs, job detail/drawer, artifacts, apply review, discovery, profile/preferences/settings, runs, pipelines, and debug views.
+- Light/dark continuity using JobHunter's existing persisted theme preference and `[data-theme="dark"]` behavior unless the ThemeProvider is explicitly migrated.
+- Density continuity for compact/regular/comfy table and list surfaces; density remains app-shell scoped, not a shadcn color token.
+- Navigation/menu polish without IA changes: topbar, nav, global search, density select, theme toggle, and connection status keep their meaning and position.
+- Action hierarchy remains clear: primary, secondary, ghost, outline, link, and destructive variants map to shadcn semantics without weakening dangerous-action cues.
+- Status semantics remain meaningful: success, warning, running/info, failed/destructive, pending/muted, stale/skipped/canceled. Domain states must not be flattened into generic `primary`/`secondary`.
+- Audit surfaces stay honest and readable. The migration must not hide missing provenance, failed workflow states, stale scoring, destructive warnings, or apply-review evidence through low contrast or layout changes.
+- Accessibility baseline remains intact: keyboard focus, contrast, aria labels, Radix focus handling, disabled states, Storybook a11y, and route-level QA.
 
-### Architecture Approach
+Explicitly out of scope:
 
-Everything stays inside the **Materials + Operations** contexts — no new bounded context, no new top-level pipeline stage. Employer analysis is modeled as `AnalyzeJobUseCase` run as a `_run_analyze` sub-step at the front of `_run_tailor` (adding a stage would force synchronized edits across 6 surfaces + the StageBadge parity test). The architectural job is to convert existing transient/`metadata_json` structures into canonical DB rows projected by a single owner, eliminating the TS↔Python divergence and the sibling-file fallback. See `ARCHITECTURE.md`.
+- New discovery, scoring, tailoring, apply, profile, hosted/auth, analytics, or worker-backed workflows.
+- Full product redesign, route/information-architecture changes, marketing-style dashboards, advanced user theme customization, new charting library, motion system, visual-regression platform rollout, or permanent compatibility shims.
 
-**Major components:**
-1. **`EmployerAnalysis` aggregate + `AnalyzeJobUseCase`** — persisted "ideal candidate": role framing, prioritized must/nice requirements, reasoned keywords each tied to a quoted JD span. Replaces `_extract_job_keywords`. New `job_employer_analysis` table, keyed by `(tenant, job, generation)` + snapshot hash for caching.
-2. **`BulletProvenance` entity** — one canonical row per generated bullet: evidence FK × requirement FK × transform-type enum × control × rationale, with `generated_text` as the coverage anchor. New `job_bullet_provenance` table. Reuses existing `build_tailoring_change_annotations` logic — the change is *persist its output as rows* computed against the selected candidate's rendered text.
-3. **Single-owner projection + read-model cleanup** — project new rows in `projection_builder.py` with `apps/api/projections.ts` parity; `read-model.ts` serves rows only; **delete** the `tailoringExplanationForArtifact` sibling-file fallback and the TS `textCoverage` recompute.
-4. **Inspector UI** — `EmployerAnalysisPanel` + `BulletProvenanceList` in `contexts/materials/components/`, composed by jobs/apply-review views, consumed via Operations hooks; new events flow through `handlers.ts` + `every-event-has-handler.test.ts` parity.
+## Architecture Integration
 
-### Critical Pitfalls
+Treat tokens as styling infrastructure at the frontend shared boundary, not as domain data. They belong in:
 
-1. **Hallucinated provenance** — model invents plausible evidence/requirement IDs. Avoid: provenance is FK bindings into pre-supplied canonical ID sets, validated at generation time (fabricated ID → hard reject); quoted JD spans verified as literal substrings of the snapshot.
-2. **Reproducible-looking but non-reproducible keywords** — "reasoning costume" over invisible randomness. Avoid: anchor every keyword to a JD span, temperature=0, and a reproducibility fixture asserting stable keyword set + must/nice split across two runs on the same snapshot.
-3. **Fabricated metrics leak past prompt rules** — defense-in-depth, not prompt-only: a deterministic numeric/date detector requiring every number to trace to profile evidence; per-decision control recorded.
-4. **Provenance/coverage drifts from rendered text** — audit computed on early JSON goes stale after repair/voice/render. Avoid: sequence voice **before** final audit; compute coverage against the final canonical text both renderers consume; carry stable bullet identity through transforms; round-trip fixture.
-5. **Audit synthesized from heuristics/sibling files** (the existing tech-debt habit) — capture at generation time, persist canonically; missing keywords = analysis − present-in-final-text; remove sibling/legacy sources.
-6. **Re-tailor destroys accepted artifact** — version generations; the "current" pointer advances only on approval; failed runs become history.
-7. **Prose still reeks of AI** — voice is an explicit pass with deterministic proxies (buzzword density, structure/length variance); re-validate provenance + fabrication after the voice pass.
-8. **Latency/cost blowup** — cache/persist the analysis (reused on re-tailor), per-stage budgets + total-call cap, prefer deterministic checks over judge calls, bound loops.
-9. **Inspector masks missing data** — render distinct present/missing/covered/missing-must-have states; per-state Storybook stories as the gate.
-10. **Coverage gamed by keyword stuffing** — count covered only when in a provenance-backed grounded bullet; token/lemma-aware matching; surface stuffing as a voice smell.
+- `apps/web/src/styles/tokens.css`: canonical semantic CSS variables for theme and density compatibility.
+- `apps/web/src/styles/globals.css`: Tailwind imports/base styles and temporary legacy selectors; this file should shrink over time.
+- `apps/web/tailwind.config.ts`: interim bridge from CSS variables to utilities; final direction is Tailwind v4 CSS-first `@theme inline`.
+- `apps/web/components.json`: shadcn registry contract and aliases.
+- `apps/web/src/shared/ui/*`: copied/owned shadcn/Radix primitives.
+- `apps/web/src/shared/layout/*`: app shell, topbar, nav, theme/density controls, global search, and connection chrome.
 
-## Implications for Roadmap
+Do not push token vocabulary into bounded contexts as runtime config, stores, query data, or domain enums. Context components may map domain state to visual variants, but the token contract remains shared styling infrastructure. Views stay composers; they should consume shared primitives and context components without creating a parallel design system.
 
-Based on combined research, the dependency-driven ordering is forced: **A (employer analysis) → B+C (provenance + controls, sharing the transform-type taxonomy) → D (voice, before final audit) → E (inspector UI)**, with the broken generate-materials path wired before E is reachable. Backend canonicalization must land before any UI so the inspector never masks missing data.
+Recommended data/style flow:
 
-### Phase 1: Canonical Employer Analysis (root-cause fix)
-**Rationale:** A is the keystone — B, C, D, E all consume the persisted analysis; it is the named root-cause fix for flakey keywords and shallow understanding.
-**Delivers:** `job_employer_analysis` table, `EmployerAnalysis` aggregate + `AnalyzeJobUseCase` + `_run_analyze`, `EmployerAnalyzed` event (+ domain-types mirror), projection (both runtimes) + DTO, `analyze_job` RPC. **Replaces `_extract_job_keywords` outright (no shim).**
-**Addresses:** A1–A4 (reasoned extraction, must/nice + priority, evidence-tied keywords, persisted inspectable artifact).
-**Uses:** Pydantic + `response_schema`, quote-first span anchoring, temperature=0, validator re-ask; cache by snapshot hash.
-**Avoids:** Pitfall 2 (non-reproducible keywords) — reproducibility + span-anchoring fixtures are the gate; Pitfall 8 (cache analysis).
+1. `useUiPreferencesStore` persists theme and density.
+2. `ThemeProvider` writes `data-theme` to `<html>`.
+3. `AppShell` writes `data-density` around app content.
+4. `tokens.css` resolves semantic CSS variables for active theme and density.
+5. Tailwind exposes semantic utilities.
+6. `shared/ui` primitives consume semantic utilities.
+7. `shared/layout`, `views`, and `contexts` compose primitives and add only owner-appropriate layout/tone classes.
 
-### Phase 2: Canonical Per-Bullet Provenance + Controls
-**Rationale:** B requires A's requirement IDs; C requires B's transform taxonomy (the shared seam). Provenance and controls land together because the governing rule is recorded per provenance row.
-**Delivers:** `job_bullet_provenance` table, `BulletProvenance` entity + `TransformType`/`ControlRule` enums, extended `TailorResumeUseCase` emitting rows computed vs generated text and consuming the persisted analysis, `BulletProvenanceRecorded` event + projection + DTO extension; per-decision `control` threaded through; generation-versioned + superseded with its artifact.
-**Addresses:** B1–B4, C1.
-**Implements:** `BulletProvenance` component; reuses `build_tailoring_change_annotations`.
-**Avoids:** Pitfall 1 (FK bindings + ID validation), Pitfall 3 (numeric/date detector + per-decision rule), Pitfall 5 (generation-time canonical capture), Pitfall 6 (generation versioning, non-destructive re-tailor).
+Key repo anchors:
 
-### Phase 3: Voice Pass + Final Audit Against Rendered Text
-**Rationale:** Voice must run **before** the final audit so audited/coverage text equals rendered/PDF text; coverage drift (Pitfall 4) is the highest-alignment auditability risk.
-**Delivers:** explicit voice/de-buzzword transform stage with deterministic proxies (buzzword density, structure/length variance), provenance + fabrication re-validation after voice, coverage computed once against the final canonical text both renderers consume; stable bullet identity through transforms.
-**Addresses:** Pillar D; honest coverage table stakes.
-**Avoids:** Pitfall 4 (round-trip fixture: audited bullet text == rendered text), Pitfall 7 (voice proxies + re-validation), Pitfall 10 (coverage gaming — covered only when provenance-backed).
+- `docs/architecture.md:440-456`: current frontend stack includes Vite, React 19, Tailwind 4 tokens, shadcn/Radix primitives, TanStack Router/Query/Table/Form, Zustand, Vitest, Playwright, Storybook/a11y.
+- `docs/frontend-target.md:1025-1072`: shadcn/Radix primitive layer plus Tailwind/CSS-variable theme architecture.
+- `docs/local-reliability-qa.md:3-32` and `docs/local-reliability-qa.md:121-178`: frontend QA, browser smoke, a11y, and materials/apply-review inspector expectations.
+- `apps/web/components.json`: current shadcn config already uses CSS variables, neutral base, `src/styles/globals.css`, `@/shared/ui`, and lucide.
+- `apps/web/src/styles/tokens.css`: current bespoke token source.
+- `apps/web/src/styles/globals.css`: high-blast-radius global and view styling surface.
+- `apps/web/tailwind.config.ts`: current bespoke Tailwind aliases.
+- `apps/web/src/shared/ui/button.tsx`, `card.tsx`, `badge.tsx`, overlay primitives, and table primitives: first TypeScript migration surface.
 
-### Phase 4: Read-Model Cleanup (rip-and-replace)
-**Rationale:** With canonical rows landed, retire the divergent read paths — directly closes two named CONCERNS.md risks (projection duplication, sibling-file synthesis).
-**Delivers:** delete `tailoringExplanationForArtifact` sibling-file fallback + TS `textCoverage` recompute; `read-model.ts` serves projection rows only; cross-runtime projection parity fixture; a regression fixture reproducing the old embarrassing state from canonical data.
-**Avoids:** Pitfall 5; projection-parity drift.
-*(May fold into Phase 2/3 tails if the slices are small; kept distinct so the cleanup is an explicit gate.)*
+## Watch Outs
 
-### Phase 5: Per-Job Generate-Materials Wiring + Inspector UI
-**Rationale:** The inspector is unreachable until the broken per-job generate-materials path (400 / disabled button / E2E fixme) is wired. UI comes last so it only ever renders honest, canonical backend data.
-**Delivers:** wire the generate-materials vertical slice; `EmployerAnalysisPanel` + `BulletProvenanceList` (+ `.test.tsx`, per-state `.stories.tsx`, `.a11y.test.tsx`) composed into `TailoringExplanationSection`, jobs detail, apply-review; `useArtifactDetailQuery` extension; `handlers.ts` invalidation + `every-event-has-handler.test.ts` parity; diff view; current-vs-history surfacing.
-**Addresses:** Pillar E; per-job invocation; diff view; preserve-on-re-tailor visibility.
-**Avoids:** Pitfall 9 (per-state stories proving missing/embarrassing states render explicitly, not blank).
+Top pitfalls and prevention:
 
-### Phase Ordering Rationale
+| Risk | Prevention |
+| --- | --- |
+| Deleting legacy variables too early | Add shadcn variables and legacy aliases in the same foundation phase; remove aliases only after grep proves no production references remain. |
+| Tailwind utilities not generated | Use Tailwind v4 `@theme inline` mappings for shadcn semantic tokens; do not rely on plain `:root` variables alone. |
+| Dark-mode selector split | Preserve `[data-theme="dark"]` for this milestone unless ThemeProvider is explicitly changed; align CSS, Tailwind dark variant, Storybook, and E2E to the same selector. |
+| Token pairs mapped backward | Build and verify a matrix for surface/foreground pairs: background, card, popover, primary, secondary, muted, accent, destructive, border, input, ring, chart, sidebar/menu. |
+| Domain status meaning flattened | Keep success/warning/info/destructive/muted domain semantics in typed context helpers/components; use standard tokens as rendering primitives, not as domain vocabulary. |
+| Dynamic classes missed | Audit `StageBadge`, `ScoreBadge`, `StatusDot`, `SegmentBar`, status pills, and global semantic classes; use explicit variant maps or keep intentional CSS until migrated. |
+| Translucent menus reduce readability | Use `popover`/`popover-foreground` for overlays by default; test any translucent treatment over dense Jobs, Apply Review, PDF preview, and dark mode. |
+| Focus rings become invisible | Map `--ring` deliberately and run keyboard focus sweeps for buttons, inputs, tabs, dropdown items, dialogs, sheets, data-grid headers, and destructive controls. |
+| Font/radius changes destabilize dense layouts | Treat typography and radius as visual phases with table, profile, apply-review, and PDF preview smoke; do not blanket `rounded-xl` operational UI. |
+| Storybook/a11y false confidence | Inventory `a11y.test = "off"` stories; changed primitives need open-state stories and a11y coverage or documented deferrals. |
+| Visual snapshots rubber-stamp regressions | Run semantic checks for status colors, focus rings, menu readability, and dark mode before accepting snapshot changes. |
+| Sensitive data leaks into QA artifacts | Use synthetic/seeded data only. Do not run auto-apply, real generation, mailbox scanning, browser submission, real resumes, logs, SQLite databases, or generated PDFs unless explicitly requested. |
 
-- **Dependency-forced:** A is consumed by everything; B's requirement IDs gate the B2 edge; C's controls attach to B4's transform taxonomy; voice must precede the final audit; E depends on canonical A4/B3/C1 persistence + the generate-materials fix.
-- **Auditability-first:** every backend canonicalization lands before UI so the inspector cannot mask missing data — directly honoring CLAUDE.md.
-- **Cross-cutting sync per slice:** each phase keeps the documented sync surfaces consistent — new event ⇒ Python factory + domain-types mirror + handlers + parity test; new read-field ⇒ both projection builders + read-model + schemas + web; new RPC ⇒ rpc.ts + local-actions + messages.py + handlers.py. **Do not touch the stage enumeration set.**
+## Recommended Phase Shape
 
-### Research Flags
+1. **Token Foundation**
 
-Phases likely needing deeper research during planning (`/gsd-plan-phase --research-phase`):
-- **Phase 1:** the **provider-model fork** must be decided here — portable validator path (Gemini/Claude-compat today) vs adding an Anthropic Messages adapter (native Structured Outputs/Citations, two-features-can't-combine, prefill removed). This decision conditions the LLM-call design for every later phase.
-- **Phase 2:** provenance granularity for executive-profile vs experience bullets, and whether provenance is a child of `MaterialsSet` (transactional) or a sibling table keyed by generation (gap flagged in ARCHITECTURE.md; transactional preferred). Confirm against the `with_resume_attempt` boundary.
-- **Phase 3:** concrete deterministic voice-proxy thresholds and the exact "final canonical text" artifact both renderers consume.
+   Establish preset tokens in `tokens.css`/`globals.css`, add `@theme inline`, preserve `[data-theme="dark"]`, introduce font/radius/chart/sidebar/menu tokens, and keep legacy aliases. Add the `@/*` alias prerequisite and update `components.json` only as needed for schema-compatible preset alignment. Exit when the app builds with both legacy and shadcn utilities and light/dark computed tokens are verified.
 
-Phases with standard/well-documented patterns (lighter research):
-- **Phase 4:** mechanical rip-and-replace of read paths grounded directly in `read-model.ts` line references.
-- **Phase 5:** follows established frontend conventions (contexts/components/hooks/handlers/stories) once the broken route is diagnosed.
+2. **Shared Primitive Migration**
 
-## Confidence Assessment
+   Migrate `shared/ui` primitives to standard semantic classes: buttons, badges, cards, inputs, selects, dropdowns, dialogs, sheets/drawers, popovers, command, toast, tabs, checkbox, switch, skeleton, separator, scroll area, table/data-grid. This phase owns focus rings, overlay readability, accessible icon controls, and open-state Storybook coverage. Do not change domain status meanings here.
 
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Stack | HIGH | Techniques verified against current Anthropic platform docs (2025–2026) and Instructor docs, cross-checked against the actual LLM client (`llm.py`, `model_defaults.py`). |
-| Features | MEDIUM | Grounded in PROJECT.md/CONCERNS.md/CLAUDE.md (HIGH), but competitor specifics are training-knowledge directional (web search unavailable in the research env). |
-| Architecture | HIGH | Grounded directly in `domain/materials`, contracts, `read-model.ts`, and the web materials context; component placement and build order verified against existing code. |
-| Pitfalls | MEDIUM-HIGH | HIGH where repo-grounded (CONCERNS.md, CLAUDE.md discipline); MEDIUM where based on general grounded-LLM/RAG domain knowledge (external post-mortems not citable in-env). |
+3. **Layout Chrome + Icon/Typography Preset**
 
-**Overall confidence:** HIGH — the milestone is canonicalization of existing, well-understood structures; the main open *decision* (not gap) is the provider-model fork.
+   Apply the preset to app shell surfaces: topbar, nav, global search, theme/density controls, connection banners, menus, and route tabs. Migrate icons through shared/layout and primitives using Tabler equivalents while preserving labels/aria labels and stable dimensions. Verify compact/regular/comfy density and light/dark topbar/menu readability.
 
-### Gaps to Address
+4. **Domain/Status Surfaces**
 
-- **Provider-model fork (decision, not gap):** resolve in Phase 1 planning — portable JSON-Schema + validator re-ask vs Anthropic adapter. PROJECT.md assumed Claude; the codebase default is Gemini. Pick the portable core; treat Citations/Structured-Outputs as an optional accelerator (and never combine them in one call).
-- **Provenance persistence boundary:** transactional-with-`MaterialsSet` vs sibling-table-by-generation — confirm during Phase 2 against `with_resume_attempt`.
-- **Keyword↔evidence-span link format:** quoted `evidence_span` vs char offsets — quoted text is simplest and matches the "explicit source" rule; confirm in Phase 1.
-- **Latency/cost budgets:** the multi-step chain risks the 180s timeout; per-stage budgets + analysis caching + bounded loops should be designed in, with metering surfaced in the Operations view.
-- **Cross-runtime projection parity:** new audit tables must have a single migration source or schema-contract test to avoid the feedback-schema drift precedent.
+   Migrate context-owned status/tone components: pipeline stages, score badges, artifact/apply statuses, status dots, segment bars, dashboard funnel/KPI tones, warning/destructive states, stale/missing audit states. Keep typed tone helpers as the source of domain meaning. Exit with stage-state parity, status fixture coverage, and browser smoke proving failed/blocked/running/succeeded/pending/stale remain distinguishable.
+
+5. **Route Visual QA + Storybook/A11y Hardening**
+
+   Cover representative routes and overlays with seeded data: `/dashboard`, `/jobs`, job detail drawer, `/artifacts`, artifact detail/panel, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`. Build/update Storybook stories for changed primitives and discriminant-state components. Run a11y gates and targeted E2E/browser smoke in light/dark and multiple densities.
+
+6. **Alias and Global CSS Cleanup**
+
+   Remove legacy token aliases, obsolete Tailwind color names, and dead global selectors only after production references are grep-clean. Keep the cleanup mechanical and separately reviewable. Exit when removed aliases/classes have named replacements and visual/semantic checks remain green.
+
+Research flags:
+
+- Phase 1 needs phase-level research if the team intends to rely on `shadcn apply` beyond `--only theme`, because full CLI output is broader than this milestone.
+- Phase 2 needs focused research for exact Tabler replacements only if icon migration is included in the same PR stack.
+- Phase 4 should plan typed status fixtures carefully; this is the highest product-semantics risk.
+- Phases 5 and 6 follow existing repo QA/cleanup patterns and should not require deeper external research.
+
+## Verification Gates
+
+Minimum automated gates:
+
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test`
+- `pnpm --filter @jobhunter/web test-d` if shared UI prop types, exports, or context component contracts change.
+- `pnpm web:storybook:build` and `pnpm web:storybook:test` after primitive/story changes.
+- `pnpm --filter @jobhunter/web e2e` or narrower affected specs for route-level visual workflow changes.
+- `git diff --check`
+
+Targeted migration gates:
+
+- Legacy audit: `rg "var\\(--bg|var\\(--paper|var\\(--ink|bg-paper|text-ink|border-rule|ring-info|--danger|--warn|--ok|--info" apps/web/src apps/web/tailwind.config.ts`
+- Computed-token smoke in light and `[data-theme="dark"]`: `--background`, `--foreground`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--primary`, `--primary-foreground`, `--destructive`, `--border`, `--input`, `--ring`, `--chart-1`, `--chart-2`, and temporary compatibility aliases.
+- Overlay smoke: dropdown, popover, command dialog, sheet, dialog, toast, select, and data-grid filter popover over dense Jobs/Apply Review content.
+- Status smoke: all `STAGE_STATE_KINDS`, score tiers, artifact statuses, connection statuses, funnel segments, warning/destructive audit states, stale/missing states.
+- Icon smoke: all icon-only controls have accessible names and stable dimensions; sort indicators, close/copy buttons, theme toggle, destructive controls, menu check/radio indicators.
+- Font/density smoke: compact/regular/comfy across Jobs table, profile editor, apply-review queue, PDF preview toolbar, and debug/activity rows.
+- Dark-mode smoke: assert the app uses `data-theme="dark"` consistently and overlays/forms/status badges resolve dark tokens correctly.
+- Visual QA smoke with fixed viewport, seeded data, fixed theme/density, disabled animations, and one browser/project baseline. Do not update broad snapshots until semantic checks pass.
+
+Roadmap blockers:
+
+- Block primitive migration if Phase 1 does not preserve legacy aliases and `[data-theme]` behavior.
+- Block domain/status migration if status colors are only visually inspected and not backed by typed fixtures/parity tests.
+- Block cleanup until grep proves legacy references are gone outside intentional compatibility code.
+- Block done status for user-facing phases without browser QA in both light and dark mode.
 
 ## Sources
 
-### Primary (HIGH confidence)
-- `.planning/PROJECT.md` — milestone scope, pillars A–E, constraints, key decisions
-- `.planning/codebase/{ARCHITECTURE.md,STRUCTURE.md,CONCERNS.md}` — existing architecture + tech-debt
-- `CLAUDE.md` — root-cause/auditability discipline
-- Repo code: `domain/materials/{use_cases,quality,value_objects}.py`, `database.py`, `infrastructure/llm/llm_client.py`, `model_defaults.py`, `packages/contracts/src/schemas.ts`, `apps/api/src/read-model.ts`, `apps/web/src/contexts/materials/`
-- platform.claude.com — Structured Outputs, Citations, prompt-engineering best practices (quote-first, XML tags, prefill removal, `effort`)
-- python.useinstructor.com — Pydantic validator re-ask, `from_provider`, retry semantics
+Research files:
 
-### Secondary (MEDIUM confidence)
-- AI resume-tailoring category knowledge (Jobscan, Teal, Rezi, Kickresume, Enhancv, ChatGPT/Claude workflows) — directional competitor analysis
-- General grounded-LLM / RAG-faithfulness domain knowledge — provenance-as-binding, fabrication detection, Goodhart/coverage-gaming, voice-as-separate-pass
+- `.planning/research/STACK.md`
+- `.planning/research/FEATURES.md`
+- `.planning/research/ARCHITECTURE.md`
+- `.planning/research/PITFALLS.md`
 
-### Tertiary (LOW confidence)
-- Specific competitor feature internals — not live-verified (web search unavailable in research env)
+Repo references:
 
----
-*Research completed: 2026-06-08*
-*Ready for roadmap: yes*
+- `README.md`
+- `docs/architecture.md`
+- `docs/frontend-target.md`
+- `docs/local-reliability-qa.md`
+- `docs/local-ts-api.md`
+- `docs/decisions.md`
+- `apps/web/components.json`
+- `apps/web/package.json`
+- `apps/web/src/styles/tokens.css`
+- `apps/web/src/styles/globals.css`
+- `apps/web/tailwind.config.ts`
+- `apps/web/src/shared/ui/*`
+- `apps/web/src/shared/layout/*`
+- `apps/web/src/shared/providers/ThemeProvider.tsx`
+- `apps/web/src/shared/providers/DensityProvider.tsx`
+- `apps/web/src/shared/stores/ui-preferences.ts`
+- `apps/web/src/contexts/operations/invalidation-router.ts`
+- `apps/web/src/contexts/pipeline/components/StageBadge.tsx`
+- `apps/web/src/contexts/scoring/components/ScoreBadge.tsx`
+
+Official external sources:
+
+- shadcn Vite installation: https://ui.shadcn.com/docs/installation/vite
+- shadcn `components.json`: https://ui.shadcn.com/docs/components-json
+- shadcn theming: https://ui.shadcn.com/docs/theming
+- shadcn Tailwind v4 guidance: https://ui.shadcn.com/docs/tailwind-v4
+- shadcn CLI: https://ui.shadcn.com/docs/cli
+- shadcn schema: https://ui.shadcn.com/schema.json
+- shadcn preset URL: https://ui.shadcn.com/create?preset=b3F5kqmYd8
+- shadcn Vite dark mode: https://ui.shadcn.com/docs/dark-mode/vite
+- shadcn chart theming: https://ui.shadcn.com/docs/components/chart
+- Tailwind dark mode: https://tailwindcss.com/docs/dark-mode
+- Tailwind theme variables: https://tailwindcss.com/docs/theme
+- Storybook accessibility testing: https://storybook.js.org/docs/writing-tests/accessibility-testing
+- Playwright visual comparisons: https://playwright.dev/docs/test-snapshots
