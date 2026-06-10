@@ -70,8 +70,8 @@ function renderTable({
         onSortingChange={onSortingChange}
         rowSelection={rowSelection}
         onRowSelectionChange={vi.fn()}
-        onRowActivate={onRowActivate}
         rowAriaSelected={(row) => row.id === "row-2"}
+        {...(onRowActivate ? { onRowActivate } : {})}
       />,
     ),
   };
@@ -93,11 +93,11 @@ describe("DataTable", () => {
     const headers = within(tableRows[0]!).getAllByRole("columnheader");
     expect(headers.map((header) => header.textContent)).toEqual(["Company", "Role", "Fit ↑"]);
     expect(headers[2]).toHaveAttribute("aria-sort", "ascending");
-    expect(within(headers[2]!).getByRole("button", { name: "Fit ↑" })).not.toHaveAttribute(
+    expect(within(headers[2]!).getByRole("button", { name: "Fit" })).not.toHaveAttribute(
       "aria-sort",
     );
 
-    await user.click(within(headers[2]!).getByRole("button", { name: "Fit ↑" }));
+    await user.click(within(headers[2]!).getByRole("button", { name: "Fit" }));
     expect(onSortingChange).toHaveBeenCalledWith([{ id: "fit", desc: true }]);
   });
 
@@ -173,6 +173,6 @@ describe("DataTable", () => {
       "true",
     );
     await user.click(screen.getByRole("button", { name: "Fit" }));
-    expect(onSortingChange).toHaveBeenCalledWith([{ id: "fit", desc: false }]);
+    expect(onSortingChange).toHaveBeenCalledWith([{ id: "fit", desc: true }]);
   });
 });

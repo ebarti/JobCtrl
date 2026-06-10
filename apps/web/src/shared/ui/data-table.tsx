@@ -75,75 +75,85 @@ export function DataTable<TData>({
   });
 
   return (
-    <div className="table">
-      <div className={headerClassName} role="row">
-        {table.getFlatHeaders().map((header) => {
-          const sortDirection = header.column.getIsSorted();
-          const headerClass = cellClassName?.(header.column.id);
-          if (!header.column.getCanSort()) {
-            return (
-              <span key={header.id} className={headerClass ?? "table-head static"}>
-                {flexRender(header.column.columnDef.header, header.getContext())}
-              </span>
-            );
-          }
-          return (
-            <button
-              key={header.id}
-              type="button"
-              aria-sort={
+    <>
+      <div className="table" role="table">
+        <div role="rowgroup">
+          <div className={headerClassName} role="row">
+            {table.getFlatHeaders().map((header) => {
+              const sortDirection = header.column.getIsSorted();
+              const headerClass = cellClassName?.(header.column.id);
+              const ariaSort =
                 sortDirection === "asc"
                   ? "ascending"
                   : sortDirection === "desc"
                     ? "descending"
-                    : "none"
+                    : "none";
+              if (!header.column.getCanSort()) {
+                return (
+                  <span
+                    key={header.id}
+                    className={headerClass ?? "table-head static"}
+                    role="columnheader"
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                  </span>
+                );
               }
-              className={
-                sortDirection
-                  ? `${headerClass ?? "table-head"} active`.trim()
-                  : (headerClass ?? "table-head")
-              }
-              onClick={header.column.getToggleSortingHandler()}
-            >
-              {flexRender(header.column.columnDef.header, header.getContext())}
-              {sortDirection ? (
-                <span aria-hidden="true">{sortDirection === "asc" ? " ↑" : " ↓"}</span>
-              ) : null}
-            </button>
-          );
-        })}
+              return (
+                <span key={header.id} role="columnheader" aria-sort={ariaSort}>
+                  <button
+                    type="button"
+                    className={
+                      sortDirection
+                        ? `${headerClass ?? "table-head"} active`.trim()
+                        : (headerClass ?? "table-head")
+                    }
+                    onClick={header.column.getToggleSortingHandler()}
+                  >
+                    {flexRender(header.column.columnDef.header, header.getContext())}
+                    {sortDirection ? (
+                      <span aria-hidden="true">{sortDirection === "asc" ? " ↑" : " ↓"}</span>
+                    ) : null}
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+        <div role="rowgroup">
+          {table.getRowModel().rows.map((row) => {
+            const ariaSelected = rowAriaSelected?.(row.original) ?? row.getIsSelected();
+            return (
+              <div
+                key={row.id}
+                role="row"
+                tabIndex={onRowActivate ? 0 : undefined}
+                className={rowClassName}
+                aria-selected={ariaSelected}
+                onClick={() => onRowActivate?.(row.original)}
+                onKeyDown={(event) => {
+                  if (!onRowActivate) {
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onRowActivate(row.original);
+                  }
+                }}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <span key={cell.id} className={cellClassName?.(cell.column.id)} role="cell">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </span>
+                ))}
+              </div>
+            );
+          })}
+        </div>
       </div>
       {loading && !loaded ? <Empty title={loadingMessage} /> : null}
-      {table.getRowModel().rows.map((row) => {
-        const ariaSelected = rowAriaSelected?.(row.original) ?? row.getIsSelected();
-        return (
-          <div
-            key={row.id}
-            role={onRowActivate ? "button" : "row"}
-            tabIndex={onRowActivate ? 0 : undefined}
-            className={rowClassName}
-            aria-selected={ariaSelected}
-            onClick={() => onRowActivate?.(row.original)}
-            onKeyDown={(event) => {
-              if (!onRowActivate) {
-                return;
-              }
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onRowActivate(row.original);
-              }
-            }}
-          >
-            {row.getVisibleCells().map((cell) => (
-              <span key={cell.id} className={cellClassName?.(cell.column.id)}>
-                {flexRender(cell.column.columnDef.cell, cell.getContext())}
-              </span>
-            ))}
-          </div>
-        );
-      })}
       {loaded && data.length === 0 ? <Empty title={emptyMessage} /> : null}
       {footer}
-    </div>
+    </>
   );
 }
