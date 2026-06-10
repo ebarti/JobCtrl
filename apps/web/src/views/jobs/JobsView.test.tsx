@@ -213,6 +213,58 @@ describe("<JobsView> bulk delete integration", () => {
     );
   });
 
+  it("keeps selected-row bulk actions enabled during background preparation pickup", async () => {
+    const user = userEvent.setup();
+    const pendingTailor: JobSummary = {
+      ...sampleJob,
+      jobKey: "job-pending-tailor",
+      url: "https://example.com/jobs/job-pending-tailor",
+      title: "Pending Tailor",
+      currentStage: "discover",
+      currentSubstage: "tailor",
+      currentState: "pending",
+    };
+    const activeJob: JobSummary = {
+      ...sampleSecondaryJob,
+      jobKey: "job-active",
+      url: "https://example.com/jobs/job-active",
+      title: "Selectable Active Job",
+      currentStage: "discover",
+      currentSubstage: "discover",
+      currentState: "succeeded",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([pendingTailor, activeJob]));
+    const runJobStage = vi.fn(
+      () => new Promise<ActionRunResponse>(() => {}),
+    );
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+    });
+    const { router, Wrapper } = buildRouter(harness);
+    const { container } = render(<RouterProvider router={router} />, {
+      wrapper: Wrapper,
+    });
+
+    expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
+    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
+
+    const rowCheckboxes = Array.from(
+      container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"),
+    ).filter(
+      (input) =>
+        input.getAttribute("aria-label")?.startsWith("Select ") &&
+        input.getAttribute("aria-label") !== "Select all rows on this page",
+    );
+    await user.click(rowCheckboxes[0]!);
+    await waitFor(() =>
+      expect(screen.getByText("1 selected")).toBeInTheDocument(),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /delete selected/i }),
+    ).not.toBeDisabled();
+  });
+
   it("does not auto-start pending tailor rows that are not likely eligible", async () => {
     const lowFitTailor: JobSummary = {
       ...sampleJob,
