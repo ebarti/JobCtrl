@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed 06-04-PLAN.md
-last_updated: "2026-06-10T00:17:55.363Z"
+stopped_at: Completed 06-05-PLAN.md
+last_updated: "2026-06-10T00:30:00.000Z"
 last_activity: 2026-06-09 -- Phase 06 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 6
-  completed_plans: 4
-  percent: 67
+  completed_plans: 5
+  percent: 83
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 06 (Token Foundation + shadcn Preset Contract) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-06-09 -- Phase 06 execution started
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Active Milestone Summary
 
@@ -81,9 +81,9 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 4 for v1.1
-- Average duration: 8 min
-- Total execution time: 31 min
+- Total plans completed: 5 for v1.1
+- Average duration: 7 min
+- Total execution time: 36 min
 
 ## Accumulated Context
 
@@ -112,6 +112,8 @@ Prior milestone decisions that still matter:
 - [Phase 06]: [Phase 06 Plan 03]: Used corrected Vitest file-filter command for token-contract.test.ts because the planned -- separator runs the full web suite.
 - [Phase 06]: [Phase 06 Plan 04]: Kept core primitive migration mechanical: only class-token utilities changed; exports, variants, Radix wiring, providers, routes, and story behavior stayed unchanged.
 - [Phase 06]: [Phase 06 Plan 04]: Corrected legacy-token grep gates to allow standard shadcn muted utilities while still rejecting bare legacy text-muted and old token names.
+- [Phase 06]: [Phase 06 Plan 05]: Kept overlay/menu primitive migration mechanical: only class-token utilities changed; Radix portals, refs, focus behavior, roles, animations, props, and exports stayed unchanged.
+- [Phase 06]: [Phase 06 Plan 05]: Recovered close-out from committed task evidence after the plan executor stalled before writing its summary.
 
 ### Pending Todos
 
@@ -137,9 +139,10 @@ None.
 | Phase 06 P02 | 12min | 2 tasks | 7 files |
 | Phase 06 P03 | 11min | 3 tasks | 7 files |
 | Phase 06 P04 | 7min | 3 tasks | 14 files |
+| Phase 06 P05 | 5min | 3 tasks | 15 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T00:17:20.019Z
-Stopped at: Completed 06-04-PLAN.md
+Last session: 2026-06-10T00:30:00.000Z
+Stopped at: Completed 06-05-PLAN.md
 Resume file: None

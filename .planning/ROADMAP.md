@@ -50,7 +50,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
 - Browser smoke of light/dark token computed values on the app shell
 
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 Plans:
 **Wave 1**
 
@@ -67,7 +67,7 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 06-04-PLAN.md — Mechanically migrate core shared primitives and Storybook wrapper utilities.
-- [ ] 06-05-PLAN.md — Mechanically migrate overlay/menu primitives and overlay story utilities.
+- [x] 06-05-PLAN.md — Mechanically migrate overlay/menu primitives and overlay story utilities.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -215,7 +215,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Token Foundation + shadcn Preset Contract | 4/6 | In Progress|  |
+| 6. Token Foundation + shadcn Preset Contract | 5/6 | In Progress|  |
 | 7. Shared Primitive Token Migration | 0/? | Pending | - |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 0/? | Pending | - |
 | 9. Domain And Status Surface Migration | 0/? | Pending | - |
