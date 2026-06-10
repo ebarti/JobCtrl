@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed Phase 10
-last_updated: "2026-06-10T14:22:43.000Z"
-last_activity: 2026-06-10 -- Phase 10 route visual QA completed; Phase 11 cleanup is next
+stopped_at: Phases 6-10 merged to main (PRs #151-#155); Phase 11 ready to plan
+last_updated: "2026-06-10T15:45:00.000Z"
+last_activity: 2026-06-10 -- Phases 6-10 squash-merged to main via PRs #151-#155; Phase 11 cleanup is next
 progress:
   total_phases: 6
   completed_phases: 5
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 Phase: 11 (alias-and-global-css-cleanup) — READY TO PLAN
 Plan: create Phase 11 plan
-Status: Phase 10 complete; Phase 11 cleanup is next
-Last activity: 2026-06-10 -- Phase 10 route visual QA completed; Phase 11 cleanup is next
+Status: Phases 6-10 complete and squash-merged to main via PRs #151-#155 (2026-06-10); Phase 11 cleanup is next
+Last activity: 2026-06-10 -- Phases 6-10 squash-merged to main via PRs #151-#155; Phase 11 cleanup is next
 
 Progress: [████████░░] 83%
 
@@ -61,6 +61,8 @@ Phase order:
 | 9 | Domain And Status Surface Migration | Completed |
 | 10 | Route Visual QA + Storybook/A11y Hardening | Completed |
 | 11 | Alias And Global CSS Cleanup | Pending |
+
+Merge status: Phases 6-10 landed on `main` on 2026-06-10 as squash-merged PRs #151-#155 (one squash commit per phase, `4758935..ef6c680`). Pre-merge review found one High issue on #152 — the deliberate CR-01 a11y change moved data-grid row activation from the row body to a per-row "Open" button, but `jobs-drawer.spec.ts` and `materials.spec.ts` still clicked the row body — fixed on the PR by updating both e2e specs before merge. The final merged tree was verified with `pnpm web:check`, `pnpm --filter @jobhunter/web test` (727 passed), `pnpm web:build`, `pnpm api:check`, and `pnpm api:test` (201 passed).
 
 ## Prior Milestone Verification (2026-06-09)
 
