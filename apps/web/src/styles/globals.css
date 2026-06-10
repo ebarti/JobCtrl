@@ -1983,6 +1983,16 @@ textarea {
   border-top: 1px solid var(--border);
 }
 
+.pager .tab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.pager select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 .row-actions {
   display: inline-flex;
   justify-content: flex-end;
