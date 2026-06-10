@@ -212,7 +212,18 @@ Plans:
 - Targeted `pnpm --filter @jobhunter/web e2e` specs or documented browser QA with screenshots
 - `git diff --check`
 
-**Plans:** Create with `$gsd-plan-phase 10`.
+**Plans:** 4 plans ready
+Plans:
+
+**Wave 1**
+
+- [ ] 10-01-PLAN.md - Add representative route visual QA for seeded routes in light/dark themes.
+- [ ] 10-02-PLAN.md - Cover density, focus, overlays, forms, controls, and destructive-control visibility.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 10-03-PLAN.md - Run Storybook/a11y and full web test gates.
+- [ ] 10-04-PLAN.md - Record verification, review/QA outcomes, and reconcile requirements/state.
 
 ### Phase 11: Alias And Global CSS Cleanup
 
