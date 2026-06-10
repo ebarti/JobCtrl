@@ -53,7 +53,7 @@ export const InfoQueued: Story = {
   render: () => (
     <>
       <ToastSeed kind="info" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };
@@ -62,7 +62,7 @@ export const ErrorQueued: Story = {
   render: () => (
     <>
       <ToastSeed kind="error" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };
@@ -71,7 +71,7 @@ export const Stacked: Story = {
   render: () => (
     <>
       <ToastSeed kind="both" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };
@@ -80,7 +80,7 @@ export const ManualTrigger: Story = {
   render: () => (
     <>
       <ToastSeed kind="trigger" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };

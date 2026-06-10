@@ -28,7 +28,7 @@ export const InfoToast: Story = {
         </div>
         <ToastClose />
       </Toast>
-      <ToastViewport />
+      <ToastViewport label="Toast story notifications ({hotkey})" />
     </ToastProvider>
   ),
 };
@@ -43,7 +43,7 @@ export const DestructiveToast: Story = {
         </div>
         <ToastClose />
       </Toast>
-      <ToastViewport />
+      <ToastViewport label="Toast story notifications ({hotkey})" />
     </ToastProvider>
   ),
 };
@@ -59,7 +59,7 @@ export const ActionToast: Story = {
         <ToastAction altText="Resume sync">Resume</ToastAction>
         <ToastClose />
       </Toast>
-      <ToastViewport />
+      <ToastViewport label="Toast story notifications ({hotkey})" />
     </ToastProvider>
   ),
 };
@@ -74,7 +74,7 @@ export const CustomCloseLabel: Story = {
         </div>
         <ToastClose aria-label="Dismiss review notice" />
       </Toast>
-      <ToastViewport />
+      <ToastViewport label="Toast story notifications ({hotkey})" />
     </ToastProvider>
   ),
 };

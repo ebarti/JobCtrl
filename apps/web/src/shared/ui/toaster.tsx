@@ -8,7 +8,7 @@ import {
   ToastViewport,
 } from "./toast.js";
 
-export function Toaster() {
+export function Toaster({ viewportLabel }: { viewportLabel?: string } = {}) {
   const toasts = useToastStore((state) => state.toasts);
   const dismiss = useToastStore((state) => state.dismiss);
 
@@ -32,7 +32,7 @@ export function Toaster() {
           <ToastClose />
         </Toast>
       ))}
-      <ToastViewport />
+      <ToastViewport {...(viewportLabel ? { label: viewportLabel } : {})} />
     </ToastProvider>
   );
 }
