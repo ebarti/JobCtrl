@@ -96,6 +96,7 @@ export interface FilterableDataGridProps<TData> {
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
+  rowActivationLabel?: (row: TData) => string;
   onPageRowsChange?: (rows: readonly TData[]) => void;
 }
 
@@ -305,6 +306,7 @@ export function FilterableDataGrid<TData>({
   rowClassName,
   rowAriaSelected,
   onRowActivate,
+  rowActivationLabel,
   onPageRowsChange,
 }: FilterableDataGridProps<TData>) {
   const [localSort, setLocalSort] = useState<DataGridSortState>(initialSort);
@@ -320,6 +322,10 @@ export function FilterableDataGrid<TData>({
   const pageSize = pagination?.pageSize ?? localPageSize;
   const effectivePageSizeOptions =
     pagination?.pageSizeOptions ?? pageSizeOptions;
+  const activationColumnIndex = useMemo(() => {
+    const rowHeaderIndex = columns.findIndex((column) => column.rowHeader);
+    return rowHeaderIndex >= 0 ? rowHeaderIndex : 0;
+  }, [columns]);
 
   const filterableColumns = useMemo(
     () => columns.filter((column) => Boolean(column.getFilterValue)),
@@ -622,36 +628,50 @@ export function FilterableDataGrid<TData>({
           <tbody>
             {pageRows.map((row, rowIndex) => {
               const rowId = getRowId(row);
+              const baseRowClassName = rowClassName?.(row);
+              const effectiveRowClassName = onRowActivate
+                ? [baseRowClassName, "data-grid-row-activatable"].filter(Boolean).join(" ")
+                : baseRowClassName;
+              const activationLabel = rowActivationLabel?.(row) ?? `Open row ${rowId}`;
               return (
                 <tr
                   key={rowId}
-                  className={rowClassName?.(row)}
+                  className={effectiveRowClassName}
                   aria-selected={rowAriaSelected?.(row)}
-                  tabIndex={onRowActivate ? 0 : undefined}
-                  onClick={() => onRowActivate?.(row)}
-                  onKeyDown={(event) => {
-                    if (!onRowActivate) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onRowActivate(row);
-                    }
-                  }}
                 >
-                  {columns.map((column) =>
-                    column.rowHeader ? (
+                  {columns.map((column, columnIndex) => {
+                    const content = column.render(row, { pageRows, rowId, rowIndex });
+                    const isActivationCell =
+                      Boolean(onRowActivate) && columnIndex === activationColumnIndex;
+                    const activationButton = isActivationCell ? (
+                      <button
+                        type="button"
+                        className="data-grid-row-activation-button"
+                        aria-label={activationLabel}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRowActivate?.(row);
+                        }}
+                      >
+                        <span aria-hidden="true">Open</span>
+                      </button>
+                    ) : null;
+                    return column.rowHeader ? (
                       <th
                         key={column.id}
                         className={column.className}
                         scope="row"
                       >
-                        {column.render(row, { pageRows, rowId, rowIndex })}
+                        {content}
+                        {activationButton}
                       </th>
                     ) : (
                       <td key={column.id} className={column.className}>
-                        {column.render(row, { pageRows, rowId, rowIndex })}
+                        {content}
+                        {activationButton}
                       </td>
-                    ),
-                  )}
+                    );
+                  })}
                 </tr>
               );
             })}

@@ -65,7 +65,11 @@ test("Generate materials: button enabled → dispatch queued → ResumeApproved 
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: "Director of Platform Engineering" });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.click();
+  // Row activation is the named per-row "Open" button, not a whole-row click:
+  // structural rows stay non-interactive for accessibility.
+  await row
+    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
+    .click();
 
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });

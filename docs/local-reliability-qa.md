@@ -140,6 +140,41 @@ not run auto-apply, browser submission, mailbox scanning, real material
 generation, destructive profile/database actions, or worker-backed jobs for
 token QA.
 
+### Shared Primitive QA Gate
+
+For shared primitive token migrations under `apps/web/src/shared/ui`, keep the
+QA surface local, synthetic, and primitive-owned. Run the relevant scoped
+shared/ui Vitest files plus the shared helper tests changed by the phase, for
+example:
+
+```bash
+corepack pnpm --filter @jobhunter/web test src/shared/ui/data-table.test.tsx src/shared/ui/toast.a11y.test.tsx src/shared/ui/filterable-data-grid.test.tsx src/shared/ui/table-pager.test.tsx src/shared/lib/job-description-blocks.test.ts
+corepack pnpm web:check
+corepack pnpm web:storybook:build
+corepack pnpm web:storybook:test
+corepack pnpm dlx shadcn@latest info -c apps/web
+git diff --check
+```
+
+Also run the corrected legacy token scan and the shared/ui boundary scan from
+the phase plan. The legacy token scan must reject `bg-paper`, `text-ink`,
+`border-rule`, `ring-info`, legacy CSS variables, and bare `text-muted` while
+allowing standard shadcn utilities such as `text-muted-foreground`. The
+boundary scan must return zero disallowed imports from `shared/ui` into
+contexts, views, API clients, routes, TanStack Query hooks, local storage,
+EventSource, or clipboard APIs.
+
+The broad `corepack pnpm --filter @jobhunter/web test` command may be skipped
+for this shared primitive phase when it hits the known unrelated inline
+snapshot runner failures, provided the scoped shared/ui tests, `web:check`,
+Storybook build/test, legacy token scan, boundary scan, and diff hygiene pass
+and the skip reason is recorded in the plan summary or primitive audit.
+
+Shared primitive QA must use synthetic stories, seeded browser proof, or
+disposable fixtures only. Do not run auto-apply, browser submission, mailbox
+scanning, real material generation, destructive profile/database actions, or
+worker-backed jobs for this gate.
+
 ### Coverage layout
 
 | Layer | Files | Purpose |
@@ -216,7 +251,7 @@ axe violations fail CI (`a11y: { test: "error" }`). The Storybook test runner
 (`pnpm web:storybook:test`) is the gate; `pnpm --filter @jobhunter/web test`
 also runs the colocated `*.a11y.test.tsx` suites for forms and dialogs.
 
-13 stories defer the a11y check (`a11y: { test: "off" }`) because they
+10 stories defer the a11y check (`a11y: { test: "off" }`) because they
 exercise pre-existing production a11y defects that are scoped out of the
 Phase 7 baseline. Each deferral is tracked in
 [`docs/backlog.md`](backlog.md) "Frontend Accessibility Backlog (Phase 7

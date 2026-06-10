@@ -38,20 +38,10 @@ const COMMON_ARGS: DataTableProps<Row> = {
   onRowSelectionChange: () => {},
 };
 
-// data-table.tsx renders divs with role="row" without a role="table"
-// container, and column headers carry aria-sort directly on raw <button>
-// elements rather than on role="columnheader". axe flags this as a
-// critical aria-allowed-attr / aria-required-parent / aria-required-children
-// violation. The fix lives in the production primitive and is out of
-// Phase 7 scope; deferred.
 const meta = {
   title: "Shared/UI/DataTable",
   component: DataTable<Row>,
   args: COMMON_ARGS,
-  parameters: {
-    // a11y deferred — data-table.tsx role="row" / aria-sort defect; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof DataTable<Row>>;
 
 export default meta;
@@ -59,14 +49,18 @@ type Story = StoryObj<typeof meta>;
 
 function Wrapper({
   data,
+  initialSorting = [],
   loading,
   loaded,
+  onRowActivate,
 }: {
   data: readonly Row[];
+  initialSorting?: SortingState;
   loading: boolean;
   loaded: boolean;
+  onRowActivate?: (row: Row) => void;
 }) {
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>(initialSorting);
   const [selection, setSelection] = useState<RowSelectionState>({});
   return (
     <DataTable<Row>
@@ -78,6 +72,9 @@ function Wrapper({
       onSortingChange={setSorting}
       rowSelection={selection}
       onRowSelectionChange={setSelection}
+      rowAriaSelected={(row) => row.id === "job-2"}
+      rowActivationLabel={(row) => `Open ${row.title}`}
+      {...(onRowActivate ? { onRowActivate } : {})}
     />
   );
 }
@@ -92,4 +89,16 @@ export const Loading: Story = {
 
 export const Empty: Story = {
   render: () => <Wrapper data={[]} loading={false} loaded={true} />,
+};
+
+export const SortedActivatable: Story = {
+  render: () => (
+    <Wrapper
+      data={ROWS}
+      initialSorting={[{ id: "fitScore", desc: true }]}
+      loading={false}
+      loaded={true}
+      onRowActivate={() => {}}
+    />
+  ),
 };

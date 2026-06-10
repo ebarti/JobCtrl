@@ -5,16 +5,9 @@ import { useToastStore } from "../stores/toasts.js";
 import { Toaster } from "./toaster.js";
 import { Button } from "./button.js";
 
-// Renders <Toast> rows whose Close button has no discernible text
-// (button-name) — same Phase 1 production-primitive defect as toast
-// stories. Deferred.
 const meta = {
   title: "Shared/UI/Toaster",
   component: Toaster,
-  parameters: {
-    // a11y deferred — toast.tsx ToastClose icon-only button-name defect; see meta comment above.
-    a11y: { test: "off" },
-  },
 } satisfies Meta<typeof Toaster>;
 
 export default meta;
@@ -60,7 +53,7 @@ export const InfoQueued: Story = {
   render: () => (
     <>
       <ToastSeed kind="info" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };
@@ -69,7 +62,7 @@ export const ErrorQueued: Story = {
   render: () => (
     <>
       <ToastSeed kind="error" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };
@@ -78,7 +71,7 @@ export const Stacked: Story = {
   render: () => (
     <>
       <ToastSeed kind="both" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };
@@ -87,7 +80,7 @@ export const ManualTrigger: Story = {
   render: () => (
     <>
       <ToastSeed kind="trigger" />
-      <Toaster />
+      <Toaster viewportLabel="Toaster story notifications ({hotkey})" />
     </>
   ),
 };

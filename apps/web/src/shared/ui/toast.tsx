@@ -71,6 +71,7 @@ export const ToastClose = forwardRef<
 >(({ className, ...props }, ref) => (
   <ToastPrimitive.Close
     ref={ref}
+    aria-label="Close"
     className={cn(
       "absolute right-1 top-1 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring group-hover:opacity-100",
       className,

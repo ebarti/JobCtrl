@@ -10,26 +10,44 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const JobDetailTabs: Story = {
+export const StateTabs: Story = {
   render: () => (
     <Tabs defaultValue="overview" className="w-[420px]">
       <TabsList>
         <TabsTrigger value="overview">Overview</TabsTrigger>
-        <TabsTrigger value="stages">Stages</TabsTrigger>
-        <TabsTrigger value="apply">Apply</TabsTrigger>
-        <TabsTrigger value="materials">Materials</TabsTrigger>
+        <TabsTrigger value="details">Details</TabsTrigger>
+        <TabsTrigger value="history">History</TabsTrigger>
+        <TabsTrigger value="disabled" disabled>
+          Disabled
+        </TabsTrigger>
       </TabsList>
       <TabsContent value="overview" className="text-sm">
-        Acme Corp · Remote (US) · Fit score 8.
+        Overview content for the active tab.
       </TabsContent>
-      <TabsContent value="stages" className="text-sm">
-        Pipeline overview lives here.
+      <TabsContent value="details" className="text-sm">
+        Detail content for an inactive tab until selected.
       </TabsContent>
-      <TabsContent value="apply" className="text-sm">
-        Apply history and dry-runs.
+      <TabsContent value="history" className="text-sm">
+        Recent synthetic changes appear here.
       </TabsContent>
-      <TabsContent value="materials" className="text-sm">
-        Tailored resume + cover letter PDFs.
+    </Tabs>
+  ),
+};
+
+export const FocusVisible: Story = {
+  render: () => (
+    <Tabs defaultValue="first" className="w-[360px]">
+      <TabsList>
+        <TabsTrigger value="first" autoFocus>
+          First
+        </TabsTrigger>
+        <TabsTrigger value="second">Second</TabsTrigger>
+      </TabsList>
+      <TabsContent value="first" className="text-sm">
+        Focus starts on the active trigger for keyboard-ring review.
+      </TabsContent>
+      <TabsContent value="second" className="text-sm">
+        Secondary panel content.
       </TabsContent>
     </Tabs>
   ),

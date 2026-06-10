@@ -60,6 +60,9 @@ export function DebugActivityTable({
       manualSorting
       tableClassName="activity-data-grid-table"
       onRowActivate={(activity) => onOpenActivity(activity.eventId)}
+      rowActivationLabel={(activity) =>
+        `Open activity ${activity.message} ${activity.eventId}`
+      }
       pagination={{
         page,
         pageSize,

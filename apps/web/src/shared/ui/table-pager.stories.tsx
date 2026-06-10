@@ -59,3 +59,16 @@ export const LastPage: Story = {
 export const SinglePage: Story = {
   render: () => <Stateful initialPage={1} initialPageSize={25} totalPages={1} totalRows={4} />,
 };
+
+export const CompactWidth: Story = {
+  render: () => (
+    <div style={{ maxWidth: 320 }}>
+      <Stateful
+        initialPage={2}
+        initialPageSize={25}
+        totalPages={4}
+        totalRows={86}
+      />
+    </div>
+  ),
+};

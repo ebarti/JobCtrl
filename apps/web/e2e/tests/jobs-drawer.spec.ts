@@ -10,7 +10,11 @@ test("Job drawer: opens with score/stages/artifacts, survives reload, close pres
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: "Director of Platform Engineering" });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await row.click();
+  // Row activation is the named per-row "Open" button, not a whole-row click:
+  // structural rows stay non-interactive for accessibility.
+  await row
+    .getByRole("button", { name: /^Open job Director of Platform Engineering/ })
+    .click();
 
   await expect(page).toHaveURL(/\/jobs\/.+/);
   const drawer = page.getByRole("dialog", { name: "Job details" });

@@ -73,6 +73,7 @@ export function ArtifactsTable({
       tableClassName="artifacts-data-grid-table"
       rowAriaSelected={(row) => Boolean(rowSelection[row.artifactId])}
       onRowActivate={(row) => onOpenArtifact(row.artifactId)}
+      rowActivationLabel={(row) => `Open artifact ${row.title || row.type}`}
       pagination={{
         page,
         pageSize,

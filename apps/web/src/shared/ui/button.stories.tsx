@@ -57,3 +57,19 @@ export const Large: Story = {
 export const Disabled: Story = {
   args: { disabled: true, children: "Apply" },
 };
+
+export const IconOnly: Story = {
+  args: {
+    "aria-label": "Add item",
+    children: <span aria-hidden="true">+</span>,
+    size: "icon",
+    variant: "outline",
+  },
+};
+
+export const FocusVisible: Story = {
+  args: {
+    autoFocus: true,
+    children: "Save changes",
+  },
+};

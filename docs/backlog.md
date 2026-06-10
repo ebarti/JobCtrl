@@ -286,7 +286,7 @@ no dual-mount, no compatibility shim.
 
 ## Frontend Accessibility Backlog (Phase 7 Deferrals)
 
-13 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
+10 Storybook stories defer the a11y bar (`a11y: { test: "off" }`) because
 they exercise pre-existing production accessibility defects that are scoped
 out of the Phase 7 baseline. Each defect needs a follow-up production fix;
 once fixed, the deferral is removed from the corresponding story
@@ -294,8 +294,6 @@ parameters.
 
 | Production file | Defect | Stories that defer |
 | --- | --- | --- |
-| `apps/web/src/shared/ui/data-table.tsx` | Missing `role="row"` on table rows; missing `aria-sort` on sortable column headers. | `data-table.stories.tsx` |
-| `apps/web/src/shared/ui/toast.tsx` | `ToastClose` icon-only button has no accessible name (`button-name` axe rule). | `toast.stories.tsx`, `toaster.stories.tsx` |
 | `apps/web/src/views/artifacts/ArtifactFilterBar.tsx` | Bare `<select>` element with no associated label. | `ArtifactFilterBar.stories.tsx` |
 | `apps/web/src/views/artifacts/ArtifactsView.tsx` (composes the above) | Inherits `ArtifactFilterBar` defects. | `ArtifactsView.stories.tsx` |
 | `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx` | Bare `<select>` elements with no labels; icon-only buttons missing accessible names. | `StructuredProfileEditor.stories.tsx`, `ProfileEditor.stories.tsx` (composes it) |
@@ -306,11 +304,11 @@ parameters.
 | Radix `ScrollArea` viewport | `scrollable-region-focusable` axe rule fires because the viewport is not focusable. | `scroll-area.stories.tsx` |
 | `cmdk` initial mount | `aria-required-children` violation during initial mount of the command palette. | `command.stories.tsx` |
 
-Production fixes for the in-repo files (`data-table.tsx`, `toast.tsx`,
-`ArtifactFilterBar.tsx`, `StructuredProfileEditor.tsx`, `ApplyHistory.tsx`)
-unblock the in-repo production-file deferrals immediately. The five remaining
-wrapper/library deferrals (Radix transient internals + cmdk) need either
-upstream fixes or local wrappers with the missing ARIA plumbing.
+Production fixes for the remaining in-repo files (`ArtifactFilterBar.tsx`,
+`StructuredProfileEditor.tsx`, `ApplyHistory.tsx`) unblock the in-repo
+production-file deferrals immediately. The five remaining wrapper/library
+deferrals (Radix transient internals + cmdk) need either upstream fixes or
+local wrappers with the missing ARIA plumbing.
 
 ## Frontend Tooling + CI Backlog (Phase 1–8 Deferrals)
 

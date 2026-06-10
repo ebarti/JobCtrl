@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
-status: phase-complete
-stopped_at: Completed Phase 06
-last_updated: "2026-06-10T10:20:00.000Z"
-last_activity: 2026-06-10 -- Phase 06 completed
+status: executing
+stopped_at: Completed Phase 07
+last_updated: "2026-06-10T11:11:51.000Z"
+last_activity: 2026-06-10 -- Phase 07 completed; Phase 08 ready for discussion
 progress:
   total_phases: 6
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  completed_phases: 2
+  total_plans: 11
+  completed_plans: 11
+  percent: 33
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 06 — Token Foundation + shadcn Preset Contract
+**Current focus:** Phase 08 — layout-chrome-fonts-and-tabler-icons
 
 ## Current Position
 
-Phase: 06 (Token Foundation + shadcn Preset Contract) — COMPLETE
-Plan: 6 of 6
-Status: Phase complete; ready for Phase 7 discussion/planning
-Last activity: 2026-06-10 -- Phase 06 completed
+Phase: 08 (layout-chrome-fonts-and-tabler-icons) — READY FOR DISCUSSION
+Plan: none yet
+Status: Phase 07 complete; ready to discuss Phase 08
+Last activity: 2026-06-10 -- Phase 07 completed; Phase 08 ready for discussion
 
 Progress: [██████████] 100%
 
@@ -56,7 +56,7 @@ Phase order:
 | Phase | Name | Status |
 |-------|------|--------|
 | 6 | Token Foundation + shadcn Preset Contract | Completed |
-| 7 | Shared Primitive Token Migration | Pending |
+| 7 | Shared Primitive Token Migration | Completed |
 | 8 | Layout Chrome, Fonts, And Tabler Icons | Pending |
 | 9 | Domain And Status Surface Migration | Pending |
 | 10 | Route Visual QA + Storybook/A11y Hardening | Pending |
@@ -81,7 +81,7 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 6 for v1.1
+- Total plans completed: 11 for v1.1
 - Average duration: 8 min
 - Total execution time: 50 min
 
@@ -117,6 +117,9 @@ Prior milestone decisions that still matter:
 - [Phase 06]: [Phase 06 Plan 06]: Added seeded browser computed-token proof for root shadcn tokens, light/dark theme switching, color-scheme, density row heights, focus indicators, and dense-route rendering.
 - [Phase 06]: [Phase 06 Plan 06]: Corrected final proof commands to use the working Vitest file filter, generated CSS ring variants, and a deterministic legacy-token scanner that allows standard shadcn muted utilities.
 - [Phase 06]: [Phase 06 Plan 06]: Removed final legacy `bg-rule`/`bg-rule-2` primitive utilities so the Phase 6 app/story/config scan exits with zero matches.
+- [Phase 07]: [Phase 07 Plan 04]: Kept changes story-only because no production primitive defect blocked truthful rendering.
+- [Phase 07]: [Phase 07 Plan 04]: Kept the existing scroll-area a11y deferral because it maps to the tracked Radix ScrollArea backlog row.
+- [Phase 07]: [Phase 07 Plan 04]: Did not change badge.stories.tsx because it already covered the supported default, secondary, destructive, and outline variants.
 
 ### Pending Todos
 
@@ -144,9 +147,11 @@ None.
 | Phase 06 P04 | 7min | 3 tasks | 14 files |
 | Phase 06 P05 | 5min | 3 tasks | 15 files |
 | Phase 06 P06 | 14min | 3 tasks | 6 files |
+| Phase 07 P04 | 10min | 2 tasks | 11 files |
+| Phase 07 P05 | 16min | 3 tasks | 8 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T10:20:00.000Z
-Stopped at: Completed Phase 06
+Last session: 2026-06-10T11:11:51.000Z
+Stopped at: Completed Phase 07
 Resume file: None

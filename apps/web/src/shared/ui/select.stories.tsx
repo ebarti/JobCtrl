@@ -26,20 +26,42 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const ApplyState: Story = {
+export const Value: Story = {
   render: () => (
-    <Select defaultValue="any">
+    <Select defaultValue="compact">
       <SelectTrigger className="w-56">
-        <SelectValue />
+        <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>
-          <SelectLabel>Apply state</SelectLabel>
-          <SelectItem value="any">Any</SelectItem>
-          <SelectItem value="ready">Ready</SelectItem>
-          <SelectItem value="applied">Applied</SelectItem>
-          <SelectItem value="dryRun">Dry-run</SelectItem>
-          <SelectItem value="skipped">Skipped</SelectItem>
+          <SelectLabel>View density</SelectLabel>
+          <SelectItem value="compact">Compact</SelectItem>
+          <SelectItem value="regular">Regular</SelectItem>
+          <SelectItem value="comfortable">Comfortable</SelectItem>
+          <SelectItem disabled value="locked">
+            Locked option
+          </SelectItem>
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  ),
+};
+
+export const OpenByDefault: Story = {
+  render: () => (
+    <Select defaultOpen defaultValue="regular">
+      <SelectTrigger className="w-56">
+        <SelectValue placeholder="Pick a view" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectLabel>View density</SelectLabel>
+          <SelectItem value="compact">Compact</SelectItem>
+          <SelectItem value="regular">Regular</SelectItem>
+          <SelectItem value="comfortable">Comfortable</SelectItem>
+          <SelectItem disabled value="locked">
+            Locked option
+          </SelectItem>
         </SelectGroup>
       </SelectContent>
     </Select>
@@ -48,12 +70,12 @@ export const ApplyState: Story = {
 
 export const Disabled: Story = {
   render: () => (
-    <Select disabled defaultValue="any">
+    <Select disabled defaultValue="regular">
       <SelectTrigger className="w-56">
-        <SelectValue placeholder="Pick a state" />
+        <SelectValue placeholder="Pick a view" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="any">Any</SelectItem>
+        <SelectItem value="regular">Regular</SelectItem>
       </SelectContent>
     </Select>
   ),

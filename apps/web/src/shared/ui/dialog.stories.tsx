@@ -27,14 +27,19 @@ export const ClosedByDefault: Story = {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete this job?</DialogTitle>
+          <DialogTitle>Delete draft?</DialogTitle>
           <DialogDescription>
-            The job and any unsubmitted artifacts will be moved to the deleted bin.
+            This synthetic dialog shows destructive copy, muted helper text, and
+            footer actions on the standard surface tokens.
           </DialogDescription>
         </DialogHeader>
+        <div className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
+          The preview item is local fixture content. It is included only to make
+          the dialog background, border, and text contrast reviewable.
+        </div>
         <DialogFooter>
           <Button variant="ghost">Cancel</Button>
-          <Button variant="destructive">Delete</Button>
+          <Button variant="destructive">Delete draft</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -46,14 +51,25 @@ export const OpenByDefault: Story = {
     <Dialog defaultOpen>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Restore this job?</DialogTitle>
+          <DialogTitle>Save changes?</DialogTitle>
           <DialogDescription>
-            The job will return to the pipeline and resume from its last successful stage.
+            Review the generic settings below before applying the changes to this
+            synthetic fixture.
           </DialogDescription>
         </DialogHeader>
+        <div className="grid gap-2 rounded-md border border-border bg-muted p-3 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold text-foreground">Visibility</span>
+            <span className="text-muted-foreground">Private preview</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold text-foreground">Notifications</span>
+            <span className="text-muted-foreground">Paused</span>
+          </div>
+        </div>
         <DialogFooter>
           <Button variant="ghost">Cancel</Button>
-          <Button>Restore</Button>
+          <Button>Save changes</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
