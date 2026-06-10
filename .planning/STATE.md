@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed Phase 06
-last_updated: "2026-06-10T09:23:24.517Z"
+stopped_at: Completed 07-04-PLAN.md
+last_updated: "2026-06-10T10:27:22.144Z"
 last_activity: 2026-06-10 -- Phase 07 execution started
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 11
-  completed_plans: 6
+  completed_plans: 10
   percent: 17
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 07 (shared-primitive-token-migration) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 07
+Plan: 2 of 5
+Status: Ready to execute
 Last activity: 2026-06-10 -- Phase 07 execution started
 
 Progress: [██████████] 100%
@@ -117,6 +117,9 @@ Prior milestone decisions that still matter:
 - [Phase 06]: [Phase 06 Plan 06]: Added seeded browser computed-token proof for root shadcn tokens, light/dark theme switching, color-scheme, density row heights, focus indicators, and dense-route rendering.
 - [Phase 06]: [Phase 06 Plan 06]: Corrected final proof commands to use the working Vitest file filter, generated CSS ring variants, and a deterministic legacy-token scanner that allows standard shadcn muted utilities.
 - [Phase 06]: [Phase 06 Plan 06]: Removed final legacy `bg-rule`/`bg-rule-2` primitive utilities so the Phase 6 app/story/config scan exits with zero matches.
+- [Phase 07]: [Phase 07 Plan 04]: Kept changes story-only because no production primitive defect blocked truthful rendering.
+- [Phase 07]: [Phase 07 Plan 04]: Kept the existing scroll-area a11y deferral because it maps to the tracked Radix ScrollArea backlog row.
+- [Phase 07]: [Phase 07 Plan 04]: Did not change badge.stories.tsx because it already covered the supported default, secondary, destructive, and outline variants.
 
 ### Pending Todos
 
@@ -144,9 +147,10 @@ None.
 | Phase 06 P04 | 7min | 3 tasks | 14 files |
 | Phase 06 P05 | 5min | 3 tasks | 15 files |
 | Phase 06 P06 | 14min | 3 tasks | 6 files |
+| Phase 07 P04 | 10min | 2 tasks | 11 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T10:20:00.000Z
-Stopped at: Completed Phase 06
+Last session: 2026-06-10T10:27:22.141Z
+Stopped at: Completed 07-04-PLAN.md
 Resume file: None

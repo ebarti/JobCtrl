@@ -19,10 +19,10 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Shared Primitives
 
-- [ ] **PRIM-01**: Shared UI primitives use standard shadcn semantic classes for surfaces, text, borders, inputs, rings, actions, destructive states, disabled states, and muted/helper text.
+- [x] **PRIM-01**: Shared UI primitives use standard shadcn semantic classes for surfaces, text, borders, inputs, rings, actions, destructive states, disabled states, and muted/helper text.
 - [ ] **PRIM-02**: Overlay primitives (dialog, sheet/drawer, dropdown, popover, command, select, toast, tooltip) render readable `popover`/surface tokens in light and dark themes, including focus-visible states.
-- [ ] **PRIM-03**: Form, table/data-grid, card, badge, tab, checkbox, switch, skeleton, separator, and scroll-area primitives preserve behavior and accessibility while moving away from legacy color/radius/font utility names.
-- [ ] **PRIM-04**: Changed primitives have colocated tests and/or Storybook states for default, hover/active, disabled, destructive, focus, loading/empty where relevant, and open overlay states.
+- [x] **PRIM-03**: Form, table/data-grid, card, badge, tab, checkbox, switch, skeleton, separator, and scroll-area primitives preserve behavior and accessibility while moving away from legacy color/radius/font utility names.
+- [x] **PRIM-04**: Changed primitives have colocated tests and/or Storybook states for default, hover/active, disabled, destructive, focus, loading/empty where relevant, and open overlay states.
 - [ ] **PRIM-05**: Shared primitives do not gain domain-specific dependencies on scoring, pipeline, materials, apply, discovery, or view modules.
 
 ### Layout, Fonts, And Icons
@@ -95,10 +95,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOKEN-04 | Phase 6 | Complete |
 | TOKEN-05 | Phase 6 | Complete |
 | TOKEN-06 | Phase 6 | Complete |
-| PRIM-01 | Phase 7 | Pending |
+| PRIM-01 | Phase 7 | Complete |
 | PRIM-02 | Phase 7 | Pending |
-| PRIM-03 | Phase 7 | Pending |
-| PRIM-04 | Phase 7 | Pending |
+| PRIM-03 | Phase 7 | Complete |
+| PRIM-04 | Phase 7 | Complete |
 | PRIM-05 | Phase 7 | Pending |
 | LAYOUT-01 | Phase 8 | Pending |
 | LAYOUT-02 | Phase 8 | Pending |

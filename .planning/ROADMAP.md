@@ -97,14 +97,14 @@ Plans:
 - `pnpm web:storybook:test` where changed stories are covered
 - Targeted browser smoke for open overlays and keyboard focus in light/dark
 
-**Plans:** 5 plans
+**Plans:** 4/5 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md - Repair DataTable and toast production primitive accessibility defects with tests and backlog cleanup.
-- [ ] 07-02-PLAN.md - Add data-grid and table-pager behavior/state coverage for dense table focus, filters, sorting, and pagination.
-- [ ] 07-03-PLAN.md - Harden overlay/menu Storybook open states for dialog, sheet, drawer, dropdown, select, popover, command, and tooltip.
-- [ ] 07-04-PLAN.md - Harden core action, form, state, layout, and feedback primitive Storybook states.
+- [x] 07-01-PLAN.md - Repair DataTable and toast production primitive accessibility defects with tests and backlog cleanup.
+- [x] 07-02-PLAN.md - Add data-grid and table-pager behavior/state coverage for dense table focus, filters, sorting, and pagination.
+- [x] 07-03-PLAN.md - Harden overlay/menu Storybook open states for dialog, sheet, drawer, dropdown, select, popover, command, and tooltip.
+- [x] 07-04-PLAN.md - Harden core action, form, state, layout, and feedback primitive Storybook states.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -227,7 +227,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 6. Token Foundation + shadcn Preset Contract | 6/6 | Complete | 2026-06-10 |
-| 7. Shared Primitive Token Migration | 0/? | Pending | - |
+| 7. Shared Primitive Token Migration | 4/5 | In Progress|  |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 0/? | Pending | - |
 | 9. Domain And Status Surface Migration | 0/? | Pending | - |
 | 10. Route Visual QA + Storybook/A11y Hardening | 0/? | Pending | - |
