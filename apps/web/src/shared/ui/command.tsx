@@ -1,5 +1,5 @@
 import { Command as CommandPrimitive } from "cmdk";
-import { Search } from "lucide-react";
+import { IconSearch } from "@tabler/icons-react";
 import {
   forwardRef,
   type ComponentPropsWithoutRef,
@@ -44,7 +44,7 @@ export const CommandInput = forwardRef<
   ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => (
   <div className="flex items-center border-b border-input bg-background px-3" cmdk-input-wrapper="">
-    <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+    <IconSearch className="mr-2 h-4 w-4 shrink-0 opacity-50" />
     <CommandPrimitive.Input
       ref={ref}
       className={cn(

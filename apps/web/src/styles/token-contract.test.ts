@@ -142,6 +142,18 @@ describe("shadcn token contract", () => {
     expect(tokensCss, "expected comfy density row height").toContain("--jh-row-height: 48px;");
   });
 
+  it("uses shadcn semantic tokens for shell chrome", () => {
+    expect(globalsCss, "expected topbar to consume the standard card token").toContain(
+      "background: color-mix(in oklch, var(--card) 96%, transparent);",
+    );
+    expect(globalsCss, "expected brand mark to use the primary token").toContain("background: var(--primary);");
+    expect(globalsCss, "expected active shell tabs to use accent token").toContain("background: var(--accent);");
+    expect(globalsCss, "expected shell controls to use the popover token").toContain("background: var(--popover);");
+    expect(globalsCss, "expected connection banners to use destructive token").toContain(
+      "border: 1px solid var(--destructive);",
+    );
+  });
+
   it("keeps shadcn preset config and packages wired", () => {
     expect(componentsJson.style, "expected luma/radix shadcn style").toBe("radix-luma");
     expect(componentsJson.tailwind.config, "expected CSS-first shadcn Tailwind config").toBe("");

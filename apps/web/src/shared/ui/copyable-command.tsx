@@ -1,4 +1,4 @@
-import { Check, Copy } from "lucide-react";
+import { IconCheck, IconCopy } from "@tabler/icons-react";
 import { useCallback, useState } from "react";
 
 import { usePorts } from "../providers/PortsProvider.js";
@@ -38,7 +38,7 @@ export function CopyableCommand({ command, className, label = "Copy command" }: 
         onClick={onCopy}
         className="h-7 w-7"
       >
-        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+        {copied ? <IconCheck className="h-4 w-4" /> : <IconCopy className="h-4 w-4" />}
       </Button>
     </div>
   );

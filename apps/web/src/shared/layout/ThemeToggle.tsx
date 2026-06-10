@@ -1,4 +1,4 @@
-import { Moon, Sun } from "lucide-react";
+import { IconMoon, IconSun } from "@tabler/icons-react";
 
 import { useTheme } from "../hooks/useTheme.js";
 
@@ -12,7 +12,7 @@ export function ThemeToggle() {
       aria-label={`Switch to ${next} theme`}
       onClick={() => setTheme(next)}
     >
-      {theme === "dark" ? <Sun aria-hidden="true" size={14} /> : <Moon aria-hidden="true" size={14} />}
+      {theme === "dark" ? <IconSun aria-hidden="true" size={14} /> : <IconMoon aria-hidden="true" size={14} />}
       <span>theme</span>
     </button>
   );

@@ -1,4 +1,10 @@
-import { Filter, SortAsc, SortDesc, TableProperties, X } from "lucide-react";
+import {
+  IconFilter,
+  IconSortAscending,
+  IconSortDescending,
+  IconTable,
+  IconX,
+} from "@tabler/icons-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import {
@@ -200,7 +206,7 @@ function ColumnFilterDialog<TData>({
           }
           aria-label={`Filter ${column.label} column${active ? " (active)" : ""}`}
         >
-          <Filter size={12} aria-hidden="true" />
+          <IconFilter size={12} aria-hidden="true" />
         </button>
       </DialogTrigger>
       <DialogContent className="data-grid-column-filter-dialog">
@@ -499,7 +505,7 @@ export function FilterableDataGrid<TData>({
     <div className="filterable-data-grid">
       <div className="data-grid-toolbar">
         <div className="data-grid-view-title">
-          <TableProperties size={15} aria-hidden="true" />
+          <IconTable size={15} aria-hidden="true" />
           <strong>{title}</strong>
           <span className="meta">{summaryText}</span>
         </div>
@@ -525,7 +531,7 @@ export function FilterableDataGrid<TData>({
                   ? filter.selectedValues.join(", ")
                   : `${operatorLabel(filter?.operator ?? "contains")} "${filter?.text.trim()}"`}
               </span>
-              <X size={12} aria-hidden="true" />
+              <IconX size={12} aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -542,7 +548,7 @@ export function FilterableDataGrid<TData>({
             <tr>
               {columns.map((column) => {
                 const active = sort.columnId === column.id;
-                const SortIcon = sort.direction === "desc" ? SortDesc : SortAsc;
+                const SortIcon = sort.direction === "desc" ? IconSortDescending : IconSortAscending;
                 const sortable =
                   column.sortable ?? Boolean(column.getSortValue);
                 const filterable = Boolean(column.getFilterValue);
