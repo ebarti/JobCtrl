@@ -347,22 +347,22 @@ Source: root/package scripts and QA docs. [VERIFIED: package.json + docs/local-r
 |---|-------|---------|---------------|
 | — | None | — | All planning-relevant claims are verified from repo artifacts, command output, npm metadata, or cited official docs. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should Phase 7 fix `MarkdownDocument.tsx` boundary drift or only prevent expansion?**
+1. **RESOLVED: Should Phase 7 fix `MarkdownDocument.tsx` boundary drift or only prevent expansion?**
    - What we know: `MarkdownDocument.tsx` imports `descriptionBlocks` from `../../contexts/operations/selectors/jobDescriptionSelectors.js`. [VERIFIED: codebase grep]
-   - What's unclear: The phase context calls this an existing exception to audit, not necessarily a required fix. [VERIFIED: 07-UI-SPEC.md]
-   - Recommendation: Do not block PRIM-05 on removing the existing exception unless the plan can move that pure selector into `shared/` without widening scope; always scan to prevent new exceptions. [VERIFIED: phase boundary]
+   - Resolution: Phase 7 will remove the exception in Plan `07-05` by moving the pure `descriptionBlocks` helper into `apps/web/src/shared/lib/job-description-blocks.ts`, updating `MarkdownDocument.tsx` and the operations selector to import it, and adding a helper regression test. [VERIFIED: 07-05-PLAN.md]
+   - Boundary rule: The final dependency-boundary scan must then report zero disallowed `shared/ui` imports, not merely no new exceptions. [VERIFIED: 07-05-PLAN.md]
 
-2. **Should the plan repair broad web Vitest snapshot hygiene?**
+2. **RESOLVED: Should the plan repair broad web Vitest snapshot hygiene?**
    - What we know: Phase 6 recorded unrelated inline snapshot runner failures in `ScoreBadge.test.tsx` and `ArtifactStatusBadge.test.tsx` when the broad web test command ran unintentionally. [VERIFIED: 06-06-SUMMARY.md]
-   - What's unclear: Phase 7 can complete with scoped shared/ui verification unless broad web Vitest is made a hard gate. [VERIFIED: 07-CONTEXT.md]
-   - Recommendation: Keep scoped verification; add a separate test-hygiene task only if the planner requires full `web test`. [VERIFIED: 07-CONTEXT.md]
+   - Resolution: Phase 7 will keep scoped shared/ui verification and will not repair unrelated broad web Vitest snapshot hygiene unless execution changes make those failures part of a touched surface. [VERIFIED: 07-VALIDATION.md and 07-05-PLAN.md]
+   - Verification rule: Plans use targeted shared/ui test commands, `web:check`, Storybook build/test, static scans, and optional targeted browser proof; any broad-suite failure remains documented as an unrelated carry-forward caveat. [VERIFIED: 07-VALIDATION.md]
 
-3. **Should wrapper/library a11y deferrals be burned down in Phase 7?**
+3. **RESOLVED: Should wrapper/library a11y deferrals be burned down in Phase 7?**
    - What we know: `data-table.tsx` and `toast.tsx` are production primitive defects; Radix/cmdk wrapper deferrals are separate and may need upstream or local ARIA plumbing. [VERIFIED: docs/backlog.md]
-   - What's unclear: Fixing Radix/cmdk wrapper deferrals may require behavior changes beyond token hardening. [VERIFIED: docs/backlog.md]
-   - Recommendation: Prioritize in-repo production primitive fixes; carry forward wrapper/library deferrals unless a targeted proof shows a local wrapper fix is behavior-preserving. [VERIFIED: docs/backlog.md]
+   - Resolution: Phase 7 will fix production primitive defects owned by this repo, especially DataTable semantics and Toast close accessibility, while carrying tracked Radix/cmdk wrapper deferrals unless a local wrapper fix is behavior-preserving and directly covered by a plan task. [VERIFIED: 07-01-PLAN.md, 07-03-PLAN.md, 07-04-PLAN.md]
+   - Backlog rule: Any remaining serious/critical Storybook a11y deferral must stay matched to `docs/backlog.md`; no new untracked deferrals may be introduced. [VERIFIED: 07-CONTEXT.md]
 
 ## Environment Availability
 
