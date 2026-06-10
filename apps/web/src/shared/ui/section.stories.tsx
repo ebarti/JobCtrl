@@ -13,6 +13,6 @@ type Story = StoryObj<typeof meta>;
 export const Basic: Story = {
   args: {
     title: "Apply queue",
-    children: <p className="text-sm text-muted">3 jobs ready, 1 dry-run pending review.</p>,
+    children: <p className="text-sm text-muted-foreground">3 jobs ready, 1 dry-run pending review.</p>,
   },
 };

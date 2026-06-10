@@ -26,7 +26,7 @@ export const FilterPicker: Story = {
       <PopoverContent>
         <div className="grid gap-2">
           <p className="text-sm font-medium">Recent companies</p>
-          <ul className="space-y-1 text-sm text-muted">
+          <ul className="space-y-1 text-sm text-muted-foreground">
             <li>Acme Corp</li>
             <li>Globex</li>
             <li>Initech</li>
