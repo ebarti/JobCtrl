@@ -24,11 +24,19 @@ export const Disabled: Story = {
   args: { disabled: true, defaultChecked: true },
 };
 
+export const DisabledOff: Story = {
+  args: { disabled: true, "aria-label": "Disabled off switch" },
+};
+
 export const WithLabel: Story = {
   render: () => (
     <div className="flex items-center gap-3">
-      <Switch id="story-dry-run" />
-      <Label htmlFor="story-dry-run">Dry-run apply</Label>
+      <Switch id="story-switch-label" />
+      <Label htmlFor="story-switch-label">Show helper text</Label>
     </div>
   ),
+};
+
+export const FocusVisible: Story = {
+  args: { autoFocus: true, "aria-label": "Focused switch" },
 };

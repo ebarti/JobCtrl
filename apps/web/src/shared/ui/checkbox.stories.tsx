@@ -24,11 +24,19 @@ export const Disabled: Story = {
   args: { disabled: true },
 };
 
+export const DisabledChecked: Story = {
+  args: { defaultChecked: true, disabled: true, "aria-label": "Disabled checked checkbox" },
+};
+
 export const WithLabel: Story = {
   render: () => (
     <div className="flex items-center gap-2">
-      <Checkbox id="story-auto-apply" />
-      <Label htmlFor="story-auto-apply">Enable auto-apply for matching jobs</Label>
+      <Checkbox id="story-checkbox-label" />
+      <Label htmlFor="story-checkbox-label">Enable compact density</Label>
     </div>
   ),
+};
+
+export const FocusVisible: Story = {
+  args: { autoFocus: true, "aria-label": "Focused checkbox" },
 };
