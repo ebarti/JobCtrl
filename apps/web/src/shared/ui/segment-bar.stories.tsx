@@ -14,7 +14,7 @@ export const Funnel: Story = {
   args: {
     total: 12,
     values: [
-      ["succeeded", 8],
+      ["done", 8],
       ["running", 2],
       ["pending", 1],
       ["failed", 1],
@@ -26,7 +26,7 @@ export const Empty: Story = {
   args: {
     total: 0,
     values: [
-      ["succeeded", 0],
+      ["done", 0],
       ["pending", 0],
     ],
   },

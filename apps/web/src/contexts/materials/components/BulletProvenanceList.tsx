@@ -1,6 +1,7 @@
 import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobhunter/contracts";
 import type { JSX } from "react";
 
+import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import { formatToken } from "../lib/audit-format.js";
 
 type AnnotatedChange = ArtifactTailoringExplanation["annotatedChanges"][number];
@@ -37,7 +38,7 @@ function TagList({
 }: {
   readonly label: string;
   readonly items: readonly string[];
-  readonly tone?: string;
+  readonly tone?: StatusTagTone;
 }): JSX.Element {
   return (
     <div className="bullet-provenance-tags">

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { IconPlus, IconTrash } from "@tabler/icons-react";
 
 import {
   asTextArray,
@@ -599,12 +599,12 @@ export function StructuredProfileEditor({
                 title="Remove"
                 onClick={() => updateValues(values.filter((_, itemIndex) => itemIndex !== index))}
               >
-                <Trash2 size={14} aria-hidden="true" />
+                <IconTrash size={14} aria-hidden="true" />
               </button>
             </div>
           ))}
           <button className="tab add-bullet" type="button" onClick={appendValue}>
-            <Plus size={14} aria-hidden="true" />
+            <IconPlus size={14} aria-hidden="true" />
             {addLabel}
           </button>
         </div>
@@ -676,7 +676,7 @@ export function StructuredProfileEditor({
                     key={`${path}-${value}`}
                     onClick={() => removeCustomValue(value)}
                   >
-                    <Trash2 size={14} aria-hidden="true" />
+                    <IconTrash size={14} aria-hidden="true" />
                     {value}
                   </button>
                 ))}
@@ -779,7 +779,7 @@ export function StructuredProfileEditor({
                 title="Remove"
                 onClick={() => updateRows(rows.filter((_, itemIndex) => itemIndex !== index))}
               >
-                <Trash2 size={14} aria-hidden="true" />
+                <IconTrash size={14} aria-hidden="true" />
               </button>
             </div>
           ))}
@@ -788,7 +788,7 @@ export function StructuredProfileEditor({
             type="button"
             onClick={appendRow}
           >
-            <Plus size={14} aria-hidden="true" />
+            <IconPlus size={14} aria-hidden="true" />
             add location
           </button>
         </div>
@@ -1015,12 +1015,12 @@ export function StructuredProfileEditor({
                         title="Remove bullet"
                         onClick={() => removeBullet(index, bulletIndex)}
                       >
-                        <Trash2 size={14} aria-hidden="true" />
+                        <IconTrash size={14} aria-hidden="true" />
                       </button>
                     </div>
                   ))}
                   <button className="tab add-bullet" type="button" onClick={() => addBullet(index)}>
-                    <Plus size={14} aria-hidden="true" />
+                    <IconPlus size={14} aria-hidden="true" />
                     add bullet
                   </button>
                 </div>
@@ -1040,7 +1040,7 @@ export function StructuredProfileEditor({
                           title="Remove achievement evidence"
                           onClick={() => removeAchievementEvidence(index, evidenceIndex)}
                         >
-                          <Trash2 size={14} aria-hidden="true" />
+                          <IconTrash size={14} aria-hidden="true" />
                         </button>
                       </div>
                       <div className="field-grid">
@@ -1110,7 +1110,7 @@ export function StructuredProfileEditor({
                     type="button"
                     onClick={() => addAchievementEvidence(index, entryId)}
                   >
-                    <Plus size={14} aria-hidden="true" />
+                    <IconPlus size={14} aria-hidden="true" />
                     add evidence
                   </button>
                 </fieldset>
@@ -1256,12 +1256,12 @@ export function StructuredProfileEditor({
                         title="Remove skill"
                         onClick={() => removeSkill(index, skillIndex)}
                       >
-                        <Trash2 size={14} aria-hidden="true" />
+                        <IconTrash size={14} aria-hidden="true" />
                       </button>
                     </div>
                   ))}
                   <button className="tab add-bullet" type="button" onClick={() => addSkill(index)}>
-                    <Plus size={14} aria-hidden="true" />
+                    <IconPlus size={14} aria-hidden="true" />
                     add skill
                   </button>
                 </div>

@@ -1,12 +1,6 @@
-export function stateTone(state: string): string {
-  if (["failed", "exhausted"].includes(state)) {
-    return "danger";
-  }
-  if (state === "blocked") {
-    return "warn";
-  }
-  if (state === "succeeded") {
-    return "ok";
-  }
-  return "muted";
+import type { StageState } from "../../operations/types.js";
+import { stageStateTone, type StageStateTone } from "./stage-state-tone.js";
+
+export function stateTone(state: StageState): StageStateTone {
+  return stageStateTone(state);
 }

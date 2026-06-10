@@ -5,18 +5,9 @@ import { formatDateTime } from "../../shared/lib/formatters.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
+import { applyRunDotState } from "./apply-run-dot-state.js";
 
 type ApplyRunSummary = DashboardSummary["applyRuns"][number];
-
-function applyRunDotState(status: string): string {
-  if (status === "running") {
-    return "running";
-  }
-  if (status === "failed") {
-    return "failed";
-  }
-  return "succeeded";
-}
 
 export interface ApplyRunsCardProps {
   summary: DashboardSummary;

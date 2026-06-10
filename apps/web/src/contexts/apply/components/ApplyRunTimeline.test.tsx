@@ -7,9 +7,17 @@ import { applyRunsKeys } from "../../operations/applyRunsKeys.js";
 import { EventStreamProvider } from "../../operations/providers/EventStreamProvider.js";
 import { buildProviderHarness } from "../../../test/render.js";
 import { FakeEventStreamPort, buildTestPorts } from "../../../test/testPorts.js";
-import { ApplyRunTimeline } from "./ApplyRunTimeline.js";
+import { ApplyRunTimeline, applyRunEventLevelTone } from "./ApplyRunTimeline.js";
 
 describe("<ApplyRunTimeline> + EventStream", () => {
+  it("maps event levels into the shared tag tone vocabulary", () => {
+    expect(applyRunEventLevelTone("error")).toBe("danger");
+    expect(applyRunEventLevelTone("warning")).toBe("warn");
+    expect(applyRunEventLevelTone("warn")).toBe("warn");
+    expect(applyRunEventLevelTone("debug")).toBe("muted");
+    expect(applyRunEventLevelTone("info")).toBe("info");
+  });
+
   it("renders persisted timeline events without roadmap placeholder copy", () => {
     const harness = buildProviderHarness();
 

@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { IconCheck } from "@tabler/icons-react";
 import { useState, type FormEvent } from "react";
 
 import { useCorrectScoreMutation } from "../hooks/useCorrectScoreMutation.js";
@@ -52,7 +52,7 @@ export function ScoreCorrectionControl({ jobId, currentScore }: ScoreCorrectionC
         />
       </label>
       <button aria-label="Save score correction" disabled={disabled} type="submit">
-        <Check aria-hidden="true" size={16} />
+        <IconCheck aria-hidden="true" size={16} />
       </button>
       {mutation.isSuccess ? (
         <small role="status">Scoring policy updated; comparable scores may be stale.</small>

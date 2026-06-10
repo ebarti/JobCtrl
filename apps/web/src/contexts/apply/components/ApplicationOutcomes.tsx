@@ -16,6 +16,8 @@ import type { JobId } from "../../operations/types.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { StatusDot } from "../../../shared/ui/status-dot.js";
+import type { StatusDotState } from "../../../shared/ui/status-tokens.js";
 import {
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,
@@ -82,6 +84,25 @@ function sortOutcomes(outcomes: readonly ApplicationOutcome[]): ApplicationOutco
 
 export function outcomeLabel(kind: ApplicationOutcomeKind): string {
   return OUTCOME_LABELS[kind] ?? kind;
+}
+
+function outcomeDotState(kind: ApplicationOutcomeKind): StatusDotState {
+  switch (kind) {
+    case "applied_confirmation":
+    case "recruiter_reply":
+    case "interview":
+    case "assessment":
+    case "offer":
+      return "succeeded";
+    case "rejection":
+    case "bounced":
+      return "failed";
+    case "withdrawn":
+      return "canceled";
+    case "no_response":
+    case "unknown":
+      return "pending";
+  }
 }
 
 export interface JobOutcomePanelProps {
@@ -234,7 +255,7 @@ export function OutcomeTimeline({ outcomes }: OutcomeTimelineProps) {
       {sorted.map((outcome) => (
         <li className="timeline-row" key={outcome.outcomeId}>
           <span className="timeline-row-head">
-            <span className={`status-dot ${outcome.kind}`} aria-hidden="true" />
+            <StatusDot state={outcomeDotState(outcome.kind)} />
             <b>{outcomeLabel(outcome.kind)}</b>
           </span>
           <time dateTime={outcome.occurredAt}>{formatDateTime(outcome.occurredAt)}</time>

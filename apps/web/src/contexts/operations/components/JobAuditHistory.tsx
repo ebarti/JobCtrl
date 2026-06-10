@@ -1,4 +1,4 @@
-import type { JobAuditEntry } from "@jobhunter/contracts";
+import type { JobAuditEntry, JobAuditTone } from "@jobhunter/contracts";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { Empty } from "../../../shared/ui/empty.js";
@@ -22,6 +22,18 @@ function categoryLabel(category: JobAuditEntry["category"]): string {
   return CATEGORY_LABELS[category] ?? category;
 }
 
+const TONE_CLASS: Record<JobAuditTone, `tone-${JobAuditTone}`> = {
+  info: "tone-info",
+  success: "tone-success",
+  warning: "tone-warning",
+  danger: "tone-danger",
+  muted: "tone-muted",
+};
+
+export function jobAuditToneClass(tone: JobAuditTone): `tone-${JobAuditTone}` {
+  return TONE_CLASS[tone];
+}
+
 export function JobAuditHistory({ entries }: JobAuditHistoryProps) {
   if (entries.length === 0) {
     return <Empty title="No audit history recorded for this job." />;
@@ -30,7 +42,7 @@ export function JobAuditHistory({ entries }: JobAuditHistoryProps) {
   return (
     <ol className="job-audit-timeline" aria-label="Job audit history">
       {entries.map((entry) => (
-        <li className={`job-audit-entry tone-${entry.tone}`} key={entry.id}>
+        <li className={`job-audit-entry ${jobAuditToneClass(entry.tone)}`} key={entry.id}>
           <span className="job-audit-marker" aria-hidden="true" />
           <span className="job-audit-body">
             <span className="job-audit-head">

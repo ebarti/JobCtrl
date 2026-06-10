@@ -9,16 +9,16 @@ import type {
   SourceRegistryEntrySummary,
 } from "@jobhunter/contracts";
 import {
-  AlertTriangle,
-  Ban,
-  Check,
-  ExternalLink,
-  Eye,
-  Plus,
-  ThumbsUp,
-  Upload,
-  X,
-} from "lucide-react";
+  IconAlertTriangle,
+  IconBan,
+  IconCheck,
+  IconExternalLink,
+  IconEye,
+  IconPlus,
+  IconThumbUp,
+  IconUpload,
+  IconX,
+} from "@tabler/icons-react";
 import { type FormEvent, useMemo, useState } from "react";
 
 import {
@@ -44,6 +44,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "../../../shared/ui/tabs.js";
+import type { StatusDotState } from "../../../shared/ui/status-tokens.js";
 import {
   useDiscoveryFeedbackMutation,
   useDiscoveryQuarantineDecisionMutation,
@@ -92,7 +93,7 @@ function pct(value: number | null): string {
   return value === null ? "n/a" : `${Math.round(value * 100)}%`;
 }
 
-function dotState(state: string): string {
+function dotState(state: SourceRegistryEntrySummary["state"]): StatusDotState {
   if (state === "disabled" || state === "quarantined") return "failed";
   if (state === "experimental") return "running";
   return "succeeded";
@@ -698,7 +699,7 @@ function SourceRegistryPanel({
                 })
               }
             >
-              <Check size={14} aria-hidden="true" />
+              <IconCheck size={14} aria-hidden="true" />
             </Button>
             <Button
               type="button"
@@ -717,7 +718,7 @@ function SourceRegistryPanel({
                 })
               }
             >
-              <Ban size={14} aria-hidden="true" />
+              <IconBan size={14} aria-hidden="true" />
             </Button>
             <Button
               type="button"
@@ -730,7 +731,7 @@ function SourceRegistryPanel({
               }
               onClick={() => setPreviewSourceId(source.sourceId)}
             >
-              <Eye size={14} aria-hidden="true" />
+              <IconEye size={14} aria-hidden="true" />
             </Button>
           </div>
         ),
@@ -836,7 +837,7 @@ function SourceRegistryPanel({
           size="sm"
           disabled={upsert.isPending || !sourceId.trim() || !displayName.trim()}
         >
-          <Plus size={14} aria-hidden="true" />
+          <IconPlus size={14} aria-hidden="true" />
           Add source
         </Button>
       </form>
@@ -913,7 +914,7 @@ function SourceLocatorPanel({
       <div className="rows compact">
         {candidates.map((candidate) => (
           <div className="discovery-review-row" key={candidate.candidateId}>
-            <ExternalLink size={16} aria-hidden="true" />
+            <IconExternalLink size={16} aria-hidden="true" />
             <span className="title-stack">
               <b>{candidate.candidateUrl}</b>
               <span>
@@ -938,7 +939,7 @@ function SourceLocatorPanel({
                   target="_blank"
                   rel="noreferrer"
                 >
-                  <ExternalLink size={14} aria-hidden="true" />
+                  <IconExternalLink size={14} aria-hidden="true" />
                 </a>
               </Button>
               <Button
@@ -958,7 +959,7 @@ function SourceLocatorPanel({
                   })
                 }
               >
-                <Check size={14} aria-hidden="true" />
+                <IconCheck size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -977,7 +978,7 @@ function SourceLocatorPanel({
                   })
                 }
               >
-                <X size={14} aria-hidden="true" />
+                <IconX size={14} aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -1020,7 +1021,7 @@ function QuarantinePanel({
       <div className="rows compact">
         {entries.map((entry) => (
           <div className="discovery-review-row" key={entry.jobKey}>
-            <AlertTriangle size={16} aria-hidden="true" />
+            <IconAlertTriangle size={16} aria-hidden="true" />
             <span className="title-stack">
               <b>{entry.title || entry.jobKey}</b>
               <span>
@@ -1046,7 +1047,7 @@ function QuarantinePanel({
                   })
                 }
               >
-                <Check size={14} aria-hidden="true" />
+                <IconCheck size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -1062,7 +1063,7 @@ function QuarantinePanel({
                   })
                 }
               >
-                <X size={14} aria-hidden="true" />
+                <IconX size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -1073,7 +1074,7 @@ function QuarantinePanel({
                 disabled={feedback.isPending}
                 onClick={() => sendFeedback(entry, "stale")}
               >
-                <Ban size={14} aria-hidden="true" />
+                <IconBan size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -1084,7 +1085,7 @@ function QuarantinePanel({
                 disabled={feedback.isPending}
                 onClick={() => sendFeedback(entry, "useful")}
               >
-                <ThumbsUp size={14} aria-hidden="true" />
+                <IconThumbUp size={14} aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -1127,7 +1128,7 @@ function RoleMatchFeedbackPanel({
             className="discovery-review-row role-match-feedback-row"
             key={suggestion.suggestionId}
           >
-            <AlertTriangle size={16} aria-hidden="true" />
+            <IconAlertTriangle size={16} aria-hidden="true" />
             <span className="title-stack">
               <b>Exclude “{suggestion.titleDisplay}”</b>
               <span>
@@ -1171,7 +1172,7 @@ function RoleMatchFeedbackPanel({
                   })
                 }
               >
-                <Check size={14} aria-hidden="true" />
+                <IconCheck size={14} aria-hidden="true" />
               </Button>
               <Button
                 type="button"
@@ -1192,7 +1193,7 @@ function RoleMatchFeedbackPanel({
                   })
                 }
               >
-                <X size={14} aria-hidden="true" />
+                <IconX size={14} aria-hidden="true" />
               </Button>
             </div>
           </div>
@@ -1297,7 +1298,7 @@ function ManualCaptureRow({
 
   return (
     <div className="discovery-review-row manual-capture-row">
-      <ExternalLink size={16} aria-hidden="true" />
+      <IconExternalLink size={16} aria-hidden="true" />
       <span className="title-stack manual-capture-body">
         <b>{item.sourceId ?? "Unassigned source"}</b>
         <span>
@@ -1369,7 +1370,7 @@ function ManualCaptureRow({
             aria-label={`Import ${item.originatingUrl}`}
             disabled={importing || !canImport}
           >
-            <Upload size={14} aria-hidden="true" />
+            <IconUpload size={14} aria-hidden="true" />
             Import
           </Button>
         </form>
@@ -1382,7 +1383,7 @@ function ManualCaptureRow({
             target="_blank"
             rel="noreferrer"
           >
-            <ExternalLink size={14} aria-hidden="true" />
+            <IconExternalLink size={14} aria-hidden="true" />
           </a>
         </Button>
         <Button
@@ -1394,7 +1395,7 @@ function ManualCaptureRow({
           disabled={dismissing}
           onClick={() => onDismiss(item.itemId)}
         >
-          <X size={14} aria-hidden="true" />
+          <IconX size={14} aria-hidden="true" />
         </Button>
       </div>
     </div>

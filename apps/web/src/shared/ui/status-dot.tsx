@@ -1,7 +1,9 @@
+import type { StatusDotState } from "./status-tokens.js";
+
 export interface StatusDotProps {
-  state: string;
+  state: StatusDotState;
 }
 
 export function StatusDot({ state }: StatusDotProps) {
-  return <span className={`status-dot ${state}`} />;
+  return <span aria-hidden="true" className={`status-dot ${state}`} />;
 }

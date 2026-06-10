@@ -2,10 +2,11 @@ import type { DashboardSummary } from "../../contexts/operations/types.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { StatusDot } from "../../shared/ui/status-dot.js";
+import type { StatusDotState } from "../../shared/ui/status-tokens.js";
 
 type SourceHealth = DashboardSummary["sourceHealth"][number];
 
-function dotState(state: string): string {
+function dotState(state: SourceHealth["recommendedState"]): StatusDotState {
   if (state === "disabled" || state === "quarantined") {
     return "failed";
   }

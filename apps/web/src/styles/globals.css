@@ -569,7 +569,7 @@ textarea:focus-visible {
 }
 
 .seg-done {
-  background: var(--foreground);
+  background: var(--success);
 }
 
 .seg-failed {
@@ -585,7 +585,7 @@ textarea:focus-visible {
 }
 
 .seg-pending {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted-foreground) 38%, var(--muted));
 }
 
 .legend {
@@ -1978,13 +1978,19 @@ textarea:focus-visible {
 }
 
 .fit.good {
-  border-color: rgba(57, 123, 87, 0.3);
-  background: rgba(57, 123, 87, 0.1);
+  border-color: color-mix(in oklch, var(--success) 40%, var(--border));
+  background: var(--success-muted);
   color: var(--success);
 }
 
 .fit.mid {
+  border-color: color-mix(in oklch, var(--warning) 40%, var(--border));
+  background: var(--warning-muted);
   color: var(--warning);
+}
+
+.fit.none {
+  color: var(--muted-foreground);
 }
 
 .score-cell {
@@ -1995,8 +2001,8 @@ textarea:focus-visible {
 }
 
 .score-stale-tag {
-  border-color: rgba(181, 71, 58, 0.3);
-  background: rgba(181, 71, 58, 0.08);
+  border-color: color-mix(in oklch, var(--destructive) 40%, var(--border));
+  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
   color: var(--destructive);
   white-space: nowrap;
 }
@@ -2018,23 +2024,39 @@ textarea:focus-visible {
   padding: 2px 6px;
 }
 
+.tag.muted,
+.stage-pill.neutral {
+  background: color-mix(in oklch, var(--muted-foreground) 8%, var(--muted));
+  color: var(--muted-foreground);
+}
+
+.stage-pill.ok {
+  background: var(--success-muted);
+  color: var(--success);
+}
+
+.stage-pill.info {
+  background: var(--status-info-muted);
+  color: var(--status-info);
+}
+
 .tag.ok {
-  background: rgba(57, 123, 87, 0.1);
+  background: var(--success-muted);
   color: var(--success);
 }
 
 .tag.warn {
-  background: rgba(169, 119, 33, 0.12);
+  background: var(--warning-muted);
   color: var(--warning);
 }
 
 .tag.danger {
-  background: rgba(181, 71, 58, 0.1);
+  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
   color: var(--destructive);
 }
 
 .tag.info {
-  background: rgba(97, 120, 146, 0.1);
+  background: var(--status-info-muted);
   color: var(--status-info);
 }
 
@@ -2108,7 +2130,7 @@ textarea:focus-visible {
 
 .banner {
   border-bottom: 1px solid var(--border);
-  background: rgba(181, 71, 58, 0.08);
+  background: color-mix(in oklch, var(--destructive) 10%, var(--card));
   color: var(--destructive);
 }
 
@@ -2430,11 +2452,11 @@ textarea:focus-visible {
 }
 
 .finding-list.danger {
-  border-color: rgba(181, 71, 58, 0.35);
+  border-color: color-mix(in oklch, var(--destructive) 45%, var(--border));
 }
 
 .finding-list.warning {
-  border-color: rgba(183, 126, 44, 0.45);
+  border-color: color-mix(in oklch, var(--warning) 45%, var(--border));
 }
 
 /* Phase 5 inspector — employer analysis + per-bullet provenance + diff. */
@@ -2717,6 +2739,10 @@ textarea:focus-visible {
   background: var(--card);
 }
 
+.status-dot.succeeded {
+  border-color: var(--success);
+}
+
 .status-dot.failed,
 .status-dot.exhausted {
   border-color: var(--destructive);
@@ -2729,6 +2755,16 @@ textarea:focus-visible {
 .status-dot.running,
 .status-dot.queued {
   border-color: var(--status-info);
+}
+
+.status-dot.pending,
+.status-dot.skipped,
+.status-dot.canceled {
+  border-color: var(--muted-foreground);
+}
+
+.status-dot.stale {
+  border-color: var(--warning);
 }
 
 .section {

@@ -1,4 +1,4 @@
-import { RotateCcw } from "lucide-react";
+import { IconRotateClockwise } from "@tabler/icons-react";
 
 import { useResetStaleScoresForRescoreMutation } from "../hooks/useResetStaleScoresForRescoreMutation.js";
 
@@ -46,7 +46,7 @@ export function ResetStaleScoresButton({
       type="button"
       onClick={reset}
     >
-      <RotateCcw aria-hidden="true" size={14} />
+      <IconRotateClockwise aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "resetting stale scores" : buttonLabel}</span>
     </button>
   );

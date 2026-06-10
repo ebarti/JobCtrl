@@ -1,6 +1,8 @@
+import type { SegmentBarTone } from "./status-tokens.js";
+
 export interface SegmentBarProps {
   total: number;
-  values: ReadonlyArray<readonly [string, number]>;
+  values: ReadonlyArray<readonly [SegmentBarTone, number]>;
 }
 
 export function SegmentBar({ total, values }: SegmentBarProps) {

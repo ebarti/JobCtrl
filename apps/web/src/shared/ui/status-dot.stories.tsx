@@ -10,14 +10,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Open: Story = {
-  args: { state: "open" },
+export const Succeeded: Story = {
+  args: { state: "succeeded" },
 };
 
-export const Connecting: Story = {
-  args: { state: "connecting" },
+export const Running: Story = {
+  args: { state: "running" },
 };
 
-export const Closed: Story = {
-  args: { state: "closed" },
+export const Failed: Story = {
+  args: { state: "failed" },
 };

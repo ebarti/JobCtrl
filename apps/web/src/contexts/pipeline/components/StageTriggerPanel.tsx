@@ -9,7 +9,7 @@ import {
   type PipelineValidationMode,
   type Stage,
 } from "@jobhunter/contracts";
-import { Play } from "lucide-react";
+import { IconPlayerPlay } from "@tabler/icons-react";
 import { type FormEvent, type ReactNode, useState } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
@@ -578,7 +578,7 @@ export function StageTriggerPanel({ stagePanels = {} }: StageTriggerPanelProps =
 
       <div className="stage-trigger-actions">
         <Button disabled={runStages.isPending || workerUnhealthy} type="submit">
-          <Play aria-hidden="true" size={16} />
+          <IconPlayerPlay aria-hidden="true" size={16} />
           {workerUnhealthy
             ? health.isPending
               ? "Checking worker"

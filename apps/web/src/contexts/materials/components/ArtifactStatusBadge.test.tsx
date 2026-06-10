@@ -13,20 +13,28 @@ describe("<ArtifactStatusBadge>", () => {
 
   it("snapshots approved", () => {
     const { container } = render(<ArtifactStatusBadge status="approved" />);
-    expect(container.firstChild).toMatchInlineSnapshot(`
-      <span
-        aria-label="approved: Approved means this generated material passed validation and is the accepted version for this job."
-        class="tag ok"
-        title="Approved means this generated material passed validation and is the accepted version for this job."
-      >
-        approved
-      </span>
-    `);
+    const badge = container.querySelector("span");
+
+    expect(badge?.className).toBe("tag ok");
+    expect(badge).toHaveAttribute(
+      "aria-label",
+      "approved: Approved means this generated material passed validation and is the accepted version for this job.",
+    );
+    expect(badge).toHaveAttribute(
+      "title",
+      "Approved means this generated material passed validation and is the accepted version for this job.",
+    );
   });
 
   it("describes suppressed artifacts as historical audit material", () => {
     render(<ArtifactStatusBadge status="suppressed" />);
 
     expect(screen.getByLabelText(/historical audit material/i)).toBeInTheDocument();
+  });
+
+  it("renders rejected artifacts with destructive status tone", () => {
+    const { container } = render(<ArtifactStatusBadge status="rejected" />);
+
+    expect(container.querySelector("span")?.className).toBe("tag danger");
   });
 });

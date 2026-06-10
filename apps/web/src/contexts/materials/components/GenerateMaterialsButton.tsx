@@ -1,4 +1,4 @@
-import { WandSparkles } from "lucide-react";
+import { IconSparkles } from "@tabler/icons-react";
 import type { JSX } from "react";
 
 import { useGenerateMaterialsMutation } from "../hooks/useGenerateMaterialsMutation.js";
@@ -42,7 +42,7 @@ export function GenerateMaterialsButton({
         mutation.mutate({ jobId });
       }}
     >
-      <WandSparkles aria-hidden="true" size={14} />
+      <IconSparkles aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "generating" : label}</span>
     </button>
   );

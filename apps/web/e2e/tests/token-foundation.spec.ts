@@ -67,9 +67,88 @@ async function readSurfaceStyles(locator: Locator) {
   });
 }
 
+interface PaintedStatusStyles {
+  readonly backgroundColor: string;
+  readonly borderTopColor: string;
+  readonly borderTopStyle: string;
+  readonly borderTopWidth: string;
+  readonly color: string;
+  readonly height: number;
+  readonly toneDiffersFromBase: boolean;
+  readonly width: number;
+}
+
+async function readFirstPaintedStatus(locator: Locator): Promise<PaintedStatusStyles | null> {
+  return locator.evaluateAll((elements) => {
+    function baseClassFor(element: Element): string | null {
+      if (element.classList.contains("status-dot")) return "status-dot";
+      if (element.classList.contains("stage-pill")) return "stage-pill";
+      if (element.classList.contains("tag")) return "tag";
+      return null;
+    }
+
+    function toneDiffersFromBase(element: Element, style: CSSStyleDeclaration): boolean {
+      const baseClass = baseClassFor(element);
+      if (baseClass === null) return true;
+      const base = document.createElement("span");
+      base.className = baseClass;
+      base.style.position = "absolute";
+      base.style.visibility = "hidden";
+      element.parentElement?.append(base);
+      const baseStyle = getComputedStyle(base);
+      const differs =
+        style.backgroundColor !== baseStyle.backgroundColor
+        || style.borderTopColor !== baseStyle.borderTopColor
+        || style.color !== baseStyle.color;
+      base.remove();
+      return differs;
+    }
+
+    for (const element of elements) {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const isPainted = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      if (isPainted) {
+        return {
+          backgroundColor: style.backgroundColor,
+          borderTopColor: style.borderTopColor,
+          borderTopStyle: style.borderTopStyle,
+          borderTopWidth: style.borderTopWidth,
+          color: style.color,
+          height: rect.height,
+          toneDiffersFromBase: toneDiffersFromBase(element, style),
+          width: rect.width,
+        };
+      }
+    }
+    return null;
+  });
+}
+
 function expectPainted(value: string, label: string): void {
   expect(value, `${label} should not be empty`).not.toBe("");
   expect(value, `${label} should not be transparent`).not.toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+}
+
+async function expectPaintedStatus(locator: Locator, label: string): Promise<void> {
+  await expect.poll(() => locator.count(), { message: `${label} should exist in the DOM` }).toBeGreaterThan(0);
+  await expect
+    .poll(() => readFirstPaintedStatus(locator), { message: `${label} should have a painted visible instance` })
+    .not.toBeNull();
+  const styles = await readFirstPaintedStatus(locator);
+  if (styles === null) {
+    throw new Error(`${label} did not resolve to a painted status element.`);
+  }
+
+  expectPainted(styles.backgroundColor, `${label} background`);
+  expectPainted(styles.color, `${label} foreground`);
+  expect(styles.width, `${label} width`).toBeGreaterThan(0);
+  expect(styles.height, `${label} height`).toBeGreaterThan(0);
+  if (Number.parseFloat(styles.borderTopWidth) > 0) {
+    expectPainted(styles.borderTopColor, `${label} border`);
+    expect(styles.borderTopStyle, `${label} border style`).not.toBe("none");
+  }
+  expect(styles.toneDiffersFromBase, `${label} should differ from its base status styling`).toBe(true);
 }
 
 async function focusByKeyboard(page: Page, target: Locator): Promise<void> {
@@ -248,6 +327,7 @@ test("shell chrome stays readable on Phase 8 route surfaces", async ({ page }) =
 
   await expectShellChromePainted(page, "/jobs", "Jobs");
   await expectShellChromePainted(page, "/apply-review", "Apply review");
+  await expectShellChromePainted(page, "/pipelines", "Pipelines");
   await expectShellChromePainted(page, "/artifacts/2", "Artifacts");
   await expect(page.getByRole("dialog", { name: "Artifact details" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Artifact PDF preview" })).toBeVisible();
@@ -264,4 +344,54 @@ test("shell chrome does not overflow the mobile viewport", async ({ page }) => {
   await expect(page.getByRole("combobox", { name: "Row density" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Switch to dark theme/i })).toBeVisible();
   await expectNoDocumentInlineOverflow(page);
+});
+
+test("domain status surfaces use painted semantic token classes", async ({ page }) => {
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Source health" })).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".seg-done"), "dashboard completed funnel segment");
+  await expectPaintedStatus(page.locator(".seg-failed"), "dashboard failed funnel segment");
+  await expectPaintedStatus(page.locator(".seg-blocked"), "dashboard blocked funnel segment");
+  await expectPaintedStatus(page.locator(".seg-pending"), "dashboard pending funnel segment");
+  await expectPaintedStatus(page.locator(".status-dot.succeeded"), "dashboard completed apply-run dot");
+  await expectPaintedStatus(page.locator(".tag.info"), "dashboard dry-run info tag");
+
+  await page.goto("/jobs");
+  await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".fit.good"), "jobs good fit score");
+  await expectPaintedStatus(page.locator(".stage-pill.ok"), "jobs apply stage pill");
+  await expectPaintedStatus(page.locator(".tag.danger"), "jobs failed state tag");
+  await expectPaintedStatus(page.locator(".tag.warn"), "jobs blocked state tag");
+  await expectPaintedStatus(page.locator(".tag.muted"), "jobs pending state tag");
+
+  await page.goto("/apply-review");
+  await expect(page.getByRole("complementary", { name: "Application review queue" })).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".tag.ok"), "apply review fit score tag");
+  await expectPaintedStatus(page.locator(".tag.info"), "apply review preparing status tag");
+
+  await page.goto("/artifacts");
+  await expect(page.locator("table.artifacts-data-grid-table")).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".tag.ok"), "artifacts approved status tag");
+  await expectPaintedStatus(page.locator(".tag.muted"), "artifacts type tag");
+
+  await page.goto("/runs");
+  await expect(page.locator("table.runs-data-grid-table")).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".tag.info"), "runs active workflow status tag");
+  await expectPaintedStatus(page.locator(".tag.ok"), "runs succeeded workflow status tag");
+
+  await page.goto("/debug");
+  await expect(page.locator("table.activity-data-grid-table")).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".tag.info"), "debug activity level tag");
+
+  await page.getByRole("button", { name: /Switch to dark theme/i }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Source health" })).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".seg-done"), "dark dashboard completed funnel segment");
+  await expectPaintedStatus(page.locator(".status-dot.succeeded"), "dark dashboard completed apply-run dot");
+
+  await page.goto("/jobs");
+  await expect(page.locator("table.jobs-data-grid-table")).toBeVisible({ timeout: 30_000 });
+  await expectPaintedStatus(page.locator(".fit.good"), "dark jobs good fit score");
+  await expectPaintedStatus(page.locator(".tag.danger"), "dark jobs failed state tag");
 });

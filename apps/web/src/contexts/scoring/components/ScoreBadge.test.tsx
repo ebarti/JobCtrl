@@ -19,12 +19,9 @@ describe("<ScoreBadge>", () => {
 
   it("snapshots score=8", () => {
     const { container } = render(<ScoreBadge score={8} />);
-    expect(container.firstChild).toMatchInlineSnapshot(`
-      <span
-        class="fit good"
-      >
-        8
-      </span>
-    `);
+    const badge = container.querySelector("span");
+
+    expect(badge?.className).toBe("fit good");
+    expect(badge).toHaveTextContent("8");
   });
 });
