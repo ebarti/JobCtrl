@@ -97,7 +97,18 @@ Plans:
 - `pnpm web:storybook:test` where changed stories are covered
 - Targeted browser smoke for open overlays and keyboard focus in light/dark
 
-**Plans:** Create with `$gsd-plan-phase 7`.
+**Plans:** 5 plans
+Plans:
+**Wave 1**
+
+- [ ] 07-01-PLAN.md - Repair DataTable and toast production primitive accessibility defects with tests and backlog cleanup.
+- [ ] 07-02-PLAN.md - Add data-grid and table-pager behavior/state coverage for dense table focus, filters, sorting, and pagination.
+- [ ] 07-03-PLAN.md - Harden overlay/menu Storybook open states for dialog, sheet, drawer, dropdown, select, popover, command, and tooltip.
+- [ ] 07-04-PLAN.md - Harden core action, form, state, layout, and feedback primitive Storybook states.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 07-05-PLAN.md - Close the shared/ui boundary, run static/story verification, update QA docs, and write primitive audit evidence.
 
 ### Phase 8: Layout Chrome, Fonts, And Tabler Icons
 
