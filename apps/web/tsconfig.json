@@ -22,7 +22,6 @@
     ".storybook/**/*.tsx",
     "vite.config.ts",
     "vitest.config.ts",
-    "vitest.types.config.ts",
-    "tailwind.config.ts"
+    "vitest.types.config.ts"
   ]
 }
