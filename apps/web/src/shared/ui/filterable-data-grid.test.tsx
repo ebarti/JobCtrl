@@ -262,6 +262,7 @@ describe("FilterableDataGrid", () => {
   it("keeps dense grid focus indicators tied to the standard ring token", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
 
+    expect(css).toMatch(/:focus-visible\s*\{[^}]*--ring/s);
     expect(css).toMatch(
       /\.data-grid-row-activation-button:focus-visible,[\s\S]*?\.table-row-activation-button:focus-visible\s*\{[^}]*--ring/s,
     );
