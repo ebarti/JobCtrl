@@ -12,6 +12,7 @@
 - Corrected shared/ui legacy-token scan returned `legacy token matches: 0`.
 - Shared/ui boundary scan returned zero disallowed imports, including removal of the former `MarkdownDocument.tsx -> contexts/operations` exception.
 - Remaining Storybook a11y deferrals are the 10 tracked rows in `docs/backlog.md`.
+- Review-fix verification rechecked row activation after moving activation from focusable structural rows to named native buttons inside the table cells.
 - No user-affecting automation, mailbox scanning, browser submission, real material generation, destructive profile/database action, or worker-backed job was run.
 
 ## Command Results
@@ -28,6 +29,14 @@
 | Shared/ui boundary scan from `07-RESEARCH.md` | PASS | Zero matches for contexts, views, API/routes, `@tanstack/react-query`, `apiClient`, query mutations, `EventSource`, `localStorage`, or `navigator.clipboard` under `apps/web/src/shared/ui`. |
 | `rg -n "a11y:\\s*\\{\\s*test:\\s*\\\"off\\\"|test:\\s*\\\"off\\\"" apps/web/src/shared/ui apps/web/src/views apps/web/src/contexts docs/backlog.md` | PASS | Found the backlog count line plus 10 story deferrals: `scroll-area`, `popover`, `command`, `ArtifactFilterBar`, `ArtifactsView`, `dropdown-menu`, `ProfileEditor`, `ApplyHistory`, `select`, and `StructuredProfileEditor`. |
 | `git diff --check` | PASS | No whitespace errors. |
+
+## Review Fix Addendum
+
+The post-review fix for CR-01 removes row-level `tabIndex`, click handlers, and Enter/Space handlers from `DataTable` and `FilterableDataGrid`. Activatable rows remain structural table rows; activation is now exposed through per-row native `<button>` controls with explicit accessible labels and `--ring` focus styling. App consumers pass domain-specific labels for jobs, artifacts, workflow runs, and debug activity.
+
+The post-review fix for WR-01 updates `docs/local-reliability-qa.md` from 13 deferred stories to the current 10-story count. The deferral scanner returned `a11y deferral stories: 10`.
+
+The post-review fix for MD-01 changes the global fallback `:focus-visible` outline from `--status-info` to the standard `--ring` token and extends the grid CSS contract test to assert the fallback rule.
 
 ## Skipped Broad Suite
 
