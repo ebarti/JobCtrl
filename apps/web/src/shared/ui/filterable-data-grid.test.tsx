@@ -61,7 +61,7 @@ function renderGrid() {
 }
 
 describe("FilterableDataGrid", () => {
-  it("activates rows by click, Enter, and Space only", async () => {
+  it("activates rows through named buttons while rows keep table semantics", async () => {
     const onRowActivate = vi.fn();
     render(
       <FilterableDataGrid
@@ -74,15 +74,18 @@ describe("FilterableDataGrid", () => {
         emptyMessage="No rows."
         initialSort={{ columnId: "company", direction: "asc" }}
         onRowActivate={onRowActivate}
+        rowActivationLabel={(row) => `Open ${row.company}`}
       />,
     );
     const user = userEvent.setup();
     const acmeRow = screen.getByRole("row", { name: /Acme Workday ATS 3/i });
+    expect(acmeRow).not.toHaveAttribute("tabindex");
+    const openAcme = within(acmeRow).getByRole("button", { name: "Open Acme" });
 
-    await user.click(acmeRow);
+    await user.click(openAcme);
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
 
-    acmeRow.focus();
+    openAcme.focus();
     await user.keyboard("{Enter}");
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
 
@@ -260,7 +263,7 @@ describe("FilterableDataGrid", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
 
     expect(css).toMatch(
-      /\.filterable-data-grid-table tbody tr\[tabindex\]:focus-visible\s*\{[^}]*--ring/s,
+      /\.data-grid-row-activation-button:focus-visible,[\s\S]*?\.table-row-activation-button:focus-visible\s*\{[^}]*--ring/s,
     );
     expect(css).toMatch(
       /\.data-grid-column-filter-button:focus-visible\s*\{[^}]*--ring/s,

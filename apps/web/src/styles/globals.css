@@ -1380,18 +1380,39 @@ textarea {
   overflow: auto;
 }
 
-.filterable-data-grid-table tbody tr[tabindex] {
-  cursor: pointer;
-}
-
-.filterable-data-grid-table tbody tr[tabindex]:hover,
-.filterable-data-grid-table tbody tr[tabindex]:focus-visible {
+.filterable-data-grid-table tbody tr.data-grid-row-activatable:hover {
   background: var(--muted);
 }
 
-.filterable-data-grid-table tbody tr[tabindex]:focus-visible {
+.data-grid-row-activation-button,
+.table-row-activation-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 24px;
+  margin-left: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.data-grid-row-activation-button:hover,
+.table-row-activation-button:hover {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.data-grid-row-activation-button:focus-visible,
+.table-row-activation-button:focus-visible {
   outline: 2px solid var(--ring);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 
 .filterable-data-grid-table tbody tr[aria-selected="true"] {
@@ -1808,6 +1829,10 @@ textarea {
 .table-head.active,
 .table-head:hover {
   color: var(--foreground);
+}
+
+.table-row-activatable:hover {
+  background: var(--muted);
 }
 
 .mini-row,

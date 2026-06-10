@@ -132,6 +132,7 @@ export const Paginated: Story = {
 export const ActivatableRows: Story = {
   args: {
     onRowActivate: () => {},
+    rowActivationLabel: (row) => `Open ${row.item}`,
     rowAriaSelected: (row) => row.id === "row-3",
     rowClassName: (row) => (row.id === "row-3" ? "selected" : undefined),
   },

@@ -73,6 +73,7 @@ function Wrapper({
       rowSelection={selection}
       onRowSelectionChange={setSelection}
       rowAriaSelected={(row) => row.id === "job-2"}
+      rowActivationLabel={(row) => `Open ${row.title}`}
       {...(onRowActivate ? { onRowActivate } : {})}
     />
   );

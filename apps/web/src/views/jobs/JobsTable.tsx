@@ -110,6 +110,9 @@ export function JobsTable({
         allMatchingSelected || Boolean(rowSelection[row.jobKey])
       }
       onRowActivate={(row) => onOpenJob(row.jobKey)}
+      rowActivationLabel={(row) =>
+        `Open job ${row.title} at ${row.company || "unknown company"}`
+      }
       onPageRowsChange={onVisiblePageRowsChange}
       pagination={{
         page,

@@ -28,6 +28,7 @@ export interface DataTableProps<TData> {
   enableRowSelection?: boolean;
   rowKeyAttribute?: (row: TData) => string;
   onRowActivate?: (row: TData) => void;
+  rowActivationLabel?: (row: TData) => string;
   rowAriaSelected?: (row: TData) => boolean;
   cellClassName?: (columnId: string) => string | undefined;
   footer?: ReactNode;
@@ -49,6 +50,7 @@ export function DataTable<TData>({
   onRowSelectionChange,
   enableRowSelection = true,
   onRowActivate,
+  rowActivationLabel,
   rowAriaSelected,
   cellClassName,
   footer,
@@ -123,29 +125,39 @@ export function DataTable<TData>({
         <div role="rowgroup">
           {table.getRowModel().rows.map((row) => {
             const ariaSelected = rowAriaSelected?.(row.original) ?? row.getIsSelected();
+            const activationLabel = rowActivationLabel?.(row.original) ?? `Open row ${row.id}`;
             return (
               <div
                 key={row.id}
                 role="row"
-                tabIndex={onRowActivate ? 0 : undefined}
-                className={rowClassName}
+                className={
+                  onRowActivate
+                    ? `${rowClassName} table-row-activatable`.trim()
+                    : rowClassName
+                }
                 aria-selected={ariaSelected}
-                onClick={() => onRowActivate?.(row.original)}
-                onKeyDown={(event) => {
-                  if (!onRowActivate) {
-                    return;
-                  }
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onRowActivate(row.original);
-                  }
-                }}
               >
-                {row.getVisibleCells().map((cell) => (
-                  <span key={cell.id} className={cellClassName?.(cell.column.id)} role="cell">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </span>
-                ))}
+                {row.getVisibleCells().map((cell, cellIndex) => {
+                  const isActivationCell = Boolean(onRowActivate) && cellIndex === 0;
+                  return (
+                    <span key={cell.id} className={cellClassName?.(cell.column.id)} role="cell">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      {isActivationCell ? (
+                        <button
+                          type="button"
+                          className="table-row-activation-button"
+                          aria-label={activationLabel}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRowActivate?.(row.original);
+                          }}
+                        >
+                          <span aria-hidden="true">Open</span>
+                        </button>
+                      ) : null}
+                    </span>
+                  );
+                })}
               </div>
             );
           })}

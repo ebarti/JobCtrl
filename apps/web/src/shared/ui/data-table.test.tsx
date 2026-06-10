@@ -71,6 +71,7 @@ function renderTable({
         rowSelection={rowSelection}
         onRowSelectionChange={vi.fn()}
         rowAriaSelected={(row) => row.id === "row-2"}
+        rowActivationLabel={(row) => `Open ${row.company}`}
         {...(onRowActivate ? { onRowActivate } : {})}
       />,
     ),
@@ -101,7 +102,7 @@ describe("DataTable", () => {
     expect(onSortingChange).toHaveBeenCalledWith([{ id: "fit", desc: true }]);
   });
 
-  it("keeps activatable data rows as rows while supporting click, Enter, and Space activation", async () => {
+  it("keeps activatable data rows as rows while exposing named button activation", async () => {
     const user = userEvent.setup();
     const onRowActivate = vi.fn();
     renderTable({ onRowActivate });
@@ -109,9 +110,13 @@ describe("DataTable", () => {
     const table = screen.getByRole("table");
     const dataRows = within(table).getAllByRole("row").slice(1);
     expect(dataRows).toHaveLength(2);
+    expect(dataRows[0]).not.toHaveAttribute("tabindex");
 
-    await user.click(dataRows[0]!);
-    dataRows[0]!.focus();
+    const openAcme = within(dataRows[0]!).getByRole("button", {
+      name: "Open Acme Studio",
+    });
+    await user.click(openAcme);
+    openAcme.focus();
     await user.keyboard("{Enter}");
     await user.keyboard(" ");
 
@@ -165,6 +170,7 @@ describe("DataTable", () => {
         onSortingChange={onSortingChange}
         rowSelection={{ "row-1": true }}
         onRowSelectionChange={vi.fn()}
+        rowActivationLabel={(row) => `Open ${row.company}`}
       />,
     );
 

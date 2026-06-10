@@ -60,6 +60,7 @@ export function RunsTable({
       manualSorting
       tableClassName="runs-data-grid-table"
       onRowActivate={(row) => onOpenRun(row.workflowId)}
+      rowActivationLabel={(row) => `Open run ${row.title} ${row.workflowId}`}
       pagination={{
         page,
         pageSize,

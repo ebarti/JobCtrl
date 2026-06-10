@@ -251,7 +251,7 @@ axe violations fail CI (`a11y: { test: "error" }`). The Storybook test runner
 (`pnpm web:storybook:test`) is the gate; `pnpm --filter @jobhunter/web test`
 also runs the colocated `*.a11y.test.tsx` suites for forms and dialogs.
 
-13 stories defer the a11y check (`a11y: { test: "off" }`) because they
+10 stories defer the a11y check (`a11y: { test: "off" }`) because they
 exercise pre-existing production a11y defects that are scoped out of the
 Phase 7 baseline. Each deferral is tracked in
 [`docs/backlog.md`](backlog.md) "Frontend Accessibility Backlog (Phase 7
