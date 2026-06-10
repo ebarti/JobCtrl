@@ -264,7 +264,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 | 7. Shared Primitive Token Migration | 5/5 | Complete | 2026-06-10 |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 4/4 | Complete | 2026-06-10 |
 | 9. Domain And Status Surface Migration | 4/4 | Complete | 2026-06-10 |
-| 10. Route Visual QA + Storybook/A11y Hardening | 0/? | Pending | - |
+| 10. Route Visual QA + Storybook/A11y Hardening | 4/4 | Complete | 2026-06-10 |
 | 11. Alias And Global CSS Cleanup | 0/? | Pending | - |
 
 ## Coverage
@@ -282,12 +282,12 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 ## Next Up
 
-**Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
+**Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
 
-`$gsd-discuss-phase 10`
+`$gsd-discuss-phase 11`
 
-Also available: `$gsd-plan-phase 10` after the Phase 10 discussion context is complete.
+Also available: `$gsd-plan-phase 11` after the Phase 11 discussion context is complete.
 
 ---
 *Roadmap created: 2026-06-09*
-*Last updated: 2026-06-10 after Phase 9 completion*
+*Last updated: 2026-06-10 after Phase 10 completion and merge of phases 6-10 to main (PRs #151-#155)*
