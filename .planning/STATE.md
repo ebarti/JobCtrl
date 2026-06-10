@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
-status: executing
-stopped_at: Completed 06-05-PLAN.md
-last_updated: "2026-06-10T00:30:00.000Z"
-last_activity: 2026-06-09 -- Phase 06 execution started
+status: phase-complete
+stopped_at: Completed Phase 06
+last_updated: "2026-06-10T10:20:00.000Z"
+last_activity: 2026-06-10 -- Phase 06 completed
 progress:
   total_phases: 6
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 100
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 ## Current Position
 
-Phase: 06 (Token Foundation + shadcn Preset Contract) — EXECUTING
+Phase: 06 (Token Foundation + shadcn Preset Contract) — COMPLETE
 Plan: 6 of 6
-Status: Ready to execute
-Last activity: 2026-06-09 -- Phase 06 execution started
+Status: Phase complete; ready for Phase 7 discussion/planning
+Last activity: 2026-06-10 -- Phase 06 completed
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Active Milestone Summary
 
@@ -55,7 +55,7 @@ Phase order:
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 6 | Token Foundation + shadcn Preset Contract | Planned |
+| 6 | Token Foundation + shadcn Preset Contract | Completed |
 | 7 | Shared Primitive Token Migration | Pending |
 | 8 | Layout Chrome, Fonts, And Tabler Icons | Pending |
 | 9 | Domain And Status Surface Migration | Pending |
@@ -81,9 +81,9 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 5 for v1.1
-- Average duration: 7 min
-- Total execution time: 36 min
+- Total plans completed: 6 for v1.1
+- Average duration: 8 min
+- Total execution time: 50 min
 
 ## Accumulated Context
 
@@ -114,6 +114,9 @@ Prior milestone decisions that still matter:
 - [Phase 06]: [Phase 06 Plan 04]: Corrected legacy-token grep gates to allow standard shadcn muted utilities while still rejecting bare legacy text-muted and old token names.
 - [Phase 06]: [Phase 06 Plan 05]: Kept overlay/menu primitive migration mechanical: only class-token utilities changed; Radix portals, refs, focus behavior, roles, animations, props, and exports stayed unchanged.
 - [Phase 06]: [Phase 06 Plan 05]: Recovered close-out from committed task evidence after the plan executor stalled before writing its summary.
+- [Phase 06]: [Phase 06 Plan 06]: Added seeded browser computed-token proof for root shadcn tokens, light/dark theme switching, color-scheme, density row heights, focus indicators, and dense-route rendering.
+- [Phase 06]: [Phase 06 Plan 06]: Corrected final proof commands to use the working Vitest file filter, generated CSS ring variants, and a deterministic legacy-token scanner that allows standard shadcn muted utilities.
+- [Phase 06]: [Phase 06 Plan 06]: Removed final legacy `bg-rule`/`bg-rule-2` primitive utilities so the Phase 6 app/story/config scan exits with zero matches.
 
 ### Pending Todos
 
@@ -140,9 +143,10 @@ None.
 | Phase 06 P03 | 11min | 3 tasks | 7 files |
 | Phase 06 P04 | 7min | 3 tasks | 14 files |
 | Phase 06 P05 | 5min | 3 tasks | 15 files |
+| Phase 06 P06 | 14min | 3 tasks | 6 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T00:30:00.000Z
-Stopped at: Completed 06-05-PLAN.md
+Last session: 2026-06-10T10:20:00.000Z
+Stopped at: Completed Phase 06
 Resume file: None

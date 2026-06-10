@@ -17,7 +17,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Integer phases are planned milestone work.
 - Decimal phases are reserved for urgent insertions.
 
-- [ ] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and clean-slate legacy token removal.
+- [x] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and clean-slate legacy token removal.
 - [ ] **Phase 7: Shared Primitive Token Migration** - Move shared shadcn/Radix primitives to standard semantic classes with overlay, focus, form, table, and Storybook coverage.
 - [ ] **Phase 8: Layout Chrome, Fonts, And Tabler Icons** - Apply the preset to app shell, topbar, nav, menus, theme/density controls, fonts, and visible iconography without route/workflow changes.
 - [ ] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
@@ -50,7 +50,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 - Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
 - Browser smoke of light/dark token computed values on the app shell
 
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans executed
 Plans:
 **Wave 1**
 
@@ -71,7 +71,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 06-06-PLAN.md — Add browser computed-token smoke, update docs, and run final proof gate.
+- [x] 06-06-PLAN.md — Add browser computed-token smoke, update docs, and run final proof gate.
 
 ### Phase 7: Shared Primitive Token Migration
 
@@ -215,7 +215,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Token Foundation + shadcn Preset Contract | 5/6 | In Progress|  |
+| 6. Token Foundation + shadcn Preset Contract | 6/6 | Complete | 2026-06-10 |
 | 7. Shared Primitive Token Migration | 0/? | Pending | - |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 0/? | Pending | - |
 | 9. Domain And Status Surface Migration | 0/? | Pending | - |
@@ -237,11 +237,11 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 ## Next Up
 
-**Phase 6: Token Foundation + shadcn Preset Contract** - Execute the verified six-plan token foundation sequence.
+**Phase 7: Shared Primitive Token Migration** - Discuss and plan the next migration slice on top of the completed Phase 6 token foundation.
 
-`$gsd-execute-phase 6`
+`$gsd-discuss-phase 7`
 
-Also available: `$gsd-plan-phase 6 --force` to intentionally replan before execution.
+Also available: `$gsd-plan-phase 7` after the Phase 7 discussion context is complete.
 
 ---
 *Roadmap created: 2026-06-09*
