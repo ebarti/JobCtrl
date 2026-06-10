@@ -28,16 +28,19 @@ type Story = StoryObj<typeof meta>;
 export const Palette: Story = {
   render: () => (
     <Command className="w-72 rounded-md border border-border">
-      <CommandInput placeholder="Search jobs, companies, runs..." />
+      <CommandInput placeholder="Search commands..." />
       <CommandList>
-        <CommandEmpty>No matches.</CommandEmpty>
-        <CommandGroup heading="Jobs">
-          <CommandItem>Staff Software Engineer · Acme Corp</CommandItem>
-          <CommandItem>Principal Platform Engineer · Globex</CommandItem>
+        <CommandEmpty>Nothing to show yet.</CommandEmpty>
+        <CommandGroup heading="Actions">
+          <CommandItem value="open-preview">Open preview</CommandItem>
+          <CommandItem value="copy-link">Copy link</CommandItem>
+          <CommandItem disabled value="archive-item">
+            Archive unavailable
+          </CommandItem>
         </CommandGroup>
         <CommandSeparator />
-        <CommandGroup heading="Apply runs">
-          <CommandItem>run-1 · running</CommandItem>
+        <CommandGroup heading="Views">
+          <CommandItem value="compact-view">Compact view</CommandItem>
         </CommandGroup>
       </CommandList>
     </Command>
@@ -47,9 +50,9 @@ export const Palette: Story = {
 export const EmptyState: Story = {
   render: () => (
     <Command className="w-72 rounded-md border border-border">
-      <CommandInput placeholder="Search jobs..." defaultValue="zzzzzzzz" />
+      <CommandInput placeholder="Search commands..." defaultValue="zzzzzzzz" />
       <CommandList>
-        <CommandEmpty>No matches.</CommandEmpty>
+        <CommandEmpty>Nothing to show yet.</CommandEmpty>
       </CommandList>
     </Command>
   ),

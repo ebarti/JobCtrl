@@ -21,16 +21,19 @@ export const FilterPicker: Story = {
   render: () => (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline">Filter by company</Button>
+        <Button variant="outline">Filter options</Button>
       </PopoverTrigger>
-      <PopoverContent>
+      <PopoverContent className="w-64">
         <div className="grid gap-2">
-          <p className="text-sm font-medium">Recent companies</p>
+          <p className="text-sm font-medium text-popover-foreground">Saved filters</p>
           <ul className="space-y-1 text-sm text-muted-foreground">
-            <li>Acme Corp</li>
-            <li>Globex</li>
-            <li>Initech</li>
+            <li>Updated recently</li>
+            <li>Owned by reviewer</li>
+            <li>Needs decision</li>
           </ul>
+          <Button disabled size="sm" variant="outline">
+            Disabled action
+          </Button>
         </div>
       </PopoverContent>
     </Popover>
@@ -43,7 +46,15 @@ export const OpenByDefault: Story = {
       <PopoverTrigger asChild>
         <Button variant="outline">Help</Button>
       </PopoverTrigger>
-      <PopoverContent>Per stage retries up to 3 attempts.</PopoverContent>
+      <PopoverContent className="w-64">
+        <div className="grid gap-2 text-sm">
+          <p className="font-medium text-popover-foreground">Open popover</p>
+          <p className="text-muted-foreground">
+            This open fixture keeps the popover surface, foreground, border, and
+            focus tokens visible over the Storybook canvas.
+          </p>
+        </div>
+      </PopoverContent>
     </Popover>
   ),
 };

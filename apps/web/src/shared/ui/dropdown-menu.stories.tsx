@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Button } from "./button.js";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -24,20 +25,20 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const JobActions: Story = {
+export const Actions: Story = {
   render: () => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline">Actions</Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuLabel>Pipeline</DropdownMenuLabel>
-        <DropdownMenuItem>Retry stage</DropdownMenuItem>
-        <DropdownMenuItem>Cancel stage</DropdownMenuItem>
+        <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+        <DropdownMenuItem>Open preview</DropdownMenuItem>
+        <DropdownMenuItem>Duplicate item</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>Apply</DropdownMenuLabel>
-        <DropdownMenuItem>Mark applied</DropdownMenuItem>
-        <DropdownMenuItem>Mark skipped</DropdownMenuItem>
+        <DropdownMenuLabel>Display</DropdownMenuLabel>
+        <DropdownMenuCheckboxItem checked>Show helper text</DropdownMenuCheckboxItem>
+        <DropdownMenuItem disabled>Archive unavailable</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   ),
@@ -50,8 +51,10 @@ export const OpenByDefault: Story = {
         <Button variant="outline">Actions</Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuItem>Open in browser</DropdownMenuItem>
-        <DropdownMenuItem>Open application URL</DropdownMenuItem>
+        <DropdownMenuLabel>Open menu</DropdownMenuLabel>
+        <DropdownMenuItem>Rename item</DropdownMenuItem>
+        <DropdownMenuCheckboxItem checked>Selected option</DropdownMenuCheckboxItem>
+        <DropdownMenuItem disabled>Disabled option</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   ),

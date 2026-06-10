@@ -18,9 +18,9 @@ export const Hint: Story = {
   render: () => (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
-        <Button variant="outline">Retry stage</Button>
+        <Button variant="outline">Show hint</Button>
       </TooltipTrigger>
-      <TooltipContent>Re-runs from the last failed stage.</TooltipContent>
+      <TooltipContent>Explains the current synthetic action.</TooltipContent>
     </Tooltip>
   ),
 };
@@ -29,9 +29,24 @@ export const OpenByDefault: Story = {
   render: () => (
     <Tooltip defaultOpen>
       <TooltipTrigger asChild>
-        <Button variant="outline">Cancel apply</Button>
+        <Button variant="outline">Open tooltip</Button>
       </TooltipTrigger>
-      <TooltipContent>Stops the run before submission.</TooltipContent>
+      <TooltipContent>Open by default for surface-token review.</TooltipContent>
+    </Tooltip>
+  ),
+};
+
+export const DisabledControl: Story = {
+  render: () => (
+    <Tooltip defaultOpen>
+      <TooltipTrigger asChild>
+        <span>
+          <Button disabled variant="outline">
+            Disabled action
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>Disabled controls can still provide context.</TooltipContent>
     </Tooltip>
   ),
 };
