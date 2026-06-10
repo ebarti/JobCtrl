@@ -1,9 +1,10 @@
 import type { ApplyRunStatus } from "@jobhunter/domain-types";
 
 import { assertNever } from "../../../shared/lib/exhaustive.js";
+import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 
 export type ApplyRunResult = ApplyRunStatus;
-export type ApplyRunTone = "ok" | "info" | "warn" | "danger" | "muted";
+export type ApplyRunTone = StatusTagTone;
 
 export function applyRunResultTone(result: ApplyRunResult): ApplyRunTone {
   switch (result) {

@@ -6,6 +6,7 @@ import { applyRunsKeys } from "../../operations/applyRunsKeys.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import {
   normalizeApplyRunEventEntry,
   type ApplyRunWithEvents,
@@ -26,7 +27,7 @@ function eventLabel(type: string): string {
     .replace(/\s+/g, " ");
 }
 
-function levelTone(level: string): string {
+export function applyRunEventLevelTone(level: string): StatusTagTone {
   const normalized = level.toLowerCase();
   if (normalized === "error") return "danger";
   if (normalized === "warn" || normalized === "warning") return "warn";
@@ -71,7 +72,7 @@ export function ApplyRunTimeline({ runId, events = EMPTY_EVENTS }: ApplyRunTimel
         <ol className="apply-run-timeline-list" aria-label="Apply run timeline">
           {timeline.map((event, index) => (
             <li
-              className={`apply-run-timeline-event tone-${levelTone(event.level)}`}
+              className={`apply-run-timeline-event tone-${applyRunEventLevelTone(event.level)}`}
               key={`${event.at ?? "no-time"}-${event.type}-${index}`}
             >
               <span className="apply-run-timeline-marker" aria-hidden="true" />

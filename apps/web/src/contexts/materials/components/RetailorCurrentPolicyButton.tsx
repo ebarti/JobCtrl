@@ -1,4 +1,4 @@
-import { WandSparkles } from "lucide-react";
+import { IconSparkles } from "@tabler/icons-react";
 import type { JSX } from "react";
 
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
@@ -47,7 +47,7 @@ export function TailorJobButton({
         mutation.mutate({ jobId, reason: "manual_tailor" });
       }}
     >
-      <WandSparkles aria-hidden="true" size={14} />
+      <IconSparkles aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "tailoring" : label}</span>
     </button>
   );
@@ -78,7 +78,7 @@ export function RetailorJobButton({
         mutation.mutate({ jobId });
       }}
     >
-      <WandSparkles aria-hidden="true" size={14} />
+      <IconSparkles aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "re-tailoring" : label}</span>
     </button>
   );
@@ -133,7 +133,7 @@ export function RetailorCurrentPolicyButton({
         mutation.mutate({ jobKeys, limit: requestLimit }, onSuccess ? { onSuccess } : undefined);
       }}
     >
-      <WandSparkles aria-hidden="true" size={14} />
+      <IconSparkles aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "re-tailoring" : buttonLabel}</span>
     </button>
   );

@@ -20,7 +20,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 - [x] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and clean-slate legacy token removal.
 - [x] **Phase 7: Shared Primitive Token Migration** - Move shared shadcn/Radix primitives to standard semantic classes with overlay, focus, form, table, and Storybook coverage.
 - [x] **Phase 8: Layout Chrome, Fonts, And Tabler Icons** - Apply the preset to app shell, topbar, nav, menus, theme/density controls, fonts, and visible iconography without route/workflow changes.
-- [ ] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
+- [x] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
 - [ ] **Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
 - [ ] **Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
 
@@ -173,7 +173,17 @@ Plans:
 - Browser smoke for Dashboard, Jobs, Apply Review, Artifacts, Pipelines, and Debug status surfaces
 - Legacy/dynamic class audit for status components and global status selectors
 
-**Plans:** Create with `$gsd-plan-phase 9`.
+**Plans:** 4/4 plans executed
+Plans:
+**Wave 1**
+
+- [x] 09-01-PLAN.md - Tighten shared status primitives and core tone helpers to closed vocabularies.
+- [x] 09-02-PLAN.md - Preserve domain status semantics through typed helpers and explicit maps.
+- [x] 09-03-PLAN.md - Migrate deferred domain/view lucide icons to Tabler equivalents.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 09-04-PLAN.md - Run status QA, browser proof, static audits, and state reconciliation.
 
 ### Phase 10: Route Visual QA + Storybook/A11y Hardening
 
@@ -242,7 +252,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 | 6. Token Foundation + shadcn Preset Contract | 6/6 | Complete | 2026-06-10 |
 | 7. Shared Primitive Token Migration | 5/5 | Complete | 2026-06-10 |
 | 8. Layout Chrome, Fonts, And Tabler Icons | 4/4 | Complete | 2026-06-10 |
-| 9. Domain And Status Surface Migration | 0/? | Pending | - |
+| 9. Domain And Status Surface Migration | 4/4 | Complete | 2026-06-10 |
 | 10. Route Visual QA + Storybook/A11y Hardening | 0/? | Pending | - |
 | 11. Alias And Global CSS Cleanup | 0/? | Pending | - |
 
@@ -261,12 +271,12 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
 
 ## Next Up
 
-**Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
+**Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
 
-`$gsd-discuss-phase 9`
+`$gsd-discuss-phase 10`
 
-Also available: `$gsd-plan-phase 9` after the Phase 9 discussion context is complete.
+Also available: `$gsd-plan-phase 10` after the Phase 10 discussion context is complete.
 
 ---
 *Roadmap created: 2026-06-09*
-*Last updated: 2026-06-10 after Phase 8 completion*
+*Last updated: 2026-06-10 after Phase 9 completion*

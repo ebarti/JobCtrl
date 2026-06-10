@@ -1,5 +1,5 @@
 import type { ApplyReviewQueueItem } from "@jobhunter/contracts";
-import { ExternalLink } from "lucide-react";
+import { IconExternalLink } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
@@ -344,7 +344,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             type="button"
             onClick={() => setDetailJobKey(item.jobKey)}
           >
-            <ExternalLink size={14} aria-hidden="true" />
+            <IconExternalLink size={14} aria-hidden="true" />
             open job detail
           </button>
           {activeRun ? (

@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { IconRefresh } from "@tabler/icons-react";
 import type { JSX } from "react";
 
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
@@ -31,7 +31,7 @@ export function RescoreJobButton({
         mutation.mutate({ jobId });
       }}
     >
-      <RefreshCw aria-hidden="true" size={14} />
+      <IconRefresh aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "rescoring" : label}</span>
     </button>
   );
@@ -80,7 +80,7 @@ export function RescoreCurrentPolicyButton({
         mutation.mutate({ jobKeys, limit: requestLimit }, onSuccess ? { onSuccess } : undefined);
       }}
     >
-      <RefreshCw aria-hidden="true" size={14} />
+      <IconRefresh aria-hidden="true" size={14} />
       <span>{mutation.isPending ? "rescoring" : buttonLabel}</span>
     </button>
   );

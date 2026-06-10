@@ -4,6 +4,7 @@ import type { DashboardSummary } from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export type KpiTarget = "all" | "failed" | "blocked" | "ready" | "applied";
+type KpiTone = "alert" | "warn" | "ok";
 
 const KPI_BASE: JobsSearch = {
   q: "",
@@ -53,14 +54,14 @@ const ITEMS: ReadonlyArray<{
   readonly key: keyof DashboardSummary["totals"];
   readonly caption: (summary: DashboardSummary) => string;
   readonly target: KpiTarget;
-  readonly tone: string;
+  readonly tone: KpiTone | null;
 }> = [
   {
     label: "Jobs",
     key: "jobs",
     caption: (summary) => `+${summary.totals.jobsToday} today`,
     target: "all",
-    tone: "",
+    tone: null,
   },
   {
     label: "Failures",
@@ -88,14 +89,14 @@ const ITEMS: ReadonlyArray<{
     key: "applied",
     caption: (summary) => `+${summary.totals.appliedToday} today`,
     target: "applied",
-    tone: "",
+    tone: null,
   },
   {
     label: "Dry runs",
     key: "dryRuns",
     caption: () => "today excluded",
     target: "all",
-    tone: "",
+    tone: null,
   },
 ];
 

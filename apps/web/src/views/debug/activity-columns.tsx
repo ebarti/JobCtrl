@@ -1,6 +1,7 @@
 import type { ActivityEventSummary } from "../../contexts/operations/types.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
+import { activityLevelTone } from "./activity-tone.js";
 
 function activityContext(activity: ActivityEventSummary): string {
   if (activity.title) {
@@ -15,7 +16,7 @@ export const activityColumns: Array<DataGridColumn<ActivityEventSummary>> = [
     label: "Level",
     sortable: true,
     render: (activity) => (
-      <span className={`tag ${activity.level === "error" ? "danger" : "muted"}`}>
+      <span className={`tag ${activityLevelTone(activity.level)}`}>
         {activity.level}
       </span>
     ),

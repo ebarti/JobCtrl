@@ -7,6 +7,7 @@ import { formatDateTime } from "../../shared/lib/formatters.js";
 import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
+import { activityLevelTone } from "./activity-tone.js";
 
 export interface ActivityDetailDrawerProps {
   eventId: string;
@@ -42,7 +43,7 @@ export function ActivityDetailDrawer({ eventId }: ActivityDetailDrawerProps) {
         ) : (
           <>
             <div className="drawer-head">
-              <span className={`tag ${activity.level === "error" ? "danger" : "muted"}`}>
+              <span className={`tag ${activityLevelTone(activity.level)}`}>
                 {activity.level}
               </span>
               <span>

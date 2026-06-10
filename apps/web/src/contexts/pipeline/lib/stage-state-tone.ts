@@ -1,7 +1,8 @@
 import { assertNever } from "../../../shared/lib/exhaustive.js";
+import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import type { StageState } from "../../operations/types.js";
 
-export type StageStateTone = "ok" | "warn" | "danger" | "muted" | "info";
+export type StageStateTone = StatusTagTone;
 
 export function stageStateTone(state: StageState): StageStateTone {
   switch (state) {

@@ -71,15 +71,15 @@ describe("<DebugActivityTable>", () => {
       onOpenActivity,
     });
 
-    const activityRow = screen.getByText("Activity event 01").closest("tr");
-    expect(activityRow).not.toBeNull();
-    expect(activityRow).toHaveAttribute("tabindex", "0");
+    const activationButton = screen.getByRole("button", {
+      name: /open activity activity event 01 evt-01/i,
+    });
 
-    await user.click(activityRow!);
+    await user.click(activationButton);
     expect(onOpenActivity).toHaveBeenLastCalledWith("evt-01");
 
     onOpenActivity.mockClear();
-    activityRow!.focus();
+    activationButton.focus();
     await user.keyboard("{Enter}");
 
     expect(onOpenActivity).toHaveBeenLastCalledWith("evt-01");

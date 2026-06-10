@@ -62,14 +62,15 @@ describe("<RunsTable>", () => {
   });
 
   it("invokes onOpenRun with the workflow id when a row is activated", async () => {
+    const user = userEvent.setup();
     const onOpenRun = vi.fn();
     renderTable({ onOpenRun });
 
-    const titleCell = screen.getByText(sampleWorkflowRun.title);
-    const row = titleCell.closest("tr");
-    if (row) {
-      (row as HTMLElement).click();
-    }
+    const activationButton = screen.getByRole("button", {
+      name: `Open run ${sampleWorkflowRun.title} ${sampleWorkflowRun.workflowId}`,
+    });
+    await user.click(activationButton);
+
     expect(onOpenRun).toHaveBeenCalledWith(sampleWorkflowRun.workflowId);
   });
 
