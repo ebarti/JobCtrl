@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
 status: executing
-stopped_at: Completed Phase 09
-last_updated: "2026-06-10T15:25:00.000Z"
-last_activity: 2026-06-10 -- Phase 09 completed; Phase 10 ready for discussion
+stopped_at: Completed Phase 10
+last_updated: "2026-06-10T14:22:43.000Z"
+last_activity: 2026-06-10 -- Phase 10 route visual QA completed; Phase 11 cleanup is next
 progress:
   total_phases: 6
-  completed_phases: 4
-  total_plans: 19
-  completed_plans: 19
-  percent: 67
+  completed_phases: 5
+  total_plans: 23
+  completed_plans: 23
+  percent: 83
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 10 — route-visual-qa-storybook-a11y-hardening
+**Current focus:** Phase 11 — alias-and-global-css-cleanup
 
 ## Current Position
 
-Phase: 10 (route-visual-qa-storybook-a11y-hardening) — READY FOR DISCUSSION
-Plan: none yet
-Status: Phase 09 complete; ready to discuss Phase 10
-Last activity: 2026-06-10 -- Phase 09 completed; Phase 10 ready for discussion
+Phase: 11 (alias-and-global-css-cleanup) — READY TO PLAN
+Plan: create Phase 11 plan
+Status: Phase 10 complete; Phase 11 cleanup is next
+Last activity: 2026-06-10 -- Phase 10 route visual QA completed; Phase 11 cleanup is next
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 83%
 
 ## Active Milestone Summary
 
@@ -59,7 +59,7 @@ Phase order:
 | 7 | Shared Primitive Token Migration | Completed |
 | 8 | Layout Chrome, Fonts, And Tabler Icons | Completed |
 | 9 | Domain And Status Surface Migration | Completed |
-| 10 | Route Visual QA + Storybook/A11y Hardening | Pending |
+| 10 | Route Visual QA + Storybook/A11y Hardening | Completed |
 | 11 | Alias And Global CSS Cleanup | Pending |
 
 ## Prior Milestone Verification (2026-06-09)
@@ -81,7 +81,7 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 ## Performance Metrics
 
-- Total plans completed: 19 for v1.1
+- Total plans completed: 23 of 23 planned so far for v1.1
 - Average duration: 9 min
 - Total execution time: 96 min
 
@@ -97,6 +97,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Current milestone decisi
 - Avoid uncontrolled full `shadcn apply`; research showed it rewrites a larger primitive/package surface than this milestone needs.
 - Keep domain status semantics explicit in context-owned tone helpers or explicit variant maps.
 - Make browser QA in light/dark themes and density modes a gate for user-facing visual phases.
+- [Phase 10]: Added seeded route visual QA coverage for representative routes, overlays, light/dark themes, density modes, focus indicators, and destructive-control visibility.
+- [Phase 10]: Restored global app focus outlines for `Input` and `Textarea` by removing primitive-level `focus-visible:outline-none` suppression.
+- [Phase 10]: Split Jobs bulk-action disabled state from background query/preparation pickup state so valid selected-row actions remain usable while automatic preparation runs.
 
 Prior milestone decisions that still matter:
 
@@ -138,7 +141,7 @@ None.
 - Research risk: `apps/web/src/styles/globals.css` has broad blast radius; phase plans must avoid broad visual rewrites without route/browser QA.
 - Research risk: full shadcn CLI apply rewrites too many UI files; use targeted application and manual edits unless a phase explicitly expands scope.
 - Carry-forward test hygiene: 3 pre-existing unrelated failing tests were noted at v1.0 close (enrichment staleness x2, materials suppression).
-- Phase 10 should run the broader route visual QA matrix, including overlays, all representative routes, density coverage, Storybook/a11y, and seeded-data safety proof.
+- Phase 11 owns final legacy alias/global CSS cleanup, icon/font dependency audit, and residual token scans after the Phase 10 QA gate passed.
 
 ## Deferred Items
 
@@ -165,9 +168,13 @@ None.
 | Phase 09 P02 | 24min | 4 tasks | 16 files |
 | Phase 09 P03 | 9min | 3 tasks | 10 files |
 | Phase 09 P04 | 21min | 4 tasks | 10 files |
+| Phase 10 P01 | 10min | 4 tasks | 1 files |
+| Phase 10 P02 | 15min | 5 tasks | 4 files |
+| Phase 10 P03 | 11min | 3 tasks | 0 files |
+| Phase 10 P04 | 8min | 4 tasks | 12 files |
 
 ## Session Continuity
 
 Last session: 2026-06-10T12:23:42.000Z
-Stopped at: Completed Phase 08
+Stopped at: Completed Phase 10
 Resume file: None

@@ -21,7 +21,7 @@ The migration is dependency-forced. First establish the token contract and shadc
 - [x] **Phase 7: Shared Primitive Token Migration** - Move shared shadcn/Radix primitives to standard semantic classes with overlay, focus, form, table, and Storybook coverage.
 - [x] **Phase 8: Layout Chrome, Fonts, And Tabler Icons** - Apply the preset to app shell, topbar, nav, menus, theme/density controls, fonts, and visible iconography without route/workflow changes.
 - [x] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
-- [ ] **Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
+- [x] **Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
 - [ ] **Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
 
 ## Phase Details
@@ -212,7 +212,18 @@ Plans:
 - Targeted `pnpm --filter @jobhunter/web e2e` specs or documented browser QA with screenshots
 - `git diff --check`
 
-**Plans:** Create with `$gsd-plan-phase 10`.
+**Plans:** 4/4 plans executed
+Plans:
+
+**Wave 1**
+
+- [x] 10-01-PLAN.md - Add representative route visual QA for seeded routes in light/dark themes.
+- [x] 10-02-PLAN.md - Cover density, focus, overlays, forms, controls, and destructive-control visibility.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 10-03-PLAN.md - Run Storybook/a11y and full web test gates.
+- [x] 10-04-PLAN.md - Record verification, review/QA outcomes, and reconcile requirements/state.
 
 ### Phase 11: Alias And Global CSS Cleanup
 
