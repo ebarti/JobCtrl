@@ -49,6 +49,7 @@ import type {
   WorkflowRunsListQuery,
 } from "./contracts.js";
 import { PIPELINE_RUN_STAGES, ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
+import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
@@ -598,18 +599,67 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const stages = reconcileStageRetryability(db, listRow.job_id, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, listRow.job_id);
   const auditHistory = buildJobAuditHistory(db, listRow.job_id);
+  const jobSummary = rowToJobSummary(listRow);
+  const latestApplyRun = latestApplyRunForJob(db, listRow.job_id);
   return {
     ok: true,
     job: {
-      ...rowToJobSummary(listRow),
+      ...jobSummary,
       descriptionPreview: detailRow?.description_preview ?? "",
       scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
+    applyAudit: buildApplyAudit({
+      applicationUrl: applyAuditApplicationUrl(listRow),
+      hasResume: Boolean(listRow.has_resume),
+      hasCoverLetter: Boolean(listRow.has_cover_letter),
+      hasPdf: Boolean(listRow.has_pdf),
+      currentStage: jobSummary.currentStage,
+      currentState: jobSummary.currentState,
+      currentErrorCode: jobSummary.errorCode,
+      currentErrorMessage: jobSummary.errorMessage,
+      latestApplyRun,
+      scoreBreakdown: jobSummary.scoreBreakdown,
+      reviewEvidenceAvailable: Boolean(
+        jobSummary.scoreBreakdown ||
+          artifacts.length ||
+          auditHistory.length ||
+          detailRow?.description_preview,
+      ),
+    }),
     stages,
     artifacts,
     auditHistory,
     employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
   };
+}
+
+function latestApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLatestRun | null {
+  if (!tableExists(db, "apply_run_projections")) {
+    return null;
+  }
+  const row = getRow<ApplyRunProjectionRow>(
+    db,
+    `SELECT * FROM apply_run_projections
+     WHERE tenant_id = ? AND job_id = ?
+     ORDER BY COALESCE(started_at, finished_at, '') DESC, run_id DESC
+     LIMIT 1`,
+    [DEFAULT_TENANT, jobId],
+  );
+  if (!row) {
+    return null;
+  }
+  return {
+    runId: stringField(row.run_id),
+    status: normalizeWorkflowRunStatus(row.status),
+    result: nullableString(row.result),
+    dryRun: Boolean(row.dry_run),
+    startedAt: nullableString(row.started_at),
+    finishedAt: nullableString(row.finished_at),
+  };
+}
+
+function applyAuditApplicationUrl(row: JobListProjectionRow): string | null {
+  return nullableString(row.application_url) ?? nullableString(row.job_id);
 }
 
 /**

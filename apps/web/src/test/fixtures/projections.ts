@@ -2,6 +2,7 @@ import type {
   ArtifactDetail,
   ArtifactSummary,
   ActivityEventSummary,
+  ApplyAudit,
   ApplicationOutcomeListResponse,
   ApplyReviewQueueResponse,
   CredentialsResponse,
@@ -135,6 +136,52 @@ export const sampleSecondaryJob: JobSummary = {
   appliedAt: "2026-05-04T10:00:00Z",
 };
 
+export function makeApplyAudit(overrides: Partial<ApplyAudit> = {}): ApplyAudit {
+  const base: ApplyAudit = {
+    state: "ready",
+    label: "materials ready",
+    summary: "The tailored materials are ready to review before approval.",
+    reviewEvidenceAvailable: true,
+    missingPrerequisites: [],
+    hardBlockers: [],
+    eligibilityConcerns: [],
+    sources: [
+      {
+        kind: "application_url",
+        label: "Application target",
+        status: "present",
+        detail: "Application target is available.",
+      },
+      {
+        kind: "materials.resume",
+        label: "Tailored resume",
+        status: "present",
+        detail: "Tailored resume is available.",
+      },
+      {
+        kind: "materials.pdf",
+        label: "Submit-ready PDF",
+        status: "present",
+        detail: "Resume PDF is available for submission.",
+      },
+      {
+        kind: "score_eligibility",
+        label: "Score eligibility",
+        status: "present",
+        detail: "Eligibility is recorded as eligible.",
+      },
+    ],
+  };
+  return {
+    ...base,
+    ...overrides,
+    missingPrerequisites: overrides.missingPrerequisites ?? base.missingPrerequisites,
+    hardBlockers: overrides.hardBlockers ?? base.hardBlockers,
+    eligibilityConcerns: overrides.eligibilityConcerns ?? base.eligibilityConcerns,
+    sources: overrides.sources ?? base.sources,
+  };
+}
+
 export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
   ok: true,
   items: [
@@ -153,6 +200,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         hasPdf: true,
         ready: true,
       },
+      applyAudit: makeApplyAudit(),
       position: {
         descriptionPreview:
           "Globex needs a principal engineer to lead platform reliability, incident response, and developer experience improvements.",
@@ -199,6 +247,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         hasPdf: true,
         ready: false,
       },
+      applyAudit: makeApplyAudit(),
       position: {
         descriptionPreview:
           "Acme is hiring a staff software engineer to own platform reliability and product engineering workflows.",
@@ -354,6 +403,7 @@ export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
     ],
     artifacts: [],
     auditHistory: sampleJobAuditHistory,
+    applyAudit: makeApplyAudit(),
     employerAnalysis: null,
   };
 }

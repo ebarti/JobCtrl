@@ -736,6 +736,34 @@ textarea:focus-visible {
   color: var(--foreground);
 }
 
+.apply-review-audit-facts {
+  display: grid;
+  flex-basis: 100%;
+  gap: 6px;
+  margin: 2px 0 0;
+}
+
+.apply-review-audit-facts > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.apply-review-audit-facts dt {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.apply-review-audit-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
 .apply-review-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

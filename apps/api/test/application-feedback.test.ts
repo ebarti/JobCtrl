@@ -60,6 +60,11 @@ describe("application feedback API", () => {
         hasResume: true,
         ready: true,
       },
+      applyAudit: {
+        state: "ready",
+        label: "materials ready",
+        hardBlockers: [],
+      },
       position: {
         descriptionPreview: "Full description",
         requirements: ["platform leadership", "public company scale", "incident leadership"],
@@ -108,6 +113,16 @@ describe("application feedback API", () => {
       currentStage: "apply",
       currentState: "failed",
       blockers: ["SKIPPED: process killed by signal"],
+      applyAudit: {
+        state: "repair",
+        label: "apply failed",
+        hardBlockers: [
+          expect.objectContaining({
+            code: "stage_not_ready",
+            detail: "process killed by signal",
+          }),
+        ],
+      },
     });
 
     await app.close();
@@ -171,6 +186,10 @@ describe("application feedback API", () => {
     expect(queueItem(response.json(), READY_JOB)).toMatchObject({
       applicationUrl: READY_JOB,
       blockers: [],
+      applyAudit: {
+        state: "ready",
+        hardBlockers: [],
+      },
     });
 
     await app.close();

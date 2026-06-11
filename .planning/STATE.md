@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: in_progress
-last_updated: "2026-06-11T20:35:00.000Z"
+last_updated: "2026-06-11T20:19:00.000Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
-  percent: 20
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 4
+  percent: 40
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 13 planning - Shared Apply Audit Contract.
+**Current focus:** Phase 14 planning - Jobs Drawer Audit Triage.
 
 ## Current Position
 
-Phase: 13 - Shared Apply Audit Contract
+Phase: 14 - Jobs Drawer Audit Triage
 Plan: Not created
-Status: Ready to plan Phase 13
-Last activity: 2026-06-11 - Phase 12 cleanup baseline completed
+Status: Ready to plan Phase 14
+Last activity: 2026-06-11 - Phase 13 shared apply audit contract completed
 
 ## Active Milestone Summary
 
@@ -55,12 +55,12 @@ Explicitly not in scope:
 | Phase | Name | Status | Requirements |
 |-------|------|--------|--------------|
 | 12 | Folded Cleanup + Verification Baseline | Complete | CLEAN-01..CLEAN-04 |
-| 13 | Shared Apply Audit Contract | Planned | AUDIT-01..AUDIT-06 |
+| 13 | Shared Apply Audit Contract | Complete | AUDIT-01..AUDIT-06 |
 | 14 | Jobs Drawer Audit Triage | Planned | DRAWER-01..DRAWER-06 |
 | 15 | Apply Review Resume Pins | Planned | REVIEW-01..REVIEW-08 |
 | 16 | Product-Path QA + Documentation | Planned | QA-01..QA-06 |
 
-Next command: `$gsd-plan-phase 13`.
+Next command: `$gsd-plan-phase 14`.
 
 ## Research Summary
 
@@ -82,6 +82,13 @@ Key findings:
 - Updated current-state codebase maps to describe Tailwind 4 CSS-first styling through `globals.css`, `tokens.css`, and `components.json`.
 - Updated `docs/frontend-target.md` icon guidance to use `@tabler/icons-react` and reject new `lucide-react` imports.
 - Verified with dependency/import audits, stale Tailwind config scans, strict legacy token scan, `corepack pnpm web:check`, `corepack pnpm web:build`, and `git diff --check`.
+
+### Phase 13 - Shared Apply Audit Contract
+
+- Added the shared `ApplyAudit` contract to `@jobhunter/contracts` and exposed it on both `ApplyReviewQueueItem` and `JobDetail`.
+- Added API/read-model derivation through `apps/api/src/apply-audit.ts`, sourced from application target, material availability, current stage state/error, latest apply run, score eligibility, and review evidence availability.
+- Updated Apply Review to consume `item.applyAudit` for queue tags, status counts, selected header status, summary copy, and compact missing/blocker/eligibility/source facts.
+- Verified with `corepack pnpm api:check`, targeted API tests, `corepack pnpm web:check`, targeted web tests, `corepack pnpm web:build`, `git diff --check`, and in-app browser QA on `/apply-review`.
 
 ## Prior Milestone Verification
 
@@ -123,6 +130,6 @@ Milestone v1.1 completed Phases 6-10 and landed semantic tokens, shared primitiv
 ## Session Continuity
 
 Last session: 2026-06-11
-Stopped at: v1.2 milestone initialized through roadmap
-Latest phase completed: Phase 12 - Folded Cleanup + Verification Baseline
+Stopped at: Phase 13 complete
+Latest phase completed: Phase 13 - Shared Apply Audit Contract
 Resume file: None

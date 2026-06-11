@@ -259,6 +259,52 @@ export interface ApplyReviewMaterialsPreview {
   coverLetterText: string | null;
 }
 
+export const APPLY_AUDIT_STATES = ["ready", "preparing", "blocked", "repair"] as const;
+export type ApplyAuditState = (typeof APPLY_AUDIT_STATES)[number];
+
+export const APPLY_AUDIT_FACT_SEVERITIES = [
+  "success",
+  "info",
+  "warning",
+  "blocking",
+  "unknown",
+] as const;
+export type ApplyAuditFactSeverity = (typeof APPLY_AUDIT_FACT_SEVERITIES)[number];
+
+export const APPLY_AUDIT_SOURCE_STATUSES = [
+  "present",
+  "missing",
+  "unknown",
+  "not_applicable",
+] as const;
+export type ApplyAuditSourceStatus = (typeof APPLY_AUDIT_SOURCE_STATUSES)[number];
+
+export interface ApplyAuditFact {
+  code: string;
+  label: string;
+  detail: string | null;
+  severity: ApplyAuditFactSeverity;
+  source: string;
+}
+
+export interface ApplyAuditSource {
+  kind: string;
+  label: string;
+  status: ApplyAuditSourceStatus;
+  detail: string | null;
+}
+
+export interface ApplyAudit {
+  state: ApplyAuditState;
+  label: string;
+  summary: string;
+  reviewEvidenceAvailable: boolean;
+  missingPrerequisites: ApplyAuditFact[];
+  hardBlockers: ApplyAuditFact[];
+  eligibilityConcerns: ApplyAuditFact[];
+  sources: ApplyAuditSource[];
+}
+
 export interface ApplyReviewQueueItem {
   jobKey: string;
   title: string;
@@ -274,6 +320,7 @@ export interface ApplyReviewQueueItem {
     hasPdf: boolean;
     ready: boolean;
   };
+  applyAudit: ApplyAudit;
   position: ApplyReviewPositionEvidence;
   materialsPreview: ApplyReviewMaterialsPreview;
   latestApplyRun: {
@@ -1367,6 +1414,7 @@ export interface JobDetail {
     descriptionPreview: string;
     scoreReasoning: string;
   };
+  applyAudit: ApplyAudit;
   stages: StageSummary[];
   artifacts: ArtifactSummary[];
   auditHistory: JobAuditEntry[];

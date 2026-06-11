@@ -30,6 +30,7 @@ import {
   STAGES,
   STAGE_STATES,
 } from "./contracts.js";
+import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobUrl } from "./write-model.js";
@@ -572,6 +573,37 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const applicationUrl = applyTargetUrl(row);
+  const materialsPreview = materialPreviewsForJob(db, row.job_id);
+  const latestApplyRun = row.run_id
+    ? {
+        runId: row.run_id,
+        status: row.apply_run_status ?? "",
+        result: row.result,
+        dryRun: Boolean(row.dry_run),
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+      }
+    : null;
+  const applyAudit = buildApplyAudit({
+    applicationUrl,
+    hasResume: Boolean(row.has_resume),
+    hasCoverLetter: Boolean(row.has_cover_letter),
+    hasPdf: Boolean(row.has_pdf),
+    currentStage: stage(row.current_stage),
+    currentState,
+    currentErrorCode: row.current_error_code,
+    currentErrorMessage: row.current_error_message,
+    latestApplyRun,
+    scoreBreakdown,
+    reviewEvidenceAvailable: Boolean(
+      scoreBreakdown ||
+        materialsPreview.resumeText ||
+        materialsPreview.resumePdfArtifactId ||
+        materialsPreview.coverLetterText ||
+        row.full_description ||
+        row.description,
+    ),
+  });
   return {
     jobKey: row.job_id,
     title: row.title || "Untitled",
@@ -585,8 +617,9 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
       hasResume: Boolean(row.has_resume),
       hasCoverLetter: Boolean(row.has_cover_letter),
       hasPdf: Boolean(row.has_pdf),
-      ready: Boolean(row.has_resume),
+      ready: applyAudit.state === "ready",
     },
+    applyAudit,
     position: {
       descriptionPreview: previewText(
         row.full_description || row.description,
@@ -602,17 +635,8 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
       transferable: boundedEvidenceList(scoreBreakdown?.transferableSignals ?? []),
       keywords: boundedEvidenceList(parseStringListJson(row.score_keywords_json)),
     },
-    materialsPreview: materialPreviewsForJob(db, row.job_id),
-    latestApplyRun: row.run_id
-      ? {
-          runId: row.run_id,
-          status: row.apply_run_status ?? "",
-          result: row.result,
-          dryRun: Boolean(row.dry_run),
-          startedAt: row.started_at,
-          finishedAt: row.finished_at,
-        }
-      : null,
+    materialsPreview,
+    latestApplyRun,
     review: {
       state: reviewState(row.decision),
       decision: reviewDecision(row.decision),
@@ -670,6 +694,12 @@ function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
     if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).legacy === true) {
       return null;
     }
+    const eligibility = parsed.eligibility as (Partial<ScoreBreakdown["eligibility"]> & Record<string, unknown>) | undefined;
+    const hardBlockers = Array.isArray(eligibility?.hardBlockers)
+      ? eligibility.hardBlockers
+      : Array.isArray(eligibility?.hard_blockers)
+        ? eligibility.hard_blockers
+        : [];
     return {
       technicalFit: scoreDimension(parsed.technicalFit),
       experienceFit: scoreDimension(parsed.experienceFit),
@@ -678,9 +708,9 @@ function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
       fitBand: parsed.fitBand ?? "plausible",
       confidence: parsed.confidence ?? "medium",
       eligibility: {
-        status: parsed.eligibility?.status ?? "unknown",
-        hardBlockers: boundedEvidenceList(parsed.eligibility?.hardBlockers ?? []),
-        warnings: boundedEvidenceList(parsed.eligibility?.warnings ?? []),
+        status: eligibility?.status ?? "unknown",
+        hardBlockers: boundedEvidenceList(hardBlockers),
+        warnings: boundedEvidenceList(eligibility?.warnings ?? []),
       },
       matchedSignals: boundedEvidenceList(parsed.matchedSignals ?? []),
       missingSignals: boundedEvidenceList(parsed.missingSignals ?? []),

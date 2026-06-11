@@ -18,12 +18,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase unless e
 
 ### Shared Apply Audit Contract
 
-- [ ] **AUDIT-01**: A shared read contract describes apply-review readiness for a job, including state, label, summary, missing prerequisites, hard blockers, eligibility concerns, lifecycle/source metadata, and whether review evidence remains available.
-- [ ] **AUDIT-02**: The shared readiness and blocker facts are computed or derived at the owning API/read-model layer from canonical sources such as application URL, material availability, current stage/state/error, latest apply run, scoring eligibility, and material validation output where present.
-- [ ] **AUDIT-03**: `JobDetail` and `ApplyReviewQueueItem` expose the same shared readiness/blocker facts for the same job so Jobs drawer and Apply Review cannot disagree.
-- [ ] **AUDIT-04**: Web views use the shared contract for source facts; any local UI helper is formatting-only and cannot independently decide readiness, blocker, or eligibility status.
-- [ ] **AUDIT-05**: Missing readiness, blocker, or eligibility source data renders an explicit inspectable state rather than an empty panel, hidden tag, or cosmetic relabeling.
-- [ ] **AUDIT-06**: API and web tests cover at least ready, preparing, missing-apply-link, blocked/failed/stale, failed apply-run, and missing-source cases.
+- [x] **AUDIT-01**: A shared read contract describes apply-review readiness for a job, including state, label, summary, missing prerequisites, hard blockers, eligibility concerns, lifecycle/source metadata, and whether review evidence remains available.
+- [x] **AUDIT-02**: The shared readiness and blocker facts are computed or derived at the owning API/read-model layer from canonical sources such as application URL, material availability, current stage/state/error, latest apply run, scoring eligibility, and material validation output where present.
+- [x] **AUDIT-03**: `JobDetail` and `ApplyReviewQueueItem` expose the same shared readiness/blocker facts for the same job so Jobs drawer and Apply Review cannot disagree.
+- [x] **AUDIT-04**: Web views use the shared contract for source facts; any local UI helper is formatting-only and cannot independently decide readiness, blocker, or eligibility status.
+- [x] **AUDIT-05**: Missing readiness, blocker, or eligibility source data renders an explicit inspectable state rather than an empty panel, hidden tag, or cosmetic relabeling.
+- [x] **AUDIT-06**: API and web tests cover at least ready, preparing, missing-apply-link, blocked/failed/stale, failed apply-run, and missing-source cases.
 
 ### Jobs Drawer Audit Triage
 
@@ -112,12 +112,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLEAN-02 | Phase 12 | Complete |
 | CLEAN-03 | Phase 12 | Complete |
 | CLEAN-04 | Phase 12 | Complete |
-| AUDIT-01 | Phase 13 | Planned |
-| AUDIT-02 | Phase 13 | Planned |
-| AUDIT-03 | Phase 13 | Planned |
-| AUDIT-04 | Phase 13 | Planned |
-| AUDIT-05 | Phase 13 | Planned |
-| AUDIT-06 | Phase 13 | Planned |
+| AUDIT-01 | Phase 13 | Complete |
+| AUDIT-02 | Phase 13 | Complete |
+| AUDIT-03 | Phase 13 | Complete |
+| AUDIT-04 | Phase 13 | Complete |
+| AUDIT-05 | Phase 13 | Complete |
+| AUDIT-06 | Phase 13 | Complete |
 | DRAWER-01 | Phase 14 | Planned |
 | DRAWER-02 | Phase 14 | Planned |
 | DRAWER-03 | Phase 14 | Planned |

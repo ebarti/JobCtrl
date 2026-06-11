@@ -6,7 +6,7 @@ import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { routeTree } from "../../routeTree.gen.js";
-import { sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
+import { makeApplyAudit, sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
 import { buildProviderHarness, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
@@ -457,6 +457,20 @@ describe("<ApplyReviewView>", () => {
                 startedAt: "2026-05-30T06:33:32Z",
                 finishedAt: "2026-05-30T06:40:29Z",
               },
+              applyAudit: makeApplyAudit({
+                state: "repair",
+                label: "submit failed",
+                summary: "Last submit failed: process killed by signal. Review evidence is still available.",
+                hardBlockers: [
+                  {
+                    code: "apply_run_failed",
+                    label: "submit failed",
+                    detail: "Last submit failed: process killed by signal.",
+                    severity: "blocking",
+                    source: "apply_run",
+                  },
+                ],
+              }),
               blockers: ["SKIPPED: process killed by signal"],
             }
           : item,
@@ -473,8 +487,64 @@ describe("<ApplyReviewView>", () => {
 
     expect((await screen.findAllByText(/Submit failed: process killed by signal/i)).length).toBeGreaterThan(0);
     expect(screen.getAllByText("submit failed").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Last submit failed: process killed by signal/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Last submit failed: process killed by signal/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
+  });
+
+  it("renders canonical audit facts for missing apply-review source data", async () => {
+    const missingSourceQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              applyAudit: makeApplyAudit({
+                state: "blocked",
+                label: "missing apply link",
+                summary: "No application or posting URL is recorded, so apply review cannot proceed.",
+                hardBlockers: [
+                  {
+                    code: "missing_application_url",
+                    label: "Missing apply link",
+                    detail: "No application or posting URL is recorded, so apply review cannot proceed.",
+                    severity: "blocking",
+                    source: "application_url",
+                  },
+                ],
+                sources: [
+                  {
+                    kind: "application_url",
+                    label: "Application target",
+                    status: "missing",
+                    detail: "No application or posting URL is recorded.",
+                  },
+                  {
+                    kind: "score_eligibility",
+                    label: "Score eligibility",
+                    status: "unknown",
+                    detail: "No score eligibility data is recorded.",
+                  },
+                ],
+              }),
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => missingSourceQueue),
+        },
+      }),
+    });
+
+    expect((await screen.findAllByText("missing apply link")).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Missing apply link: No application or posting URL is recorded, so apply review cannot proceed."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Application target: missing: No application or posting URL is recorded.")).toBeInTheDocument();
+    expect(screen.getByText("Score eligibility: unknown: No score eligibility data is recorded.")).toBeInTheDocument();
   });
 
   it("records approval without dispatching apply automation", async () => {

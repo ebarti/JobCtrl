@@ -1426,6 +1426,15 @@ describe("local TypeScript API", () => {
       currentState: "pending",
       artifactCount: 2,
     });
+    expect(body.applyAudit).toMatchObject({
+      state: "preparing",
+      label: "materials preparing",
+      reviewEvidenceAvailable: true,
+      hardBlockers: [],
+    });
+    expect(body.applyAudit.missingPrerequisites).toEqual([
+      expect.objectContaining({ code: "missing_resume_pdf" }),
+    ]);
     expect(body.stages.map((stage: { stage: string }) => stage.stage)).toEqual([
       "discover",
       "enrich",

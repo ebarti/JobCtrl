@@ -210,7 +210,13 @@ verification-code MCP server:
 
 - `GET /v1/apply/review-queue` returns active apply-stage jobs that are ready
   or close enough for human review, plus materials readiness, latest apply-run
-  context, blockers, and latest review state.
+  context, blockers, latest review state, and `applyAudit`, the canonical
+  readiness/blocker/eligibility DTO used by Apply Review.
+- `GET /v1/jobs/:jobKey` returns the same `applyAudit` DTO on job detail
+  payloads so the Jobs drawer and Apply Review consume the same readiness
+  facts. The DTO includes state, label, summary, missing prerequisites, hard
+  blockers, eligibility concerns, source metadata, and whether review evidence
+  remains available.
 - `POST /v1/jobs/:jobKey/apply-review/decision` appends an
   `approve_submit`, `approve_dry_run`, `defer`, `decline`, or `reset`
   decision. Approval records intent only in this slice; it does not dispatch
