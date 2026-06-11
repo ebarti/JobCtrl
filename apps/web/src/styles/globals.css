@@ -2161,9 +2161,9 @@ textarea:focus-visible {
 }
 
 .fit.mid {
-  border-color: color-mix(in oklch, var(--warning) 40%, var(--border));
-  background: var(--warning-muted);
-  color: var(--warning);
+  border-color: color-mix(in oklch, var(--success) 24%, var(--border));
+  background: color-mix(in oklch, var(--success-muted) 72%, var(--card));
+  color: color-mix(in oklch, var(--success) 72%, var(--foreground));
 }
 
 .fit.none {

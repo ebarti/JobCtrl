@@ -24,4 +24,12 @@ describe("<ScoreBadge>", () => {
     expect(badge?.className).toBe("fit good");
     expect(badge).toHaveTextContent("8");
   });
+
+  it("keeps score=7 in the positive mid-fit tier", () => {
+    const { container } = render(<ScoreBadge score={7} />);
+    const badge = container.querySelector("span");
+
+    expect(badge?.className).toBe("fit mid");
+    expect(badge).toHaveTextContent("7");
+  });
 });
