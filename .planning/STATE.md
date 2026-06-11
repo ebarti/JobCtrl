@@ -1,68 +1,55 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: shadcn standard-token migration + preset b3F5kqmYd8
-status: executing
-stopped_at: Phases 6-10 merged to main (PRs #151-#155); Phase 11 ready to plan
-last_updated: "2026-06-10T15:45:00.000Z"
-last_activity: 2026-06-10 -- Phases 6-10 squash-merged to main via PRs #151-#155; Phase 11 cleanup is next
+milestone: v1.2
+milestone_name: Apply Review Audit UX - Drawer + Resume Pins
+status: planning
+last_updated: "2026-06-11T19:42:01.586Z"
+last_activity: 2026-06-11
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 23
-  completed_plans: 23
-  percent: 83
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-09)
+See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 11 — alias-and-global-css-cleanup
+**Current focus:** Defining milestone v1.2 — Apply Review Audit UX - Drawer + Resume Pins
 
 ## Current Position
 
-Phase: 11 (alias-and-global-css-cleanup) — READY TO PLAN
-Plan: create Phase 11 plan
-Status: Phases 6-10 complete and squash-merged to main via PRs #151-#155 (2026-06-10); Phase 11 cleanup is next
-Last activity: 2026-06-10 -- Phases 6-10 squash-merged to main via PRs #151-#155; Phase 11 cleanup is next
-
-Progress: [████████░░] 83%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-11 — Milestone v1.2 started
 
 ## Active Milestone Summary
 
-Milestone v1.1 migrates JobHunter's web UI from legacy custom tokens to the shadcn standard semantic CSS-variable token system using preset `b3F5kqmYd8`.
+Milestone v1.2 implements Sketch 002 Option 1: Drawer + Resume Pins. The milestone makes the existing Jobs row-click drawer and the Apply review rendered-resume surface explain the audit trail clearly enough that a technical job seeker can understand ranking, readiness, blockers, material changes, grounding, and claim risk before any apply approval.
 
-Decoded preset values:
+Chosen scope:
 
-| Setting | Value |
-|---------|-------|
-| menuColor | default-translucent |
-| menuAccent | subtle |
-| radius | medium |
-| font | geist |
-| iconLibrary | tabler |
-| theme | sky |
-| baseColor | neutral |
-| style | luma / radix-luma target |
-| chartColor | amber |
-| fontHeading | jetbrains-mono |
+| Area | Status |
+|------|--------|
+| v1.1 cleanup folded into v1.2 | Early housekeeping slice |
+| Jobs row-click drawer (`JobDetailDrawer`) | Owns ranking explanation, readiness, blockers, and eligibility concerns |
+| Apply review rendered resume/material surface | Owns source-to-artifact changes, grounding, claim risk, and generated-material inspection |
+| Shared readiness/eligibility contract | Must be one source of truth across both surfaces |
+| Product-path QA | Must cover Jobs drawer, Apply review, resume pins, blocker/readiness states, and no auto-apply/submission |
 
-Phase order:
+Explicitly not in scope:
 
-| Phase | Name | Status |
-|-------|------|--------|
-| 6 | Token Foundation + shadcn Preset Contract | Completed |
-| 7 | Shared Primitive Token Migration | Completed |
-| 8 | Layout Chrome, Fonts, And Tabler Icons | Completed |
-| 9 | Domain And Status Surface Migration | Completed |
-| 10 | Route Visual QA + Storybook/A11y Hardening | Completed |
-| 11 | Alias And Global CSS Cleanup | Pending |
+- Option 2 Evidence Ledger and Option 3 Gate Timeline.
+- Blind-auto-apply safety positioning in UI; this stays deferred to README/docs positioning later.
+- Auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, or worker-backed jobs unless explicitly requested later.
 
-Merge status: Phases 6-10 landed on `main` on 2026-06-10 as squash-merged PRs #151-#155 (one squash commit per phase, `4758935..ef6c680`). Pre-merge review found one High issue on #152 — the deliberate CR-01 a11y change moved data-grid row activation from the row body to a per-row "Open" button, but `jobs-drawer.spec.ts` and `materials.spec.ts` still clicked the row body — fixed on the PR by updating both e2e specs before merge. The final merged tree was verified with `pnpm web:check`, `pnpm --filter @jobhunter/web test` (727 passed), `pnpm web:build`, `pnpm api:check`, and `pnpm api:test` (201 passed).
+Prior v1.1 status: Phases 6-10 landed on `main` on 2026-06-10 as squash-merged PRs #151-#155 (one squash commit per phase, `4758935..ef6c680`). Phase 11 cleanup did not start; its narrow cleanup intent is folded into v1.2 rather than blocking the product audit milestone.
 
 ## Prior Milestone Verification (2026-06-09)
 
@@ -93,15 +80,12 @@ The previous `.planning/phases/01-*` through `.planning/phases/05-*` directories
 
 Decisions are logged in PROJECT.md Key Decisions table. Current milestone decisions:
 
-- Treat shadcn tokens as frontend shared infrastructure, not bounded-context domain data.
-- Preserve JobHunter's existing `[data-theme="dark"]` model during the migration unless a phase explicitly changes `ThemeProvider`.
-- Phase 6 uses the clean-slate token decision from `06-CONTEXT.md`: remove legacy aliases/utilities by Phase 6 completion, with no compatibility-bridge handoff to later phases.
-- Avoid uncontrolled full `shadcn apply`; research showed it rewrites a larger primitive/package surface than this milestone needs.
-- Keep domain status semantics explicit in context-owned tone helpers or explicit variant maps.
-- Make browser QA in light/dark themes and density modes a gate for user-facing visual phases.
-- [Phase 10]: Added seeded route visual QA coverage for representative routes, overlays, light/dark themes, density modes, focus indicators, and destructive-control visibility.
-- [Phase 10]: Restored global app focus outlines for `Input` and `Textarea` by removing primitive-level `focus-visible:outline-none` suppression.
-- [Phase 10]: Split Jobs bulk-action disabled state from background query/preparation pickup state so valid selected-row actions remain usable while automatic preparation runs.
+- Choose Sketch 002 Option 1: Drawer + Resume Pins for implementation.
+- Define "job overlay" as the Jobs row-click drawer (`JobDetailDrawer`), not an Apply review queue panel.
+- Keep Apply review centered on the rendered resume/material, with row/claim pins for evidence inspection.
+- Share readiness and eligibility facts across Jobs drawer and Apply review from one contract/source of truth.
+- Fold the leftover v1.1 Phase 11 cleanup into v1.2 as housekeeping, not as the core product outcome.
+- Defer blind-auto-apply safety positioning to README/docs rather than the v1.2 UI scope.
 
 Prior milestone decisions that still matter:
 
@@ -140,10 +124,10 @@ None.
 ### Blockers/Concerns
 
 - No current Blocker/High milestone blockers.
-- Research risk: `apps/web/src/styles/globals.css` has broad blast radius; phase plans must avoid broad visual rewrites without route/browser QA.
-- Research risk: full shadcn CLI apply rewrites too many UI files; use targeted application and manual edits unless a phase explicitly expands scope.
-- Carry-forward test hygiene: 3 pre-existing unrelated failing tests were noted at v1.0 close (enrichment staleness x2, materials suppression).
-- Phase 11 owns final legacy alias/global CSS cleanup, icon/font dependency audit, and residual token scans after the Phase 10 QA gate passed.
+- Auditability risk: the UI must not hide missing or embarrassing audit data; missing sources must be fixed at the owning layer.
+- Scope risk: ranking explanation belongs in the Jobs row-click drawer, while generated-material proof belongs in Apply review.
+- QA risk: browser proof must use synthetic/seeded data and must not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs.
+- Cleanup risk: folded v1.1 cleanup should close stale dependency/config/docs items without re-opening broad visual-system migration.
 
 ## Deferred Items
 

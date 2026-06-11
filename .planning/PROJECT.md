@@ -8,15 +8,20 @@ JobHunter is a local-first job-search automation app with a TypeScript API, Reac
 
 A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
 
-## Current Milestone: v1.1 shadcn standard-token migration + preset b3F5kqmYd8
+## Current Milestone: v1.2 Apply Review Audit UX - Drawer + Resume Pins
 
-**Goal:** Move JobHunter's web UI from its legacy custom token layer to the current shadcn semantic CSS-variable token system using preset `b3F5kqmYd8`, without regressing local-first product workflows or audit-heavy surfaces.
+**Goal:** Make the existing Jobs row-click popup/drawer and the Apply review rendered-resume surface explain the audit trail clearly enough that a technical job seeker can understand ranking, readiness, blockers, material changes, grounding, and claim risk before any apply approval.
+
+**Chosen design direction:** Sketch 002, Option 1: Drawer + Resume Pins.
 
 **Target features:**
-- Apply the decoded shadcn preset: `radix-luma` / luma style, neutral base, sky action/accent theme, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icons, default-translucent menu treatment, and subtle menu accent.
-- Establish shadcn standard semantic tokens as the canonical styling API: `background`, `foreground`, `card`, `popover`, `primary`, `secondary`, `muted`, `accent`, `destructive`, `border`, `input`, `ring`, chart tokens, sidebar/menu tokens, font tokens, and radius scale.
-- Preserve compatibility while migrating: keep temporary aliases for legacy `--bg`, `--paper`, `--ink`, `--rule`, status colors, fonts, and density until shared primitives, layout chrome, views, and domain status components are migrated.
-- Update shared UI primitives, app shell/navigation, forms, overlays, tables, status components, charts/status visual semantics, Storybook, and QA coverage so the migration is proven in light/dark themes and density modes.
+- Fold in the remaining v1.1 cleanup as a small early housekeeping slice: remove obsolete dependency/config remnants, normalize stale verification commands, and document final shadcn token/icon/font expectations.
+- Treat the Jobs overlay as the existing Jobs view popup/drawer opened after clicking a job row (`JobDetailDrawer`), not an apply-review queue panel.
+- Make the Jobs drawer explain why the job was ranked the way it was, whether it is ready for apply review, and what hard blockers or eligibility concerns exist.
+- Treat Apply review as the surface that shows the actual rendered resume/material, not another generic summary panel.
+- Make Apply review show hard blockers or eligibility concerns, readiness, source-to-artifact changes, and whether generated claims are grounded or risky.
+- Use one shared readiness and eligibility/blocker contract across Jobs drawer and Apply review so the two surfaces cannot disagree.
+- Keep the rendered resume as the central review object, with row/claim pins that reveal source evidence, tailored text, transform/change type, grounding status, claim risk, and reviewer action.
 
 ## Requirements
 
@@ -36,75 +41,78 @@ A user can trust every line of a tailored resume because each bullet traces visi
 - [x] Profile import and canonical profile data store - existing.
 - [x] Materials, apply-review, and artifacts web surfaces - existing.
 - [x] v1.0 grounded resume tailoring milestone - employer analysis, per-bullet provenance, granular controls, voice pass, canonical read model, generate-materials wiring, and inspector UI verified on 2026-06-09. See `.planning/MILESTONE-ACCEPTANCE.md`.
+- [x] v1.1 shadcn/token migration through Phases 6-10 - semantic tokens, shared primitives, layout chrome, Tabler icons, status semantics, and route visual QA landed via PRs #151-#155. The remaining cleanup slice is folded into v1.2.
 
 ### Active
 
 <!-- Current milestone scope. Hypotheses until shipped and validated. -->
 
-**Pillar A - Token foundation and preset fidelity**
+**Pillar A - v1.1 cleanup folded into v1.2**
 
-- [ ] The web app exposes shadcn standard semantic CSS variables for light and dark themes, mapped through Tailwind 4 `@theme inline`.
-- [ ] The decoded preset `b3F5kqmYd8` is represented in real app styling: neutral base, sky accents, amber chart/data tokens, medium radius, Geist body text, JetBrains Mono headings/technical labels, translucent menu treatment, subtle menu accent, and Tabler icons.
-- [ ] Legacy JobHunter token names remain as temporary aliases only while migrating, then are removed when production references are grep-clean.
+- [ ] Obsolete dependency/config remnants from the shadcn/token migration are audited and removed only when import/config proof shows they are unused.
+- [ ] Stale verification commands are normalized to the current project structure, including removing references to `apps/web/tailwind.config.ts` now that Tailwind 4 CSS-first config is in use.
+- [ ] Docs/config surfaces reflect the final shadcn token, icon, font, and QA expectations without re-opening visual-system scope.
 
-**Pillar B - Shared primitives and layout chrome**
+**Pillar B - Jobs drawer audit triage**
 
-- [ ] Shared UI primitives use standard shadcn semantic utilities for surfaces, text, borders, inputs, focus rings, overlays, actions, disabled states, and destructive states.
-- [ ] App shell, topbar, nav, global search, connection status, theme toggle, density control, menus, tabs, and route chrome preserve current workflow behavior while adopting the preset visual language.
-- [ ] Iconography migrates from lucide to Tabler where user-visible, without changing action meaning, accessible names, or stable dimensions.
+- [ ] Opening a job from the Jobs table shows a drawer/popup that explains why the job was ranked the way it was.
+- [ ] The same drawer shows whether the job is ready for apply review, with the concrete missing prerequisites when it is not.
+- [ ] The drawer exposes hard blockers or eligibility concerns as audit facts, not ambiguous status tags.
+- [ ] The drawer links or hands off to Apply review only for generated-material inspection, not for ranking explanation.
 
-**Pillar C - Domain/status visual semantics**
+**Pillar C - Rendered resume pins and material audit**
 
-- [ ] Pipeline, scoring, materials, apply, discovery, dashboard, audit, warning, stale, missing, success, blocked, running, and failed states remain semantically distinct after the token migration.
-- [ ] Chart/data tokens are used for data-series styling only; lifecycle/status colors keep explicit domain meaning.
-- [ ] Audit and apply-review surfaces remain readable and honest in light/dark modes; missing or embarrassing data is never hidden by low contrast or layout changes.
+- [ ] Apply review keeps the rendered resume/material as the central review object.
+- [ ] Resume rows or generated claims expose pins/markers that reveal source profile/resume evidence and the tailored artifact text.
+- [ ] Pin details show the transform/change type, grounding status, claim risk, and reviewer action where applicable.
+- [ ] Generated claims that are adjacent, unsupported, risky, or missing source proof remain visibly reviewable rather than hidden or collapsed into a summary.
 
-**Pillar D - QA, a11y, and cleanup**
+**Pillar D - Shared contract and QA**
 
-- [ ] Storybook, component tests, a11y checks, browser smoke, and route-level QA prove the migration across representative JobHunter workflows, light/dark themes, and compact/regular/comfy densities.
-- [ ] Visual QA uses synthetic or seeded data only and does not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless explicitly requested.
-- [ ] Documentation and config surfaces that own the behavior (`components.json`, `package.json`, `docs/local-reliability-qa.md`, `docs/frontend-target.md`, and PR notes) reflect the final token, icon, font, and QA expectations.
+- [ ] Readiness and eligibility/blocker facts come from one shared source/contract across Jobs drawer and Apply review.
+- [ ] If a correct audit source is missing, the owning layer computes, derives, or persists it; UI copy must not hide, rename, or cosmetically suppress incomplete audit data.
+- [ ] Product-path QA covers Jobs drawer, Apply review, readiness/blocker states, resume-pin inspection, seeded browser proof, and no auto-apply/browser submission.
 
 ### Out of Scope
 
 <!-- Explicit boundaries with reasoning to prevent re-adding. -->
 
-- New discovery, scoring, tailoring, cover-letter, apply, profile, hosted/auth, analytics, or worker-backed product workflows - this is a visual-system migration.
-- Full product redesign, route/information-architecture changes, marketing dashboard treatment, or landing-page work - JobHunter remains a dense operational tool.
-- Permanent compatibility shims for `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, `ring-info`, or legacy status aliases - temporary bridge only.
-- Regenerating all shadcn primitives through an uncontrolled full `shadcn apply` - research showed full apply rewrites a broader component surface than this milestone needs.
-- Replacing domain state models, query keys, SSE invalidation, API contracts, local storage, ports, or bounded-context ownership - token work must not become behavior refactoring.
-- Visual regression platform rollout such as Chromatic, Loki, or Percy - useful later, but targeted Storybook/a11y/browser proof is enough for this milestone.
-- User-editable theme customization - the preset is the design contract for this milestone.
+- Option 2 Evidence Ledger and Option 3 Gate Timeline - comparison sketches only, not implementation scope for v1.2.
+- "Why JobHunter is safer than blind auto-apply tools" as a UI surface - deferred to README/docs positioning later.
+- Auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, or worker-backed jobs unless explicitly requested later.
+- Broad route redesign, new scoring/tailoring policy redesign, worker automation expansion, marketing dashboard treatment, or landing-page work.
+- Hiding or suppressing missing audit data as a substitute for fixing the source of truth.
+- Re-opening the v1.1 visual-system migration beyond the narrow folded cleanup slice.
 
 ## Context
 
 - **Current web stack:** React 19, Vite 7, Tailwind CSS 4, `@tailwindcss/vite`, shadcn/Radix copied primitives under `apps/web/src/shared/ui`, TanStack Router/Query/Table/Form, Zustand UI preferences, Vitest, Playwright, Storybook, and axe-based accessibility tests.
-- **Current token state:** `apps/web/src/styles/tokens.css` defines bespoke variables such as `--bg`, `--paper`, `--ink`, `--rule`, `--danger`, `--warn`, `--ok`, and `--info`. `apps/web/tailwind.config.ts` exposes those names as utility colors. `apps/web/src/styles/globals.css` has a large blast radius because it owns app chrome, table, dashboard, drawer, apply-review, profile, and status styles.
-- **shadcn baseline:** `apps/web/components.json` already enables CSS variables, neutral base color, TypeScript, and aliases to `@/shared/ui`, `@/shared/lib`, and `@/shared/hooks`, but it still uses `style: "default"`, `tailwind.config.ts`, and `iconLibrary: "lucide"`.
-- **Preset source:** `pnpm dlx shadcn@latest preset decode b3F5kqmYd8 --json` decoded to default-translucent menu, subtle menu accent, medium radius, Geist body font, Tabler icons, sky theme, neutral base color, luma style, amber chart color, and JetBrains Mono heading font.
-- **Official docs baseline:** Current shadcn theming recommends CSS variables, semantic background/foreground token pairs, Tailwind 4 CSS-first `@theme inline`, chart/sidebar/radius tokens, and `components.json` with Tailwind v4 config left blank as the final target.
-- **Architecture boundary:** The token contract belongs to the shared styling boundary, not bounded-context data. Contexts may map domain states to visual variants, but they do not own global token definitions.
+- **Chosen sketch:** `.planning/sketches/002-layered-audit-surfaces/` Option 1: Drawer + Resume Pins. Option 1 keeps the existing Jobs drawer pattern and adds row-level proof on the rendered resume.
+- **Jobs overlay definition:** The job overlay is the popup/drawer opened from the Jobs view after clicking a job row, currently represented by `JobDetailDrawer`.
+- **Apply review definition:** Apply review is the surface that shows the actual rendered resume/material and review controls; it owns generated-material evidence inspection.
+- **Shared audit contract:** Readiness and eligibility/blocker facts must be shared across the two surfaces. Differences in display are acceptable; disagreement in facts is not.
+- **v1.1 cleanup snapshot:** Phases 6-10 landed via PRs #151-#155. Remaining cleanup is small: stale verification command normalization, dependency/config audit, obsolete `lucide-react` cleanup if import proof allows it, and docs/config updates.
+- **Current token state:** The app now uses the shadcn semantic token stack from v1.1. `apps/web/components.json` uses `style: "radix-luma"`, `iconLibrary: "tabler"`, and an empty Tailwind config path. No production old-token references were found in the preflight scan, but cleanup proof still belongs in v1.2.
 
 ## Constraints
 
-- **Architecture:** Follow the frontend target architecture: views compose context components; contexts do not import views; shared UI owns primitives; operations owns read-side hooks and invalidation. Token work must not touch query keys, mutations, API contracts, SSE event handling, or domain state unless explicitly scoped by a phase.
+- **Architecture:** Follow the frontend target architecture: views compose context components; contexts do not import views; shared UI owns primitives; operations owns read-side hooks and invalidation. Jobs drawer work belongs in the Jobs view composer plus context-owned components/hooks; shared readiness logic belongs in the owning context/read model rather than duplicated local UI state.
 - **Local-first safety:** Do not expose profile data, resumes, generated PDFs, browser profiles, logs, SQLite databases, API keys, OAuth tokens, or application artifacts in screenshots, stories, fixtures, docs, or commits.
-- **Dark mode:** Preserve JobHunter's existing persisted `[data-theme="dark"]` model unless a phase explicitly migrates `ThemeProvider`; do not split styling between `.dark` and `[data-theme]`.
-- **Density:** Preserve compact/regular/comfy density behavior and app-shell-scoped `data-density`; do not let font, radius, icon, or spacing changes break dense table/list workflows.
-- **QA:** User-facing visual migration requires product-path QA, not only typecheck. At minimum use web typecheck, build, relevant tests, Storybook/a11y where primitives change, and browser smoke in light/dark and density modes.
-- **Scope discipline:** Keep changes as small as practical per phase. Do not combine product behavior changes, backend changes, or worker execution with token migration.
+- **Auditability:** Every displayed claim must have an explicit source of truth. If the correct source is missing, compute or persist it at the owning layer; do not hide the UI field as a substitute for correct evidence.
+- **Product safety:** This milestone must not start auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks later.
+- **QA:** User-facing Apply review and Jobs drawer changes require product-path QA, not only typecheck. Use synthetic or seeded data and include browser proof for the relevant routes.
+- **Scope discipline:** Keep changes as small as practical per phase. Do not combine broad redesign, worker execution, or new policy behavior with the Drawer + Resume Pins milestone.
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Treat shadcn tokens as frontend shared infrastructure, not domain data | Preserves bounded-context and view/composer architecture | - Pending |
-| Preserve `[data-theme="dark"]` during the migration | Existing theme store/provider already uses this selector; switching to `.dark` is unnecessary risk | - Pending |
-| Use compatibility aliases before cleanup | The global CSS and shared primitives still depend on legacy token names; hard cutover would create broad visual regressions | - Pending |
-| Avoid uncontrolled full `shadcn apply` | Research showed full apply rewrites many UI files and broadens package scope beyond a standard-token migration | - Pending |
-| Keep domain status semantics explicit | JobHunter status colors encode product meaning; generic shadcn tokens alone are not enough | - Pending |
-| Make browser QA a release gate for user-visible visual phases | Token changes can pass tests while breaking readability, focus, overlays, or dense layouts | - Pending |
+| Choose Sketch 002 Option 1: Drawer + Resume Pins | Keeps the existing Jobs drawer interaction and makes generated-material proof inspectable on the rendered resume | - Pending |
+| Define "job overlay" as the Jobs row-click drawer (`JobDetailDrawer`) | Prevents accidentally implementing the ranking/readiness story in Apply review instead of Jobs | - Pending |
+| Keep Apply review centered on the rendered resume/material | The user needs to inspect what actually changed and whether generated claims are grounded | - Pending |
+| Share readiness and eligibility facts across both surfaces | The same job cannot be "ready" in one surface and blocked in another without a source-of-truth bug | - Pending |
+| Fold v1.1 Phase 11 cleanup into v1.2 as housekeeping | The cleanup is small and should not block the product audit milestone, but stale config/dependency/docs should be closed | - Pending |
+| Defer blind-auto-apply safety positioning to README/docs | The chosen UI milestone is about audit surfaces; positioning copy belongs in docs later | - Deferred |
 | v1.0 grounded resume tailoring architecture is validated | Milestone verification on 2026-06-09 showed all 26 requirements mapped and verified | Good |
 
 ## Evolution
@@ -125,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-09 after starting milestone v1.1*
+*Last updated: 2026-06-11 after starting milestone v1.2*
