@@ -766,7 +766,7 @@ textarea:focus-visible {
 
 .apply-review-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 0.36fr) minmax(520px, 0.64fr);
   gap: 12px;
   min-width: 0;
   padding: 12px;
@@ -837,6 +837,155 @@ textarea:focus-visible {
   min-height: 520px;
   overflow: hidden;
   border-radius: 6px;
+}
+
+.apply-review-materials-scroll {
+  gap: 14px;
+}
+
+.apply-review-resume-review {
+  container-type: inline-size;
+  display: grid;
+  gap: 12px;
+}
+
+.apply-review-resume-main,
+.apply-review-resume-pins {
+  min-width: 0;
+}
+
+.apply-review-resume-main > .apply-review-preview-block,
+.apply-review-resume-pins {
+  padding-bottom: 0;
+}
+
+@container (min-width: 780px) {
+  .apply-review-resume-review {
+    grid-template-columns: minmax(360px, 1fr) minmax(280px, 0.44fr);
+    align-items: start;
+  }
+
+  .apply-review-resume-pins {
+    position: sticky;
+    top: 0;
+  }
+}
+
+.resume-pin-shell {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.resume-pin-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
+.resume-pin-button {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: inherit;
+  cursor: pointer;
+  padding: 9px;
+  text-align: left;
+}
+
+.resume-pin-button:hover,
+.resume-pin-button.selected {
+  border-color: var(--status-info);
+  background: color-mix(in srgb, var(--status-info) 7%, var(--card));
+}
+
+.resume-pin-button.selected {
+  box-shadow: inset 3px 0 0 var(--status-info);
+}
+
+.resume-pin-button b,
+.resume-pin-button span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.resume-pin-button span:last-child {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.resume-pin-detail,
+.resume-pin-diff > section,
+.resume-pin-risk {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.resume-pin-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.resume-pin-detail > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resume-pin-detail > header div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.resume-pin-detail h4,
+.resume-pin-risk h4,
+.resume-pin-diff h5 {
+  margin: 0;
+}
+
+.resume-pin-detail h4 {
+  font-size: 13px;
+}
+
+.resume-pin-risk h4,
+.resume-pin-diff h5 {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.resume-pin-diff {
+  display: grid;
+  gap: 8px;
+}
+
+@container (min-width: 640px) {
+  .resume-pin-diff {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.resume-pin-diff > section {
+  display: grid;
+  gap: 6px;
+  background: var(--muted);
+}
+
+.resume-pin-risk {
+  display: grid;
+  gap: 8px;
 }
 
 @container (max-width: 520px) {

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: in_progress
-last_updated: "2026-06-11T20:29:58.000Z"
+last_updated: "2026-06-11T20:55:00.000Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
-  percent: 60
+  completed_phases: 4
+  total_plans: 11
+  completed_plans: 11
+  percent: 80
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 15 planning - Apply Review Resume Pins.
+**Current focus:** Phase 16 planning - Product-Path QA + Documentation.
 
 ## Current Position
 
-Phase: 15 - Apply Review Resume Pins
+Phase: 16 - Product-Path QA + Documentation
 Plan: Not created
-Status: Ready to plan Phase 15
-Last activity: 2026-06-11 - Phase 14 Jobs drawer audit triage completed
+Status: Ready to plan Phase 16
+Last activity: 2026-06-11 - Phase 15 Apply Review resume pins completed
 
 ## Active Milestone Summary
 
@@ -57,10 +57,10 @@ Explicitly not in scope:
 | 12 | Folded Cleanup + Verification Baseline | Complete | CLEAN-01..CLEAN-04 |
 | 13 | Shared Apply Audit Contract | Complete | AUDIT-01..AUDIT-06 |
 | 14 | Jobs Drawer Audit Triage | Complete | DRAWER-01..DRAWER-06 |
-| 15 | Apply Review Resume Pins | Planned | REVIEW-01..REVIEW-08 |
+| 15 | Apply Review Resume Pins | Complete | REVIEW-01..REVIEW-08 |
 | 16 | Product-Path QA + Documentation | Planned | QA-01..QA-06 |
 
-Next command: `$gsd-plan-phase 15`.
+Next command: `$gsd-plan-phase 16`.
 
 ## Research Summary
 
@@ -97,6 +97,15 @@ Key findings:
 - Added a non-mutating `/apply-review` handoff for generated-material proof instead of duplicating the full resume audit surface in the Jobs drawer.
 - Extended Jobs drawer regression tests and local QA docs for the new audit smoke path.
 - Verified with `corepack pnpm web:check`, targeted Jobs drawer tests, `corepack pnpm web:build`, `git diff --check`, and product-path browser QA from `/jobs` row activation.
+
+### Phase 15 - Apply Review Resume Pins
+
+- Added `ResumeAuditPins` as a context-owned material audit component backed by artifact detail read models.
+- Reworked Apply Review's Application Materials pane so the rendered resume appears first, with claim pins beside it on wider containers and below it on narrow containers.
+- Pin detail exposes source text, tailored text, transform, controls, evidence IDs, requirement IDs, matched signals, rationale, and grounding/risk/lifecycle facts.
+- Preserved the full tailoring inspector below the resume-centered pin surface.
+- Updated Apply Review tests and local QA docs for populated provenance and no-provenance states.
+- Verified with `corepack pnpm web:check`, targeted Apply Review tests, `corepack pnpm web:build`, `git diff --check`, and product-path browser QA on `/apply-review`.
 
 ## Prior Milestone Verification
 
@@ -138,6 +147,6 @@ Milestone v1.1 completed Phases 6-10 and landed semantic tokens, shared primitiv
 ## Session Continuity
 
 Last session: 2026-06-11
-Stopped at: Phase 14 complete
-Latest phase completed: Phase 14 - Jobs Drawer Audit Triage
+Stopped at: Phase 15 complete
+Latest phase completed: Phase 15 - Apply Review Resume Pins
 Resume file: None

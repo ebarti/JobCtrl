@@ -24,7 +24,7 @@ The milestone starts with the leftover v1.1 cleanup folded in as a narrow housek
 - [x] **Phase 12: Folded Cleanup + Verification Baseline** - Close narrow v1.1 cleanup residue before feature work: stale verification commands, dependency/config audits, optional unused icon dependency removal, and docs/config normalization.
 - [x] **Phase 13: Shared Apply Audit Contract** - Add one readiness/blocker/eligibility contract served by the API/read model and consumed by both Jobs drawer and Apply Review.
 - [x] **Phase 14: Jobs Drawer Audit Triage** - Reframe the Jobs row-click drawer around why ranked, readiness, blockers, eligibility concerns, and handoff to Apply Review.
-- [ ] **Phase 15: Apply Review Resume Pins** - Make the rendered resume/material central and add provenance-backed pins with source-to-tailored change, grounding, risk, and action detail.
+- [x] **Phase 15: Apply Review Resume Pins** - Make the rendered resume/material central and add provenance-backed pins with source-to-tailored change, grounding, risk, and action detail.
 - [ ] **Phase 16: Product-Path QA + Documentation** - Verify both surfaces end to end with synthetic data, update docs/checklists, and audit milestone acceptance.
 
 ## Phase Details
@@ -156,7 +156,12 @@ Plans:
 - Browser QA on `/apply-review`: ready job, blocker job, grounded claim pin, risky/unsupported claim pin, missing-source/no-provenance state, PDF/text fallback.
 - `git diff --check`
 
-**Plans:** Create with `$gsd-plan-phase 15`.
+**Plans:** 2/2 plans executed.
+
+Plans:
+
+- [x] 15-01-PLAN.md - Resume pin component and layout.
+- [x] 15-02-PLAN.md - Regression coverage and phase evidence.
 
 ### Phase 16: Product-Path QA + Documentation
 
@@ -196,4 +201,4 @@ Plans:
 **Execution Order:**
 Phases execute in numeric order: 12 -> 13 -> 14 -> 15 -> 16
 
-**Milestone Status:** Phase 14 complete; next step is `$gsd-plan-phase 15`.
+**Milestone Status:** Phase 15 complete; next step is `$gsd-plan-phase 16`.

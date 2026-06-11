@@ -188,6 +188,38 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
   },
 };
 
+const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
+  ...sampleTailoringExplanation,
+  judge: {
+    ...sampleTailoringExplanation.judge,
+    passed: false,
+    verdict: "REVIEW",
+    score: 0.62,
+    unsupportedClaims: ["Unsupported scope claim"],
+    missingRequiredEvidence: ["req-platform-scale"],
+    repairInstructions: ["Remove unsupported scope claim."],
+  },
+  reviewFeedback: {
+    warningRepairAttempted: true,
+    acceptedWithResidualWarnings: true,
+    acceptedWarnings: ["Kept one residual warning for reviewer inspection."],
+  },
+  bulletProvenance: [
+    {
+      bulletId: "pin-1",
+      section: "experience",
+      sourceId: "ev_platform_reliability",
+      evidenceIds: ["ev_platform_reliability"],
+      requirementIds: ["req-platform"],
+      matchedKeywords: ["platform reliability"],
+      transformType: "achievement_reframed",
+      control: "evidence_reframing",
+      rationale: "Reframed the source fact to foreground platform reliability ownership.",
+      generatedText: "Owned platform reliability improvements for incident response.",
+    },
+  ],
+};
+
 describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
@@ -248,15 +280,15 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Filtered missing keywords")).not.toBeInTheDocument();
     expect(screen.queryByText("join")).not.toBeInTheDocument();
     expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
-    expect(screen.getByText("Senior SWE at Acme")).toBeInTheDocument();
-    expect(screen.getByText("Built platform services.")).toBeInTheDocument();
+    expect(screen.getAllByText("Senior SWE at Acme").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
     expect(
-      screen.getByText("Owned platform reliability improvements for incident response."),
-    ).toBeInTheDocument();
+      screen.getAllByText("Owned platform reliability improvements for incident response.").length,
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(3);
+    expect(screen.getAllByText("ev_platform_reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("93% / minimum 84%")).toBeInTheDocument();
-    expect(screen.getByText("High-fit review")).toBeInTheDocument();
+    expect(screen.getAllByText("High-fit review").length).toBeGreaterThan(0);
     expect(screen.getByText("Why overall score")).toBeInTheDocument();
     expect(screen.getByText("Persona judgments")).toBeInTheDocument();
     expect(screen.getByText("Evidence Auditor")).toBeInTheDocument();
@@ -272,6 +304,77 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
     expect(screen.getAllByText("All personas passed with no blockers.").length).toBeGreaterThan(0);
     expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
+  });
+
+  it("centers the rendered resume with selectable source-backed claim pins", async () => {
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: pinnedTailoringExplanation,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    const resumePdf = await screen.findByRole("img", { name: "Tailored resume PDF" });
+    const pins = await screen.findByRole("region", { name: "Resume claim pins" });
+    expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Experience pin 1: Senior SWE at Acme/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Source profile or resume text")).toBeInTheDocument();
+    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Tailored artifact text")).toBeInTheDocument();
+    expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Achievement Reframed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("evidence_reframing").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("req-platform").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ev_platform_reliability").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
+    expect(screen.getByText("Grounding and claim risk")).toBeInTheDocument();
+    expect(screen.getAllByText("claim risk").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Unsupported scope claim").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("req-platform-scale").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Kept one residual warning for reviewer inspection.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Warning repair attempted").length).toBeGreaterThan(0);
+  });
+
+  it("shows an explicit no-provenance state beside the rendered resume", async () => {
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: null,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
+    expect(screen.getByText("No resume provenance recorded for this artifact.")).toBeInTheDocument();
   });
 
   it("opens job detail as an in-place overlay", async () => {

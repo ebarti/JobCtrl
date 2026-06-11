@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
 import { ArtifactTailoringInspector } from "../../contexts/materials/components/ArtifactTailoringInspector.js";
+import { ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -297,6 +298,25 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   );
 }
 
+function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
+  const artifactId = item.materialsPreview.resumePdfArtifactId;
+  return (
+    <section className="apply-review-preview-block apply-review-resume-review" aria-label="Rendered resume audit">
+      <div className="apply-review-resume-main">
+        <ResumePreview item={item} />
+      </div>
+      {artifactId ? (
+        <ResumeAuditPins artifactId={artifactId} />
+      ) : (
+        <section className="apply-review-resume-pins" aria-label="Resume claim pins">
+          <h3>Resume claim pins</h3>
+          <Empty title="No resume artifact is available for provenance inspection." />
+        </section>
+      )}
+    </section>
+  );
+}
+
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const status = materialStatus(item);
   const evidenceGroups = evidenceValues(item).length;
@@ -392,14 +412,14 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             <span className="eyebrow">Application Materials</span>
             <h2>Tailored resume and cover</h2>
           </header>
-          <div className="apply-review-pane-scroll">
+          <div className="apply-review-pane-scroll apply-review-materials-scroll">
+            <ResumeReviewSurface item={item} />
             {resumePdfArtifactId ? (
               <ArtifactTailoringInspector
                 artifactId={resumePdfArtifactId}
                 className="apply-review-preview-block apply-review-tailoring"
               />
             ) : null}
-            <ResumePreview item={item} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

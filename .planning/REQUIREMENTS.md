@@ -36,14 +36,14 @@ Requirements for this milestone. Each maps to exactly one roadmap phase unless e
 
 ### Apply Review Resume Pins
 
-- [ ] **REVIEW-01**: Apply Review keeps the rendered resume/material as the central review object rather than relegating it below detached audit cards.
-- [ ] **REVIEW-02**: Resume rows or generated claims expose stable pins/markers derived from canonical artifact audit data, starting with `bulletProvenance` and `annotatedChanges`.
-- [ ] **REVIEW-03**: Selecting a pin shows source profile/resume text, generated tailored artifact text, transform/change type, governing controls, requirement IDs, evidence IDs, matched keywords, and rationale where recorded.
-- [ ] **REVIEW-04**: Pin details show grounding and claim-risk status using quality, judge, adversarial review, coverage, and review-feedback signals where available.
-- [ ] **REVIEW-05**: Pins preserve honest lifecycle labels: repair attempted, accepted with residual warnings, skipped audit, no source recorded, unsupported claim, missing required evidence, and no provenance recorded remain visibly distinct when those states apply.
-- [ ] **REVIEW-06**: The Apply Review readiness/header and decision controls consume the shared apply audit contract and explain blockers without contradicting the Jobs drawer.
-- [ ] **REVIEW-07**: Cover-letter and text/PDF fallback states remain reviewable; missing PDF or missing provenance shows explicit empty states rather than blank space.
-- [ ] **REVIEW-08**: Resume-pin interactions are keyboard accessible, have stable dimensions, do not overlap text/content at supported viewport sizes, and remain usable in light/dark themes.
+- [x] **REVIEW-01**: Apply Review keeps the rendered resume/material as the central review object rather than relegating it below detached audit cards.
+- [x] **REVIEW-02**: Resume rows or generated claims expose stable pins/markers derived from canonical artifact audit data, starting with `bulletProvenance` and `annotatedChanges`.
+- [x] **REVIEW-03**: Selecting a pin shows source profile/resume text, generated tailored artifact text, transform/change type, governing controls, requirement IDs, evidence IDs, matched keywords, and rationale where recorded.
+- [x] **REVIEW-04**: Pin details show grounding and claim-risk status using quality, judge, adversarial review, coverage, and review-feedback signals where available.
+- [x] **REVIEW-05**: Pins preserve honest lifecycle labels: repair attempted, accepted with residual warnings, skipped audit, no source recorded, unsupported claim, missing required evidence, and no provenance recorded remain visibly distinct when those states apply.
+- [x] **REVIEW-06**: The Apply Review readiness/header and decision controls consume the shared apply audit contract and explain blockers without contradicting the Jobs drawer.
+- [x] **REVIEW-07**: Cover-letter and text/PDF fallback states remain reviewable; missing PDF or missing provenance shows explicit empty states rather than blank space.
+- [x] **REVIEW-08**: Resume-pin interactions are keyboard accessible, have stable dimensions, do not overlap text/content at supported viewport sizes, and remain usable in light/dark themes.
 
 ### QA, Safety, And Documentation
 
@@ -124,14 +124,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DRAWER-04 | Phase 14 | Complete |
 | DRAWER-05 | Phase 14 | Complete |
 | DRAWER-06 | Phase 14 | Complete |
-| REVIEW-01 | Phase 15 | Planned |
-| REVIEW-02 | Phase 15 | Planned |
-| REVIEW-03 | Phase 15 | Planned |
-| REVIEW-04 | Phase 15 | Planned |
-| REVIEW-05 | Phase 15 | Planned |
-| REVIEW-06 | Phase 15 | Planned |
-| REVIEW-07 | Phase 15 | Planned |
-| REVIEW-08 | Phase 15 | Planned |
+| REVIEW-01 | Phase 15 | Complete |
+| REVIEW-02 | Phase 15 | Complete |
+| REVIEW-03 | Phase 15 | Complete |
+| REVIEW-04 | Phase 15 | Complete |
+| REVIEW-05 | Phase 15 | Complete |
+| REVIEW-06 | Phase 15 | Complete |
+| REVIEW-07 | Phase 15 | Complete |
+| REVIEW-08 | Phase 15 | Complete |
 | QA-01 | Phase 16 | Planned |
 | QA-02 | Phase 16 | Planned |
 | QA-03 | Phase 16 | Planned |
@@ -142,10 +142,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 **Coverage:**
 
 - v1.2 requirements: 30 total
-- Complete: 16
+- Complete: 24
 - Mapped to phases: 30
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after Phase 14 completion*
+*Last updated: 2026-06-11 after Phase 15 completion*
