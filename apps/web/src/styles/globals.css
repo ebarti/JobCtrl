@@ -2208,7 +2208,8 @@ textarea:focus-visible {
 }
 
 .stage-pill.ok {
-  background: var(--success-muted);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 34%, transparent);
+  background: color-mix(in oklch, var(--success) 18%, var(--card));
   color: var(--success);
 }
 
@@ -2218,7 +2219,8 @@ textarea:focus-visible {
 }
 
 .tag.ok {
-  background: var(--success-muted);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 34%, transparent);
+  background: color-mix(in oklch, var(--success) 18%, var(--card));
   color: var(--success);
 }
 

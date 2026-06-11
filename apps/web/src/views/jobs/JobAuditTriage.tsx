@@ -180,11 +180,14 @@ function auditTone(state: JobDetail["applyAudit"]["state"]): "ok" | "info" | "wa
   return "warn";
 }
 
-function factTone(fact: ApplyAuditFact): "muted" | "info" | "warn" {
+function factTone(fact: ApplyAuditFact): "muted" | "info" | "ok" | "warn" {
   if (fact.severity === "unknown") {
     return "muted";
   }
-  if (fact.severity === "info" || fact.severity === "success") {
+  if (fact.severity === "success") {
+    return "ok";
+  }
+  if (fact.severity === "info") {
     return "info";
   }
   return "warn";

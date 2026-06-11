@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` now prints observed service bindings, and fit-score badges now keep mid-positive scores such as 7 in the green success family.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, fit-score badges keep mid-positive scores green, and Apply Review ready/ok status badges use visible success-green styling.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-11 - Post-completion fit-score color correction completed
+Last activity: 2026-06-11 - Post-completion ready status color correction completed
 
 ## Active Milestone Summary
 
@@ -116,6 +116,7 @@ Key findings:
 - Recorded final milestone acceptance evidence.
 - Follow-up correction: detached `pnpm dev:start` now reports observed API/web/Temporal bindings, including the actual Vite web URL when the requested port is occupied and Vite binds a higher port.
 - Follow-up correction: Jobs fit-score badges now keep mid-positive scores such as 7 visually green instead of warning/red.
+- Follow-up correction: Apply Review ready/ok badges and success facts now render in the success-green family instead of info/blue or weak neutral styling.
 - Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, material regeneration, destructive data action, or worker-backed job.
 
 ## Prior Milestone Verification
