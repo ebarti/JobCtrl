@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA correction: `pnpm dev:start` now prints observed service bindings so the browser URL matches the actual Vite port when local port fallback occurs.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-11 - Phase 16 product-path QA and documentation completed
+Last activity: 2026-06-11 - Post-completion dev launcher binding output correction completed
 
 ## Active Milestone Summary
 
@@ -114,6 +114,7 @@ Key findings:
 - Re-verified the Apply Review product path from `/apply-review`.
 - Confirmed docs/checklists cover Jobs drawer audit triage and Apply Review resume pins.
 - Recorded final milestone acceptance evidence.
+- Follow-up correction: detached `pnpm dev:start` now reports observed API/web/Temporal bindings, including the actual Vite web URL when the requested port is occupied and Vite binds a higher port.
 - Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, material regeneration, destructive data action, or worker-backed job.
 
 ## Prior Milestone Verification

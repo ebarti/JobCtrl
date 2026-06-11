@@ -56,6 +56,11 @@ pnpm dev:start
 pnpm dev:stop
 ```
 
+`pnpm dev:start` prints the observed API, web, and Temporal bindings after the
+processes launch. Use the printed web URL rather than assuming `5173`, because
+Vite can bind a higher port when another local JobHunter web server is already
+using the requested port.
+
 Run individual components only when troubleshooting a specific process:
 
 ```bash

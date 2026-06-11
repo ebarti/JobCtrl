@@ -251,6 +251,61 @@ while true; do sleep 1; done
     }
   });
 
+  it("prints the actual Vite binding observed from detached web logs", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobhunter-dev-launcher-"));
+    const devDir = join(tempDir, "dev-state");
+    const callsLog = join(tempDir, "calls.log");
+    const pidFile = join(devDir, "pids/web.pid");
+    let webPid: number | undefined;
+    let env: NodeJS.ProcessEnv | undefined;
+
+    try {
+      writeFileSync(
+        join(tempDir, "pnpm"),
+        `#!/usr/bin/env bash
+echo "fake pnpm $*" >> "${callsLog}"
+echo "  Local:   http://127.0.0.1:5175/"
+trap 'echo "fake pnpm terminated $$" >> "${callsLog}"; exit 0' TERM INT
+while true; do sleep 1; done
+`,
+      );
+      chmodSync(join(tempDir, "pnpm"), 0o755);
+      env = devScriptEnv(devDir, {
+        PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+        JOBHUNTER_BINDING_WAIT_TICKS: "20",
+        JOBHUNTER_BINDING_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBHUNTER_STOP_WAIT_TICKS: "10",
+        JOBHUNTER_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBHUNTER_WEB_PORT: "5173",
+      });
+
+      const output = execFileSync(devScript, ["start", "web"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env,
+      });
+      webPid = await waitForPidFile(pidFile);
+      await waitForFileText(callsLog, "fake pnpm --filter @jobhunter/web exec vite --host 127.0.0.1 --port 5173");
+
+      expect(output).toContain("dev: bindings");
+      expect(output).toContain("web: http://127.0.0.1:5175/");
+      expect(processExists(webPid)).toBe(true);
+    } finally {
+      try {
+        execFileSync(devScript, ["stop", "web"], {
+          cwd: repoRoot,
+          env: env ?? devScriptEnv(devDir),
+        });
+      } catch {
+        // The process may already be stopped if an assertion failed late.
+      }
+      if (webPid !== undefined && processExists(webPid)) {
+        process.kill(webPid, "SIGKILL");
+      }
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("runs attached processes and cleans PID files on termination", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobhunter-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");
