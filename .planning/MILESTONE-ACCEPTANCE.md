@@ -30,3 +30,38 @@ exist; the work was verified retroactively (this document + the per-phase `VERIF
 - **LOW (env)** — Phase 5 live Playwright E2E needs a clean-environment run (port-reuse artifact, not a code defect).
 - **Out of scope** — 3 pre-existing failing tests (enrichment staleness ×2, materials suppression) unrelated to this milestone.
 - **Skipped by user** — live matched-job happy-path demo (the code path is already verified).
+
+---
+
+# Milestone v1.2 — Apply Review Audit UX - Drawer + Resume Pins — Acceptance
+
+**Status:** COMPLETE (verified 2026-06-11)
+**Verified against:** branch `worktree/c151` through the Phase 16 documentation commit
+**Method:** goal-backward verification against `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, targeted automated tests, and browser product-path QA.
+
+## Result: 5/5 phases PASS · 30/30 requirements wired
+
+| Phase | Requirements | Verdict | Report |
+|-------|--------------|---------|--------|
+| 12 · Folded Cleanup + Verification Baseline | CLEAN-01..04 | PASS | `phases/12-folded-cleanup-verification-baseline/12-VERIFICATION.md` |
+| 13 · Shared Apply Audit Contract | AUDIT-01..06 | PASS | `phases/13-shared-apply-audit-contract/13-VERIFICATION.md` |
+| 14 · Jobs Drawer Audit Triage | DRAWER-01..06 | PASS | `phases/14-jobs-drawer-audit-triage/14-VERIFICATION.md` |
+| 15 · Apply Review Resume Pins | REVIEW-01..08 | PASS | `phases/15-apply-review-resume-pins/15-VERIFICATION.md` |
+| 16 · Product-Path QA + Documentation | QA-01..06 | PASS | `phases/16-product-path-qa-documentation/16-VERIFICATION.md` |
+
+## Verification Summary
+
+- `corepack pnpm api:check` passed.
+- `corepack pnpm --filter @jobhunter/api test -- apply-audit application-feedback server` passed, 11 files / 207 tests.
+- `corepack pnpm web:check` passed.
+- `corepack pnpm --filter @jobhunter/web test src/views/apply-review/ApplyReviewView.test.tsx src/views/jobs/JobDetailDrawer.test.tsx src/views/jobs/JobOverview.test.tsx` passed, 3 files / 20 tests.
+- `corepack pnpm web:build` passed with the existing Vite large-chunk warning.
+- `git diff --check` passed.
+- Browser QA passed for `/jobs` row activation into the audit triage drawer.
+- Browser QA passed for `/apply-review` rendered-resume-first review surface and explicit no-provenance state.
+
+## Residual
+
+- **Non-blocking:** Browser QA with local data showed the no-provenance state for the selected artifact; populated source-to-tailored pins, grounded/risky claim labels, unsupported claims, missing required evidence, and residual warning lifecycle are covered by synthetic Apply Review tests.
+- **Existing warning:** `corepack pnpm web:build` still emits the existing large chunk warning.
+- **Deferred:** Option 2 Evidence Ledger, Option 3 Gate Timeline, deep PDF coordinate annotations, reviewer comments on pins, audit packet export, and blind-auto-apply positioning copy.

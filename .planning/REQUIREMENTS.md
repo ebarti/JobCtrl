@@ -47,12 +47,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase unless e
 
 ### QA, Safety, And Documentation
 
-- [ ] **QA-01**: Required API/web checks pass for touched surfaces, including typecheck, build, targeted API/read-model tests, web unit/component tests, and additional type-level/Storybook/a11y checks where component shape warrants them.
-- [ ] **QA-02**: Product-path browser QA proves the Jobs drawer stories: why ranked, readiness, blockers, eligibility concerns, and drawer-to-review handoff.
-- [ ] **QA-03**: Product-path browser QA proves Apply Review stories: readiness agreement, rendered resume focus, pin selection, source-to-tailored change detail, grounded claim, risky/unsupported claim, and missing-source state.
-- [ ] **QA-04**: QA fixtures, stories, screenshots, and docs use synthetic or seeded data only and do not expose profile data, resumes, generated PDFs, application data, browser profiles, logs, SQLite databases, API keys, or OAuth tokens.
-- [ ] **QA-05**: No QA stage runs auto-apply, browser submission, mailbox scanning, real material regeneration, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks for that behavior later.
-- [ ] **QA-06**: Documentation is updated only where behavior or QA expectations changed; blind-auto-apply positioning remains deferred unless separately requested.
+- [x] **QA-01**: Required API/web checks pass for touched surfaces, including typecheck, build, targeted API/read-model tests, web unit/component tests, and additional type-level/Storybook/a11y checks where component shape warrants them.
+- [x] **QA-02**: Product-path browser QA proves the Jobs drawer stories: why ranked, readiness, blockers, eligibility concerns, and drawer-to-review handoff.
+- [x] **QA-03**: Product-path browser QA proves Apply Review stories: readiness agreement, rendered resume focus, pin selection, source-to-tailored change detail, grounded claim, risky/unsupported claim, and missing-source state.
+- [x] **QA-04**: QA fixtures, stories, screenshots, and docs use synthetic or seeded data only and do not expose profile data, resumes, generated PDFs, application data, browser profiles, logs, SQLite databases, API keys, or OAuth tokens.
+- [x] **QA-05**: No QA stage runs auto-apply, browser submission, mailbox scanning, real material regeneration, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks for that behavior later.
+- [x] **QA-06**: Documentation is updated only where behavior or QA expectations changed; blind-auto-apply positioning remains deferred unless separately requested.
 
 ## Existing Foundations
 
@@ -132,20 +132,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REVIEW-06 | Phase 15 | Complete |
 | REVIEW-07 | Phase 15 | Complete |
 | REVIEW-08 | Phase 15 | Complete |
-| QA-01 | Phase 16 | Planned |
-| QA-02 | Phase 16 | Planned |
-| QA-03 | Phase 16 | Planned |
-| QA-04 | Phase 16 | Planned |
-| QA-05 | Phase 16 | Planned |
-| QA-06 | Phase 16 | Planned |
+| QA-01 | Phase 16 | Complete |
+| QA-02 | Phase 16 | Complete |
+| QA-03 | Phase 16 | Complete |
+| QA-04 | Phase 16 | Complete |
+| QA-05 | Phase 16 | Complete |
+| QA-06 | Phase 16 | Complete |
 
 **Coverage:**
 
 - v1.2 requirements: 30 total
-- Complete: 24
+- Complete: 30
 - Mapped to phases: 30
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after Phase 15 completion*
+*Last updated: 2026-06-11 after Phase 16 completion*

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
-status: in_progress
-last_updated: "2026-06-11T20:55:00.000Z"
+status: complete
+last_updated: "2026-06-11T21:08:00.000Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 11
-  completed_plans: 11
-  percent: 80
+  completed_phases: 5
+  total_plans: 13
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 16 planning - Product-Path QA + Documentation.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains.
 
 ## Current Position
 
-Phase: 16 - Product-Path QA + Documentation
-Plan: Not created
-Status: Ready to plan Phase 16
-Last activity: 2026-06-11 - Phase 15 Apply Review resume pins completed
+Phase: v1.2 complete
+Plan: All milestone plans complete
+Status: Complete
+Last activity: 2026-06-11 - Phase 16 product-path QA and documentation completed
 
 ## Active Milestone Summary
 
@@ -58,9 +58,9 @@ Explicitly not in scope:
 | 13 | Shared Apply Audit Contract | Complete | AUDIT-01..AUDIT-06 |
 | 14 | Jobs Drawer Audit Triage | Complete | DRAWER-01..DRAWER-06 |
 | 15 | Apply Review Resume Pins | Complete | REVIEW-01..REVIEW-08 |
-| 16 | Product-Path QA + Documentation | Planned | QA-01..QA-06 |
+| 16 | Product-Path QA + Documentation | Complete | QA-01..QA-06 |
 
-Next command: `$gsd-plan-phase 16`.
+Next command: PR review/merge workflow.
 
 ## Research Summary
 
@@ -107,6 +107,15 @@ Key findings:
 - Updated Apply Review tests and local QA docs for populated provenance and no-provenance states.
 - Verified with `corepack pnpm web:check`, targeted Apply Review tests, `corepack pnpm web:build`, `git diff --check`, and product-path browser QA on `/apply-review`.
 
+### Phase 16 - Product-Path QA + Documentation
+
+- Ran API and web verification commands for the changed surfaces.
+- Re-verified the Jobs drawer product path from `/jobs` row activation.
+- Re-verified the Apply Review product path from `/apply-review`.
+- Confirmed docs/checklists cover Jobs drawer audit triage and Apply Review resume pins.
+- Recorded final milestone acceptance evidence.
+- Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, material regeneration, destructive data action, or worker-backed job.
+
 ## Prior Milestone Verification
 
 Milestone v1.0 was verified on 2026-06-09. All five phases plus cross-phase integration returned PASS. The durable summary is `.planning/MILESTONE-ACCEPTANCE.md`.
@@ -147,6 +156,6 @@ Milestone v1.1 completed Phases 6-10 and landed semantic tokens, shared primitiv
 ## Session Continuity
 
 Last session: 2026-06-11
-Stopped at: Phase 15 complete
-Latest phase completed: Phase 15 - Apply Review Resume Pins
+Stopped at: v1.2 complete
+Latest phase completed: Phase 16 - Product-Path QA + Documentation
 Resume file: None

@@ -25,7 +25,7 @@ The milestone starts with the leftover v1.1 cleanup folded in as a narrow housek
 - [x] **Phase 13: Shared Apply Audit Contract** - Add one readiness/blocker/eligibility contract served by the API/read model and consumed by both Jobs drawer and Apply Review.
 - [x] **Phase 14: Jobs Drawer Audit Triage** - Reframe the Jobs row-click drawer around why ranked, readiness, blockers, eligibility concerns, and handoff to Apply Review.
 - [x] **Phase 15: Apply Review Resume Pins** - Make the rendered resume/material central and add provenance-backed pins with source-to-tailored change, grounding, risk, and action detail.
-- [ ] **Phase 16: Product-Path QA + Documentation** - Verify both surfaces end to end with synthetic data, update docs/checklists, and audit milestone acceptance.
+- [x] **Phase 16: Product-Path QA + Documentation** - Verify both surfaces end to end with synthetic data, update docs/checklists, and audit milestone acceptance.
 
 ## Phase Details
 
@@ -194,11 +194,16 @@ Plans:
 - `git diff --check`
 - `$gsd-audit-milestone` or equivalent final milestone audit before completion.
 
-**Plans:** Create with `$gsd-plan-phase 16`.
+**Plans:** 2/2 plans executed.
+
+Plans:
+
+- [x] 16-01-PLAN.md - Verification matrix.
+- [x] 16-02-PLAN.md - Documentation and milestone acceptance.
 
 ## Progress
 
 **Execution Order:**
 Phases execute in numeric order: 12 -> 13 -> 14 -> 15 -> 16
 
-**Milestone Status:** Phase 15 complete; next step is `$gsd-plan-phase 16`.
+**Milestone Status:** Complete; all v1.2 phases are verified.
