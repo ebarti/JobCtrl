@@ -1054,8 +1054,8 @@ Button, Input, Textarea, Checkbox, Switch, Badge, Card, Form (TanStack
 Form bindings), Table primitives.
 
 **Icons:** `components.json` targets Tabler for newly copied shadcn output.
-Existing visible `lucide-react` imports remain compatible until the layout
-and icon migration phase maps them deliberately.
+Visible product icons use `@tabler/icons-react`; do not add new
+`lucide-react` imports.
 
 ### 4.8 Styling — Tailwind CSS
 

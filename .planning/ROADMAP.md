@@ -21,7 +21,7 @@ The milestone starts with the leftover v1.1 cleanup folded in as a narrow housek
 - Integer phases are planned milestone work.
 - Decimal phases are reserved for urgent insertions.
 
-- [ ] **Phase 12: Folded Cleanup + Verification Baseline** - Close narrow v1.1 cleanup residue before feature work: stale verification commands, dependency/config audits, optional unused icon dependency removal, and docs/config normalization.
+- [x] **Phase 12: Folded Cleanup + Verification Baseline** - Close narrow v1.1 cleanup residue before feature work: stale verification commands, dependency/config audits, optional unused icon dependency removal, and docs/config normalization.
 - [ ] **Phase 13: Shared Apply Audit Contract** - Add one readiness/blocker/eligibility contract served by the API/read model and consumed by both Jobs drawer and Apply Review.
 - [ ] **Phase 14: Jobs Drawer Audit Triage** - Reframe the Jobs row-click drawer around why ranked, readiness, blockers, eligibility concerns, and handoff to Apply Review.
 - [ ] **Phase 15: Apply Review Resume Pins** - Make the rendered resume/material central and add provenance-backed pins with source-to-tailored change, grounding, risk, and action detail.
@@ -55,7 +55,12 @@ The milestone starts with the leftover v1.1 cleanup folded in as a narrow housek
 - `pnpm --filter @jobhunter/web test` if touched code warrants it.
 - `git diff --check`
 
-**Plans:** Create with `$gsd-plan-phase 12`.
+**Plans:** 2/2 plans executed.
+
+Plans:
+
+- [x] 12-01-PLAN.md - Dependency and config cleanup.
+- [x] 12-02-PLAN.md - Documentation and baseline verification.
 
 ### Phase 13: Shared Apply Audit Contract
 
@@ -181,4 +186,4 @@ The milestone starts with the leftover v1.1 cleanup folded in as a narrow housek
 **Execution Order:**
 Phases execute in numeric order: 12 -> 13 -> 14 -> 15 -> 16
 
-**Milestone Status:** Requirements and roadmap defined; next step is `$gsd-plan-phase 12`.
+**Milestone Status:** Phase 12 complete; next step is `$gsd-plan-phase 13`.

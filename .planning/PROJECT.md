@@ -49,9 +49,9 @@ A user can trust every line of a tailored resume because each bullet traces visi
 
 **Pillar A - v1.1 cleanup folded into v1.2**
 
-- [ ] Obsolete dependency/config remnants from the shadcn/token migration are audited and removed only when import/config proof shows they are unused.
-- [ ] Stale verification commands are normalized to the current project structure, including removing references to `apps/web/tailwind.config.ts` now that Tailwind 4 CSS-first config is in use.
-- [ ] Docs/config surfaces reflect the final shadcn token, icon, font, and QA expectations without re-opening visual-system scope.
+- [x] Obsolete dependency/config remnants from the shadcn/token migration are audited and removed only when import/config proof shows they are unused.
+- [x] Stale verification commands are normalized to the current project structure, including removing references to `apps/web/tailwind.config.ts` now that Tailwind 4 CSS-first config is in use.
+- [x] Docs/config surfaces reflect the final shadcn token, icon, font, and QA expectations without re-opening visual-system scope.
 
 **Pillar B - Jobs drawer audit triage**
 
@@ -133,4 +133,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-11 after initializing milestone v1.2 research, requirements, and roadmap*
+*Last updated: 2026-06-11 after Phase 12 completion*

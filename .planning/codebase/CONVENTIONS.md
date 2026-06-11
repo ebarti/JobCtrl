@@ -51,7 +51,7 @@
 **Frontend Styling:**
 - Use Tailwind utility composition and shared UI primitives under `apps/web/src/shared/ui`.
 - Use `cn()` from `apps/web/src/shared/lib/cn.ts` when merging class variants with `clsx` and `tailwind-merge`.
-- Use CSS variables surfaced through `apps/web/tailwind.config.ts`; base styles live in `apps/web/src/styles/globals.css` and `apps/web/src/styles/tokens.css`.
+- Use CSS-first Tailwind 4 mappings in `apps/web/src/styles/globals.css`; token values live in `apps/web/src/styles/tokens.css`, and shadcn config lives in `apps/web/components.json`.
 
 ## Import Organization
 

@@ -11,10 +11,10 @@ Requirements for this milestone. Each maps to exactly one roadmap phase unless e
 
 ### Cleanup And Baseline
 
-- [ ] **CLEAN-01**: Stale v1.1 verification commands and references are normalized to the current project structure, including removing outdated `apps/web/tailwind.config.ts` assumptions now that Tailwind 4 CSS-first config is in use.
-- [ ] **CLEAN-02**: Obsolete dependency/config remnants are audited and removed only when import/config proof shows they are unused; `lucide-react` removal is allowed only if source and package audits prove zero required imports.
-- [ ] **CLEAN-03**: Documentation/config owners are updated narrowly for final shadcn token, Tabler icon, font, and QA expectations without reopening visual-system migration scope.
-- [ ] **CLEAN-04**: Cleanup leaves no permanent styling or verification API based on removed legacy token names such as `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, or `ring-info`.
+- [x] **CLEAN-01**: Stale v1.1 verification commands and references are normalized to the current project structure, including removing outdated `apps/web/tailwind.config.ts` assumptions now that Tailwind 4 CSS-first config is in use.
+- [x] **CLEAN-02**: Obsolete dependency/config remnants are audited and removed only when import/config proof shows they are unused; `lucide-react` removal is allowed only if source and package audits prove zero required imports.
+- [x] **CLEAN-03**: Documentation/config owners are updated narrowly for final shadcn token, Tabler icon, font, and QA expectations without reopening visual-system migration scope.
+- [x] **CLEAN-04**: Cleanup leaves no permanent styling or verification API based on removed legacy token names such as `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, or `ring-info`.
 
 ### Shared Apply Audit Contract
 
@@ -108,10 +108,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CLEAN-01 | Phase 12 | Planned |
-| CLEAN-02 | Phase 12 | Planned |
-| CLEAN-03 | Phase 12 | Planned |
-| CLEAN-04 | Phase 12 | Planned |
+| CLEAN-01 | Phase 12 | Complete |
+| CLEAN-02 | Phase 12 | Complete |
+| CLEAN-03 | Phase 12 | Complete |
+| CLEAN-04 | Phase 12 | Complete |
 | AUDIT-01 | Phase 13 | Planned |
 | AUDIT-02 | Phase 13 | Planned |
 | AUDIT-03 | Phase 13 | Planned |
@@ -142,9 +142,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 **Coverage:**
 
 - v1.2 requirements: 30 total
+- Complete: 4
 - Mapped to phases: 30
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after v1.2 research*
+*Last updated: 2026-06-11 after Phase 12 completion*
