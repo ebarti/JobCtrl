@@ -284,6 +284,38 @@ def test_tailor_success_unblocks_cover_waiting_on_tailor(tmp_path):
         close_connection(db_path)
 
 
+def test_tailor_success_unblocks_apply_waiting_on_materials(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        set_stage_state(
+            conn,
+            job["url"],
+            "apply",
+            "blocked",
+            error_code="BLOCKED",
+            error_message="Materials are not ready.",
+        )
+
+        set_stage_state(conn, job["url"], "tailor", "running", started_at="2026-04-29T10:03:00+00:00")
+        set_stage_state(conn, job["url"], "tailor", "succeeded", finished_at="2026-04-29T10:04:00+00:00")
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT state, error_code, error_message FROM job_stage_states "
+            "WHERE job_url = ? AND stage = 'apply'",
+            (job["url"],),
+        ).fetchone()
+        assert row["state"] == "pending"
+        assert row["error_code"] is None
+        assert row["error_message"] is None
+    finally:
+        close_connection(db_path)
+
+
 def test_dependency_reconciliation_preserves_unrelated_blockers(tmp_path):
     db_path = Path(tmp_path) / "jobs.db"
     conn = init_db(db_path)
@@ -346,6 +378,45 @@ def test_dependency_reconciliation_repairs_existing_stale_rows(tmp_path):
         row = conn.execute(
             "SELECT state, error_message FROM job_stage_states "
             "WHERE job_url = ? AND stage = 'tailor'",
+            (job["url"],),
+        ).fetchone()
+        assert repaired == 1
+        assert row["state"] == "pending"
+        assert row["error_message"] is None
+    finally:
+        close_connection(db_path)
+
+
+def test_dependency_reconciliation_repairs_existing_apply_material_blocker(tmp_path):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+
+    try:
+        job = _insert_job(conn)
+        ensure_job_stage_rows(conn, job["url"], discovered_at=job["discovered_at"])
+        set_stage_state(
+            conn,
+            job["url"],
+            "tailor",
+            "succeeded",
+            finished_at="2026-04-29T10:04:00+00:00",
+            validate_transition=False,
+        )
+        set_stage_state(
+            conn,
+            job["url"],
+            "apply",
+            "blocked",
+            error_code="BLOCKED",
+            error_message="Materials are not ready.",
+        )
+
+        repaired = reconcile_dependency_blockers(conn)
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT state, error_message FROM job_stage_states "
+            "WHERE job_url = ? AND stage = 'apply'",
             (job["url"],),
         ).fetchone()
         assert repaired == 1

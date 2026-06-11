@@ -113,6 +113,52 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("repairs stale apply material blockers before listing the review queue", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `
+      UPDATE job_stage_states
+         SET state = 'blocked',
+             error_code = 'BLOCKED',
+             error_message = 'Materials are not ready.',
+             retryable = 0
+       WHERE job_url = ?
+         AND stage = 'apply'
+      `,
+    ).run(READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      currentStage: "apply",
+      currentState: "pending",
+      blockers: [],
+    });
+    await app.close();
+
+    const readDb = new Database(options.dbPath, { readonly: true });
+    const stage = readDb
+      .prepare(
+        `
+        SELECT state, error_code, error_message
+          FROM job_stage_states
+         WHERE job_url = ?
+           AND stage = 'apply'
+        `,
+      )
+      .get(READY_JOB) as { state: string; error_code: string | null; error_message: string | null };
+    readDb.close();
+
+    expect(stage).toEqual({
+      state: "pending",
+      error_code: null,
+      error_message: null,
+    });
+  });
+
   it("uses the posting URL as the review apply target when direct application URL is missing", async () => {
     const db = new Database(options.dbPath);
     db.prepare("UPDATE jobs SET application_url = NULL WHERE url = ?").run(READY_JOB);
