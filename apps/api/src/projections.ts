@@ -49,6 +49,14 @@ const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   cover: 5,
   apply: 3,
 };
+const DEPENDENCY_BLOCKER_MESSAGES: Record<string, Array<{ downstream: string; messages: readonly string[] }>> = {
+  enrich: [{ downstream: "score", messages: ["Enrichment has not completed."] }],
+  score: [{ downstream: "tailor", messages: ["score has not completed."] }],
+  tailor: [
+    { downstream: "cover", messages: ["tailor has not completed."] },
+    { downstream: "apply", messages: ["Materials are not ready."] },
+  ],
+};
 
 interface BackfillOpts {
   jobUrl: string;
@@ -248,6 +256,57 @@ function backfillLegacyStageStates(db: SqliteDatabase): void {
       insertStage(row.url, "apply", "pending");
     }
   }
+}
+
+function reconcileDependencyBlockers(db: SqliteDatabase): Set<string> {
+  const repairedJobs = new Set<string>();
+  if (!tableExists(db, "job_stage_states")) return repairedJobs;
+
+  const columns = new Set(
+    allRows<{ name: string }>(db, "PRAGMA table_info(job_stage_states)").map((row) => row.name),
+  );
+  const assignments = [
+    "state = 'pending'",
+    columns.has("updated_at") ? "updated_at = ?" : null,
+    columns.has("error_code") ? "error_code = NULL" : null,
+    columns.has("error_message") ? "error_message = NULL" : null,
+    columns.has("retryable") ? "retryable = 1" : null,
+    columns.has("blocked_by_json") ? "blocked_by_json = NULL" : null,
+    columns.has("next_action") ? "next_action = NULL" : null,
+    columns.has("metadata_json") ? "metadata_json = NULL" : null,
+  ].filter((assignment): assignment is string => Boolean(assignment));
+  const updateSql = `UPDATE job_stage_states SET ${assignments.join(", ")} WHERE job_url = ? AND stage = ?`;
+  const update = db.prepare(updateSql);
+  const now = new Date().toISOString();
+
+  for (const [upstream, downstreams] of Object.entries(DEPENDENCY_BLOCKER_MESSAGES)) {
+    for (const { downstream, messages } of downstreams) {
+      const placeholders = messages.map(() => "?").join(", ");
+      const rows = allRows<{ job_url: string; stage: string }>(
+        db,
+        `SELECT downstream.job_url, downstream.stage
+           FROM job_stage_states AS downstream
+          WHERE downstream.stage = ?
+            AND downstream.state = 'blocked'
+            AND downstream.error_code = 'BLOCKED'
+            AND downstream.error_message IN (${placeholders})
+            AND EXISTS (
+              SELECT 1
+                FROM job_stage_states AS upstream
+               WHERE upstream.job_url = downstream.job_url
+                 AND upstream.stage = ?
+                 AND upstream.state = 'succeeded'
+            )`,
+        [downstream, ...messages, upstream],
+      );
+      for (const row of rows) {
+        update.run(...(columns.has("updated_at") ? [now] : []), row.job_url, row.stage);
+        repairedJobs.add(row.job_url);
+      }
+    }
+  }
+
+  return repairedJobs;
 }
 
 /** Idempotently create the projection tables. Mirrors the Python schema. */
@@ -513,10 +572,11 @@ function setWatermark(db: SqliteDatabase, projection: string, eventId: number): 
 export function refreshProjections(db: SqliteDatabase, tenantId = "local"): void {
   const projectionSchemaChanged = ensureProjectionTables(db);
   backfillLegacyStageStates(db);
+  const repairedDependencyJobs = reconcileDependencyBlockers(db);
 
   const watermark = readWatermark(db, PROJECTION_WATERMARK_NAME);
 
-  let dirtyJobs = new Set<string>();
+  let dirtyJobs = new Set<string>(repairedDependencyJobs);
   let sourceQualityDirty = false;
   let maxEventId = watermark;
   if (tableExists(db, "job_events")) {

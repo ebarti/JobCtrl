@@ -64,6 +64,7 @@ _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]]
     "score": (("tailor", ("score has not completed.",)),),
     "tailor": (
         ("cover", ("tailor has not completed.",)),
+        ("apply", ("Materials are not ready.",)),
     ),
 }
 SCORE_ELIGIBILITY_BLOCKED_ERROR_CODE = "SCORE_ELIGIBILITY_BLOCKED"
