@@ -1,180 +1,90 @@
-# Technology Stack: shadcn Standard-Token Migration
+# Stack Research
 
-**Project:** JobHunter web app
-**Researched:** 2026-06-09
-**Scope:** Stack/package/config research only for migrating the existing React/Vite/Tailwind 4 UI from bespoke tokens to the current shadcn semantic CSS-variable token system using preset `b3F5kqmYd8`.
-**Overall confidence:** HIGH for shadcn CLI/docs behavior; MEDIUM for exact final package delta because `shadcn apply` broadens scope if allowed to rewrite components.
+**Domain:** Local-first job-application audit UX
+**Researched:** 2026-06-11
+**Confidence:** HIGH for current repo stack, MEDIUM for exact resume-pin rendering mechanics
 
-## Summary
+## Recommended Stack
 
-JobHunter already has the core framework needed for this milestone: React 19, Vite 7, Tailwind 4, `@tailwindcss/vite`, Radix primitives, `class-variance-authority`, `clsx`, and `tailwind-merge`. The migration does not need a framework change.
+### Core Technologies
 
-The required stack work is CSS/config/package alignment: introduce shadcn's semantic token names (`--background`, `--foreground`, `--card`, `--primary`, `--muted`, `--border`, `--ring`, `--chart-*`, `--sidebar-*`, `--radius`), expose them through Tailwind 4 `@theme inline`, and retire the bespoke `--bg` / `--paper` / `--ink` / `--rule` token vocabulary after callers are migrated.
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| React | 19.2.x in `apps/web` | UI composition for Jobs drawer and Apply Review | Existing production stack; supports componentized audit panes without changing routing or state architecture. |
+| Vite | 7.x in `apps/web` | Web build and dev server | Existing fast local workflow; no new bundler needed for milestone UI work. |
+| TypeScript | 6.0.3 root dev dependency | Contracts, API, and web type safety | Shared `@jobhunter/contracts` DTOs can make readiness/blocker drift a compile-time problem. |
+| Tailwind CSS | 4.x in `apps/web` | CSS-first semantic token styling | v1.1 already migrated to shadcn semantic tokens; v1.2 should build on the current token system rather than add a second styling layer. |
+| TanStack Router/Query/Table/Form | Current repo packages | URL state, server state, tables, forms | Existing frontend target architecture requires Operations hooks for reads and context-owned mutations for writes. |
+| SQLite projection read model | Current API architecture | Local-first read DTOs for Jobs and Apply Review | The shared readiness/audit contract belongs in projection-backed API read models rather than duplicated UI derivation. |
 
-Use `shadcn@latest` as a generator/probe, not as an uncontrolled rewrite tool. In a disposable probe, `shadcn@latest` was version `4.11.0`; `preset decode b3F5kqmYd8 --json` matched the milestone values and produced `https://ui.shadcn.com/create?preset=b3F5kqmYd8`. A full `apply` rewrote 22 local UI files and created 2 new files, which is broader than this token milestone. Prefer `apply --only theme` plus deliberate local edits.
+### Supporting Libraries
 
-## Current Repo State
+| Library | Purpose | When to Use |
+|---------|---------|-------------|
+| `@jobhunter/contracts` | Shared DTO interfaces and schemas | Add the readiness/blocker contract and any resume-pin DTOs here before consuming them in web or API code. |
+| `@tabler/icons-react` | Current icon target | Use for any new icon buttons, pins, warnings, and drawer controls. Do not add lucide usage. |
+| Radix/shadcn copied primitives | Dialog/sheet/card/button/select primitives | Use existing shared primitives and sheet/drawer patterns rather than adding a new modal library. |
+| `PdfPreviewViewer` | Existing PDF preview surface | Keep PDF rendering in the current viewer; add pin affordances around/alongside it only if anchors are stable. |
+| Vitest + Testing Library + MSW | Unit/component/API hook tests | Cover shared contract mapping, readiness/blocker states, and component interaction states. |
+| Playwright | Browser QA and E2E | Required for product-path proof across `/jobs` drawer and `/apply-review`; use synthetic or seeded data only. |
+| Storybook + axe addon | Visual/a11y states | Use for new audit cards, pin inspector states, and drawer panel variants if components are extracted. |
 
-- `apps/web/components.json` is already present with `cssVariables: true`, `baseColor: neutral`, `rsc: false`, `tsx: true`, aliases pointing at `@/shared/*`, `style: default`, and `iconLibrary: lucide`.
-- `apps/web/package.json` already has Tailwind 4 packages and shadcn-adjacent runtime dependencies: `@tailwindcss/vite`, `tailwindcss`, `class-variance-authority`, `clsx`, `tailwind-merge`, Radix component packages, `cmdk`, `vaul`, and `lucide-react`.
-- `apps/web/src/styles/tokens.css` owns bespoke variables: `--bg`, `--paper`, `--paper-2`, `--rule`, `--rule-2`, `--ink`, `--muted`, `--soft`, `--danger`, `--warn`, `--ok`, `--info`, `--font`, `--mono`, `--row`, with dark mode under `[data-theme="dark"]`.
-- `apps/web/src/styles/globals.css` imports Tailwind, `@config "../../tailwind.config.ts"`, and `./tokens.css`, then uses bespoke variables directly across a large CSS surface.
-- `apps/web/tailwind.config.ts` extends Tailwind with bespoke utility names (`bg`, `paper`, `ink`, `rule`, etc.) and uses `darkMode: ["selector", "[data-theme='dark']"]`.
-- `apps/web/tsconfig.json` does not currently define `baseUrl` / `paths`, and `apps/web/vite.config.ts` does not define an `@` alias. The current shadcn CLI fails validation against this app until that alias contract is configured.
+### Development Tools
 
-## Required Stack Changes
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `pnpm web:check` | Web TypeScript check | Required when contracts or UI components change. |
+| `pnpm web:build` | Production web build | Required before claiming user-facing route work is complete. |
+| `pnpm --filter @jobhunter/web test` | Web unit/component tests | Add targeted tests for new view/context components. |
+| `pnpm --filter @jobhunter/web e2e` | Browser E2E | Use targeted specs or documented Browser QA for the selected paths. |
+| `pnpm api:test` | API/read-model tests | Required when shared readiness/blocker contract is computed by the API. |
+| `rg` audits | Dependency/config/source checks | Use for folded cleanup: legacy tokens, stale Tailwind config references, lucide imports, and sensitive fixture text. |
 
-### Package changes
+## Installation
 
-Add only the packages needed by the token/font/icon migration:
+No new runtime stack is recommended for the milestone. The preferred implementation uses existing dependencies and components.
 
-```bash
-corepack pnpm --filter @jobhunter/web add shadcn tw-animate-css @fontsource-variable/geist @fontsource-variable/jetbrains-mono @tabler/icons-react
-corepack pnpm --filter @jobhunter/web add -D @types/node
-```
+If a later plan proves that PDF coordinate annotations are required, evaluate that in a spike before adding a PDF annotation or text-extraction package. The MVP should first try stable generated-text anchors from `bulletProvenance` and `annotatedChanges`.
 
-Rationale:
+## Alternatives Considered
 
-- `shadcn` is needed if `globals.css` imports `shadcn/tailwind.css`; official CLI docs say this import supplies shared Tailwind v4 utilities and animations, and `eject` can inline it later.
-- `tw-animate-css` is the current shadcn/Tailwind 4 animation package; official docs say `tailwindcss-animate` is deprecated for shadcn's Tailwind v4 path.
-- `@fontsource-variable/geist` and `@fontsource-variable/jetbrains-mono` match the preset fonts (`font: geist`, `fontHeading: jetbrains-mono`).
-- `@tabler/icons-react` matches the preset icon library. Keep `lucide-react` until existing imports are migrated; remove it only after `rg "lucide-react" apps/web/src` is empty.
-- `@types/node` is recommended by the official Vite install guide when adding the Vite `@` alias and Node path imports.
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| Shared DTO in `@jobhunter/contracts` | UI-only helpers in Jobs/Apply Review | Only for transient labels that do not affect readiness/blocker facts. |
+| Existing `PdfPreviewViewer` plus side rail/pin inspector | New PDF annotation library | Only if generated material text cannot be mapped to stable visible rows and a spike proves the library is worth the blast radius. |
+| Operations read hooks | Direct `apiClient` calls in views | Never for this milestone; repo frontend architecture forbids direct API calls from views. |
+| Existing shadcn/Radix primitives | New design system package | Not needed; v1.1 just established the visual foundation. |
+| Tabler icons | Lucide icons | Avoid; v1.1 made Tabler the icon target and lucide cleanup is folded into v1.2. |
 
-Do not add `radix-ui` or run `shadcn migrate radix` for this milestone unless the implementation intentionally rewrites local UI primitives to the new shadcn Radix aggregate package. Current components already compile against individual `@radix-ui/react-*` packages.
+## What NOT to Use
 
-### `components.json`
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| Separate readiness logic in each UI surface | This already caused visible disagreement risk between queue tags and API material fields. | A shared API/contract object consumed by both surfaces. |
+| PDF-only pin coordinates as the first implementation | Coordinates can be brittle across renderers, zoom, and pages. | Anchor by generated bullet/change text first; use PDF overlay only when anchors are stable. |
+| Recomputing missing keywords from job keywords alone | It violates the project auditability rule and can mislabel generated material. | Use generation-time coverage or actual rendered resume text with provenance-backed coverage. |
+| Hiding incomplete audit fields | It removes user value and masks source-of-truth gaps. | Show explicit missing-source states and fix the owning layer. |
+| Real profile/resume/application data in tests or screenshots | Sensitive local artifacts must not be exposed. | Synthetic seeded fixtures and scrubbed screenshots only. |
 
-Target configuration:
+## Version Compatibility
 
-```json
-{
-  "style": "radix-luma",
-  "rsc": false,
-  "tsx": true,
-  "tailwind": {
-    "config": "",
-    "css": "src/styles/globals.css",
-    "baseColor": "neutral",
-    "cssVariables": true,
-    "prefix": ""
-  },
-  "aliases": {
-    "components": "@/shared/ui",
-    "utils": "@/shared/lib/cn",
-    "ui": "@/shared/ui",
-    "lib": "@/shared/lib",
-    "hooks": "@/shared/hooks"
-  },
-  "iconLibrary": "tabler",
-  "rtl": false,
-  "menuColor": "default-translucent",
-  "menuAccent": "subtle",
-  "registries": {}
-}
-```
+| Package/Layer | Compatible With | Notes |
+|---------------|-----------------|-------|
+| React 19 + Vite 7 | Current web app | Continue colocated component tests and Vite build checks. |
+| Tailwind 4 CSS-first tokens | v1.1 shadcn token migration | Do not reintroduce `apps/web/tailwind.config.ts` assumptions. |
+| `@jobhunter/contracts` DTOs | API read model and web Operations hooks | Contract additions must be reflected in API mappers and consuming hooks/components. |
+| SQLite projections | Local-first API endpoints | Read model should deserialize/derive audit facts without requiring worker runs during QA. |
 
-Notes:
+## Sources
 
-- `luma` preset style resolves to schema value `radix-luma`.
-- Official docs say `tailwind.config` should be blank for Tailwind v4. This should be the final target after legacy color/font utilities are moved from `tailwind.config.ts` into CSS `@theme inline`.
-- If migration needs an interim state, keeping `"config": "tailwind.config.ts"` and `@config "../../tailwind.config.ts"` is workable because `shadcn@4.11.0 info` and `apply` detected Tailwind v4 with the current config, but it is not the final shadcn-standard configuration.
+- `package.json` - current scripts, package manager, TypeScript version, and verification commands.
+- `apps/web/package.json` - current React/Vite/Tailwind/TanStack/Storybook/Playwright stack.
+- `apps/web/src/views/jobs/JobDetailDrawer.tsx` - existing Jobs row-click drawer surface.
+- `apps/web/src/views/apply-review/ApplyReviewView.tsx` - existing Apply Review queue, status derivation, and material preview surface.
+- `packages/contracts/src/schemas.ts` - existing Apply Review, Job Detail, artifact, provenance, and tailoring explanation DTOs.
+- `apps/api/src/application-feedback.ts` and `apps/api/src/read-model.ts` - current queue/detail read-model construction.
+- `.planning/sketches/002-layered-audit-surfaces/` - chosen Option 1 sketch.
 
-### Vite and TypeScript alias
-
-Add the alias contract the shadcn CLI requires before running `apply`:
-
-- `apps/web/tsconfig.json`: add `baseUrl: "."` and `paths: { "@/*": ["./src/*"] }`.
-- `apps/web/vite.config.ts`: add `resolve.alias["@"]` pointing to `apps/web/src`.
-
-Without this, `shadcn apply b3F5kqmYd8 -c apps/web` fails at "Validating import alias" with: "Could not find valid path aliases or package imports for init."
-
-### Global CSS/token shape
-
-Make `apps/web/src/styles/globals.css` the owning shadcn token file:
-
-- Keep `@import "tailwindcss";`.
-- Add `@import "tw-animate-css";` and `@import "shadcn/tailwind.css";` unless choosing the ejected inline path.
-- Import the selected fontsource packages.
-- Add `@custom-variant dark (&:is(.dark *));`.
-- Define shadcn semantic tokens on `:root` and `.dark` using the decoded sky/neutral/amber preset values.
-- Expose tokens with `@theme inline`, including `--color-*`, `--radius-*`, `--font-sans`, and `--font-heading`.
-
-Migrate utilities/classes from bespoke names to shadcn names:
-
-| Current | shadcn target |
-| --- | --- |
-| `bg-paper` / `var(--paper)` | `bg-card` or `bg-background` / `var(--card)` or `var(--background)` |
-| `text-ink` / `var(--ink)` | `text-foreground` / `var(--foreground)` |
-| `text-muted` | `text-muted-foreground` |
-| `bg-paper-2` | `bg-muted` or `bg-secondary` |
-| `border-rule` / `border-rule-2` | `border-border` / `border-input` |
-| `ring-info` / focus `--info` | `ring-ring` |
-| `bg-danger` | `bg-destructive` |
-| `--ok`, `--warn`, `--info`, `--soft`, `--row` | keep as app-specific extension tokens only if still semantically needed; expose via `@theme inline` with explicit app names |
-
-Switch dark-mode ownership from `[data-theme="dark"]` to shadcn's `.dark` class, or temporarily support both selectors while the theme toggle is migrated. Final standard should use `.dark`.
-
-## Official shadcn Guidance
-
-- Vite installation docs: existing projects should add Tailwind if missing, configure `@/*` aliases in TypeScript and Vite, run `pnpm dlx shadcn@latest init`, and add components with `pnpm dlx shadcn@latest add ...`. Source: https://ui.shadcn.com/docs/installation/vite
-- `components.json` docs: the file drives CLI generation; `default` style is deprecated in favor of newer styles, `cssVariables: true` generates semantic tokens like `background`, `foreground`, and `primary`, and Tailwind v4 projects should leave `tailwind.config` blank. Source: https://ui.shadcn.com/docs/components-json
-- Theming docs: shadcn's default Tailwind v4 theme is CSS-first: `@custom-variant dark`, semantic OKLCH variables under `:root` / `.dark`, and `@theme inline` mappings for color/radius/sidebar/chart tokens. Source: https://ui.shadcn.com/docs/theming
-- Tailwind v4 docs: shadcn supports Tailwind 4 and React 19, recommends moving variables outside `@layer base`, using `@theme inline`, removing color wrappers in chart config, and replacing `tailwindcss-animate` with `tw-animate-css`. Source: https://ui.shadcn.com/docs/tailwind-v4
-- CLI docs: `init` installs dependencies and configures CSS variables; `apply` applies presets and supports `--only theme` / `--only font`; `migrate icons` exists for icon-library migration; `eject` inlines `shadcn/tailwind.css` and removes the `shadcn` dependency. Source: https://ui.shadcn.com/docs/cli
-- Schema: current accepted styles include `radix-luma`; `menuColor` accepts `default-translucent`; `menuAccent` accepts `subtle`; `iconLibrary` is a string field. Source: https://ui.shadcn.com/schema.json
-- Preset URL verified by CLI decode: https://ui.shadcn.com/create?preset=b3F5kqmYd8
-
-## Commands/Validation
-
-Verified probe commands:
-
-```bash
-corepack pnpm dlx shadcn@latest --version
-# observed: 4.11.0
-
-corepack pnpm dlx shadcn@latest preset decode b3F5kqmYd8 --json
-# observed: menuColor default-translucent, menuAccent subtle, radius medium,
-# font geist, iconLibrary tabler, theme sky, baseColor neutral, style luma,
-# chartColor amber, fontHeading jetbrains-mono
-
-corepack pnpm dlx shadcn@latest info -c apps/web
-# observed: Vite, Tailwind v4, style default, iconLibrary lucide, no preset
-```
-
-Recommended migration command sequence:
-
-```bash
-# 1. Add TS/Vite alias first, then verify the CLI can see the app.
-corepack pnpm dlx shadcn@latest info -c apps/web
-
-# 2. Apply only the preset theme. This avoids the broad component rewrite.
-corepack pnpm dlx shadcn@latest apply b3F5kqmYd8 --only theme -y -c apps/web
-
-# 3. Manually finish package/config/font/icon/token changes listed above.
-
-# 4. Validate the touched web surface.
-corepack pnpm web:check
-corepack pnpm web:build
-corepack pnpm --filter @jobhunter/web test
-```
-
-If icon imports are migrated in the same milestone, also run:
-
-```bash
-rg "lucide-react|@tabler/icons-react" apps/web/src apps/web/package.json
-corepack pnpm --filter @jobhunter/web test-d
-```
-
-For user-visible theme changes, add a browser QA pass and at minimum inspect light/dark mode, focus rings, table/list surfaces, dialogs/popovers/dropdowns, Storybook/a11y coverage for changed components, and the materials/apply-review surfaces.
-
-## Risks
-
-- **Full CLI apply is too broad.** In a disposable probe, `corepack pnpm dlx shadcn@latest apply b3F5kqmYd8 -y -c apps/web` rewrote 22 `src/shared/ui/*` files, created `src/shared/lib/utils.ts` and `src/shared/ui/input-group.tsx`, and added packages including `radix-ui`. That should be avoided unless the milestone explicitly expands from token migration to component regeneration.
-- **Alias config is a hard prerequisite.** The current app fails shadcn CLI alias validation. Add `@/*` TS/Vite resolution before relying on `apply`, `add`, or future generated components.
-- **`--only theme` is partial.** It appends theme tokens and menu fields but does not fully update `style` / `iconLibrary` / font packages. The final config still needs deliberate edits.
-- **`--only font` can fail in the current partial state.** In a probe after theme-only apply, `apply --only font` looked under the old `styles/default` registry path and failed to find `font-geist.json`. Set/verify the final `radix-luma` style or install font packages manually.
-- **Dark mode selector mismatch.** Existing CSS uses `[data-theme="dark"]`; shadcn standard uses `.dark`. A half-migration can silently produce light/dark drift unless the theme toggle and CSS selectors move together.
-- **Legacy utility churn is large.** Many app CSS rules and shared UI classes use bespoke utilities (`bg-paper`, `text-ink`, `border-rule`, etc.). Keep the migration mechanical and token-focused; do not redesign components while renaming tokens.
-- **Removing `tailwind.config.ts` too early will break legacy classes.** Official shadcn Tailwind v4 config wants CSS-first `@theme inline`, but JobHunter currently depends on Tailwind config extensions. Blank `tailwind.config` only after all bespoke utilities are migrated.
-- **Font and icon package removal must be last.** Do not remove `lucide-react`, old font variables, or `tokens.css` until references are gone and `web:check` / `web:build` pass.
+---
+*Stack research for: v1.2 Apply Review Audit UX - Drawer + Resume Pins*
+*Researched: 2026-06-11*
