@@ -2212,6 +2212,110 @@ textarea:focus-visible {
   font-size: 22px;
 }
 
+.job-audit-triage {
+  display: grid;
+  gap: 14px;
+}
+
+.job-audit-triage-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.job-audit-triage-head h3 {
+  margin: 2px 0 0;
+}
+
+.job-audit-triage-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.job-audit-triage-column {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.job-audit-triage-column + .job-audit-triage-column {
+  border-left: 1px solid var(--border);
+  padding-left: 18px;
+}
+
+.job-audit-triage-kicker {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.job-audit-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.job-audit-metrics > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.job-audit-metrics span,
+.job-audit-tag-group > span,
+.job-audit-fact-list dt {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.job-audit-metrics b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.job-audit-tag-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.job-audit-tag-group > div,
+.job-audit-fact-list dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.job-audit-readiness-line {
+  display: grid;
+  gap: 6px;
+  align-items: start;
+}
+
+.job-audit-readiness-line > .tag {
+  width: max-content;
+  max-width: 100%;
+}
+
+.job-audit-fact-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.job-audit-fact-list > div {
+  display: grid;
+  gap: 5px;
+}
+
 .artifact-detail-layout {
   display: grid;
   grid-template-columns: minmax(320px, 0.42fr) minmax(420px, 0.58fr);
@@ -3696,6 +3800,17 @@ textarea:focus-visible {
 
   .drawer {
     width: min(100vw, 760px);
+  }
+
+  .job-audit-triage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .job-audit-triage-column + .job-audit-triage-column {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    padding-top: 14px;
+    padding-left: 0;
   }
 
   .artifact-detail-drawer {

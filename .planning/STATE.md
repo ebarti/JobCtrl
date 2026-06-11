@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: in_progress
-last_updated: "2026-06-11T20:19:00.000Z"
+last_updated: "2026-06-11T20:29:58.000Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 40
+  completed_phases: 3
+  total_plans: 6
+  completed_plans: 6
+  percent: 60
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 14 planning - Jobs Drawer Audit Triage.
+**Current focus:** Phase 15 planning - Apply Review Resume Pins.
 
 ## Current Position
 
-Phase: 14 - Jobs Drawer Audit Triage
+Phase: 15 - Apply Review Resume Pins
 Plan: Not created
-Status: Ready to plan Phase 14
-Last activity: 2026-06-11 - Phase 13 shared apply audit contract completed
+Status: Ready to plan Phase 15
+Last activity: 2026-06-11 - Phase 14 Jobs drawer audit triage completed
 
 ## Active Milestone Summary
 
@@ -56,11 +56,11 @@ Explicitly not in scope:
 |-------|------|--------|--------------|
 | 12 | Folded Cleanup + Verification Baseline | Complete | CLEAN-01..CLEAN-04 |
 | 13 | Shared Apply Audit Contract | Complete | AUDIT-01..AUDIT-06 |
-| 14 | Jobs Drawer Audit Triage | Planned | DRAWER-01..DRAWER-06 |
+| 14 | Jobs Drawer Audit Triage | Complete | DRAWER-01..DRAWER-06 |
 | 15 | Apply Review Resume Pins | Planned | REVIEW-01..REVIEW-08 |
 | 16 | Product-Path QA + Documentation | Planned | QA-01..QA-06 |
 
-Next command: `$gsd-plan-phase 14`.
+Next command: `$gsd-plan-phase 15`.
 
 ## Research Summary
 
@@ -89,6 +89,14 @@ Key findings:
 - Added API/read-model derivation through `apps/api/src/apply-audit.ts`, sourced from application target, material availability, current stage state/error, latest apply run, score eligibility, and review evidence availability.
 - Updated Apply Review to consume `item.applyAudit` for queue tags, status counts, selected header status, summary copy, and compact missing/blocker/eligibility/source facts.
 - Verified with `corepack pnpm api:check`, targeted API tests, `corepack pnpm web:check`, targeted web tests, `corepack pnpm web:build`, `git diff --check`, and in-app browser QA on `/apply-review`.
+
+### Phase 14 - Jobs Drawer Audit Triage
+
+- Added a top-of-drawer audit triage section to `JobDetailDrawer` that answers why a job ranked where it did and whether it is ready for apply review.
+- Rendered rank evidence from existing score read-model fields and readiness/blocker/eligibility facts from the shared `applyAudit` contract only.
+- Added a non-mutating `/apply-review` handoff for generated-material proof instead of duplicating the full resume audit surface in the Jobs drawer.
+- Extended Jobs drawer regression tests and local QA docs for the new audit smoke path.
+- Verified with `corepack pnpm web:check`, targeted Jobs drawer tests, `corepack pnpm web:build`, `git diff --check`, and product-path browser QA from `/jobs` row activation.
 
 ## Prior Milestone Verification
 
@@ -130,6 +138,6 @@ Milestone v1.1 completed Phases 6-10 and landed semantic tokens, shared primitiv
 ## Session Continuity
 
 Last session: 2026-06-11
-Stopped at: Phase 13 complete
-Latest phase completed: Phase 13 - Shared Apply Audit Contract
+Stopped at: Phase 14 complete
+Latest phase completed: Phase 14 - Jobs Drawer Audit Triage
 Resume file: None

@@ -27,12 +27,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase unless e
 
 ### Jobs Drawer Audit Triage
 
-- [ ] **DRAWER-01**: Opening a job from the Jobs view row-click popup/drawer immediately explains why the job was ranked the way it was.
-- [ ] **DRAWER-02**: The drawer rank explanation includes fit score, score band/confidence where available, matched signals, missing signals, transferable signals, keywords, score reasoning/trace where available, and eligibility status/concerns.
-- [ ] **DRAWER-03**: The drawer shows whether the job is ready for apply review and lists concrete missing prerequisites, hard blockers, and eligibility concerns from the shared apply audit contract.
-- [ ] **DRAWER-04**: The drawer distinguishes job-fit/ranking evidence from generated-material proof and hands off to Apply Review for resume/material inspection instead of duplicating the full resume audit surface.
-- [ ] **DRAWER-05**: Existing drawer workflows remain intact: close behavior, escape handling, job actions, retry affordances, artifact links, apply history, outcome panel, score correction, job description, and audit history continue to work.
-- [ ] **DRAWER-06**: Drawer layout remains dense, scannable, responsive, keyboard accessible, and compatible with light/dark themes and compact/regular/comfy density.
+- [x] **DRAWER-01**: Opening a job from the Jobs view row-click popup/drawer immediately explains why the job was ranked the way it was.
+- [x] **DRAWER-02**: The drawer rank explanation includes fit score, score band/confidence where available, matched signals, missing signals, transferable signals, keywords, score reasoning/trace where available, and eligibility status/concerns.
+- [x] **DRAWER-03**: The drawer shows whether the job is ready for apply review and lists concrete missing prerequisites, hard blockers, and eligibility concerns from the shared apply audit contract.
+- [x] **DRAWER-04**: The drawer distinguishes job-fit/ranking evidence from generated-material proof and hands off to Apply Review for resume/material inspection instead of duplicating the full resume audit surface.
+- [x] **DRAWER-05**: Existing drawer workflows remain intact: close behavior, escape handling, job actions, retry affordances, artifact links, apply history, outcome panel, score correction, job description, and audit history continue to work.
+- [x] **DRAWER-06**: Drawer layout remains dense, scannable, responsive, keyboard accessible, and compatible with light/dark themes and compact/regular/comfy density.
 
 ### Apply Review Resume Pins
 
@@ -118,12 +118,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDIT-04 | Phase 13 | Complete |
 | AUDIT-05 | Phase 13 | Complete |
 | AUDIT-06 | Phase 13 | Complete |
-| DRAWER-01 | Phase 14 | Planned |
-| DRAWER-02 | Phase 14 | Planned |
-| DRAWER-03 | Phase 14 | Planned |
-| DRAWER-04 | Phase 14 | Planned |
-| DRAWER-05 | Phase 14 | Planned |
-| DRAWER-06 | Phase 14 | Planned |
+| DRAWER-01 | Phase 14 | Complete |
+| DRAWER-02 | Phase 14 | Complete |
+| DRAWER-03 | Phase 14 | Complete |
+| DRAWER-04 | Phase 14 | Complete |
+| DRAWER-05 | Phase 14 | Complete |
+| DRAWER-06 | Phase 14 | Complete |
 | REVIEW-01 | Phase 15 | Planned |
 | REVIEW-02 | Phase 15 | Planned |
 | REVIEW-03 | Phase 15 | Planned |
@@ -142,10 +142,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 **Coverage:**
 
 - v1.2 requirements: 30 total
-- Complete: 4
+- Complete: 16
 - Mapped to phases: 30
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after Phase 12 completion*
+*Last updated: 2026-06-11 after Phase 14 completion*

@@ -361,7 +361,43 @@ export const sampleJobAuditHistory: JobAuditEntry[] = [
   },
 ];
 
-export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
+export function makeJobDetail(
+  job: JobSummary = sampleJob,
+  overrides: Partial<Omit<JobDetail, "ok" | "job">> = {},
+): JobDetail {
+  const stages = overrides.stages ?? [
+    {
+      stage: "discover",
+      state: "succeeded",
+      attemptCount: 1,
+      maxAttempts: 3,
+      startedAt: "2026-05-01T12:00:00Z",
+      updatedAt: "2026-05-01T12:00:30Z",
+      finishedAt: "2026-05-01T12:00:30Z",
+      durationMs: 30_000,
+      errorCode: null,
+      errorMessage: null,
+      retryable: false,
+      blockedBy: [],
+      nextAction: null,
+    },
+    {
+      stage: "score",
+      state: "succeeded",
+      attemptCount: 1,
+      maxAttempts: 3,
+      startedAt: "2026-05-01T12:01:00Z",
+      updatedAt: "2026-05-01T12:01:20Z",
+      finishedAt: "2026-05-01T12:01:20Z",
+      durationMs: 20_000,
+      errorCode: null,
+      errorMessage: null,
+      retryable: false,
+      blockedBy: [],
+      nextAction: null,
+    },
+  ];
+
   return {
     ok: true,
     job: {
@@ -369,42 +405,11 @@ export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
       descriptionPreview: "Lead the platform engineering team...",
       scoreReasoning: job.scoreReasoning,
     },
-    stages: [
-      {
-        stage: "discover",
-        state: "succeeded",
-        attemptCount: 1,
-        maxAttempts: 3,
-        startedAt: "2026-05-01T12:00:00Z",
-        updatedAt: "2026-05-01T12:00:30Z",
-        finishedAt: "2026-05-01T12:00:30Z",
-        durationMs: 30_000,
-        errorCode: null,
-        errorMessage: null,
-        retryable: false,
-        blockedBy: [],
-        nextAction: null,
-      },
-      {
-        stage: "score",
-        state: "succeeded",
-        attemptCount: 1,
-        maxAttempts: 3,
-        startedAt: "2026-05-01T12:01:00Z",
-        updatedAt: "2026-05-01T12:01:20Z",
-        finishedAt: "2026-05-01T12:01:20Z",
-        durationMs: 20_000,
-        errorCode: null,
-        errorMessage: null,
-        retryable: false,
-        blockedBy: [],
-        nextAction: null,
-      },
-    ],
-    artifacts: [],
-    auditHistory: sampleJobAuditHistory,
-    applyAudit: makeApplyAudit(),
-    employerAnalysis: null,
+    stages,
+    artifacts: overrides.artifacts ?? [],
+    auditHistory: overrides.auditHistory ?? sampleJobAuditHistory,
+    applyAudit: overrides.applyAudit ?? makeApplyAudit(),
+    employerAnalysis: overrides.employerAnalysis ?? null,
   };
 }
 

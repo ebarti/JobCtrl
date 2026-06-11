@@ -19,6 +19,7 @@ import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { Section } from "../../shared/ui/section.js";
+import { JobAuditTriage } from "./JobAuditTriage.js";
 import { JobDescription } from "./JobDescription.js";
 import { JobOverview } from "./JobOverview.js";
 
@@ -97,6 +98,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
         {detail ? (
           <>
             <JobOverview detail={detail} />
+            <JobAuditTriage detail={detail} />
             <JobActions
               jobId={detail.job.jobKey}
               currentStage={detail.job.currentSubstage}
