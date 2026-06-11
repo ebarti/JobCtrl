@@ -62,6 +62,7 @@ exist; the work was verified retroactively (this document + the per-phase `VERIF
 - Post-completion QA correction: `pnpm dev:start` now prints observed local bindings after launch, including the actual Vite web URL when port fallback occurs; verified by `corepack pnpm --dir apps/api exec vitest run test/dev-launcher-contract.test.ts`, `bash -n scripts/dev`, `git diff --check`, and a live `pnpm dev:start web` smoke.
 - Post-completion QA correction: Jobs fit-score badges now keep mid-positive scores such as 7 in the green success family instead of warning/red; verified by targeted ScoreBadge regression coverage.
 - Post-completion QA correction: Apply Review ready/ok status badges and success facts now use visible success-green styling rather than blue/info or weak neutral styling; verified by targeted Apply Review and Jobs drawer regression coverage.
+- Post-completion QA correction: Apply Review now falls back from missing artifact provenance to a line-by-line rendered-resume audit, preserving reviewer inspection instead of showing an empty pin state; verified by `corepack pnpm --filter @jobhunter/web test src/views/apply-review/ApplyReviewView.test.tsx`, `corepack pnpm web:check`, and `git diff --check`.
 
 ## Residual
 

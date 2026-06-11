@@ -859,9 +859,9 @@ textarea:focus-visible {
   padding-bottom: 0;
 }
 
-@container (min-width: 780px) {
+@media (min-width: 960px) {
   .apply-review-resume-review {
-    grid-template-columns: minmax(360px, 1fr) minmax(280px, 0.44fr);
+    grid-template-columns: minmax(420px, 1fr) minmax(340px, 0.56fr);
     align-items: start;
   }
 
@@ -869,6 +869,13 @@ textarea:focus-visible {
     position: sticky;
     top: 0;
   }
+}
+
+.resume-audit-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .resume-pin-shell {
@@ -880,16 +887,37 @@ textarea:focus-visible {
 .resume-pin-list {
   display: grid;
   gap: 8px;
-  max-height: 260px;
+  max-height: min(48dvh, 520px);
+  margin: 0;
   overflow: auto;
-  padding-right: 2px;
+  padding: 0 2px 0 0;
+  list-style: none;
   scrollbar-gutter: stable;
+}
+
+.resume-pin-list > li {
+  min-width: 0;
+}
+
+.resume-pin-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.resume-line-number {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .resume-pin-button {
   display: grid;
   gap: 6px;
   width: 100%;
+  min-block-size: 64px;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 6px;

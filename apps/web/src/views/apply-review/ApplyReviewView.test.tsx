@@ -1,7 +1,7 @@
 import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -329,7 +329,7 @@ describe("<ApplyReviewView>", () => {
     });
 
     const resumePdf = await screen.findByRole("img", { name: "Tailored resume PDF" });
-    const pins = await screen.findByRole("region", { name: "Resume claim pins" });
+    const pins = await screen.findByRole("region", { name: "Line-by-line resume audit" });
     expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /Experience pin 1: Senior SWE at Acme/i }),
@@ -351,7 +351,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("Warning repair attempted").length).toBeGreaterThan(0);
   });
 
-  it("shows an explicit no-provenance state beside the rendered resume", async () => {
+  it("falls back to a line-by-line resume audit when generation provenance is missing", async () => {
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -374,7 +374,18 @@ describe("<ApplyReviewView>", () => {
     });
 
     expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
-    expect(screen.getByText("No resume provenance recorded for this artifact.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
+    expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Rendered resume line 1: Principal Platform Engineer/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Rendered resume line 3: Led platform reliability programs and incident response improvements/i,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("missing provenance").length).toBeGreaterThan(0);
+    expect(screen.getByText("No source text was recorded for this resume line.")).toBeInTheDocument();
   });
 
   it("opens job detail as an in-place overlay", async () => {
@@ -539,7 +550,9 @@ describe("<ApplyReviewView>", () => {
       "https://example.com",
     );
     expect(screen.getByText("SDLC")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    const verbatimJobPost = screen.getByRole("heading", { name: "Verbatim job post" }).closest("section");
+    expect(verbatimJobPost).not.toBeNull();
+    expect(within(verbatimJobPost!).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("<script>alert('xss')</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
   });

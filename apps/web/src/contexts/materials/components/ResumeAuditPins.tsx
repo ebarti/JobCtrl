@@ -9,13 +9,21 @@ type AnnotatedChange = ArtifactTailoringExplanation["annotatedChanges"][number];
 
 interface ResumeAuditPinsProps {
   readonly artifactId: string;
+  readonly resumeText?: string | null;
   readonly className?: string;
+}
+
+interface ResumeLineEntry {
+  readonly lineNumber: number;
+  readonly text: string;
 }
 
 interface ResumeAuditPin {
   readonly id: string;
   readonly title: string;
   readonly section: string;
+  readonly lineNumber?: number;
+  readonly provenanceState: "recorded" | "missing";
   readonly sourceText: readonly string[] | null;
   readonly tailoredText: readonly string[];
   readonly transformType: string;
@@ -73,6 +81,7 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
         id: entry.bulletId,
         title: change?.label || `${formatToken(entry.section)} pin ${index + 1}`,
         section: entry.section,
+        provenanceState: "recorded",
         sourceText: originalTextFor(entry, explanation.annotatedChanges),
         tailoredText: entry.generatedText ? [entry.generatedText] : [],
         transformType: entry.transformType,
@@ -89,6 +98,7 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
     id: `change:${change.section}:${change.sourceId ?? change.label}:${index}`,
     title: change.label || `${formatToken(change.section)} pin ${index + 1}`,
     section: change.section,
+    provenanceState: "recorded",
     sourceText: change.sourceText.length ? change.sourceText : null,
     tailoredText: change.tailoredText,
     transformType: change.changeType,
@@ -97,6 +107,35 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
     requirementIds: [],
     matchedSignals: change.jobSignals,
     rationale: change.rationale,
+  }));
+}
+
+function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineEntry[] {
+  return (resumeText ?? "")
+    .split(/\r?\n/)
+    .map((line, index) => ({
+      lineNumber: index + 1,
+      text: line.trim(),
+    }))
+    .filter((entry) => entry.text.length > 0);
+}
+
+function pinsFromResumeText(lines: readonly ResumeLineEntry[]): ResumeAuditPin[] {
+  return lines.map((line) => ({
+    id: `resume-line:${line.lineNumber}`,
+    title: `Line ${line.lineNumber}`,
+    section: "rendered_resume",
+    lineNumber: line.lineNumber,
+    provenanceState: "missing",
+    sourceText: null,
+    tailoredText: [line.text],
+    transformType: "no_generation_provenance",
+    controls: ["rendered resume fallback"],
+    evidenceIds: [],
+    requirementIds: [],
+    matchedSignals: [],
+    rationale:
+      "This line is visible in the tailored resume, but no generation-time source or evidence mapping was recorded.",
   }));
 }
 
@@ -146,7 +185,27 @@ function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
   };
 }
 
+function emptyRiskSignals(): RiskSignals {
+  return {
+    hasAnyAudit: false,
+    quality: "not recorded",
+    judge: "not recorded",
+    adversarial: "not recorded",
+    blockers: [],
+    warnings: [],
+    unsupportedClaims: [],
+    fabrications: [],
+    missingRequiredEvidence: [],
+    repairInstructions: [],
+    warningRepairAttempted: "not recorded",
+    residualWarnings: [],
+  };
+}
+
 function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn" {
+  if (pin.provenanceState === "missing") {
+    return "warn";
+  }
   if (
     risk.blockers.length ||
     risk.unsupportedClaims.length ||
@@ -164,6 +223,9 @@ function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn"
 }
 
 function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
+  if (pin.provenanceState === "missing") {
+    return "missing provenance";
+  }
   const tone = pinTone(pin, risk);
   if (tone === "ok") return "grounded";
   if (
@@ -290,6 +352,14 @@ function PinDetail({
   readonly risk: RiskSignals;
 }): JSX.Element {
   const tone = pinTone(pin, risk);
+  const sourceEmpty =
+    pin.provenanceState === "missing"
+      ? "No source text was recorded for this resume line."
+      : "No source text was recorded for this claim.";
+  const tailoredEmpty =
+    pin.provenanceState === "missing"
+      ? "No resume text was recorded for this line."
+      : "No tailored text was recorded for this claim.";
   return (
     <article className="resume-pin-detail" aria-live="polite">
       <header>
@@ -302,14 +372,20 @@ function PinDetail({
       <div className="resume-pin-diff">
         <section>
           <h5>Source profile or resume text</h5>
-          <TextLines empty="No source text was recorded for this claim." lines={pin.sourceText} />
+          <TextLines empty={sourceEmpty} lines={pin.sourceText} />
         </section>
         <section>
           <h5>Tailored artifact text</h5>
-          <TextLines empty="No tailored text was recorded for this claim." lines={pin.tailoredText} />
+          <TextLines empty={tailoredEmpty} lines={pin.tailoredText} />
         </section>
       </div>
       <dl className="detail-list compact">
+        {pin.lineNumber ? (
+          <div>
+            <dt>Resume line</dt>
+            <dd>{pin.lineNumber}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>Transform</dt>
           <dd>{formatToken(pin.transformType)}</dd>
@@ -330,13 +406,23 @@ function PinDetail({
 
 export function ResumeAuditPins({
   artifactId,
+  resumeText,
   className = "apply-review-resume-pins",
 }: ResumeAuditPinsProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
-  const pins = useMemo(() => (explanation ? pinsFromExplanation(explanation) : []), [explanation]);
-  const risk = useMemo(() => (explanation ? riskSignals(explanation) : null), [explanation]);
+  const resumeLines = useMemo(() => resumeLinesFromText(resumeText), [resumeText]);
+  const provenancePins = useMemo(() => (explanation ? pinsFromExplanation(explanation) : []), [explanation]);
+  const canUseResumeFallback = Boolean(
+    !provenancePins.length && resumeLines.length && (detail.data || detail.error),
+  );
+  const pins = useMemo(
+    () => (provenancePins.length ? provenancePins : canUseResumeFallback ? pinsFromResumeText(resumeLines) : []),
+    [canUseResumeFallback, provenancePins, resumeLines],
+  );
+  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const usingResumeFallback = canUseResumeFallback && !provenancePins.length && pins.length > 0;
 
   useEffect(() => {
     setSelectedPinId(pins[0]?.id ?? null);
@@ -346,42 +432,54 @@ export function ResumeAuditPins({
   const errorMessage = detail.error instanceof Error ? detail.error.message : null;
 
   return (
-    <section className={className} aria-label="Resume claim pins">
-      <h3>Resume claim pins</h3>
+    <section className={className} aria-label="Line-by-line resume audit">
+      <h3>Line-by-line resume audit</h3>
+      {usingResumeFallback ? (
+        <p className="resume-audit-note">
+          No generation-time provenance was recorded. Showing the rendered resume text line by line for reviewer
+          inspection.
+        </p>
+      ) : null}
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {!detail.data && detail.isFetching ? <Empty title="Loading resume provenance." /> : null}
-      {detail.data && !explanation ? (
-        <Empty title="No resume provenance recorded for this artifact." />
+      {detail.data && !pins.length && !explanation ? (
+        <Empty title="No resume provenance or rendered resume text was recorded for this artifact." />
       ) : null}
-      {explanation && !pins.length ? (
-        <Empty title="No resume claim pins were recorded for this artifact generation." />
+      {detail.data && explanation && !pins.length ? (
+        <Empty title="No resume claim pins or rendered resume text were recorded for this artifact generation." />
       ) : null}
-      {pins.length && risk ? (
+      {pins.length ? (
         <div className="resume-pin-shell">
-          <div className="resume-pin-list" role="list" aria-label="Resume claim pin list">
+          <ul className="resume-pin-list" aria-label="Resume audit line list">
             {pins.map((pin, index) => {
               const tone = pinTone(pin, risk);
               const preview = pin.tailoredText[0] ?? "No generated text recorded.";
+              const accessibleName = pin.lineNumber
+                ? `Rendered resume line ${pin.lineNumber}: ${preview}`
+                : `${formatToken(pin.section)} pin ${index + 1}: ${pin.title}`;
               return (
-                <button
-                  aria-label={`${formatToken(pin.section)} pin ${index + 1}: ${pin.title}`}
-                  aria-pressed={pin.id === selectedPin?.id}
-                  className={`resume-pin-button${pin.id === selectedPin?.id ? " selected" : ""}`}
-                  key={pin.id}
-                  type="button"
-                  onClick={() => setSelectedPinId(pin.id)}
-                >
-                  <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
-                  <b>{pin.title}</b>
-                  <span>{preview}</span>
-                </button>
+                <li key={pin.id}>
+                  <button
+                    aria-label={accessibleName}
+                    aria-pressed={pin.id === selectedPin?.id}
+                    className={`resume-pin-button${pin.id === selectedPin?.id ? " selected" : ""}`}
+                    type="button"
+                    onClick={() => setSelectedPinId(pin.id)}
+                  >
+                    <span className="resume-pin-meta">
+                      {pin.lineNumber ? <span className="resume-line-number">Line {pin.lineNumber}</span> : null}
+                      <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
+                    </span>
+                    <b>{pin.lineNumber ? formatToken(pin.section) : pin.title}</b>
+                    <span>{preview}</span>
+                  </button>
+                </li>
               );
             })}
-          </div>
+          </ul>
           {selectedPin ? <PinDetail pin={selectedPin} risk={risk} /> : null}
         </div>
       ) : null}
     </section>
   );
 }
-

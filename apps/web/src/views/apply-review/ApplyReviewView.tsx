@@ -309,10 +309,10 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
         <ResumePreview item={item} />
       </div>
       {artifactId ? (
-        <ResumeAuditPins artifactId={artifactId} />
+        <ResumeAuditPins artifactId={artifactId} resumeText={item.materialsPreview.resumeText} />
       ) : (
-        <section className="apply-review-resume-pins" aria-label="Resume claim pins">
-          <h3>Resume claim pins</h3>
+        <section className="apply-review-resume-pins" aria-label="Line-by-line resume audit">
+          <h3>Line-by-line resume audit</h3>
           <Empty title="No resume artifact is available for provenance inspection." />
         </section>
       )}
