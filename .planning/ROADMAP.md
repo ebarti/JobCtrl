@@ -1,293 +1,184 @@
-# Roadmap: v1.1 shadcn standard-token migration + preset b3F5kqmYd8
+# Roadmap: v1.2 Apply Review Audit UX - Drawer + Resume Pins
 
-## v1.1 shadcn standard-token migration + preset b3F5kqmYd8
+## v1.2 Apply Review Audit UX - Drawer + Resume Pins
 
 ## Overview
 
-Milestone v1.1 migrates the JobHunter web app from a bespoke token layer to the current shadcn semantic CSS-variable token system using preset `b3F5kqmYd8`. This is not a product-feature milestone. The app must continue to behave like the same local-first operational tool: dashboard, jobs, artifacts, apply review, discovery, profile/preferences/settings, runs, pipelines, debug views, audit surfaces, route behavior, TanStack state, SSE invalidation, and safety boundaries stay intact.
+Milestone v1.2 implements Sketch 002 Option 1: Drawer + Resume Pins. The goal is to make the existing Jobs row-click drawer and the Apply Review rendered-resume surface explain the audit trail clearly enough that a technical job seeker can understand why a job ranked highly, whether it is ready for apply review, what hard blockers or eligibility concerns exist, what changed from source profile/resume into the tailored artifact, and whether generated claims are grounded or risky.
 
-The migration is dependency-forced. First establish the token contract and shadcn CLI/config prerequisites while removing the legacy token API under the Phase 6 clean-slate decision. Then migrate shared primitives, then app shell/layout, then domain/status surfaces. Only after Storybook/a11y/browser QA proves representative workflows in light/dark and density modes should the final cleanup remove dead global CSS, obsolete config remnants, and unused dependencies. This ordering still treats `apps/web/src/styles/globals.css` as the highest-risk blast radius: a hard token rename can pass typecheck while visually breaking dense operational surfaces, so Phase 6 requires browser proof.
+This is not a broad redesign. The Jobs overlay means the existing Jobs view popup/drawer opened after clicking a job row (`JobDetailDrawer`). The Jobs drawer owns ranking, readiness, blockers, and eligibility concerns. Apply Review owns generated-material inspection, centered on the rendered resume with source-backed pins. Both surfaces must consume the same readiness/blocker facts from a shared API/read contract so the product cannot say "ready" in one place and "not ready" in another for the same job.
+
+The milestone starts with the leftover v1.1 cleanup folded in as a narrow housekeeping phase. Then it builds the shared contract, updates the Jobs drawer, implements Apply Review resume pins, and closes with synthetic product-path QA and documentation. Option 2 Evidence Ledger, Option 3 Gate Timeline, and blind-auto-apply safety positioning are deferred.
 
 ## Phases
 
 **Phase Numbering:**
 
-- Previous milestone v1.0 completed Phases 1-5.
-- This milestone continues numbering at Phase 6.
+- Milestone v1.0 completed Phases 1-5.
+- Milestone v1.1 completed Phases 6-10.
+- The planned v1.1 Phase 11 cleanup is folded into v1.2 as Phase 12.
+- This milestone continues numbering at Phase 12.
 - Integer phases are planned milestone work.
 - Decimal phases are reserved for urgent insertions.
 
-- [x] **Phase 6: Token Foundation + shadcn Preset Contract** - Establish preset-backed standard semantic tokens, Tailwind 4 mappings, alias prerequisites, and clean-slate legacy token removal.
-- [x] **Phase 7: Shared Primitive Token Migration** - Move shared shadcn/Radix primitives to standard semantic classes with overlay, focus, form, table, and Storybook coverage.
-- [x] **Phase 8: Layout Chrome, Fonts, And Tabler Icons** - Apply the preset to app shell, topbar, nav, menus, theme/density controls, fonts, and visible iconography without route/workflow changes.
-- [x] **Phase 9: Domain And Status Surface Migration** - Preserve product-specific status semantics across pipeline, scoring, artifacts, apply, discovery, dashboard, audit, and warning states.
-- [x] **Phase 10: Route Visual QA + Storybook/A11y Hardening** - Prove representative routes, overlays, light/dark themes, and density modes with seeded/synthetic QA only.
-- [ ] **Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
+- [ ] **Phase 12: Folded Cleanup + Verification Baseline** - Close narrow v1.1 cleanup residue before feature work: stale verification commands, dependency/config audits, optional unused icon dependency removal, and docs/config normalization.
+- [ ] **Phase 13: Shared Apply Audit Contract** - Add one readiness/blocker/eligibility contract served by the API/read model and consumed by both Jobs drawer and Apply Review.
+- [ ] **Phase 14: Jobs Drawer Audit Triage** - Reframe the Jobs row-click drawer around why ranked, readiness, blockers, eligibility concerns, and handoff to Apply Review.
+- [ ] **Phase 15: Apply Review Resume Pins** - Make the rendered resume/material central and add provenance-backed pins with source-to-tailored change, grounding, risk, and action detail.
+- [ ] **Phase 16: Product-Path QA + Documentation** - Verify both surfaces end to end with synthetic data, update docs/checklists, and audit milestone acceptance.
 
 ## Phase Details
 
-### Phase 6: Token Foundation + shadcn Preset Contract
+### Phase 12: Folded Cleanup + Verification Baseline
 
-**Goal:** The app has a standard shadcn semantic token foundation for light/dark themes and the decoded preset, with legacy token names removed from the Phase 6 public token contract.
+**Goal:** The repo has a clean baseline for v1.2 feature work, with leftover v1.1 cleanup closed without reopening the visual-system migration.
 
-**Depends on:** Milestone v1.0 complete.
-
-**Requirements:** TOKEN-01, TOKEN-02, TOKEN-03, TOKEN-04, TOKEN-05, TOKEN-06
-
-**Success Criteria** (what must be TRUE):
-
-1. `apps/web/src/styles/tokens.css` and `apps/web/src/styles/globals.css` expose the shadcn standard semantic token set, chart/sidebar/menu tokens, font tokens, and derived radius scale for light and dark themes.
-2. Tailwind 4 can generate semantic utilities such as `bg-background`, `text-foreground`, `bg-card`, `border-border`, `ring-ring`, `bg-primary`, `text-primary-foreground`, `bg-popover`, and `text-popover-foreground` through CSS-first token mappings.
-3. `components.json`, TypeScript aliases, and Vite aliases satisfy current shadcn CLI validation and keep generated/copied components under `apps/web/src/shared/ui`.
-4. The decoded preset values are represented in config/tokens: luma/radix-luma style target, neutral base, sky accents, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
-5. Existing `[data-theme="dark"]` and `data-density` behavior still works, and legacy aliases/utilities are absent from production styling by the Phase 6 exit state.
-
-**Verification:**
-
-- `pnpm web:check`
-- `pnpm web:build`
-- `pnpm dlx shadcn@latest info -c apps/web` or documented equivalent
-- Token grep showing legacy names are removed from production styling and any short-lived compile bridge is gone
-- Browser smoke of light/dark token computed values on the app shell
-
-**Plans:** 6/6 plans executed
-Plans:
-**Wave 1**
-
-- [x] 06-01-PLAN.md — Approve SUS package identities before dependency installation.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 06-02-PLAN.md — Install preset dependencies and validate shadcn aliases/config.
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 06-03-PLAN.md — Implement CSS-first semantic tokens, density seams, bridge removal, and token tests.
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 06-04-PLAN.md — Mechanically migrate core shared primitives and Storybook wrapper utilities.
-- [x] 06-05-PLAN.md — Mechanically migrate overlay/menu primitives and overlay story utilities.
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 06-06-PLAN.md — Add browser computed-token smoke, update docs, and run final proof gate.
-
-### Phase 7: Shared Primitive Token Migration
-
-**Goal:** Shared UI primitives speak the shadcn standard token language, so views and context components can inherit consistent surfaces, borders, focus rings, actions, forms, tables, overlays, and disabled states.
-
-**Depends on:** Phase 6
-
-**Requirements:** PRIM-01, PRIM-02, PRIM-03, PRIM-04, PRIM-05
-
-**Success Criteria** (what must be TRUE):
-
-1. Button, badge, card, input, textarea, select, checkbox, switch, tabs, table/data-grid, skeleton, separator, scroll-area, toast, dialog, sheet/drawer, dropdown, popover, command, and tooltip primitives use standard semantic utilities instead of legacy `bg-paper`, `text-ink`, `border-rule`, `ring-info`, or direct legacy variables.
-2. Overlay primitives are readable in light and dark modes over dense content, with `popover`/surface token pairs and visible focus rings.
-3. Changed primitives preserve behavior, ARIA semantics, keyboard behavior, disabled states, loading/empty states, and stable dimensions.
-4. Colocated tests and/or Storybook stories cover changed variants and open overlay states.
-5. `shared/ui` remains domain-agnostic and does not import context, view, API, query, or domain modules.
-
-**Verification:**
-
-- `pnpm --filter @jobhunter/web test`
-- `pnpm --filter @jobhunter/web test-d` if primitive prop/export types change
-- `pnpm web:storybook:build`
-- `pnpm web:storybook:test` where changed stories are covered
-- Targeted browser smoke for open overlays and keyboard focus in light/dark
-
-**Plans:** 5/5 plans executed
-Plans:
-**Wave 1**
-
-- [x] 07-01-PLAN.md - Repair DataTable and toast production primitive accessibility defects with tests and backlog cleanup.
-- [x] 07-02-PLAN.md - Add data-grid and table-pager behavior/state coverage for dense table focus, filters, sorting, and pagination.
-- [x] 07-03-PLAN.md - Harden overlay/menu Storybook open states for dialog, sheet, drawer, dropdown, select, popover, command, and tooltip.
-- [x] 07-04-PLAN.md - Harden core action, form, state, layout, and feedback primitive Storybook states.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 07-05-PLAN.md - Close the shared/ui boundary, run static/story verification, update QA docs, and write primitive audit evidence.
-
-### Phase 8: Layout Chrome, Fonts, And Tabler Icons
-
-**Goal:** The app shell and user-visible chrome adopt the preset visual language while preserving route behavior, theme/density controls, navigation meaning, and operational density.
-
-**Depends on:** Phase 7
-
-**Requirements:** LAYOUT-01, LAYOUT-02, LAYOUT-03, LAYOUT-04, LAYOUT-05
-
-**Success Criteria** (what must be TRUE):
-
-1. Topbar, nav links, brand mark, global search, density selector, theme toggle, connection status/banner, route tabs, and menu states use standard tokens and the preset's subtle translucent menu treatment without lowering readability.
-2. Geist body font and JetBrains Mono heading/technical font load in Vite and Storybook with fallback stacks, and dense routes still fit in compact/regular/comfy density modes.
-3. User-visible lucide imports are migrated or explicitly mapped to Tabler equivalents; icon-only controls keep accessible names and stable dimensions.
-4. Navigation, route search params, loaders, mutations, theme persistence, density persistence, and local-first safety behavior are unchanged.
-5. Topbar/menu surfaces remain readable over Jobs, Apply Review, artifact/PDF, and dark-mode surfaces.
-
-**Verification:**
-
-- `pnpm web:check`
-- `pnpm web:build`
-- `pnpm --filter @jobhunter/web test`
-- Icon import audit: `rg "lucide-react|@tabler/icons-react" apps/web/src apps/web/package.json`
-- Browser smoke for topbar/nav/theme/density in light/dark and compact/regular/comfy modes
-
-**Plans:** 4/4 plans executed
-Plans:
-**Wave 1**
-
-- [x] 08-01-PLAN.md - Retokenize app shell chrome, font mappings, density seams, and connection status surfaces.
-- [x] 08-02-PLAN.md - Migrate shell/shared affordance icons to Tabler and record retained domain icon deferrals.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 08-03-PLAN.md - Add focused shell behavior tests for search, theme, density, and connection status.
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 08-04-PLAN.md - Extend browser proof, run gates, record review/verification, and reconcile state.
-
-### Phase 9: Domain And Status Surface Migration
-
-**Goal:** JobHunter's domain states remain semantically distinct after the token migration, with typed tone helpers or explicit variant maps preserving product meaning.
-
-**Depends on:** Phase 8
-
-**Requirements:** STATUS-01, STATUS-02, STATUS-03, STATUS-04, STATUS-05
-
-**Success Criteria** (what must be TRUE):
-
-1. Pipeline stage states, score tiers, artifact statuses, apply statuses, connection statuses, discovery/source health, dashboard funnel/KPI tones, audit warnings, stale states, missing states, blocked states, running states, and failed states remain visually distinguishable in light and dark themes.
-2. Context-owned tone helpers or explicit variant maps remain the source of domain-to-visual mapping; no context defines global token variables or relies on unscannable dynamic Tailwind utility strings.
-3. Stage-state parity and status fixtures cover every discriminant/state arm that has user-visible styling.
-4. Chart/data-series tokens are not used as lifecycle/status colors unless the component is actually a data-series chart.
-5. Tailoring inspector, apply-review, audit history, missing provenance, failed workflow, stale scoring, and destructive warning states remain readable and honest.
-
-**Verification:**
-
-- `pnpm --filter @jobhunter/web test`
-- `pnpm --filter @jobhunter/web test-d` if discriminant/status types change
-- Existing parity tests, including `every-stage-state-has-badge.test.tsx`
-- Browser smoke for Dashboard, Jobs, Apply Review, Artifacts, Pipelines, and Debug status surfaces
-- Legacy/dynamic class audit for status components and global status selectors
-
-**Plans:** 4/4 plans executed
-Plans:
-**Wave 1**
-
-- [x] 09-01-PLAN.md - Tighten shared status primitives and core tone helpers to closed vocabularies.
-- [x] 09-02-PLAN.md - Preserve domain status semantics through typed helpers and explicit maps.
-- [x] 09-03-PLAN.md - Migrate deferred domain/view lucide icons to Tabler equivalents.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 09-04-PLAN.md - Run status QA, browser proof, static audits, and state reconciliation.
-
-### Phase 10: Route Visual QA + Storybook/A11y Hardening
-
-**Goal:** The migration is proven across representative JobHunter workflows, overlays, themes, density modes, Storybook states, and accessibility gates using synthetic or seeded data only.
-
-**Depends on:** Phase 9
-
-**Requirements:** QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
-
-**Success Criteria** (what must be TRUE):
-
-1. Required web checks for touched surfaces pass: typecheck, build, unit/component tests, type-level tests when applicable, Storybook/a11y where primitives/stories changed, and targeted E2E/browser smoke for route-level behavior.
-2. Browser QA opens representative routes and overlays in light and dark: `/dashboard`, `/jobs`, job detail, `/artifacts`, artifact detail, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`.
-3. Compact, regular, and comfy density modes are checked on table/list-heavy surfaces, with focus rings, destructive controls, forms, menus, dialogs, sheets, popovers, and select/dropdown controls visible and usable.
-4. Changed Storybook stories introduce no new critical or serious axe violations; any pre-existing a11y deferral remains documented in the owning backlog.
-5. QA evidence uses only synthetic or seeded data and does not expose sensitive profile/application/material/log/database/browser data.
-6. QA does not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless explicitly requested by the user.
-
-**Verification:**
-
-- `pnpm web:check`
-- `pnpm web:build`
-- `pnpm --filter @jobhunter/web test`
-- `pnpm web:storybook:build`
-- `pnpm web:storybook:test`
-- Targeted `pnpm --filter @jobhunter/web e2e` specs or documented browser QA with screenshots
-- `git diff --check`
-
-**Plans:** 4/4 plans executed
-Plans:
-
-**Wave 1**
-
-- [x] 10-01-PLAN.md - Add representative route visual QA for seeded routes in light/dark themes.
-- [x] 10-02-PLAN.md - Cover density, focus, overlays, forms, controls, and destructive-control visibility.
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 10-03-PLAN.md - Run Storybook/a11y and full web test gates.
-- [x] 10-04-PLAN.md - Record verification, review/QA outcomes, and reconcile requirements/state.
-
-### Phase 11: Alias And Global CSS Cleanup
-
-**Goal:** Remove dead global CSS, obsolete config remnants, residual legacy references, and unused styling dependencies once migrated surfaces have passed semantic, visual, and accessibility checks.
-
-**Depends on:** Phase 10
+**Depends on:** v1.1 Phases 6-10 complete and v1.2 milestone scope accepted.
 
 **Requirements:** CLEAN-01, CLEAN-02, CLEAN-03, CLEAN-04
 
 **Success Criteria** (what must be TRUE):
 
-1. Grep proves no production references remain to legacy token variables or utility names outside intentional test fixtures or migration notes.
-2. Obsolete Tailwind color names, dead config references, and any residual compatibility artifacts are removed from token/config files, and removed classes have named replacements.
-3. Unused icon/font dependencies are removed only after import audits prove they are no longer used.
-4. Global CSS cleanup is mechanical and does not remove view-specific styling unless that styling has an implemented replacement.
-5. Owning docs/configs are updated narrowly for the final shadcn token, icon, font, and QA expectations.
+1. Stale verification commands and docs no longer reference removed Tailwind config assumptions such as `apps/web/tailwind.config.ts`.
+2. Import/dependency/config audits prove whether `lucide-react` and other visual-migration remnants are still required before any removal.
+3. Docs/config owners reflect final shadcn semantic token, Tabler icon, font, and QA expectations.
+4. Legacy token references such as `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, and `ring-info` remain absent from production styling/config except intentional historical notes.
+5. The phase does not change product layout, route behavior, scoring policy, tailoring policy, or worker behavior.
 
 **Verification:**
 
-- Legacy audit: `rg "var\\(--bg|var\\(--paper|var\\(--ink|bg-paper|text-ink|border-rule|ring-info|--danger|--warn|--ok|--info" apps/web/src apps/web/tailwind.config.ts`
-- Icon/font/dependency import audit
+- `rg "apps/web/tailwind.config.ts|tailwind.config" README.md docs AGENTS.md .planning apps/web`
+- `rg "lucide-react|@tabler/icons-react" apps/web/src apps/web/package.json pnpm-lock.yaml`
+- Legacy token grep over production styling and web source.
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test` if touched code warrants it.
+- `git diff --check`
+
+**Plans:** Create with `$gsd-plan-phase 12`.
+
+### Phase 13: Shared Apply Audit Contract
+
+**Goal:** Jobs drawer and Apply Review consume the same readiness, blocker, and eligibility facts from one source of truth.
+
+**Depends on:** Phase 12.
+
+**Requirements:** AUDIT-01, AUDIT-02, AUDIT-03, AUDIT-04, AUDIT-05, AUDIT-06
+
+**Success Criteria** (what must be TRUE):
+
+1. `@jobhunter/contracts` defines a shared apply-audit/readiness DTO that includes state, label, summary, missing prerequisites, hard blockers, eligibility concerns, lifecycle/source metadata, and whether review evidence remains available.
+2. API/read-model code derives the DTO from canonical local sources: application URL, material availability, current stage/state/error, latest apply run, score eligibility, and material validation/audit data where present.
+3. `JobDetail` and `ApplyReviewQueueItem` expose the same shared DTO for the same job.
+4. Apply Review no longer owns source-of-truth readiness logic in a view-local status function; view helpers are formatting-only.
+5. Missing source data renders explicit inspectable states rather than blank or hidden UI.
+6. Tests cover ready, preparing, missing apply link, missing resume/PDF, blocked/failed/stale, failed apply run, and missing-source cases.
+
+**Verification:**
+
+- `pnpm api:test` targeted to read-model/apply-review queue tests.
+- `pnpm api:check`
+- `pnpm web:check`
+- `pnpm --filter @jobhunter/web test` targeted to readiness/blocker display.
+- Contract/type tests if DTO changes require them.
+- `git diff --check`
+
+**Plans:** Create with `$gsd-plan-phase 13`.
+
+### Phase 14: Jobs Drawer Audit Triage
+
+**Goal:** The existing Jobs row-click drawer immediately answers why the job was ranked the way it was and whether it is ready for apply review.
+
+**Depends on:** Phase 13.
+
+**Requirements:** DRAWER-01, DRAWER-02, DRAWER-03, DRAWER-04, DRAWER-05, DRAWER-06
+
+**Success Criteria** (what must be TRUE):
+
+1. Opening a job row in the Jobs view shows a drawer top section that summarizes ranking, readiness, blockers, and eligibility without requiring the user to hunt through generic diagnostics.
+2. Rank explanation includes fit score, score band/confidence where available, matched/missing/transferable signals, keywords, score reasoning/trace where available, and eligibility status/concerns.
+3. Readiness and blocker display uses the Phase 13 shared apply audit contract.
+4. The drawer clearly separates job-fit evidence from generated-material proof and links/hands off to Apply Review for resume/material inspection.
+5. Existing drawer behaviors remain intact: close/escape, job actions, retry affordances, artifact links, apply history, outcome panel, score correction, description, and audit history.
+6. The drawer remains responsive, keyboard accessible, dense, and readable across light/dark themes and density modes.
+
+**Verification:**
+
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test` targeted to Jobs drawer components.
+- Storybook/a11y checks if new extracted drawer components gain stories.
+- Browser QA on `/jobs`: open row-click drawer and prove rank/readiness/blocker/eligibility stories with synthetic or seeded data.
+- `git diff --check`
+
+**Plans:** Create with `$gsd-plan-phase 14`.
+
+### Phase 15: Apply Review Resume Pins
+
+**Goal:** Apply Review centers the actual rendered resume/material and makes source-to-tailored proof inspectable at the claim/row level.
+
+**Depends on:** Phase 13 and Phase 14.
+
+**Requirements:** REVIEW-01, REVIEW-02, REVIEW-03, REVIEW-04, REVIEW-05, REVIEW-06, REVIEW-07, REVIEW-08
+
+**Success Criteria** (what must be TRUE):
+
+1. Apply Review layout centers the rendered resume/material as the main review object while preserving queue selection, status, and decision controls.
+2. Resume pins/markers are derived from canonical artifact audit data, starting with `bulletProvenance` and `annotatedChanges`.
+3. Selecting a pin opens detail with source profile/resume text, tailored artifact text, transform/change type, governing controls, requirement IDs, evidence IDs, matched keywords, and rationale where recorded.
+4. Pin detail displays grounding/risk status from quality, judge, adversarial review, coverage, and review-feedback signals where available.
+5. Honest lifecycle and missing-source states remain visible: repair attempted, accepted with residual warnings, skipped audit, unsupported claim, missing required evidence, no source recorded, no provenance recorded, and PDF/text fallback.
+6. Apply Review readiness/header and decision controls consume the shared apply audit contract and match the Jobs drawer facts.
+7. Pin interactions are keyboard accessible, stable in layout, and usable across supported viewport sizes, light/dark themes, and density modes.
+
+**Verification:**
+
+- `pnpm web:check`
+- `pnpm web:build`
+- `pnpm --filter @jobhunter/web test` targeted to pin model/components and Apply Review layout.
+- `pnpm --filter @jobhunter/web test-d` if pin/component public types warrant it.
+- Storybook/a11y checks if new pin inspector or audit components gain stories.
+- Browser QA on `/apply-review`: ready job, blocker job, grounded claim pin, risky/unsupported claim pin, missing-source/no-provenance state, PDF/text fallback.
+- `git diff --check`
+
+**Plans:** Create with `$gsd-plan-phase 15`.
+
+### Phase 16: Product-Path QA + Documentation
+
+**Goal:** The milestone is verified from the user's product path and documented without exposing sensitive local data or triggering application submission flows.
+
+**Depends on:** Phase 15.
+
+**Requirements:** QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
+
+**Success Criteria** (what must be TRUE):
+
+1. API and web verification commands pass for the changed surfaces.
+2. Browser QA proves Jobs drawer stories: why ranked, readiness, blockers, eligibility concerns, and drawer-to-review handoff.
+3. Browser QA proves Apply Review stories: readiness agreement, resume-centered review, pin selection, source-to-tailored detail, grounded claim, risky/unsupported claim, missing-source state, and no-provenance fallback.
+4. All QA data, screenshots, stories, fixtures, and docs use synthetic or seeded data only.
+5. QA does not run auto-apply, browser submission, mailbox scanning, real material regeneration, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks later.
+6. Documentation updates are narrow and limited to changed behavior or QA expectations; blind-auto-apply safety positioning remains deferred.
+7. Milestone acceptance is audited against `.planning/REQUIREMENTS.md`, this roadmap, and product-path evidence.
+
+**Verification:**
+
+- `pnpm api:test`
+- `pnpm api:check`
 - `pnpm web:check`
 - `pnpm web:build`
 - `pnpm --filter @jobhunter/web test`
-- Targeted browser smoke proving cleanup did not regress light/dark/density surfaces
+- `pnpm --filter @jobhunter/web test-d` when type-level tests are affected.
+- Storybook/a11y checks for changed stories/components.
+- Targeted Playwright or Browser QA with synthetic fixtures.
 - `git diff --check`
+- `$gsd-audit-milestone` or equivalent final milestone audit before completion.
 
-**Plans:** Create with `$gsd-plan-phase 11`.
+**Plans:** Create with `$gsd-plan-phase 16`.
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11
+Phases execute in numeric order: 12 -> 13 -> 14 -> 15 -> 16
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 6. Token Foundation + shadcn Preset Contract | 6/6 | Complete | 2026-06-10 |
-| 7. Shared Primitive Token Migration | 5/5 | Complete | 2026-06-10 |
-| 8. Layout Chrome, Fonts, And Tabler Icons | 4/4 | Complete | 2026-06-10 |
-| 9. Domain And Status Surface Migration | 4/4 | Complete | 2026-06-10 |
-| 10. Route Visual QA + Storybook/A11y Hardening | 4/4 | Complete | 2026-06-10 |
-| 11. Alias And Global CSS Cleanup | 0/? | Pending | - |
-
-## Coverage
-
-| Requirement Group | Requirements | Phase |
-|-------------------|--------------|-------|
-| Token Foundation | TOKEN-01 through TOKEN-06 | Phase 6 |
-| Shared Primitives | PRIM-01 through PRIM-05 | Phase 7 |
-| Layout, Fonts, Icons | LAYOUT-01 through LAYOUT-05 | Phase 8 |
-| Domain/Status Semantics | STATUS-01 through STATUS-05 | Phase 9 |
-| QA and Accessibility | QA-01 through QA-06 | Phase 10 |
-| Cleanup and Documentation | CLEAN-01 through CLEAN-04 | Phase 11 |
-
-**Coverage summary:** 31 of 31 v1.1 requirements mapped. Unmapped: 0.
-
-## Next Up
-
-**Phase 11: Alias And Global CSS Cleanup** - Remove dead global selectors, obsolete config remnants, residual old token references, and unused icon/font dependencies after grep and QA proof.
-
-`$gsd-discuss-phase 11`
-
-Also available: `$gsd-plan-phase 11` after the Phase 11 discussion context is complete.
-
----
-*Roadmap created: 2026-06-09*
-*Last updated: 2026-06-10 after Phase 10 completion and merge of phases 6-10 to main (PRs #151-#155)*
+**Milestone Status:** Requirements and roadmap defined; next step is `$gsd-plan-phase 12`.
