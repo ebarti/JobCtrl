@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: complete
-last_updated: "2026-06-12T08:13:23.000Z"
+last_updated: "2026-06-12T08:21:17.000Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 5
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, fit-score badges keep mid-positive scores green, Apply Review ready/ok status badges use visible success-green background styling, and Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, fit-score badges keep mid-positive scores green, Apply Review ready/ok status badges use visible success-green background styling, and Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-12 - Post-completion success badge background correction completed
+Last activity: 2026-06-12 - Post-completion Jobs visible row-click overlay correction completed
 
 ## Active Milestone Summary
 
@@ -119,6 +119,7 @@ Key findings:
 - Follow-up correction: Apply Review ready/ok badges and success facts now render in the success-green family instead of info/blue or weak neutral styling.
 - Follow-up correction: Apply Review no longer collapses to an empty provenance state when rendered resume text exists; the Application Materials pane now shows a line-by-line rendered-resume audit fallback and lays the audit inspector beside the PDF on wide screens.
 - Follow-up correction: Shared success badges now use a visibly green background fill, border, and foreground using `oklab` color mixing so the `materials ready` header badge reads green in the browser.
+- Follow-up correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by targeted grid/Jobs tests and live `/jobs` browser QA.
 - Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, material regeneration, destructive data action, or worker-backed job.
 
 ## Prior Milestone Verification

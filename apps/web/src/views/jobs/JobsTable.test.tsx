@@ -153,6 +153,23 @@ describe("<JobsTable>", () => {
     expect(openCalls).toEqual([]);
   });
 
+  it("opens the job overlay when clicking visible row content", async () => {
+    const user = userEvent.setup();
+    const openCalls: string[] = [];
+
+    render(
+      <StatefulJobsTable
+        jobs={[sampleJob, sampleSecondaryJob]}
+        onOpenJob={(jobKey) => openCalls.push(jobKey)}
+      />,
+    );
+
+    await user.click(screen.getByText(sampleJob.title));
+
+    expect(openCalls).toEqual([sampleJob.jobKey]);
+    expect(rowForTitle(sampleJob.title)).toHaveAttribute("aria-selected", "false");
+  });
+
   it("shift-selects the visible range between the anchor row and target row", async () => {
     const user = userEvent.setup();
     const jobs = [makeJob(1), makeJob(2), makeJob(3), makeJob(4)];

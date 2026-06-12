@@ -64,6 +64,7 @@ exist; the work was verified retroactively (this document + the per-phase `VERIF
 - Post-completion QA correction: Apply Review ready/ok status badges and success facts now use visible success-green styling rather than blue/info or weak neutral styling; verified by targeted Apply Review and Jobs drawer regression coverage.
 - Post-completion QA correction: Apply Review now falls back from missing artifact provenance to a line-by-line rendered-resume audit, preserving reviewer inspection instead of showing an empty pin state; verified by `corepack pnpm --filter @jobhunter/web test src/views/apply-review/ApplyReviewView.test.tsx`, `corepack pnpm web:check`, and `git diff --check`.
 - Post-completion QA correction: Shared success badges now use a visibly green `oklab`-mixed background, border, and foreground so the Apply Review `materials ready` badge does not render as a weak non-green tint; verified by `corepack pnpm --filter @jobhunter/web test src/styles/token-contract.test.ts src/views/apply-review/ApplyReviewView.test.tsx`, `corepack pnpm web:check`, `git diff --check`, and live computed-style QA on `/apply-review`.
+- Post-completion QA correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by `corepack pnpm --filter @jobhunter/web test src/shared/ui/filterable-data-grid.test.tsx src/views/jobs/JobsTable.test.tsx src/views/jobs/JobDetailDrawer.test.tsx`, `corepack pnpm web:check`, `git diff --check`, and live browser QA on `/jobs`.
 
 ## Residual
 

@@ -82,6 +82,9 @@ describe("FilterableDataGrid", () => {
     expect(acmeRow).not.toHaveAttribute("tabindex");
     const openAcme = within(acmeRow).getByRole("button", { name: "Open Acme" });
 
+    await user.click(within(acmeRow).getByText("Workday ATS"));
+    expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
+
     await user.click(openAcme);
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
 
@@ -93,7 +96,7 @@ describe("FilterableDataGrid", () => {
     expect(onRowActivate).toHaveBeenLastCalledWith(rows[0]);
 
     await user.keyboard("{ArrowDown}");
-    expect(onRowActivate).toHaveBeenCalledTimes(3);
+    expect(onRowActivate).toHaveBeenCalledTimes(4);
   });
 
   it("paginates local rows after filtering and sorting", async () => {

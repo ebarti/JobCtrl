@@ -1627,6 +1627,10 @@ textarea:focus-visible {
   background: var(--muted);
 }
 
+.filterable-data-grid-table tbody tr.data-grid-row-activatable {
+  cursor: pointer;
+}
+
 .data-grid-row-activation-button,
 .table-row-activation-button {
   display: inline-flex;
