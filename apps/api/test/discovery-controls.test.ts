@@ -73,9 +73,6 @@ function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
 function options(dbPath: string, dir: string) {
   return {
     dbPath,
-    profilePath: path.join(dir, "profile.json"),
-    resumeStylePath: path.join(dir, "resume_style.json"),
-    resumeTemplatePath: path.join(dir, "resume_template.tex"),
     settingsPath: path.join(dir, "dashboard.json"),
   };
 }

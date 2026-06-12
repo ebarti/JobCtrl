@@ -282,10 +282,9 @@ policies, and writing style preferences.
 
 **Boundary justification:** Profile is a single-user, single-document aggregate
 with its own lifecycle (user edits it independently of any job). Consuming
-contexts need a stable read-only view. *Historical pain point addressed:*
-legacy `profile.json` was loaded as a raw dict and threaded through tailor,
-cover, apply, wizard, and profile_import with no invariants enforced (briefing
-point 8).
+contexts need a stable read-only view. *Historical pain point addressed:* raw
+profile dictionaries were threaded through tailor, cover, apply, wizard, and
+profile import with no invariants enforced (briefing point 8).
 
 ---
 
@@ -1025,7 +1024,7 @@ Playwright for a hosted browser fleet without changing extraction logic.
 
 | Driven Port | Local Adapter (today) | Hosted Adapter (cloud) |
 |---|---|---|
-| `ProfileRepository` | `SqliteProfileRepository` (normalized `candidate_profile*` tables; legacy profile/rendering files can seed empty tables once) | `PostgresProfileRepository` (RDS Postgres, keyed by `(tenant_id, profile_id)`) |
+| `ProfileRepository` | `SqliteProfileRepository` (normalized `candidate_profile*` tables; explicit saves and resume imports populate profile/rendering rows) | `PostgresProfileRepository` (RDS Postgres, keyed by `(tenant_id, profile_id)`) |
 | `PdfParserPort` | `PyPdfAdapter` | `PyPdfAdapter` (same library, runs in worker pod; no cloud service needed) |
 
 **Seam justification:** Profile storage is isolated behind the repository port:

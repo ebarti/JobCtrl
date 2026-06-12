@@ -487,10 +487,10 @@ def ensure_state_tables(conn: sqlite3.Connection | None = None) -> list[str]:
 def ensure_profile_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     """Create normalized Candidate Profile tables.
 
-    The canonical profile source now lives in relational rows.  The schema
-    deliberately has no ``profile_json`` / ``style_json`` escape hatch:
-    aggregate value objects live as typed columns on ``candidate_profiles``;
-    repeatable child entities and rule lists live in child tables.
+    The canonical profile source now lives in relational rows. The schema
+    deliberately has no raw profile/style blob escape hatch: aggregate value
+    objects live as typed columns on ``candidate_profiles``; repeatable child
+    entities and rule lists live in child tables.
     """
     if conn is None:
         conn = get_connection()

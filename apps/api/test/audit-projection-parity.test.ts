@@ -249,9 +249,6 @@ describe("Phase 4 cross-runtime audit projection parity (AUDIT-02)", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {

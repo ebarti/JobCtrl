@@ -18,9 +18,6 @@ beforeEach(() => {
   workspace = createQaWorkspace();
   options = {
     dbPath: workspace.dbPath,
-    profilePath: workspace.profilePath,
-    resumeStylePath: workspace.resumeStylePath,
-    resumeTemplatePath: workspace.resumeTemplatePath,
     settingsPath: workspace.settingsPath,
     profilePreviewRenderer: async () => Buffer.from("%PDF-1.4\n% QA preview\n"),
   };
@@ -161,7 +158,7 @@ describe("seeded local QA workflow", () => {
     await app.close();
   });
 
-  it("persists profile, settings, credentials, and the rendered preview against seeded files", async () => {
+  it("persists profile, settings, credentials, and the rendered preview against seeded SQLite data", async () => {
     const credentialStore = createMemoryCredentialStore();
     const app = buildApp({ ...options, credentialStore });
 
@@ -190,9 +187,9 @@ describe("seeded local QA workflow", () => {
       target_criteria: "QA targeting criteria",
     });
 
-    const profile = await app.inject({ method: "GET", url: "/v1/profile" });
-    expect(profile.statusCode, profile.body).toBe(200);
-    const profileDraft = profile.json().profile;
+    const profileResponse = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(profileResponse.statusCode, profileResponse.body).toBe(200);
+    const profileDraft = profileResponse.json().profile;
     profileDraft.personal.full_name = "QA Candidate Edited";
     const updateProfile = await app.inject({
       method: "PATCH",
@@ -204,7 +201,6 @@ describe("seeded local QA workflow", () => {
     const profileAfterUpdate = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
     expect(profileAfterUpdate.json().profile.personal.full_name).toBe("QA Candidate Edited");
-    expect(JSON.parse(fs.readFileSync(workspace.profilePath, "utf8")).personal.full_name).toBe("QA Candidate");
 
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);

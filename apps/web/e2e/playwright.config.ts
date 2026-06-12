@@ -9,18 +9,11 @@ const repoRoot = path.resolve(here, "..", "..", "..");
 const E2E_DIR =
   process.env["JOBHUNTER_E2E_APP_DIR"] ?? path.join(os.tmpdir(), "jobhunter-e2e-current");
 const E2E_DB = process.env["JOBHUNTER_E2E_DB_PATH"] ?? path.join(E2E_DIR, "jobhunter.db");
-const E2E_PROFILE = process.env["JOBHUNTER_E2E_PROFILE_PATH"] ?? path.join(E2E_DIR, "profile.json");
-const E2E_STYLE = process.env["JOBHUNTER_E2E_STYLE_PATH"] ?? path.join(E2E_DIR, "resume_style.json");
-const E2E_TEMPLATE =
-  process.env["JOBHUNTER_E2E_TEMPLATE_PATH"] ?? path.join(E2E_DIR, "resume_template.tex");
 const E2E_SETTINGS =
   process.env["JOBHUNTER_E2E_SETTINGS_PATH"] ?? path.join(E2E_DIR, "dashboard.json");
 
 process.env["JOBHUNTER_E2E_APP_DIR"] = E2E_DIR;
 process.env["JOBHUNTER_E2E_DB_PATH"] = E2E_DB;
-process.env["JOBHUNTER_E2E_PROFILE_PATH"] = E2E_PROFILE;
-process.env["JOBHUNTER_E2E_STYLE_PATH"] = E2E_STYLE;
-process.env["JOBHUNTER_E2E_TEMPLATE_PATH"] = E2E_TEMPLATE;
 process.env["JOBHUNTER_E2E_SETTINGS_PATH"] = E2E_SETTINGS;
 
 // Ports default to 8767/5174 (unchanged) but are overridable so parallel
@@ -59,9 +52,6 @@ export default defineConfig({
         JOBHUNTER_API_PORT: API_PORT,
         JOBHUNTER_DIR: E2E_DIR,
         JOBHUNTER_DB_PATH: E2E_DB,
-        JOBHUNTER_PROFILE_PATH: E2E_PROFILE,
-        JOBHUNTER_RESUME_STYLE_PATH: E2E_STYLE,
-        JOBHUNTER_RESUME_TEMPLATE_PATH: E2E_TEMPLATE,
         JOBHUNTER_DASHBOARD_CONFIG_PATH: E2E_SETTINGS,
         // INSPECT-01: route material-generation dispatch to the deterministic
         // E2E stub (no worker subprocess, no LLM) while keeping the

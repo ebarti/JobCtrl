@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ from jobhunter.domain.profile.use_cases import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
-from jobhunter.infrastructure.profile.json_file import JsonFileProfileRepository
+from jobhunter.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 
 def _valid_profile() -> dict:
@@ -42,9 +43,11 @@ def _valid_profile() -> dict:
     }
 
 
-def _repo(tmp_path: Path) -> JsonFileProfileRepository:
-    return JsonFileProfileRepository(
-        profile_path=tmp_path / "profile.json",
+def _repo(tmp_path: Path) -> SqliteProfileRepository:
+    conn = sqlite3.connect(tmp_path / "jobhunter.db")
+    conn.row_factory = sqlite3.Row
+    return SqliteProfileRepository(
+        conn,
         publisher=InProcessEventBus(),
     )
 

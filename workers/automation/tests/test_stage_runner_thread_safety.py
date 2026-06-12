@@ -79,7 +79,7 @@ def test_profile_repository_cache_is_thread_local(tmp_path: Path, monkeypatch) -
     reused safely inside the activity worker thread.
     """
 
-    monkeypatch.setattr(profile_factory.config, "PROFILE_PATH", tmp_path / "profile.json")
+    monkeypatch.setattr(profile_factory.config, "DB_PATH", tmp_path / "jobhunter.db")
     profile_factory.reset_profile_repository()
 
     main_repo = profile_factory.get_profile_repository()

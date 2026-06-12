@@ -2,8 +2,9 @@
 
 The Candidate Profile aggregate is stored natively in relational SQLite rows:
 one root row for scalar value objects and child tables for experience,
-education, skills, tailoring requirements, and resume constraints.  Legacy
-``profile.json`` is a one-time seed only when the database has no profile row.
+education, skills, tailoring requirements, and resume constraints. Profiles
+must be created explicitly through the profile use cases, API, or PDF import
+flow.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from jobhunter.database import ensure_profile_tables
@@ -61,17 +61,11 @@ class SqliteProfileRepository:
         *,
         publisher: EventPublisher,
         pdf_parser: PdfParserPort | None = None,
-        legacy_profile_path: Path | None = None,
-        legacy_style_path: Path | None = None,
-        legacy_template_path: Path | None = None,
         profile_id: str = DEFAULT_PROFILE_ID,
     ) -> None:
         self._conn = conn
         self._publisher = publisher
         self._pdf_parser = pdf_parser
-        self._legacy_profile_path = Path(legacy_profile_path) if legacy_profile_path else None
-        self._legacy_style_path = Path(legacy_style_path) if legacy_style_path else None
-        self._legacy_template_path = Path(legacy_template_path) if legacy_template_path else None
         self._profile_id = profile_id or DEFAULT_PROFILE_ID
         ensure_profile_tables(self._conn)
 
@@ -80,7 +74,6 @@ class SqliteProfileRepository:
     # ------------------------------------------------------------------
 
     def load(self, tenant_id: TenantId) -> Profile | None:
-        self._ensure_imported_from_legacy(tenant_id)
         row = self._profile_row(tenant_id)
         if row is None:
             return None
@@ -118,8 +111,7 @@ class SqliteProfileRepository:
     def load_snapshot(self, tenant_id: TenantId) -> ProfileSnapshot:
         profile = self.load(tenant_id)
         if profile is None:
-            location = self._legacy_profile_path or "candidate_profiles"
-            raise FileNotFoundError(f"Profile not found at {location}. Run `jobhunter init` first.")
+            raise FileNotFoundError("Profile not found in candidate_profiles. Run `jobhunter init` first.")
         row = self._profile_row(tenant_id)
         version = int(row["version"]) if row is not None else 1
         return ProfileSnapshot.from_profile(profile, version=version)
@@ -129,7 +121,6 @@ class SqliteProfileRepository:
     # ------------------------------------------------------------------
 
     def load_rendering_settings(self, tenant_id: TenantId) -> dict[str, Any]:
-        self._ensure_imported_from_legacy(tenant_id)
         row = self._profile_row(tenant_id)
         if row is None:
             return {
@@ -198,23 +189,6 @@ class SqliteProfileRepository:
             "SELECT * FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?",
             (str(tenant_id), self._profile_id),
         ).fetchone()
-
-    def _ensure_imported_from_legacy(self, tenant_id: TenantId) -> None:
-        if self._profile_row(tenant_id) is not None:
-            return
-        if self._legacy_profile_path is None or not self._legacy_profile_path.exists():
-            return
-        data = self._read_legacy_profile()
-        profile = Profile.from_dict(tenant_id, data, profile_id=self._profile_id)
-        _reject_unsupported_top_level_fields(profile)
-        style = self._read_legacy_style()
-        template_text = self._read_legacy_template()
-        self._replace_profile(
-            tenant_id,
-            profile,
-            version=1,
-            rendering={"style": style, "template_text": template_text},
-        )
 
     def _replace_profile(
         self,
@@ -806,34 +780,6 @@ class SqliteProfileRepository:
         for row in rows:
             grouped.setdefault(str(row[key_column]), []).append(str(row[value_column]))
         return grouped
-
-    def _read_legacy_profile(self) -> dict[str, Any]:
-        assert self._legacy_profile_path is not None
-        try:
-            data = json.loads(self._legacy_profile_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise InvalidProfileError(
-                [f"profile.json at {self._legacy_profile_path} is not valid JSON: {exc}"]
-            ) from exc
-        if not isinstance(data, dict):
-            raise InvalidProfileError(["profile.json must contain a top-level object."])
-        return data
-
-    def _read_legacy_style(self) -> dict[str, Any]:
-        if self._legacy_style_path is None or not self._legacy_style_path.exists():
-            return normalize_resume_style()
-        try:
-            data = json.loads(self._legacy_style_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            logger.warning("resume_style.json at %s is not valid JSON; using defaults.", self._legacy_style_path)
-            return normalize_resume_style()
-        return normalize_resume_style(data if isinstance(data, dict) else None)
-
-    def _read_legacy_template(self) -> str:
-        if self._legacy_template_path is None or not self._legacy_template_path.exists():
-            return DEFAULT_RESUME_LATEX_TEMPLATE
-        return self._legacy_template_path.read_text(encoding="utf-8")
-
 
 def _root_values(
     tenant_id: str,

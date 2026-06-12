@@ -1,5 +1,3 @@
-import fs from "node:fs";
-
 import type { ProfileConfigResponse, ProfileShape, ProfileUpdateRequest } from "./contracts.js";
 import { ProfileSchema } from "./contracts.js";
 import type { SqliteDatabase } from "./db.js";
@@ -8,12 +6,6 @@ const TENANT_ID = "local";
 const PROFILE_ID = "default";
 
 export class ProfileInputError extends Error {}
-
-export interface ProfilePaths {
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
-}
 
 const CHILD_TABLES = [
   "candidate_profile_experience_bullets",
@@ -386,9 +378,8 @@ function ensureCandidateProfileColumns(db: SqliteDatabase): void {
   }
 }
 
-export function readProfileConfig(db: SqliteDatabase, paths: ProfilePaths): ProfileConfigResponse {
+export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   ensureProfileTables(db);
-  importLegacyProfileIfNeeded(db, paths);
   const row = getProfileRow(db);
   if (!row) {
     return { ok: true, profile: {}, style: DEFAULT_STYLE, templateText: DEFAULT_RESUME_TEMPLATE };
@@ -403,11 +394,9 @@ export function readProfileConfig(db: SqliteDatabase, paths: ProfilePaths): Prof
 
 export function writeProfileConfig(
   db: SqliteDatabase,
-  paths: ProfilePaths,
   request: ProfileUpdateRequest,
 ): ProfileConfigResponse {
   ensureProfileTables(db);
-  importLegacyProfileIfNeeded(db, paths);
 
   let wrote = false;
   let profile: ProfileShape | undefined;
@@ -446,7 +435,7 @@ export function writeProfileConfig(
   const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
 
   replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
-  return readProfileConfig(db, paths);
+  return readProfileConfig(db);
 }
 
 export function parseProfileUpdateProfile(request: ProfileUpdateRequest): ProfileShape | undefined {
@@ -454,20 +443,6 @@ export function parseProfileUpdateProfile(request: ProfileUpdateRequest): Profil
     return undefined;
   }
   return parseProfileInput(request.profile, request.profileText);
-}
-
-function importLegacyProfileIfNeeded(db: SqliteDatabase, paths: ProfilePaths): void {
-  if (getProfileRow(db) || !fs.existsSync(paths.profilePath)) {
-    return;
-  }
-  const profile = parseProfileInput(undefined, fs.readFileSync(paths.profilePath, "utf8"));
-  const style = fs.existsSync(paths.resumeStylePath)
-    ? normalizeStyle(parseJsonObjectInput(undefined, fs.readFileSync(paths.resumeStylePath, "utf8"), "resume style settings"))
-    : DEFAULT_STYLE;
-  const templateText = fs.existsSync(paths.resumeTemplatePath)
-    ? fs.readFileSync(paths.resumeTemplatePath, "utf8")
-    : DEFAULT_RESUME_TEMPLATE;
-  replaceProfile(db, profile, style, templateText.trim() ? templateText : DEFAULT_RESUME_TEMPLATE, 1);
 }
 
 function replaceProfile(

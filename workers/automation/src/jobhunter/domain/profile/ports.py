@@ -76,8 +76,8 @@ class PdfParserPort(Protocol):
     ) -> dict[str, Any]:
         """Return ``{"profile": ..., "style": ..., "source": ...}``.
 
-        ``profile`` is a dict in the canonical profile.json shape (a draft
-        for the user to review). ``style`` is the resume_style.json shape.
+        ``profile`` is a dict in the canonical profile shape (a draft for the
+        user to review). ``style`` is the resume rendering style shape.
         ``source`` carries diagnostics (filename, page count, warnings).
         """
         ...

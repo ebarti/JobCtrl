@@ -15,6 +15,7 @@ from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.ports.events import Subscription
 from jobhunter.domain.ports.llm import LlmMessage
+from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.scoring import (
     FitScore,
     JobScore,
@@ -174,17 +175,19 @@ class _ExplodingLlm:
 
 @pytest.fixture()
 def profile_snapshot(tmp_path):
-    """Build a fresh ``ProfileSnapshot`` from a tmp profile.json."""
-    profile_path = tmp_path / "profile.json"
-    profile_path.write_text(
-        '{"personal": {"full_name": "Tester"},'
-        '"resume": {"executive_profile": {"baseline_text": "Engineer with 5 years experience."},'
-        '"experience_entries": [{"id": "r1", "title": "Engineer", "company": "Acme"}],'
-        '"education_entries": [], "skill_categories": []}}',
-        encoding="utf-8",
-    )
+    """Build a fresh ``ProfileSnapshot`` from an explicitly saved profile."""
+    profile = {
+        "personal": {"full_name": "Tester"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Engineer with 5 years experience."},
+            "experience_entries": [{"id": "r1", "title": "Engineer", "company": "Acme"}],
+            "education_entries": [],
+            "skill_categories": [],
+        },
+    }
     publisher = InProcessEventBus()
-    repo = build_profile_repository(profile_path=profile_path, publisher=publisher)
+    repo = build_profile_repository(db_path=tmp_path / "jobhunter.db", publisher=publisher)
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
     return repo.load_snapshot(LOCAL_TENANT)
 
 

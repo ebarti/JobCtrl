@@ -1752,7 +1752,7 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
   };
 }
 
-/** Validate a candidate profile JSON. Used by callers (e.g. tests, future
+/** Validate candidate profile data. Used by callers (e.g. tests, future
  * SDK helpers) that want to assert canonical shape before posting. */
 export function parseProfileShape(value: unknown): ProfileShape | null {
   const parsed = ProfileSchema.safeParse(value);

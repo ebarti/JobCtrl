@@ -26,9 +26,6 @@ beforeEach(() => {
   })) as ReturnType<typeof vi.fn> & ActionDispatcher;
   options = {
     dbPath: path.join(tempDir, "jobhunter.db"),
-    profilePath: path.join(tempDir, "profile.json"),
-    resumeStylePath: path.join(tempDir, "resume_style.json"),
-    resumeTemplatePath: path.join(tempDir, "resume_template.tex"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     actionDispatcher,
   };

@@ -69,7 +69,7 @@ export interface ProfileImportInput {
 }
 
 export interface ProfileImportResult {
-  /** Draft profile JSON. Validated server-side against ``ProfileSchema`` in
+  /** Draft profile data. Validated server-side against ``ProfileSchema`` in
    * ``extractProfileImportDraft`` before being placed on this field; tests
    * may inject partial drafts through the ``ProfileImporter`` injection
    * point, so the static type stays ``unknown`` to keep that seam open. */
@@ -223,7 +223,7 @@ export const defaultProfileImporter: ProfileImporter = async (input, context) =>
 
 export const defaultProfilePreviewRenderer: ProfilePreviewRenderer = async (input, context) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-profile-preview-"));
-  const profilePath = path.join(tempDir, "profile.json");
+  const profilePath = path.join(tempDir, "profile-preview-input.json");
   const templatePath = path.join(tempDir, "resume_template.tex");
   const outputPath = path.join(tempDir, "resume-preview.pdf");
   try {

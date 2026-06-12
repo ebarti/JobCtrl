@@ -89,7 +89,7 @@ class Profile:
         *,
         profile_id: str = DEFAULT_PROFILE_ID,
     ) -> "Profile":
-        """Parse a profile.json dict into a validated aggregate.
+        """Parse a profile dict into a validated aggregate.
 
         Raises ``InvalidProfileError`` collecting every structural invariant
         violation reachable given the input — missing ``resume`` block stops
@@ -112,7 +112,7 @@ class Profile:
             # raise immediately with the single actionable reason. Other invariants
             # can only be assessed against parseable structure.
             reasons.append(
-                "profile.json must include a top-level 'resume' block with executive_profile, "
+                "profile data must include a top-level 'resume' block with executive_profile, "
                 "experience_entries, education_entries, skill_categories, and tailoring_rules. "
                 "Run `jobhunter init` or use profile.example.json as a template."
             )
@@ -209,7 +209,7 @@ class Profile:
     # ------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the aggregate back into the canonical profile.json shape.
+        """Serialize the aggregate back into the canonical profile shape.
 
         Extra fields preserved at parse time are re-emitted unchanged so the
         on-disk file remains a superset of what the aggregate models. The
