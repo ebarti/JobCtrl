@@ -195,7 +195,7 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
     passed: false,
     verdict: "REVIEW",
     score: 0.62,
-    unsupportedClaims: ["Unsupported scope claim"],
+    unsupportedClaims: ["Owned platform reliability improvements for incident response."],
     missingRequiredEvidence: ["req-platform-scale"],
     repairInstructions: ["Remove unsupported scope claim."],
   },
@@ -308,6 +308,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("centers the rendered resume with selectable source-backed claim pins", async () => {
+    const user = userEvent.setup();
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -334,9 +335,14 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
     expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /Experience pin 1: Senior SWE at Acme/i }),
-    ).toBeInTheDocument();
+    const auditLineOne = screen.getByRole("button", {
+      name: /Rendered resume line 1: Principal Platform Engineer/i,
+    });
+    const auditLineThree = screen.getByRole("button", {
+      name: /Rendered resume line 3: Owned platform reliability improvements for incident response/i,
+    });
+    expect(within(auditLineOne).queryByText("claim risk")).not.toBeInTheDocument();
+    await user.click(auditLineThree);
     expect(screen.getByText("Source profile or resume text")).toBeInTheDocument();
     expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
     expect(screen.getByText("Tailored artifact text")).toBeInTheDocument();
@@ -348,14 +354,70 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("Grounding and claim risk")).toBeInTheDocument();
     expect(screen.getAllByText("claim risk").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Unsupported scope claim").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("req-platform-scale").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Kept one residual warning for reviewer inspection.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Warning repair attempted").length).toBeGreaterThan(0);
   });
 
+  it("does not promote source-backed lines with audit metadata gaps to claim risk", async () => {
+    const user = userEvent.setup();
+    const sourceBackedExplanation: ArtifactTailoringExplanation = {
+      ...sampleTailoringExplanation,
+      quality: {
+        ...sampleTailoringExplanation.quality,
+        errors: ["Tailoring audit metadata incomplete: missing profile evidence mapping"],
+      },
+      annotatedChanges: sampleTailoringExplanation.annotatedChanges.map((change) => ({
+        ...change,
+        evidenceIds: [],
+      })),
+    };
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: sourceBackedExplanation,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    const auditLineThree = await screen.findByRole("button", {
+      name: /Rendered resume line 3: Owned platform reliability improvements for incident response/i,
+    });
+    await user.click(auditLineThree);
+
+    expect(screen.getAllByText("source-backed").length).toBeGreaterThan(0);
+    expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
+    expect(screen.getByText("Audit metadata gaps")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Tailoring audit metadata incomplete: missing profile evidence mapping").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
+  });
+
   it("falls back to a line-by-line resume audit when generation provenance is missing", async () => {
     const user = userEvent.setup();
+    const scrolledElements: Element[] = [];
+    const scrollIntoView = vi.fn(function scrollSelectedElementIntoView(this: Element) {
+      scrolledElements.push(this);
+    });
+    const elementPrototype = window.HTMLElement.prototype as Partial<Pick<Element, "scrollIntoView">>;
+    const originalScrollIntoView = elementPrototype.scrollIntoView;
+    elementPrototype.scrollIntoView = scrollIntoView;
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -391,25 +453,35 @@ describe("<ApplyReviewView>", () => {
       name: "Line 1: Principal Platform Engineer",
     });
     const renderedLineThree = within(renderedResume).getByRole("button", {
-      name: "Line 3: Led platform reliability programs and incident response improvements for distributed systems teams.",
+      name: "Line 3: Owned platform reliability improvements for incident response.",
     });
     await waitFor(() => expect(renderedLineOne).toHaveAttribute("aria-pressed", "true"));
+    scrollIntoView.mockClear();
+    scrolledElements.length = 0;
     expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
     expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
     const auditLineOne = screen.getByRole("button", { name: /Rendered resume line 1: Principal Platform Engineer/i });
     const auditLineThree = screen.getByRole("button", {
-        name: /Rendered resume line 3: Led platform reliability programs and incident response improvements/i,
+      name: /Rendered resume line 3: Owned platform reliability improvements for incident response/i,
     });
     expect(auditLineOne).toBeInTheDocument();
     expect(auditLineThree).toBeInTheDocument();
     await user.click(auditLineThree);
     expect(renderedLineThree).toHaveAttribute("aria-pressed", "true");
     expect(renderedLineOne).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() =>
+      expect(scrolledElements.some((element) => element.closest(".resume-pin-list"))).toBe(true),
+    );
+    expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
+    expect(screen.getByText("No source text was recorded for this resume line.")).toBeInTheDocument();
     await user.click(renderedLineOne);
     expect(auditLineOne).toHaveAttribute("aria-pressed", "true");
     expect(auditLineThree).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getAllByText("missing provenance").length).toBeGreaterThan(0);
-    expect(screen.getByText("No source text was recorded for this resume line.")).toBeInTheDocument();
+    if (originalScrollIntoView) {
+      elementPrototype.scrollIntoView = originalScrollIntoView;
+    } else {
+      delete elementPrototype.scrollIntoView;
+    }
   });
 
   it("opens job detail as an in-place overlay", async () => {

@@ -1,5 +1,5 @@
 import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobhunter/contracts";
-import { useEffect, useMemo, useState, type JSX } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
@@ -18,6 +18,7 @@ interface ResumeAuditPinsProps {
 interface ResumeLineEntry {
   readonly lineNumber: number;
   readonly text: string;
+  readonly kind: "name" | "contact" | "section" | "metadata" | "bullet" | "body";
 }
 
 interface ResumeAuditPin {
@@ -25,7 +26,7 @@ interface ResumeAuditPin {
   readonly title: string;
   readonly section: string;
   readonly lineNumber?: number;
-  readonly provenanceState: "recorded" | "missing";
+  readonly provenanceState: "recorded" | "missing" | "not_applicable";
   readonly sourceText: readonly string[] | null;
   readonly tailoredText: readonly string[];
   readonly transformType: string;
@@ -41,6 +42,7 @@ interface RiskSignals {
   readonly quality: string;
   readonly judge: string;
   readonly adversarial: string;
+  readonly auditGaps: readonly string[];
   readonly blockers: readonly string[];
   readonly warnings: readonly string[];
   readonly unsupportedClaims: readonly string[];
@@ -50,6 +52,21 @@ interface RiskSignals {
   readonly warningRepairAttempted: string;
   readonly residualWarnings: readonly string[];
 }
+
+const RENDERED_RESUME_SECTION_HEADINGS = new Set([
+  "certifications",
+  "core skills",
+  "education",
+  "executive profile",
+  "experience",
+  "languages",
+  "professional profile",
+  "profile",
+  "projects",
+  "skills",
+  "summary",
+  "technical skills",
+]);
 
 function yesNo(value: boolean | null | undefined): string {
   if (value === null || value === undefined) return "not recorded";
@@ -73,6 +90,39 @@ function changeFor(
   return annotatedChanges.find(
     (change) => change.section === entry.section && change.sourceId === entry.sourceId,
   );
+}
+
+function normalizeResumeLine(value: string): string {
+  return value
+    .replace(/^[-•○]\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function textsMatchLine(candidateText: string, lineText: string): boolean {
+  const candidate = normalizeResumeLine(candidateText);
+  const line = normalizeResumeLine(lineText);
+  if (!candidate || !line) return false;
+  return candidate === line || candidate.includes(line) || line.includes(candidate);
+}
+
+function changeForLine(
+  line: ResumeLineEntry,
+  annotatedChanges: readonly AnnotatedChange[],
+): AnnotatedChange | undefined {
+  return annotatedChanges.find((change) => change.tailoredText.some((text) => textsMatchLine(text, line.text)));
+}
+
+function bulletForLine(
+  line: ResumeLineEntry,
+  provenance: readonly BulletProvenanceEntry[],
+): BulletProvenanceEntry | undefined {
+  return provenance.find((entry) => textsMatchLine(entry.generatedText, line.text));
+}
+
+function isStructuralLine(line: ResumeLineEntry): boolean {
+  return line.kind === "name" || line.kind === "contact" || line.kind === "section" || line.kind === "metadata";
 }
 
 function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeAuditPin[] {
@@ -112,18 +162,69 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
   }));
 }
 
-function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineEntry[] {
-  return (resumeText ?? "")
-    .split(/\r?\n/)
-    .map((line, index) => ({
-      lineNumber: index + 1,
-      text: line.trim(),
-    }))
-    .filter((entry) => entry.text.length > 0);
-}
+function pinFromResumeLine(
+  line: ResumeLineEntry,
+  explanation: ArtifactTailoringExplanation | null,
+): ResumeAuditPin {
+  const bullet = explanation ? bulletForLine(line, explanation.bulletProvenance) : undefined;
+  if (bullet) {
+    const change = explanation ? changeFor(bullet, explanation.annotatedChanges) : undefined;
+    return {
+      id: `resume-line:${line.lineNumber}`,
+      title: `Line ${line.lineNumber}`,
+      section: bullet.section,
+      lineNumber: line.lineNumber,
+      provenanceState: "recorded",
+      sourceText: originalTextFor(bullet, explanation?.annotatedChanges ?? []),
+      tailoredText: [line.text],
+      transformType: bullet.transformType,
+      controls: bullet.control ? [bullet.control] : [],
+      evidenceIds: bullet.evidenceIds,
+      requirementIds: bullet.requirementIds,
+      matchedSignals: bullet.matchedKeywords,
+      rationale: bullet.rationale || change?.rationale || null,
+    };
+  }
 
-function pinsFromResumeText(lines: readonly ResumeLineEntry[]): ResumeAuditPin[] {
-  return lines.map((line) => ({
+  const change = explanation ? changeForLine(line, explanation.annotatedChanges) : undefined;
+  if (change) {
+    return {
+      id: `resume-line:${line.lineNumber}`,
+      title: `Line ${line.lineNumber}`,
+      section: change.section,
+      lineNumber: line.lineNumber,
+      provenanceState: "recorded",
+      sourceText: change.sourceText.length ? change.sourceText : null,
+      tailoredText: [line.text],
+      transformType: change.changeType,
+      controls: change.controls,
+      evidenceIds: change.evidenceIds,
+      requirementIds: [],
+      matchedSignals: change.jobSignals,
+      rationale: change.rationale,
+    };
+  }
+
+  if (isStructuralLine(line)) {
+    return {
+      id: `resume-line:${line.lineNumber}`,
+      title: `Line ${line.lineNumber}`,
+      section: line.kind === "section" ? "resume_section" : `resume_${line.kind}`,
+      lineNumber: line.lineNumber,
+      provenanceState: "not_applicable",
+      sourceText: null,
+      tailoredText: [line.text],
+      transformType: "rendered_structure",
+      controls: ["rendered resume structure"],
+      evidenceIds: [],
+      requirementIds: [],
+      matchedSignals: [],
+      rationale:
+        "This rendered line is resume structure or identity text, not a generated claim requiring source attribution.",
+    };
+  }
+
+  return {
     id: `resume-line:${line.lineNumber}`,
     title: `Line ${line.lineNumber}`,
     section: "rendered_resume",
@@ -131,20 +232,61 @@ function pinsFromResumeText(lines: readonly ResumeLineEntry[]): ResumeAuditPin[]
     provenanceState: "missing",
     sourceText: null,
     tailoredText: [line.text],
-    transformType: "no_generation_provenance",
-    controls: ["rendered resume fallback"],
+    transformType: explanation ? "unmapped_rendered_line" : "no_generation_provenance",
+    controls: [explanation ? "line not mapped to recorded change" : "rendered resume fallback"],
     evidenceIds: [],
     requirementIds: [],
     matchedSignals: [],
-    rationale:
-      "This line is visible in the tailored resume, but no generation-time source or evidence mapping was recorded.",
-  }));
+    rationale: explanation
+      ? "This line is visible in the tailored resume, but it did not match a recorded generation-time source mapping."
+      : "This line is visible in the tailored resume, but no generation-time source or evidence mapping was recorded.",
+  };
+}
+
+function pinsFromResumeLines(
+  lines: readonly ResumeLineEntry[],
+  explanation: ArtifactTailoringExplanation | null,
+): ResumeAuditPin[] {
+  return lines.map((line) => pinFromResumeLine(line, explanation));
+}
+
+function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineEntry[] {
+  let firstContentLine = true;
+  const lines: ResumeLineEntry[] = [];
+  (resumeText ?? "").split(/\r?\n/).forEach((line, index) => {
+    const text = line.trim();
+    if (!text) return;
+    const lower = text.toLowerCase();
+    const kind: ResumeLineEntry["kind"] = firstContentLine
+      ? "name"
+      : RENDERED_RESUME_SECTION_HEADINGS.has(lower)
+        ? "section"
+        : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(text)
+          ? "contact"
+          : /^[-•○]\s+/.test(text)
+            ? "bullet"
+            : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(
+                  text,
+                )
+              ? "metadata"
+              : "body";
+    firstContentLine = false;
+    lines.push({
+      lineNumber: index + 1,
+      text,
+      kind,
+    });
+  });
+  return lines;
 }
 
 function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
   const adversarial = explanation.adversarialReview;
+  const auditGaps = explanation.quality.errors.filter((error) =>
+    error.toLowerCase().startsWith("tailoring audit metadata incomplete"),
+  );
   const blockers = [
-    ...explanation.quality.errors,
+    ...explanation.quality.errors.filter((error) => !auditGaps.includes(error)),
     ...explanation.judge.issues,
     ...(adversarial?.blockers ?? []),
   ];
@@ -170,6 +312,7 @@ function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
     adversarial: adversarial?.ran
       ? `${yesNo(adversarial.passed)} ${scorePercent(adversarial.score)}`
       : adversarial?.skippedReason ?? "not recorded",
+    auditGaps,
     blockers,
     warnings,
     unsupportedClaims: explanation.judge.unsupportedClaims,
@@ -193,6 +336,7 @@ function emptyRiskSignals(): RiskSignals {
     quality: "not recorded",
     judge: "not recorded",
     adversarial: "not recorded",
+    auditGaps: [],
     blockers: [],
     warnings: [],
     unsupportedClaims: [],
@@ -204,20 +348,49 @@ function emptyRiskSignals(): RiskSignals {
   };
 }
 
+function riskSearchFieldsForPin(pin: ResumeAuditPin): string[] {
+  return [
+    pin.title,
+    pin.section,
+    pin.transformType,
+    ...pin.controls,
+    ...pin.evidenceIds,
+    ...pin.requirementIds,
+    ...pin.matchedSignals,
+    ...(pin.sourceText ?? []),
+    ...pin.tailoredText,
+  ]
+    .map(normalizeResumeLine)
+    .filter(Boolean);
+}
+
+function riskItemMatchesPin(pin: ResumeAuditPin, riskItem: string): boolean {
+  const normalizedRisk = normalizeResumeLine(riskItem);
+  if (!normalizedRisk) return false;
+  const fields = riskSearchFieldsForPin(pin);
+  if (fields.some((field) => field === normalizedRisk)) return true;
+  if (normalizedRisk.length < 24) return false;
+  return fields.some((field) => field.includes(normalizedRisk) || normalizedRisk.includes(field));
+}
+
+function pinHasClaimRisk(pin: ResumeAuditPin, risk: RiskSignals): boolean {
+  return [
+    ...risk.blockers,
+    ...risk.unsupportedClaims,
+    ...risk.fabrications,
+    ...risk.missingRequiredEvidence,
+  ].some((riskItem) => riskItemMatchesPin(pin, riskItem));
+}
+
 function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn" {
   if (pin.provenanceState === "missing") {
     return "warn";
   }
-  if (
-    risk.blockers.length ||
-    risk.unsupportedClaims.length ||
-    risk.fabrications.length ||
-    risk.missingRequiredEvidence.length ||
-    !pin.evidenceIds.length ||
-    pin.sourceText === null
-  ) {
+  if (pinHasClaimRisk(pin, risk)) {
     return "warn";
   }
+  if (pin.sourceText !== null && pin.sourceText.length) return "ok";
+  if (pin.provenanceState === "not_applicable") return "info";
   if (risk.warnings.length || risk.residualWarnings.length || !risk.hasAnyAudit) {
     return "info";
   }
@@ -226,17 +399,14 @@ function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn"
 
 function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
   if (pin.provenanceState === "missing") {
-    return "missing provenance";
+    return "missing source";
   }
-  const tone = pinTone(pin, risk);
-  if (tone === "ok") return "grounded";
-  if (
-    risk.unsupportedClaims.length ||
-    risk.fabrications.length ||
-    risk.missingRequiredEvidence.length ||
-    !pin.evidenceIds.length
-  ) {
+  if (pinHasClaimRisk(pin, risk)) {
     return "claim risk";
+  }
+  if (pin.provenanceState === "not_applicable") return "structure";
+  if (pin.sourceText !== null && pin.sourceText.length) {
+    return pin.evidenceIds.length ? "grounded" : "source-backed";
   }
   return "review";
 }
@@ -339,6 +509,7 @@ function RiskPanel({ risk }: { readonly risk: RiskSignals }): JSX.Element {
       <FindingList label="Fabrications" items={risk.fabrications} tone="danger" />
       <FindingList label="Missing required evidence" items={risk.missingRequiredEvidence} tone="danger" />
       <FindingList label="Blockers" items={risk.blockers} tone="danger" />
+      <FindingList label="Audit metadata gaps" items={risk.auditGaps} tone="warning" />
       <FindingList label="Warnings" items={risk.warnings} tone="warning" />
       <FindingList label="Accepted residual warnings" items={risk.residualWarnings} tone="warning" />
       <FindingList label="Repair instructions" items={risk.repairInstructions} tone="warning" />
@@ -357,6 +528,8 @@ function PinDetail({
   const sourceEmpty =
     pin.provenanceState === "missing"
       ? "No source text was recorded for this resume line."
+      : pin.provenanceState === "not_applicable"
+        ? "This resume structure line does not require source attribution."
       : "No source text was recorded for this claim.";
   const tailoredEmpty =
     pin.provenanceState === "missing"
@@ -416,17 +589,22 @@ export function ResumeAuditPins({
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
   const resumeLines = useMemo(() => resumeLinesFromText(resumeText), [resumeText]);
-  const provenancePins = useMemo(() => (explanation ? pinsFromExplanation(explanation) : []), [explanation]);
-  const canUseResumeFallback = Boolean(
-    !provenancePins.length && resumeLines.length && (detail.data || detail.error),
+  const explanationPins = useMemo(() => (explanation ? pinsFromExplanation(explanation) : []), [explanation]);
+  const canUseResumeLines = Boolean(
+    resumeLines.length && (explanation || detail.data || detail.error),
+  );
+  const linePins = useMemo(
+    () => (canUseResumeLines ? pinsFromResumeLines(resumeLines, explanation) : []),
+    [canUseResumeLines, explanation, resumeLines],
   );
   const pins = useMemo(
-    () => (provenancePins.length ? provenancePins : canUseResumeFallback ? pinsFromResumeText(resumeLines) : []),
-    [canUseResumeFallback, provenancePins, resumeLines],
+    () => (linePins.length ? linePins : explanationPins),
+    [explanationPins, linePins],
   );
   const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
-  const usingResumeFallback = canUseResumeFallback && !provenancePins.length && pins.length > 0;
+  const usingResumeFallback = Boolean(!explanation && canUseResumeLines && linePins.length > 0);
+  const selectedPinRef = useRef<HTMLLIElement | null>(null);
 
   useEffect(() => {
     if (!pins.length) {
@@ -450,6 +628,12 @@ export function ResumeAuditPins({
 
   const selectedPin = pins.find((pin) => pin.id === selectedPinId) ?? pins[0] ?? null;
   const errorMessage = detail.error instanceof Error ? detail.error.message : null;
+
+  useEffect(() => {
+    if (typeof selectedPinRef.current?.scrollIntoView === "function") {
+      selectedPinRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedPin?.id]);
 
   useEffect(() => {
     onSelectedLineNumberChange?.(selectedPin?.lineNumber ?? null);
@@ -482,7 +666,7 @@ export function ResumeAuditPins({
                 ? `Rendered resume line ${pin.lineNumber}: ${preview}`
                 : `${formatToken(pin.section)} pin ${index + 1}: ${pin.title}`;
               return (
-                <li key={pin.id}>
+                <li key={pin.id} ref={pin.id === selectedPin?.id ? selectedPinRef : undefined}>
                   <button
                     aria-label={accessibleName}
                     aria-pressed={pin.id === selectedPin?.id}

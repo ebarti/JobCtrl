@@ -212,7 +212,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       },
       materialsPreview: {
         resumeText:
-          "Principal Platform Engineer\n\nLed platform reliability programs and incident response improvements for distributed systems teams.",
+          "Principal Platform Engineer\n\nOwned platform reliability improvements for incident response.",
         resumeTextArtifactId: "resume-text-2",
         resumePdfArtifactId: "resume-pdf-2",
         coverLetterText:
