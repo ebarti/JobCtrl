@@ -161,6 +161,21 @@ def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority()
     assert plan.target_seniority == "senior"
 
 
+def test_build_tailoring_plan_maps_legacy_resume_bullets_to_evidence_ids() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0].pop("achievement_evidence")
+
+    plan = build_tailoring_plan(
+        profile,
+        _senior_job(),
+        employer_analysis=_employer_analysis("latency"),
+    )
+
+    assert plan.evidence_items[0].evidence_id == "acme_swe_bullet_1"
+    assert plan.evidence_items[0].source_text == "Reduced API latency 35% by replacing synchronous calls."
+    assert "acme_swe_bullet_1" in plan.required_evidence_ids
+
+
 def test_build_tailoring_change_annotations_explain_reframed_resume_sections() -> None:
     profile = _profile()
     job = _senior_job()

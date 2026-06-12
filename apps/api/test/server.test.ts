@@ -2415,6 +2415,122 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("backfills profile evidence mapping for legacy resume bullets", async () => {
+    const resumePath = path.join(tempDir, "tailoring-legacy-profile-evidence-resume.txt");
+    fs.writeFileSync(resumePath, "Resume with platform reliability and 35% latency improvement.");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    seedDb.exec(`
+      CREATE TABLE candidate_profile_experience_entries (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        position_index INTEGER NOT NULL,
+        date_range TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        company TEXT NOT NULL DEFAULT '',
+        location TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (tenant_id, profile_id, entry_id)
+      );
+      CREATE TABLE candidate_profile_experience_bullets (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        bullet_index INTEGER NOT NULL,
+        bullet_text TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id, entry_id, bullet_index)
+      );
+    `);
+    seedDb.prepare(`
+      INSERT INTO candidate_profile_experience_entries (
+        tenant_id, profile_id, entry_id, position_index, title, company
+      ) VALUES ('local', 'default', 'acme_swe', 0, 'Senior SWE', 'Acme Corp')
+    `).run();
+    seedDb.prepare(`
+      INSERT INTO candidate_profile_experience_bullets (
+        tenant_id, profile_id, entry_id, bullet_index, bullet_text
+      ) VALUES ('local', 'default', 'acme_swe', 0, ?)
+    `).run("Owned API latency 35% by replacing synchronous calls.");
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-legacy-profile-evidence",
+      title: "Platform Engineering Lead",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+      fullDescription: "Platform reliability, API latency, and senior ownership.",
+    });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-legacy-profile-evidence", 1, 9, {
+      keywords: ["platform reliability", "api latency"],
+    });
+    const metadata = completeTailoringAuditMetadata();
+    const qualityPlan = metadata.quality_plan as Record<string, unknown>;
+    qualityPlan.required_evidence_ids = [];
+    qualityPlan.seniority_evidence_ids = [];
+    metadata.change_annotations = [
+      {
+        section: "experience",
+        label: "Senior SWE at Acme Corp",
+        change_type: "achievement_reframed",
+        source_id: "acme_swe",
+        source_text: ["Senior SWE", "Owned API latency 35% by replacing synchronous calls."],
+        tailored_text: ["Owned platform reliability and reduced API latency 35%."],
+        rationale: "Reframed toward platform reliability.",
+        job_signals: ["platform reliability", "api latency"],
+        controls: ["target seniority: executive", "claim mode: evidence_reframing"],
+        evidence_ids: [],
+        evidence_notes: [],
+      },
+    ];
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-legacy-profile-evidence",
+      artifactId: "artifact-tailoring-legacy-profile-evidence",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata,
+    });
+    insertBulletProvenanceRow(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-legacy-profile-evidence",
+      artifactId: "artifact-tailoring-legacy-profile-evidence",
+      bulletId: "experience:acme_swe#0",
+      section: "experience",
+      sourceId: "acme_swe",
+      evidenceIds: [],
+      requirementIds: ["req_platform"],
+      matchedKeywords: ["platform reliability", "api latency"],
+      transformType: "reframe",
+      control: "rephrase_allowed",
+      rationale: "Reframed legacy resume bullet toward the job.",
+      generatedText: "Owned platform reliability and reduced API latency 35%.",
+      coverage: {
+        computed_against: "rendered_text",
+        planned: ["platform reliability", "api latency"],
+        covered: ["platform reliability", "api latency"],
+        missing: [],
+        covered_by: { "platform reliability": "experience:acme_swe#0", "api latency": "experience:acme_swe#0" },
+        counts: { planned: 2, covered: 2, missing: 0 },
+      },
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-legacy-profile-evidence",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const explanation = response.json().tailoringExplanation;
+    expect(explanation.evidence.requiredIds).toContain("acme_swe_bullet_1");
+    expect(explanation.evidence.seniorityIds).toContain("acme_swe_bullet_1");
+    expect(explanation.evidence.representedIds).toContain("acme_swe_bullet_1");
+    expect(explanation.annotatedChanges[0].evidenceIds).toContain("acme_swe_bullet_1");
+    expect(explanation.bulletProvenance[0].evidenceIds).toContain("acme_swe_bullet_1");
+    expect(explanation.quality.errors.join("\n")).not.toContain("profile evidence mapping");
+
+    await app.close();
+  });
+
   it("flags keyword-only tailoring explanations as incomplete audit metadata", async () => {
     const resumePath = path.join(tempDir, "tailoring-incomplete-audit-resume.txt");
     fs.writeFileSync(resumePath, "Resume with AWS and CI/CD delivery.");

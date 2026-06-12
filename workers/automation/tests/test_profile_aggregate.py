@@ -92,6 +92,17 @@ def test_from_dict_parses_valid_profile():
     assert profile.resume_constraints.real_metrics == ("40%",)
 
 
+def test_get_achievement_evidence_derives_legacy_bullets_when_explicit_evidence_missing():
+    evidence = get_achievement_evidence(_valid_profile_dict())
+
+    assert [item["id"] for item in evidence] == ["role_1_bullet_1", "role_1_bullet_2"]
+    assert [item["source_text"] for item in evidence] == ["Built APIs.", "Reduced incidents 40%."]
+    assert evidence[1]["metrics"] == ["40%"]
+    assert all(item["experience_entry_id"] == "role_1" for item in evidence)
+    assert all(item["evidence_strength"] == "supported" for item in evidence)
+    assert all(item["user_confirmed"] is True for item in evidence)
+
+
 def test_from_dict_rejects_missing_resume_block():
     with pytest.raises(InvalidProfileError) as exc:
         Profile.from_dict(LOCAL_TENANT, {"personal": {"full_name": "X"}})
