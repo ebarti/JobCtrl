@@ -335,20 +335,20 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
     expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const auditLineOne = screen.getByRole("button", {
-      name: /Source pointer for rendered resume line 1: Resume structure/i,
+    expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    const renderedLineThree = within(renderedResume).getByRole("button", {
+      name: "Line 3: Owned platform reliability improvements for incident response.",
     });
-    const auditLineThree = screen.getByRole("button", {
-      name: /Source pointer for rendered resume line 3: Experience -> Senior SWE at Acme/i,
-    });
-    expect(within(auditLineOne).queryByText("claim risk")).not.toBeInTheDocument();
-    await user.click(auditLineThree);
-    expect(screen.getByText("Source pointer")).toBeInTheDocument();
-    expect(within(auditLineThree).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
-    expect(within(auditLineThree).getByText("Source evidence")).toBeInTheDocument();
-    expect(within(auditLineThree).getByText("Built platform services.")).toBeInTheDocument();
-    expect(screen.getByText("Bullet provenance")).toBeInTheDocument();
-    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
+    const initialAudit = screen.getByRole("article", { name: /Selected resume line audit for line 1/i });
+    expect(within(initialAudit).queryByText("claim risk")).not.toBeInTheDocument();
+    await user.click(renderedLineThree);
+    const selectedAudit = screen.getByRole("article", { name: /Selected resume line audit for line 3/i });
+    expect(within(selectedAudit).getByText("Source pointer")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
+    expect(within(selectedAudit).getAllByText("Source evidence").length).toBeGreaterThan(0);
+    expect(within(selectedAudit).getByText("Built platform services.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Bullet provenance")).toBeInTheDocument();
     expect(screen.queryByText("Tailored artifact text")).not.toBeInTheDocument();
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Achievement Reframed").length).toBeGreaterThan(0);
@@ -400,23 +400,22 @@ describe("<ApplyReviewView>", () => {
     });
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
-    const auditLineThree = await screen.findByRole("button", {
-      name: /Source pointer for rendered resume line 3: Experience -> Senior SWE at Acme/i,
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    const renderedLineThree = within(renderedResume).getByRole("button", {
+      name: "Line 3: Owned platform reliability improvements for incident response.",
     });
-    await user.click(auditLineThree);
+    await user.click(renderedLineThree);
+    const selectedAudit = screen.getByRole("article", { name: /Selected resume line audit for line 3/i });
 
     expect(screen.getAllByText("source span").length).toBeGreaterThan(0);
     expect(screen.queryByText("source-backed")).not.toBeInTheDocument();
     expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
-    expect(screen.getByText("Source pointer")).toBeInTheDocument();
-    expect(screen.getByText("Section source span")).toBeInTheDocument();
-    expect(within(auditLineThree).getByText("Source evidence")).toBeInTheDocument();
-    expect(within(auditLineThree).getByText("Built platform services.")).toBeInTheDocument();
-    expect(within(auditLineThree).getByText("Led incident response handovers.")).toBeInTheDocument();
-    const sourceSpan = screen.getByText("Recorded source span (2 lines)").closest("details");
-    expect(sourceSpan).not.toBeNull();
-    expect(sourceSpan).not.toHaveAttribute("open");
-    expect(screen.getByText("Audit metadata gaps")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Source pointer")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Section source span")).toBeInTheDocument();
+    expect(within(selectedAudit).getAllByText("Source evidence").length).toBeGreaterThan(0);
+    expect(within(selectedAudit).getByText("Built platform services.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Led incident response handovers.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Audit metadata gaps")).toBeInTheDocument();
     expect(
       screen.getAllByText("Tailoring audit metadata incomplete: missing profile evidence mapping").length,
     ).toBeGreaterThan(0);
@@ -425,13 +424,6 @@ describe("<ApplyReviewView>", () => {
 
   it("falls back to a line-by-line resume audit when generation provenance is missing", async () => {
     const user = userEvent.setup();
-    const scrolledElements: Element[] = [];
-    const scrollIntoView = vi.fn(function scrollSelectedElementIntoView(this: Element) {
-      scrolledElements.push(this);
-    });
-    const elementPrototype = window.HTMLElement.prototype as Partial<Pick<Element, "scrollIntoView">>;
-    const originalScrollIntoView = elementPrototype.scrollIntoView;
-    elementPrototype.scrollIntoView = scrollIntoView;
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -470,34 +462,20 @@ describe("<ApplyReviewView>", () => {
       name: "Line 3: Owned platform reliability improvements for incident response.",
     });
     await waitFor(() => expect(renderedLineOne).toHaveAttribute("aria-pressed", "true"));
-    scrollIntoView.mockClear();
-    scrolledElements.length = 0;
     expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
     expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
-    const auditLineOne = screen.getByRole("button", {
-      name: /Source pointer for rendered resume line 1: Resume structure/i,
-    });
-    const auditLineThree = screen.getByRole("button", {
-      name: /Source pointer for rendered resume line 3: No source pointer recorded/i,
-    });
-    expect(auditLineOne).toBeInTheDocument();
-    expect(auditLineThree).toBeInTheDocument();
-    await user.click(auditLineThree);
+    expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: /Selected resume line audit for line 1/i })).toBeInTheDocument();
+    await user.click(renderedLineThree);
     expect(renderedLineThree).toHaveAttribute("aria-pressed", "true");
     expect(renderedLineOne).toHaveAttribute("aria-pressed", "false");
-    await waitFor(() =>
-      expect(scrolledElements.some((element) => element.closest(".resume-pin-list"))).toBe(true),
-    );
+    expect(screen.getByRole("article", { name: /Selected resume line audit for line 3/i })).toBeInTheDocument();
     expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
     expect(screen.getByText("No source pointer was recorded for this resume line.")).toBeInTheDocument();
     await user.click(renderedLineOne);
-    expect(auditLineOne).toHaveAttribute("aria-pressed", "true");
-    expect(auditLineThree).toHaveAttribute("aria-pressed", "false");
-    if (originalScrollIntoView) {
-      elementPrototype.scrollIntoView = originalScrollIntoView;
-    } else {
-      delete elementPrototype.scrollIntoView;
-    }
+    expect(renderedLineOne).toHaveAttribute("aria-pressed", "true");
+    expect(renderedLineThree).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("article", { name: /Selected resume line audit for line 1/i })).toBeInTheDocument();
   });
 
   it("opens job detail as an in-place overlay", async () => {

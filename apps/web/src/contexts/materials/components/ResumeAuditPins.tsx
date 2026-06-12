@@ -1,5 +1,5 @@
 import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobhunter/contracts";
-import { useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
@@ -460,28 +460,6 @@ function TagRow({
   );
 }
 
-function TextLines({
-  empty,
-  lines,
-}: {
-  readonly empty: string;
-  readonly lines: readonly string[] | null;
-}): JSX.Element {
-  if (lines === null) {
-    return <p className="muted">{empty}</p>;
-  }
-  if (!lines.length) {
-    return <p className="muted">No text was recorded.</p>;
-  }
-  return (
-    <ul className="annotation-line-list">
-      {lines.map((line) => (
-        <li key={line}>{line}</li>
-      ))}
-    </ul>
-  );
-}
-
 function FindingList({
   label,
   items,
@@ -562,7 +540,9 @@ function SourceEvidencePreview({
   readonly expanded: boolean;
   readonly pin: ResumeAuditPin;
 }): JSX.Element | null {
-  if (pin.sourceGranularity === "structure") return null;
+  if (pin.sourceGranularity === "structure") {
+    return <span className="resume-pin-source-evidence muted">Resume structure; no source evidence required.</span>;
+  }
   if (pin.sourceGranularity === "missing") {
     return <span className="resume-pin-source-evidence missing">No source evidence recorded for this line.</span>;
   }
@@ -574,7 +554,6 @@ function SourceEvidencePreview({
   const hiddenLineCount = pin.sourceText.length - visibleLines.length;
   return (
     <span className="resume-pin-source-evidence" aria-label={`Source evidence: ${pin.sourceText.join(" ")}`}>
-      <span className="resume-pin-source-label">Source evidence</span>
       {visibleLines.map((line, index) => (
         <span className="resume-pin-source-line" key={`${pin.id}:source:${index}`}>
           {line}
@@ -597,7 +576,6 @@ function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
     return <p className="muted">This resume structure line does not require source attribution.</p>;
   }
 
-  const sourceSpanCount = pin.sourceText?.length ?? 0;
   return (
     <div className="source-pointer">
       <p>
@@ -613,19 +591,11 @@ function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
           <dd>{pin.sourceId || <span className="muted">none recorded</span>}</dd>
         </div>
       </dl>
-      {sourceSpanCount ? (
-        <details className="source-span-disclosure">
-          <summary>Recorded source span ({sourceSpanCount} line{sourceSpanCount === 1 ? "" : "s"})</summary>
-          <TextLines empty="No source text was recorded." lines={pin.sourceText} />
-        </details>
-      ) : (
-        <p className="muted">No source text span was recorded for this pointer.</p>
-      )}
     </div>
   );
 }
 
-function PinDetail({
+function SelectedPinInspector({
   pin,
   risk,
 }: {
@@ -634,7 +604,11 @@ function PinDetail({
 }): JSX.Element {
   const tone = pinTone(pin, risk);
   return (
-    <article className="resume-pin-detail" aria-live="polite">
+    <article
+      aria-label={pin.lineNumber ? `Selected resume line audit for line ${pin.lineNumber}` : "Selected resume audit"}
+      className="resume-pin-detail"
+      aria-live="polite"
+    >
       <header>
         <div>
           <span className="eyebrow">{formatToken(pin.section)}</span>
@@ -643,6 +617,10 @@ function PinDetail({
         <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
       </header>
       <div className="resume-pin-diff">
+        <section>
+          <h5>Source evidence</h5>
+          <SourceEvidencePreview expanded pin={pin} />
+        </section>
         <section>
           <h5>Source pointer</h5>
           <SourcePointer pin={pin} />
@@ -698,7 +676,6 @@ export function ResumeAuditPins({
   const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const usingResumeFallback = Boolean(!explanation && canUseResumeLines && linePins.length > 0);
-  const selectedPinRef = useRef<HTMLLIElement | null>(null);
 
   useEffect(() => {
     if (!pins.length) {
@@ -724,12 +701,6 @@ export function ResumeAuditPins({
   const errorMessage = detail.error instanceof Error ? detail.error.message : null;
 
   useEffect(() => {
-    if (typeof selectedPinRef.current?.scrollIntoView === "function") {
-      selectedPinRef.current.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedPin?.id]);
-
-  useEffect(() => {
     onSelectedLineNumberChange?.(selectedPin?.lineNumber ?? null);
   }, [onSelectedLineNumberChange, selectedPin?.lineNumber]);
 
@@ -750,41 +721,9 @@ export function ResumeAuditPins({
       {detail.data && explanation && !pins.length ? (
         <Empty title="No resume claim pins or rendered resume text were recorded for this artifact generation." />
       ) : null}
-      {pins.length ? (
+      {selectedPin ? (
         <div className="resume-pin-shell">
-          <ul className="resume-pin-list" aria-label="Resume audit line list">
-            {pins.map((pin, index) => {
-              const tone = pinTone(pin, risk);
-              const selected = pin.id === selectedPin?.id;
-              const pointerPreview = sourcePointerLabel(pin);
-              const accessibleName = pin.lineNumber
-                ? `Source pointer for rendered resume line ${pin.lineNumber}: ${pointerPreview}`
-                : `${formatToken(pin.section)} pin ${index + 1}: ${pin.title}`;
-              return (
-                <li key={pin.id} ref={pin.id === selectedPin?.id ? selectedPinRef : undefined}>
-                  <button
-                    aria-label={accessibleName}
-                    aria-pressed={selected}
-                    className={`resume-pin-button${selected ? " selected" : ""}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedPinId(pin.id);
-                      onSelectedLineNumberChange?.(pin.lineNumber ?? null);
-                    }}
-                  >
-                    <span className="resume-pin-meta">
-                      {pin.lineNumber ? <span className="resume-line-number">Line {pin.lineNumber}</span> : null}
-                      <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
-                    </span>
-                    <b>{pin.lineNumber ? formatToken(pin.section) : pin.title}</b>
-                    <span className="resume-pin-pointer">{pointerPreview}</span>
-                    <SourceEvidencePreview expanded={selected} pin={pin} />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {selectedPin ? <PinDetail pin={selectedPin} risk={risk} /> : null}
+          <SelectedPinInspector pin={selectedPin} risk={risk} />
         </div>
       ) : null}
     </section>
