@@ -63,6 +63,7 @@ exist; the work was verified retroactively (this document + the per-phase `VERIF
 - Post-completion QA correction: Jobs fit-score badges now keep mid-positive scores such as 7 in the green success family instead of warning/red; verified by targeted ScoreBadge regression coverage.
 - Post-completion QA correction: Apply Review ready/ok status badges and success facts now use visible success-green styling rather than blue/info or weak neutral styling; verified by targeted Apply Review and Jobs drawer regression coverage.
 - Post-completion QA correction: Apply Review now falls back from missing artifact provenance to a line-by-line rendered-resume audit, preserving reviewer inspection instead of showing an empty pin state; verified by `corepack pnpm --filter @jobhunter/web test src/views/apply-review/ApplyReviewView.test.tsx`, `corepack pnpm web:check`, and `git diff --check`.
+- Post-completion QA correction: Shared success badges now use a visibly green `oklab`-mixed background, border, and foreground so the Apply Review `materials ready` badge does not render as a weak non-green tint; verified by `corepack pnpm --filter @jobhunter/web test src/styles/token-contract.test.ts src/views/apply-review/ApplyReviewView.test.tsx`, `corepack pnpm web:check`, `git diff --check`, and live computed-style QA on `/apply-review`.
 
 ## Residual
 
