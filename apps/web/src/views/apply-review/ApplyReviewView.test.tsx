@@ -278,7 +278,10 @@ describe("<ApplyReviewView>", () => {
     expect(within(selectedAudit).getByText("Built platform services.")).toBeInTheDocument();
     expect(within(selectedAudit).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
     expect(within(selectedAudit).getByText("Experience was emphasized because it matches platform reliability.")).toBeInTheDocument();
-    expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
+    const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
+    const renderedAudit = screen.getByRole("region", { name: "Rendered resume audit" });
+    expect(artifactRisk.compareDocumentPosition(renderedAudit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).not.toContainElement(artifactRisk);
     expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
     expect(screen.queryByText("Annotated resume changes")).not.toBeInTheDocument();
     expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();

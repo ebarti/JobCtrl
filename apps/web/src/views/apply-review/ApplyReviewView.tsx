@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
-import { ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
+import { ArtifactGroundingRiskPanel, ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -472,6 +472,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const evidenceGroups = evidenceValues(item).length;
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
+  const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
   useEffect(() => {
     setDetailJobKey(null);
@@ -561,6 +562,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             <h2>Tailored resume and cover</h2>
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
+            {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
             <ResumeReviewSurface item={item} />
             <TextPreview
               title="Cover letter"

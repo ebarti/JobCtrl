@@ -562,9 +562,15 @@ function FindingList({
   );
 }
 
-function RiskPanel({ risk }: { readonly risk: RiskSignals }): JSX.Element {
+function RiskPanel({
+  className = "resume-pin-risk",
+  risk,
+}: {
+  readonly className?: string;
+  readonly risk: RiskSignals;
+}): JSX.Element {
   return (
-    <div className="resume-pin-risk">
+    <section aria-label="Artifact-level grounding and claim risk" className={className}>
       <h4>Artifact-level grounding and claim risk</h4>
       <dl className="evidence-summary-grid">
         <div>
@@ -595,8 +601,20 @@ function RiskPanel({ risk }: { readonly risk: RiskSignals }): JSX.Element {
       <FindingList label="Warnings" items={risk.warnings} tone="warning" />
       <FindingList label="Accepted residual warnings" items={risk.residualWarnings} tone="warning" />
       <FindingList label="Repair instructions" items={risk.repairInstructions} tone="warning" />
-    </div>
+    </section>
   );
+}
+
+export function ArtifactGroundingRiskPanel({
+  artifactId,
+}: {
+  readonly artifactId: string;
+}): JSX.Element | null {
+  const detail = useArtifactDetailQuery(artifactId);
+  const explanation = detail.data?.tailoringExplanation ?? null;
+  const risk = useMemo(() => (explanation ? riskSignals(explanation) : emptyRiskSignals()), [explanation]);
+  if (!risk.hasAnyAudit) return null;
+  return <RiskPanel className="apply-review-preview-block apply-review-artifact-risk resume-pin-risk" risk={risk} />;
 }
 
 function lineagePrecision(pin: ResumeAuditPin): string {
@@ -802,7 +820,6 @@ export function ResumeAuditPins({
       ) : null}
       {selectedPin ? (
         <div className="resume-pin-shell">
-          {risk.hasAnyAudit ? <RiskPanel risk={risk} /> : null}
           <SelectedPinInspector pin={selectedPin} risk={risk} />
         </div>
       ) : null}
