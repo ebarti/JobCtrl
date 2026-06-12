@@ -68,7 +68,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Source quality stops feeding discovery budgets or dashboard health | `workers/automation/tests/test_discovery_scheduler_pr4.py`; `workers/automation/tests/test_source_quality_projection_pr4.py`; `apps/web/src/views/dashboard/SourceHealthCard.test.tsx`; `apps/web/src/contexts/operations/invalidation-router.test.ts` |
 | Discovery product controls stop recording source/quarantine/manual-capture feedback safely, mislabel locator candidates, preview quarantine residue as source leads, or hide low-score role-match suggestions and approval state | `apps/api/test/discovery-controls.test.ts`; `apps/api/test/server.test.ts`; `apps/web/src/contexts/discovery/components/DiscoveryProductControls.test.tsx`; `workers/automation/tests/test_title_filter.py` |
 | Apply review queue or outcome tracking starts apply automation, derives readiness differently from job detail, loses local-only outcome notes, hides pending outcome suggestions or in-flight apply stop controls, exposes raw Gmail body text, or stops invalidating job/outcome views after decisions | `apps/api/test/apply-audit.test.ts`; `apps/api/test/application-feedback.test.ts`; `apps/api/test/server.test.ts`; `workers/automation/tests/test_gmail_feedback.py`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; `apps/web/src/contexts/apply/components/ApplicationOutcomes.test.tsx`; `apps/web/src/contexts/apply/hooks/useApplyReviewMutations.test.ts`; `apps/web/src/contexts/operations/hooks/useApplyReviewOutcomeQueries.test.ts` |
-| Apply Review stops centering the rendered resume before audit detail, loses source-to-tailored claim pins, hides missing provenance, or drops grounding/risk labels from generated claims | `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/apply-review` |
+| Apply Review stops centering the rendered resume before audit detail, loses source-to-tailored claim pins, stops highlighting the selected rendered-resume line, hides missing provenance, or drops grounding/risk labels from generated claims | `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/apply-review` |
 | Discovery Target search stops driving role guidance, structured track/seniority/function recall, location fallback, Spain/Europe source filtering, new-job discovery limits, or API-visible source controls | `workers/automation/tests/test_target_search_preferences.py`; `workers/automation/tests/test_discovery_limits.py`; `workers/automation/tests/test_discovery_production_wiring.py`; `apps/api/test/discovery-controls.test.ts` |
 | Profile, Preferences, Discovery target search, or Settings form autosave/undo regresses and risks losing user edits | `apps/web/src/contexts/profile/forms/profile-form.test.tsx`; `apps/web/src/contexts/profile/forms/settings-form.test.tsx`; `apps/web/src/contexts/profile/components/StructuredProfileEditor.test.tsx` |
 | Discovery RFC production wiring stops auto-approving located parseable sources, feeding API-visible manual queues, canonical ATS ingestion, manual-capture imports, snapshot persistence, or acceptance evidence | `workers/automation/tests/test_discovery_production_wiring.py` uses a Barcelona/Spain tech-leadership fixture and report covering lead yield, candidate sources, manual-action count, canonical verification rate, duplicate/quarantine counts, source-quality updates, and scoring handoff count |
@@ -232,11 +232,13 @@ only after a completed dry run, records `approve_submit`, dry-run approval,
 defer, decline, and reset decisions without starting apply/browser automation,
 and refreshes the queue after each decision. Open a job detail drawer and
 verify its `applyAudit` readiness/blocker facts agree with the selected Apply
-Review job. For resume-audit changes, verify the rendered resume appears before
-claim pins or detailed audit cards, pins expose source text, tailored text,
-evidence IDs, requirement IDs, transform/controls, rationale, and
-grounding/risk labels when provenance exists, and missing provenance renders an
-explicit state instead of blank space. Manual outcomes should save with a
+Review job. For resume-audit changes, verify the rendered resume line-review
+surface appears before the faithful PDF preview, the PDF preview remains
+available below for visual verification, selecting a line in the audit rail
+highlights the matching rendered-resume text line, pins expose source text,
+tailored text, evidence IDs, requirement IDs, transform/controls, rationale,
+and grounding/risk labels when provenance exists, and missing provenance
+renders an explicit state instead of blank space. Manual outcomes should save with a
 canonical timestamp, local notes render only in the outcome timeline, pending
 outcome suggestions can be accepted, corrected, or ignored, and the job audit
 history shows review/outcome milestones without raw notes, email body text,

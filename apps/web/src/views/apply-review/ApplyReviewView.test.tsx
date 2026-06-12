@@ -224,7 +224,7 @@ describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    expect(await screen.findAllByText("Principal Platform Engineer")).toHaveLength(2);
+    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole("heading", { name: "Requirements and original post" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailored resume and cover" })).toBeInTheDocument();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
@@ -352,6 +352,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("falls back to a line-by-line resume audit when generation provenance is missing", async () => {
+    const user = userEvent.setup();
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -374,16 +375,29 @@ describe("<ApplyReviewView>", () => {
     });
 
     expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    expect(renderedResume).toBeInTheDocument();
+    const renderedLineOne = within(renderedResume).getByRole("button", {
+      name: "Line 1: Principal Platform Engineer",
+    });
+    const renderedLineThree = within(renderedResume).getByRole("button", {
+      name: "Line 3: Led platform reliability programs and incident response improvements for distributed systems teams.",
+    });
+    await waitFor(() => expect(renderedLineOne).toHaveAttribute("aria-pressed", "true"));
     expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
     expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Rendered resume line 1: Principal Platform Engineer/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
+    const auditLineOne = screen.getByRole("button", { name: /Rendered resume line 1: Principal Platform Engineer/i });
+    const auditLineThree = screen.getByRole("button", {
         name: /Rendered resume line 3: Led platform reliability programs and incident response improvements/i,
-      }),
-    ).toBeInTheDocument();
+    });
+    expect(auditLineOne).toBeInTheDocument();
+    expect(auditLineThree).toBeInTheDocument();
+    await user.click(auditLineThree);
+    expect(renderedLineThree).toHaveAttribute("aria-pressed", "true");
+    expect(renderedLineOne).toHaveAttribute("aria-pressed", "false");
+    await user.click(renderedLineOne);
+    expect(auditLineOne).toHaveAttribute("aria-pressed", "true");
+    expect(auditLineThree).toHaveAttribute("aria-pressed", "false");
     expect(screen.getAllByText("missing provenance").length).toBeGreaterThan(0);
     expect(screen.getByText("No source text was recorded for this resume line.")).toBeInTheDocument();
   });
@@ -717,7 +731,7 @@ describe("<ApplyReviewView>", () => {
 
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
 
-    expect(await screen.findAllByText("Principal Platform Engineer")).toHaveLength(2);
+    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("outcomes unavailable")).not.toBeInTheDocument();
     expect(applicationOutcomes).not.toHaveBeenCalled();
   });

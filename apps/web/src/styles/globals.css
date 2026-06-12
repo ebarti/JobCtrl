@@ -854,9 +854,29 @@ textarea:focus-visible {
   min-width: 0;
 }
 
+.apply-review-resume-main {
+  display: grid;
+  gap: 12px;
+}
+
 .apply-review-resume-main > .apply-review-preview-block,
 .apply-review-resume-pins {
   padding-bottom: 0;
+}
+
+.apply-review-faithful-resume {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.apply-review-faithful-resume .apply-review-preview-block {
+  padding-bottom: 0;
+}
+
+.apply-review-faithful-resume .pdf-preview-viewer {
+  height: min(42dvh, 520px);
+  min-height: 360px;
 }
 
 @media (min-width: 960px) {
@@ -876,6 +896,69 @@ textarea:focus-visible {
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.resume-line-review-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.resume-line-review-list {
+  display: grid;
+  gap: 4px;
+  max-height: min(58dvh, 680px);
+  margin: 0;
+  overflow: auto;
+  padding: 0 2px 0 0;
+  list-style: none;
+  scrollbar-gutter: stable;
+}
+
+.resume-line-review-line {
+  min-width: 0;
+}
+
+.resume-line-review-button {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.resume-line-review-button:hover {
+  border-color: var(--border);
+  background: var(--muted);
+}
+
+.resume-line-review-button[aria-pressed="true"] {
+  border-color: color-mix(in oklab, var(--status-info) 48%, var(--border));
+  background: color-mix(in oklab, var(--status-info) 16%, var(--card));
+  box-shadow: inset 3px 0 0 var(--status-info);
+}
+
+.resume-line-review-number {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.resume-line-review-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .resume-pin-shell {

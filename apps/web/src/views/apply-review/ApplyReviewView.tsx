@@ -1,6 +1,6 @@
 import type { ApplyAuditFact, ApplyAuditSource, ApplyReviewQueueItem } from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
@@ -23,6 +23,11 @@ type MaterialStatus = {
 };
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
+
+interface RenderedResumeLine {
+  readonly lineNumber: number;
+  readonly text: string;
+}
 
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
   return {
@@ -273,6 +278,73 @@ function TextPreview({
   );
 }
 
+function renderedResumeLines(resumeText: string | null | undefined): RenderedResumeLine[] {
+  return (resumeText ?? "")
+    .split(/\r?\n/)
+    .map((line, index) => ({
+      lineNumber: index + 1,
+      text: line.trim(),
+    }))
+    .filter((line) => line.text.length > 0);
+}
+
+function RenderedResumeLineReview({
+  resumeText,
+  selectedLineNumber,
+  onSelectLine,
+}: {
+  readonly resumeText: string | null | undefined;
+  readonly selectedLineNumber: number | null;
+  readonly onSelectLine: (lineNumber: number) => void;
+}) {
+  const lines = renderedResumeLines(resumeText);
+  const selectedLineRef = useRef<HTMLLIElement | null>(null);
+
+  useEffect(() => {
+    if (typeof selectedLineRef.current?.scrollIntoView === "function") {
+      selectedLineRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedLineNumber]);
+
+  return (
+    <section className="apply-review-preview-block apply-review-text-resume" aria-label="Rendered resume line review">
+      <h3>Rendered resume line review</h3>
+      <p className="resume-line-review-note">
+        Select a rendered line to inspect provenance and risk. The faithful PDF preview remains below for visual
+        verification.
+      </p>
+      {lines.length ? (
+        <ol className="resume-line-review-list" aria-label="Rendered resume text lines">
+          {lines.map((line) => {
+            const selected = line.lineNumber === selectedLineNumber;
+            return (
+              <li
+                className={`resume-line-review-line${selected ? " selected" : ""}`}
+                key={line.lineNumber}
+                ref={selected ? selectedLineRef : undefined}
+                value={line.lineNumber}
+              >
+                <button
+                  aria-label={`Line ${line.lineNumber}: ${line.text}`}
+                  aria-pressed={selected}
+                  className="resume-line-review-button"
+                  type="button"
+                  onClick={() => onSelectLine(line.lineNumber)}
+                >
+                  <span className="resume-line-review-number">Line {line.lineNumber}</span>
+                  <span className="resume-line-review-text">{line.text}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <Empty title="No rendered resume text is available for line review." />
+      )}
+    </section>
+  );
+}
+
 function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const { api } = usePorts();
   const artifactId = item.materialsPreview.resumePdfArtifactId;
@@ -303,13 +375,31 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
 
 function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
   const artifactId = item.materialsPreview.resumePdfArtifactId;
+  const [selectedLineNumber, setSelectedLineNumber] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSelectedLineNumber(null);
+  }, [item.jobKey]);
+
   return (
     <section className="apply-review-preview-block apply-review-resume-review" aria-label="Rendered resume audit">
       <div className="apply-review-resume-main">
-        <ResumePreview item={item} />
+        <RenderedResumeLineReview
+          resumeText={item.materialsPreview.resumeText}
+          selectedLineNumber={selectedLineNumber}
+          onSelectLine={setSelectedLineNumber}
+        />
+        <div className="apply-review-faithful-resume">
+          <ResumePreview item={item} />
+        </div>
       </div>
       {artifactId ? (
-        <ResumeAuditPins artifactId={artifactId} resumeText={item.materialsPreview.resumeText} />
+        <ResumeAuditPins
+          artifactId={artifactId}
+          resumeText={item.materialsPreview.resumeText}
+          selectedLineNumber={selectedLineNumber}
+          onSelectedLineNumberChange={setSelectedLineNumber}
+        />
       ) : (
         <section className="apply-review-resume-pins" aria-label="Line-by-line resume audit">
           <h3>Line-by-line resume audit</h3>

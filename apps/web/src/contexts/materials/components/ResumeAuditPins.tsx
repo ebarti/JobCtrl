@@ -11,6 +11,8 @@ interface ResumeAuditPinsProps {
   readonly artifactId: string;
   readonly resumeText?: string | null;
   readonly className?: string;
+  readonly selectedLineNumber?: number | null;
+  readonly onSelectedLineNumberChange?: (lineNumber: number | null) => void;
 }
 
 interface ResumeLineEntry {
@@ -408,6 +410,8 @@ export function ResumeAuditPins({
   artifactId,
   resumeText,
   className = "apply-review-resume-pins",
+  selectedLineNumber,
+  onSelectedLineNumberChange,
 }: ResumeAuditPinsProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
@@ -425,11 +429,31 @@ export function ResumeAuditPins({
   const usingResumeFallback = canUseResumeFallback && !provenancePins.length && pins.length > 0;
 
   useEffect(() => {
-    setSelectedPinId(pins[0]?.id ?? null);
-  }, [artifactId, pins]);
+    if (!pins.length) {
+      setSelectedPinId(null);
+      return;
+    }
+    const selectedLinePin =
+      selectedLineNumber === null || selectedLineNumber === undefined
+        ? null
+        : pins.find((pin) => pin.lineNumber === selectedLineNumber) ?? null;
+    setSelectedPinId((currentPinId) => {
+      if (selectedLinePin) {
+        return selectedLinePin.id;
+      }
+      if (currentPinId && pins.some((pin) => pin.id === currentPinId)) {
+        return currentPinId;
+      }
+      return pins[0]?.id ?? null;
+    });
+  }, [artifactId, pins, selectedLineNumber]);
 
   const selectedPin = pins.find((pin) => pin.id === selectedPinId) ?? pins[0] ?? null;
   const errorMessage = detail.error instanceof Error ? detail.error.message : null;
+
+  useEffect(() => {
+    onSelectedLineNumberChange?.(selectedPin?.lineNumber ?? null);
+  }, [onSelectedLineNumberChange, selectedPin?.lineNumber]);
 
   return (
     <section className={className} aria-label="Line-by-line resume audit">
@@ -464,7 +488,10 @@ export function ResumeAuditPins({
                     aria-pressed={pin.id === selectedPin?.id}
                     className={`resume-pin-button${pin.id === selectedPin?.id ? " selected" : ""}`}
                     type="button"
-                    onClick={() => setSelectedPinId(pin.id)}
+                    onClick={() => {
+                      setSelectedPinId(pin.id);
+                      onSelectedLineNumberChange?.(pin.lineNumber ?? null);
+                    }}
                   >
                     <span className="resume-pin-meta">
                       {pin.lineNumber ? <span className="resume-line-number">Line {pin.lineNumber}</span> : null}
