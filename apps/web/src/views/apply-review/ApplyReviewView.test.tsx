@@ -336,17 +336,18 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
     expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const auditLineOne = screen.getByRole("button", {
-      name: /Rendered resume line 1: Principal Platform Engineer/i,
+      name: /Source pointer for rendered resume line 1: Resume structure/i,
     });
     const auditLineThree = screen.getByRole("button", {
-      name: /Rendered resume line 3: Owned platform reliability improvements for incident response/i,
+      name: /Source pointer for rendered resume line 3: Experience -> Senior SWE at Acme/i,
     });
     expect(within(auditLineOne).queryByText("claim risk")).not.toBeInTheDocument();
     await user.click(auditLineThree);
     expect(screen.getByText("Source pointer")).toBeInTheDocument();
+    expect(within(auditLineThree).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
     expect(screen.getByText("Bullet provenance")).toBeInTheDocument();
     expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
-    expect(screen.getByText("Tailored artifact text")).toBeInTheDocument();
+    expect(screen.queryByText("Tailored artifact text")).not.toBeInTheDocument();
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Achievement Reframed").length).toBeGreaterThan(0);
     expect(screen.getAllByText("evidence_reframing").length).toBeGreaterThan(0);
@@ -398,7 +399,7 @@ describe("<ApplyReviewView>", () => {
 
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     const auditLineThree = await screen.findByRole("button", {
-      name: /Rendered resume line 3: Owned platform reliability improvements for incident response/i,
+      name: /Source pointer for rendered resume line 3: Experience -> Senior SWE at Acme/i,
     });
     await user.click(auditLineThree);
 
@@ -468,9 +469,11 @@ describe("<ApplyReviewView>", () => {
     scrolledElements.length = 0;
     expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
     expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
-    const auditLineOne = screen.getByRole("button", { name: /Rendered resume line 1: Principal Platform Engineer/i });
+    const auditLineOne = screen.getByRole("button", {
+      name: /Source pointer for rendered resume line 1: Resume structure/i,
+    });
     const auditLineThree = screen.getByRole("button", {
-      name: /Rendered resume line 3: Owned platform reliability improvements for incident response/i,
+      name: /Source pointer for rendered resume line 3: No source pointer recorded/i,
     });
     expect(auditLineOne).toBeInTheDocument();
     expect(auditLineThree).toBeInTheDocument();

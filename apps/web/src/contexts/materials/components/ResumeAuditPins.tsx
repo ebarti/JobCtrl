@@ -548,6 +548,13 @@ function lineagePrecision(pin: ResumeAuditPin): string {
   return "No source mapping";
 }
 
+function sourcePointerLabel(pin: ResumeAuditPin): string {
+  if (pin.sourceGranularity === "missing") return "No source pointer recorded";
+  if (pin.sourceGranularity === "structure") return "Resume structure";
+  const pointerLabel = pin.sourceLabel || formatToken(pin.section);
+  return `${formatToken(pin.section)} -> ${pointerLabel}`;
+}
+
 function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
   if (pin.sourceGranularity === "missing") {
     return <p className="muted">No source pointer was recorded for this resume line.</p>;
@@ -556,14 +563,11 @@ function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
     return <p className="muted">This resume structure line does not require source attribution.</p>;
   }
 
-  const pointerLabel = pin.sourceLabel || formatToken(pin.section);
   const sourceSpanCount = pin.sourceText?.length ?? 0;
   return (
     <div className="source-pointer">
       <p>
-        <b>{formatToken(pin.section)}</b>
-        {" -> "}
-        <span>{pointerLabel}</span>
+        <b>{sourcePointerLabel(pin)}</b>
       </p>
       <dl className="detail-list compact">
         <div>
@@ -595,10 +599,6 @@ function PinDetail({
   readonly risk: RiskSignals;
 }): JSX.Element {
   const tone = pinTone(pin, risk);
-  const tailoredEmpty =
-    pin.provenanceState === "missing"
-      ? "No resume text was recorded for this line."
-      : "No tailored text was recorded for this claim.";
   return (
     <article className="resume-pin-detail" aria-live="polite">
       <header>
@@ -612,10 +612,6 @@ function PinDetail({
         <section>
           <h5>Source pointer</h5>
           <SourcePointer pin={pin} />
-        </section>
-        <section>
-          <h5>Tailored artifact text</h5>
-          <TextLines empty={tailoredEmpty} lines={pin.tailoredText} />
         </section>
       </div>
       <dl className="detail-list compact">
@@ -725,9 +721,9 @@ export function ResumeAuditPins({
           <ul className="resume-pin-list" aria-label="Resume audit line list">
             {pins.map((pin, index) => {
               const tone = pinTone(pin, risk);
-              const preview = pin.tailoredText[0] ?? "No generated text recorded.";
+              const pointerPreview = sourcePointerLabel(pin);
               const accessibleName = pin.lineNumber
-                ? `Rendered resume line ${pin.lineNumber}: ${preview}`
+                ? `Source pointer for rendered resume line ${pin.lineNumber}: ${pointerPreview}`
                 : `${formatToken(pin.section)} pin ${index + 1}: ${pin.title}`;
               return (
                 <li key={pin.id} ref={pin.id === selectedPin?.id ? selectedPinRef : undefined}>
@@ -746,7 +742,7 @@ export function ResumeAuditPins({
                       <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
                     </span>
                     <b>{pin.lineNumber ? formatToken(pin.section) : pin.title}</b>
-                    <span>{preview}</span>
+                    <span>{pointerPreview}</span>
                   </button>
                 </li>
               );
