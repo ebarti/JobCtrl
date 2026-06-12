@@ -121,6 +121,10 @@ describe("<JobDetailDrawer>", () => {
     renderJobDetailDrawer("https://example.com/jobs/1");
 
     const triage = await screen.findByRole("region", { name: "Why this job is here" });
+    const drawer = screen.getByRole("dialog", { name: "Job details" });
+    expect(drawer).toHaveClass("job-detail-drawer");
+    expect(drawer.querySelector(".job-detail-drawer-content")).not.toBeNull();
+    expect(drawer.querySelector(".job-detail-drawer-main")).not.toBeNull();
     expect(within(triage).getByText("Audit triage")).toBeInTheDocument();
     expect(within(triage).getByText("8/10")).toBeInTheDocument();
     expect(within(triage).getByText("strong")).toBeInTheDocument();

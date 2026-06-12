@@ -84,7 +84,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
 
   return (
     <DetailDrawerBackdrop onDismiss={onClose}>
-      <div className="drawer" role="dialog" aria-modal="true" aria-label="Job details">
+      <div className="drawer job-detail-drawer" role="dialog" aria-modal="true" aria-label="Job details">
         <button
           aria-label="Close job details"
           className="drawer-close"
@@ -98,84 +98,88 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
         {detail ? (
           <>
             <JobOverview detail={detail} />
-            <JobAuditTriage detail={detail} />
-            <JobActions
-              jobId={detail.job.jobKey}
-              currentStage={detail.job.currentSubstage}
-              canRetryStage={canRetryStage(currentSubstage)}
-              canRetailor={detail.artifacts.length > 0}
-            />
-            <Section title="Preparation diagnostics">
-              <StageTimeline
+            <div className="job-detail-drawer-content">
+              <JobAuditTriage detail={detail} />
+              <JobActions
                 jobId={detail.job.jobKey}
-                stages={preparationStages(detail.stages)}
+                currentStage={detail.job.currentSubstage}
+                canRetryStage={canRetryStage(currentSubstage)}
+                canRetailor={detail.artifacts.length > 0}
               />
-            </Section>
-            <Section title="Active artifacts">
-              {detail.artifacts.length ? (
-                detail.artifacts.map((artifact) => (
-                  <div className="mini-row" key={artifact.artifactId}>
-                    <ArtifactStatusBadge status={artifact.status} />
-                    <span>{artifact.type}</span>
-                    <code>{artifact.localPath}</code>
-                    <OpenArtifactButton
-                      artifactId={artifact.artifactId}
-                      disabled={artifact.status === "missing"}
-                    />
-                  </div>
-                ))
-              ) : (
-                <Empty title="No active apply-ready artifacts." />
-              )}
-            </Section>
-            <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section" />
-            {resumeArtifact ? (
-              <ArtifactTailoringInspector
-                artifactId={resumeArtifact.artifactId}
-                className="section"
-              />
-            ) : null}
-            <Section title="Apply history">
-              <ApplyHistory jobId={detail.job.jobKey} />
-            </Section>
-            <Section title="Application outcomes">
-              <JobOutcomePanel jobId={detail.job.jobKey} />
-            </Section>
-            <Section title="Score breakdown">
-              {detail.job.scoreStaleness.isStale ? (
-                <div className="score-policy-row">
-                  <ScoreStalenessBadge staleness={detail.job.scoreStaleness} />
-                  <span className="muted">
-                    scoring policy updated; reset this score before rescoring
-                  </span>
-                  <ResetStaleScoresButton
-                    className="tab on"
-                    jobKeys={[detail.job.jobKey]}
-                    label="reset for rescore"
-                    staleCount={1}
+              <div className="job-detail-drawer-main">
+                <Section title="Preparation diagnostics">
+                  <StageTimeline
+                    jobId={detail.job.jobKey}
+                    stages={preparationStages(detail.stages)}
                   />
-                </div>
-              ) : null}
-              <ScoreBreakdown
-                fitScore={detail.job.fitScore}
-                scoreBreakdown={detail.job.scoreBreakdown}
-                scoreKeywords={detail.job.scoreKeywords}
-                scoreReasoning={detail.job.scoreReasoning}
-                scoreVersion={detail.job.scoreVersion}
-                scoredAt={detail.job.scoredAt}
-                scoreCriteria={detail.job.scoreCriteria}
-                scoreTrace={detail.job.scoreTrace}
-                scoreCorrection={detail.job.scoreCorrection}
-              />
-              <ScoreCorrectionControl
-                jobId={detail.job.jobKey}
-                currentScore={detail.job.fitScore}
-              />
-            </Section>
-            <Section title="Description">
-              <JobDescription text={detail.job.descriptionPreview} />
-            </Section>
-            <JobAuditHistorySection entries={detail.auditHistory} />
+                </Section>
+                <Section title="Active artifacts">
+                  {detail.artifacts.length ? (
+                    detail.artifacts.map((artifact) => (
+                      <div className="mini-row" key={artifact.artifactId}>
+                        <ArtifactStatusBadge status={artifact.status} />
+                        <span>{artifact.type}</span>
+                        <code>{artifact.localPath}</code>
+                        <OpenArtifactButton
+                          artifactId={artifact.artifactId}
+                          disabled={artifact.status === "missing"}
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <Empty title="No active apply-ready artifacts." />
+                  )}
+                </Section>
+                <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section" />
+                {resumeArtifact ? (
+                  <ArtifactTailoringInspector
+                    artifactId={resumeArtifact.artifactId}
+                    className="section"
+                  />
+                ) : null}
+                <Section title="Apply history">
+                  <ApplyHistory jobId={detail.job.jobKey} />
+                </Section>
+                <Section title="Application outcomes">
+                  <JobOutcomePanel jobId={detail.job.jobKey} />
+                </Section>
+                <Section title="Score breakdown">
+                  {detail.job.scoreStaleness.isStale ? (
+                    <div className="score-policy-row">
+                      <ScoreStalenessBadge staleness={detail.job.scoreStaleness} />
+                      <span className="muted">
+                        scoring policy updated; reset this score before rescoring
+                      </span>
+                      <ResetStaleScoresButton
+                        className="tab on"
+                        jobKeys={[detail.job.jobKey]}
+                        label="reset for rescore"
+                        staleCount={1}
+                      />
+                    </div>
+                  ) : null}
+                  <ScoreBreakdown
+                    fitScore={detail.job.fitScore}
+                    scoreBreakdown={detail.job.scoreBreakdown}
+                    scoreKeywords={detail.job.scoreKeywords}
+                    scoreReasoning={detail.job.scoreReasoning}
+                    scoreVersion={detail.job.scoreVersion}
+                    scoredAt={detail.job.scoredAt}
+                    scoreCriteria={detail.job.scoreCriteria}
+                    scoreTrace={detail.job.scoreTrace}
+                    scoreCorrection={detail.job.scoreCorrection}
+                  />
+                  <ScoreCorrectionControl
+                    jobId={detail.job.jobKey}
+                    currentScore={detail.job.fitScore}
+                  />
+                </Section>
+                <Section title="Description">
+                  <JobDescription text={detail.job.descriptionPreview} />
+                </Section>
+                <JobAuditHistorySection entries={detail.auditHistory} />
+              </div>
+            </div>
           </>
         ) : null}
       </div>

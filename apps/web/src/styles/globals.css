@@ -2456,6 +2456,16 @@ textarea:focus-visible {
   box-shadow: -18px 0 42px rgba(0, 0, 0, 0.18);
 }
 
+.job-detail-drawer {
+  width: calc(100dvw - 32px);
+  block-size: calc(100dvh - 32px);
+  margin: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  scrollbar-gutter: stable;
+}
+
 .artifact-detail-drawer {
   width: min(1180px, 88vw);
 }
@@ -2483,6 +2493,27 @@ textarea:focus-visible {
 .drawer-head h2 {
   margin: 4px 0;
   font-size: 22px;
+}
+
+.job-detail-drawer-content {
+  display: grid;
+  min-width: 0;
+}
+
+.job-detail-drawer-main {
+  display: grid;
+  min-width: 0;
+  border-top: 1px solid var(--border);
+}
+
+@media (min-width: 1180px) {
+  .job-detail-drawer-main {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .job-detail-drawer-main > .section:nth-child(odd) {
+    border-right: 1px solid var(--border);
+  }
 }
 
 .job-audit-triage {
@@ -4073,6 +4104,12 @@ textarea:focus-visible {
 
   .drawer {
     width: min(100vw, 760px);
+  }
+
+  .job-detail-drawer {
+    width: calc(100dvw - 16px);
+    block-size: calc(100dvh - 16px);
+    margin: 8px;
   }
 
   .job-audit-triage-grid {

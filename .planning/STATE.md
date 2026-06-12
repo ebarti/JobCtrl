@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: complete
-last_updated: "2026-06-12T08:37:59.000Z"
+last_updated: "2026-06-12T13:32:27.000Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 5
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, and selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, and selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-12 - Post-completion Jobs fit-score numeric color-scale correction completed
+Last activity: 2026-06-12 - Post-completion Jobs overlay full-screen workspace correction completed
 
 ## Active Milestone Summary
 
@@ -121,6 +121,7 @@ Key findings:
 - Follow-up correction: Apply Review now keeps the audit rail and rendered-resume text selection synchronized so selecting a no-provenance audit row highlights the exact rendered text line, with the faithful PDF retained below for visual verification.
 - Follow-up correction: Shared success badges now use a visibly green background fill, border, and foreground using `oklab` color mixing so the `materials ready` header badge reads green in the browser.
 - Follow-up correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by targeted grid/Jobs tests and live `/jobs` browser QA.
+- Follow-up correction: Jobs row-click overlay now opens as an almost full-screen audit workspace with a wide two-column detail grid so ranking, readiness, diagnostics, artifacts, outcomes, scoring, description, and audit history have usable room.
 - Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, material regeneration, destructive data action, or worker-backed job.
 
 ## Prior Milestone Verification
