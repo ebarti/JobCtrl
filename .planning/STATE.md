@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: complete
-last_updated: "2026-06-12T08:28:07.000Z"
+last_updated: "2026-06-12T08:37:59.000Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 5
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, fit-score badges keep mid-positive scores green, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, and selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, and selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-12 - Post-completion Apply Review rendered-line highlight correction completed
+Last activity: 2026-06-12 - Post-completion Jobs fit-score numeric color-scale correction completed
 
 ## Active Milestone Summary
 
@@ -115,7 +115,7 @@ Key findings:
 - Confirmed docs/checklists cover Jobs drawer audit triage and Apply Review resume pins.
 - Recorded final milestone acceptance evidence.
 - Follow-up correction: detached `pnpm dev:start` now reports observed API/web/Temporal bindings, including the actual Vite web URL when the requested port is occupied and Vite binds a higher port.
-- Follow-up correction: Jobs fit-score badges now keep mid-positive scores such as 7 visually green instead of warning/red.
+- Follow-up correction: Jobs fit-score badges now use the numeric score as the color source of truth: 10 maps to visible green, 5 maps to neutral gray, and 0 maps to visible red, with intermediate scores moving toward the nearest endpoint.
 - Follow-up correction: Apply Review ready/ok badges and success facts now render in the success-green family instead of info/blue or weak neutral styling.
 - Follow-up correction: Apply Review no longer collapses to an empty provenance state when rendered resume text exists; the Application Materials pane now shows a line-by-line rendered-resume audit fallback and lays the audit inspector beside the PDF on wide screens.
 - Follow-up correction: Apply Review now keeps the audit rail and rendered-resume text selection synchronized so selecting a no-provenance audit row highlights the exact rendered text line, with the faithful PDF retained below for visual verification.
