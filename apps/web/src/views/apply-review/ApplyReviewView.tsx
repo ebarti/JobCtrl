@@ -432,7 +432,7 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
 }
 
 function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
-  const artifactId = item.materialsPreview.resumePdfArtifactId;
+  const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const [selectedLineNumber, setSelectedLineNumber] = useState<number | null>(null);
 
   useEffect(() => {
@@ -451,9 +451,9 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
           <ResumePreview item={item} />
         </div>
       </div>
-      {artifactId ? (
+      {auditArtifactId ? (
         <ResumeAuditPins
-          artifactId={artifactId}
+          artifactId={auditArtifactId}
           resumeText={item.materialsPreview.resumeText}
           selectedLineNumber={selectedLineNumber}
           onSelectedLineNumberChange={setSelectedLineNumber}
@@ -475,6 +475,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const activeRun = activeApplyRun(item);
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
   const resumePdfArtifactId = item.materialsPreview.resumePdfArtifactId;
+  const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? resumePdfArtifactId;
 
   useEffect(() => {
     setDetailJobKey(null);
@@ -565,9 +566,9 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
             <ResumeReviewSurface item={item} />
-            {resumePdfArtifactId ? (
+            {resumeAuditArtifactId ? (
               <ArtifactTailoringInspector
-                artifactId={resumePdfArtifactId}
+                artifactId={resumeAuditArtifactId}
                 className="apply-review-preview-block apply-review-tailoring"
               />
             ) : null}

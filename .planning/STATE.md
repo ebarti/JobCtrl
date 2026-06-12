@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: complete
-last_updated: "2026-06-12T15:22:52.000Z"
+last_updated: "2026-06-12T15:32:54.000Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 5
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below, the fallback rendered-resume line surface now looks like a PDF-style document page rather than a debug list, and the worker material lifecycle now preserves accepted artifacts during refresh while regenerating complete current-generation resume/cover/PDF materials for every score-qualified non-blocked job.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below, the fallback rendered-resume line surface now looks like a PDF-style document page rather than a debug list, Apply Review now sources claim attribution from the tailored text artifact while keeping the PDF artifact for visual rendering, and the worker material lifecycle now preserves accepted artifacts during refresh while regenerating complete current-generation resume/cover/PDF materials for every score-qualified non-blocked job.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-12 - Post-completion Apply Review rendered-resume page correction completed
+Last activity: 2026-06-12 - Post-completion Apply Review source-attribution correction completed
 
 ## Active Milestone Summary
 
@@ -120,6 +120,7 @@ Key findings:
 - Follow-up correction: Apply Review no longer collapses to an empty provenance state when rendered resume text exists; the Application Materials pane now shows a line-by-line rendered-resume audit fallback and lays the audit inspector beside the PDF on wide screens.
 - Follow-up correction: Apply Review now keeps the audit rail and rendered-resume text selection synchronized so selecting a no-provenance audit row highlights the exact rendered text line, with the faithful PDF retained below for visual verification.
 - Follow-up correction: Apply Review rendered-resume fallback now uses a PDF-style page treatment with hidden debug labels, preserved blank lines, section/bullet styling, and selectable rendered text so the audit surface visually matches the generated resume instead of a line-debug table.
+- Follow-up correction: Apply Review now uses a separate tailored-resume text artifact id for source attribution, claim pins, and the tailoring inspector while keeping the resume PDF artifact id for faithful visual rendering, so PDF shell metadata no longer causes false missing-source states.
 - Follow-up correction: Shared success badges now use a visibly green background fill, border, and foreground using `oklab` color mixing so the `materials ready` header badge reads green in the browser.
 - Follow-up correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by targeted grid/Jobs tests and live `/jobs` browser QA.
 - Follow-up correction: Jobs row-click overlay now opens as an almost full-screen audit workspace with a wide two-column detail grid so ranking, readiness, diagnostics, artifacts, outcomes, scoring, description, and audit history have usable room.

@@ -213,6 +213,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       materialsPreview: {
         resumeText:
           "Principal Platform Engineer\n\nLed platform reliability programs and incident response improvements for distributed systems teams.",
+        resumeTextArtifactId: "resume-text-2",
         resumePdfArtifactId: "resume-pdf-2",
         coverLetterText:
           "Dear Hiring Manager,\n\nI am excited to bring platform reliability leadership to Globex.",
@@ -260,6 +261,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       materialsPreview: {
         resumeText:
           "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
+        resumeTextArtifactId: "resume-text-1",
         resumePdfArtifactId: "resume-pdf-1",
         coverLetterText: null,
       },

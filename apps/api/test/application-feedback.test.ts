@@ -75,6 +75,7 @@ describe("application feedback API", () => {
       },
       materialsPreview: {
         resumeText: "tailored resume",
+        resumeTextArtifactId: "apply-ready-resume-text",
         resumePdfArtifactId: "apply-ready-resume-pdf",
         coverLetterText: null,
       },

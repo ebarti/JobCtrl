@@ -774,14 +774,73 @@ function materialPreviewsForJob(
 ): ApplyReviewQueueItem["materialsPreview"] {
   return {
     resumeText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "resume")),
+    resumeTextArtifactId: latestMaterialTextArtifactId(db, jobKey, "resume"),
     resumePdfArtifactId: latestMaterialPdfArtifactId(db, jobKey, "resume"),
     coverLetterText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "cover")),
   };
 }
 
+function latestMaterialTextArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
+  const artifactTypes =
+    kind === "resume"
+      ? ["tailored_resume", "tailored_resume_txt", "resume_txt"]
+      : ["cover_letter", "cover_letter_txt"];
+  const projectionId = latestExistingArtifactId(db, {
+    jobKey,
+    artifactTypes,
+    binary: false,
+  });
+  if (projectionId) {
+    return projectionId;
+  }
+  if (!tableExists(db, "job_materials_artifacts")) {
+    return null;
+  }
+  const placeholders = artifactTypes.map(() => "?").join(", ");
+  const rows = allRows<{ artifact_id: string | null; path: string | null }>(
+    db,
+    `SELECT artifact_id, path
+     FROM job_materials_artifacts
+     WHERE job_url = ?
+       AND artifact_type IN (${placeholders})
+       AND COALESCE(status, 'approved') IN ('approved', 'active')
+       AND path IS NOT NULL
+       AND path != ''
+     ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC, rowid DESC
+     LIMIT 8`,
+    [jobKey, ...artifactTypes],
+  );
+  for (const row of rows) {
+    if (!row.artifact_id || !row.path) continue;
+    if (artifactPathExists(row.path, { binary: false })) {
+      return row.artifact_id;
+    }
+  }
+  return null;
+}
+
 function latestMaterialPdfArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
   const artifactTypes =
     kind === "resume" ? ["tailored_resume_pdf", "resume_pdf"] : ["cover_letter_pdf"];
+  return latestExistingArtifactId(db, {
+    jobKey,
+    artifactTypes,
+    binary: true,
+  });
+}
+
+function latestExistingArtifactId(
+  db: SqliteDatabase,
+  {
+    artifactTypes,
+    binary,
+    jobKey,
+  }: {
+    readonly artifactTypes: readonly string[];
+    readonly binary: boolean;
+    readonly jobKey: string;
+  },
+): string | null {
   if (!tableExists(db, "artifact_list_projections")) {
     return null;
   }
@@ -800,16 +859,24 @@ function latestMaterialPdfArtifactId(db: SqliteDatabase, jobKey: string, kind: "
     [jobKey, ...artifactTypes],
   );
   for (const row of rows) {
-    try {
-      if (fs.existsSync(row.local_path) && fs.statSync(row.local_path).isFile()) {
-        return row.artifact_id;
-      }
-    } catch {
-      // Artifact files can disappear while the local projection still exists.
-      // In that case the review UI should fall back to text evidence.
+    if (artifactPathExists(row.local_path, { binary })) {
+      return row.artifact_id;
     }
   }
   return null;
+}
+
+function artifactPathExists(artifactPath: string, { binary }: { readonly binary: boolean }): boolean {
+  try {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+      return false;
+    }
+    return binary || !isBinaryPreviewPath(artifactPath);
+  } catch {
+    // Artifact files can disappear while the local projection still exists.
+    // In that case the review UI should fall back to the next available source.
+    return false;
+  }
 }
 
 function materialPreviewPaths(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string[] {

@@ -303,7 +303,8 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
     expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
     expect(screen.getAllByText("All personas passed with no blockers.").length).toBeGreaterThan(0);
-    expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
+    expect(artifact).toHaveBeenCalledWith("resume-text-2");
+    expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
   });
 
   it("centers the rendered resume with selectable source-backed claim pins", async () => {
@@ -330,6 +331,8 @@ describe("<ApplyReviewView>", () => {
 
     const resumePdf = await screen.findByRole("img", { name: "Tailored resume PDF" });
     const pins = await screen.findByRole("region", { name: "Line-by-line resume audit" });
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
     expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
       screen.getByRole("button", { name: /Experience pin 1: Senior SWE at Acme/i }),
@@ -375,6 +378,8 @@ describe("<ApplyReviewView>", () => {
     });
 
     expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
     const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
     expect(renderedResume).toBeInTheDocument();
     const renderedPage = within(renderedResume).getByRole("list", { name: "Rendered resume text lines" });

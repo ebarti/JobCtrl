@@ -255,6 +255,7 @@ export interface ApplyReviewPositionEvidence {
 
 export interface ApplyReviewMaterialsPreview {
   resumeText: string | null;
+  resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
   coverLetterText: string | null;
 }
