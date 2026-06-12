@@ -345,6 +345,8 @@ describe("<ApplyReviewView>", () => {
     await user.click(auditLineThree);
     expect(screen.getByText("Source pointer")).toBeInTheDocument();
     expect(within(auditLineThree).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
+    expect(within(auditLineThree).getByText("Source evidence")).toBeInTheDocument();
+    expect(within(auditLineThree).getByText("Built platform services.")).toBeInTheDocument();
     expect(screen.getByText("Bullet provenance")).toBeInTheDocument();
     expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
     expect(screen.queryByText("Tailored artifact text")).not.toBeInTheDocument();
@@ -408,6 +410,9 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
     expect(screen.getByText("Source pointer")).toBeInTheDocument();
     expect(screen.getByText("Section source span")).toBeInTheDocument();
+    expect(within(auditLineThree).getByText("Source evidence")).toBeInTheDocument();
+    expect(within(auditLineThree).getByText("Built platform services.")).toBeInTheDocument();
+    expect(within(auditLineThree).getByText("Led incident response handovers.")).toBeInTheDocument();
     const sourceSpan = screen.getByText("Recorded source span (2 lines)").closest("details");
     expect(sourceSpan).not.toBeNull();
     expect(sourceSpan).not.toHaveAttribute("open");

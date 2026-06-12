@@ -1076,14 +1076,44 @@ textarea:focus-visible {
 }
 
 .resume-pin-button b,
-.resume-pin-button span:last-child {
+.resume-pin-pointer,
+.resume-pin-source-evidence {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.resume-pin-button span:last-child {
+.resume-pin-pointer {
   color: var(--muted-foreground);
   font-size: 12px;
+}
+
+.resume-pin-source-evidence {
+  display: grid;
+  gap: 4px;
+  border-left: 2px solid color-mix(in srgb, var(--status-info) 50%, var(--border));
+  background: color-mix(in srgb, var(--status-info) 5%, var(--card));
+  color: var(--foreground);
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.resume-pin-source-evidence.missing {
+  border-left-color: var(--status-warning);
+  background: color-mix(in srgb, var(--status-warning) 7%, var(--card));
+  color: var(--muted-foreground);
+}
+
+.resume-pin-source-label,
+.resume-pin-source-more {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.resume-pin-source-line {
+  display: block;
 }
 
 .resume-pin-detail,

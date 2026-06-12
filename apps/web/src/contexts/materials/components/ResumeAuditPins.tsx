@@ -555,6 +555,40 @@ function sourcePointerLabel(pin: ResumeAuditPin): string {
   return `${formatToken(pin.section)} -> ${pointerLabel}`;
 }
 
+function SourceEvidencePreview({
+  expanded,
+  pin,
+}: {
+  readonly expanded: boolean;
+  readonly pin: ResumeAuditPin;
+}): JSX.Element | null {
+  if (pin.sourceGranularity === "structure") return null;
+  if (pin.sourceGranularity === "missing") {
+    return <span className="resume-pin-source-evidence missing">No source evidence recorded for this line.</span>;
+  }
+  if (!pin.sourceText?.length) {
+    return <span className="resume-pin-source-evidence missing">No source text recorded for this pointer.</span>;
+  }
+
+  const visibleLines = expanded ? pin.sourceText : pin.sourceText.slice(0, 2);
+  const hiddenLineCount = pin.sourceText.length - visibleLines.length;
+  return (
+    <span className="resume-pin-source-evidence" aria-label={`Source evidence: ${pin.sourceText.join(" ")}`}>
+      <span className="resume-pin-source-label">Source evidence</span>
+      {visibleLines.map((line, index) => (
+        <span className="resume-pin-source-line" key={`${pin.id}:source:${index}`}>
+          {line}
+        </span>
+      ))}
+      {hiddenLineCount > 0 ? (
+        <span className="resume-pin-source-more">
+          +{hiddenLineCount} more source line{hiddenLineCount === 1 ? "" : "s"}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
   if (pin.sourceGranularity === "missing") {
     return <p className="muted">No source pointer was recorded for this resume line.</p>;
@@ -721,6 +755,7 @@ export function ResumeAuditPins({
           <ul className="resume-pin-list" aria-label="Resume audit line list">
             {pins.map((pin, index) => {
               const tone = pinTone(pin, risk);
+              const selected = pin.id === selectedPin?.id;
               const pointerPreview = sourcePointerLabel(pin);
               const accessibleName = pin.lineNumber
                 ? `Source pointer for rendered resume line ${pin.lineNumber}: ${pointerPreview}`
@@ -729,8 +764,8 @@ export function ResumeAuditPins({
                 <li key={pin.id} ref={pin.id === selectedPin?.id ? selectedPinRef : undefined}>
                   <button
                     aria-label={accessibleName}
-                    aria-pressed={pin.id === selectedPin?.id}
-                    className={`resume-pin-button${pin.id === selectedPin?.id ? " selected" : ""}`}
+                    aria-pressed={selected}
+                    className={`resume-pin-button${selected ? " selected" : ""}`}
                     type="button"
                     onClick={() => {
                       setSelectedPinId(pin.id);
@@ -742,7 +777,8 @@ export function ResumeAuditPins({
                       <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
                     </span>
                     <b>{pin.lineNumber ? formatToken(pin.section) : pin.title}</b>
-                    <span>{pointerPreview}</span>
+                    <span className="resume-pin-pointer">{pointerPreview}</span>
+                    <SourceEvidencePreview expanded={selected} pin={pin} />
                   </button>
                 </li>
               );
