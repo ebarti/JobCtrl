@@ -307,7 +307,7 @@ describe("<ApplyReviewView>", () => {
     expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
   });
 
-  it("centers the rendered resume with selectable source-backed claim pins", async () => {
+  it("centers the rendered resume with selectable line-level claim pins", async () => {
     const user = userEvent.setup();
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
@@ -343,7 +343,8 @@ describe("<ApplyReviewView>", () => {
     });
     expect(within(auditLineOne).queryByText("claim risk")).not.toBeInTheDocument();
     await user.click(auditLineThree);
-    expect(screen.getByText("Source profile or resume text")).toBeInTheDocument();
+    expect(screen.getByText("Source pointer")).toBeInTheDocument();
+    expect(screen.getByText("Bullet provenance")).toBeInTheDocument();
     expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
     expect(screen.getByText("Tailored artifact text")).toBeInTheDocument();
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
@@ -360,7 +361,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("Warning repair attempted").length).toBeGreaterThan(0);
   });
 
-  it("does not promote source-backed lines with audit metadata gaps to claim risk", async () => {
+  it("does not promote source-span fallback lines with audit metadata gaps to claim risk", async () => {
     const user = userEvent.setup();
     const sourceBackedExplanation: ArtifactTailoringExplanation = {
       ...sampleTailoringExplanation,
@@ -370,6 +371,7 @@ describe("<ApplyReviewView>", () => {
       },
       annotatedChanges: sampleTailoringExplanation.annotatedChanges.map((change) => ({
         ...change,
+        sourceText: ["Built platform services.", "Led incident response handovers."],
         evidenceIds: [],
       })),
     };
@@ -400,8 +402,14 @@ describe("<ApplyReviewView>", () => {
     });
     await user.click(auditLineThree);
 
-    expect(screen.getAllByText("source-backed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("source span").length).toBeGreaterThan(0);
+    expect(screen.queryByText("source-backed")).not.toBeInTheDocument();
     expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
+    expect(screen.getByText("Source pointer")).toBeInTheDocument();
+    expect(screen.getByText("Section source span")).toBeInTheDocument();
+    const sourceSpan = screen.getByText("Recorded source span (2 lines)").closest("details");
+    expect(sourceSpan).not.toBeNull();
+    expect(sourceSpan).not.toHaveAttribute("open");
     expect(screen.getByText("Audit metadata gaps")).toBeInTheDocument();
     expect(
       screen.getAllByText("Tailoring audit metadata incomplete: missing profile evidence mapping").length,
@@ -473,7 +481,7 @@ describe("<ApplyReviewView>", () => {
       expect(scrolledElements.some((element) => element.closest(".resume-pin-list"))).toBe(true),
     );
     expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
-    expect(screen.getByText("No source text was recorded for this resume line.")).toBeInTheDocument();
+    expect(screen.getByText("No source pointer was recorded for this resume line.")).toBeInTheDocument();
     await user.click(renderedLineOne);
     expect(auditLineOne).toHaveAttribute("aria-pressed", "true");
     expect(auditLineThree).toHaveAttribute("aria-pressed", "false");

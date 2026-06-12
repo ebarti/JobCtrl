@@ -27,6 +27,9 @@ interface ResumeAuditPin {
   readonly section: string;
   readonly lineNumber?: number;
   readonly provenanceState: "recorded" | "missing" | "not_applicable";
+  readonly sourceGranularity: "bullet" | "change_span" | "missing" | "structure";
+  readonly sourceId: string | null;
+  readonly sourceLabel: string | null;
   readonly sourceText: readonly string[] | null;
   readonly tailoredText: readonly string[];
   readonly transformType: string;
@@ -134,6 +137,9 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
         title: change?.label || `${formatToken(entry.section)} pin ${index + 1}`,
         section: entry.section,
         provenanceState: "recorded",
+        sourceGranularity: "bullet",
+        sourceId: entry.sourceId,
+        sourceLabel: change?.label ?? null,
         sourceText: originalTextFor(entry, explanation.annotatedChanges),
         tailoredText: entry.generatedText ? [entry.generatedText] : [],
         transformType: entry.transformType,
@@ -151,6 +157,9 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
     title: change.label || `${formatToken(change.section)} pin ${index + 1}`,
     section: change.section,
     provenanceState: "recorded",
+    sourceGranularity: "change_span",
+    sourceId: change.sourceId,
+    sourceLabel: change.label,
     sourceText: change.sourceText.length ? change.sourceText : null,
     tailoredText: change.tailoredText,
     transformType: change.changeType,
@@ -175,6 +184,9 @@ function pinFromResumeLine(
       section: bullet.section,
       lineNumber: line.lineNumber,
       provenanceState: "recorded",
+      sourceGranularity: "bullet",
+      sourceId: bullet.sourceId,
+      sourceLabel: change?.label ?? null,
       sourceText: originalTextFor(bullet, explanation?.annotatedChanges ?? []),
       tailoredText: [line.text],
       transformType: bullet.transformType,
@@ -194,6 +206,9 @@ function pinFromResumeLine(
       section: change.section,
       lineNumber: line.lineNumber,
       provenanceState: "recorded",
+      sourceGranularity: "change_span",
+      sourceId: change.sourceId,
+      sourceLabel: change.label,
       sourceText: change.sourceText.length ? change.sourceText : null,
       tailoredText: [line.text],
       transformType: change.changeType,
@@ -212,6 +227,9 @@ function pinFromResumeLine(
       section: line.kind === "section" ? "resume_section" : `resume_${line.kind}`,
       lineNumber: line.lineNumber,
       provenanceState: "not_applicable",
+      sourceGranularity: "structure",
+      sourceId: null,
+      sourceLabel: null,
       sourceText: null,
       tailoredText: [line.text],
       transformType: "rendered_structure",
@@ -230,6 +248,9 @@ function pinFromResumeLine(
     section: "rendered_resume",
     lineNumber: line.lineNumber,
     provenanceState: "missing",
+    sourceGranularity: "missing",
+    sourceId: null,
+    sourceLabel: null,
     sourceText: null,
     tailoredText: [line.text],
     transformType: explanation ? "unmapped_rendered_line" : "no_generation_provenance",
@@ -357,7 +378,6 @@ function riskSearchFieldsForPin(pin: ResumeAuditPin): string[] {
     ...pin.evidenceIds,
     ...pin.requirementIds,
     ...pin.matchedSignals,
-    ...(pin.sourceText ?? []),
     ...pin.tailoredText,
   ]
     .map(normalizeResumeLine)
@@ -389,7 +409,8 @@ function pinTone(pin: ResumeAuditPin, risk: RiskSignals): "ok" | "info" | "warn"
   if (pinHasClaimRisk(pin, risk)) {
     return "warn";
   }
-  if (pin.sourceText !== null && pin.sourceText.length) return "ok";
+  if (pin.sourceGranularity === "bullet" && pin.evidenceIds.length) return "ok";
+  if (pin.sourceGranularity === "bullet" || pin.sourceGranularity === "change_span") return "info";
   if (pin.provenanceState === "not_applicable") return "info";
   if (risk.warnings.length || risk.residualWarnings.length || !risk.hasAnyAudit) {
     return "info";
@@ -405,8 +426,11 @@ function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
     return "claim risk";
   }
   if (pin.provenanceState === "not_applicable") return "structure";
-  if (pin.sourceText !== null && pin.sourceText.length) {
-    return pin.evidenceIds.length ? "grounded" : "source-backed";
+  if (pin.sourceGranularity === "bullet") {
+    return pin.evidenceIds.length ? "grounded" : "source pointer";
+  }
+  if (pin.sourceGranularity === "change_span") {
+    return "source span";
   }
   return "review";
 }
@@ -517,6 +541,52 @@ function RiskPanel({ risk }: { readonly risk: RiskSignals }): JSX.Element {
   );
 }
 
+function lineagePrecision(pin: ResumeAuditPin): string {
+  if (pin.sourceGranularity === "bullet") return "Bullet provenance";
+  if (pin.sourceGranularity === "change_span") return "Section source span";
+  if (pin.sourceGranularity === "structure") return "Resume structure";
+  return "No source mapping";
+}
+
+function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
+  if (pin.sourceGranularity === "missing") {
+    return <p className="muted">No source pointer was recorded for this resume line.</p>;
+  }
+  if (pin.sourceGranularity === "structure") {
+    return <p className="muted">This resume structure line does not require source attribution.</p>;
+  }
+
+  const pointerLabel = pin.sourceLabel || formatToken(pin.section);
+  const sourceSpanCount = pin.sourceText?.length ?? 0;
+  return (
+    <div className="source-pointer">
+      <p>
+        <b>{formatToken(pin.section)}</b>
+        {" -> "}
+        <span>{pointerLabel}</span>
+      </p>
+      <dl className="detail-list compact">
+        <div>
+          <dt>Lineage precision</dt>
+          <dd>{lineagePrecision(pin)}</dd>
+        </div>
+        <div>
+          <dt>Source ID</dt>
+          <dd>{pin.sourceId || <span className="muted">none recorded</span>}</dd>
+        </div>
+      </dl>
+      {sourceSpanCount ? (
+        <details className="source-span-disclosure">
+          <summary>Recorded source span ({sourceSpanCount} line{sourceSpanCount === 1 ? "" : "s"})</summary>
+          <TextLines empty="No source text was recorded." lines={pin.sourceText} />
+        </details>
+      ) : (
+        <p className="muted">No source text span was recorded for this pointer.</p>
+      )}
+    </div>
+  );
+}
+
 function PinDetail({
   pin,
   risk,
@@ -525,12 +595,6 @@ function PinDetail({
   readonly risk: RiskSignals;
 }): JSX.Element {
   const tone = pinTone(pin, risk);
-  const sourceEmpty =
-    pin.provenanceState === "missing"
-      ? "No source text was recorded for this resume line."
-      : pin.provenanceState === "not_applicable"
-        ? "This resume structure line does not require source attribution."
-      : "No source text was recorded for this claim.";
   const tailoredEmpty =
     pin.provenanceState === "missing"
       ? "No resume text was recorded for this line."
@@ -546,8 +610,8 @@ function PinDetail({
       </header>
       <div className="resume-pin-diff">
         <section>
-          <h5>Source profile or resume text</h5>
-          <TextLines empty={sourceEmpty} lines={pin.sourceText} />
+          <h5>Source pointer</h5>
+          <SourcePointer pin={pin} />
         </section>
         <section>
           <h5>Tailored artifact text</h5>

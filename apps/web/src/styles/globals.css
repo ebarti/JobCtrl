@@ -1148,6 +1148,31 @@ textarea:focus-visible {
   background: var(--muted);
 }
 
+.source-pointer {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.source-pointer p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.source-pointer .detail-list {
+  margin: 0;
+}
+
+.source-span-disclosure > summary {
+  cursor: pointer;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.source-span-disclosure[open] > summary {
+  margin-bottom: 6px;
+}
+
 .resume-pin-risk {
   display: grid;
   gap: 8px;
