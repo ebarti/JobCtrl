@@ -377,6 +377,11 @@ describe("<ApplyReviewView>", () => {
     expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
     const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
     expect(renderedResume).toBeInTheDocument();
+    const renderedPage = within(renderedResume).getByRole("list", { name: "Rendered resume text lines" });
+    expect(renderedPage).toHaveClass("resume-line-review-page");
+    expect(renderedPage.querySelector('[data-line-kind="blank"]')).toBeInTheDocument();
+    expect(renderedPage).not.toHaveTextContent(/Line\s+1/i);
+    expect(within(renderedResume).getAllByRole("button")).toHaveLength(2);
     const renderedLineOne = within(renderedResume).getByRole("button", {
       name: "Line 1: Principal Platform Engineer",
     });

@@ -27,6 +27,7 @@ type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 interface RenderedResumeLine {
   readonly lineNumber: number;
   readonly text: string;
+  readonly kind: "blank" | "name" | "contact" | "section" | "metadata" | "bullet" | "body";
 }
 
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
@@ -278,14 +279,57 @@ function TextPreview({
   );
 }
 
+const RENDERED_RESUME_SECTION_HEADINGS = new Set([
+  "certifications",
+  "core skills",
+  "education",
+  "executive profile",
+  "experience",
+  "languages",
+  "professional profile",
+  "profile",
+  "projects",
+  "skills",
+  "summary",
+  "technical skills",
+]);
+
+function isRenderedResumeSectionHeading(text: string): boolean {
+  return RENDERED_RESUME_SECTION_HEADINGS.has(text.toLowerCase());
+}
+
 function renderedResumeLines(resumeText: string | null | undefined): RenderedResumeLine[] {
+  let firstContentLine = true;
   return (resumeText ?? "")
     .split(/\r?\n/)
-    .map((line, index) => ({
-      lineNumber: index + 1,
-      text: line.trim(),
-    }))
-    .filter((line) => line.text.length > 0);
+    .map((line, index) => {
+      const text = line.replace(/\t/g, "  ").trimEnd();
+      const normalized = text.trim();
+      if (!normalized) {
+        return {
+          lineNumber: index + 1,
+          text: "",
+          kind: "blank" as const,
+        };
+      }
+      const kind = firstContentLine
+        ? "name"
+        : isRenderedResumeSectionHeading(normalized)
+          ? "section"
+          : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(normalized)
+            ? "contact"
+            : /^[-•○]\s+/.test(normalized)
+              ? "bullet"
+              : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(normalized)
+                ? "metadata"
+                : "body";
+      firstContentLine = false;
+      return {
+        lineNumber: index + 1,
+        text,
+        kind,
+      };
+    });
 }
 
 function RenderedResumeLineReview({
@@ -308,18 +352,30 @@ function RenderedResumeLineReview({
 
   return (
     <section className="apply-review-preview-block apply-review-text-resume" aria-label="Rendered resume line review">
-      <h3>Rendered resume line review</h3>
-      <p className="resume-line-review-note">
+      <h3 className="sr-only">Rendered resume line review</h3>
+      <p className="sr-only">
         Select a rendered line to inspect provenance and risk. The faithful PDF preview remains below for visual
         verification.
       </p>
-      {lines.length ? (
-        <ol className="resume-line-review-list" aria-label="Rendered resume text lines">
+      {lines.some((line) => line.kind !== "blank") ? (
+        <ol className="resume-line-review-list resume-line-review-page" aria-label="Rendered resume text lines">
           {lines.map((line) => {
             const selected = line.lineNumber === selectedLineNumber;
+            if (line.kind === "blank") {
+              return (
+                <li
+                  aria-hidden="true"
+                  className="resume-line-review-line blank"
+                  data-line-kind="blank"
+                  key={line.lineNumber}
+                  value={line.lineNumber}
+                />
+              );
+            }
             return (
               <li
                 className={`resume-line-review-line${selected ? " selected" : ""}`}
+                data-line-kind={line.kind}
                 key={line.lineNumber}
                 ref={selected ? selectedLineRef : undefined}
                 value={line.lineNumber}
@@ -331,7 +387,9 @@ function RenderedResumeLineReview({
                   type="button"
                   onClick={() => onSelectLine(line.lineNumber)}
                 >
-                  <span className="resume-line-review-number">Line {line.lineNumber}</span>
+                  <span aria-hidden="true" className="resume-line-review-number">
+                    {line.lineNumber}
+                  </span>
                   <span className="resume-line-review-text">{line.text}</span>
                 </button>
               </li>
