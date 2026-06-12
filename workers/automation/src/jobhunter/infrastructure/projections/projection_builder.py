@@ -636,7 +636,16 @@ class ProjectionBuilder:
         try:
             generation_row = self._conn.execute(
                 """
-                SELECT MAX(generation) FROM job_materials WHERE job_url = ?
+                SELECT MAX(generation)
+                FROM job_materials_artifacts
+                WHERE job_url = ?
+                  AND status = 'approved'
+                  AND artifact_type IN (
+                    'tailored_resume',
+                    'cover_letter',
+                    'resume_pdf',
+                    'cover_letter_pdf'
+                  )
                 """,
                 (job_url,),
             ).fetchone()

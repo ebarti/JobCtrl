@@ -341,7 +341,7 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           limit: 5,
           jobUrls: ["https://example.com/jobs/current"],
           dryRun: false,
-          suppressExistingArtifacts: true,
+          suppressExistingArtifacts: false,
         },
       },
     ]);

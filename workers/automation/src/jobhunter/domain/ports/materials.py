@@ -53,6 +53,9 @@ class MaterialsRepository(Protocol):
         artifact additions during the same generation use this path).
       * :meth:`load` returns the LATEST generation by default. Pass
         ``generation=`` to read a specific historical row.
+      * :meth:`load_current_approved` returns the newest generation whose
+        tailored resume is approved. Rejected re-tailor attempts remain history
+        and must not hide the last accepted artifact from downstream stages.
 
     The selectors (``list_pending_*``) return job URLs, not full
     aggregates, so the queue runner can decide whether to load each one.
@@ -69,6 +72,14 @@ class MaterialsRepository(Protocol):
 
         ``generation=None`` (the default) returns the latest generation.
         """
+        ...
+
+    def load_current_approved(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> MaterialsSet | None:
+        """Return the newest approved tailored resume generation, if any."""
         ...
 
     def save(self, materials: MaterialsSet) -> None:

@@ -190,6 +190,15 @@ class _FakeRepository:
         ]
         return candidates[0] if candidates else None
 
+    def load_current_approved(self, tenant_id, job_id) -> MaterialsSet | None:
+        candidates = [
+            m for m in reversed(self.saved)
+            if str(m.tenant_id) == str(tenant_id)
+            and str(m.job_id) == str(job_id)
+            and m.is_resume_approved
+        ]
+        return candidates[0] if candidates else None
+
     def save(self, materials: MaterialsSet) -> None:
         self.saved.append(materials)
 
@@ -1405,6 +1414,7 @@ def test_repository_protocol_satisfied_by_fake() -> None:
     # Structural typing — any class with the right methods passes.
     for name in (
         "load",
+        "load_current_approved",
         "save",
         "list_pending_tailor",
         "list_pending_cover",

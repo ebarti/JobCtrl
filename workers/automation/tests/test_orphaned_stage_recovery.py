@@ -6,6 +6,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from jobhunter.database import close_connection, init_db
+from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials import (
+    Artifact,
+    ArtifactType,
+    JudgeVerdict,
+    MaterialsSetFactory,
+    RenderFormat,
+    ValidationResult,
+)
+from jobhunter.domain.tenant import LOCAL_TENANT
+from jobhunter.infrastructure.materials import SqliteMaterialsRepository
 from jobhunter.state import (
     ensure_job_stage_rows,
     recover_orphaned_discovery_runs,
@@ -44,6 +55,15 @@ def _mark_running_at(conn: sqlite3.Connection, url: str, stage: str, timestamp: 
         (timestamp, url, stage),
     )
     conn.commit()
+
+
+def _artifact(artifact_type: ArtifactType, path: str, render_format: RenderFormat) -> Artifact:
+    return Artifact.create(
+        type=artifact_type,
+        path=path,
+        created_at="2026-05-21T20:00:30+00:00",
+        render_format=render_format,
+    )
 
 
 def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(tmp_path: Path) -> None:
@@ -152,6 +172,149 @@ def test_recover_orphaned_running_stages_marks_only_stale_non_apply_runs_failed(
         assert metric["is_scrape_failure"] == 0
         assert metric["is_retryable"] == 1
         assert metric["error_class"] == "ORPHANED_STAGE_RUN"
+    finally:
+        close_connection(db_path)
+
+
+def test_recover_orphaned_tailor_with_approved_artifacts_marks_succeeded(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = init_db(db_path)
+    url = "https://example.com/jobs/orphaned-tailor-approved"
+
+    try:
+        _insert_job(conn, url)
+        repo = SqliteMaterialsRepository(conn)
+        materials = MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            created_at="2026-05-21T20:00:00+00:00",
+        ).with_resume_attempt(
+            _artifact(ArtifactType.TAILORED_RESUME, "/tmp/resume.txt", RenderFormat.TEXT),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2026-05-21T20:00:30+00:00",
+        ).with_resume_pdf(
+            _artifact(ArtifactType.RESUME_PDF, "/tmp/resume.pdf", RenderFormat.LATEX_PDF),
+            updated_at="2026-05-21T20:00:40+00:00",
+        )
+        repo.save(materials)
+        _mark_running_at(conn, url, "tailor", "2026-05-21T20:00:00+00:00")
+
+        recovered = recover_orphaned_running_stages(
+            conn,
+            now=datetime(2026, 5, 21, 20, 10, 0, tzinfo=timezone.utc),
+            stale_after_seconds=150,
+            started_before=datetime(2026, 5, 21, 20, 2, 0, tzinfo=timezone.utc),
+        )
+
+        assert recovered == 1
+        recovered_row = conn.execute(
+            """
+            SELECT state, error_code, error_message, retryable, next_action, metadata_json
+            FROM job_stage_states
+            WHERE job_url = ? AND stage = 'tailor'
+            """,
+            (url,),
+        ).fetchone()
+        assert recovered_row["state"] == "succeeded"
+        assert recovered_row["error_code"] is None
+        assert recovered_row["error_message"] is None
+        assert recovered_row["retryable"] == 0
+        assert recovered_row["next_action"] is None
+        assert '"materials_generation": 1' in recovered_row["metadata_json"]
+
+        event = conn.execute(
+            """
+            SELECT event_type, level, message, payload_json
+            FROM job_events
+            WHERE job_url = ? AND stage = 'tailor'
+            ORDER BY event_id DESC LIMIT 1
+            """,
+            (url,),
+        ).fetchone()
+        assert event["event_type"] == "StageCompleted"
+        assert event["level"] == "info"
+        assert "approved artifacts were found" in event["message"]
+        assert "approved_material_artifacts" in event["payload_json"]
+
+        metric = conn.execute(
+            """
+            SELECT attempt_kind, outcome, failure_category,
+                   is_operational_failure, is_retryable
+            FROM operational_attempt_metrics
+            WHERE job_url = ? AND stage = 'tailor'
+            ORDER BY metric_id DESC LIMIT 1
+            """,
+            (url,),
+        ).fetchone()
+        assert metric["attempt_kind"] == "orphan_recovery"
+        assert metric["outcome"] == "succeeded"
+        assert metric["failure_category"] is None
+        assert metric["is_operational_failure"] == 0
+        assert metric["is_retryable"] == 0
+    finally:
+        close_connection(db_path)
+
+
+def test_recover_failed_orphaned_tailor_with_approved_artifacts_marks_succeeded(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobhunter.db"
+    conn = init_db(db_path)
+    url = "https://example.com/jobs/failed-orphaned-tailor-approved"
+
+    try:
+        _insert_job(conn, url)
+        repo = SqliteMaterialsRepository(conn)
+        materials = MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            created_at="2026-05-21T20:00:00+00:00",
+        ).with_resume_attempt(
+            _artifact(ArtifactType.TAILORED_RESUME, "/tmp/resume.txt", RenderFormat.TEXT),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2026-05-21T20:00:30+00:00",
+        ).with_resume_pdf(
+            _artifact(ArtifactType.RESUME_PDF, "/tmp/resume.pdf", RenderFormat.LATEX_PDF),
+            updated_at="2026-05-21T20:00:40+00:00",
+        )
+        repo.save(materials)
+        set_stage_state(
+            conn,
+            url,
+            "tailor",
+            "failed",
+            attempt_count=1,
+            error_code="ORPHANED_STAGE_RUN",
+            error_message="tailor stage was left running by a prior worker.",
+            retryable=True,
+            validate_transition=False,
+        )
+        conn.commit()
+
+        recovered = recover_orphaned_running_stages(
+            conn,
+            now=datetime(2026, 5, 21, 20, 10, 0, tzinfo=timezone.utc),
+            stale_after_seconds=150,
+            started_before=datetime(2026, 5, 21, 20, 2, 0, tzinfo=timezone.utc),
+        )
+
+        assert recovered == 1
+        recovered_row = conn.execute(
+            """
+            SELECT state, error_code, error_message, retryable
+            FROM job_stage_states
+            WHERE job_url = ? AND stage = 'tailor'
+            """,
+            (url,),
+        ).fetchone()
+        assert recovered_row["state"] == "succeeded"
+        assert recovered_row["error_code"] is None
+        assert recovered_row["error_message"] is None
+        assert recovered_row["retryable"] == 0
     finally:
         close_connection(db_path)
 

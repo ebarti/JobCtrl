@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: complete
-last_updated: "2026-06-12T13:32:27.000Z"
+last_updated: "2026-06-12T15:10:23.000Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 5
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, and selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below, and the worker material lifecycle now preserves accepted artifacts during refresh while regenerating complete current-generation resume/cover/PDF materials for every score-qualified non-blocked job.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-12 - Post-completion Jobs overlay full-screen workspace correction completed
+Last activity: 2026-06-12 - Post-completion material lifecycle hardening and live landscape repair completed
 
 ## Active Milestone Summary
 
@@ -122,7 +122,9 @@ Key findings:
 - Follow-up correction: Shared success badges now use a visibly green background fill, border, and foreground using `oklab` color mixing so the `materials ready` header badge reads green in the browser.
 - Follow-up correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by targeted grid/Jobs tests and live `/jobs` browser QA.
 - Follow-up correction: Jobs row-click overlay now opens as an almost full-screen audit workspace with a wide two-column detail grid so ranking, readiness, diagnostics, artifacts, outcomes, scoring, description, and audit history have usable room.
-- Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, material regeneration, destructive data action, or worker-backed job.
+- Follow-up correction: tailoring and cover lifecycle state now stays aligned with approved current-generation artifacts: rejected refreshes no longer hide accepted materials, orphaned stages recover from approved artifacts, re-tailor defaults preserve existing artifacts until replacement approval, new resume generations reset cover readiness to pending, and target-job-only technologies are explicitly context rather than candidate evidence in the generator prompt.
+- Live material-generation QA: after targeted repairs and reruns, all 49 score-qualified non-blocked jobs have complete approved current materials (`tailored_resume`, `resume_pdf`, `cover_letter`, `cover_letter_pdf`); the remaining 4 score-qualified incomplete jobs are blocked by score eligibility compensation blockers.
+- Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, destructive profile/database action, or application submission. Worker-backed material regeneration was run only for the requested score-qualified landscape repair.
 
 ## Prior Milestone Verification
 

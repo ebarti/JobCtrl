@@ -513,10 +513,10 @@ def test_pending_tailor_excludes_jobs_with_high_attempt_count(
 # ---------------------------------------------------------------------------
 
 
-def test_reset_tailor_clears_materials_and_re_enables_pending_queue(
+def test_reset_tailor_clears_rejected_attempt_artifacts(
     conn: sqlite3.Connection,
 ) -> None:
-    """After a tailor reset, the job must re-appear in pending_tailor."""
+    """After a failed tailor reset, rejected artifacts are cleared for retry."""
     from jobhunter.state import ensure_job_stage_rows, reset_job_stage
 
     url = _seed_job(conn, "https://example.com/job")
@@ -528,15 +528,12 @@ def test_reset_tailor_clears_materials_and_re_enables_pending_queue(
             created_at="2024-01-01T00:00:00+00:00",
         ).with_resume_attempt(
             _make_resume_artifact(),
-            validation=ValidationResult.success(),
+            validation=ValidationResult.failure(("unsupported claim",)),
             verdict=JudgeVerdict.passed(),
             updated_at="2024-01-02T00:00:00+00:00",
         )
     )
     ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
-    # Confirm baseline: job is NOT in pending_tailor (tailored resume is approved).
-    pending_before = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)}
-    assert url not in pending_before
 
     reset_job_stage(conn, url, "tailor")
 
@@ -551,11 +548,80 @@ def test_reset_tailor_clears_materials_and_re_enables_pending_queue(
     assert artifact_count == 0
 
 
-def test_reset_cover_clears_only_cover_artifacts(conn: sqlite3.Connection) -> None:
-    """``reset_job_stage(stage='cover')`` keeps the tailored resume."""
+def test_reset_tailor_preserves_approved_materials_until_replacement(
+    conn: sqlite3.Connection,
+) -> None:
+    """Retry reset must not hide the last accepted tailored resume."""
+    from jobhunter.state import ensure_job_stage_rows, reset_job_stage
+
+    url = _seed_job(conn, "https://example.com/approved-job")
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(
+        MaterialsSetFactory.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(url),
+            created_at="2024-01-01T00:00:00+00:00",
+        ).with_resume_attempt(
+            _make_resume_artifact(),
+            validation=ValidationResult.success(),
+            verdict=JudgeVerdict.passed(),
+            updated_at="2024-01-02T00:00:00+00:00",
+        )
+    )
+    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+
+    reset_job_stage(conn, url, "tailor")
+
+    pending_after = {row["url"] for row in get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)}
+    assert url not in pending_after
+    artifact_count = conn.execute(
+        "SELECT COUNT(*) FROM job_materials_artifacts WHERE job_url = ?",
+        (url,),
+    ).fetchone()[0]
+    assert artifact_count == 1
+
+
+def test_reset_cover_clears_only_failed_cover_artifacts(conn: sqlite3.Connection) -> None:
+    """``reset_job_stage(stage='cover')`` keeps the approved tailored resume."""
     from jobhunter.state import ensure_job_stage_rows, reset_job_stage
 
     url = _seed_job(conn, "https://example.com/job")
+    repo = SqliteMaterialsRepository(conn)
+    materials = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        _make_resume_artifact(),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    ).with_cover_letter(
+        _make_cover_artifact(),
+        validation=ValidationResult.failure(("too generic",)),
+        updated_at="2024-01-03T00:00:00+00:00",
+    )
+    repo.save(materials)
+    ensure_job_stage_rows(conn, url, discovered_at="2024-01-01T00:00:00+00:00")
+
+    reset_job_stage(conn, url, "cover")
+
+    rows = conn.execute(
+        "SELECT artifact_type FROM job_materials_artifacts WHERE job_url = ?",
+        (url,),
+    ).fetchall()
+    types = {row[0] for row in rows}
+    assert "tailored_resume" in types
+    assert "cover_letter" not in types
+
+
+def test_reset_cover_preserves_approved_cover_until_replacement(
+    conn: sqlite3.Connection,
+) -> None:
+    """Retry reset must not hide the last accepted cover letter."""
+    from jobhunter.state import ensure_job_stage_rows, reset_job_stage
+
+    url = _seed_job(conn, "https://example.com/approved-cover")
     repo = SqliteMaterialsRepository(conn)
     materials = MaterialsSetFactory.initial(
         tenant_id=LOCAL_TENANT,
@@ -582,7 +648,7 @@ def test_reset_cover_clears_only_cover_artifacts(conn: sqlite3.Connection) -> No
     ).fetchall()
     types = {row[0] for row in rows}
     assert "tailored_resume" in types
-    assert "cover_letter" not in types
+    assert "cover_letter" in types
 
 
 # ---------------------------------------------------------------------------

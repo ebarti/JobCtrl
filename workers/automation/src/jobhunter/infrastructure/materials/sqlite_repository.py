@@ -113,6 +113,41 @@ class SqliteMaterialsRepository:
             return None
         return self._row_to_materials(row, tenant_id)
 
+    def load_current_approved(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> MaterialsSet | None:
+        """Return the newest generation with an approved tailored resume.
+
+        Re-tailoring writes rejected generations for audit. Those generations
+        are history, not the current reviewable artifact, so downstream stages
+        such as cover/PDF generation need this approved-material view instead of
+        the raw latest generation.
+        """
+        row = self._conn.execute(
+            """
+            SELECT m.job_url, m.generation, m.status, m.created_at, m.updated_at,
+                   m.last_validation_json, m.last_verdict_json, m.metadata_json
+            FROM job_materials m
+            INNER JOIN (
+                SELECT job_url, MAX(generation) AS generation
+                FROM job_materials_artifacts
+                WHERE job_url = ?
+                  AND artifact_type = 'tailored_resume'
+                  AND status = 'approved'
+                GROUP BY job_url
+            ) current
+              ON current.job_url = m.job_url
+             AND current.generation = m.generation
+            WHERE m.job_url = ? AND m.tenant_id = ?
+            """,
+            (str(job_id), str(job_id), str(tenant_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_materials(row, tenant_id)
+
     def list_pending_tailor(
         self,
         tenant_id: TenantId,
@@ -127,10 +162,10 @@ class SqliteMaterialsRepository:
 
           * ``full_description IS NOT NULL`` (enrichment done).
           * Latest score ``fit_score >= min_score``.
-          * Either no MaterialsSet exists yet OR ``retailor=True``.
+          * Either no approved tailored resume exists yet OR ``retailor=True``.
 
-        ``retailor`` widens the predicate to include jobs whose latest
-        generation already has an approved tailored resume — the use case
+        ``retailor`` widens the predicate to include jobs that already have an
+        approved tailored resume in any active generation — the use case
         will mint a new generation when it picks them up.
         """
         min_score = effective_tailoring_min_score(min_score)
@@ -158,14 +193,11 @@ class SqliteMaterialsRepository:
         )
         materials_join = (
             "LEFT JOIN ("
-            "SELECT m.job_url AS mj_job_url, m.generation AS mj_gen, "
-            "tr.status AS mj_resume_status "
+            "SELECT DISTINCT m.job_url AS mj_job_url, tr.status AS mj_resume_status "
             "FROM job_materials m "
-            "INNER JOIN ("
-            "SELECT job_url, MAX(generation) AS mg FROM job_materials GROUP BY job_url"
-            ") latest ON latest.job_url = m.job_url AND latest.mg = m.generation "
-            "LEFT JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
-            "AND tr.generation = m.generation AND tr.artifact_type = 'tailored_resume' "
+            "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
+            "AND tr.generation = m.generation "
+            "AND tr.artifact_type = 'tailored_resume' "
             "AND tr.status = 'approved' "
             "WHERE m.tenant_id = ?"
             ") mj ON mj.mj_job_url = j.url"
@@ -206,7 +238,7 @@ class SqliteMaterialsRepository:
         min_score: int = 7,
         limit: int = 0,
     ) -> list[JobId]:
-        """Return job URLs whose latest generation has an approved
+        """Return job URLs whose current approved generation has an approved
         tailored resume PDF but no approved cover letter."""
         min_score = effective_tailoring_min_score(min_score)
         params: list[Any] = [str(tenant_id)]
@@ -237,7 +269,10 @@ class SqliteMaterialsRepository:
             "cl.status AS mj_cover_status "
             "FROM job_materials m "
             "INNER JOIN ("
-            "SELECT job_url, MAX(generation) AS mg FROM job_materials GROUP BY job_url"
+            "SELECT job_url, MAX(generation) AS mg "
+            "FROM job_materials_artifacts "
+            "WHERE artifact_type = 'tailored_resume' AND status = 'approved' "
+            "GROUP BY job_url"
             ") latest ON latest.job_url = m.job_url AND latest.mg = m.generation "
             "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
             "AND tr.generation = m.generation AND tr.artifact_type = 'tailored_resume' "
@@ -272,13 +307,17 @@ class SqliteMaterialsRepository:
         *,
         limit: int = 0,
     ) -> list[JobId]:
-        """Return job URLs whose latest generation has text artifacts but
+        """Return job URLs whose current approved generation has text artifacts but
         is missing one or more PDFs."""
         params: list[Any] = [str(tenant_id)]
         sql = (
             "SELECT m.job_url FROM job_materials m "
             "INNER JOIN ("
-            "SELECT job_url, MAX(generation) AS mg FROM job_materials GROUP BY job_url"
+            "SELECT job_url, MAX(generation) AS mg "
+            "FROM job_materials_artifacts "
+            "WHERE status = 'approved' "
+            "AND artifact_type IN ('tailored_resume', 'cover_letter') "
+            "GROUP BY job_url"
             ") latest ON latest.job_url = m.job_url AND latest.mg = m.generation "
             "INNER JOIN job_materials_artifacts tr ON tr.job_url = m.job_url "
             "AND tr.generation = m.generation AND tr.status = 'approved' "

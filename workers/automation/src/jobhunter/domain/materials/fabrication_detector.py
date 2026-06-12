@@ -76,11 +76,16 @@ _DATE_RE = re.compile(
 
 # Leadership/seniority title tokens whose presence in a bullet implies a claimed
 # level. They are only a fabrication when the same signal is absent from the
-# profile evidence corpus (CONTROL never_fabricate_titles).
+# profile evidence corpus (CONTROL never_fabricate_titles). Keep this regex
+# precision-biased: standalone "lead" is often a verb in prose, so only explicit
+# lead-title phrases are classified as title claims.
 _TITLE_TOKEN_RE = re.compile(
     r"(?ix)\b("
     r"chief|cto|ceo|cio|vp|vice\s+president|director|head\s+of|principal|staff|"
-    r"senior|sr\.?|lead|architect|founder|co-?founder|manager|executive"
+    r"senior|sr\.?|"
+    r"lead\s+(?:engineer|developer|architect|manager)|"
+    r"(?:engineering|technical|software|platform|security|backend|frontend|product|team)\s+lead|"
+    r"architect|founder|co-?founder|manager|executive"
     r")\b"
 )
 
@@ -250,6 +255,9 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
     """Assemble the grounded-fact corpus from canonical profile data.
 
     Sources (the explicit source of truth for every claim a bullet may make):
+      * profile experience metadata — total years, current role/company, target
+        role context;
+      * resume baseline summary — canonical source-profile positioning text;
       * experience entries — titles, companies, date ranges, locations, bullets;
       * achievement evidence items — source text, metrics, tools, outcomes,
         scope, seniority signals;
@@ -260,6 +268,8 @@ def build_evidence_corpus(profile: dict) -> EvidenceCorpus:
     generated bullet against.
     """
     fragments: list[str] = []
+    _collect(profile.get("experience"), fragments)
+    _collect(profile.get("resume", {}).get("executive_profile"), fragments)
 
     for entry in get_experience_entries(profile):
         if isinstance(entry, dict):

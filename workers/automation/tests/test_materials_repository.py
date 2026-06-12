@@ -106,6 +106,21 @@ def _approved_with_pdf(url: str) -> MaterialsSet:
     )
 
 
+def _rejected(url: str, *, generation: int = 2) -> MaterialsSet:
+    return MaterialsSet(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(url),
+        generation=generation,
+        created_at="2024-01-03T00:00:00+00:00",
+        updated_at="2024-01-03T00:00:00+00:00",
+    ).with_resume_attempt(
+        _make_artifact(ArtifactType.TAILORED_RESUME, path=f"/tmp/rejected-{generation}.txt"),
+        validation=ValidationResult.failure(("unsupported claim",)),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-03T00:00:00+00:00",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Round-trip
 # ---------------------------------------------------------------------------
@@ -149,6 +164,24 @@ def test_load_specific_generation(conn: sqlite3.Connection) -> None:
     # Default load returns latest.
     latest = repo.load(LOCAL_TENANT, JobId(url))
     assert latest is not None and latest.generation == 2
+
+
+def test_load_current_approved_ignores_newer_rejected_generation(
+    conn: sqlite3.Connection,
+) -> None:
+    url = _seed_job(conn)
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(_approved_with_pdf(url))
+    repo.save(_rejected(url, generation=2))
+
+    raw_latest = repo.load(LOCAL_TENANT, JobId(url))
+    current = repo.load_current_approved(LOCAL_TENANT, JobId(url))
+
+    assert raw_latest is not None and raw_latest.generation == 2
+    assert current is not None
+    assert current.generation == 1
+    assert current.tailored_resume is not None
+    assert current.tailored_resume.status is ArtifactStatus.APPROVED
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +312,19 @@ def test_list_pending_tailor_with_retailor_includes_already_done(conn: sqlite3.C
     assert JobId(url_done) in retailor_pending
 
 
+def test_list_pending_tailor_excludes_prior_approved_when_latest_generation_rejected(
+    conn: sqlite3.Connection,
+) -> None:
+    url_done = _seed_with_score(conn, "https://example.com/done-with-rejected-refresh")
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(_approved_with_pdf(url_done))
+    repo.save(_rejected(url_done, generation=2))
+
+    pending = repo.list_pending_tailor(LOCAL_TENANT, min_score=7)
+
+    assert JobId(url_done) not in pending
+
+
 def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
     conn: sqlite3.Connection,
 ) -> None:
@@ -297,6 +343,19 @@ def test_list_pending_cover_returns_only_jobs_with_resume_no_cover(
 
     pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
     assert pending == [JobId(url_resume_only)]
+
+
+def test_list_pending_cover_uses_prior_approved_generation_when_latest_rejected(
+    conn: sqlite3.Connection,
+) -> None:
+    url = _seed_with_score(conn, "https://example.com/cover-after-rejected-refresh")
+    repo = SqliteMaterialsRepository(conn)
+    repo.save(_approved_with_pdf(url))
+    repo.save(_rejected(url, generation=2))
+
+    pending = repo.list_pending_cover(LOCAL_TENANT, min_score=7)
+
+    assert pending == [JobId(url)]
 
 
 def test_list_pending_cover_excludes_score_five_by_default(conn: sqlite3.Connection) -> None:

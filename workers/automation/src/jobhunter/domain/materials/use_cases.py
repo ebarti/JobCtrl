@@ -560,7 +560,7 @@ def build_master_tailor_prompt(
     policy_lines = [
         f"- Tailoring mode: {tailoring_policy['mode']}",
         f"- Rewrite executive profile: {'yes' if tailoring_policy['allow_summary_rewrite'] else 'no, preserve the baseline summary'}",
-        f"- Reframe experience titles: {'yes' if tailoring_policy['allow_title_reframing'] else 'no, titles are fixed by the master resume'}",
+        "- Reframe experience titles: no, historical titles are source-controlled for safety",
         f"- Rewrite achievement bullets: {'yes' if tailoring_policy['allow_achievement_rewriting'] else 'no, preserve the original bullets'}",
         f"- Reorder or trim skills: {'yes' if tailoring_policy['allow_skill_reordering'] else 'no, preserve original skill order and wording'}",
         f"- Minor inferred phrasing: {'allowed' if tailoring_policy['allow_minor_inference'] else 'not allowed'}",
@@ -596,14 +596,28 @@ The code will inject all fixed structure from the master resume:
 - all education entries
 - section order
 
+SOURCE OF TRUTH:
+- MASTER EXECUTIVE PROFILE, MASTER EXPERIENCE ENTRIES, MASTER EDUCATION
+  ENTRIES, MASTER SKILL CATEGORIES, REQUIRED BULLETS, and REAL METRICS are the
+  only evidence for candidate claims.
+- TARGET JOB text is context only. Do NOT copy target-job technologies,
+  systems, responsibilities, business claims, or phrases into the candidate's
+  executive profile or bullets unless the same fact appears in the master
+  evidence above.
+- If the target job asks for a tool, system, domain, or responsibility that is
+  not present in the master evidence, omit that term and emphasize adjacent
+  grounded experience instead.
+
 HARD RULES:
 - Return EVERY required experience entry id exactly once
-- Return a title field for EVERY experience update; set it to "" unless policy allows and needs a rewritten title
+- Return a title field for EVERY experience update; set it to "" to preserve the source title
 - Return EVERY required skill category id exactly once
 - Preserve every required bullet listed below in the matching experience entry
 - Do NOT add or remove experience entries
 - Do NOT add or remove education entries
 - Do NOT add or remove skill categories
+- Do NOT rewrite historical experience titles or append job keywords to titles
+- Skill items must be exact strings from MASTER SKILL CATEGORIES; do NOT add job-only skills
 - Do NOT change real numbers ({metrics_str})
 - Do NOT invent companies, roles, degrees, or certifications
 - Max {max_bullets} bullets per experience entry
@@ -1782,8 +1796,10 @@ class TailorResumeUseCase:
         verdict: JudgeVerdict | None,
     ) -> str:
         status = report.get("status", "pending")
+        if not validation.passed:
+            return "failed_validation"
         if status == "approved":
-            return status
+            return "approved" if verdict is None or verdict.approved else "failed_judge"
         if status == "failed_adversarial_review":
             return status
         if validation.passed and verdict is not None and not verdict.approved:
@@ -2164,6 +2180,17 @@ class CoverLetterOutcome:
     error: str = ""
 
 
+def _load_current_approved_materials(
+    repository: MaterialsRepository,
+    tenant_id: TenantId,
+    job_id: JobId,
+) -> MaterialsSet | None:
+    loader = getattr(repository, "load_current_approved", None)
+    if callable(loader):
+        return loader(tenant_id, job_id)
+    return repository.load(tenant_id, job_id)
+
+
 class GenerateCoverLetterUseCase:
     """Generate a cover letter for an approved resume's MaterialsSet.
 
@@ -2197,7 +2224,7 @@ class GenerateCoverLetterUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
     ) -> CoverLetterOutcome:
         job_id = JobId(str(job["url"]))
-        materials = self._repository.load(tenant_id, job_id)
+        materials = _load_current_approved_materials(self._repository, tenant_id, job_id)
         if materials is None:
             return CoverLetterOutcome(
                 materials=None,
@@ -2395,7 +2422,7 @@ class RenderPdfUseCase:
         profile_dict: dict | None = None,
         tenant_id: TenantId = LOCAL_TENANT,
     ) -> RenderPdfOutcome:
-        materials = self._repository.load(tenant_id, job_id)
+        materials = _load_current_approved_materials(self._repository, tenant_id, job_id)
         if materials is None:
             return RenderPdfOutcome(
                 materials=None,

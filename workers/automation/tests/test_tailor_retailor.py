@@ -23,6 +23,7 @@ from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.pipeline import _count_pending
+from jobhunter.state import ensure_job_stage_rows, set_stage_state
 from jobhunter.scoring.tailor import (
     _build_llm_policy,
     _build_master_tailor_prompt,
@@ -183,6 +184,100 @@ def test_tailor_job_by_url_does_not_enumerate_unrelated_pending_jobs(tmp_path, m
             (unrelated_url,),
         ).fetchone()
         assert unrelated_stage is None
+    finally:
+        close_connection(db_path)
+
+
+def test_tailor_job_by_url_resets_stale_cover_success_after_new_resume(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = Path(tmp_path) / "jobs.db"
+    conn = init_db(db_path)
+    target_url = "https://example.com/stale-cover"
+
+    try:
+        _insert_job(conn, url=target_url, fit_score=8)
+        ensure_job_stage_rows(conn, target_url, discovered_at="2026-06-01T00:00:00+00:00")
+        set_stage_state(
+            conn,
+            target_url,
+            "tailor",
+            "succeeded",
+            attempt_count=1,
+            finished_at="2026-06-01T00:01:00+00:00",
+            validate_transition=False,
+        )
+        set_stage_state(
+            conn,
+            target_url,
+            "cover",
+            "succeeded",
+            attempt_count=2,
+            started_at="2026-06-01T00:02:00+00:00",
+            finished_at="2026-06-01T00:03:00+00:00",
+            error_code="OLD_ERROR",
+            error_message="old failure",
+            validate_transition=False,
+        )
+        conn.commit()
+
+        def fake_tailor_one_job(job, *_args, **_kwargs):
+            return {
+                "url": job["url"],
+                "title": job["title"],
+                "site": job.get("site"),
+                "status": "approved",
+                "attempts": 1,
+                "path": "/tmp/stale-cover.txt",
+                "pdf_path": "/tmp/stale-cover.pdf",
+                "materials": SimpleNamespace(generation=2),
+            }
+
+        monkeypatch.setattr("jobhunter.scoring.tailor.get_connection", lambda: conn)
+        monkeypatch.setattr("jobhunter.scoring.tailor._build_pdf_renderer", lambda: object())
+        monkeypatch.setattr("jobhunter.scoring.tailor._tailor_one_job", fake_tailor_one_job)
+
+        result = tailor_job_by_url(
+            target_url,
+            min_score=7,
+            retailor=True,
+            snapshot=SimpleNamespace(),
+            llm_model=None,
+        )
+
+        assert result["status"] == "approved"
+        cover = conn.execute(
+            """
+            SELECT state, attempt_count, started_at, finished_at, duration_ms,
+                   error_code, error_message, next_action
+            FROM job_stage_states
+            WHERE job_url = ? AND stage = 'cover'
+            """,
+            (target_url,),
+        ).fetchone()
+        assert dict(cover) == {
+            "state": "pending",
+            "attempt_count": 0,
+            "started_at": None,
+            "finished_at": None,
+            "duration_ms": None,
+            "error_code": None,
+            "error_message": None,
+            "next_action": None,
+        }
+        event = conn.execute(
+            """
+            SELECT event_type, message
+            FROM job_events
+            WHERE job_url = ? AND stage = 'cover'
+            ORDER BY rowid DESC
+            LIMIT 1
+            """,
+            (target_url,),
+        ).fetchone()
+        assert event["event_type"] == "StageReset"
+        assert event["message"] == "Cover stage reset after tailored resume generation"
     finally:
         close_connection(db_path)
 
@@ -680,3 +775,40 @@ def test_tailor_prompt_includes_writing_style_and_custom_guidance():
     assert "- Bullet style: impact" in prompt
     assert "USER ADDITIONAL TAILORING PROMPT:" in prompt
     assert "Use concise platform leadership language." in prompt
+
+
+def test_tailor_prompt_treats_target_job_as_context_not_evidence():
+    profile = {
+        "personal": {"full_name": "Jordan Candidate", "email": "jordan@example.com"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Platform engineer."},
+            "experience_entries": [
+                {
+                    "id": "platform_engineer",
+                    "date_range": "2024 -- Present",
+                    "title": "Platform Engineer",
+                    "company": "Example",
+                    "location": "Remote",
+                    "bullets": ["Built distributed systems."],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [{"id": "platform", "label": "Platform", "items": ["Python"]}],
+            "tailoring_rules": {
+                "required_experience_entry_ids": ["platform_engineer"],
+                "required_skill_category_ids": ["platform"],
+                "max_experience_bullets": 4,
+            },
+        },
+        "resume_constraints": {"real_metrics": []},
+    }
+
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    prompt = _build_master_tailor_prompt(snapshot)
+
+    assert "TARGET JOB text is context only" in prompt
+    assert "Do NOT copy target-job technologies" in prompt
+    assert "same fact appears in the master" in prompt
+    assert "evidence above" in prompt
+    assert "adjacent" in prompt
+    assert "grounded experience instead" in prompt

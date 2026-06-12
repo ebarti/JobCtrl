@@ -464,6 +464,26 @@ def test_detector_passes_when_every_numeric_traces_to_evidence() -> None:
     assert findings == []
 
 
+def test_detector_grounds_profile_summary_and_experience_metadata_numbers() -> None:
+    profile = _profile()
+    profile["experience"] = {
+        "years_of_experience_total": "12",
+        "current_job_title": "Director of Engineering",
+        "current_company": "Acme Corp",
+    }
+    profile["resume"]["executive_profile"] = {
+        "baseline_text": "Engineering Director with 12+ years of experience."
+    }
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "executive_profile#0",
+        "Engineering Director with 12+ years of experience.",
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    assert [f for f in findings if f.kind == "numeric"] == []
+
+
 def test_detector_flags_invented_metric() -> None:
     profile = _profile()
     corpus = build_evidence_corpus(profile)
@@ -629,6 +649,54 @@ def test_detector_flags_fabricated_title_and_employer() -> None:
     kinds = {f.kind for f in findings}
     assert "title" in kinds  # "Chief"/"CTO"-class token absent from profile
     assert "employer" in kinds  # "Globex Corporation" is not a real employer
+
+
+def test_detector_does_not_treat_lead_verb_as_title_fabrication() -> None:
+    """Regression: standalone ``lead`` is often a verb in generated prose.
+
+    The deterministic title gate must reject invented role/seniority claims, not
+    block ordinary phrases like "lead platform reliability work" when the word is
+    not presented as a title.
+    """
+    profile = _profile()
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "executive_profile#0",
+        "Hands-on engineer who can lead platform reliability work across teams.",
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    assert [f for f in findings if f.kind == "title"] == []
+
+
+def test_detector_flags_ungrounded_lead_title_phrase() -> None:
+    profile = _profile()  # real title: Senior SWE; no Lead Engineer title evidence
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "executive_profile#0",
+        "Lead Engineer for distributed platform systems.",
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    assert any(
+        f.kind == "title"
+        and f.token.lower() == "lead engineer"
+        and f.control is ControlRule.NEVER_FABRICATE_TITLES
+        for f in findings
+    )
+
+
+def test_detector_allows_grounded_lead_title_phrase() -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"][0]["title"] = "Lead Engineer"
+    corpus = build_evidence_corpus(profile)
+    findings = find_fabricated_tokens(
+        "executive_profile#0",
+        "Lead Engineer for distributed platform systems.",
+        corpus,
+        employers=employer_name_set(profile),
+    )
+    assert [f for f in findings if f.kind == "title"] == []
 
 
 def test_detector_defers_bare_name_employer_to_judge() -> None:
