@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
 status: complete
-last_updated: "2026-06-12T19:45:00.000Z"
+last_updated: "2026-06-12T19:52:00.000Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 5
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below, the fallback rendered-resume line surface now looks like a PDF-style document page rather than a debug list, Apply Review now sources claim attribution from the tailored text artifact while keeping the PDF artifact for visual rendering, source-backed rendered resume lines are no longer mislabeled as claim risk when only audit metadata gaps exist, section-level fallback lineage is labeled as a source span with a source pointer instead of raw original bullet text, the right audit surface now shows only the selected rendered line and includes source evidence plus lineage/risk metadata in that same inspector, artifact-level grounding/risk facts now sit above the full Application Materials resume audit surface, the duplicate annotated resume changes ledger has been removed from Apply Review, and the worker material lifecycle now preserves accepted artifacts during refresh while regenerating complete current-generation resume/cover/PDF materials for every score-qualified non-blocked job.
+**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below, the fallback rendered-resume line surface now looks like a PDF-style document page rather than a debug list, Apply Review now sources claim attribution from the tailored text artifact while keeping the PDF artifact for visual rendering, source-backed rendered resume lines are no longer mislabeled as claim risk when only audit metadata gaps exist, section-level fallback lineage is labeled as a source span with a source pointer instead of raw original bullet text, the right audit surface now shows only the selected rendered line and includes source evidence plus lineage/risk metadata in that same inspector, artifact-level grounding/risk facts now sit above the full Application Materials resume audit surface as a compact summary strip, the duplicate annotated resume changes ledger has been removed from Apply Review, and the worker material lifecycle now preserves accepted artifacts during refresh while regenerating complete current-generation resume/cover/PDF materials for every score-qualified non-blocked job.
 
 ## Current Position
 
 Phase: v1.2 complete
 Plan: All milestone plans complete
 Status: Complete
-Last activity: 2026-06-12 - Post-completion Apply Review artifact-risk placement correction completed
+Last activity: 2026-06-12 - Post-completion Apply Review artifact-risk density correction completed
 
 ## Active Milestone Summary
 
@@ -128,6 +128,7 @@ Key findings:
 - Follow-up correction: Apply Review no longer renders a scrollable right-side audit-row list plus a separate lower detail box; it now renders one selected-line inspector driven by the highlighted resume line, with source evidence, source pointer, lineage precision, source id, transform, controls, requirement/evidence ids, matched keywords, rationale, and risk metadata in one box.
 - Follow-up correction: Apply Review selected-line audit now keeps only line-specific evidence in the dynamic inspector: unmatched rendered bullets inherit the nearest recorded source span in their resume section, source evidence and pointer appear directly in the selected-line box, artifact-level grounding/risk gates render once outside that box, and the older annotated resume changes ledger no longer duplicates the mapper.
 - Follow-up correction: Apply Review artifact-level grounding/risk now renders as a full-width Application Materials summary above the rendered resume audit surface, not inside the right-side line-by-line audit rail.
+- Follow-up correction: Apply Review artifact-level grounding/risk summary now uses inline gate chips and collapsed finding groups with counts/previews so the panel remains visible without pushing the resume far down the materials pane.
 - Follow-up correction: Shared success badges now use a visibly green background fill, border, and foreground using `oklab` color mixing so the `materials ready` header badge reads green in the browser.
 - Follow-up correction: Jobs table visible row content now opens the job overlay while checkbox hitboxes remain selection-only; verified by targeted grid/Jobs tests and live `/jobs` browser QA.
 - Follow-up correction: Jobs row-click overlay now opens as an almost full-screen audit workspace with a wide two-column detail grid so ranking, readiness, diagnostics, artifacts, outcomes, scoring, description, and audit history have usable room.
@@ -136,6 +137,7 @@ Key findings:
 - Verified safety boundaries: no auto-apply, browser submission, mailbox scanning, destructive profile/database action, or application submission. Worker-backed material regeneration was run only for the requested score-qualified landscape repair.
 - Live Apply Review QA: selecting rendered resume line 17 on `localhost:5173/apply-review` showed `source span`, 5 source evidence lines, 0 missing-source markers in the selected inspector, 1 artifact-level risk panel outside the selected inspector, and 0 legacy `Annotated resume changes` / `Tailoring rationale` duplicate sections.
 - Live Apply Review placement QA: the artifact-level grounding/risk region rendered before `Rendered resume audit`, outside both `Rendered resume audit` and `Line-by-line resume audit`, and occupied 97% of the Application Materials pane width on a 2763px desktop viewport.
+- Live Apply Review density QA: on a 2226px desktop viewport, the artifact-level grounding/risk panel measured 89.5px tall, remained above the rendered resume, had 4 inline metrics, 3 collapsed finding groups, and left only a 14px gap before the resume audit.
 
 ## Prior Milestone Verification
 

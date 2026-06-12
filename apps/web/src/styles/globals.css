@@ -1137,6 +1137,133 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.apply-review-artifact-risk {
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.artifact-risk-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: safe center;
+  min-width: 0;
+}
+
+.artifact-risk-summary h4 {
+  flex: 1 1 190px;
+}
+
+.artifact-risk-metrics {
+  display: flex;
+  flex: 999 1 460px;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.artifact-risk-metrics > div {
+  display: flex;
+  flex: 1 1 136px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--muted);
+  padding: 5px 7px;
+}
+
+.artifact-risk-metrics dt,
+.artifact-risk-metrics dd {
+  margin: 0;
+}
+
+.artifact-risk-metrics dt {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.artifact-risk-metrics dd {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.artifact-risk-findings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.artifact-risk-finding {
+  flex: 1 1 220px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--muted) 62%, var(--card));
+}
+
+.artifact-risk-finding.danger {
+  border-color: color-mix(in oklch, var(--destructive) 45%, var(--border));
+}
+
+.artifact-risk-finding.warning {
+  border-color: color-mix(in oklch, var(--warning) 45%, var(--border));
+}
+
+.artifact-risk-finding summary {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
+.artifact-risk-finding summary::-webkit-details-marker {
+  display: none;
+}
+
+.artifact-risk-finding summary::before {
+  content: "›";
+  display: inline-block;
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+
+.artifact-risk-finding[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.artifact-risk-finding-label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.artifact-risk-finding-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-risk-finding .compact-list {
+  padding: 0 7px 7px;
+}
+
 @container (max-width: 520px) {
   .apply-review-pdf-preview .pdf-preview-viewer {
     min-height: 420px;

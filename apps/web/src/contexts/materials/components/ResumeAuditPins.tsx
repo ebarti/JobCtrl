@@ -540,7 +540,7 @@ function TagRow({
   );
 }
 
-function FindingList({
+function CompactFindingList({
   label,
   items,
   tone,
@@ -551,14 +551,20 @@ function FindingList({
 }): JSX.Element | null {
   if (!items.length) return null;
   return (
-    <div className={`finding-list ${tone}`}>
-      <b>{label}</b>
+    <details className={`artifact-risk-finding ${tone}`}>
+      <summary>
+        <span className="artifact-risk-finding-label">
+          <b>{label}</b>
+          <span className="tag muted">{items.length}</span>
+        </span>
+        <span className="artifact-risk-finding-preview">{items[0]}</span>
+      </summary>
       <ul className="compact-list">
         {items.map((item) => (
           <li key={item}>{item}</li>
         ))}
       </ul>
-    </div>
+    </details>
   );
 }
 
@@ -571,36 +577,40 @@ function RiskPanel({
 }): JSX.Element {
   return (
     <section aria-label="Artifact-level grounding and claim risk" className={className}>
-      <h4>Artifact-level grounding and claim risk</h4>
-      <dl className="evidence-summary-grid">
-        <div>
-          <dt>Quality gate</dt>
-          <dd>{risk.quality}</dd>
-        </div>
-        <div>
-          <dt>Judge</dt>
-          <dd>{risk.judge}</dd>
-        </div>
-        <div>
-          <dt>High-fit review</dt>
-          <dd>{risk.adversarial}</dd>
-        </div>
-        <div>
-          <dt>Warning repair attempted</dt>
-          <dd>{risk.warningRepairAttempted}</dd>
-        </div>
-      </dl>
+      <div className="artifact-risk-summary">
+        <h4>Artifact-level grounding and claim risk</h4>
+        <dl className="artifact-risk-metrics">
+          <div>
+            <dt>Quality gate</dt>
+            <dd>{risk.quality}</dd>
+          </div>
+          <div>
+            <dt>Judge</dt>
+            <dd>{risk.judge}</dd>
+          </div>
+          <div>
+            <dt>High-fit review</dt>
+            <dd>{risk.adversarial}</dd>
+          </div>
+          <div>
+            <dt>Warning repair attempted</dt>
+            <dd>{risk.warningRepairAttempted}</dd>
+          </div>
+        </dl>
+      </div>
       {!risk.hasAnyAudit ? (
         <p className="muted">No claim-risk audit was recorded for this artifact.</p>
       ) : null}
-      <FindingList label="Unsupported claims" items={risk.unsupportedClaims} tone="danger" />
-      <FindingList label="Fabrications" items={risk.fabrications} tone="danger" />
-      <FindingList label="Missing required evidence" items={risk.missingRequiredEvidence} tone="danger" />
-      <FindingList label="Blockers" items={risk.blockers} tone="danger" />
-      <FindingList label="Audit metadata gaps" items={risk.auditGaps} tone="warning" />
-      <FindingList label="Warnings" items={risk.warnings} tone="warning" />
-      <FindingList label="Accepted residual warnings" items={risk.residualWarnings} tone="warning" />
-      <FindingList label="Repair instructions" items={risk.repairInstructions} tone="warning" />
+      <div className="artifact-risk-findings">
+        <CompactFindingList label="Unsupported claims" items={risk.unsupportedClaims} tone="danger" />
+        <CompactFindingList label="Fabrications" items={risk.fabrications} tone="danger" />
+        <CompactFindingList label="Missing required evidence" items={risk.missingRequiredEvidence} tone="danger" />
+        <CompactFindingList label="Blockers" items={risk.blockers} tone="danger" />
+        <CompactFindingList label="Audit metadata gaps" items={risk.auditGaps} tone="warning" />
+        <CompactFindingList label="Warnings" items={risk.warnings} tone="warning" />
+        <CompactFindingList label="Accepted residual warnings" items={risk.residualWarnings} tone="warning" />
+        <CompactFindingList label="Repair instructions" items={risk.repairInstructions} tone="warning" />
+      </div>
     </section>
   );
 }
