@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
-import { ArtifactTailoringInspector } from "../../contexts/materials/components/ArtifactTailoringInspector.js";
 import { ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
@@ -474,9 +473,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
-  const resumePdfArtifactId = item.materialsPreview.resumePdfArtifactId;
-  const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? resumePdfArtifactId;
-
   useEffect(() => {
     setDetailJobKey(null);
   }, [item.jobKey]);
@@ -566,12 +562,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           </header>
           <div className="apply-review-pane-scroll apply-review-materials-scroll">
             <ResumeReviewSurface item={item} />
-            {resumeAuditArtifactId ? (
-              <ArtifactTailoringInspector
-                artifactId={resumeAuditArtifactId}
-                className="apply-review-preview-block apply-review-tailoring"
-              />
-            ) : null}
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}

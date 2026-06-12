@@ -117,6 +117,46 @@ function changeForLine(
   return annotatedChanges.find((change) => change.tailoredText.some((text) => textsMatchLine(text, line.text)));
 }
 
+function tokenSet(value: string): Set<string> {
+  return new Set(
+    normalizeResumeLine(value)
+      .replace(/[|/]/g, " ")
+      .split(/\s+/)
+      .filter((token) => token.length > 2 && !["and", "the", "for", "with", "from"].includes(token)),
+  );
+}
+
+function labelMatchesContext(changeLabel: string | null | undefined, sourceHeading: string | null): boolean {
+  if (!changeLabel || !sourceHeading) return false;
+  const changeTokens = tokenSet(changeLabel);
+  const headingTokens = tokenSet(sourceHeading);
+  if (!changeTokens.size || !headingTokens.size) return false;
+  const matches = [...changeTokens].filter((token) => headingTokens.has(token)).length;
+  return matches >= Math.min(3, changeTokens.size);
+}
+
+function looksLikeSourceHeading(line: ResumeLineEntry, section: string | null): boolean {
+  const isDatedLine = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\b|\b\d{4}\b/i.test(line.text);
+  if (isDatedLine) return false;
+  if (line.kind === "metadata") return true;
+  const inExperience = section ? normalizeResumeLine(section) === "experience" : false;
+  const roleLikeContactLine =
+    line.kind === "contact" && /\s\|\s/.test(line.text) && !/(@|https?:\/\/|linkedin|github|\+\d)/i.test(line.text);
+  return inExperience && roleLikeContactLine;
+}
+
+function contextualChangeForLine(
+  line: ResumeLineEntry,
+  annotatedChanges: readonly AnnotatedChange[],
+  section: string | null,
+  sourceHeading: string | null,
+): AnnotatedChange | undefined {
+  if (!section || isStructuralLine(line)) return undefined;
+  return annotatedChanges.find(
+    (change) => normalizeResumeLine(change.section) === normalizeResumeLine(section) && labelMatchesContext(change.label, sourceHeading),
+  );
+}
+
 function bulletForLine(
   line: ResumeLineEntry,
   provenance: readonly BulletProvenanceEntry[],
@@ -174,6 +214,7 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
 function pinFromResumeLine(
   line: ResumeLineEntry,
   explanation: ArtifactTailoringExplanation | null,
+  contextChange?: AnnotatedChange,
 ): ResumeAuditPin {
   const bullet = explanation ? bulletForLine(line, explanation.bulletProvenance) : undefined;
   if (bullet) {
@@ -217,6 +258,27 @@ function pinFromResumeLine(
       requirementIds: [],
       matchedSignals: change.jobSignals,
       rationale: change.rationale,
+    };
+  }
+
+  if (contextChange) {
+    return {
+      id: `resume-line:${line.lineNumber}`,
+      title: `Line ${line.lineNumber}`,
+      section: contextChange.section,
+      lineNumber: line.lineNumber,
+      provenanceState: "recorded",
+      sourceGranularity: "change_span",
+      sourceId: contextChange.sourceId,
+      sourceLabel: contextChange.label,
+      sourceText: contextChange.sourceText.length ? contextChange.sourceText : null,
+      tailoredText: [line.text],
+      transformType: contextChange.changeType,
+      controls: contextChange.controls,
+      evidenceIds: contextChange.evidenceIds,
+      requirementIds: [],
+      matchedSignals: contextChange.jobSignals,
+      rationale: contextChange.rationale,
     };
   }
 
@@ -268,7 +330,25 @@ function pinsFromResumeLines(
   lines: readonly ResumeLineEntry[],
   explanation: ArtifactTailoringExplanation | null,
 ): ResumeAuditPin[] {
-  return lines.map((line) => pinFromResumeLine(line, explanation));
+  let currentSection: string | null = null;
+  let currentSourceHeading: string | null = null;
+  return lines.map((line) => {
+    if (line.kind === "section") {
+      currentSection = line.text;
+      currentSourceHeading = null;
+    } else if (looksLikeSourceHeading(line, currentSection)) {
+      currentSourceHeading = line.text;
+    }
+    const exactPin = pinFromResumeLine(line, explanation);
+    if (exactPin.provenanceState !== "missing" || !explanation) {
+      return exactPin;
+    }
+    return pinFromResumeLine(
+      line,
+      explanation,
+      contextualChangeForLine(line, explanation.annotatedChanges, currentSection, currentSourceHeading),
+    );
+  });
 }
 
 function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineEntry[] {
@@ -485,7 +565,7 @@ function FindingList({
 function RiskPanel({ risk }: { readonly risk: RiskSignals }): JSX.Element {
   return (
     <div className="resume-pin-risk">
-      <h4>Grounding and claim risk</h4>
+      <h4>Artifact-level grounding and claim risk</h4>
       <dl className="evidence-summary-grid">
         <div>
           <dt>Quality gate</dt>
@@ -646,7 +726,6 @@ function SelectedPinInspector({
           <dd>{pin.rationale || <span className="muted">no rationale recorded</span>}</dd>
         </div>
       </dl>
-      <RiskPanel risk={risk} />
     </article>
   );
 }
@@ -723,6 +802,7 @@ export function ResumeAuditPins({
       ) : null}
       {selectedPin ? (
         <div className="resume-pin-shell">
+          {risk.hasAnyAudit ? <RiskPanel risk={risk} /> : null}
           <SelectedPinInspector pin={selectedPin} risk={risk} />
         </div>
       ) : null}
