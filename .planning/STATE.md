@@ -2,14 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Apply Review Audit UX - Drawer + Resume Pins
-status: complete
-last_updated: "2026-06-12T20:21:54.000Z"
-last_activity: 2026-06-12
+status: Awaiting next milestone
+stopped_at: v1.2 complete
+last_updated: "2026-06-13T08:37:07.825Z"
+last_activity: 2026-06-13 — Milestone v1.2 completed and archived
 progress:
   total_phases: 5
   completed_phases: 5
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 10
+  completed_plans: 10
   percent: 100
 ---
 
@@ -17,17 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-11)
+See: .planning/PROJECT.md (updated 2026-06-13)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 complete; PR review/merge remains. Post-completion QA corrections: `pnpm dev:start` prints observed service bindings, Jobs visible row clicks open the job overlay, the Jobs overlay is now an almost full-screen audit workspace, fit-score badges use a numeric 0 red / 5 gray / 10 green color scale, Apply Review ready/ok status badges use visible success-green background styling, Apply Review falls back to a line-by-line rendered-resume audit when generation provenance is missing, selecting a resume audit line highlights the matching rendered resume text line while preserving the faithful PDF below, the fallback rendered-resume line surface now looks like a PDF-style document page rather than a debug list, Apply Review now sources claim attribution from the tailored text artifact while keeping the PDF artifact for visual rendering, source-backed rendered resume lines are no longer mislabeled as claim risk when only audit metadata gaps exist, section-level fallback lineage is labeled as a source span with a source pointer instead of raw original bullet text, the right audit surface now shows only the selected rendered line and includes source evidence plus lineage/risk metadata in that same inspector, artifact-level grounding/risk facts now sit above the full Application Materials resume audit surface as a compact summary strip, the duplicate annotated resume changes ledger has been removed from Apply Review, the worker material lifecycle now preserves accepted artifacts during refresh while regenerating complete current-generation resume/cover/PDF materials for every score-qualified non-blocked job, and legacy profile bullets now produce deterministic evidence IDs so accepted artifacts with recorded source spans no longer show a false `profile evidence mapping` gap.
+**Current focus:** Milestone v1.2 is archived; awaiting the next milestone definition.
 
 ## Current Position
 
-Phase: v1.2 complete
-Plan: All milestone plans complete
-Status: Complete
-Last activity: 2026-06-12 - Post-completion legacy profile evidence mapping correction completed
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-13 — Milestone v1.2 completed and archived
 
 ## Active Milestone Summary
 
@@ -184,3 +185,7 @@ Last session: 2026-06-11
 Stopped at: v1.2 complete
 Latest phase completed: Phase 16 - Product-Path QA + Documentation
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
