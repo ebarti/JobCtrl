@@ -32,6 +32,10 @@ Last activity: 2026-06-13 — Milestone v1.2 completed and archived
 
 ## Active Milestone Summary
 
+No active milestone is currently defined. Start the next cycle with `/gsd-new-milestone`.
+
+## Archived v1.2 Milestone Summary
+
 Milestone v1.2 implements Sketch 002 Option 1: Drawer + Resume Pins. The milestone updates two existing surfaces:
 
 | Surface | Owns |
@@ -61,7 +65,7 @@ Explicitly not in scope:
 | 15 | Apply Review Resume Pins | Complete | REVIEW-01..REVIEW-08 |
 | 16 | Product-Path QA + Documentation | Complete | QA-01..QA-06 |
 
-Next command: PR review/merge workflow.
+Next command: `/gsd-new-milestone`.
 
 ## Research Summary
 
