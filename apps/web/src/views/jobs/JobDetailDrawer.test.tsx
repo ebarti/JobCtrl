@@ -139,10 +139,10 @@ describe("<JobDetailDrawer>", () => {
     expect(
       within(triage).getByText("Eligibility warning: Sponsorship requirements need review."),
     ).toBeInTheDocument();
-    expect(within(triage).getByRole("link", { name: "Open Apply Review for Staff Software Engineer" })).toHaveAttribute(
-      "href",
-      "/apply-review",
-    );
+    const handoff = within(triage).getByRole("link", { name: "Open Apply Review for Staff Software Engineer" });
+    const handoffUrl = new URL(handoff.getAttribute("href") ?? "", "http://localhost");
+    expect(handoffUrl.pathname).toBe("/apply-review");
+    expect(handoffUrl.searchParams.get("jobKey")).toBe("https://example.com/jobs/1");
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
     expect(screen.getByText("Score breakdown")).toBeInTheDocument();
   });
