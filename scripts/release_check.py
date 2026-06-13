@@ -24,7 +24,6 @@ FORBIDDEN_TEXT = {
 
 FORBIDDEN_PATH_NAMES = {
     ".env",
-    "profile.json",
     "resume.txt",
     "resume.pdf",
 }

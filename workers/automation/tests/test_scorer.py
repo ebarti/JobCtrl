@@ -15,6 +15,7 @@ import pytest
 
 from jobhunter.database import init_db
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.scoring import (
     EligibilityAssessment,
     FitScore,
@@ -138,16 +139,18 @@ def profile_snapshot(tmp_path):
     from jobhunter.infrastructure.events.in_process_bus import InProcessEventBus
     from jobhunter.infrastructure.profile.factory import build_profile_repository
 
-    profile_path = tmp_path / "profile.json"
-    profile_path.write_text(
-        '{"personal": {"full_name": "Tester"},'
-        '"resume": {"executive_profile": {"baseline_text": "Engineer."},'
-        '"experience_entries": [{"id": "r1", "title": "Engineer", "company": "Acme"}],'
-        '"education_entries": [], "skill_categories": []}}',
-        encoding="utf-8",
-    )
+    profile = {
+        "personal": {"full_name": "Tester"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Engineer."},
+            "experience_entries": [{"id": "r1", "title": "Engineer", "company": "Acme"}],
+            "education_entries": [],
+            "skill_categories": [],
+        },
+    }
     bus = InProcessEventBus()
-    repo = build_profile_repository(profile_path=profile_path, publisher=bus)
+    repo = build_profile_repository(db_path=tmp_path / "jobhunter.db", publisher=bus)
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
     return repo.load_snapshot(LOCAL_TENANT)
 
 

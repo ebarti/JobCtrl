@@ -58,8 +58,6 @@ Important local files include:
 - `jobhunter.db`: local SQLite database, including normalized candidate profile,
   jobs, discovery settings, events, projections, and artifact metadata.
 - `.env`: API keys and local runtime settings.
-- `profile.json`, `resume_template.tex`, and `resume_style.json`: legacy
-  profile/rendering seed files imported into SQLite when no profile row exists.
 - `tailored_resumes/`, `cover_letters/`, `logs/`: generated artifacts.
 - `chrome-workers/`, `apply-workers/`: local browser/apply worker state.
 - `codex_home/`: isolated Codex SDK home (session rollouts plus a copied auth
@@ -531,12 +529,14 @@ JobHunter uses local user configuration plus package-shipped registries:
 - `~/.jobhunter/jobhunter.db`: candidate profile source of truth, application
   defaults, discovery settings, resume baseline, tailoring controls, rendering
   settings, jobs, events, and projections.
-- `~/.jobhunter/profile.json`: legacy seed path for first-time import when the
-  profile tables are empty.
 - `~/.jobhunter/.env`: provider keys and runtime environment.
 - `workers/automation/src/jobhunter/config/employers.yaml`: packaged employer registry.
 - `workers/automation/src/jobhunter/config/sites.yaml`: packaged site and ATS
   behavior settings.
+
+Create or update the Candidate Profile through the local Profile page or the
+resume-import flow so profile data, rendering settings, and template text are
+stored in SQLite.
 
 Profile, Preferences, Discovery target search, and Settings forms autosave five
 seconds after the last edit through the same local API mutations as the Save
@@ -567,12 +567,13 @@ working while sources are promoted or rejected.
 The Discovery page's Target search settings are discovery inputs. Target roles
 stay as explicit guidance and replace the active discovery query list with exact
 role queries. Target tracks are normalized to IC, management, and executive;
-seniority floors use the engineering ladder choices shown in Discovery settings.
-Target tracks, seniority floors, role areas, and specializations add structured intent;
-resume import can suggest these fields conservatively but does not overwrite
-existing user choices. The worker expands that intent into deterministic recall
-queries. Recall queries keep the same search tier as exact queries because
-relevance is determined after discovery by scoring, not by query generation.
+seniority floors use the engineering ladder choices shown in Discovery
+settings. Target tracks, seniority floors, role areas, and specializations add
+structured intent; resume import can suggest these fields conservatively but
+does not overwrite existing user choices. The worker expands that intent into
+deterministic recall queries. Recall queries keep the same search tier as exact
+queries because relevance is determined after discovery by scoring, not by
+query generation.
 Recall title matching enforces candidate seniority and track: IC targets stay
 IC, management targets stay management, executive targets stay executive, and
 mixed profiles can opt into multiple tracks explicitly. Broad-board providers

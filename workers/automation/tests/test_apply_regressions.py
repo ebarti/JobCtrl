@@ -322,7 +322,6 @@ def test_single_job_tailor_rejects_blocked_candidate(tmp_path, monkeypatch):
 
     monkeypatch.setattr(config_module, "APP_DIR", app_dir)
     monkeypatch.setattr(config_module, "DB_PATH", db_path)
-    monkeypatch.setattr(config_module, "PROFILE_PATH", app_dir / "profile.json")
     monkeypatch.setattr(config_module, "RESUME_PATH", resume_path)
     monkeypatch.setattr(config_module, "TAILORED_DIR", app_dir / "tailored_resumes")
     monkeypatch.setattr(config_module, "COVER_LETTER_DIR", app_dir / "cover_letters")

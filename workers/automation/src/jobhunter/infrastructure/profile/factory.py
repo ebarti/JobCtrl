@@ -32,25 +32,18 @@ _local = threading.local()
 def build_profile_repository(
     *,
     db_path: Path | None = None,
-    profile_path: Path | None = None,
     publisher: EventPublisher | None = None,
 ) -> SqliteProfileRepository:
     """Construct a fresh repository — bypasses the singleton.
 
     Tests should prefer this so each test gets an isolated bus + tmp DB.
-    ``profile_path`` is retained as the legacy-import seed path and, when
-    ``db_path`` is omitted, implies a sibling ``jobhunter.db``.
     """
-    legacy_profile_path = profile_path or config.PROFILE_PATH
-    resolved_db_path = db_path or legacy_profile_path.parent / "jobhunter.db"
+    resolved_db_path = db_path or config.DB_PATH
     conn = init_db(resolved_db_path)
     return SqliteProfileRepository(
         conn,
         publisher=publisher or get_default_publisher(),
         pdf_parser=PyPdfProfileParser(),
-        legacy_profile_path=legacy_profile_path,
-        legacy_style_path=legacy_profile_path.parent / "resume_style.json",
-        legacy_template_path=legacy_profile_path.parent / "resume_template.tex",
     )
 
 

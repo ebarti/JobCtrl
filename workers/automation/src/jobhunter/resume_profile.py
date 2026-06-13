@@ -1,10 +1,10 @@
 """Pure dict accessors for the canonical resume schema.
 
-These helpers operate on a profile dict in the canonical ``profile.json``
-shape. Modern call sites obtain that dict via ``ProfileSnapshot.as_dict()``
-from ``jobhunter.domain.profile``; the helpers themselves stay schema-only
-so legacy modules under ``scoring/{pdf,validator}.py`` keep working without
-needing to know about the aggregate.
+These helpers operate on a profile dict in the canonical profile shape. Modern
+call sites obtain that dict via ``ProfileSnapshot.as_dict()`` from
+``jobhunter.domain.profile``; the helpers themselves stay schema-only so legacy
+modules under ``scoring/{pdf,validator}.py`` keep working without needing to
+know about the aggregate.
 
 Historic ``augment_profile`` (which deep-copied + injected legacy
 ``skills_boundary`` / ``resume_facts`` keys) has been removed in Phase 4 —
@@ -24,7 +24,7 @@ def require_resume_master(profile: dict) -> dict:
     """Return the profile when the canonical resume schema is present, else fail fast."""
     if not has_resume_master(profile):
         raise ValueError(
-            "profile.json must include a top-level 'resume' block with executive_profile, "
+            "profile data must include a top-level 'resume' block with executive_profile, "
             "experience_entries, education_entries, skill_categories, and tailoring_rules. "
             "Run `jobhunter init` or use profile.example.json as a template."
         )

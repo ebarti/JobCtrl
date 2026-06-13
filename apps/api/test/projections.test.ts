@@ -314,9 +314,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -343,9 +340,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -398,9 +392,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -463,9 +454,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -605,9 +593,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -727,9 +712,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -797,9 +779,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -857,9 +836,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -945,9 +921,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1000,9 +973,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       seedSchema(dbPath);
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1190,9 +1160,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1368,9 +1335,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1524,9 +1488,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1617,9 +1578,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1679,9 +1637,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {
@@ -1764,9 +1719,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
       const app = buildApp({
         dbPath,
-        profilePath: path.join(path.dirname(dbPath), "profile.json"),
-        resumeStylePath: path.join(path.dirname(dbPath), "resume_style.json"),
-        resumeTemplatePath: path.join(path.dirname(dbPath), "resume_template.tex"),
         settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
       });
       try {

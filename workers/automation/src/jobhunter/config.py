@@ -31,7 +31,6 @@ APP_DIR = Path(os.environ.get("JOBHUNTER_DIR", Path.home() / ".jobhunter"))
 
 # Core paths
 DB_PATH = APP_DIR / "jobhunter.db"
-PROFILE_PATH = APP_DIR / "profile.json"
 RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 RESUME_TEMPLATE_PATH = APP_DIR / "resume_template.tex"

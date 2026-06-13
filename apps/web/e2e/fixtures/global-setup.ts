@@ -5,9 +5,6 @@ import path from "node:path";
 interface SeedReport {
   appDir: string;
   dbPath: string;
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
   settingsPath: string;
 }
 

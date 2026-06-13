@@ -62,9 +62,8 @@ class ProfileSnapshot:
         data = profile.to_dict()
         # Augment with the legacy-compatibility derived sections that the
         # cover-letter and resume judge prompts read. These ARE part of the
-        # published language (consumers depend on them); they ARE NOT part
-        # of the persisted profile.json (the repository regenerates them on
-        # every load).
+        # published language (consumers depend on them); they ARE NOT persisted
+        # directly (the repository regenerates them on every load).
         data.setdefault("skills_boundary", _build_skills_boundary(profile))
         data.setdefault("resume_facts", _build_resume_facts(profile))
 

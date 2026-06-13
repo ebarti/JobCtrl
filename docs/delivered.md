@@ -237,7 +237,7 @@ Delivered (Phases 1–9):
   `cancel_stage`, `run_stage`, `apply`, `profile_import`), TS-side
   state-machine mirror, and the `jobhunter rpc` CLI command.
 - **Phase 4 (S-14..S-15):** `Profile` aggregate, `ProfileRepository` port,
-  `JsonFileProfileRepository` adapter, and `ProfileSnapshotPort`.
+  SQLite profile adapter, and `ProfileSnapshotPort`.
 - **Phase 5 (S-16..S-19):** `JobScore` aggregate, `ScoreRepository`,
   `LlmPort`, scorer refactor through use cases.
 - **Phase 6 (S-20..S-25):** `MaterialsSet` aggregate, `MaterialsRepository`,

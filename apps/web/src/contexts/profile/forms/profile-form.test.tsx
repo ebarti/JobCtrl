@@ -30,9 +30,6 @@ describe("<ProfileForm>", () => {
 
     expect(await screen.findByRole("heading", { name: "Personal information" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "source" })).not.toBeInTheDocument();
-    expect(screen.queryByText("profile.json")).not.toBeInTheDocument();
-    expect(screen.queryByText("resume_style.json")).not.toBeInTheDocument();
-    expect(screen.queryByText("resume_template.tex")).not.toBeInTheDocument();
   });
 
   it("does not expose internal IDs or job-site passwords in the profile editor", async () => {

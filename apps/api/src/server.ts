@@ -160,9 +160,6 @@ const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
 export interface BuildAppOptions {
   appDir?: string;
   dbPath: string;
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
   settingsPath: string;
   actionDispatcher?: ActionDispatcher;
   artifactOpener?: ArtifactOpener;
@@ -1217,24 +1214,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.get("/v1/profile", async (_request, reply) =>
-    withDb(reply, options.dbPath, (db) =>
-      readProfileConfig(db, {
-        profilePath: options.profilePath,
-        resumeStylePath: options.resumeStylePath,
-        resumeTemplatePath: options.resumeTemplatePath,
-      }),
-    ),
+    withDb(reply, options.dbPath, (db) => readProfileConfig(db)),
   );
 
   app.get("/v1/profile/preview.pdf", async (_request, reply) => {
     try {
-      const profileConfig = withDb(reply, options.dbPath, (db) =>
-        readProfileConfig(db, {
-          profilePath: options.profilePath,
-          resumeStylePath: options.resumeStylePath,
-          resumeTemplatePath: options.resumeTemplatePath,
-        }),
-      );
+      const profileConfig = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
       if ("ok" in profileConfig && profileConfig.ok === false) {
         return profileConfig;
       }
@@ -1285,15 +1270,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     let profileUpdatedEvent: ReturnType<typeof recordProfileUpdatedEvent> = null;
     let queueRetailor = false;
     try {
-      profileResponse = writeProfileConfig(
-        db,
-        {
-          profilePath: options.profilePath,
-          resumeStylePath: options.resumeStylePath,
-          resumeTemplatePath: options.resumeTemplatePath,
-        },
-        body,
-      );
+      profileResponse = writeProfileConfig(db, body);
       profileUpdatedEvent = recordProfileUpdatedEvent(db, profileChangedSections(body));
       queueRetailor = shouldRetailorForProfileUpdate(body) && hasRetailorableResumes(db);
     } catch (error) {

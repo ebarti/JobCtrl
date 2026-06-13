@@ -526,9 +526,9 @@ export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema
 // ---------------------------------------------------------------------------
 // Profile schemas — mirror packages/domain-types/src/profile/profile.ts
 //
-// Wire format keeps the snake_case JSON shape from the canonical
-// ``profile.json`` file (the Python aggregate's ``to_dict()`` output) so the
-// API ↔ worker boundary is one schema, not two. Field names match the JSON,
+// Wire format keeps the snake_case JSON shape from the Python aggregate's
+// ``to_dict()`` output so the API ↔ worker boundary is one schema, not two.
+// Field names match the JSON,
 // not the camelCase TS interfaces.
 // ---------------------------------------------------------------------------
 
@@ -755,7 +755,7 @@ const ProfileResumeConstraintsSchema = z
   })
   .partial();
 
-/** Canonical profile.json shape. ``passthrough()`` preserves forward-compatible
+/** Canonical profile shape. ``passthrough()`` preserves forward-compatible
  * keys we don't yet model so a round-trip never silently drops data. */
 export const ProfileSchema = z
   .object({
@@ -1611,10 +1611,10 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
-  /** Profile JSON. Validated against ``ProfileSchema`` server-side; the wire
-   * type stays ``unknown`` so the web client (which renders the raw JSON in
-   * a textarea) is not forced to satisfy every required field at compile
-   * time. Programmatic consumers should re-parse with ``ProfileSchema``. */
+  /** Profile data. Validated against ``ProfileSchema`` server-side; the wire
+   * type stays ``unknown`` so partial drafts can flow through explicit review
+   * and import paths. Programmatic consumers should re-parse with
+   * ``ProfileSchema``. */
   profile: unknown;
   style: unknown;
   templateText: string;

@@ -7,7 +7,7 @@ const meta = {
   title: "Contexts/Profile/Editor",
   component: Editor,
   args: {
-    label: "Profile JSON",
+    label: "Profile data",
     value: '{\n  "personal": { "full_name": "Jordan Candidate" }\n}',
     saving: false,
     dirty: false,
@@ -31,7 +31,7 @@ function Stateful({
   const [dirty, setDirty] = useState(false);
   return (
     <Editor
-      label="Profile JSON"
+      label="Profile data"
       value={value}
       saving={saving}
       dirty={dirty}

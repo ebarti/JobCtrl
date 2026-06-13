@@ -4,12 +4,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 
+import { writeProfileConfig } from "../src/profile-store.js";
+
 export interface QaWorkspace {
   appDir: string;
   dbPath: string;
-  profilePath: string;
-  resumeStylePath: string;
-  resumeTemplatePath: string;
   settingsPath: string;
 }
 
@@ -50,15 +49,57 @@ const QA_RESUME_TEMPLATE = String.raw`\documentclass[11pt,a4paper,sans]{moderncv
 \end{document}
 `;
 
+const QA_PROFILE = {
+  schema_version: 2,
+  personal: {
+    full_name: "QA Candidate",
+    preferred_name: "QA",
+    email: "qa@example.local",
+    phone: "+1 555-0100",
+    city: "Remote City",
+    country: "Remote",
+  },
+  resume: {
+    executive_profile: {
+      baseline_text: "Platform and security engineering leader for QA validation.",
+    },
+    experience_entries: [
+      {
+        id: "qa_platform",
+        title: "Director of Platform Engineering",
+        company: "QA Systems",
+        date_range: "2024 -- Present",
+        bullets: ["Led platform reliability and security validation programs."],
+      },
+    ],
+    skill_categories: [
+      {
+        id: "platform",
+        label: "Platform",
+        items: ["Kubernetes", "Security", "Developer Experience"],
+      },
+    ],
+    education_entries: [],
+    tailoring_rules: {
+      required_experience_entry_ids: ["qa_platform"],
+    },
+  },
+};
+
+const QA_RESUME_STYLE = {
+  document_font_size: "11pt",
+  font_family: "sans",
+  moderncv_style: "banking",
+  moderncv_color: "black",
+  paper_size: "a4paper",
+};
+
 export function createQaWorkspace(targetDir?: string): QaWorkspace {
   const appDir = targetDir ? path.resolve(targetDir) : fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-qa-"));
   fs.mkdirSync(appDir, { recursive: true });
   const workspace = {
     appDir,
     dbPath: path.join(appDir, "jobhunter.db"),
-    profilePath: path.join(appDir, "profile.json"),
-    resumeStylePath: path.join(appDir, "resume_style.json"),
-    resumeTemplatePath: path.join(appDir, "resume_template.tex"),
     settingsPath: path.join(appDir, "dashboard.json"),
   };
   seedQaWorkspace(workspace);
@@ -72,61 +113,6 @@ export function removeQaWorkspace(workspace: QaWorkspace): void {
 export function seedQaWorkspace(workspace: QaWorkspace): void {
   fs.mkdirSync(workspace.appDir, { recursive: true });
   seedQaDatabase(workspace.dbPath);
-  fs.writeFileSync(
-    workspace.profilePath,
-    JSON.stringify(
-      {
-        schema_version: 2,
-        personal: {
-          full_name: "QA Candidate",
-          preferred_name: "QA",
-          email: "qa@example.local",
-          phone: "+1 555-0100",
-          city: "Remote City",
-          country: "Remote",
-        },
-        resume: {
-          executive_profile: {
-            baseline_text: "Platform and security engineering leader for QA validation.",
-          },
-          experience_entries: [
-            {
-              id: "qa_platform",
-              title: "Director of Platform Engineering",
-              company: "QA Systems",
-              date_range: "2024 -- Present",
-              bullets: ["Led platform reliability and security validation programs."],
-              must_include: true,
-            },
-          ],
-          skill_categories: [
-            {
-              id: "platform",
-              label: "Platform",
-              items: ["Kubernetes", "Security", "Developer Experience"],
-            },
-          ],
-        },
-      },
-      null,
-      2,
-    ),
-  );
-  fs.writeFileSync(
-    workspace.resumeStylePath,
-    JSON.stringify(
-      {
-        document_font_size: "11pt",
-        font_family: "sans",
-        moderncv_style: "banking",
-        moderncv_color: "black",
-        paper_size: "a4paper",
-      },
-      null,
-      2,
-    ),
-  );
-  fs.writeFileSync(workspace.resumeTemplatePath, QA_RESUME_TEMPLATE);
   fs.writeFileSync(
     workspace.settingsPath,
     JSON.stringify(
@@ -251,6 +237,11 @@ export function seedQaDatabase(dbPath: string): void {
       last_seen_at TEXT NOT NULL
     );
   `);
+  writeProfileConfig(db, {
+    profile: QA_PROFILE,
+    style: QA_RESUME_STYLE,
+    templateText: QA_RESUME_TEMPLATE,
+  });
 
   // INSPECT-01: a current worker heartbeat so the generate-materials route's
   // worker-readiness gate passes in E2E. ``app_dir``/``db_path`` must match the
@@ -439,9 +430,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       {
         appDir: workspace.appDir,
         dbPath: workspace.dbPath,
-        profilePath: workspace.profilePath,
-        resumeStylePath: workspace.resumeStylePath,
-        resumeTemplatePath: workspace.resumeTemplatePath,
         settingsPath: workspace.settingsPath,
       },
       null,

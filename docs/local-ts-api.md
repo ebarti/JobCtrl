@@ -9,10 +9,9 @@ invokes Python automation through the JSON-RPC 2.0 protocol over a long-lived
 
 `GET /v1/profile` and `PATCH /v1/profile` use the normalized Candidate
 Profile tables in `jobhunter.db` as the source of truth. When the profile
-tables are empty, the API can seed them once from legacy `profile.json`,
-`resume_style.json`, and `resume_template.tex`; subsequent writes update only
-SQLite and reconstruct the existing response object shape for frontend/client
-compatibility.
+tables are empty, `GET /v1/profile` returns an empty profile with default
+rendering settings. Explicit profile saves and resume-PDF imports create or
+update the SQLite rows.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,

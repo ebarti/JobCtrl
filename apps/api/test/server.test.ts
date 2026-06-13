@@ -13,6 +13,9 @@ import { buildApp, type BuildAppOptions } from "../src/server.js";
 
 let tempDir = "";
 let options: BuildAppOptions;
+let strayProfileExportPath = "";
+let strayStyleExportPath = "";
+let strayTemplateExportPath = "";
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -78,16 +81,16 @@ beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-api-"));
   options = {
     dbPath: path.join(tempDir, "jobhunter.db"),
-    profilePath: path.join(tempDir, "profile.json"),
-    resumeStylePath: path.join(tempDir, "resume_style.json"),
-    resumeTemplatePath: path.join(tempDir, "resume_template.tex"),
     settingsPath: path.join(tempDir, "dashboard.json"),
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
   };
+  strayProfileExportPath = path.join(tempDir, "candidate-profile-export.json");
+  strayStyleExportPath = path.join(tempDir, "resume-rendering-export.json");
+  strayTemplateExportPath = path.join(tempDir, "resume-rendering-export.tex");
   seedDatabase(options.dbPath);
-  fs.writeFileSync(options.profilePath, JSON.stringify(validProfileFixture("Jordan Candidate")));
-  fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "sans" }));
-  fs.writeFileSync(options.resumeTemplatePath, "\\documentclass{article}");
+  fs.writeFileSync(strayProfileExportPath, JSON.stringify(validProfileFixture("Jordan Candidate")));
+  fs.writeFileSync(strayStyleExportPath, JSON.stringify({ font_family: "sans" }));
+  fs.writeFileSync(strayTemplateExportPath, "\\documentclass{article}");
   fs.writeFileSync(
     options.settingsPath,
     JSON.stringify({
@@ -390,7 +393,7 @@ describe("local TypeScript API", () => {
     const importer = vi.fn(async () => ({ profile: {} }));
     const app = buildApp({ ...options, actionDispatcher: dispatch, artifactOpener: opener, profileImporter: importer });
     const jobKey = encodeURIComponent("https://example.com/jobs/ready");
-    const originalProfile = fs.readFileSync(options.profilePath, "utf8");
+    const originalProfile = fs.readFileSync(strayProfileExportPath, "utf8");
 
     const mutationRequests = [
       {
@@ -452,7 +455,7 @@ describe("local TypeScript API", () => {
     expect(dispatch).not.toHaveBeenCalled();
     expect(opener).not.toHaveBeenCalled();
     expect(importer).not.toHaveBeenCalled();
-    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
+    expect(fs.readFileSync(strayProfileExportPath, "utf8")).toBe(originalProfile);
 
     const db = new Database(options.dbPath);
     const row = db.prepare("SELECT apply_status, applied_at FROM jobs WHERE url = ?").get("https://example.com/jobs/ready") as {
@@ -4280,7 +4283,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("imports legacy profile files once and returns relational profile configuration", async () => {
+  it("returns empty relational profile configuration when rows are absent", async () => {
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/profile" });
 
@@ -4288,18 +4291,16 @@ describe("local TypeScript API", () => {
     const body = response.json();
     expect(body).toMatchObject({
       ok: true,
-      profile: { personal: { full_name: "Jordan Candidate" } },
+      profile: {},
       style: { font_family: "sans" },
-      templateText: "\\documentclass{article}",
     });
+    expect(body.templateText).toContain("{{ personal_data }}");
     expect(body.paths).toBeUndefined();
     const db = new Database(options.dbPath);
     try {
-      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profiles").get()).toMatchObject({ count: 1 });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profiles").get()).toMatchObject({ count: 0 });
       const rootColumns = db.prepare("PRAGMA table_info(candidate_profiles)").all() as Array<{ name: string }>;
-      expect(rootColumns.map((column) => column.name)).not.toEqual(
-        expect.arrayContaining(["profile_json", "style_json", "payload_json"]),
-      );
+      expect(rootColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining(["style_json", "payload_json"]));
     } finally {
       db.close();
     }
@@ -4307,8 +4308,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("seeds a default resume template when the legacy template file is missing", async () => {
-    fs.rmSync(options.resumeTemplatePath, { force: true });
+  it("uses a default resume template before the profile is initialized", async () => {
     const app = buildApp(options);
     const initial = await app.inject({ method: "GET", url: "/v1/profile" });
 
@@ -4344,9 +4344,9 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("persists profile, style, and template updates to relational rows without rewriting legacy files", async () => {
+  it("persists profile, style, and template updates to relational rows without rewriting stray files", async () => {
     const app = buildApp(options);
-    const originalLegacyProfile = fs.readFileSync(options.profilePath, "utf8");
+    const originalStrayProfile = fs.readFileSync(strayProfileExportPath, "utf8");
     const validProfile = validProfileFixture("Taylor Updated");
     const response = await app.inject({
       method: "PATCH",
@@ -4365,7 +4365,7 @@ describe("local TypeScript API", () => {
       style: { moderncv_style: "classic" },
       templateText: "\\documentclass{moderncv}",
     });
-    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalLegacyProfile);
+    expect(fs.readFileSync(strayProfileExportPath, "utf8")).toBe(originalStrayProfile);
     const db = new Database(options.dbPath);
     try {
       expect(
@@ -4574,9 +4574,16 @@ describe("local TypeScript API", () => {
   });
 
   it("preserves existing non-default style fields during partial style updates", async () => {
-    fs.writeFileSync(options.resumeStylePath, JSON.stringify({ font_family: "roman", moderncv_color: "blue" }));
     const app = buildApp(options);
-    await app.inject({ method: "GET", url: "/v1/profile" });
+    const seed = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: validProfileFixture("Style Candidate"),
+        style: { font_family: "roman", moderncv_color: "blue" },
+      },
+    });
+    expect(seed.statusCode, seed.body).toBe(200);
 
     const response = await app.inject({
       method: "PATCH",
@@ -4618,20 +4625,25 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects unsupported top-level legacy profile fields before import", async () => {
+  it("ignores unsupported top-level fields in stray profile files", async () => {
     fs.writeFileSync(
-      options.profilePath,
-      JSON.stringify({ ...validProfileFixture("Future Legacy"), custom_section: { future: "thing" } }),
+      strayProfileExportPath,
+      JSON.stringify({ ...validProfileFixture("Future Export"), custom_section: { future: "thing" } }),
     );
     const app = buildApp(options);
     const response = await app.inject({ method: "GET", url: "/v1/profile" });
 
-    expect(response.statusCode, response.body).toBe(400);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
-      ok: false,
-      error: "invalid_profile",
+      ok: true,
+      profile: {},
     });
-    expect(response.json().message).toContain("unsupported top-level profile field(s): custom_section");
+    const db = new Database(options.dbPath);
+    try {
+      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profiles").get()).toMatchObject({ count: 0 });
+    } finally {
+      db.close();
+    }
 
     await app.close();
   });
@@ -4652,8 +4664,8 @@ describe("local TypeScript API", () => {
 
   it("validates all profile update inputs before changing relational rows", async () => {
     const app = buildApp(options);
-    const originalProfile = fs.readFileSync(options.profilePath, "utf8");
-    const originalStyle = fs.readFileSync(options.resumeStylePath, "utf8");
+    const originalProfile = fs.readFileSync(strayProfileExportPath, "utf8");
+    const originalStyle = fs.readFileSync(strayStyleExportPath, "utf8");
     await app.inject({ method: "GET", url: "/v1/profile" });
     const db = new Database(options.dbPath);
     const before = db.prepare("SELECT personal_full_name FROM candidate_profiles").get();
@@ -4668,8 +4680,8 @@ describe("local TypeScript API", () => {
 
     expect(response.statusCode, response.body).toBe(400);
     expect(response.json()).toMatchObject({ ok: false, error: "invalid_profile" });
-    expect(fs.readFileSync(options.profilePath, "utf8")).toBe(originalProfile);
-    expect(fs.readFileSync(options.resumeStylePath, "utf8")).toBe(originalStyle);
+    expect(fs.readFileSync(strayProfileExportPath, "utf8")).toBe(originalProfile);
+    expect(fs.readFileSync(strayStyleExportPath, "utf8")).toBe(originalStyle);
     expect(db.prepare("SELECT personal_full_name FROM candidate_profiles").get()).toEqual(before);
     db.close();
 
@@ -4734,6 +4746,15 @@ describe("local TypeScript API", () => {
   it("serves a rendered profile PDF preview", async () => {
     const renderer = vi.fn(async () => Buffer.from("%PDF-1.7\nmock preview"));
     const app = buildApp({ ...options, profilePreviewRenderer: renderer });
+    const seed = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: validProfileFixture("Jordan Candidate"),
+        templateText: "\\documentclass{article}",
+      },
+    });
+    expect(seed.statusCode, seed.body).toBe(200);
     const response = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
 
     expect(response.statusCode, response.body).toBe(200);

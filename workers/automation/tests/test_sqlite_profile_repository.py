@@ -72,15 +72,12 @@ def _new_repo(tmp_path: Path) -> tuple[SqliteProfileRepository, sqlite3.Connecti
     bus.subscribe(None, events.append)
     repo = SqliteProfileRepository(
         conn,
-        legacy_profile_path=tmp_path / "profile.json",
-        legacy_style_path=tmp_path / "resume_style.json",
-        legacy_template_path=tmp_path / "resume_template.tex",
         publisher=bus,
     )
     return repo, conn, events
 
 
-def test_profile_schema_is_normalized_without_profile_json_escape_hatch(tmp_path):
+def test_profile_schema_is_normalized_without_blob_escape_hatch(tmp_path):
     _, conn, _ = _new_repo(tmp_path)
 
     tables = {
@@ -108,7 +105,7 @@ def test_profile_schema_is_normalized_without_profile_json_escape_hatch(tmp_path
     root_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(candidate_profiles)")
     }
-    forbidden = {"profile_json", "style_json", "json_blob", "payload_json"}
+    forbidden = {"style_json", "json_blob", "payload_json"}
     assert root_columns.isdisjoint(forbidden)
 
 
@@ -180,40 +177,37 @@ def test_save_and_load_preserves_achievement_evidence_and_tailoring_controls(tmp
     ] == ["verified_only"]
 
 
-def test_legacy_profile_json_seeds_sqlite_once_and_writes_stay_in_sqlite(tmp_path):
+def test_stray_profile_export_is_ignored_and_writes_stay_in_sqlite(tmp_path):
     repo, conn, _ = _new_repo(tmp_path)
-    legacy_profile = tmp_path / "profile.json"
-    legacy_profile.write_text(json.dumps(_valid_profile()), encoding="utf-8")
-    (tmp_path / "resume_style.json").write_text(
+    stray_profile = tmp_path / "candidate-profile-export.json"
+    stray_profile.write_text(json.dumps(_valid_profile()), encoding="utf-8")
+    (tmp_path / "resume-rendering-export.json").write_text(
         json.dumps({"moderncv_style": "classic", "moderncv_color": "blue"}),
         encoding="utf-8",
     )
-    (tmp_path / "resume_template.tex").write_text("\\documentclass{moderncv}", encoding="utf-8")
+    (tmp_path / "resume-rendering-export.tex").write_text("\\documentclass{moderncv}", encoding="utf-8")
 
     loaded = repo.load(LOCAL_TENANT)
-    assert loaded is not None
-    assert loaded.personal.full_name == "Jordan Candidate"
-    assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 1
+    assert loaded is None
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 0
     rendering = repo.load_rendering_settings(LOCAL_TENANT)
-    assert rendering["style"]["moderncv_style"] == "classic"
-    assert rendering["style"]["moderncv_color"] == "blue"
-    assert rendering["template_text"] == "\\documentclass{moderncv}"
+    assert rendering["style"]["moderncv_style"] == "banking"
+    assert rendering["style"]["moderncv_color"] == "black"
+    assert "{{ personal_data }}" in rendering["template_text"]
 
-    changed_legacy = _valid_profile()
-    changed_legacy["personal"]["full_name"] = "Legacy File Changed"
-    legacy_profile.write_text(json.dumps(changed_legacy), encoding="utf-8")
+    changed_stray = _valid_profile()
+    changed_stray["personal"]["full_name"] = "Stray Export Changed"
+    stray_profile.write_text(json.dumps(changed_stray), encoding="utf-8")
 
-    loaded_again = repo.load(LOCAL_TENANT)
-    assert loaded_again is not None
-    assert loaded_again.personal.full_name == "Jordan Candidate"
+    assert repo.load(LOCAL_TENANT) is None
 
     updated = _valid_profile()
     updated["personal"]["full_name"] = "SQLite Updated"
     repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
 
-    assert json.loads(legacy_profile.read_text(encoding="utf-8"))["personal"]["full_name"] == "Legacy File Changed"
+    assert json.loads(stray_profile.read_text(encoding="utf-8"))["personal"]["full_name"] == "Stray Export Changed"
     assert repo.load(LOCAL_TENANT).personal.full_name == "SQLite Updated"  # type: ignore[union-attr]
-    assert repo.load_rendering_settings(LOCAL_TENANT)["template_text"] == "\\documentclass{moderncv}"
+    assert "{{ personal_data }}" in repo.load_rendering_settings(LOCAL_TENANT)["template_text"]
 
 
 def test_save_rejects_unsupported_top_level_profile_fields(tmp_path):
@@ -227,13 +221,12 @@ def test_save_rejects_unsupported_top_level_profile_fields(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 0
 
 
-def test_legacy_profile_rejects_unsupported_top_level_fields_before_import(tmp_path):
+def test_stray_profile_export_with_unsupported_top_level_fields_is_ignored(tmp_path):
     repo, conn, _ = _new_repo(tmp_path)
-    legacy = _valid_profile()
-    legacy["custom_section"] = {"future": "thing"}
-    (tmp_path / "profile.json").write_text(json.dumps(legacy), encoding="utf-8")
+    stray = _valid_profile()
+    stray["custom_section"] = {"future": "thing"}
+    (tmp_path / "candidate-profile-export.json").write_text(json.dumps(stray), encoding="utf-8")
 
-    with pytest.raises(InvalidProfileError, match="unsupported top-level profile field\\(s\\): custom_section"):
-        repo.load(LOCAL_TENANT)
+    assert repo.load(LOCAL_TENANT) is None
 
     assert conn.execute("SELECT COUNT(*) FROM candidate_profiles").fetchone()[0] == 0
