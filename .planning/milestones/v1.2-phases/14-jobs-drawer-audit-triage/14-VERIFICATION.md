@@ -1,3 +1,9 @@
+---
+phase: 14-jobs-drawer-audit-triage
+status: passed
+verified_at: 2026-06-11
+---
+
 # Phase 14 Verification: Jobs Drawer Audit Triage
 
 **Date:** 2026-06-11
@@ -38,4 +44,3 @@ Safety boundaries:
 - Did not generate or replace materials.
 - Did not start worker-backed jobs.
 - Did not expose profile data, resumes, PDFs, logs, SQLite contents, OAuth data, or secrets in this artifact.
-

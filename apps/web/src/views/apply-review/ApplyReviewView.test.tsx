@@ -818,4 +818,30 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("outcomes unavailable")).not.toBeInTheDocument();
     expect(applicationOutcomes).not.toHaveBeenCalled();
   });
+
+  it("selects the review item requested by the route search job key", async () => {
+    const ports = buildTestPorts({
+      api: {
+        applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+      },
+    });
+    const harness = buildProviderHarness({ ports, withEventStream: true });
+    const router = createRouter({
+      routeTree,
+      history: createMemoryHistory({ initialEntries: ["/apply-review?jobKey=job-1"] }),
+      context: { ports, queryClient: harness.queryClient, tenantId: LOCAL_TENANT },
+    });
+
+    render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
+
+    const queue = await screen.findByRole("complementary", { name: "Application review queue" });
+    expect(within(queue).getByRole("button", { name: /Staff Software Engineer/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      await screen.findByRole("region", { name: "Review evidence for Staff Software Engineer" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Review evidence for Principal Platform Engineer" })).not.toBeInTheDocument();
+  });
 });

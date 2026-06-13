@@ -23,6 +23,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
         <Link
           aria-label={`Open Apply Review for ${job.title}`}
           className="tab"
+          search={{ jobKey: job.jobKey }}
           to="/apply-review"
         >
           Open Apply Review

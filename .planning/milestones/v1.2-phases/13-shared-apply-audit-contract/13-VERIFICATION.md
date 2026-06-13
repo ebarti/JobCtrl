@@ -1,6 +1,6 @@
 ---
 phase: 13-shared-apply-audit-contract
-status: pass
+status: passed
 verified_at: 2026-06-11
 ---
 
@@ -39,4 +39,3 @@ Opened `http://localhost:5174/apply-review` in the in-app browser and verified:
 - The first queue items rendered `materials ready`, not the prior stale `materials not ready` label.
 
 No apply/browser automation, mailbox scanning, generated-material regeneration, destructive profile/database action, or worker-backed job was run.
-

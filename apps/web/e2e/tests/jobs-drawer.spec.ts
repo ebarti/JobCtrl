@@ -33,3 +33,31 @@ test("Job drawer: opens with score/stages/artifacts, survives reload, close pres
   await expect(page).toHaveURL(/sort=fit_score/);
   await expect(page).toHaveURL(/\/jobs\?/);
 });
+
+test("Job drawer: Apply Review handoff preserves the selected job", async ({ page }) => {
+  const response = await page.request.get("/v1/apply/review-queue");
+  expect(response.ok()).toBeTruthy();
+  const queue = (await response.json()) as {
+    readonly items?: readonly { readonly jobKey: string; readonly title: string }[];
+  };
+  const target = queue.items?.[0];
+  expect(target, "seeded review queue should contain an item").toBeTruthy();
+
+  await page.goto(`/jobs/${encodeURIComponent(target!.jobKey)}?${FILTER_PARAMS}`);
+  const drawer = page.getByRole("dialog", { name: "Job details" });
+  await expect(drawer).toBeVisible({ timeout: 30_000 });
+
+  await drawer.getByRole("link", { name: `Open Apply Review for ${target!.title}` }).click();
+
+  await expect(page).toHaveURL(/\/apply-review\?/);
+  const applyReviewUrl = new URL(page.url());
+  expect(applyReviewUrl.searchParams.get("jobKey")).toBe(target!.jobKey);
+  await expect(
+    page.getByRole("region", { name: `Review evidence for ${target!.title}` }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page
+      .getByRole("complementary", { name: "Application review queue" })
+      .getByRole("button", { name: new RegExp(target!.title) }),
+  ).toHaveAttribute("aria-pressed", "true");
+});

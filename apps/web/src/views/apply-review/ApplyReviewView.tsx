@@ -576,11 +576,19 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   );
 }
 
-export function ApplyReviewView() {
+export interface ApplyReviewViewProps {
+  readonly targetJobKey?: string | null;
+  readonly onTargetJobKeyChange?: (jobKey: string | null) => void;
+}
+
+export function ApplyReviewView({
+  targetJobKey = null,
+  onTargetJobKeyChange,
+}: ApplyReviewViewProps = {}) {
   const queue = useApplyReviewQueueQuery();
   const queueError = queue.error instanceof Error ? queue.error.message : null;
   const items = queue.data?.items ?? [];
-  const [selectedJobKey, setSelectedJobKey] = useState<string | null>(null);
+  const [selectedJobKey, setSelectedJobKey] = useState<string | null>(targetJobKey);
   const selected = selectedItem(items, selectedJobKey);
 
   useEffect(() => {
@@ -588,10 +596,23 @@ export function ApplyReviewView() {
       setSelectedJobKey(null);
       return;
     }
-    if (!selectedJobKey || !items.some((item) => item.jobKey === selectedJobKey)) {
-      setSelectedJobKey(items[0]?.jobKey ?? null);
+    if (targetJobKey && items.some((item) => item.jobKey === targetJobKey)) {
+      setSelectedJobKey(targetJobKey);
+      return;
     }
-  }, [items, selectedJobKey]);
+    if (!selectedJobKey || !items.some((item) => item.jobKey === selectedJobKey)) {
+      const fallbackJobKey = items[0]?.jobKey ?? null;
+      setSelectedJobKey(fallbackJobKey);
+      if (targetJobKey && fallbackJobKey !== targetJobKey) {
+        onTargetJobKeyChange?.(fallbackJobKey);
+      }
+    }
+  }, [items, onTargetJobKeyChange, selectedJobKey, targetJobKey]);
+
+  const handleSelectJob = (jobKey: string) => {
+    setSelectedJobKey(jobKey);
+    onTargetJobKeyChange?.(jobKey);
+  };
 
   const statuses = items.map(materialStatus);
   const readyCount = statuses.filter((status) => status.kind === "ready").length;
@@ -609,7 +630,7 @@ export function ApplyReviewView() {
         {queue.isFetching && !queue.data ? <Empty title="Loading review queue." /> : null}
         {queue.data && selected ? (
           <div className="apply-review-shell">
-            <ApplyReviewQueue items={items} selected={selected} onSelect={setSelectedJobKey} />
+            <ApplyReviewQueue items={items} selected={selected} onSelect={handleSelectJob} />
             <SelectedReview item={selected} />
           </div>
         ) : null}
