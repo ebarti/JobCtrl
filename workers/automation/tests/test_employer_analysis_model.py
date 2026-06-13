@@ -232,6 +232,33 @@ class TestNormalizedGroundingAndSnap:
         # Snaps to the JD's actual casing, not the model's lowercase quote.
         assert locate_grounded_span("postgresql tuning", jd) == "PostgreSQL tuning"
 
+    # --- Markdown punctuation escape tolerance --- #
+
+    def test_markdown_escaped_hyphen_grounds_and_snaps_to_source(self) -> None:
+        jd = "We need hands\\-on Kubernetes and AI\\-native engineering workflows."
+        assert is_grounded("hands-on Kubernetes", jd) is True
+        assert is_grounded("AI-native engineering workflows", jd) is True
+        assert locate_grounded_span("hands-on Kubernetes", jd) == "hands\\-on Kubernetes"
+        assert locate_grounded_span("AI-native engineering workflows", jd) == (
+            "AI\\-native engineering workflows"
+        )
+
+    def test_markdown_escaped_symbols_ground_and_snap_to_source(self) -> None:
+        jd = "Partner with R\\&D on 6\\+ years of platform engineering experience."
+        assert is_grounded("R&D", jd) is True
+        assert is_grounded("6+ years of platform engineering experience", jd) is True
+        assert locate_grounded_span("R&D", jd) == "R\\&D"
+        assert locate_grounded_span("6+ years of platform engineering experience", jd) == (
+            "6\\+ years of platform engineering experience"
+        )
+
+    def test_markdown_escaped_span_input_also_grounds(self) -> None:
+        jd = "Interest and practical exposure to AI-native engineering workflows and tooling."
+        assert is_grounded("AI\\-native engineering workflows", jd) is True
+        assert locate_grounded_span("AI\\-native engineering workflows", jd) == (
+            "AI-native engineering workflows"
+        )
+
     # --- THE GUARANTEE: different WORDS are still rejected --- #
 
     def test_paraphrase_with_different_words_is_still_rejected(self) -> None:

@@ -6,8 +6,8 @@ import type {
   ScoringCriteriaSnapshot,
 } from "@jobhunter/contracts";
 
+import { ScoreBadge } from "./ScoreBadge.js";
 import { ScoreReasoning } from "./ScoreReasoning.js";
-import { scoreTier } from "../lib/score-tier.js";
 
 export interface ScoreBreakdownProps {
   fitScore: number | null;
@@ -51,7 +51,7 @@ export function ScoreBreakdown({
   return (
     <div className="score-explainer">
       <div className="score-line">
-        <span className={`fit ${scoreTier(fitScore)}`}>{fitScore ?? "-"}</span>
+        <ScoreBadge score={fitScore} />
         <span>
           <b>{fitScore ?? "-"} / 10 fit score</b>
           {metadata ? <small>{metadata}</small> : null}

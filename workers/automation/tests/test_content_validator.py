@@ -111,6 +111,31 @@ def test_validate_json_fields_rejects_too_many_bullets() -> None:
     assert any("exceeds 4 bullets" in err for err in result.errors)
 
 
+def test_validate_json_fields_rejects_rewritten_experience_title() -> None:
+    payload = _good_payload()
+    payload["experience_updates"][0]["title"] = "Senior SWE - Platform Infrastructure"
+    result = _VALIDATOR.validate_json_fields(payload, _profile())
+    assert result.passed is False
+    assert any("Unsupported title rewrite" in err for err in result.errors)
+
+
+def test_validate_json_fields_accepts_empty_or_exact_source_title() -> None:
+    payload = _good_payload()
+    payload["experience_updates"][0]["title"] = ""
+    assert _VALIDATOR.validate_json_fields(payload, _profile()).passed is True
+
+    payload["experience_updates"][0]["title"] = "Senior SWE"
+    assert _VALIDATOR.validate_json_fields(payload, _profile()).passed is True
+
+
+def test_validate_json_fields_rejects_job_only_skill_items() -> None:
+    payload = _good_payload()
+    payload["skill_category_updates"][0]["items"] = ["Python", "Kubernetes Operators"]
+    result = _VALIDATOR.validate_json_fields(payload, _profile())
+    assert result.passed is False
+    assert any("Fabricated skill: 'Kubernetes Operators'" in err for err in result.errors)
+
+
 def test_validate_json_fields_normal_mode_warns_about_banned_words() -> None:
     payload = _good_payload()
     payload["experience_updates"][0]["bullets"] = ["passionate about robust solutions"]

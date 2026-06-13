@@ -49,11 +49,13 @@ import type {
   WorkflowRunsListQuery,
 } from "./contracts.js";
 import { PIPELINE_RUN_STAGES, ProfileSchema, STAGES, WORKFLOW_RUN_STATUSES } from "./contracts.js";
+import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
 
 const DEFAULT_TENANT = "local";
+const DEFAULT_PROFILE_ID = "default";
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const satisfies readonly ActiveState[];
 
 const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
@@ -175,6 +177,14 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   bullet_provenance_json: string | null;
   coverage_audit_json: string | null;
   voice_pass_json: string | null;
+}
+
+interface ProfileEvidencePointer {
+  entryId: string;
+  evidenceId: string;
+  sourceText: string;
+  normalizedSourceText: string;
+  senioritySignal: boolean;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -598,18 +608,67 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const stages = reconcileStageRetryability(db, listRow.job_id, parseStages(detailRow?.stages_json));
   const artifacts = artifactsForJob(db, listRow.job_id);
   const auditHistory = buildJobAuditHistory(db, listRow.job_id);
+  const jobSummary = rowToJobSummary(listRow);
+  const latestApplyRun = latestApplyRunForJob(db, listRow.job_id);
   return {
     ok: true,
     job: {
-      ...rowToJobSummary(listRow),
+      ...jobSummary,
       descriptionPreview: detailRow?.description_preview ?? "",
       scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
+    applyAudit: buildApplyAudit({
+      applicationUrl: applyAuditApplicationUrl(listRow),
+      hasResume: Boolean(listRow.has_resume),
+      hasCoverLetter: Boolean(listRow.has_cover_letter),
+      hasPdf: Boolean(listRow.has_pdf),
+      currentStage: jobSummary.currentStage,
+      currentState: jobSummary.currentState,
+      currentErrorCode: jobSummary.errorCode,
+      currentErrorMessage: jobSummary.errorMessage,
+      latestApplyRun,
+      scoreBreakdown: jobSummary.scoreBreakdown,
+      reviewEvidenceAvailable: Boolean(
+        jobSummary.scoreBreakdown ||
+          artifacts.length ||
+          auditHistory.length ||
+          detailRow?.description_preview,
+      ),
+    }),
     stages,
     artifacts,
     auditHistory,
     employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
   };
+}
+
+function latestApplyRunForJob(db: SqliteDatabase, jobId: string): ApplyAuditLatestRun | null {
+  if (!tableExists(db, "apply_run_projections")) {
+    return null;
+  }
+  const row = getRow<ApplyRunProjectionRow>(
+    db,
+    `SELECT * FROM apply_run_projections
+     WHERE tenant_id = ? AND job_id = ?
+     ORDER BY COALESCE(started_at, finished_at, '') DESC, run_id DESC
+     LIMIT 1`,
+    [DEFAULT_TENANT, jobId],
+  );
+  if (!row) {
+    return null;
+  }
+  return {
+    runId: stringField(row.run_id),
+    status: normalizeWorkflowRunStatus(row.status),
+    result: nullableString(row.result),
+    dryRun: Boolean(row.dry_run),
+    startedAt: nullableString(row.started_at),
+    finishedAt: nullableString(row.finished_at),
+  };
+}
+
+function applyAuditApplicationUrl(row: JobListProjectionRow): string | null {
+  return nullableString(row.application_url) ?? nullableString(row.job_id);
 }
 
 /**
@@ -2065,6 +2124,14 @@ function tailoringExplanationForArtifact(
   // time) instead of recomputed from the resume file / job description at read
   // time. Honest empty when no canonical coverage exists for this generation.
   explanation.keywords = keywordsBlockFromCoverageAudit(explanation.coverageAudit);
+  backfillLegacyProfileEvidenceMapping(db, row, explanation);
+  const missingAuditFields = missingTailoringAuditFields(explanation);
+  if (missingAuditFields.length) {
+    explanation.quality.errors = [
+      `Tailoring audit metadata incomplete: missing ${missingAuditFields.join(", ")}`,
+      ...explanation.quality.errors,
+    ];
+  }
   return explanation;
 }
 
@@ -2179,6 +2246,237 @@ function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
     });
   }
   return entries;
+}
+
+function backfillLegacyProfileEvidenceMapping(
+  db: SqliteDatabase,
+  row: ArtifactProjectionRow,
+  explanation: ArtifactTailoringExplanation,
+): void {
+  const pointers = profileEvidencePointers(db, row.tenant_id);
+  if (!pointers.length) return;
+
+  const discoveredIds: string[] = [];
+  explanation.annotatedChanges = explanation.annotatedChanges.map((change) => {
+    if (change.evidenceIds.length) {
+      discoveredIds.push(...change.evidenceIds);
+      return change;
+    }
+    const evidenceIds = matchProfileEvidencePointers(
+      pointers,
+      change.sourceId,
+      [change.label, ...change.sourceText, ...change.tailoredText, change.rationale ?? ""],
+    );
+    if (!evidenceIds.length) return change;
+    discoveredIds.push(...evidenceIds);
+    return { ...change, evidenceIds };
+  });
+
+  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
+    if (entry.evidenceIds.length) {
+      discoveredIds.push(...entry.evidenceIds);
+      return entry;
+    }
+    const evidenceIds = matchProfileEvidencePointers(
+      pointers,
+      entry.sourceId,
+      [entry.generatedText, entry.rationale, ...entry.matchedKeywords],
+    );
+    if (!evidenceIds.length) return entry;
+    discoveredIds.push(...evidenceIds);
+    return { ...entry, evidenceIds };
+  });
+
+  const backfilledIds = uniqueEvidenceIds(discoveredIds).slice(0, 32);
+  if (!backfilledIds.length) return;
+
+  if (!explanation.evidence.requiredIds.length) {
+    explanation.evidence.requiredIds = backfilledIds;
+  }
+  if (!explanation.evidence.seniorityIds.length) {
+    const seniorityIds = backfilledIds.filter((id) => pointers.some((pointer) => pointer.evidenceId === id && pointer.senioritySignal));
+    explanation.evidence.seniorityIds = seniorityIds.slice(0, 32);
+  }
+  if (!explanation.evidence.representedIds.length) {
+    explanation.evidence.representedIds = backfilledIds;
+  }
+}
+
+function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileEvidencePointer[] {
+  if (!tableExists(db, "candidate_profile_experience_entries")) return [];
+  const pointers: ProfileEvidencePointer[] = [];
+  if (tableExists(db, "candidate_profile_achievement_evidence")) {
+    const rows = allRows<{
+      entry_id: string;
+      evidence_id: string;
+      source_text: string;
+      scope: string;
+      action: string;
+      outcome: string;
+      seniority_signal: string;
+    }>(
+      db,
+      `SELECT evidence.entry_id,
+              evidence.evidence_id,
+              evidence.source_text,
+              evidence.scope,
+              evidence.action,
+              evidence.outcome,
+              evidence.seniority_signal
+         FROM candidate_profile_achievement_evidence AS evidence
+        WHERE evidence.tenant_id = ?
+          AND evidence.profile_id = ?
+          AND TRIM(evidence.evidence_id) != ''
+          AND TRIM(evidence.source_text) != ''
+        ORDER BY evidence.entry_id, evidence.evidence_index`,
+      [tenantId, DEFAULT_PROFILE_ID],
+    );
+    for (const evidence of rows) {
+      const sourceText = safeAuditText(evidence.source_text, 1200);
+      const evidenceId = safeEvidenceId(evidence.evidence_id);
+      const entryId = safeAuditText(evidence.entry_id, 160);
+      if (!sourceText || !evidenceId || !entryId) continue;
+      pointers.push({
+        entryId,
+        evidenceId,
+        sourceText,
+        normalizedSourceText: normalizeEvidenceText(sourceText),
+        senioritySignal: hasSenioritySignal([
+          evidence.scope,
+          evidence.action,
+          evidence.outcome,
+          evidence.seniority_signal,
+          sourceText,
+        ]),
+      });
+    }
+  }
+  if (!tableExists(db, "candidate_profile_experience_bullets")) {
+    return pointers;
+  }
+  const rows = allRows<{
+    entry_id: string;
+    title: string;
+    company: string;
+    bullet_index: number;
+    bullet_text: string;
+  }>(
+    db,
+    `SELECT entries.entry_id,
+            entries.title,
+            entries.company,
+            bullets.bullet_index,
+            bullets.bullet_text
+       FROM candidate_profile_experience_entries AS entries
+       JOIN candidate_profile_experience_bullets AS bullets
+         ON bullets.tenant_id = entries.tenant_id
+        AND bullets.profile_id = entries.profile_id
+        AND bullets.entry_id = entries.entry_id
+      WHERE entries.tenant_id = ?
+        AND entries.profile_id = ?
+        AND TRIM(bullets.bullet_text) != ''
+      ORDER BY entries.position_index, bullets.bullet_index`,
+    [tenantId, DEFAULT_PROFILE_ID],
+  );
+  for (const bullet of rows) {
+    const entryId = safeAuditText(bullet.entry_id, 160);
+    const sourceText = safeAuditText(bullet.bullet_text, 1200);
+    if (!entryId || !sourceText) continue;
+    pointers.push({
+      entryId,
+      evidenceId: legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1),
+      sourceText,
+      normalizedSourceText: normalizeEvidenceText(sourceText),
+      senioritySignal: hasSenioritySignal([bullet.title, bullet.company, sourceText]),
+    });
+  }
+  return pointers;
+}
+
+function matchProfileEvidencePointers(
+  pointers: readonly ProfileEvidencePointer[],
+  sourceId: string | null,
+  rawTexts: readonly string[],
+): string[] {
+  const normalizedSourceId = safeAuditText(sourceId, 160);
+  const texts = rawTexts.map((text) => normalizeEvidenceText(text)).filter(Boolean);
+  const textTokenSets = texts.map((text) => new Set(evidenceTokens(text)));
+  const scored: Array<{ id: string; score: number }> = [];
+  for (const pointer of pointers) {
+    let score = 0;
+    if (normalizedSourceId && pointer.entryId === normalizedSourceId) score += 6;
+    if (normalizedSourceId && pointer.evidenceId === normalizedSourceId) score += 8;
+    for (const text of texts) {
+      if (text && pointer.normalizedSourceText && text.includes(pointer.normalizedSourceText)) score += 6;
+      if (text && pointer.normalizedSourceText && pointer.normalizedSourceText.includes(text) && text.length >= 24) score += 4;
+    }
+    const pointerTokens = evidenceTokens(pointer.normalizedSourceText);
+    const overlap = Math.max(
+      0,
+      ...textTokenSets.map((tokens) => pointerTokens.filter((token) => tokens.has(token)).length),
+    );
+    if (overlap >= 2) score += overlap;
+    if (score >= 6 || overlap >= 4) {
+      scored.push({ id: pointer.evidenceId, score });
+    }
+  }
+  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  return uniqueEvidenceIds(scored.map((item) => item.id)).slice(0, 6);
+}
+
+function uniqueEvidenceIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    const safe = safeEvidenceId(id);
+    if (!safe || seen.has(safe)) continue;
+    seen.add(safe);
+    out.push(safe);
+  }
+  return out;
+}
+
+function safeEvidenceId(value: unknown): string {
+  return safeAuditText(value, 160).replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function legacyBulletEvidenceId(entryId: string, oneBasedBulletIndex: number): string {
+  return `${safeEvidenceId(entryId) || "experience"}_bullet_${Math.max(1, Math.trunc(oneBasedBulletIndex || 1))}`;
+}
+
+const PROFILE_EVIDENCE_SENIORITY_TERMS = [
+  "own",
+  "owned",
+  "ownership",
+  "scope",
+  "influence",
+  "influenced",
+  "cross-team",
+  "stakeholder",
+  "stakeholders",
+  "led",
+  "lead",
+  "mentor",
+  "mentored",
+  "architect",
+  "architected",
+  "strategy",
+  "technical leadership",
+];
+
+function hasSenioritySignal(values: readonly unknown[]): boolean {
+  const text = values.map((value) => safeAuditText(value, 300)).join(" ").toLowerCase();
+  return PROFILE_EVIDENCE_SENIORITY_TERMS.some((term) => text.includes(term));
+}
+
+function normalizeEvidenceText(value: unknown): string {
+  return (safeAuditText(value, 1200).toLowerCase().match(KEYWORD_TOKEN_RE) ?? []).join(" ");
+}
+
+function evidenceTokens(value: string): string[] {
+  return (value.match(KEYWORD_TOKEN_RE) ?? [])
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length >= 3 && !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
 }
 
 /**
@@ -2371,15 +2669,7 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       attempts: metadataNumber(metadata.attempts),
     },
   };
-  const missingAuditFields = missingTailoringAuditFields(explanation);
-  if (missingAuditFields.length) {
-    explanation.quality.errors = [
-      `Tailoring audit metadata incomplete: missing ${missingAuditFields.join(", ")}`,
-      ...explanation.quality.errors,
-    ];
-  }
-
-  return hasTailoringExplanationContent(explanation) ? explanation : null;
+  return explanation;
 }
 
 function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation): string[] {
@@ -2567,56 +2857,6 @@ function parseTailoringChangeAnnotations(
     evidenceIds: metadataTextList(item.evidence_ids ?? item.evidenceIds, 12, 120),
     evidenceNotes: metadataTextList(item.evidence_notes ?? item.evidenceNotes, 8, 220),
   }));
-}
-
-function hasTailoringExplanationContent(explanation: ArtifactTailoringExplanation): boolean {
-  return Boolean(
-    explanation.targetSeniority ||
-      explanation.claimMode ||
-      explanation.validationMode ||
-      explanation.safety.autoApprovableClaimModes.length ||
-      explanation.safety.allowAdjacentAchievementDrafts !== null ||
-      explanation.safety.qualityPassed !== null ||
-      explanation.keywords.planned.length ||
-      explanation.keywords.covered.length ||
-      explanation.keywords.missing.length ||
-      explanation.keywords.filtered.planned.length ||
-      explanation.keywords.filtered.covered.length ||
-      explanation.keywords.filtered.missing.length ||
-      explanation.keywords.counts.planned ||
-      explanation.keywords.counts.covered ||
-      explanation.keywords.counts.missing ||
-      explanation.evidence.requiredIds.length ||
-      explanation.evidence.seniorityIds.length ||
-      explanation.evidence.representedIds.length ||
-      explanation.evidence.missingIds.length ||
-      explanation.evidence.verifiedMetricCount !== null ||
-      explanation.quality.passed !== null ||
-      explanation.quality.errors.length ||
-      explanation.quality.warnings.length ||
-      explanation.quality.notes.length ||
-      explanation.quality.metricClaims.length ||
-      explanation.quality.repeatedKeywords.length ||
-      explanation.judge.passed !== null ||
-      explanation.judge.verdict ||
-      explanation.judge.score !== null ||
-      explanation.judge.minScore !== null ||
-      explanation.judge.issues.length ||
-      explanation.judge.unsupportedClaims.length ||
-      explanation.judge.fabrications.length ||
-      explanation.judge.missingRequiredEvidence.length ||
-      explanation.judge.repairInstructions.length ||
-      explanation.adversarialReview ||
-      explanation.reviewFeedback.warningRepairAttempted !== null ||
-      explanation.reviewFeedback.acceptedWithResidualWarnings !== null ||
-      explanation.reviewFeedback.acceptedWarnings.length ||
-      explanation.annotatedChanges.length ||
-      explanation.models.candidateModels.length ||
-      explanation.models.selectedModel ||
-      explanation.models.selectedCandidate ||
-      explanation.models.judgeModel ||
-      explanation.models.attempts !== null,
-  );
 }
 
 function metadataRecord(value: unknown): Record<string, unknown> {

@@ -349,6 +349,7 @@ def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_prov
     )
 
     # The resume is NOT approved despite the judge pass — the detector gated it.
+    assert outcome.status == "failed_validation"
     assert outcome.materials is not None
     assert not outcome.materials.is_resume_approved
     # No provenance was persisted for the rejected candidate.
@@ -379,6 +380,7 @@ def test_fabricated_employer_is_hard_rejected_by_detector_and_writes_no_provenan
     )
 
     # The resume is NOT approved despite the judge pass — the detector gated it.
+    assert outcome.status == "failed_validation"
     assert outcome.materials is not None
     assert not outcome.materials.is_resume_approved
     # No provenance was persisted for a rejected candidate (last accepted

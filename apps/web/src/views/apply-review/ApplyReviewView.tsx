@@ -1,10 +1,10 @@
-import type { ApplyReviewQueueItem } from "@jobhunter/contracts";
+import type { ApplyAuditFact, ApplyAuditSource, ApplyReviewQueueItem } from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
-import { ArtifactTailoringInspector } from "../../contexts/materials/components/ArtifactTailoringInspector.js";
+import { ArtifactGroundingRiskPanel, ResumeAuditPins } from "../../contexts/materials/components/ResumeAuditPins.js";
 import { useApplyReviewQueueQuery } from "../../contexts/operations/hooks/useApplyReviewQueueQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -15,7 +15,7 @@ import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
 type MaterialStatus = {
-  readonly kind: "ready" | "preparing" | "repair";
+  readonly kind: ApplyReviewQueueItem["applyAudit"]["state"];
   readonly label: string;
   readonly tone: "ok" | "info" | "warn";
   readonly summary: string;
@@ -23,68 +23,25 @@ type MaterialStatus = {
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
 
+interface RenderedResumeLine {
+  readonly lineNumber: number;
+  readonly text: string;
+  readonly kind: "blank" | "name" | "contact" | "section" | "metadata" | "bullet" | "body";
+}
+
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
-  if (!item.applicationUrl) {
-    return {
-      kind: "repair",
-      label: "missing apply link",
-      tone: "warn",
-      summary: "The application link is missing, so submission cannot run yet.",
-    };
-  }
-  if (!item.materials.hasResume) {
-    return {
-      kind: "preparing",
-      label: "materials preparing",
-      tone: "info",
-      summary: "The tailored resume is still being prepared automatically.",
-    };
-  }
-  if (!item.materials.hasPdf) {
-    return {
-      kind: "preparing",
-      label: "materials preparing",
-      tone: "info",
-      summary: "Submit-ready files are being prepared automatically; reviewable text is available now.",
-    };
-  }
-  if (item.currentState === "blocked" || item.currentState === "failed" || item.currentState === "stale") {
-    return repairStatus(item);
-  }
   return {
-    kind: "ready",
-    label: "materials ready",
-    tone: "ok",
-    summary: "The tailored materials are ready to review before approval.",
+    kind: item.applyAudit.state,
+    label: item.applyAudit.label,
+    tone: auditTone(item.applyAudit.state),
+    summary: item.applyAudit.summary,
   };
 }
 
-function repairStatus(item: ApplyReviewQueueItem): MaterialStatus {
-  const run = item.latestApplyRun;
-  const reason = firstRepairReason(item);
-  if (run && isFailedApplyRun(run)) {
-    const mode = run.dryRun ? "dry run" : "submit";
-    return {
-      kind: "repair",
-      label: `${mode} failed`,
-      tone: "warn",
-      summary: `Last ${mode} failed${reason ? `: ${reason}` : ""}. Review evidence is still available.`,
-    };
-  }
-  if (reason) {
-    return {
-      kind: "repair",
-      label: repairReasonLabel(reason, item),
-      tone: "warn",
-      summary: `${stageLabel(item.currentStage)} is ${stateLabel(item.currentState)}: ${reason}. Review evidence is still available.`,
-    };
-  }
-  return {
-    kind: "repair",
-    label: `${stageLabel(item.currentStage)} ${stateLabel(item.currentState)}`,
-    tone: "warn",
-    summary: `${stageLabel(item.currentStage)} is ${stateLabel(item.currentState)}. Review evidence is still available.`,
-  };
+function auditTone(state: ApplyReviewQueueItem["applyAudit"]["state"]): MaterialStatus["tone"] {
+  if (state === "ready") return "ok";
+  if (state === "preparing") return "info";
+  return "warn";
 }
 
 function latestApplyContext(item: ApplyReviewQueueItem): string {
@@ -116,20 +73,6 @@ function isFailedApplyRun(run: ApplyRun): boolean {
   return status.includes("failed") || status.includes("skipped");
 }
 
-function firstRepairReason(item: ApplyReviewQueueItem): string | null {
-  const runReason = cleanRepairReason(item.latestApplyRun?.result);
-  if (runReason && item.latestApplyRun && isFailedApplyRun(item.latestApplyRun)) {
-    return runReason;
-  }
-  for (const blocker of item.blockers) {
-    const reason = cleanRepairReason(blocker);
-    if (reason) {
-      return reason;
-    }
-  }
-  return null;
-}
-
 function cleanRepairReason(value: string | null | undefined): string | null {
   const text = String(value ?? "")
     .replace(/_/g, " ")
@@ -140,28 +83,6 @@ function cleanRepairReason(value: string | null | undefined): string | null {
     return null;
   }
   return text.charAt(0).toLowerCase() + text.slice(1);
-}
-
-function repairReasonLabel(reason: string, item: ApplyReviewQueueItem): string {
-  const lower = reason.toLowerCase();
-  if (lower.includes("materials")) {
-    return "materials not ready";
-  }
-  if (lower.includes("application") && lower.includes("link")) {
-    return "missing apply link";
-  }
-  if (lower.includes("process killed")) {
-    return "process killed";
-  }
-  return `${stageLabel(item.currentStage)} ${stateLabel(item.currentState)}`;
-}
-
-function stageLabel(stage: string): string {
-  return stage.replace(/_/g, " ");
-}
-
-function stateLabel(state: string): string {
-  return state.replace(/_/g, " ");
 }
 
 function selectedItem(items: readonly ApplyReviewQueueItem[], selectedJobKey: string | null) {
@@ -202,6 +123,77 @@ function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; valu
     { label: "Transferable", values: item.position.transferable },
     { label: "Keywords", values: item.position.keywords },
   ].filter((group) => group.values.length > 0);
+}
+
+function sourceFacts(item: ApplyReviewQueueItem): ApplyAuditFact[] {
+  return item.applyAudit.sources
+    .filter(isInspectableSource)
+    .map((source) => ({
+      code: `source_${source.kind}`,
+      label: source.label,
+      detail: sourceDetail(source),
+      severity: source.status === "unknown" ? "unknown" : "warning",
+      source: source.kind,
+    }));
+}
+
+function isInspectableSource(source: ApplyAuditSource): boolean {
+  if (source.status === "unknown") {
+    return true;
+  }
+  return source.status === "missing" && (
+    source.kind === "application_url" ||
+    source.kind === "materials.resume" ||
+    source.kind === "materials.pdf"
+  );
+}
+
+function sourceDetail(source: ApplyAuditSource): string {
+  const status = source.status.replace(/_/g, " ");
+  return source.detail ? `${status}: ${source.detail}` : status;
+}
+
+function ApplyAuditFacts({ item }: { readonly item: ApplyReviewQueueItem }) {
+  const groups = [
+    { label: "Missing", facts: item.applyAudit.missingPrerequisites },
+    { label: "Blockers", facts: item.applyAudit.hardBlockers },
+    { label: "Eligibility", facts: item.applyAudit.eligibilityConcerns },
+    { label: "Sources", facts: sourceFacts(item) },
+  ].filter((group) => group.facts.length > 0);
+
+  if (!groups.length) {
+    return null;
+  }
+
+  return (
+    <dl className="apply-review-audit-facts">
+      {groups.map((group) => (
+        <div key={group.label}>
+          <dt>{group.label}</dt>
+          <dd>
+            {group.facts.map((fact) => (
+              <span className={`tag ${factTone(fact)}`} key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}>
+                {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
+              </span>
+            ))}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function factTone(fact: ApplyAuditFact): "muted" | "info" | "ok" | "warn" {
+  if (fact.severity === "unknown") {
+    return "muted";
+  }
+  if (fact.severity === "success") {
+    return "ok";
+  }
+  if (fact.severity === "info") {
+    return "info";
+  }
+  return "warn";
 }
 
 function ApplyReviewQueue({
@@ -286,6 +278,130 @@ function TextPreview({
   );
 }
 
+const RENDERED_RESUME_SECTION_HEADINGS = new Set([
+  "certifications",
+  "core skills",
+  "education",
+  "executive profile",
+  "experience",
+  "languages",
+  "professional profile",
+  "profile",
+  "projects",
+  "skills",
+  "summary",
+  "technical skills",
+]);
+
+function isRenderedResumeSectionHeading(text: string): boolean {
+  return RENDERED_RESUME_SECTION_HEADINGS.has(text.toLowerCase());
+}
+
+function renderedResumeLines(resumeText: string | null | undefined): RenderedResumeLine[] {
+  let firstContentLine = true;
+  return (resumeText ?? "")
+    .split(/\r?\n/)
+    .map((line, index) => {
+      const text = line.replace(/\t/g, "  ").trimEnd();
+      const normalized = text.trim();
+      if (!normalized) {
+        return {
+          lineNumber: index + 1,
+          text: "",
+          kind: "blank" as const,
+        };
+      }
+      const kind = firstContentLine
+        ? "name"
+        : isRenderedResumeSectionHeading(normalized)
+          ? "section"
+          : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(normalized)
+            ? "contact"
+            : /^[-•○]\s+/.test(normalized)
+              ? "bullet"
+              : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(normalized)
+                ? "metadata"
+                : "body";
+      firstContentLine = false;
+      return {
+        lineNumber: index + 1,
+        text,
+        kind,
+      };
+    });
+}
+
+function RenderedResumeLineReview({
+  resumeText,
+  selectedLineNumber,
+  onSelectLine,
+}: {
+  readonly resumeText: string | null | undefined;
+  readonly selectedLineNumber: number | null;
+  readonly onSelectLine: (lineNumber: number) => void;
+}) {
+  const lines = renderedResumeLines(resumeText);
+  const selectedLineRef = useRef<HTMLLIElement | null>(null);
+
+  useEffect(() => {
+    if (typeof selectedLineRef.current?.scrollIntoView === "function") {
+      selectedLineRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedLineNumber]);
+
+  return (
+    <section className="apply-review-preview-block apply-review-text-resume" aria-label="Rendered resume line review">
+      <h3 className="sr-only">Rendered resume line review</h3>
+      <p className="sr-only">
+        Select a rendered line to inspect provenance and risk. The faithful PDF preview remains below for visual
+        verification.
+      </p>
+      {lines.some((line) => line.kind !== "blank") ? (
+        <ol className="resume-line-review-list resume-line-review-page" aria-label="Rendered resume text lines">
+          {lines.map((line) => {
+            const selected = line.lineNumber === selectedLineNumber;
+            if (line.kind === "blank") {
+              return (
+                <li
+                  aria-hidden="true"
+                  className="resume-line-review-line blank"
+                  data-line-kind="blank"
+                  key={line.lineNumber}
+                  value={line.lineNumber}
+                />
+              );
+            }
+            return (
+              <li
+                className={`resume-line-review-line${selected ? " selected" : ""}`}
+                data-line-kind={line.kind}
+                key={line.lineNumber}
+                ref={selected ? selectedLineRef : undefined}
+                value={line.lineNumber}
+              >
+                <button
+                  aria-label={`Line ${line.lineNumber}: ${line.text}`}
+                  aria-pressed={selected}
+                  className="resume-line-review-button"
+                  type="button"
+                  onClick={() => onSelectLine(line.lineNumber)}
+                >
+                  <span aria-hidden="true" className="resume-line-review-number">
+                    {line.lineNumber}
+                  </span>
+                  <span className="resume-line-review-text">{line.text}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <Empty title="No rendered resume text is available for line review." />
+      )}
+    </section>
+  );
+}
+
 function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const { api } = usePorts();
   const artifactId = item.materialsPreview.resumePdfArtifactId;
@@ -314,14 +430,50 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   );
 }
 
+function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
+  const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
+  const [selectedLineNumber, setSelectedLineNumber] = useState<number | null>(null);
+
+  useEffect(() => {
+    setSelectedLineNumber(null);
+  }, [item.jobKey]);
+
+  return (
+    <section className="apply-review-preview-block apply-review-resume-review" aria-label="Rendered resume audit">
+      <div className="apply-review-resume-main">
+        <RenderedResumeLineReview
+          resumeText={item.materialsPreview.resumeText}
+          selectedLineNumber={selectedLineNumber}
+          onSelectLine={setSelectedLineNumber}
+        />
+        <div className="apply-review-faithful-resume">
+          <ResumePreview item={item} />
+        </div>
+      </div>
+      {auditArtifactId ? (
+        <ResumeAuditPins
+          artifactId={auditArtifactId}
+          resumeText={item.materialsPreview.resumeText}
+          selectedLineNumber={selectedLineNumber}
+          onSelectedLineNumberChange={setSelectedLineNumber}
+        />
+      ) : (
+        <section className="apply-review-resume-pins" aria-label="Line-by-line resume audit">
+          <h3>Line-by-line resume audit</h3>
+          <Empty title="No resume artifact is available for provenance inspection." />
+        </section>
+      )}
+    </section>
+  );
+}
+
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const status = materialStatus(item);
   const evidenceGroups = evidenceValues(item).length;
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
+  const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
   const [detailJobKey, setDetailJobKey] = useState<string | null>(null);
-  const resumePdfArtifactId = item.materialsPreview.resumePdfArtifactId;
-
   useEffect(() => {
     setDetailJobKey(null);
   }, [item.jobKey]);
@@ -370,6 +522,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
       <div className="apply-review-status-note">
         <b>{status.summary}</b>
         {reviewState ? <span>Current decision: {reviewState}.</span> : null}
+        <ApplyAuditFacts item={item} />
       </div>
 
       <section className="apply-review-workspace" aria-label={`Review evidence for ${item.title}`}>
@@ -408,14 +561,9 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             <span className="eyebrow">Application Materials</span>
             <h2>Tailored resume and cover</h2>
           </header>
-          <div className="apply-review-pane-scroll">
-            {resumePdfArtifactId ? (
-              <ArtifactTailoringInspector
-                artifactId={resumePdfArtifactId}
-                className="apply-review-preview-block apply-review-tailoring"
-              />
-            ) : null}
-            <ResumePreview item={item} />
+          <div className="apply-review-pane-scroll apply-review-materials-scroll">
+            {resumeAuditArtifactId ? <ArtifactGroundingRiskPanel artifactId={resumeAuditArtifactId} /> : null}
+            <ResumeReviewSurface item={item} />
             <TextPreview
               title="Cover letter"
               text={item.materialsPreview.coverLetterText}
@@ -448,7 +596,7 @@ export function ApplyReviewView() {
   const statuses = items.map(materialStatus);
   const readyCount = statuses.filter((status) => status.kind === "ready").length;
   const preparingCount = statuses.filter((status) => status.kind === "preparing").length;
-  const repairCount = statuses.filter((status) => status.kind === "repair").length;
+  const repairCount = statuses.filter((status) => status.kind === "repair" || status.kind === "blocked").length;
 
   return (
     <div className="apply-review-layout">

@@ -385,6 +385,10 @@ pnpm dev:start
 pnpm dev:stop
 ```
 
+`pnpm dev:start` prints the observed local bindings after launch. Use that
+output as the browser URL, especially when Vite moves the web app to a higher
+port because `5173` is already occupied.
+
 The API health endpoint reports the API app/database identity and the latest
 JobHunter automation worker heartbeat. The web topbar alerts when the worker is
 missing or stale, and pipeline stage buttons stay disabled until the worker is

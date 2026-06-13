@@ -622,6 +622,38 @@ def _clean_blocker_reasons(value: list[str] | tuple[str, ...] | None) -> list[st
     return out
 
 
+def _material_generation_completed_stage(conn, job_url: str, stage: str) -> int | None:
+    if stage == "tailor":
+        required_artifacts = ("tailored_resume", "resume_pdf")
+    elif stage == "cover":
+        required_artifacts = ("cover_letter",)
+    else:
+        return None
+
+    placeholders = ", ".join("?" for _ in required_artifacts)
+    row = conn.execute(
+        f"""
+        SELECT generation
+        FROM job_materials_artifacts
+        WHERE job_url = ?
+          AND status = 'approved'
+          AND artifact_type IN ({placeholders})
+        GROUP BY generation
+        HAVING COUNT(DISTINCT artifact_type) = ?
+        ORDER BY generation DESC
+        LIMIT 1
+        """,
+        (job_url, *required_artifacts, len(required_artifacts)),
+    ).fetchone()
+    if row is None:
+        return None
+    return int(
+        row["generation"]
+        if hasattr(row, "keys") and "generation" in row.keys()
+        else row[0]
+    )
+
+
 def recover_orphaned_running_stages(
     conn,
     *,
@@ -652,10 +684,14 @@ def recover_orphaned_running_stages(
     placeholders = ", ".join("?" for _ in recovery_stages)
     rows = conn.execute(
         f"""
-        SELECT s.job_url, s.stage, s.attempt_count, s.started_at, s.updated_at
+        SELECT s.job_url, s.stage, s.state, s.error_code, s.attempt_count,
+               s.started_at, s.updated_at
         FROM job_stage_states s
         JOIN jobs j ON j.url = s.job_url
-        WHERE s.state = 'running'
+        WHERE (
+            s.state = 'running'
+            OR (s.state = 'failed' AND s.error_code = 'ORPHANED_STAGE_RUN')
+        )
           AND s.stage IN ({placeholders})
         """,
         recovery_stages,
@@ -667,19 +703,80 @@ def recover_orphaned_running_stages(
         started_before.astimezone(timezone.utc) if started_before is not None else None
     )
     for row in rows:
-        updated_at = _parse_timestamp(row["updated_at"])
-        started_at = _parse_timestamp(row["started_at"])
-        last_seen = updated_at or started_at
-        if started_before_utc is not None:
-            current_worker_marker = started_at or last_seen
-            if current_worker_marker is not None and current_worker_marker >= started_before_utc:
-                continue
-        if last_seen is not None and last_seen > cutoff:
-            continue
-
         stage = str(row["stage"])
         job_url = str(row["job_url"])
         attempt_count = max(1, int(row["attempt_count"] or 0))
+        state = str(row["state"])
+        material_generation = _material_generation_completed_stage(conn, job_url, stage)
+        if state == "failed":
+            if material_generation is None:
+                continue
+        else:
+            updated_at = _parse_timestamp(row["updated_at"])
+            started_at = _parse_timestamp(row["started_at"])
+            last_seen = updated_at or started_at
+            if started_before_utc is not None:
+                current_worker_marker = started_at or last_seen
+                if current_worker_marker is not None and current_worker_marker >= started_before_utc:
+                    continue
+            if last_seen is not None and last_seen > cutoff:
+                continue
+        if material_generation is not None:
+            message = (
+                f"{stage} stage was orphaned by a prior worker but approved "
+                "artifacts were found, so it was marked succeeded."
+            )
+            set_stage_state(
+                conn,
+                job_url,
+                stage,
+                "succeeded",
+                attempt_count=attempt_count,
+                started_at=row["started_at"],
+                finished_at=recovered_at_iso,
+                error_code=None,
+                error_message=None,
+                retryable=False,
+                next_action=None,
+                metadata={
+                    "recovered_at": recovered_at_iso,
+                    "previous_updated_at": row["updated_at"],
+                    "materials_generation": material_generation,
+                },
+                validate_transition=False,
+            )
+            record_job_event(
+                conn,
+                job_url,
+                stage,
+                "StageCompleted",
+                level="info",
+                message=message,
+                occurred_at=recovered_at_iso,
+                payload={
+                    "recoveredAt": recovered_at_iso,
+                    "previousUpdatedAt": row["updated_at"],
+                    "materialsGeneration": material_generation,
+                    "recoveredFrom": "approved_material_artifacts",
+                },
+            )
+            record_operational_attempt_metric(
+                conn,
+                stage=stage,
+                attempt_kind="orphan_recovery",
+                outcome="succeeded",
+                job_url=job_url,
+                is_operational_failure=False,
+                is_scrape_failure=False,
+                is_retryable=False,
+                occurred_at=recovered_at_iso,
+                metadata={
+                    "previousUpdatedAt": row["updated_at"],
+                    "materialsGeneration": material_generation,
+                },
+            )
+            recovered += 1
+            continue
         message = (
             f"{stage} stage was left running by a prior worker and has been "
             "marked failed for retry."
@@ -1087,33 +1184,83 @@ def _reset_enrichment_aggregate(conn, job_url: str) -> None:
     repo.save(aggregate.reset(reset_at=utc_now()))
 
 
+def _resettable_material_generation(conn, job_url: str, stage: str) -> int | None:
+    if stage == "tailor":
+        row = conn.execute(
+            """
+            SELECT m.generation
+            FROM job_materials m
+            WHERE m.job_url = ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM job_materials_artifacts a
+                WHERE a.job_url = m.job_url
+                  AND a.generation = m.generation
+                  AND a.artifact_type = 'tailored_resume'
+                  AND a.status = 'approved'
+              )
+            ORDER BY m.generation DESC
+            LIMIT 1
+            """,
+            (job_url,),
+        ).fetchone()
+    elif stage == "cover":
+        row = conn.execute(
+            """
+            SELECT m.generation
+            FROM job_materials m
+            WHERE m.job_url = ?
+              AND EXISTS (
+                SELECT 1
+                FROM job_materials_artifacts a
+                WHERE a.job_url = m.job_url
+                  AND a.generation = m.generation
+                  AND a.artifact_type = 'tailored_resume'
+                  AND a.status = 'approved'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM job_materials_artifacts a
+                WHERE a.job_url = m.job_url
+                  AND a.generation = m.generation
+                  AND a.artifact_type = 'cover_letter'
+                  AND a.status = 'approved'
+              )
+            ORDER BY m.generation DESC
+            LIMIT 1
+            """,
+            (job_url,),
+        ).fetchone()
+    else:
+        return None
+    if row is None:
+        return None
+    return int(
+        row["generation"]
+        if hasattr(row, "keys") and "generation" in row.keys()
+        else row[0]
+    )
+
+
 def _reset_materials_artifacts(conn, job_url: str, stage: str) -> None:
-    """Clear the latest generation's affected artifact rows after a stage reset.
+    """Clear failed/in-progress material artifacts after a stage reset.
 
     Round-2 review B3. Maps stage → artifact_type subset:
 
-      * ``tailor`` resets EVERYTHING in the latest generation (resume,
-        cover, both PDFs) and resets the parent row's status back to
-        ``resume_in_progress`` — re-tailoring will start a fresh attempt
-        within the same generation; downstream artifacts are stale and
-        must be regenerated. (Use the ``MaterialsSetFactory.next_generation``
-        primitive when explicit re-tailoring with audit-trail is wanted —
-        ``reset_job_stage`` is the in-place reset path.)
-      * ``cover`` resets the cover-letter text + cover-letter PDF only;
-        tailored resume + resume PDF stay intact.
+      * ``tailor`` resets only the newest generation that does not already
+        have an approved tailored resume.
+      * ``cover`` resets only a generation with an approved resume but no
+        approved cover letter.
+
+    Approved materials remain reviewable until an approved replacement exists.
 
     Status is rolled back to the appropriate lifecycle state so the
     aggregate's invariants stay consistent.
     """
-    latest_row = conn.execute(
-        "SELECT generation FROM job_materials WHERE job_url = ? "
-        "ORDER BY generation DESC LIMIT 1",
-        (job_url,),
-    ).fetchone()
-    if latest_row is None:
+    generation = _resettable_material_generation(conn, job_url, stage)
+    if generation is None:
         return
 
-    generation = int(latest_row[0])
     if stage == "tailor":
         targets = ("tailored_resume", "cover_letter", "resume_pdf", "cover_letter_pdf")
         new_status = "resume_in_progress"

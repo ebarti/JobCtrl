@@ -2,6 +2,7 @@ import type {
   ArtifactDetail,
   ArtifactSummary,
   ActivityEventSummary,
+  ApplyAudit,
   ApplicationOutcomeListResponse,
   ApplyReviewQueueResponse,
   CredentialsResponse,
@@ -135,6 +136,52 @@ export const sampleSecondaryJob: JobSummary = {
   appliedAt: "2026-05-04T10:00:00Z",
 };
 
+export function makeApplyAudit(overrides: Partial<ApplyAudit> = {}): ApplyAudit {
+  const base: ApplyAudit = {
+    state: "ready",
+    label: "materials ready",
+    summary: "The tailored materials are ready to review before approval.",
+    reviewEvidenceAvailable: true,
+    missingPrerequisites: [],
+    hardBlockers: [],
+    eligibilityConcerns: [],
+    sources: [
+      {
+        kind: "application_url",
+        label: "Application target",
+        status: "present",
+        detail: "Application target is available.",
+      },
+      {
+        kind: "materials.resume",
+        label: "Tailored resume",
+        status: "present",
+        detail: "Tailored resume is available.",
+      },
+      {
+        kind: "materials.pdf",
+        label: "Submit-ready PDF",
+        status: "present",
+        detail: "Resume PDF is available for submission.",
+      },
+      {
+        kind: "score_eligibility",
+        label: "Score eligibility",
+        status: "present",
+        detail: "Eligibility is recorded as eligible.",
+      },
+    ],
+  };
+  return {
+    ...base,
+    ...overrides,
+    missingPrerequisites: overrides.missingPrerequisites ?? base.missingPrerequisites,
+    hardBlockers: overrides.hardBlockers ?? base.hardBlockers,
+    eligibilityConcerns: overrides.eligibilityConcerns ?? base.eligibilityConcerns,
+    sources: overrides.sources ?? base.sources,
+  };
+}
+
 export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
   ok: true,
   items: [
@@ -153,6 +200,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         hasPdf: true,
         ready: true,
       },
+      applyAudit: makeApplyAudit(),
       position: {
         descriptionPreview:
           "Globex needs a principal engineer to lead platform reliability, incident response, and developer experience improvements.",
@@ -164,7 +212,8 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       },
       materialsPreview: {
         resumeText:
-          "Principal Platform Engineer\n\nLed platform reliability programs and incident response improvements for distributed systems teams.",
+          "Principal Platform Engineer\n\nOwned platform reliability improvements for incident response.",
+        resumeTextArtifactId: "resume-text-2",
         resumePdfArtifactId: "resume-pdf-2",
         coverLetterText:
           "Dear Hiring Manager,\n\nI am excited to bring platform reliability leadership to Globex.",
@@ -199,6 +248,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
         hasPdf: true,
         ready: false,
       },
+      applyAudit: makeApplyAudit(),
       position: {
         descriptionPreview:
           "Acme is hiring a staff software engineer to own platform reliability and product engineering workflows.",
@@ -211,6 +261,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       materialsPreview: {
         resumeText:
           "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
+        resumeTextArtifactId: "resume-text-1",
         resumePdfArtifactId: "resume-pdf-1",
         coverLetterText: null,
       },
@@ -312,7 +363,43 @@ export const sampleJobAuditHistory: JobAuditEntry[] = [
   },
 ];
 
-export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
+export function makeJobDetail(
+  job: JobSummary = sampleJob,
+  overrides: Partial<Omit<JobDetail, "ok" | "job">> = {},
+): JobDetail {
+  const stages = overrides.stages ?? [
+    {
+      stage: "discover",
+      state: "succeeded",
+      attemptCount: 1,
+      maxAttempts: 3,
+      startedAt: "2026-05-01T12:00:00Z",
+      updatedAt: "2026-05-01T12:00:30Z",
+      finishedAt: "2026-05-01T12:00:30Z",
+      durationMs: 30_000,
+      errorCode: null,
+      errorMessage: null,
+      retryable: false,
+      blockedBy: [],
+      nextAction: null,
+    },
+    {
+      stage: "score",
+      state: "succeeded",
+      attemptCount: 1,
+      maxAttempts: 3,
+      startedAt: "2026-05-01T12:01:00Z",
+      updatedAt: "2026-05-01T12:01:20Z",
+      finishedAt: "2026-05-01T12:01:20Z",
+      durationMs: 20_000,
+      errorCode: null,
+      errorMessage: null,
+      retryable: false,
+      blockedBy: [],
+      nextAction: null,
+    },
+  ];
+
   return {
     ok: true,
     job: {
@@ -320,41 +407,11 @@ export function makeJobDetail(job: JobSummary = sampleJob): JobDetail {
       descriptionPreview: "Lead the platform engineering team...",
       scoreReasoning: job.scoreReasoning,
     },
-    stages: [
-      {
-        stage: "discover",
-        state: "succeeded",
-        attemptCount: 1,
-        maxAttempts: 3,
-        startedAt: "2026-05-01T12:00:00Z",
-        updatedAt: "2026-05-01T12:00:30Z",
-        finishedAt: "2026-05-01T12:00:30Z",
-        durationMs: 30_000,
-        errorCode: null,
-        errorMessage: null,
-        retryable: false,
-        blockedBy: [],
-        nextAction: null,
-      },
-      {
-        stage: "score",
-        state: "succeeded",
-        attemptCount: 1,
-        maxAttempts: 3,
-        startedAt: "2026-05-01T12:01:00Z",
-        updatedAt: "2026-05-01T12:01:20Z",
-        finishedAt: "2026-05-01T12:01:20Z",
-        durationMs: 20_000,
-        errorCode: null,
-        errorMessage: null,
-        retryable: false,
-        blockedBy: [],
-        nextAction: null,
-      },
-    ],
-    artifacts: [],
-    auditHistory: sampleJobAuditHistory,
-    employerAnalysis: null,
+    stages,
+    artifacts: overrides.artifacts ?? [],
+    auditHistory: overrides.auditHistory ?? sampleJobAuditHistory,
+    applyAudit: overrides.applyAudit ?? makeApplyAudit(),
+    employerAnalysis: overrides.employerAnalysis ?? null,
   };
 }
 

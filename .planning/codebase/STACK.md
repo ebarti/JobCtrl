@@ -55,7 +55,7 @@ JobHunter is a local-first monorepo with a TypeScript product surface and a Pyth
 **Web (`apps/web`):**
 - React 19.2.x and React DOM 19.2.x - UI runtime in `apps/web/src/main.tsx`.
 - Vite 7.3.x - bundler/dev server in `apps/web/vite.config.ts`.
-- Tailwind CSS 4.2.x with `@tailwindcss/vite` - styling in `apps/web/tailwind.config.ts`, `apps/web/src/styles/globals.css`, and `apps/web/src/styles/tokens.css`.
+- Tailwind CSS 4.2.x with `@tailwindcss/vite` - CSS-first styling through `apps/web/src/styles/globals.css`, `apps/web/src/styles/tokens.css`, and `apps/web/components.json`.
 - TanStack Router 1.169.x - file-based routing through `apps/web/src/routes` and `apps/web/src/router.ts`.
 - TanStack Query 5.100.x - server state through hooks in `apps/web/src/contexts/operations/hooks`.
 - TanStack Table 8.21.x - table views such as `apps/web/src/views/jobs/columns.tsx`.
@@ -99,7 +99,7 @@ JobHunter is a local-first monorepo with a TypeScript product surface and a Pyth
 - Root package and scripts: `package.json`.
 - Workspace definition: `pnpm-workspace.yaml`.
 - API package config: `apps/api/package.json`, `apps/api/tsconfig.json`.
-- Web package config: `apps/web/package.json`, `apps/web/tsconfig.json`, `apps/web/vite.config.ts`, `apps/web/vitest.config.ts`, `apps/web/vitest.types.config.ts`, `apps/web/e2e/playwright.config.ts`, `apps/web/tailwind.config.ts`, `apps/web/components.json`, `apps/web/.storybook/main.ts`.
+- Web package config: `apps/web/package.json`, `apps/web/tsconfig.json`, `apps/web/vite.config.ts`, `apps/web/vitest.config.ts`, `apps/web/vitest.types.config.ts`, `apps/web/e2e/playwright.config.ts`, `apps/web/components.json`, `apps/web/src/styles/globals.css`, `apps/web/src/styles/tokens.css`, and `apps/web/.storybook/main.ts`.
 - Shared TypeScript config: `packages/tsconfig/base.json`.
 - Python package config: `workers/automation/pyproject.toml`.
 - Python lockfile: `workers/automation/uv.lock`.

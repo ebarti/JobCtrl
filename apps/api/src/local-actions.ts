@@ -480,7 +480,7 @@ function retailorRpcParams(
     expectedAppDir: context.appDir,
     expectedDbPath: context.dbPath,
     dryRun: Boolean(command.dryRun),
-    suppressExistingArtifacts: command.suppressExistingArtifacts !== false,
+    suppressExistingArtifacts: Boolean(command.suppressExistingArtifacts),
   };
   if (jobUrl) {
     params.jobUrl = jobUrl;

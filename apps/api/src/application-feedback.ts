@@ -30,6 +30,7 @@ import {
   STAGES,
   STAGE_STATES,
 } from "./contracts.js";
+import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobUrl } from "./write-model.js";
@@ -572,6 +573,37 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const applicationUrl = applyTargetUrl(row);
+  const materialsPreview = materialPreviewsForJob(db, row.job_id);
+  const latestApplyRun = row.run_id
+    ? {
+        runId: row.run_id,
+        status: row.apply_run_status ?? "",
+        result: row.result,
+        dryRun: Boolean(row.dry_run),
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+      }
+    : null;
+  const applyAudit = buildApplyAudit({
+    applicationUrl,
+    hasResume: Boolean(row.has_resume),
+    hasCoverLetter: Boolean(row.has_cover_letter),
+    hasPdf: Boolean(row.has_pdf),
+    currentStage: stage(row.current_stage),
+    currentState,
+    currentErrorCode: row.current_error_code,
+    currentErrorMessage: row.current_error_message,
+    latestApplyRun,
+    scoreBreakdown,
+    reviewEvidenceAvailable: Boolean(
+      scoreBreakdown ||
+        materialsPreview.resumeText ||
+        materialsPreview.resumePdfArtifactId ||
+        materialsPreview.coverLetterText ||
+        row.full_description ||
+        row.description,
+    ),
+  });
   return {
     jobKey: row.job_id,
     title: row.title || "Untitled",
@@ -585,8 +617,9 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
       hasResume: Boolean(row.has_resume),
       hasCoverLetter: Boolean(row.has_cover_letter),
       hasPdf: Boolean(row.has_pdf),
-      ready: Boolean(row.has_resume),
+      ready: applyAudit.state === "ready",
     },
+    applyAudit,
     position: {
       descriptionPreview: previewText(
         row.full_description || row.description,
@@ -602,17 +635,8 @@ function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyR
       transferable: boundedEvidenceList(scoreBreakdown?.transferableSignals ?? []),
       keywords: boundedEvidenceList(parseStringListJson(row.score_keywords_json)),
     },
-    materialsPreview: materialPreviewsForJob(db, row.job_id),
-    latestApplyRun: row.run_id
-      ? {
-          runId: row.run_id,
-          status: row.apply_run_status ?? "",
-          result: row.result,
-          dryRun: Boolean(row.dry_run),
-          startedAt: row.started_at,
-          finishedAt: row.finished_at,
-        }
-      : null,
+    materialsPreview,
+    latestApplyRun,
     review: {
       state: reviewState(row.decision),
       decision: reviewDecision(row.decision),
@@ -670,6 +694,12 @@ function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
     if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).legacy === true) {
       return null;
     }
+    const eligibility = parsed.eligibility as (Partial<ScoreBreakdown["eligibility"]> & Record<string, unknown>) | undefined;
+    const hardBlockers = Array.isArray(eligibility?.hardBlockers)
+      ? eligibility.hardBlockers
+      : Array.isArray(eligibility?.hard_blockers)
+        ? eligibility.hard_blockers
+        : [];
     return {
       technicalFit: scoreDimension(parsed.technicalFit),
       experienceFit: scoreDimension(parsed.experienceFit),
@@ -678,9 +708,9 @@ function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
       fitBand: parsed.fitBand ?? "plausible",
       confidence: parsed.confidence ?? "medium",
       eligibility: {
-        status: parsed.eligibility?.status ?? "unknown",
-        hardBlockers: boundedEvidenceList(parsed.eligibility?.hardBlockers ?? []),
-        warnings: boundedEvidenceList(parsed.eligibility?.warnings ?? []),
+        status: eligibility?.status ?? "unknown",
+        hardBlockers: boundedEvidenceList(hardBlockers),
+        warnings: boundedEvidenceList(eligibility?.warnings ?? []),
       },
       matchedSignals: boundedEvidenceList(parsed.matchedSignals ?? []),
       missingSignals: boundedEvidenceList(parsed.missingSignals ?? []),
@@ -744,14 +774,73 @@ function materialPreviewsForJob(
 ): ApplyReviewQueueItem["materialsPreview"] {
   return {
     resumeText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "resume")),
+    resumeTextArtifactId: latestMaterialTextArtifactId(db, jobKey, "resume"),
     resumePdfArtifactId: latestMaterialPdfArtifactId(db, jobKey, "resume"),
     coverLetterText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "cover")),
   };
 }
 
+function latestMaterialTextArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
+  const artifactTypes =
+    kind === "resume"
+      ? ["tailored_resume", "tailored_resume_txt", "resume_txt"]
+      : ["cover_letter", "cover_letter_txt"];
+  const projectionId = latestExistingArtifactId(db, {
+    jobKey,
+    artifactTypes,
+    binary: false,
+  });
+  if (projectionId) {
+    return projectionId;
+  }
+  if (!tableExists(db, "job_materials_artifacts")) {
+    return null;
+  }
+  const placeholders = artifactTypes.map(() => "?").join(", ");
+  const rows = allRows<{ artifact_id: string | null; path: string | null }>(
+    db,
+    `SELECT artifact_id, path
+     FROM job_materials_artifacts
+     WHERE job_url = ?
+       AND artifact_type IN (${placeholders})
+       AND COALESCE(status, 'approved') IN ('approved', 'active')
+       AND path IS NOT NULL
+       AND path != ''
+     ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC, rowid DESC
+     LIMIT 8`,
+    [jobKey, ...artifactTypes],
+  );
+  for (const row of rows) {
+    if (!row.artifact_id || !row.path) continue;
+    if (artifactPathExists(row.path, { binary: false })) {
+      return row.artifact_id;
+    }
+  }
+  return null;
+}
+
 function latestMaterialPdfArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
   const artifactTypes =
     kind === "resume" ? ["tailored_resume_pdf", "resume_pdf"] : ["cover_letter_pdf"];
+  return latestExistingArtifactId(db, {
+    jobKey,
+    artifactTypes,
+    binary: true,
+  });
+}
+
+function latestExistingArtifactId(
+  db: SqliteDatabase,
+  {
+    artifactTypes,
+    binary,
+    jobKey,
+  }: {
+    readonly artifactTypes: readonly string[];
+    readonly binary: boolean;
+    readonly jobKey: string;
+  },
+): string | null {
   if (!tableExists(db, "artifact_list_projections")) {
     return null;
   }
@@ -770,16 +859,24 @@ function latestMaterialPdfArtifactId(db: SqliteDatabase, jobKey: string, kind: "
     [jobKey, ...artifactTypes],
   );
   for (const row of rows) {
-    try {
-      if (fs.existsSync(row.local_path) && fs.statSync(row.local_path).isFile()) {
-        return row.artifact_id;
-      }
-    } catch {
-      // Artifact files can disappear while the local projection still exists.
-      // In that case the review UI should fall back to text evidence.
+    if (artifactPathExists(row.local_path, { binary })) {
+      return row.artifact_id;
     }
   }
   return null;
+}
+
+function artifactPathExists(artifactPath: string, { binary }: { readonly binary: boolean }): boolean {
+  try {
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+      return false;
+    }
+    return binary || !isBinaryPreviewPath(artifactPath);
+  } catch {
+    // Artifact files can disappear while the local projection still exists.
+    // In that case the review UI should fall back to the next available source.
+    return false;
+  }
 }
 
 function materialPreviewPaths(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string[] {

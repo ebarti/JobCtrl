@@ -23,6 +23,7 @@ to work; their internals now run on top of the new use case.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -291,6 +292,59 @@ def _selected_candidate_payload(report: dict) -> dict | None:
 def _build_master_tailor_prompt(snapshot: ProfileSnapshot) -> str:
     """Backward-compatible wrapper for the canonical use-case prompt builder."""
     return build_master_tailor_prompt(snapshot)
+
+
+def _mark_cover_pending_after_tailor_success(
+    conn: sqlite3.Connection,
+    job_url: str,
+    *,
+    reason: str,
+) -> None:
+    """Invalidate downstream cover readiness after a new resume generation.
+
+    A stale ``cover=succeeded`` row is unsafe after re-tailoring because it can
+    refer to a superseded cover letter from an older material generation. The
+    cover stage must become visibly pending so the next pipeline step generates
+    cover artifacts for the current approved resume.
+    """
+    now = utc_now()
+    metadata = json.dumps(
+        {"invalidated_at": now, "reason": reason},
+        sort_keys=True,
+    )
+    conn.execute(
+        "UPDATE jobs SET cover_letter_path = NULL, cover_letter_at = NULL, cover_attempts = 0 "
+        "WHERE url = ?",
+        (job_url,),
+    )
+    conn.execute(
+        """
+        UPDATE job_stage_states
+        SET state = 'pending',
+            attempt_count = 0,
+            max_attempts = 5,
+            started_at = NULL,
+            updated_at = ?,
+            finished_at = NULL,
+            duration_ms = NULL,
+            error_code = NULL,
+            error_message = NULL,
+            retryable = 1,
+            blocked_by_json = '[]',
+            next_action = NULL,
+            metadata_json = ?
+        WHERE job_url = ? AND stage = 'cover'
+        """,
+        (now, metadata, job_url),
+    )
+    record_job_event(
+        conn,
+        job_url,
+        "cover",
+        "StageReset",
+        message="Cover stage reset after tailored resume generation",
+        payload={"reason": reason},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +668,11 @@ def run_tailoring(
                 message=f"Tailoring {r.get('status')}",
                 payload={"attempts": attempts},
             )
+            _mark_cover_pending_after_tailor_success(
+                conn,
+                url,
+                reason="tailor_stage_completed",
+            )
         else:
             exhausted = (
                 attempts >= config.DEFAULTS["max_tailor_attempts"]
@@ -778,6 +837,11 @@ def tailor_job_by_url(
             "StageCompleted",
             message="Tailoring approved",
             payload={"attempts": attempts},
+        )
+        _mark_cover_pending_after_tailor_success(
+            conn,
+            job_url,
+            reason="tailor_stage_completed",
         )
     else:
         exhausted = (

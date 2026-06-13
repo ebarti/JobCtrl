@@ -1,178 +1,215 @@
-# Summary
+# Architecture Research
+
+**Domain:** Local-first job-application audit UX
+**Researched:** 2026-06-11
+**Confidence:** HIGH for ownership boundaries, MEDIUM for final pin-rendering component shape
+
+## Standard Architecture
 
-The shadcn standard-token migration should be treated as a frontend shared-kernel migration, not as a feature-context migration. The semantic token contract belongs at the app styling boundary: `apps/web/src/styles/tokens.css`, `apps/web/src/styles/globals.css`, `apps/web/tailwind.config.ts`, and the shadcn registry contract in `apps/web/components.json`. The migration should make shadcn's standard CSS-variable names the canonical design-token API while preserving JobHunter's existing architecture: bounded contexts own domain behavior, views compose context components, and `shared/ui` owns reusable primitives.
+### System Overview
 
-Use preset `b3F5kqmYd8` as the source for the standard semantic token vocabulary, then map the current local palette into shadcn-compatible variables such as `--background`, `--foreground`, `--card`, `--card-foreground`, `--popover`, `--popover-foreground`, `--primary`, `--primary-foreground`, `--secondary`, `--secondary-foreground`, `--muted`, `--muted-foreground`, `--accent`, `--accent-foreground`, `--destructive`, `--destructive-foreground`, `--border`, `--input`, `--ring`, and `--radius`. Do not let app-specific aliases like `--paper`, `--ink`, `--rule`, `--ok`, or `--info` remain the long-term primitive API. If transitional aliases are needed, they should live only in `tokens.css` and point to the standard names, not spread through components.
+```text
+User clicks job row
+    -> Jobs view composer
+        -> JobDetailDrawer
+            -> useJobDetailQuery
+                -> GET job detail read model
+                    -> JobSummary + ScoreBreakdown + SharedApplyAudit + artifacts
+
+User opens Apply Review
+    -> ApplyReviewView
+        -> useApplyReviewQueueQuery
+            -> GET apply review queue read model
+                -> ApplyReviewQueueItem + SharedApplyAudit + material previews
+        -> Resume audit surface
+            -> ArtifactTailoringInspector / pin model
+                -> useArtifactDetailQuery
+                    -> ArtifactTailoringExplanation
+```
 
-The main architecture risk is that `globals.css` currently owns much more than global CSS. It imports Tailwind and tokens at the root, but it also contains app chrome, cards, dashboards, table grids, drawers, source registry, apply-review, scoring, and pipeline selectors. That file is the migration's highest-risk surface because changing tokens there changes every view at once. Roadmap phases should first establish the token contract, then migrate shared primitives, then migrate layout chrome, then migrate view/context CSS in small slices.
+### Component Responsibilities
 
-Repo anchors:
+| Component | Responsibility | Current / Planned Implementation |
+|-----------|----------------|----------------------------------|
+| API read model | Own readiness, blockers, eligibility/readiness reasons, and DTO shape | Extend `@jobhunter/contracts`, `application-feedback.ts`, and `read-model.ts`; do not duplicate in views. |
+| Jobs drawer | Triage whether this job is worth/apply-ready and why it ranked this way | Refactor `JobDetailDrawer` sections around rank, readiness, blocker, and handoff panels. |
+| Apply Review | Inspect the generated artifact before approval | Rework `ApplyReviewView` so rendered resume is central and pins drive detail inspection. |
+| Materials context | Own artifact tailoring explanation rendering and reusable provenance widgets | Extend `ArtifactTailoringInspector`, `TailoringExplanationSection`, or new context-owned components for pin data. |
+| Operations hooks | Fetch read-side data | Continue `useJobDetailQuery`, `useApplyReviewQueueQuery`, and `useArtifactDetailQuery`; views do not call `apiClient` directly. |
+| Shared UI primitives | Visual controls and surfaces | Use existing shadcn/Radix primitives and Tabler icons. |
 
-- `docs/architecture.md:433` states the frontend follows the target architecture: three-layer state, eight bounded contexts, view/context dichotomy, ports, SSE invalidation, and Operations read-side.
-- `docs/architecture.md:446` records Tailwind CSS 4 with design tokens in `tokens.css`; `docs/architecture.md:447` records shadcn/ui as copied and owned in `shared/ui`.
-- `docs/frontend-target.md:1025` to `docs/frontend-target.md:1054` chooses shadcn/Radix for the primitive layer.
-- `docs/frontend-target.md:1059` to `docs/frontend-target.md:1072` makes Tailwind plus CSS variables the styling architecture.
-- `apps/web/components.json:6` to `apps/web/components.json:20` already points shadcn at `src/styles/globals.css`, `tailwind.config.ts`, `@/shared/ui`, `@/shared/lib`, and `lucide`.
-- `apps/web/src/styles/tokens.css:1` to `apps/web/src/styles/tokens.css:42` is the current non-standard token source.
-- `apps/web/src/styles/globals.css:1` to `apps/web/src/styles/globals.css:34` is the global Tailwind/base style entry; `apps/web/src/styles/globals.css:42` onward is app/view/component styling that should be reduced over time.
+## Recommended Project Structure
 
-# Current Architecture Fit
+```text
+packages/contracts/src/
+  schemas.ts                         # shared readiness/blocker and optional pin DTOs
 
-The token migration fits the current architecture if tokens are handled as styling infrastructure, not as domain data. They do not belong in `contexts/discovery`, `contexts/scoring`, `contexts/materials`, `contexts/apply`, `contexts/pipeline`, `contexts/profile`, or `contexts/operations` as config objects, enums, stores, or query data. Context components may consume semantic classes from `shared/ui` and Tailwind, but they should not define the app's semantic token vocabulary.
+apps/api/src/
+  application-feedback.ts            # apply queue item mapping and shared audit derivation
+  read-model.ts                      # job detail mapping with same shared audit contract
+  *.test.ts                          # API/read-model contract tests
 
-The existing shadcn setup is already aligned with the intended destination:
+apps/web/src/contexts/apply/
+  components/ApplyReadinessPanel.tsx # shared readiness/blocker display if owned by Apply
+  lib/apply-readiness.ts             # formatting only, no source-of-truth logic
 
-- `apps/web/components.json:6` to `apps/web/components.json:11` has `cssVariables: true`, no prefix, neutral base color, and `src/styles/globals.css` as the registry CSS target.
-- `apps/web/components.json:13` to `apps/web/components.json:19` aliases generated components to `@/shared/ui`, utilities to `@/shared/lib/cn`, and hooks to `@/shared/hooks`.
-- `apps/web/src/shared/ui/button.tsx:9` to `apps/web/src/shared/ui/button.tsx:25`, `apps/web/src/shared/ui/badge.tsx:8` to `apps/web/src/shared/ui/badge.tsx:19`, and `apps/web/src/shared/ui/card.tsx:7` to `apps/web/src/shared/ui/card.tsx:38` show the primitive layer already centralizes reusable visual variants. Those primitives currently use JobHunter-specific classes like `bg-ink`, `text-paper`, `border-rule`, and `text-muted`; they are the correct first TypeScript migration surface after the token file.
+apps/web/src/contexts/materials/
+  components/ResumeAuditPins.tsx     # artifact provenance pins and selected-pin inspector
+  components/ResumePinInspector.tsx  # selected claim/source/risk detail
+  lib/resume-pin-model.ts            # maps artifact explanation to UI pin model
 
-The app's theme and density mechanics also fit the shadcn CSS-variable model:
+apps/web/src/views/jobs/
+  JobDetailDrawer.tsx                # composer for ranking/readiness/blocker sections
+  JobRankAuditPanel.tsx              # view-local composition of scoring components
+
+apps/web/src/views/apply-review/
+  ApplyReviewView.tsx                # composer for queue, selected job, and rendered resume audit surface
 
-- `apps/web/src/shared/stores/ui-preferences.ts:14` to `apps/web/src/shared/stores/ui-preferences.ts:26` persists `theme` and `density`.
-- `apps/web/src/shared/providers/ThemeProvider.tsx:5` to `apps/web/src/shared/providers/ThemeProvider.tsx:10` writes `data-theme` to `<html>`.
-- `apps/web/src/shared/layout/AppShell.tsx:6` to `apps/web/src/shared/layout/AppShell.tsx:14` writes `data-density` on the app shell.
-- `apps/web/src/shared/providers/DensityProvider.tsx:3` to `apps/web/src/shared/providers/DensityProvider.tsx:8` intentionally keeps density off `<html>` so portaled overlays are not accidentally density-scoped.
+apps/web/e2e/tests/
+  apply-review-audit.spec.ts         # seeded product-path QA
+```
 
-Keep that split. Shadcn semantic color tokens should be theme-scoped on `:root` and `[data-theme="dark"]`. Density should remain an app-shell/layout concern and should continue to drive dimensional variables like row height. Do not move density to shadcn color tokens, and do not make portaled Radix overlays depend on `.app-shell[data-density]` unless the overlay intentionally receives density classes.
+### Structure Rationale
 
-The current mismatch is naming and ownership:
+- **Contracts first:** The readiness/blocker facts are cross-surface data, so they belong in shared contracts and API mappers before UI work.
+- **Context-owned reusable audit pieces:** Materials provenance is not Apply Review-specific; resume-pin data should live near existing materials inspector logic.
+- **Views as composers:** Jobs and Apply Review views assemble panels but should not own server queries, API clients, or cross-context state.
+- **Small cleanup phase first:** Stale v1.1 cleanup reduces verification noise before feature work.
 
-- `apps/web/src/styles/tokens.css:1` to `apps/web/src/styles/tokens.css:16` defines bespoke light tokens.
-- `apps/web/src/styles/tokens.css:19` to `apps/web/src/styles/tokens.css:27` defines density variables on `[data-density]`.
-- `apps/web/src/styles/tokens.css:29` to `apps/web/src/styles/tokens.css:42` defines bespoke dark tokens.
-- `apps/web/tailwind.config.ts:8` to `apps/web/tailwind.config.ts:24` exposes bespoke names as Tailwind colors and fonts.
-- `apps/web/src/styles/globals.css:42` onward uses those bespoke variables directly for app structure.
+## Architectural Patterns
 
-The migration should change the public styling API from JobHunter aliases to shadcn semantic names while keeping the product architecture unchanged.
+### Pattern 1: Shared Read Contract
 
-# Owning Layers
+**What:** A single DTO, for example `ApplyAuditReadiness`, describes readiness kind, label, blockers, eligibility concerns, missing prerequisites, and source/lifecycle metadata.
 
-| Layer | Owns | Migration Responsibility | Do Not Put Here |
-| --- | --- | --- | --- |
-| `apps/web/src/styles/tokens.css` | Canonical CSS variables for theme and density | Add preset `b3F5kqmYd8` standard semantic variables; keep light/dark scopes; optionally provide temporary alias variables that point to standard variables | Component selectors, view layout rules, domain status mappings, JavaScript data |
-| `apps/web/src/styles/globals.css` | Tailwind import/config, base element styles, temporary legacy global selectors | Switch base styles to standard tokens; shrink legacy selectors over phases; keep only real global reset/base and temporary compatibility | Long-term ownership of cards, tables, drawers, dashboard grids, status badges, apply-review layout |
-| `apps/web/tailwind.config.ts` | Tailwind bridge to CSS variables | Expose shadcn standard semantic color names and radius/font tokens; keep dark mode selector as `[data-theme='dark']` | Bespoke product palette aliases as the permanent API; domain tone definitions |
-| `apps/web/components.json` | shadcn registry contract | Keep aliases to `@/shared/ui`, `@/shared/lib/cn`, CSS variables, `lucide`; update only if shadcn CLI output requires a schema-compatible change | Alternate component roots, generated code outside `shared/ui`, prefix changes that invalidate existing classes |
-| `apps/web/src/shared/ui/*` | shadcn/Radix primitives and reusable non-domain UI | Convert primitive classes from `bg-ink`/`text-paper`/`border-rule` to standard semantic classes (`bg-primary`, `text-primary-foreground`, `bg-card`, `text-card-foreground`, `border-border`, `ring-ring`, etc.) | Domain-specific tones like "job failed", "score stale", "resume approved"; direct API/query/state logic |
-| `apps/web/src/shared/layout/*` | App shell, topbar, nav, global search, theme/density controls, connection chrome | Move `.topbar`, `.brand`, `.nav`, `.global-search`, `.tab`, `.main`, and connection-banner styling out of legacy global CSS into layout components or layout-specific primitives | Context imports, domain-specific view logic, persistent server state |
-| `apps/web/src/views/*` | View composition and view-local ephemeral UI | Consume primitives/layout utilities; migrate view-owned layout wrappers like dashboard grids and page section composition in small slices | New token definitions, shared primitive variants, context-owned badge/status semantics, query keys, mutations |
-| `apps/web/src/contexts/*` | Domain hooks, context components, domain selectors, event handlers | Update context-owned components only where they render their own status/tone UI; keep tone decisions in context libs such as scoring/pipeline/materials tone helpers | CSS variable declarations, shadcn registry config, global app chrome, view composition |
-| `apps/web/src/shared/providers/*` and stores | Theme/density/ports/query/toast provider wiring | Preserve `ThemeProvider` and `DensityProvider` behavior; no token migration should change server/URL/client state boundaries | CSS token maps as runtime state, user preference migrations unrelated to theme/density |
+**When to use:** Any fact that appears in both Jobs drawer and Apply Review.
 
-Data/style flow should remain:
+**Trade-offs:** Adds API/contract work up front, but prevents UI disagreement and makes QA assert one source of truth.
 
-1. `useUiPreferencesStore` persists theme and density (`apps/web/src/shared/stores/ui-preferences.ts:14`).
-2. `ThemeProvider` writes `data-theme` to `<html>` (`apps/web/src/shared/providers/ThemeProvider.tsx:7`).
-3. `AppShell` writes `data-density` around app content (`apps/web/src/shared/layout/AppShell.tsx:9`).
-4. `tokens.css` resolves semantic CSS variables for the active theme and density.
-5. `tailwind.config.ts` exposes those variables as Tailwind semantic utilities.
-6. `shared/ui` primitives consume semantic utilities.
-7. `shared/layout`, `views`, and `contexts` compose primitives and add only the layout/tone classes they own.
+```typescript
+interface ApplyAuditReadiness {
+  state: "ready" | "preparing" | "blocked" | "repair";
+  label: string;
+  summary: string;
+  missingPrerequisites: string[];
+  blockers: string[];
+  eligibilityConcerns: string[];
+  sources: Array<{ kind: string; id: string | null }>;
+}
+```
 
-This means tokens flow downward; domain state never flows back into token definitions. A score, stage, or apply status can choose a component variant, but it must not rewrite global CSS variables.
+The final shape should be planned in Phase 13; the important invariant is shared ownership, not this exact interface.
 
-# Migration Sequence
+### Pattern 2: Pin Model Derived From Artifact Explanation
 
-1. Establish the standard-token contract.
+**What:** Convert `ArtifactTailoringExplanation` into stable UI pins keyed by `bulletId`, `sourceId`, section, and generated text.
 
-   Replace the canonical variable names in `apps/web/src/styles/tokens.css` with shadcn standard semantic variables from preset `b3F5kqmYd8`. Keep light and dark scopes. Preserve density variables (`--row` or a renamed app dimension token) under `[data-density]` because density is a local JobHunter UI preference, not a shadcn color semantic. For compatibility, temporary aliases like `--bg: var(--background)` and `--ink: var(--foreground)` are acceptable only inside `tokens.css`.
+**When to use:** Apply Review resume claim inspection.
 
-2. Update the Tailwind bridge.
+**Trade-offs:** Text/bullet anchors are less visually exact than PDF coordinates, but they are safer and grounded in existing canonical provenance. Coordinate overlays can be added later if necessary.
 
-   Convert `apps/web/tailwind.config.ts` from bespoke colors (`bg`, `paper`, `paper-2`, `rule`, `ink`, `danger`, `warn`, `ok`, `info`) to shadcn semantic colors backed by CSS variables. Preserve `darkMode: ["selector", "[data-theme='dark']"]` from `apps/web/tailwind.config.ts:4` because it matches `ThemeProvider` and the architecture docs. Add radius/font mappings if the preset includes them. Do not introduce Tailwind plugin or config state that bypasses CSS variables.
+```typescript
+type ResumeAuditPin = {
+  id: string;
+  section: string;
+  generatedText: string;
+  sourceText: string[];
+  transformType: string;
+  evidenceIds: string[];
+  requirementIds: string[];
+  risk: "grounded" | "warning" | "unsupported" | "missing_source";
+};
+```
 
-3. Migrate shared primitives.
+### Pattern 3: Honest Missing States
 
-   Update `apps/web/src/shared/ui/*` before touching views. Button, badge, card, input, select, dropdown, dialog, sheet, drawer, toast, tabs, table, popover, tooltip, switch, checkbox, scroll-area, skeleton, separator, and data-grid primitives should speak shadcn semantic classes. This creates a stable semantic surface for context and view work. Primitive tests and stories should remain colocated.
+**What:** Components render explicit "not recorded" / "no source captured" states instead of blank panels.
 
-4. Migrate app shell and layout chrome.
+**When to use:** Any provenance, score, judge, prompt, or blocker data that may be absent.
 
-   Move topbar/nav/main/global-search/tab/connection styling out of broad legacy selectors and into `apps/web/src/shared/layout/*` using semantic utilities or small layout-local class names. `Topbar` currently uses `.topbar`, `.brand`, `.brand-mark`, `.global-search`, `.select`, and `.tab` (`apps/web/src/shared/layout/Topbar.tsx:17` to `apps/web/src/shared/layout/Topbar.tsx:48`); `NavBar` uses `.nav` and active class `on` (`apps/web/src/shared/layout/NavBar.tsx:31` to `apps/web/src/shared/layout/NavBar.tsx:39`); `ThemeToggle` uses `.tab` (`apps/web/src/shared/layout/ThemeToggle.tsx:9` to `apps/web/src/shared/layout/ThemeToggle.tsx:17`). Those are layout-owned, not view-owned.
+**Trade-offs:** The UI may show uncomfortable gaps, but this is core product value and aligns with the repository auditability discipline.
 
-5. Migrate shared data/table surfaces.
+## Data Flow
 
-   `FilterableDataGrid` is a shared UI primitive used by Jobs and Artifacts (`apps/web/src/shared/ui/filterable-data-grid.tsx:73` to `apps/web/src/shared/ui/filterable-data-grid.tsx:100`). It currently emits many global class names (`apps/web/src/shared/ui/filterable-data-grid.tsx:492` to `apps/web/src/shared/ui/filterable-data-grid.tsx:620`). Migrate this once in `shared/ui`, then let Jobs/Artifacts inherit the result. Avoid per-view table token overrides except for structural column width classes owned by the view.
+### Readiness Flow
 
-6. Migrate view-owned layout slices.
+```text
+Projection rows and latest apply/material state
+    -> API readiness/blocker derivation
+        -> Shared contract in JobDetail and ApplyReviewQueueItem
+            -> Jobs drawer readiness panel
+            -> Apply Review readiness panel and queue tags
+                -> Tests assert identical facts for the same job
+```
 
-   After primitives and layout are stable, migrate view wrappers in small slices:
+### Resume-Pin Flow
 
-   - Dashboard: `DashboardView` composes KPIs, funnel, source health, apply runs, and outcome suggestions (`apps/web/src/views/dashboard/DashboardView.tsx:19` to `apps/web/src/views/dashboard/DashboardView.tsx:44`). Its `.dashboard-grid`, `.card`, and `.banner` usage should become semantic primitives/layout utilities.
-   - Jobs: `JobsView` owns URL-bound filters, bulk selection, and table composition (`apps/web/src/views/jobs/JobsView.tsx:153` to `apps/web/src/views/jobs/JobsView.tsx:239`) and renders the page card/table surface (`apps/web/src/views/jobs/JobsView.tsx:438` onward). Keep data logic unchanged while migrating classes.
-   - Artifacts: `ArtifactsView` mirrors the same composer pattern (`apps/web/src/views/artifacts/ArtifactsView.tsx:34` to `apps/web/src/views/artifacts/ArtifactsView.tsx:96`).
-   - Job drawer: `JobDetailDrawer` composes components from apply/materials/operations/pipeline/scoring (`apps/web/src/views/jobs/JobDetailDrawer.tsx:4` to `apps/web/src/views/jobs/JobDetailDrawer.tsx:23` and `apps/web/src/views/jobs/JobDetailDrawer.tsx:97` to `apps/web/src/views/jobs/JobDetailDrawer.tsx:177`). Treat drawer structure as view/layout; context-rendered sections keep their own domain components.
+```text
+Artifact detail
+    -> ArtifactTailoringExplanation
+        -> pin model derived from bulletProvenance + annotatedChanges + judge/quality/adversarial data
+            -> rendered resume preview with pin markers
+            -> selected pin inspector with source, generated text, transform, grounding, risk, action
+```
 
-7. Migrate context-owned tone components.
+### Ranking Flow
 
-   Context components such as `StageBadge`, `ScoreBadge`, `ArtifactStatusBadge`, `ApplyRunBadge`, and status/timeline components should map domain states to semantic variants or context-local tone helpers. They should not define CSS variables. Existing tone helpers like `contexts/pipeline/lib/*tone*`, `contexts/materials/lib/*tone*`, and scoring tier helpers remain the right place to translate domain state into UI tone.
+```text
+Job detail
+    -> JobSummary score fields + ScoreBreakdown + ScoreTrace + EmployerAnalysis
+        -> Jobs drawer rank audit panel
+            -> requirements/matched/missing/transferable/eligibility display
+            -> handoff to Apply Review for material proof
+```
 
-8. Remove compatibility aliases and legacy globals.
+## Anti-Patterns
 
-   Only after `rg "bg-ink|text-paper|border-rule|var\\(--paper|var\\(--ink|var\\(--rule|var\\(--info|var\\(--ok|var\\(--warn|var\\(--danger"` is clean outside intentional compatibility checks, remove bespoke aliases from `tokens.css` and bespoke Tailwind color names from `tailwind.config.ts`. The final state should make accidental use of legacy token names fail quickly.
+### Anti-Pattern 1: UI-Only Readiness
 
-# Test/QA Integration Points
+**What people do:** Derive status labels independently in `ApplyReviewView`, `JobDetailDrawer`, and queue cards.
 
-Use the frontend's existing architecture test pyramid rather than inventing token-specific backend tests.
+**Why it is wrong:** It creates contradictory "ready" and "not ready" labels and hides the actual blocker source.
 
-Required static checks for migration phases:
+**Do this instead:** Compute/read the readiness contract once in the API/read model and use UI helpers only for formatting.
 
-- `pnpm web:check` or `pnpm api:check` only if touched; token/UI work should at least run the web typecheck.
-- `pnpm --filter @jobhunter/web test` for touched primitive, layout, context, and view tests.
-- `pnpm web:build` because Tailwind token/config mistakes often surface only during Vite/Tailwind compilation.
-- A token usage audit with `rg` for legacy names after each phase. This is especially important before removing aliases.
+### Anti-Pattern 2: Resume Pins Without Canonical Anchors
 
-Recommended targeted tests:
+**What people do:** Place visual markers by guessed PDF coordinates or line indexes without a canonical link to provenance.
 
-- Primitive Storybook stories: update stories colocated with `shared/ui` primitives so default, secondary, destructive, outline, disabled, focus, hover, and dark-mode states are visually reviewable.
-- Component tests for behavior-bearing primitives only. Do not test shadcn/Radix internals; `docs/frontend-target.md:2189` to `docs/frontend-target.md:2193` explicitly excludes primitive internals and visual pixel-perfectness from unit tests.
-- A small token-contract test can be useful if it checks project-owned invariants, not CSS rendering internals. Example: assert `tokens.css` contains the required standard variables in both `:root` and `[data-theme="dark"]`, and assert `tailwind.config.ts` exposes the semantic token names used by shadcn primitives.
-- A11y checks should remain with forms/dialogs/components that already own them. The migration should not silence existing `*.a11y.test.tsx` files or Storybook a11y gates.
+**Why it is wrong:** Pins drift when rendering changes and can imply proof for the wrong claim.
 
-Required product QA for user-facing visual migration phases:
+**Do this instead:** Anchor pins to generated text/provenance rows first; show "not located in preview" when an anchor cannot be matched.
 
-- Run at least one browser smoke through the visible app shell: dashboard load, topbar/nav, theme toggle, density selector, Jobs table, job detail drawer, and Artifacts table. The token migration can visually break these without changing behavior.
-- Verify both light and dark themes because `ThemeProvider` writes `[data-theme]` and all semantic variables must resolve in both scopes.
-- Verify all three densities because row height is still a product preference (`--row`) and the AppShell intentionally scopes it below `<html>`.
-- Verify Radix portals: Dialog, Sheet/Drawer, DropdownMenu, Popover, Select, Tooltip, Toast. Portaled elements may not inherit AppShell density, and they depend on globally scoped theme tokens.
+### Anti-Pattern 3: Evidence Suppression
 
-QA should be phase-specific:
+**What people do:** Hide missing, unsupported, or risky sections to keep the UI clean.
 
-- Token/Tailwind phase: build plus token audit plus light/dark smoke.
-- Primitive phase: Storybook or component smoke for every changed primitive.
-- Layout phase: browser smoke for topbar/nav/global search/theme/density/connection banner.
-- View phase: Playwright or manual browser smoke for the changed view's real workflow.
-- Context tone phase: existing colocated tests for status badges/timelines plus Storybook variants per discriminant state.
+**Why it is wrong:** It directly undermines trust and violates the auditability rule.
 
-# Risks
+**Do this instead:** Show explicit missing-source states and add source computation/persistence at the owning layer when the data should exist.
 
-1. Global CSS blast radius.
+## Integration Points
 
-   `globals.css` is not just global base CSS. It owns topbar, cards, dashboards, forms, tables, drawers, apply-review, discovery, source registry, score, pipeline, and artifact styles. A single token rename can break unrelated product surfaces. Mitigation: introduce standard variables first, keep temporary aliases, migrate by owner layer, and remove aliases only after an `rg` audit.
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| API -> web contracts | `@jobhunter/contracts` DTOs | Shared readiness/blocker additions must be backward-compatible within the local app and covered by typecheck/tests. |
+| API read model -> Apply Review | `useApplyReviewQueueQuery` | Queue tags and selected view should consume shared readiness rather than local `materialStatus`. |
+| API read model -> Jobs drawer | `useJobDetailQuery` | Job detail should expose the same readiness/blocker facts when possible. |
+| Materials -> Apply Review | `useArtifactDetailQuery` | Resume pins can reuse artifact tailoring explanation data; no worker execution needed for QA. |
+| Browser QA -> seeded API data | Synthetic fixtures | Do not run auto-apply, browser submission, mailbox scanning, real generation, or destructive local data actions. |
 
-2. Architecture drift into view-owned design systems.
+## Sources
 
-   Views are composers, not component libraries. `docs/frontend-target.md:680` to `docs/frontend-target.md:709` and `docs/architecture.md:489` to `docs/architecture.md:494` are explicit: views own layout and ephemeral UI only. Mitigation: any reusable visual variant belongs in `shared/ui`; any app chrome belongs in `shared/layout`; any domain status rendering belongs in its context.
+- `docs/frontend-target.md` and `AGENTS.md` frontend conventions for view/context boundaries.
+- `apps/web/src/views/jobs/JobDetailDrawer.tsx`
+- `apps/web/src/views/apply-review/ApplyReviewView.tsx`
+- `apps/web/src/contexts/materials/components/ArtifactTailoringInspector.tsx`
+- `apps/web/src/contexts/materials/components/TailoringExplanationSection.tsx`
+- `apps/web/src/contexts/materials/components/BulletProvenanceList.tsx`
+- `apps/api/src/application-feedback.ts`
+- `apps/api/src/read-model.ts`
+- `packages/contracts/src/schemas.ts`
 
-3. Domain tone flattening.
-
-   Shadcn standard tokens have generic semantic colors, but JobHunter has domain states: stage failed/blocked/running/pending, score stale, artifact missing/approved, apply run states, source health. A naive migration to only `primary`, `secondary`, and `destructive` will lose product meaning. Mitigation: keep domain-to-tone mapping in context-owned helpers/components, but express the final styles through standard token utilities or context-local component variants.
-
-4. Density and portal inheritance bugs.
-
-   Density is scoped on `.app-shell` by design (`apps/web/src/shared/providers/DensityProvider.tsx:3` to `apps/web/src/shared/providers/DensityProvider.tsx:6`). Radix portals render outside that subtree. Mitigation: keep theme tokens global, keep density layout-scoped, and explicitly handle density for portaled components only when necessary.
-
-5. Premature removal of aliases.
-
-   Removing `--paper`, `--ink`, `--rule`, `--info`, `--ok`, `--warn`, and `--danger` before all CSS/classes are migrated will produce broad visual regressions. Mitigation: use compatibility aliases during early phases, then delete aliases in a final cleanup phase guarded by `rg`.
-
-6. Token migration mixed with state or data refactors.
-
-   The migration should not touch query keys, Operations read hooks, SSE invalidation, router search params, ports, or API contracts. Those are architecture seams documented in `docs/architecture.md:458` to `docs/architecture.md:575`. Mitigation: reject roadmap phases that combine token migration with server-state, routing, event, or domain behavior changes unless there is a separate product reason.
-
-7. Shadcn CLI output outside the intended owner.
-
-   `components.json` already directs shadcn output to `@/shared/ui`. Generated components must not land under `views`, `contexts`, or a new root `components` folder. Mitigation: keep `apps/web/components.json` aliases stable and review generated imports before accepting a phase.
-
-8. Incomplete dark-mode coverage.
-
-   Existing `tokens.css` has both light and dark values. The standard-token replacement must preserve both. Mitigation: token-contract check plus manual/browser smoke in both themes before any alias cleanup.
+---
+*Architecture research for: v1.2 Apply Review Audit UX - Drawer + Resume Pins*
+*Researched: 2026-06-11*

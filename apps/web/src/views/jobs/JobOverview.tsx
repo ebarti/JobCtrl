@@ -1,5 +1,5 @@
 import type { JobDetail } from "../../contexts/operations/types.js";
-import { scoreTier } from "../../contexts/scoring/lib/score-tier.js";
+import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 
 export interface JobOverviewProps {
   detail: JobDetail;
@@ -9,7 +9,7 @@ export function JobOverview({ detail }: JobOverviewProps) {
   const { job } = detail;
   return (
     <div className="drawer-head">
-      <span className={`fit ${scoreTier(job.fitScore)}`}>{job.fitScore ?? "-"}</span>
+      <ScoreBadge score={job.fitScore} />
       <span>
         <small>
           {job.company}

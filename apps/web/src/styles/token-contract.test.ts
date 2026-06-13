@@ -83,6 +83,11 @@ const requiredThemeMappings = [
 ] as const;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+const cssRuleContaining = (selector: string): string => {
+  const pattern = new RegExp(`[^{}]*${escapeRegExp(selector)}[^{}]*\\{(?<body>[^}]*)\\}`, "m");
+  const match = globalsCss.match(pattern);
+  return match?.groups?.body?.trim() ?? "";
+};
 const absentPattern = (prefix: string, parts: readonly string[], joiner = "") =>
   new RegExp(`${escapeRegExp(prefix)}${parts.map(escapeRegExp).join(escapeRegExp(joiner))}(?![a-z0-9-])`, "i");
 
@@ -152,6 +157,22 @@ describe("shadcn token contract", () => {
     expect(globalsCss, "expected connection banners to use destructive token").toContain(
       "border: 1px solid var(--destructive);",
     );
+  });
+
+  it("keeps success badges visibly green", () => {
+    const tagOkRule = cssRuleContaining(".tag.ok");
+    const stagePillOkRule = cssRuleContaining(".stage-pill.ok");
+
+    expect(tagOkRule, "expected a shared success badge rule").toContain(
+      "background: color-mix(in oklab, var(--success) 32%, var(--card));",
+    );
+    expect(tagOkRule, "expected success badge border to stay green").toContain(
+      "box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--success) 52%, transparent);",
+    );
+    expect(tagOkRule, "expected success badge text to stay green").toContain(
+      "color: color-mix(in oklab, var(--success) 78%, var(--foreground));",
+    );
+    expect(stagePillOkRule, "stage pills should use the same success rule as tags").toBe(tagOkRule);
   });
 
   it("keeps shadcn preset config and packages wired", () => {

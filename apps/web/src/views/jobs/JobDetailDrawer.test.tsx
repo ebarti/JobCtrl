@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
-import { makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
+import { makeApplyAudit, makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
 function RoutedJobDetailDrawer({ jobId }: { readonly jobId: string }) {
@@ -61,6 +61,92 @@ function renderJobDetailDrawer(jobId: string) {
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("summarizes ranking, readiness, blockers, eligibility, and Apply Review handoff", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        return HttpResponse.json(
+          makeJobDetail({
+            ...sampleJob,
+            jobKey: String(params["jobKey"]),
+            currentStage: "apply",
+            currentSubstage: "apply",
+            currentState: "pending",
+            scoreKeywords: ["platform reliability", "sre"],
+            scoreBreakdown: {
+              ...sampleJob.scoreBreakdown!,
+              eligibility: {
+                status: "warning",
+                hardBlockers: [],
+                warnings: ["Sponsorship requirements need review."],
+              },
+            },
+          }, {
+            applyAudit: makeApplyAudit({
+              state: "blocked",
+              label: "missing apply link",
+              summary: "No application or posting URL is recorded, so apply review cannot proceed.",
+              missingPrerequisites: [
+                {
+                  code: "missing_resume_pdf",
+                  label: "Submit-ready PDF missing",
+                  detail: "Reviewable resume text may be available, but the submit-ready PDF is still missing.",
+                  severity: "warning",
+                  source: "materials.pdf",
+                },
+              ],
+              hardBlockers: [
+                {
+                  code: "missing_application_url",
+                  label: "Missing apply link",
+                  detail: "No application or posting URL is recorded, so apply review cannot proceed.",
+                  severity: "blocking",
+                  source: "application_url",
+                },
+              ],
+              eligibilityConcerns: [
+                {
+                  code: "score_eligibility_warning",
+                  label: "Eligibility warning",
+                  detail: "Sponsorship requirements need review.",
+                  severity: "warning",
+                  source: "score_eligibility",
+                },
+              ],
+            }),
+          }),
+        );
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    const triage = await screen.findByRole("region", { name: "Why this job is here" });
+    const drawer = screen.getByRole("dialog", { name: "Job details" });
+    expect(drawer).toHaveClass("job-detail-drawer");
+    expect(drawer.querySelector(".job-detail-drawer-content")).not.toBeNull();
+    expect(drawer.querySelector(".job-detail-drawer-main")).not.toBeNull();
+    expect(within(triage).getByText("Audit triage")).toBeInTheDocument();
+    expect(within(triage).getByText("8/10")).toBeInTheDocument();
+    expect(within(triage).getByText("strong")).toBeInTheDocument();
+    expect(within(triage).getByText("high")).toBeInTheDocument();
+    expect(within(triage).getByText("Strong fit on platform reliability.")).toBeInTheDocument();
+    expect(within(triage).getAllByText("platform reliability").length).toBeGreaterThan(0);
+    expect(within(triage).getByText("public company scale")).toBeInTheDocument();
+    expect(within(triage).getByText("missing apply link")).toBeInTheDocument();
+    expect(
+      within(triage).getByText("Missing apply link: No application or posting URL is recorded, so apply review cannot proceed."),
+    ).toBeInTheDocument();
+    expect(
+      within(triage).getByText("Eligibility warning: Sponsorship requirements need review."),
+    ).toBeInTheDocument();
+    expect(within(triage).getByRole("link", { name: "Open Apply Review for Staff Software Engineer" })).toHaveAttribute(
+      "href",
+      "/apply-review",
+    );
+    expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
+    expect(screen.getByText("Score breakdown")).toBeInTheDocument();
+  });
+
   it("shows a not-found state instead of the raw API 404 for missing jobs", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", () =>

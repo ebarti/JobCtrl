@@ -1,95 +1,187 @@
-# Summary
+# Pitfalls Research
 
-This migration is high-risk because it is visually broad but mechanically easy to under-scope. JobHunter currently has a large legacy token surface built on `--bg`, `--paper`, `--paper-2`, `--ink`, `--muted`, `--soft`, `--danger`, `--warn`, `--ok`, and `--info` in `apps/web/src/styles/tokens.css:1`, with dark mode expressed as `[data-theme="dark"]` in `apps/web/src/styles/tokens.css:29`. The Tailwind config exposes those same legacy names as utilities in `apps/web/tailwind.config.ts:8`, while shadcn is already configured for CSS variables and lucide icons in `apps/web/components.json:6` and `apps/web/components.json:20`.
+**Domain:** Local-first job-application audit UX
+**Researched:** 2026-06-11
+**Confidence:** HIGH for auditability and scope pitfalls, MEDIUM for pin placement risks
 
-The safe migration shape is compatibility first: introduce shadcn standard semantic tokens from preset `b3F5kqmYd8`, map legacy variables to those tokens during the transition, and only then migrate shared primitives and global classes. A hard switch to `bg-background`, `text-foreground`, `border-border`, `ring-ring`, `bg-popover`, and `text-popover-foreground` without legacy aliases will break existing global CSS, dynamic status classes, and non-shadcn view styles.
+## Critical Pitfalls
 
-External docs used:
+### Pitfall 1: Contradictory Readiness Labels
 
-- shadcn theming: https://ui.shadcn.com/docs/theming
-- shadcn Vite dark mode: https://ui.shadcn.com/docs/dark-mode/vite
-- shadcn chart theming: https://ui.shadcn.com/docs/components/chart
-- Tailwind dark mode selector/data attribute: https://tailwindcss.com/docs/dark-mode
-- Tailwind theme variables: https://tailwindcss.com/docs/theme
-- Storybook accessibility testing: https://storybook.js.org/docs/writing-tests/accessibility-testing
-- Playwright visual comparisons: https://playwright.dev/docs/test-snapshots
+**What goes wrong:**
+Jobs drawer, Apply Review queue, selected header, and decision controls show different readiness/blocker facts for the same job.
 
-# Pitfalls
+**Why it happens:**
+Each UI surface derives its own status from a subset of fields. The current Apply Review view already has local `materialStatus` logic while the API queue exposes a simpler `materials.ready` field.
 
-| Pitfall | What goes wrong | Concrete prevention | Phase |
-| --- | --- | --- | --- |
-| Deleting legacy variables too early | `globals.css` still reads `var(--bg)`, `var(--paper)`, `var(--ink)`, status colors, mono font, and row density variables; pages can compile but render with missing colors or inherited defaults. | Add shadcn variables and legacy aliases in the same token foundation phase. Keep `--bg`, `--paper`, `--paper-2`, `--rule`, `--rule-2`, `--ink`, `--muted`, `--soft`, `--danger`, `--warn`, `--ok`, `--info`, `--font`, `--mono`, and `--row` until all references are removed by grep. | Phase 1: token foundation |
-| Treating Tailwind v4 theme variables as plain `:root` variables | shadcn utility classes such as `bg-background` and `border-border` may not exist or may not follow the generated preset when only normal CSS variables are defined. Tailwind v4 docs distinguish theme variables that generate utilities from ordinary CSS variables. | Add `@theme inline` mappings for shadcn semantic tokens, matching shadcn's theme scaffold. Keep Tailwind config legacy mappings temporarily for existing `bg-paper`, `text-ink`, `ring-info`, etc. | Phase 1: token foundation |
-| Dark-mode selector mismatch | shadcn docs default to a `.dark` class, while this app uses `[data-theme="dark"]` and Tailwind currently configures `darkMode: ["selector", "[data-theme='dark']"]`. A migration that copies `.dark` tokens or `@custom-variant dark (&:is(.dark *))` will leave `dark:` utilities and CSS overrides split across two selectors. | Choose one selector for the milestone: preserve `[data-theme="dark"]`. Define dark token overrides under `[data-theme="dark"]`, and define Tailwind's dark variant using the data attribute if moving fully into CSS via `@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *))`. Do not introduce `.dark` unless the ThemeProvider is also changed. | Phase 1: token foundation |
-| Semantic token pairs mapped backwards | shadcn expects surface/foreground pairs such as `primary`/`primary-foreground`, `card`/`card-foreground`, `popover`/`popover-foreground`, and `destructive`/foreground treatment. Mapping legacy `--ink` to `--primary` without `--primary-foreground` can make buttons, badges, menus, or icons unreadable. | Build a token matrix before component edits: page background, text, card, popover, primary action, secondary action, muted helper text, accent hover, destructive, border, input, ring, chart tokens, sidebar tokens if present. Verify each pair in light and dark. | Phase 1: token foundation |
-| Confusing status semantics with shadcn component variants | JobHunter's domain statuses use `ok`, `warn`, `danger`, `info`, and `muted` for stage states, audit entries, fit scores, queue status, and segment bars. shadcn's `destructive`, `primary`, `secondary`, `muted`, and `accent` are UI roles, not domain state roles. Mapping `ok` to `primary` or `warn` to `secondary` loses product meaning. | Keep explicit domain tokens such as `--success`, `--warning`, `--info`, and their foreground/soft variants, then alias legacy `--ok`, `--warn`, `--info`, `--danger` during migration. Use typed tone helpers for status components. | Phase 3: domain/status surfaces |
-| Dynamic class names lose styling during utility migration | Components generate classes dynamically: `StageBadge` emits `stage-pill ${tone}` and `tag ${tone}` in `apps/web/src/contexts/pipeline/components/StageBadge.tsx:9`; `ScoreBadge` emits `fit ${scoreTier(score)}` in `apps/web/src/contexts/scoring/components/ScoreBadge.tsx:9`; `SegmentBar` emits `seg-${name}` in `apps/web/src/shared/ui/segment-bar.tsx:9`; `StatusDot` emits `status-dot ${state}` in `apps/web/src/shared/ui/status-dot.tsx:5`. A Tailwind-only rewrite can miss these names. | Either keep global CSS for these semantic classes or replace them with explicit typed variant maps. Do not use computed Tailwind class strings unless every possible class is statically present or safelisted. Keep parity tests for stage states and add focused tests for status-dot and segment-bar color classes. | Phase 3: domain/status surfaces |
-| Fit/status colors become contrast-only instead of meaning-preserving | Current global CSS assigns `seg-failed` to danger, `seg-blocked` to warn, `seg-running` to info, `seg-pending` to soft in `apps/web/src/styles/globals.css:529`; `stageStateTone` maps `succeeded`, `running`, `blocked`, `failed`, and stale states in `apps/web/src/contexts/pipeline/lib/stage-state-tone.ts:6`. Visual redesign can accidentally make blocked and failed look alike. | Create a semantic-status acceptance fixture: failed is destructive, blocked is warning, running/queued is info, succeeded is success, stale/skipped/canceled/pending is muted. Check both light and dark, including a non-color cue where practical. | Phase 3: domain/status surfaces |
-| Menu and popover translucency reduces readability | shadcn has separate `popover` tokens for floating surfaces. Existing dropdown/popover primitives use opaque `bg-paper text-ink` in `apps/web/src/shared/ui/dropdown-menu.tsx:53` and `apps/web/src/shared/ui/popover.tsx:10`; dialogs/sheets use `bg-paper` plus `bg-black/35` overlays in `apps/web/src/shared/ui/dialog.tsx:17` and `apps/web/src/shared/ui/sheet.tsx:18`. Adding translucent or backdrop-blur menu backgrounds can expose dense table text underneath and fail contrast in dark mode. | Use opaque `popover`/`popover-foreground` for dropdowns, command palette, selects, and popovers unless a specific component has a tested blur design. If translucency is introduced, test over Jobs table, Apply Review, PDF preview, and dark mode. | Phase 2: shared primitive migration |
-| Focus rings become invisible | Current base focus uses `outline: 2px solid var(--info)` in `apps/web/src/styles/globals.css:30`, and primitives use `focus-visible:ring-info` or `focus:ring-info`. Moving to `ring-ring` without checking contrast can make keyboard focus low-contrast, especially on popovers and destructive buttons. | Map `--ring` deliberately, not as a leftover neutral. Run keyboard focus sweeps for buttons, inputs, tabs, dropdown items, dialogs, sheets, and data table sortable headers. | Phase 2: shared primitive migration |
-| Icon swaps change meaning or layout | `components.json` sets lucide as the icon library, and many primitives already import lucide icons. Replacing text glyphs or arrow characters with icons can alter accessible names, button sizing, and row height. `DataTable` currently uses text arrows for sort state in `apps/web/src/shared/ui/data-table.tsx:109`; icon buttons in `globals.css` assume `30px` boxes at `apps/web/src/styles/globals.css:3318`. | Swap icons only through shared primitives, with `aria-hidden` for decorative icons and `sr-only` labels for icon-only controls. Verify row height and density in compact/regular/comfy modes. Do not replace domain labels with icons where the text carries audit meaning. | Phase 2: shared primitive migration |
-| Font changes destabilize dense layouts and snapshots | `--font` and `--mono` live in `apps/web/src/styles/tokens.css:14`; the app uses small 11-13px dense UI, monospace status metadata, and fixed row heights via `--row`. A new preset font can change table widths, PDF preview chrome, command layouts, and screenshot baselines. | Keep system font aliases during token migration unless the roadmap explicitly scopes typography. If fonts change, treat it as a separate visual phase with table, profile editor, apply review, and PDF preview screenshots. | Phase 1: token foundation |
-| Radius and spacing changes create layout regressions | shadcn standard tokens include radius scales, while existing global CSS uses 5-8px radii across cards, rows, tags, inputs, drawers, and profile editor sections. A blanket `rounded-lg`/`rounded-xl` update can make operational UI feel oversized and can shift visual snapshots. | Introduce `--radius` and derived radius utilities, but keep current radius values for dense operational surfaces until shared primitive migration. Verify no nested-card or oversized control regression in dashboard, jobs, artifacts, apply review, and profile. | Phase 2: shared primitive migration |
-| Storybook a11y is misread as complete coverage | The repo's QA doc requires Storybook a11y gates and notes critical/serious axe failures fail the gate in `docs/local-reliability-qa.md:190`. But an existing DropdownMenu story disables a11y due Radix portal animation warnings in `apps/web/src/shared/ui/dropdown-menu.stories.tsx:13`, so a token migration can pass while the changed menu remains untested. | Inventory all `a11y: { test: "off" }` stories before the migration. For changed primitive stories, either re-enable checks or document deferrals in the existing backlog process. Add explicit open-state stories for dropdown, popover, command, dialog, sheet, toast, select, tabs, status badges, segment bar, and data table. | Phase 4: Storybook and a11y hardening |
-| Visual snapshots become flaky and unreviewable | Playwright warns screenshots vary by OS, browser, fonts, settings, hardware, power source, and headless mode. Token migrations can produce large diffs that reviewers rubber-stamp, while dynamic timestamps, SSE state, PDF iframes, and animations add noise. | Keep visual QA narrow and deterministic: seeded local data only, fixed viewport, fixed theme/density, disabled animation stylesheet, hidden or frozen timestamps/PDF iframe where not under test, one browser/project baseline, and explicit snapshot names. Review pixel diffs as a product artifact, not just a CI gate. | Phase 4: visual QA hardening |
-| Snapshot updates hide semantic regressions | Regenerating all screenshots after a token migration can bless broken status colors, missing focus rings, translucent menus, or unreadable dark mode. | Before updating baselines, run semantic assertions for status labels/classes, keyboard focus, menu readability, and dark theme. Only update snapshots after the semantic checks pass. | Phase 4: visual QA hardening |
-| Local-first sensitive data leaks into visual artifacts | JobHunter is local-first and handles profile, resume, generated PDFs, applications, logs, and SQLite-backed projections. Screenshots and Storybook fixtures can accidentally capture real profile data or generated materials. | Use existing MSW/seed fixtures and synthetic data only. Do not run auto-apply or real generation for QA. Follow the local QA guidance that destructive browser QA uses disposable seeded workspaces in `docs/local-reliability-qa.md:34`. | Phase 4: visual QA hardening |
-| Shared primitive migration breaks view/context boundaries | Frontend target architecture says views compose context components and shared primitives; contexts own domain components and mutations. Moving status rendering into shared shadcn primitives can make `shared/ui` depend on pipeline/scoring/materials domain language. | Keep domain tone decisions in contexts (`stageStateTone`, `stageTone`, `scoreTier`, artifact status tone). Shared UI should expose generic variant slots; contexts map domain states to those variants. | Phase 2 and Phase 3 |
-| Global CSS cleanup breaks view-specific surfaces | `globals.css` is still the owner for topbar, KPI grid, funnel, apply-review panes, drawers, tables, profile editor, PDF preview, audit timelines, and connection pills. Removing legacy classes because shared shadcn components exist can break surfaces not yet componentized. | Use grep-driven cleanup only. Each deletion must name the replacing component or file. Keep page/view global classes until a specific view migration covers them. | Phase 5: cleanup |
-| Tailwind content/scanning misses generated or shared paths | Tailwind content is currently `./index.html` and `./src/**/*.{ts,tsx}` in `apps/web/tailwind.config.ts:5`. If shadcn registry output, stories, or non-src style fixtures use new utilities, they may not compile into CSS. | Confirm all migrated class usage lives under scanned paths or update scanning intentionally. Avoid relying on story-only classes for production styles. | Phase 1: token foundation |
-| New chart tokens do not preserve dashboard meaning | shadcn provides `chart-1` through `chart-5`, but JobHunter's funnel segment colors currently communicate done/failed/blocked/running/pending, not arbitrary series order. | Do not map funnel/status segments to `chart-1..5` by position. Use chart tokens for neutral data series and status tokens for lifecycle states. If a dashboard chart is added, use shadcn chart config with explicit labels and CSS variables. | Phase 3: domain/status surfaces |
-| Dark theme QA only checks page shell | Tokens can look correct on body and cards while overlays, form controls, scroll areas, command palette, toast, PDF preview, and status badges remain wrong. | Dark-mode acceptance must open every overlay primitive and at least one dense operational view. Check `data-theme="dark"` on `<html>` and inspect computed values for `background`, `foreground`, `popover`, `ring`, and status tokens. | Phase 4: Storybook and a11y hardening |
+**How to avoid:**
+Create one shared readiness/blocker contract in the API/read model and consume it in both surfaces. UI helpers can format labels, but cannot decide source facts.
 
-# Prevention Strategy
+**Warning signs:**
+- New helpers named `materialStatus` or `readinessStatus` inside views.
+- Tests assert labels without checking the API contract.
+- `materials.ready` and blocker labels are not derived from the same source.
 
-1. Token foundation first. Add shadcn semantic tokens from preset `b3F5kqmYd8` in `tokens.css`, add Tailwind `@theme inline` mappings, preserve existing `@import "./tokens.css"` order in `globals.css`, and keep compatibility aliases for every legacy variable currently used by global CSS and shared primitives.
+**Phase to address:** Phase 13 shared audit contract.
 
-2. Selector decision before component work. Preserve JobHunter's current `data-theme="dark"` model unless the milestone explicitly changes the ThemeProvider. Align CSS dark overrides, Tailwind `dark:` variant behavior, Storybook decorators, and E2E setup to the same selector.
+---
 
-3. Shared primitives before page globals. Migrate `Button`, `Badge`, `Card`, `Dialog`, `Sheet`, `DropdownMenu`, `Popover`, `Command`, `Toast`, `Tabs`, `Checkbox`, `Switch`, `Input`, `Textarea`, `Select`, and table primitives to shadcn semantic utilities. Keep domain components on their existing tone helpers until the primitives are stable.
+### Pitfall 2: Ranking Explanation Implemented in the Wrong Surface
 
-4. Domain semantics as a separate phase. Migrate `StageBadge`, `ScoreBadge`, `StatusDot`, `SegmentBar`, artifact status, audit timeline, apply timeline, and KPI tones with explicit state fixtures. This phase owns success/warning/info/destructive/muted semantics, not shadcn component cosmetics.
+**What goes wrong:**
+The milestone explains ranking in Apply Review but leaves the Jobs row-click drawer vague.
 
-5. QA hardening before cleanup. Add/refresh Storybook state coverage and targeted Playwright visual checks before removing aliases. A cleanup phase should only delete aliases and global classes after `rg "var\\(--bg|var\\(--paper|bg-paper|text-ink|ring-info|border-rule"` returns no production references outside intentional compatibility code.
+**Why it happens:**
+Apply Review currently shows requirement evidence and can open job details, so it is tempting to keep adding ranking content there.
 
-6. Keep tests product-shaped. This is a local-first operational app; test dashboard, jobs list/detail drawer, apply review, artifacts/PDF preview, profile editor, settings, debug/activity, and dark-mode overlays with synthetic fixtures. Do not use real resumes, generated PDFs, browser profiles, logs, API keys, Gmail, or apply automation in token QA.
+**How to avoid:**
+Keep the scope split explicit: Jobs drawer owns rank explanation, readiness, blockers, and eligibility concerns. Apply Review owns generated-material inspection.
 
-# Phase Placement
+**Warning signs:**
+- Jobs drawer still starts with generic "Preparation diagnostics" before rank/readiness triage.
+- Apply Review becomes the only place a user can answer why the job ranked highly.
 
-| Roadmap phase | Owns | Pitfalls addressed | Exit criteria |
-| --- | --- | --- | --- |
-| Phase 1: Token foundation | `tokens.css`, Tailwind theme mappings, `data-theme` dark selector, font/radius base, legacy aliases | Legacy variable deletion, Tailwind v4 `@theme`, selector mismatch, token pair mistakes, font instability, content scanning | App compiles with both legacy and shadcn utilities; light/dark computed token table is documented; no visual surface is intentionally changed except preset token values. |
-| Phase 2: Shared primitive migration | `apps/web/src/shared/ui/*` primitives and their stories | Menu translucency, focus rings, icon swaps, radius/spacing shifts, view/context boundary mistakes | Shared primitive stories render in light/dark; keyboard focus is visible; open overlays are readable; icon-only controls have accessible names; no domain status meaning is changed. |
-| Phase 3: Domain/status surfaces | Pipeline/scoring/materials/apply/discovery status components, KPI tones, funnel/segment bars, chart/status token split | Status semantics drift, dynamic class loss, fit/status contrast, chart token misuse | Stage-state parity test still passes; status fixture verifies success/warning/info/destructive/muted mapping; Jobs, Dashboard, Apply Review, Artifacts, and Debug surfaces show correct state meanings. |
-| Phase 4: Storybook/a11y/visual QA | Storybook stories, axe gates, Playwright visual smoke, seeded QA data | Storybook false confidence, flaky snapshots, snapshot baseline rubber-stamping, local data leakage, dark shell-only QA | `pnpm web:storybook:build`, `pnpm web:storybook:test`, web unit/a11y suites, and targeted E2E/visual checks pass with deterministic fixtures; any a11y deferral is recorded per repo policy. |
-| Phase 5: Alias/global cleanup | Remove obsolete token aliases and dead global CSS only after migration proof | Premature cleanup, missed global classes, stale legacy Tailwind config | Grep proves no production references to removed legacy tokens/classes; cleanup diff is mechanical and separately reviewable; screenshots and semantic checks remain green. |
+**Phase to address:** Phase 14 Jobs drawer audit triage.
 
-# Verification Signals
+---
 
-Required automated signals:
+### Pitfall 3: Resume Pins That Are Decorative Instead of Auditable
 
-- `pnpm web:check` after token/theme changes.
-- `pnpm web:build` to prove Tailwind generates the new semantic utilities.
-- `pnpm --filter @jobhunter/web test` for shared primitives, status components, and a11y tests.
-- `pnpm --filter @jobhunter/web test-d` if shared UI/component prop types or context exports change.
-- `pnpm web:storybook:build` and `pnpm web:storybook:test` after primitive/story changes.
-- `pnpm --filter @jobhunter/web e2e` or narrower affected specs for dashboard, jobs, apply-review, artifacts, profile/settings, and dark-mode flows.
-- `git diff --check`.
+**What goes wrong:**
+Pins appear on or near the resume but do not open concrete source evidence, transformed text, grounding status, or risk.
 
-Targeted migration checks:
+**Why it happens:**
+The UI work focuses on layout before deriving a pin model from `bulletProvenance`, `annotatedChanges`, and judge/quality data.
 
-- Grep compatibility: `rg "var\\(--bg|var\\(--paper|var\\(--ink|bg-paper|text-ink|border-rule|ring-info|--danger|--warn|--ok|--info" apps/web/src apps/web/tailwind.config.ts`.
-- Computed-token smoke: in light and `[data-theme="dark"]`, inspect `--background`, `--foreground`, `--card`, `--popover`, `--primary`, `--primary-foreground`, `--destructive`, `--border`, `--input`, `--ring`, `--chart-1`, `--chart-2`, plus compatibility aliases.
-- Overlay smoke: open dropdown, popover, command dialog, sheet, dialog, toast, select, and data-grid filter popover over dense Jobs/Apply Review content; verify no translucent readability loss.
-- Status smoke: render all `STAGE_STATE_KINDS`, score tiers `null/5/6/8/10`, artifact statuses `approved/stale/missing`, connection statuses `open/connecting/closed/lost`, and funnel segments `done/failed/blocked/running/pending`.
-- Icon smoke: verify all icon-only controls have accessible names and stable dimensions; check sort indicators, close buttons, copy buttons, theme toggle, destructive/remove controls, and menu check/radio indicators.
-- Font/density smoke: compare compact, regular, and comfy density for Jobs table, profile editor, apply-review queue, PDF preview toolbar, and debug/activity rows.
-- Dark-mode smoke: assert the app uses `data-theme="dark"` and not an accidental `.dark` split; open all overlay primitives in dark mode.
-- Visual QA smoke: use fixed viewport, seeded data, fixed theme/density, disabled animations, and one browser/project baseline. Do not update all snapshots until semantic checks pass.
+**How to avoid:**
+Define a pin model first. Every pin must point to a generated claim/bullet and show source profile/resume text, requirements/evidence IDs, transform/change type, grounding/risk, and reviewer action where available.
 
-Roadmap blockers:
+**Warning signs:**
+- Pins are keyed by array index only.
+- Pins do not survive sorting/filtering/re-rendering.
+- Pin detail cannot name source evidence or generated text.
 
-- Block Phase 2 if Phase 1 does not preserve legacy aliases and `data-theme` dark behavior.
-- Block Phase 3 if status colors are only visually inspected and not backed by typed fixtures/parity tests.
-- Block Phase 4 if any changed primitive lacks open-state Storybook coverage.
-- Block Phase 5 until grep proves legacy references are gone and the removal is limited to compatibility aliases/dead CSS.
+**Phase to address:** Phase 15 Apply Review resume pins.
+
+---
+
+### Pitfall 4: Missing Audit Data Hidden for Polish
+
+**What goes wrong:**
+Unsupported claims, missing evidence, missing prompt/judge details, absent source bullets, or incomplete material status are hidden or renamed to make the UI feel cleaner.
+
+**Why it happens:**
+Audit gaps look embarrassing in review surfaces.
+
+**How to avoid:**
+Preserve explicit missing states and fix missing audit sources in the owning layer when the source should exist.
+
+**Warning signs:**
+- Empty arrays return `null` instead of an explicit empty state.
+- "not recorded" states disappear from inspector components.
+- PR text says a field was removed because it was confusing without source-of-truth remediation.
+
+**Phase to address:** All phases; especially Phases 13 and 15.
+
+---
+
+### Pitfall 5: QA Accidentally Uses Sensitive or Live Application Flows
+
+**What goes wrong:**
+Browser proof exposes local resume/profile/application data or triggers apply/browser submission/worker-backed actions.
+
+**Why it happens:**
+The most realistic path is a running local app with real data, but this repo treats generated materials and local artifacts as sensitive.
+
+**How to avoid:**
+Use synthetic seeded fixtures or scrubbed static examples. QA must not run auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless explicitly requested.
+
+**Warning signs:**
+- Screenshots show real company/candidate identifiers from the user environment.
+- QA command starts `jobhunter run`, a Temporal worker, apply automation, or browser submission without explicit approval.
+
+**Phase to address:** Phase 16 QA/docs.
+
+---
+
+### Pitfall 6: Folded Cleanup Overtakes the Product Milestone
+
+**What goes wrong:**
+The leftover v1.1 cleanup expands into broad styling, route, or dependency refactors before the audit UX is delivered.
+
+**Why it happens:**
+Cleanup items are easy to chase because they touch many files and have obvious grep targets.
+
+**How to avoid:**
+Limit cleanup to stale verification command normalization, dependency/config audit, obsolete `lucide-react` removal only if imports are zero, and narrow docs/config updates.
+
+**Warning signs:**
+- Cleanup phase changes product layout or route behavior.
+- Cleanup PR touches unrelated design tokens beyond stale references.
+- No audit UX phases are planned yet.
+
+**Phase to address:** Phase 12 folded cleanup.
+
+## Technical Debt Patterns
+
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Formatting readiness in the UI from raw fields | Fast visible labels | Permanent cross-surface drift | Never for shared facts. |
+| Pins keyed by visual order | Quick prototype | Breaks proof when rendering changes | Only in throwaway sketches, not production. |
+| Missing keyword list inferred from job keywords | Easy to fill UI | False audit claims | Never; use coverage audit or rendered text with provenance. |
+| Adding new UI components inside views only | Fast local change | Reuse and testing suffer | Acceptable only for pure layout composers. |
+| Deferring API tests for read-model DTOs | Faster PR | Contract regressions slip to browser QA | Not acceptable for shared contract changes. |
+
+## Integration Gotchas
+
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| Contracts/API/web | Add fields to web types without API mapper tests | Add DTO fields in `@jobhunter/contracts`, map in API, and cover with tests/typecheck. |
+| Apply Review and Jobs drawer | Duplicate blocker formatting | Share source facts; localize only labels or compact display variants. |
+| PDF preview and pins | Assume PDF page coordinates are stable | Anchor to generated text/provenance first and show fallback when visual location cannot be established. |
+| Storybook/QA fixtures | Reuse local artifacts | Use synthetic data and scrubbed examples. |
+| Icon cleanup | Remove dependency before import proof | Run import/dependency audit before removing `lucide-react`. |
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Dense audit panels disconnected from the resume | User cannot connect evidence to the artifact they approve. | Put pins/markers on or beside the rendered resume and show detail on selection. |
+| Generic "materials not ready" tag | User does not know why review is blocked. | Show concrete prerequisites and blocker source. |
+| Ranking mixed with material proof | User cannot tell whether a problem is job fit or generated artifact risk. | Jobs drawer owns fit/readiness; Apply Review owns artifact proof. |
+| Over-explaining process text in the app | Slows repeated review workflow. | Use compact labels, disclosure, pins, and inspector detail. |
+| Hero/marketing treatment | Misfits dense operational tool usage. | Keep a utilitarian, scannable, work-focused layout. |
+
+## Looks Done But Is Not Checklist
+
+- [ ] **Readiness:** Both surfaces show labels, but tests do not assert they come from the same contract.
+- [ ] **Jobs drawer:** It contains score details, but no clear answer to "why ranked this way."
+- [ ] **Apply Review:** It shows provenance cards, but selecting a resume line/claim does not reveal source and risk.
+- [ ] **Pins:** They exist visually, but cannot name source profile/resume text and generated text.
+- [ ] **Claim risk:** Judge/adversarial warnings are present somewhere, but not connected to specific generated claims or accepted lifecycle state.
+- [ ] **QA:** Browser screenshots look good, but data is real or the apply path was triggered.
+- [ ] **Cleanup:** `lucide-react` is removed without import/dependency proof, or stale Tailwind config references remain.
+
+## Pitfall-to-Phase Mapping
+
+| Pitfall | Prevention Phase | Verification |
+|---------|------------------|--------------|
+| Contradictory readiness labels | Phase 13 | API/read-model tests plus browser proof of same job in Jobs drawer and Apply Review. |
+| Ranking explanation in wrong surface | Phase 14 | Jobs drawer test/browser QA answers rank/readiness/blocker stories without opening Apply Review. |
+| Decorative pins | Phase 15 | Component tests assert pin detail includes source, generated text, transform, evidence, grounding, risk. |
+| Hidden missing audit data | Phases 13-15 | Empty/missing-state tests and review checklist. |
+| Sensitive/live QA | Phase 16 | QA evidence uses synthetic data and records no auto-apply/submission commands. |
+| Cleanup scope creep | Phase 12 | Diff scoped to stale config/dependency/docs proof. |
+
+## Sources
+
+- `AGENTS.md` auditability and QA discipline.
+- `apps/web/src/views/apply-review/ApplyReviewView.tsx`
+- `apps/web/src/views/jobs/JobDetailDrawer.tsx`
+- `apps/api/src/application-feedback.ts`
+- `packages/contracts/src/schemas.ts`
+- `.planning/sketches/002-layered-audit-surfaces/README.md`
+
+---
+*Pitfalls research for: v1.2 Apply Review Audit UX - Drawer + Resume Pins*
+*Researched: 2026-06-11*

@@ -1,12 +1,12 @@
 import type { ArtifactTailoringExplanation } from "@jobhunter/contracts";
 import { LOCAL_TENANT } from "@jobhunter/domain-types";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { routeTree } from "../../routeTree.gen.js";
-import { sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
+import { makeApplyAudit, sampleApplyReviewQueue, sampleArtifact } from "../../test/fixtures/projections.js";
 import { buildProviderHarness, renderWithProviders } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
 import { ApplyReviewView } from "./ApplyReviewView.js";
@@ -188,11 +188,43 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
   },
 };
 
+const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
+  ...sampleTailoringExplanation,
+  judge: {
+    ...sampleTailoringExplanation.judge,
+    passed: false,
+    verdict: "REVIEW",
+    score: 0.62,
+    unsupportedClaims: ["Owned platform reliability improvements for incident response."],
+    missingRequiredEvidence: ["req-platform-scale"],
+    repairInstructions: ["Remove unsupported scope claim."],
+  },
+  reviewFeedback: {
+    warningRepairAttempted: true,
+    acceptedWithResidualWarnings: true,
+    acceptedWarnings: ["Kept one residual warning for reviewer inspection."],
+  },
+  bulletProvenance: [
+    {
+      bulletId: "pin-1",
+      section: "experience",
+      sourceId: "ev_platform_reliability",
+      evidenceIds: ["ev_platform_reliability"],
+      requirementIds: ["req-platform"],
+      matchedKeywords: ["platform reliability"],
+      transformType: "achievement_reframed",
+      control: "evidence_reframing",
+      rationale: "Reframed the source fact to foreground platform reliability ownership.",
+      generatedText: "Owned platform reliability improvements for incident response.",
+    },
+  ],
+};
+
 describe("<ApplyReviewView>", () => {
   it("renders the review workspace with job evidence and tailored materials", async () => {
     renderWithProviders(<ApplyReviewView />);
 
-    expect(await screen.findAllByText("Principal Platform Engineer")).toHaveLength(2);
+    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole("heading", { name: "Requirements and original post" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tailored resume and cover" })).toBeInTheDocument();
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
@@ -212,6 +244,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("surfaces resume tailoring rationale in the apply review workspace", async () => {
+    const user = userEvent.setup();
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -233,45 +266,223 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText("Evidence Reframing")).toBeInTheDocument();
-    expect(screen.getByText("Principal")).toBeInTheDocument();
-    expect(screen.getByText("Why these changes")).toBeInTheDocument();
-    expect(screen.getByText("Resume match audit")).toBeInTheDocument();
-    expect(screen.getByText("1/3 found in resume")).toBeInTheDocument();
-    expect(screen.getByText("3 total")).toBeInTheDocument();
-    expect(screen.getByText("Target job keywords")).toBeInTheDocument();
-    expect(screen.getByText("Found in tailored resume")).toBeInTheDocument();
-    expect(screen.getByText("No resume keyword match found")).toBeInTheDocument();
-    expect(screen.queryByText("No recorded resume match")).not.toBeInTheDocument();
-    expect(screen.queryByText("Not recorded as covered")).not.toBeInTheDocument();
-    expect(screen.queryByText("Displayed target keywords")).not.toBeInTheDocument();
-    expect(screen.queryByText("Filtered missing keywords")).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    await user.click(
+      within(renderedResume).getByRole("button", {
+        name: "Line 3: Owned platform reliability improvements for incident response.",
+      }),
+    );
+    const selectedAudit = screen.getByRole("article", { name: /Selected resume line audit for line 3/i });
+    expect(within(selectedAudit).getByText("Source evidence")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Built platform services.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Experience was emphasized because it matches platform reliability.")).toBeInTheDocument();
+    const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
+    const renderedAudit = screen.getByRole("region", { name: "Rendered resume audit" });
+    expect(artifactRisk.compareDocumentPosition(renderedAudit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).not.toContainElement(artifactRisk);
+    expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
+    expect(screen.queryByText("Annotated resume changes")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
     expect(screen.queryByText("join")).not.toBeInTheDocument();
-    expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
-    expect(screen.getByText("Senior SWE at Acme")).toBeInTheDocument();
-    expect(screen.getByText("Built platform services.")).toBeInTheDocument();
+    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
     expect(
-      screen.getByText("Owned platform reliability improvements for incident response."),
-    ).toBeInTheDocument();
+      screen.getAllByText("Owned platform reliability improvements for incident response.").length,
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("ev_platform_reliability")).toHaveLength(3);
-    expect(screen.getByText("93% / minimum 84%")).toBeInTheDocument();
-    expect(screen.getByText("High-fit review")).toBeInTheDocument();
-    expect(screen.getByText("Why overall score")).toBeInTheDocument();
-    expect(screen.getByText("Persona judgments")).toBeInTheDocument();
-    expect(screen.getByText("Evidence Auditor")).toBeInTheDocument();
-    expect(screen.getByText("Show LLM audit trail")).toBeInTheDocument();
-    expect(screen.getByText("Persona rubric")).toBeInTheDocument();
-    expect(screen.getByText("Check that every metric, tool, role, company, and achievement is supported.")).toBeInTheDocument();
-    expect(screen.getByText("Why it scored this way")).toBeInTheDocument();
-    expect(screen.getByText("LLM returned")).toBeInTheDocument();
-    expect(screen.getByText("Exact LLM request")).toBeInTheDocument();
-    expect(screen.getByText("Persona response")).toBeInTheDocument();
-    expect(screen.getByText("Stored LLM response")).toBeInTheDocument();
-    expect(screen.getAllByText("Evidence was supported by profile facts.").length).toBeGreaterThan(0);
-    expect(screen.getByText("Evaluate the tailored resume from every persona below.")).toBeInTheDocument();
-    expect(screen.getAllByText("All personas passed with no blockers.").length).toBeGreaterThan(0);
-    expect(artifact).toHaveBeenCalledWith("resume-pdf-2");
+    expect(screen.getAllByText("ev_platform_reliability").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("High-fit review").length).toBeGreaterThan(0);
+    expect(artifact).toHaveBeenCalledWith("resume-text-2");
+    expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
+  });
+
+  it("centers the rendered resume with selectable line-level claim pins", async () => {
+    const user = userEvent.setup();
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: pinnedTailoringExplanation,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    const resumePdf = await screen.findByRole("img", { name: "Tailored resume PDF" });
+    const pins = await screen.findByRole("region", { name: "Line-by-line resume audit" });
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
+    expect(resumePdf.compareDocumentPosition(pins) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    const renderedLineThree = within(renderedResume).getByRole("button", {
+      name: "Line 3: Owned platform reliability improvements for incident response.",
+    });
+    const initialAudit = screen.getByRole("article", { name: /Selected resume line audit for line 1/i });
+    expect(within(initialAudit).queryByText("claim risk")).not.toBeInTheDocument();
+    await user.click(renderedLineThree);
+    const selectedAudit = screen.getByRole("article", { name: /Selected resume line audit for line 3/i });
+    expect(within(selectedAudit).getByText("Source pointer")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Experience -> Senior SWE at Acme")).toBeInTheDocument();
+    expect(within(selectedAudit).getAllByText("Source evidence").length).toBeGreaterThan(0);
+    expect(within(selectedAudit).getByText("Built platform services.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Bullet provenance")).toBeInTheDocument();
+    expect(screen.queryByText("Tailored artifact text")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Achievement Reframed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("evidence_reframing").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("req-platform").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ev_platform_reliability").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
+    expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
+    expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
+    expect(screen.getAllByText("claim risk").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("req-platform-scale").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Kept one residual warning for reviewer inspection.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Warning repair attempted").length).toBeGreaterThan(0);
+  });
+
+  it("does not promote source-span fallback lines with audit metadata gaps to claim risk", async () => {
+    const user = userEvent.setup();
+    const sourceBackedExplanation: ArtifactTailoringExplanation = {
+      ...sampleTailoringExplanation,
+      quality: {
+        ...sampleTailoringExplanation.quality,
+        errors: ["Tailoring audit metadata incomplete: missing profile evidence mapping"],
+      },
+      annotatedChanges: sampleTailoringExplanation.annotatedChanges.map((change) => ({
+        ...change,
+        sourceText: ["Built platform services.", "Led incident response handovers."],
+        evidenceIds: [],
+      })),
+    };
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: sourceBackedExplanation,
+    }));
+    const queueWithContextualResume = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              materialsPreview: {
+                ...item.materialsPreview,
+                resumeText: "Principal Platform Engineer\n\nExperience\nSenior SWE | Acme\n- Led incident response handovers.",
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queueWithContextualResume),
+          artifact,
+        },
+      }),
+    });
+
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    const renderedLineThree = within(renderedResume).getByRole("button", {
+      name: "Line 5: - Led incident response handovers.",
+    });
+    await user.click(renderedLineThree);
+    const selectedAudit = screen.getByRole("article", { name: /Selected resume line audit for line 5/i });
+
+    expect(screen.getAllByText("source span").length).toBeGreaterThan(0);
+    expect(screen.queryByText("source-backed")).not.toBeInTheDocument();
+    expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
+    expect(screen.queryByText("No source evidence recorded for this line.")).not.toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Source pointer")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Section source span")).toBeInTheDocument();
+    expect(within(selectedAudit).getAllByText("Source evidence").length).toBeGreaterThan(0);
+    expect(within(selectedAudit).getByText("Built platform services.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Led incident response handovers.")).toBeInTheDocument();
+    expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
+    expect(within(selectedAudit).queryByText("Audit metadata gaps")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("Tailoring audit metadata incomplete: missing profile evidence mapping").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("Built platform services.").length).toBeGreaterThan(0);
+  });
+
+  it("falls back to a line-by-line resume audit when generation provenance is missing", async () => {
+    const user = userEvent.setup();
+    const artifact = vi.fn(async (artifactId: string) => ({
+      ok: true as const,
+      artifact: {
+        ...sampleArtifact,
+        artifactId,
+        jobKey: sampleApplyReviewQueue.items[0]!.jobKey,
+        title: "Principal Platform Engineer Resume",
+        company: sampleApplyReviewQueue.items[0]!.company,
+      },
+      tailoringExplanation: null,
+    }));
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+          artifact,
+        },
+      }),
+    });
+
+    expect(await screen.findByRole("img", { name: "Tailored resume PDF" })).toBeInTheDocument();
+    await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
+    expect(artifact).not.toHaveBeenCalledWith("resume-pdf-2");
+    const renderedResume = screen.getByRole("region", { name: "Rendered resume line review" });
+    expect(renderedResume).toBeInTheDocument();
+    const renderedPage = within(renderedResume).getByRole("list", { name: "Rendered resume text lines" });
+    expect(renderedPage).toHaveClass("resume-line-review-page");
+    expect(renderedPage.querySelector('[data-line-kind="blank"]')).toBeInTheDocument();
+    expect(renderedPage).not.toHaveTextContent(/Line\s+1/i);
+    expect(within(renderedResume).getAllByRole("button")).toHaveLength(2);
+    const renderedLineOne = within(renderedResume).getByRole("button", {
+      name: "Line 1: Principal Platform Engineer",
+    });
+    const renderedLineThree = within(renderedResume).getByRole("button", {
+      name: "Line 3: Owned platform reliability improvements for incident response.",
+    });
+    await waitFor(() => expect(renderedLineOne).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("region", { name: "Line-by-line resume audit" })).toBeInTheDocument();
+    expect(screen.getByText(/No generation-time provenance was recorded/i)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: /Selected resume line audit for line 1/i })).toBeInTheDocument();
+    await user.click(renderedLineThree);
+    expect(renderedLineThree).toHaveAttribute("aria-pressed", "true");
+    expect(renderedLineOne).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("article", { name: /Selected resume line audit for line 3/i })).toBeInTheDocument();
+    expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
+    expect(screen.getByText("No source pointer was recorded for this resume line.")).toBeInTheDocument();
+    await user.click(renderedLineOne);
+    expect(renderedLineOne).toHaveAttribute("aria-pressed", "true");
+    expect(renderedLineThree).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("article", { name: /Selected resume line audit for line 1/i })).toBeInTheDocument();
   });
 
   it("opens job detail as an in-place overlay", async () => {
@@ -436,7 +647,9 @@ describe("<ApplyReviewView>", () => {
       "https://example.com",
     );
     expect(screen.getByText("SDLC")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    const verbatimJobPost = screen.getByRole("heading", { name: "Verbatim job post" }).closest("section");
+    expect(verbatimJobPost).not.toBeNull();
+    expect(within(verbatimJobPost!).getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("<script>alert('xss')</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
   });
@@ -457,6 +670,20 @@ describe("<ApplyReviewView>", () => {
                 startedAt: "2026-05-30T06:33:32Z",
                 finishedAt: "2026-05-30T06:40:29Z",
               },
+              applyAudit: makeApplyAudit({
+                state: "repair",
+                label: "submit failed",
+                summary: "Last submit failed: process killed by signal. Review evidence is still available.",
+                hardBlockers: [
+                  {
+                    code: "apply_run_failed",
+                    label: "submit failed",
+                    detail: "Last submit failed: process killed by signal.",
+                    severity: "blocking",
+                    source: "apply_run",
+                  },
+                ],
+              }),
               blockers: ["SKIPPED: process killed by signal"],
             }
           : item,
@@ -473,8 +700,64 @@ describe("<ApplyReviewView>", () => {
 
     expect((await screen.findAllByText(/Submit failed: process killed by signal/i)).length).toBeGreaterThan(0);
     expect(screen.getAllByText("submit failed").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Last submit failed: process killed by signal/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Last submit failed: process killed by signal/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("needs repair")).not.toBeInTheDocument();
+  });
+
+  it("renders canonical audit facts for missing apply-review source data", async () => {
+    const missingSourceQueue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              applyAudit: makeApplyAudit({
+                state: "blocked",
+                label: "missing apply link",
+                summary: "No application or posting URL is recorded, so apply review cannot proceed.",
+                hardBlockers: [
+                  {
+                    code: "missing_application_url",
+                    label: "Missing apply link",
+                    detail: "No application or posting URL is recorded, so apply review cannot proceed.",
+                    severity: "blocking",
+                    source: "application_url",
+                  },
+                ],
+                sources: [
+                  {
+                    kind: "application_url",
+                    label: "Application target",
+                    status: "missing",
+                    detail: "No application or posting URL is recorded.",
+                  },
+                  {
+                    kind: "score_eligibility",
+                    label: "Score eligibility",
+                    status: "unknown",
+                    detail: "No score eligibility data is recorded.",
+                  },
+                ],
+              }),
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => missingSourceQueue),
+        },
+      }),
+    });
+
+    expect((await screen.findAllByText("missing apply link")).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Missing apply link: No application or posting URL is recorded, so apply review cannot proceed."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Application target: missing: No application or posting URL is recorded.")).toBeInTheDocument();
+    expect(screen.getByText("Score eligibility: unknown: No score eligibility data is recorded.")).toBeInTheDocument();
   });
 
   it("records approval without dispatching apply automation", async () => {
@@ -531,7 +814,7 @@ describe("<ApplyReviewView>", () => {
 
     render(<RouterProvider router={router} />, { wrapper: harness.Wrapper });
 
-    expect(await screen.findAllByText("Principal Platform Engineer")).toHaveLength(2);
+    expect((await screen.findAllByText("Principal Platform Engineer")).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("outcomes unavailable")).not.toBeInTheDocument();
     expect(applicationOutcomes).not.toHaveBeenCalled();
   });

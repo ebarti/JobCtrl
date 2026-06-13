@@ -1,5 +1,5 @@
+import { ScoreBadge } from "./ScoreBadge.js";
 import { parseScoreReasoning } from "../lib/parse-reasoning.js";
-import { scoreTier } from "../lib/score-tier.js";
 
 export interface ScoreReasoningProps {
   text: string;
@@ -16,7 +16,7 @@ export function ScoreReasoning({ text, fitScore }: ScoreReasoningProps) {
   return (
     <div className="score-explainer">
       <div className="score-line">
-        <span className={`fit ${scoreTier(fitScore)}`}>{fitScore ?? parsed.score ?? "-"}</span>
+        <ScoreBadge score={fitScore ?? parsed.score} />
         <span>
           <b>{fitScore ?? parsed.score ?? "-"} / 10 fit score</b>
           <small>

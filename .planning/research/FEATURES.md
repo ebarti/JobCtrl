@@ -1,111 +1,117 @@
-# Feature Landscape: shadcn Standard Token Migration
+# Feature Research
 
-## Summary
+**Domain:** Local-first job-application audit UX
+**Researched:** 2026-06-11
+**Confidence:** HIGH for milestone scope, MEDIUM for exact pin-anchor affordance until implementation spike
 
-This milestone should behave as a visual-system migration, not as a new JobHunter product feature. From the user's perspective, the app should still be the same local-first job-search pipeline: dashboard, jobs, job detail, artifacts, apply review, discovery, profile/preferences/settings, runs, pipelines, and debug views should preserve their navigation, data loading, forms, destructive-action safeguards, and audit surfaces. The visible change is a coherent shadcn standard-token skin based on preset `b3F5kqmYd8`: neutral base, sky theme accents, amber chart palette, medium radius, Geist body text, JetBrains Mono headings/technical labels, subtle translucent menu treatment, and Tabler iconography.
+## Feature Landscape
 
-The migration is table-stakes successful only if existing workflows feel more consistent without requiring the user to relearn the app. The old custom vocabulary (`--bg`, `--paper`, `--ink`, `--rule`, `--info`, `--danger`, etc.) currently drives global CSS, Tailwind aliases, and shared primitives. The new behavior should route these surfaces through shadcn's semantic pairs (`background/foreground`, `card/card-foreground`, `popover/popover-foreground`, `primary/primary-foreground`, `secondary`, `muted`, `accent`, `destructive`, `border`, `input`, `ring`, `chart-*`, `sidebar-*`, `radius`) so future components inherit the same language by default.
+### Table Stakes
 
-The user-visible invariant is preservation plus polish: theme and density preferences continue to work, focus states remain obvious, status colors remain meaningful, audit/provenance displays remain honest, tables stay scannable, dialogs/drawers/menus remain keyboard-accessible, and local-first safety is unchanged. No new job pipeline, tailoring, apply, account, hosted, or analytics capabilities belong in this milestone.
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| Job ranking explanation in the Jobs drawer | A technical job seeker needs to know why a job is ranked before investing review time. | MEDIUM | Use existing `ScoreBreakdown`, `scoreReasoning`, `scoreTrace`, and employer analysis data; present as triage, not a generic diagnostics dump. |
+| Readiness state with concrete missing prerequisites | The user must know whether a job can enter apply review and what blocks it. | MEDIUM | Must be a shared API/contract fact used by Jobs drawer and Apply Review. |
+| Hard blockers and eligibility concerns | Users need to distinguish "not a fit" from "system material missing" and "apply cannot proceed." | MEDIUM | Use scoring eligibility, stage/error blockers, application URL/material availability, and quality/judge blockers with clear lifecycle labels. |
+| Rendered resume remains central in Apply Review | The user wants to inspect the artifact they may approve, not an abstract summary. | HIGH | Rework layout around the resume preview and pin inspector rather than moving evidence into a detached ledger. |
+| Source-to-tailored change inspection | Users need to see what changed from profile/resume into generated material. | MEDIUM | Existing `annotatedChanges` and `bulletProvenance` provide a strong base. |
+| Grounding and claim-risk visibility | Users need to know whether generated claims are supported, adjacent, unsupported, or risky. | HIGH | Use `quality`, `judge`, `adversarialReview`, `reviewFeedback`, and per-bullet provenance data. |
+| Honest empty/missing states | Audit surfaces must not silently disappear when data is absent. | LOW | Existing inspector has this pattern; preserve it for pins/readiness. |
 
-## Table Stakes
+### Differentiators
 
-| Capability | Expected user-visible behavior | Acceptance shape |
-| --- | --- | --- |
-| Standard semantic token coverage | Every visible surface uses the same light/dark token system. Backgrounds, cards, popovers, form controls, focus rings, selected rows, hover states, destructive actions, and chart colors look intentional instead of stitched together from old custom aliases. | CSS and primitives expose shadcn standard tokens in `globals.css` / `tokens.css`; shared UI components use semantic utilities such as `bg-background`, `text-foreground`, `bg-card`, `border-border`, `ring-ring`, `bg-primary`, `bg-accent`, and `text-muted-foreground` rather than app-specific color aliases. |
-| Preset fidelity | The app visually reflects the preset: neutral base, sky action/accent language, amber chart emphasis, medium radius, Geist body font, JetBrains Mono for headings/technical display, subtle translucent menu treatment, and Tabler icons. | Token values, font imports/fallbacks, radius scale, chart palette, menu/nav styling, and icon library mapping are represented in the actual web app, not only in documentation. |
-| Workflow preservation | Dashboard KPIs, jobs search/filter/sort/detail, artifacts preview/detail, apply review, discovery controls, profile/preferences/settings forms, runs/pipelines, and debug tables behave as before. | No route, loader, mutation, URL search-param behavior, form state, or SSE invalidation behavior changes as part of this migration. Existing tests for touched surfaces continue to pass. |
-| Light/dark theme continuity | Theme toggle remains a persisted user preference and both themes are complete. Dark mode must not be a partial inversion with unreadable muted text, missing borders, invisible focus rings, or mismatched popovers. | `data-theme` / dark selector behavior remains compatible with the existing preference store and Tailwind configuration. Browser smoke covers light and dark on representative routes. |
-| Density continuity | Compact, regular, and comfy density still alter row height and scanning density without changing route behavior or hiding controls. | The existing topbar density control remains visible and functional. Token changes do not accidentally hard-code table/list heights that defeat `--row` or its successor. |
-| Navigation/menu polish | Topbar, nav links, global search, density select, theme toggle, and connection status keep their position and meaning while adopting the preset's translucent, subtle menu style. Active and hover states are visible but restrained. | The header is readable over app backgrounds in both themes; active route state is obvious; connection error banners remain high contrast. |
-| Action hierarchy | Primary, secondary, ghost, outline, link, and destructive actions remain distinguishable. Dangerous actions are still visually and semantically destructive. | Button variants map to standard shadcn tokens. Destructive actions use `destructive` semantics rather than generic red aliases. |
-| Status semantics | Pipeline/status indicators preserve meaning for success, warning, running/info, failed/destructive, pending/muted, and neutral states. | Status components may introduce local semantic tokens only where shadcn's core set is insufficient, but their names must reflect domain meaning and be mapped through `@theme inline` / CSS variables rather than ad hoc hex colors. |
-| Form readability | Inputs, selects, textareas, checkboxes, tabs, dialogs, drawers, sheets, dropdowns, popovers, command palette, toasts, tables, badges, cards, skeletons, and empty states look like one component family. | Shared primitives in `apps/web/src/shared/ui/` are updated first, then route/view CSS follows. Focus-visible and disabled states remain clear. |
-| Audit surface integrity | Tailoring rationale, employer analysis, bullet provenance, missing-audit states, apply review evidence, and artifact detail surfaces remain inspectable and honest. The migration must not hide awkward data by making it low contrast or moving it out of view. | Browser QA includes the materials/apply-review inspector states named in local QA. Missing data states remain explicit (`not recorded`, `none recorded`, etc.) where already required. |
-| Responsive stability | Existing dense operational layouts continue to fit on desktop and narrow viewports. Token changes cannot introduce oversized padding, huge heading scale, or rounded-card marketing treatment that breaks repeated-use workflows. | Visual/browser smoke checks representative desktop and mobile/narrow widths for topbar wrapping, tables, drawers, apply-review split panes, forms, and artifact previews. |
-| Accessibility baseline | Keyboard focus, aria labels, contrast, dialogs/drawers focus handling, menu selection, and visible disabled states stay at least as good as current shadcn/Radix-backed primitives. | Existing a11y tests and Storybook a11y gate remain green. Any pre-existing deferral remains documented; no new critical/serious axe issue is introduced. |
-| Icon consistency | Existing lucide glyphs are replaced or intentionally mapped to Tabler equivalents without changing action meaning. A user should see one icon language, not a mixed library. | Every visible icon import is audited. Controls keep labels/aria labels where needed. Missing Tabler equivalents are documented before deferring. |
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| Resume pins tied to provenance rows | Makes trust inspectable at the exact claim level. | HIGH | Start with generated bullet/change anchors and a side inspector. |
+| One shared readiness/blocker contract | Prevents contradictory UI labels and makes QA deterministic. | MEDIUM | Add contract/API field first, then consume in both surfaces. |
+| Lifecycle-aware warnings | Distinguishes repair-attempt warnings, residual accepted warnings, and post-acceptance audit findings. | MEDIUM | Existing `reviewFeedback` fields help; display labels must be clear. |
+| Drawer-to-review handoff | Lets ranking/readiness triage hand off to generated-material inspection without duplicating every detail. | LOW | Existing Apply Review can open `JobDetailDrawer`; Jobs drawer can link to Apply Review once the selected target is URL-addressable. |
 
-## User-Visible Acceptance
+### Anti-Features
 
-| Category | Acceptance criteria |
-| --- | --- |
-| App still feels like JobHunter | Brand, topbar, navigation, dense tables, operational cards, pipeline/status language, and audit-heavy views remain recognizable. The migration should not introduce a landing-page, marketing dashboard, decorative hero, or new IA. |
-| Theme parity | Light and dark modes both render complete token sets for app shell, cards, forms, popovers, dialogs, drawers, tabs, badges, toasts, tables, charts/funnels, and focus rings. No component falls back to browser default blue/black/white. |
-| Preset surface proof | A reviewer can point to the preset in the app: sky primary/accent, amber chart/funnel emphasis, neutral base surfaces, medium radii, Geist/JetBrains typography, subtle translucent menu/nav treatment, and Tabler icons. |
-| Route coverage | At minimum, visual/browser QA should open `/dashboard`, `/jobs`, a job detail route/drawer, `/artifacts`, an artifact detail route/panel, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`. |
-| Critical workflow no-regression | Search, filters, sorting, pagination, drawers, route params/search params, form edit/save/undo/autosave, theme toggle, density toggle, apply-review decisions, artifact preview, and pipeline/run status displays continue to work. |
-| Safety no-regression | The migration must not start apply automation, auto-submit, browser submission, mailbox scanning, real generation, destructive profile/database actions, or worker-backed jobs during QA unless explicitly requested. |
-| Readability | Body text, dense table cells, small metadata, muted helper text, status chips, warning/destructive text, and code/technical labels meet practical contrast in both themes. Muted text should be subdued, not illegible. |
-| Focus and keyboard behavior | Keyboard users can tab through topbar controls, menus, filters, table controls, dialogs, drawers, forms, and destructive confirmations with visible focus. |
-| Empty/loading/error states | Skeletons, empty states, errors, connection warnings, disabled states, and queued/in-flight states adopt the same token language and remain understandable. |
-| Data honesty | UI polish must not reduce visibility of audit warnings, missing provenance, failed workflow state, stale scoring, hidden/deleted job state, or destructive warnings. |
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| Option 2 Evidence Ledger as milestone implementation | It makes evidence feel comprehensive. | It moves attention away from the rendered artifact the user approves. | Use Option 1 pins with a focused inspector; keep ledger as future comparison. |
+| Option 3 Gate Timeline as milestone implementation | It explains process sequence. | It does not solve source-to-claim review on the resume. | Use readiness summary plus pins; timeline remains future comparison. |
+| Blind auto-apply safety pitch in UI | It reinforces positioning. | User explicitly deferred this to README/docs positioning later. | Leave product copy/docs for a later milestone. |
+| Real material regeneration during QA | It proves realism. | It can touch sensitive data and worker-backed flows outside scope. | Use seeded API/browser fixtures and static generated-material samples. |
+| Cosmetic relabeling of "not ready" states | It may quiet a symptom. | It does not explain why or fix source-of-truth disagreement. | Compute readiness reasons and blockers at the owning layer. |
 
-## Developer Experience Acceptance
+## Feature Dependencies
 
-| Category | Acceptance criteria |
-| --- | --- |
-| Token vocabulary | The canonical styling vocabulary is shadcn standard semantic tokens. New feature code should not introduce new `--paper`, `--ink`, `--rule`, `--info`, `--danger`, `bg-paper`, `text-ink`, `border-rule`, or `ring-info` usage. |
-| Migration strategy | Update shared primitives and token definitions before one-off view CSS. Keep any temporary compatibility aliases narrow and remove them by the milestone exit unless explicitly documented. |
-| Tailwind integration | Tailwind 4 exposes standard shadcn token utilities through the project CSS/Tailwind setup. Radius scale derives from `--radius`; chart and sidebar/menu tokens are available even if current views use only a subset. |
-| Component ownership | shadcn components remain copied and owned under `apps/web/src/shared/ui/`, consistent with the target architecture. The migration should not add a runtime component framework or CSS-in-JS layer. |
-| Icon migration | Replace `lucide-react` imports with the selected Tabler package only after mapping all current icons and updating tests/stories. Do not leave user-facing mixed icon sets as the final state. |
-| Fonts | Geist and JetBrains Mono are loaded or locally configured in a way that works in the Vite app and Storybook/build output. Fallback stacks remain sensible if font loading fails. |
-| Tests | Run at least `pnpm web:check`, `pnpm web:build`, `pnpm --filter @jobhunter/web test`, and targeted Storybook/a11y or E2E checks for changed visual primitives and routes. Broader `pnpm test` is the default if the implementation touches shared behavior beyond CSS/primitives. |
-| Visual QA | Capture browser screenshots or equivalent reviewer-visible evidence in light and dark mode across representative routes. Include compact and comfy density checks for table/list-heavy routes. |
-| Storybook | Update primitive and affected component stories so future visual review uses the new token system. Storybook a11y remains the gate for critical/serious violations. |
-| Documentation | If `components.json`, package dependencies, scripts, icon library, token names, or QA expectations change, update the owning docs/files narrowly. If the implementation is purely internal and no docs change is warranted, state that in the PR description. |
-| Reviewability | The diff should make the token migration obvious: centralized token changes, primitive class changes, icon import changes, and limited view CSS cleanup. Avoid mixing product-feature changes into the same PR. |
+```text
+Shared readiness/blocker contract
+    -> Jobs drawer readiness and blocker panel
+    -> Apply Review readiness and blocker panel
+    -> Browser QA for agreement across surfaces
 
-## Deferred/Out of Scope
+Artifact tailoring explanation
+    -> Resume pin model
+        -> Pin inspector
+            -> Apply Review rendered-resume audit UX
 
-| Deferred item | Why out of scope | Later acceptance trigger |
-| --- | --- | --- |
-| New product workflows | This is a design-system migration. It should not add new discovery, scoring, tailoring, cover-letter, apply, profile, or pipeline functionality. | A separate product milestone with domain requirements and tests. |
-| Full redesign or information architecture change | The current app is an operational tool with dense repeated-use views. A full IA redesign would create validation risk unrelated to token migration. | A dedicated UX milestone with route-level prototypes and usability acceptance. |
-| Hosted/multi-tenant/auth UI | Project context remains local-first single-user. Token work should keep hosted seams unblocked but not build hosted surfaces. | Hosted milestone that activates auth/tenant requirements. |
-| Visual regression infrastructure | Useful, but not required to perform the migration. Storybook and Playwright/browser screenshots are enough for this milestone. | Add Chromatic/Loki/Percy only when visual drift becomes recurring review cost. |
-| Advanced user theme customization | The preset is the design contract. Letting users edit theme colors/fonts/radius would undermine migration acceptance. | A future personalization/settings milestone. |
-| Component inventory expansion | Do not add large new shadcn blocks or components merely because they exist. | Add when a product feature needs that primitive. |
-| Charting overhaul | Amber chart tokens should be available and used where existing chart/funnel-like surfaces need them, but new chart libraries or analytics dashboards are out of scope. | A reporting/analytics milestone. |
-| Motion/animation system | Token migration does not require new transitions, page animations, or microinteraction design. | A later polish milestone with accessibility and reduced-motion criteria. |
-| Tailoring inspector product changes | Inspector readability must be preserved, but employer analysis/provenance behavior is governed by the active product milestone, not by token migration. | The resume-tailoring milestone's auditability phases. |
-| Compatibility shims as permanent API | Temporary old-token aliases may help cut over safely, but they should not become the new public styling API. | Only keep aliases if a follow-up phase explicitly owns their removal schedule. |
+Score breakdown and employer analysis
+    -> Jobs drawer ranking explanation
+        -> Drawer-to-review handoff
 
-## Evidence
+Folded cleanup
+    -> Clean verification commands and icon/config dependency state
+        -> Lower-noise implementation and QA
+```
 
-### Repo Evidence
+### Dependency Notes
 
-| Source | Evidence used | Confidence |
-| --- | --- | --- |
-| `.planning/PROJECT.md:5-9` | JobHunter's core user value is local-first resume tailoring with inspectable trust; token migration must not distract from that product behavior. | High |
-| `.planning/PROJECT.md:17-28` | Existing discovery, enrichment, scoring, tailoring, cover, apply, PDF, projection/SSE, profile, materials/apply-review/artifacts surfaces are already shipped and must be preserved. | High |
-| `.planning/PROJECT.md:56-60` | Inspector UI must expose employer analysis and per-bullet provenance without masking missing audit data; visual polish cannot hide audit facts. | High |
-| `.planning/PROJECT.md:81-85` | Existing stack and local-first boundaries constrain the migration: React/Vite/Tailwind web, no new runtime without justification, no exposure of sensitive local data. | High |
-| `docs/frontend-target.md:1025-1057` | shadcn/ui is the chosen primitive layer; components are copied/owned locally, Radix supplies accessibility behavior, and the existing target named lucide icons before this preset's Tabler change. | High |
-| `docs/frontend-target.md:1059-1068` | Tailwind and CSS-variable-driven theme switching are the frontend styling target. | High |
-| `docs/architecture.md:440-456` | Current frontend stack: Vite, React 19, Tailwind 4 tokens, shadcn/Radix primitives, TanStack Router/Query/Table/Form, Zustand, Vitest, Playwright, Storybook/a11y. | High |
-| `docs/local-reliability-qa.md:3-32` | React UI changes require local QA commands and browser smoke against API/web or full `pnpm dev` stack. | High |
-| `docs/local-reliability-qa.md:121-128` | Frontend coverage includes Vitest/RTL/MSW, type-level tests, Playwright E2E, and a11y suites. | High |
-| `docs/local-reliability-qa.md:158-178` | Materials/apply-review inspector smoke requires honest missing-data rendering and preservation of last accepted artifact/provenance. | High |
-| `apps/web/src/styles/tokens.css:1-42` | Current token file uses custom light/dark variables rather than shadcn standard semantic names. | High |
-| `apps/web/src/styles/globals.css:1-33` | Global CSS imports Tailwind and current tokens, then applies old `--bg`, `--ink`, and `--info` values to body/focus. | High |
-| `apps/web/src/styles/globals.css:42-120` | Topbar, brand, nav, search, banners, and tabs are styled through old custom variables; these are user-visible migration targets. | High |
-| `apps/web/tailwind.config.ts:3-25` | Tailwind currently exposes old aliases (`bg`, `paper`, `ink`, `rule`, `danger`, `info`) and font aliases from `--font`/`--mono`. | High |
-| `apps/web/components.json:1-20` | shadcn config already uses CSS variables and neutral base color, but currently has style `default` and icon library `lucide`; preset migration must reconcile these with the new standard/preset. | High |
-| `apps/web/src/shared/ui/button.tsx:7-18` | Button variants currently use old aliases such as `bg-ink`, `text-paper`, `bg-danger`, `border-rule-2`, `text-info`. | High |
-| `apps/web/src/shared/ui/card.tsx:5-37` | Card primitives currently use old aliases such as `border-rule`, `bg-paper`, `text-ink`, and `text-muted`. | High |
-| `apps/web/src/shared/layout/Topbar.tsx:10-49` | Theme, density, global search, navigation, and connection status are persistent top-level user controls that must continue to work. | High |
-| `apps/web/src/routes/*.tsx` | Routes use TanStack Router loaders and view composers; token migration should not change route loaders, query keys, URL state, or mutation behavior. | High |
+- **Shared contract must come before UI agreement checks:** If both surfaces compute readiness independently, tests can only assert two copies of logic.
+- **Resume pins require artifact explanation data:** Pins should be derived from `bulletProvenance` and `annotatedChanges`, not handcrafted from the job post.
+- **Jobs drawer ranking explanation is separate from material proof:** Jobs owns rank/readiness triage; Apply Review owns generated artifact inspection.
+- **Cleanup should be early and narrow:** It removes stale v1.1 friction without becoming the milestone's core feature.
 
-### External Sources
+## MVP Definition
 
-| Source URL | Evidence used | Confidence |
-| --- | --- | --- |
-| https://ui.shadcn.com/docs/theming | shadcn recommends CSS variables for theming and defines standard semantic tokens used by components: background/foreground, card, popover, primary, secondary, muted, accent, destructive, border, input, ring, chart tokens, sidebar tokens, and radius scale. | High - official documentation, fetched 2026-06-09 |
-| https://ui.shadcn.com/docs/components-json | `components.json` controls style, Tailwind CSS location, base color, CSS-variable generation, aliases, and icon library; the docs note some initialization choices are effectively not casual runtime switches. | High - official documentation, fetched 2026-06-09 |
-| https://ui.shadcn.com/create | Official visual preset/create surface for previewing theme choices. The fetched text shell was sparse, so project-provided decoded preset values are treated as the source of truth for `b3F5kqmYd8`. | Medium - official page reachable, but decoded preset values came from milestone context |
+### Launch With (v1.2)
 
-### Tooling Note
+- [ ] Narrow cleanup of stale v1.1 verification/config/dependency leftovers.
+- [ ] Shared readiness/blocker DTO served to both `JobDetail` and `ApplyReviewQueueItem`.
+- [ ] Jobs drawer audit triage: rank explanation, readiness, blockers, eligibility concerns.
+- [ ] Apply Review centered on rendered resume/material with pin affordances and selected-pin inspector.
+- [ ] Pin detail showing source evidence, tailored text, transform/change type, grounding status, claim risk, and reviewer action when available.
+- [ ] Synthetic product-path QA that proves both surfaces agree and no apply submission path runs.
 
-`gsd-tools` was not available in this shell (`zsh: command not found: gsd-tools`), so the research-plan/cache/confidence seam could not be executed. Confidence above is based on local repo files plus current official shadcn documentation.
+### Add After Validation
+
+- [ ] Dedicated evidence ledger if users need bulk comparison beyond pin inspection.
+- [ ] Gate timeline if users need lifecycle sequence debugging after the audit surfaces are usable.
+- [ ] Deep PDF coordinate annotation if text/change anchors are not sufficient.
+- [ ] README/docs positioning for why JobHunter is safer than blind auto-apply tools.
+
+### Future Consideration
+
+- [ ] Multi-artifact side-by-side diff for resume versions.
+- [ ] Reviewer annotations/comments attached to individual pins.
+- [ ] Exportable audit packet for a selected application.
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| Shared readiness/blocker contract | HIGH | MEDIUM | P1 |
+| Jobs drawer ranking/readiness triage | HIGH | MEDIUM | P1 |
+| Apply Review resume pins | HIGH | HIGH | P1 |
+| Pin inspector with grounding/risk detail | HIGH | MEDIUM | P1 |
+| Folded cleanup | MEDIUM | LOW | P1 |
+| Evidence ledger | MEDIUM | MEDIUM | P3 |
+| Gate timeline | MEDIUM | MEDIUM | P3 |
+| Blind auto-apply safety docs | MEDIUM | LOW | P3 |
+
+## Sources
+
+- User-selected sketch: `.planning/sketches/002-layered-audit-surfaces/` Option 1.
+- User stories and scope split from QA comments on 2026-06-11.
+- `apps/web/src/views/jobs/JobDetailDrawer.tsx` for current Jobs overlay.
+- `apps/web/src/views/apply-review/ApplyReviewView.tsx` for current Apply Review material surface.
+- `apps/web/src/contexts/materials/components/TailoringExplanationSection.tsx` and `BulletProvenanceList.tsx` for existing material audit capabilities.
+- `packages/contracts/src/schemas.ts` for score, readiness, artifact, tailoring, and provenance DTO inventory.
+
+---
+*Feature research for: v1.2 Apply Review Audit UX - Drawer + Resume Pins*
+*Researched: 2026-06-11*

@@ -230,6 +230,71 @@ start_one() {
   echo "$name: started (pid $pid, logs $log)"
 }
 
+read_log_url() {
+  local file="$1" pattern="$2"
+  [[ -f "$file" ]] || return 1
+  grep -Eo "$pattern" "$file" 2>/dev/null | tail -n 1 || true
+}
+
+wait_for_log_url() {
+  local file="$1" pattern="$2"
+  local ticks="${JOBHUNTER_BINDING_WAIT_TICKS:-50}"
+  local interval="${JOBHUNTER_BINDING_WAIT_INTERVAL_SECONDS:-0.1}"
+  local i url
+  for i in $(seq 1 "$ticks"); do
+    url=$(read_log_url "$file" "$pattern")
+    if [[ -n "$url" ]]; then
+      echo "$url"
+      return 0
+    fi
+    sleep "$interval"
+  done
+  return 1
+}
+
+print_binding_for() {
+  local name="$1" url
+  case "$name" in
+    api)
+      url=$(read_log_url "$(log_file "$name")" 'http://[^[:space:]]+')
+      if [[ -n "$url" ]]; then
+        echo "api: $url"
+      else
+        echo "api: http://${JOBHUNTER_API_HOST}:${JOBHUNTER_API_PORT} (configured)"
+      fi
+      ;;
+    web)
+      url=$(wait_for_log_url "$(log_file "$name")" 'http://127\.0\.0\.1:[0-9]+/?' || true)
+      if [[ -z "$url" ]]; then
+        url=$(read_log_url "$(log_file "$name")" 'http://localhost:[0-9]+/?')
+      fi
+      if [[ -n "$url" ]]; then
+        echo "web: $url"
+      else
+        echo "web: http://127.0.0.1:${JOBHUNTER_WEB_PORT}/ (requested; startup log pending)"
+      fi
+      ;;
+    temporal)
+      echo "temporal: grpc 127.0.0.1:7233, ui http://127.0.0.1:8233"
+      ;;
+  esac
+}
+
+print_binding_summary() {
+  local printed=0 n
+  for n in "$@"; do
+    case "$n" in
+      api|web|temporal)
+        if [[ "$printed" -eq 0 ]]; then
+          echo "dev: bindings"
+          printed=1
+        fi
+        print_binding_for "$n"
+        ;;
+    esac
+  done
+}
+
 run_pids=()
 run_names=()
 run_cleaned=0
@@ -298,6 +363,7 @@ cmd_start() {
     for n in $(process_names); do targets+=("$n"); done
   fi
   for n in "${targets[@]}"; do start_one "$n"; done
+  print_binding_summary "${targets[@]}"
 }
 
 cmd_run() {

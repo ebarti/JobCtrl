@@ -14,6 +14,35 @@ aggregate now.
 
 from __future__ import annotations
 
+import re
+
+_LEGACY_BULLET_METRIC_RE = re.compile(
+    r"(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?"
+    r"|\d+(?:\.\d+)?%"
+    r"|\d+(?:\.\d+)?x"
+    r"|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req/s))",
+    re.IGNORECASE,
+)
+_LEGACY_BULLET_SENIORITY_TERMS = (
+    "own",
+    "owned",
+    "ownership",
+    "scope",
+    "influence",
+    "influenced",
+    "cross-team",
+    "stakeholder",
+    "stakeholders",
+    "led",
+    "lead",
+    "mentor",
+    "mentored",
+    "architect",
+    "architected",
+    "strategy",
+    "technical leadership",
+)
+
 
 def has_resume_master(profile: dict) -> bool:
     """Return True when the profile uses the structured resume master schema."""
@@ -216,12 +245,26 @@ def get_achievement_evidence(profile: dict) -> list[dict]:
             continue
         entry_id = str(entry.get("id", "")).strip()
         raw_items = entry.get("achievement_evidence")
-        if not isinstance(raw_items, list):
+        normalized_items: list[dict] = []
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                normalized = _normalize_achievement_evidence(item)
+                normalized["experience_entry_id"] = entry_id
+                normalized_items.append(normalized)
+        if normalized_items:
+            evidence.extend(normalized_items)
             continue
-        for item in raw_items:
-            if not isinstance(item, dict):
-                continue
-            normalized = _normalize_achievement_evidence(item)
+        if not entry_id:
+            continue
+        for bullet_index, bullet in enumerate(_text_list(entry.get("bullets")), start=1):
+            normalized = _legacy_bullet_achievement_evidence(
+                entry=entry,
+                entry_id=entry_id,
+                bullet=bullet,
+                bullet_index=bullet_index,
+            )
             normalized["experience_entry_id"] = entry_id
             evidence.append(normalized)
     return evidence
@@ -290,6 +333,48 @@ def _normalize_achievement_evidence(item: dict) -> dict:
         "claim_confidence": confidence,
         "user_confirmed": bool(item.get("user_confirmed", False)),
         "tags": _text_list(item.get("tags")),
+    }
+
+
+def legacy_bullet_evidence_id(entry_id: str, bullet_index: int) -> str:
+    """Return the stable evidence id used for legacy resume bullets."""
+    safe_entry_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(entry_id).strip()).strip("_")
+    safe_entry_id = safe_entry_id or "experience"
+    return f"{safe_entry_id}_bullet_{max(1, int(bullet_index))}"
+
+
+def _legacy_bullet_achievement_evidence(
+    *,
+    entry: dict,
+    entry_id: str,
+    bullet: str,
+    bullet_index: int,
+) -> dict:
+    source_text = str(bullet).strip()
+    title = str(entry.get("title", "")).strip()
+    company = str(entry.get("company", "")).strip()
+    normalized = _normalize_text(" ".join([title, company, source_text]))
+    seniority_signal = (
+        "resume bullet contains seniority signal"
+        if any(term in normalized for term in _LEGACY_BULLET_SENIORITY_TERMS)
+        else ""
+    )
+    return {
+        "id": legacy_bullet_evidence_id(entry_id, bullet_index),
+        "source_text": source_text,
+        "scope": " ".join(part for part in [title, company] if part),
+        "action": source_text,
+        "tools": [],
+        "metrics": [
+            re.sub(r"\s+", " ", match.group(0).strip())
+            for match in _LEGACY_BULLET_METRIC_RE.finditer(source_text)
+        ],
+        "outcome": source_text,
+        "seniority_signal": seniority_signal,
+        "evidence_strength": "supported",
+        "claim_confidence": 0.8,
+        "user_confirmed": True,
+        "tags": [],
     }
 
 

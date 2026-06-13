@@ -5,7 +5,7 @@ import {
   IconTable,
   IconX,
 } from "@tabler/icons-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import {
   Dialog,
@@ -135,6 +135,33 @@ function sortButtonLabel(
     return `Sort by ${columnLabel} (descending)`;
   }
   return `Sort by ${columnLabel}`;
+}
+
+const ROW_ACTIVATION_IGNORE_SELECTOR = [
+  "a",
+  "button",
+  "input",
+  "label",
+  "select",
+  "summary",
+  "textarea",
+  "[role='button']",
+  "[role='link']",
+  "[data-row-activation-ignore]",
+].join(",");
+
+function shouldIgnoreRowActivation(event: MouseEvent<HTMLElement>): boolean {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.shiftKey
+  ) {
+    return true;
+  }
+  return event.target instanceof Element && Boolean(event.target.closest(ROW_ACTIVATION_IGNORE_SELECTOR));
 }
 
 export function isActiveDataGridFilter(
@@ -644,6 +671,16 @@ export function FilterableDataGrid<TData>({
                   key={rowId}
                   className={effectiveRowClassName}
                   aria-selected={rowAriaSelected?.(row)}
+                  onClick={
+                    onRowActivate
+                      ? (event) => {
+                          if (shouldIgnoreRowActivation(event)) {
+                            return;
+                          }
+                          onRowActivate(row);
+                        }
+                      : undefined
+                  }
                 >
                   {columns.map((column, columnIndex) => {
                     const content = column.render(row, { pageRows, rowId, rowIndex });

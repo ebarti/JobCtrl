@@ -14,13 +14,15 @@ content-exact** via normalize → locate → snap-to-source:
   1. **Normalize** both sides for the membership decision: collapse every
      whitespace run (spaces, tabs, newlines) to a single space; fold the
      Unicode hyphen/dash family (‐ ‑ ‒ – — −) to ASCII ``-``; fold smart
-     quotes (' ' to ``'``, “ ” to ``"``); case-insensitive. Every one of
-     these is formatting-insignificant — none changes WHICH words are present,
-     so none can let a fabrication through.
+     quotes (' ' to ``'``, “ ” to ``"``); strip Markdown escape backslashes
+     before punctuation; case-insensitive. Every one of these is
+     formatting-insignificant — none changes WHICH words are present, so none
+     can let a fabrication through.
   2. **Locate** the span by building a tolerant regex from it (escape it, then
-     relax escaped whitespace to ``\\s+`` and each hyphen/quote to a character
-     class) and searching the ORIGINAL JD case-insensitively. A hit means the
-     span is genuinely present, modulo formatting.
+     relax escaped whitespace to ``\\s+``, each hyphen/quote to a character
+     class, and Markdown-escaped punctuation to the same source character) and
+     searching the ORIGINAL JD case-insensitively. A hit means the span is
+     genuinely present, modulo formatting.
   3. **Snap-to-source**: the located match yields the JD's ACTUAL text at that
      position, so the stored ``evidence_span`` becomes verbatim-from-the-posting
      (satisfies D-15 and enables clean char-offset highlighting later).
@@ -44,6 +46,8 @@ from jobhunter.domain.materials.analysis import (
 )
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_MARKDOWN_ESCAPABLE_CHARS = r"\\`*_{}[]()#+-.!|&<>"
+_MARKDOWN_ESCAPE_RE = re.compile(r"\\([" + re.escape(_MARKDOWN_ESCAPABLE_CHARS) + r"])")
 
 # Unicode hyphen/dash variants that are formatting-equivalent to ASCII "-".
 # Folding them changes punctuation rendering only, never which words are present:
@@ -68,6 +72,18 @@ _SINGLE_QUOTE_CLASS = f"['{_SINGLE_QUOTE_CHARS}]"
 _DOUBLE_QUOTE_CLASS = f'["{_DOUBLE_QUOTE_CHARS}]'
 
 
+def _strip_markdown_escapes(text: str) -> str:
+    """Drop Markdown escape backslashes before punctuation.
+
+    The agent transport often serializes JD text as Markdown with punctuation
+    escaped (``hands\\-on``, ``R\\&D``, ``6\\+ years``). These backslashes are
+    rendering artifacts, not content. Stripping only the standard Markdown
+    punctuation escapes keeps the grounding check word-exact while preventing
+    false rejects on faithfully quoted source text.
+    """
+    return _MARKDOWN_ESCAPE_RE.sub(r"\1", text)
+
+
 def _normalize(text: str) -> str:
     """Fold formatting-insignificant variation for the membership decision.
 
@@ -76,10 +92,25 @@ def _normalize(text: str) -> str:
     other punctuation are preserved, so the check stays a genuine
     content-membership test — an over-inferred or paraphrased span still fails.
     """
-    folded = _DASH_RE.sub("-", text)
+    folded = _strip_markdown_escapes(text)
+    folded = _DASH_RE.sub("-", folded)
     folded = _SINGLE_QUOTE_RE.sub("'", folded)
     folded = _DOUBLE_QUOTE_RE.sub('"', folded)
     return _WHITESPACE_RE.sub(" ", folded).strip().lower()
+
+
+def _char_pattern(char: str) -> str:
+    if char.isspace():
+        return r"\s+"
+    if char == "-":
+        return rf"\\?{_HYPHEN_CLASS}"
+    if char == "'":
+        return _SINGLE_QUOTE_CLASS
+    if char == '"':
+        return _DOUBLE_QUOTE_CLASS
+    if char in _MARKDOWN_ESCAPABLE_CHARS:
+        return rf"\\?{re.escape(char)}"
+    return re.escape(char)
 
 
 def _tolerant_pattern(span: str) -> re.Pattern[str] | None:
@@ -96,15 +127,7 @@ def _tolerant_pattern(span: str) -> re.Pattern[str] | None:
     normalized = _normalize(span)
     if not normalized:
         return None
-    escaped = re.escape(normalized)
-    # re.escape encodes a literal space as "\\ " and a hyphen as "\\-"; relax the
-    # space to any whitespace run and the hyphen to the dash-variant char-class so
-    # the JD's actual formatting (newlines, en/em dashes) still matches.
-    pattern = escaped.replace("\\ ", r"\s+")
-    pattern = pattern.replace("\\-", _HYPHEN_CLASS)
-    # re.escape leaves ASCII quotes unescaped, so match them directly.
-    pattern = pattern.replace("'", _SINGLE_QUOTE_CLASS)
-    pattern = pattern.replace('"', _DOUBLE_QUOTE_CLASS)
+    pattern = "".join(_char_pattern(char) for char in normalized)
     return re.compile(pattern, re.IGNORECASE)
 
 

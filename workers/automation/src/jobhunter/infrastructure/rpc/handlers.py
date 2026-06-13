@@ -254,7 +254,7 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         retailor=True,
         job_url=job_url,
         suppress_existing_artifacts=_bool_param(
-            params, "suppressExistingArtifacts", default=True
+            params, "suppressExistingArtifacts", default=False
         ),
     )
 
@@ -322,7 +322,7 @@ def retailor_current_policy(params: dict[str, Any]) -> WorkflowStartSpec:
         job_urls=_job_urls(params),
         tailor_current_policy_only=True,
         suppress_existing_artifacts=_bool_param(
-            params, "suppressExistingArtifacts", default=True
+            params, "suppressExistingArtifacts", default=False
         ),
     )
 

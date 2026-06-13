@@ -1,73 +1,91 @@
-# Requirements: JobHunter - shadcn standard-token migration
+# Requirements: JobHunter - Apply Review Audit UX
 
-**Defined:** 2026-06-09
-**Milestone:** v1.1 shadcn standard-token migration + preset `b3F5kqmYd8`
+**Defined:** 2026-06-11
+**Milestone:** v1.2 Apply Review Audit UX - Drawer + Resume Pins
+**Chosen sketch:** `.planning/sketches/002-layered-audit-surfaces/` Option 1: Drawer + Resume Pins
 **Core Value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
 
-## v1.1 Requirements
+## v1.2 Requirements
 
-Requirements for this milestone. Each maps to exactly one roadmap phase.
+Requirements for this milestone. Each maps to exactly one roadmap phase unless explicitly marked as cross-phase QA.
 
-### Token Foundation
+### Cleanup And Baseline
 
-- [x] **TOKEN-01**: The web app defines shadcn standard semantic CSS variables for light and dark themes, including `background`, `foreground`, `card`, `popover`, `primary`, `secondary`, `muted`, `accent`, `destructive`, `border`, `input`, `ring`, `chart-*`, `sidebar-*`, font, and radius tokens.
-- [x] **TOKEN-02**: Tailwind 4 can generate standard shadcn utilities from the token contract via CSS-first `@theme inline` mappings while legacy JobHunter token utility names are removed or mechanically replaced before Phase 6 completion.
-- [x] **TOKEN-03**: The decoded preset `b3F5kqmYd8` is represented in project config and tokens: `radix-luma`/luma style, neutral base, sky theme, amber chart palette, medium radius, Geist body font, JetBrains Mono heading/technical font, Tabler icon target, default-translucent menu, and subtle menu accent.
-- [x] **TOKEN-04**: `components.json`, TypeScript aliases, and Vite aliases support current shadcn CLI validation without moving generated components outside `apps/web/src/shared/ui`.
-- [x] **TOKEN-05**: JobHunter's persisted `[data-theme="dark"]` behavior and app-shell-scoped density behavior remain compatible with the new token contract.
-- [x] **TOKEN-06**: Legacy token aliases (`--bg`, `--paper`, `--ink`, `--rule`, `--info`, `--danger`, `--warn`, `--ok`, `--font`, `--mono`, `--row`) and legacy utilities are absent from the Phase 6 public token contract; any short-lived compile bridge is removed before completion.
+- [x] **CLEAN-01**: Stale v1.1 verification commands and references are normalized to the current project structure, including removing outdated `apps/web/tailwind.config.ts` assumptions now that Tailwind 4 CSS-first config is in use.
+- [x] **CLEAN-02**: Obsolete dependency/config remnants are audited and removed only when import/config proof shows they are unused; `lucide-react` removal is allowed only if source and package audits prove zero required imports.
+- [x] **CLEAN-03**: Documentation/config owners are updated narrowly for final shadcn token, Tabler icon, font, and QA expectations without reopening visual-system migration scope.
+- [x] **CLEAN-04**: Cleanup leaves no permanent styling or verification API based on removed legacy token names such as `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, or `ring-info`.
 
-### Shared Primitives
+### Shared Apply Audit Contract
 
-- [x] **PRIM-01**: Shared UI primitives use standard shadcn semantic classes for surfaces, text, borders, inputs, rings, actions, destructive states, disabled states, and muted/helper text.
-- [x] **PRIM-02**: Overlay primitives (dialog, sheet/drawer, dropdown, popover, command, select, toast, tooltip) render readable `popover`/surface tokens in light and dark themes, including focus-visible states.
-- [x] **PRIM-03**: Form, table/data-grid, card, badge, tab, checkbox, switch, skeleton, separator, and scroll-area primitives preserve behavior and accessibility while moving away from legacy color/radius/font utility names.
-- [x] **PRIM-04**: Changed primitives have colocated tests and/or Storybook states for default, hover/active, disabled, destructive, focus, loading/empty where relevant, and open overlay states.
-- [x] **PRIM-05**: Shared primitives do not gain domain-specific dependencies on scoring, pipeline, materials, apply, discovery, or view modules.
+- [x] **AUDIT-01**: A shared read contract describes apply-review readiness for a job, including state, label, summary, missing prerequisites, hard blockers, eligibility concerns, lifecycle/source metadata, and whether review evidence remains available.
+- [x] **AUDIT-02**: The shared readiness and blocker facts are computed or derived at the owning API/read-model layer from canonical sources such as application URL, material availability, current stage/state/error, latest apply run, scoring eligibility, and material validation output where present.
+- [x] **AUDIT-03**: `JobDetail` and `ApplyReviewQueueItem` expose the same shared readiness/blocker facts for the same job so Jobs drawer and Apply Review cannot disagree.
+- [x] **AUDIT-04**: Web views use the shared contract for source facts; any local UI helper is formatting-only and cannot independently decide readiness, blocker, or eligibility status.
+- [x] **AUDIT-05**: Missing readiness, blocker, or eligibility source data renders an explicit inspectable state rather than an empty panel, hidden tag, or cosmetic relabeling.
+- [x] **AUDIT-06**: API and web tests cover at least ready, preparing, missing-apply-link, blocked/failed/stale, failed apply-run, and missing-source cases.
 
-### Layout, Fonts, And Icons
+### Jobs Drawer Audit Triage
 
-- [x] **LAYOUT-01**: App shell, topbar, navigation, global search, theme toggle, density control, connection status, tabs, and menu surfaces adopt the preset visual language without changing route behavior or user workflows.
-- [x] **LAYOUT-02**: Geist body font and JetBrains Mono heading/technical font load in the Vite app and Storybook with sensible fallbacks and without breaking dense table/list layouts.
-- [x] **LAYOUT-03**: User-visible lucide icons are migrated or explicitly mapped to Tabler equivalents without changing action meaning, accessible labels, or stable control dimensions.
-- [x] **LAYOUT-04**: Compact, regular, and comfy density modes still affect row height and dense operational scanning after the radius/font/icon changes.
-- [x] **LAYOUT-05**: Topbar/menu translucency remains readable over dense Jobs, Apply Review, PDF preview, and dark-mode surfaces.
+- [x] **DRAWER-01**: Opening a job from the Jobs view row-click popup/drawer immediately explains why the job was ranked the way it was.
+- [x] **DRAWER-02**: The drawer rank explanation includes fit score, score band/confidence where available, matched signals, missing signals, transferable signals, keywords, score reasoning/trace where available, and eligibility status/concerns.
+- [x] **DRAWER-03**: The drawer shows whether the job is ready for apply review and lists concrete missing prerequisites, hard blockers, and eligibility concerns from the shared apply audit contract.
+- [x] **DRAWER-04**: The drawer distinguishes job-fit/ranking evidence from generated-material proof and hands off to Apply Review for resume/material inspection instead of duplicating the full resume audit surface.
+- [x] **DRAWER-05**: Existing drawer workflows remain intact: close behavior, escape handling, job actions, retry affordances, artifact links, apply history, outcome panel, score correction, job description, and audit history continue to work.
+- [x] **DRAWER-06**: Drawer layout remains dense, scannable, responsive, keyboard accessible, and compatible with light/dark themes and compact/regular/comfy density.
 
-### Domain And Status Semantics
+### Apply Review Resume Pins
 
-- [x] **STATUS-01**: Pipeline stage states, scoring tiers, artifact states, apply states, connection states, discovery/source health, dashboard funnel segments, warnings, stale states, and missing audit states remain visually distinct after migration.
-- [x] **STATUS-02**: Domain components keep typed tone helpers or explicit variant maps as the source of product meaning; they do not define global CSS variables or rely on computed Tailwind class names that Tailwind cannot scan.
-- [x] **STATUS-03**: Success, warning, info/running, destructive/failed, blocked, muted/pending, stale, skipped, canceled, and missing states meet practical contrast in light and dark themes.
-- [x] **STATUS-04**: Chart/data-series tokens are available and used only for chart/data emphasis; lifecycle/status colors are not flattened into positional `chart-*` tokens.
-- [x] **STATUS-05**: Tailoring inspector, apply-review, audit history, missing provenance, failed workflow, stale scoring, and destructive warning states remain honest and inspectable; visual polish never hides awkward data.
+- [x] **REVIEW-01**: Apply Review keeps the rendered resume/material as the central review object rather than relegating it below detached audit cards.
+- [x] **REVIEW-02**: Resume rows or generated claims expose stable pins/markers derived from canonical artifact audit data, starting with `bulletProvenance` and `annotatedChanges`.
+- [x] **REVIEW-03**: Selecting a pin shows source profile/resume text, generated tailored artifact text, transform/change type, governing controls, requirement IDs, evidence IDs, matched keywords, and rationale where recorded.
+- [x] **REVIEW-04**: Pin details show grounding and claim-risk status using quality, judge, adversarial review, coverage, and review-feedback signals where available.
+- [x] **REVIEW-05**: Pins preserve honest lifecycle labels: repair attempted, accepted with residual warnings, skipped audit, no source recorded, unsupported claim, missing required evidence, and no provenance recorded remain visibly distinct when those states apply.
+- [x] **REVIEW-06**: The Apply Review readiness/header and decision controls consume the shared apply audit contract and explain blockers without contradicting the Jobs drawer.
+- [x] **REVIEW-07**: Cover-letter and text/PDF fallback states remain reviewable; missing PDF or missing provenance shows explicit empty states rather than blank space.
+- [x] **REVIEW-08**: Resume-pin interactions are keyboard accessible, have stable dimensions, do not overlap text/content at supported viewport sizes, and remain usable in light/dark themes.
 
-### QA And Accessibility
+### QA, Safety, And Documentation
 
-- [x] **QA-01**: Required web checks pass for the touched surface: `pnpm web:check`, `pnpm web:build`, `pnpm --filter @jobhunter/web test`, plus `test-d`, Storybook, a11y, or E2E commands where the phase touches those surfaces.
-- [x] **QA-02**: Browser QA covers representative routes and overlays in light and dark themes: `/dashboard`, `/jobs`, job detail, `/artifacts`, artifact detail, `/apply-review`, `/discovery`, `/profile` or `/preferences`, `/settings`, `/runs`, `/pipelines`, and `/debug`.
-- [x] **QA-03**: Browser QA covers compact, regular, and comfy density for table/list-heavy views and verifies focus rings, menus, overlays, forms, and destructive controls.
-- [x] **QA-04**: Storybook a11y introduces no new critical or serious axe violations for changed primitives and stateful components; any pre-existing deferral remains documented per repo policy.
-- [x] **QA-05**: QA fixtures, screenshots, stories, and docs use synthetic or seeded data only and do not expose profile data, resumes, generated PDFs, application data, browser profiles, logs, SQLite databases, API keys, or OAuth tokens.
-- [x] **QA-06**: No QA stage runs auto-apply, browser submission, mailbox scanning, real material generation, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks for that behavior.
+- [x] **QA-01**: Required API/web checks pass for touched surfaces, including typecheck, build, targeted API/read-model tests, web unit/component tests, and additional type-level/Storybook/a11y checks where component shape warrants them.
+- [x] **QA-02**: Product-path browser QA proves the Jobs drawer stories: why ranked, readiness, blockers, eligibility concerns, and drawer-to-review handoff.
+- [x] **QA-03**: Product-path browser QA proves Apply Review stories: readiness agreement, rendered resume focus, pin selection, source-to-tailored change detail, grounded claim, risky/unsupported claim, and missing-source state.
+- [x] **QA-04**: QA fixtures, stories, screenshots, and docs use synthetic or seeded data only and do not expose profile data, resumes, generated PDFs, application data, browser profiles, logs, SQLite databases, API keys, or OAuth tokens.
+- [x] **QA-05**: No QA stage runs auto-apply, browser submission, mailbox scanning, real material regeneration, destructive profile/database actions, or worker-backed jobs unless the user explicitly asks for that behavior later.
+- [x] **QA-06**: Documentation is updated only where behavior or QA expectations changed; blind-auto-apply positioning remains deferred unless separately requested.
 
-### Cleanup And Documentation
+## Existing Foundations
 
-- [ ] **CLEAN-01**: Production references to legacy token variables and legacy Tailwind utilities remain grep-clean after route, primitive, status, and QA migration work.
-- [ ] **CLEAN-02**: Dead global selectors, obsolete Tailwind config remnants, and unused icon/font dependencies are removed only after replacements are verified.
-- [ ] **CLEAN-03**: Documentation and config owners are updated narrowly for final token, icon, font, script, and QA expectations where behavior changed.
-- [ ] **CLEAN-04**: The final diff leaves no permanent styling API based on `--paper`, `--ink`, `--rule`, `bg-paper`, `text-ink`, `border-rule`, or `ring-info`.
+These are already validated foundations that v1.2 may rely on but does not re-implement:
+
+- [x] Discovery, enrichment, scoring, tailoring, cover, apply, and projection-backed read-model pipeline exists.
+- [x] v1.0 grounded resume tailoring delivered employer analysis, per-bullet provenance, granular controls, voice pass, canonical read model, generate-materials wiring, and inspector UI.
+- [x] `ArtifactTailoringExplanation` exposes annotated changes, per-bullet provenance, keyword coverage, quality/judge data, adversarial review data, review feedback, and model metadata.
+- [x] Jobs view has a row-click `JobDetailDrawer` backed by `useJobDetailQuery`.
+- [x] Apply Review has queue selection, decision controls, resume PDF/text preview, cover-letter preview, and `ArtifactTailoringInspector`.
+- [x] v1.1 shadcn/token migration through Phases 6-10 landed semantic tokens, shared primitives, layout chrome, Tabler target, status semantics, and route visual QA.
 
 ## Future Requirements
 
 Deferred to a future release. Tracked but not in the current roadmap.
 
+### Audit Surface Evolution
+
+- **LEDGER-01**: Option 2 Evidence Ledger as an optional bulk comparison and audit export surface.
+- **TIMELINE-01**: Option 3 Gate Timeline as an optional lifecycle/debug chronology.
+- **PDFPIN-01**: Deep PDF coordinate annotation if text/provenance anchors prove insufficient.
+- **ANNOTATE-01**: Reviewer comments or annotations attached to individual resume pins.
+- **EXPORT-01**: Exportable audit packet for a selected application.
+
+### Product Positioning
+
+- **SAFETYDOC-01**: README/docs positioning that explains why JobHunter is safer than blind auto-apply tools.
+
 ### Visual System Evolution
 
 - **THEME-01**: User-editable theme settings for color, radius, and typography.
 - **VISUAL-01**: Dedicated visual-regression service such as Chromatic, Loki, Percy, or equivalent.
-- **CHART-01**: Reporting/analytics charting overhaul beyond token availability.
 - **MOTION-01**: Motion and microinteraction system with reduced-motion criteria.
-- **REDESIGN-01**: Full information-architecture or product redesign milestone with prototypes and usability acceptance.
 
 ## Out of Scope
 
@@ -75,13 +93,14 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| New discovery, scoring, tailoring, cover-letter, apply, profile, hosted/auth, analytics, or worker workflows | This milestone is a visual-system and shared-UI infrastructure migration |
-| Full product redesign or route/IA changes | The app is a dense operational tool; route-level redesign needs separate acceptance |
-| Permanent compatibility aliases | Legacy token names are a bridge only; final shadcn standard token API should be canonical |
-| Full uncontrolled `shadcn apply` over every primitive | Research showed it rewrites a larger surface and adds broader package changes than needed |
-| Query key, API, SSE, local storage, or domain state refactors | Token migration must not become behavior migration |
-| Real auto-apply/browser submission/material generation during QA | Safety rule: no generated user data or application submission without explicit request |
-| User theme customization | The decoded preset is the design contract for this milestone |
+| Option 2 Evidence Ledger implementation | It was a comparison sketch; user chose Option 1. |
+| Option 3 Gate Timeline implementation | It was a comparison sketch; user chose Option 1. |
+| UI copy explaining why JobHunter is safer than blind auto-apply tools | User explicitly deferred this to README/docs positioning later. |
+| Auto-apply, browser submission, mailbox scanning, real generated-material regeneration, destructive profile/database actions, or worker-backed jobs | Safety boundary; not part of audit UX milestone unless explicitly requested later. |
+| Broad route redesign, landing page, marketing dashboard treatment, or information-architecture rewrite | The milestone updates two existing surfaces, not the whole product. |
+| Scoring, tailoring, cover-letter, or worker policy redesign | The milestone displays and audits existing facts; policy changes need separate scope. |
+| Hiding or suppressing missing audit data | This violates auditability and does not fix source-of-truth gaps. |
+| Broad visual-system migration | v1.1 completed the visual migration; v1.2 only folds in narrow cleanup. |
 
 ## Traceability
 
@@ -89,44 +108,44 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TOKEN-01 | Phase 6 | Complete |
-| TOKEN-02 | Phase 6 | Complete |
-| TOKEN-03 | Phase 6 | Complete |
-| TOKEN-04 | Phase 6 | Complete |
-| TOKEN-05 | Phase 6 | Complete |
-| TOKEN-06 | Phase 6 | Complete |
-| PRIM-01 | Phase 7 | Complete |
-| PRIM-02 | Phase 7 | Complete |
-| PRIM-03 | Phase 7 | Complete |
-| PRIM-04 | Phase 7 | Complete |
-| PRIM-05 | Phase 7 | Complete |
-| LAYOUT-01 | Phase 8 | Complete |
-| LAYOUT-02 | Phase 8 | Complete |
-| LAYOUT-03 | Phase 8 | Complete |
-| LAYOUT-04 | Phase 8 | Complete |
-| LAYOUT-05 | Phase 8 | Complete |
-| STATUS-01 | Phase 9 | Complete |
-| STATUS-02 | Phase 9 | Complete |
-| STATUS-03 | Phase 9 | Complete |
-| STATUS-04 | Phase 9 | Complete |
-| STATUS-05 | Phase 9 | Complete |
-| QA-01 | Phase 10 | Complete |
-| QA-02 | Phase 10 | Complete |
-| QA-03 | Phase 10 | Complete |
-| QA-04 | Phase 10 | Complete |
-| QA-05 | Phase 10 | Complete |
-| QA-06 | Phase 10 | Complete |
-| CLEAN-01 | Phase 11 | Pending |
-| CLEAN-02 | Phase 11 | Pending |
-| CLEAN-03 | Phase 11 | Pending |
-| CLEAN-04 | Phase 11 | Pending |
+| CLEAN-01 | Phase 12 | Complete |
+| CLEAN-02 | Phase 12 | Complete |
+| CLEAN-03 | Phase 12 | Complete |
+| CLEAN-04 | Phase 12 | Complete |
+| AUDIT-01 | Phase 13 | Complete |
+| AUDIT-02 | Phase 13 | Complete |
+| AUDIT-03 | Phase 13 | Complete |
+| AUDIT-04 | Phase 13 | Complete |
+| AUDIT-05 | Phase 13 | Complete |
+| AUDIT-06 | Phase 13 | Complete |
+| DRAWER-01 | Phase 14 | Complete |
+| DRAWER-02 | Phase 14 | Complete |
+| DRAWER-03 | Phase 14 | Complete |
+| DRAWER-04 | Phase 14 | Complete |
+| DRAWER-05 | Phase 14 | Complete |
+| DRAWER-06 | Phase 14 | Complete |
+| REVIEW-01 | Phase 15 | Complete |
+| REVIEW-02 | Phase 15 | Complete |
+| REVIEW-03 | Phase 15 | Complete |
+| REVIEW-04 | Phase 15 | Complete |
+| REVIEW-05 | Phase 15 | Complete |
+| REVIEW-06 | Phase 15 | Complete |
+| REVIEW-07 | Phase 15 | Complete |
+| REVIEW-08 | Phase 15 | Complete |
+| QA-01 | Phase 16 | Complete |
+| QA-02 | Phase 16 | Complete |
+| QA-03 | Phase 16 | Complete |
+| QA-04 | Phase 16 | Complete |
+| QA-05 | Phase 16 | Complete |
+| QA-06 | Phase 16 | Complete |
 
 **Coverage:**
 
-- v1.1 requirements: 31 total
-- Mapped to phases: 31
+- v1.2 requirements: 30 total
+- Complete: 30
+- Mapped to phases: 30
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-06-09*
-*Last updated: 2026-06-10 after Phase 10 completion*
+*Requirements defined: 2026-06-11*
+*Last updated: 2026-06-11 after Phase 16 completion*

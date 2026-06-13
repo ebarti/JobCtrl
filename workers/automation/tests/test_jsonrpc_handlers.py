@@ -444,6 +444,24 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
             },
         ),
         (
+            "retailor_job",
+            {
+                "tenantId": "local",
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "jobUrl": "https://example.com/job/tailor",
+            },
+            {
+                "stages": ["tailor", "cover"],
+                "limit": 1,
+                "rescore": False,
+                "retailor": True,
+                "job_url": "https://example.com/job/tailor",
+                "dry_run": False,
+                "suppress_existing_artifacts": False,
+            },
+        ),
+        (
             "retailor_current_policy",
             {
                 "tenantId": "local",
@@ -470,6 +488,27 @@ def test_run_stage_preserves_omitted_tailor_judge_threshold(tmp_db: Path) -> Non
                 "tailor_current_policy_only": True,
                 "dry_run": False,
                 "suppress_existing_artifacts": True,
+            },
+        ),
+        (
+            "retailor_current_policy",
+            {
+                "tenantId": "local",
+                "expectedAppDir": "/tmp/jobhunter",
+                "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
+                "limit": 5,
+                "jobUrls": ["https://example.com/job/tailor-a"],
+            },
+            {
+                "stages": ["tailor", "cover"],
+                "limit": 5,
+                "rescore": False,
+                "retailor": True,
+                "job_url": None,
+                "job_urls": ("https://example.com/job/tailor-a",),
+                "tailor_current_policy_only": True,
+                "dry_run": False,
+                "suppress_existing_artifacts": False,
             },
         ),
     ],

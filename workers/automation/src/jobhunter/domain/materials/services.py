@@ -51,6 +51,7 @@ from jobhunter.resume_profile import (
 )
 
 log = logging.getLogger(__name__)
+_OUTPUT_WHITESPACE_RE = re.compile(r"\s+")
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +145,10 @@ def _build_allowed_skill_terms(profile: dict) -> set[str]:
     return allowed
 
 
+def _normalize_output_term(value: object) -> str:
+    return _OUTPUT_WHITESPACE_RE.sub(" ", str(value or "")).strip().lower()
+
+
 def _contains_watch_term(text: str, term: str) -> bool:
     """Return True when a fabrication-watch term appears as a real term match."""
     if re.fullmatch(r"[a-z0-9 ]+", term):
@@ -194,7 +199,9 @@ def _validate_master_json_fields(
     assert isinstance(experience_updates, list)
     assert isinstance(skill_updates, list)
 
-    all_experience_ids = {entry.get("id") for entry in get_experience_entries(profile)}
+    experience_entries = get_experience_entries(profile)
+    entry_by_id = {str(entry.get("id") or ""): entry for entry in experience_entries}
+    all_experience_ids = {entry.get("id") for entry in experience_entries}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
     required_skill_ids = set(get_required_skill_category_ids(profile))
     max_bullets = get_max_experience_bullets(profile)
@@ -219,6 +226,12 @@ def _validate_master_json_fields(
             continue
         if len(bullets) > max_bullets:
             errors.append(f"Experience update '{entry_id}' exceeds {max_bullets} bullets")
+        title = str(update.get("title") or "").strip()
+        source_title = str(entry_by_id.get(entry_id, {}).get("title") or "").strip()
+        if title and title != source_title:
+            errors.append(
+                f"Unsupported title rewrite for '{entry_id}': use an empty title or the exact source title"
+            )
         all_text_parts.extend(str(bullet) for bullet in bullets)
 
     missing_experience_ids = required_experience_ids - seen_experience_ids
@@ -249,6 +262,16 @@ def _validate_master_json_fields(
         if not isinstance(items, list) or not items:
             errors.append(f"Skill category update '{category_id}' must include items")
             continue
+        allowed_for_category = {
+            _normalize_output_term(item)
+            for category in get_skill_categories(profile)
+            if str(category.get("id") or "").strip() == category_id
+            for item in normalize_profile_list(category.get("items", []))
+        }
+        for item in items:
+            normalized_item = _normalize_output_term(item)
+            if normalized_item and normalized_item not in allowed_for_category:
+                errors.append(f"Fabricated skill: '{item}'")
         all_text_parts.extend(str(item) for item in items)
 
     missing_skill_ids = required_skill_ids - seen_skill_ids
