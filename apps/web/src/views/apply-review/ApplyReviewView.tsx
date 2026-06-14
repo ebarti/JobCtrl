@@ -368,8 +368,6 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
 
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const status = materialStatus(item);
-  const evidenceGroups = evidenceValues(item);
-  const evidenceGroupNames = evidenceGroups.map((group) => group.label).join(", ");
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
@@ -434,10 +432,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           <div className="apply-review-pane-scroll">
             <section className="apply-review-preview-block">
               <h3>Requirement evidence</h3>
-              <p className="meta">
-                Derived from existing scoring evidence for this v1 review workspace.
-                {evidenceGroups.length ? ` Evidence groups (${evidenceGroups.length}): ${evidenceGroupNames}.` : ""}
-              </p>
               <RequirementEvidence item={item} />
             </section>
             <section className="apply-review-preview-block">

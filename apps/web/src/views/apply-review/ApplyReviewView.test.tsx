@@ -341,11 +341,8 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("public company scale")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Derived from existing scoring evidence for this v1 review workspace. Evidence groups (4): Matched, Missing, Transferable, Keywords.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/Derived from existing scoring evidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Evidence groups/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
     expect(screen.queryByText(/dry_run/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Globex needs a principal engineer/i)).toBeInTheDocument();
