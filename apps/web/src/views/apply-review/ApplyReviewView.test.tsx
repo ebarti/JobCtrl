@@ -386,7 +386,7 @@ describe("<ApplyReviewView>", () => {
     const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
     const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
     expect(within(selectedJustification).getByText("Profile source field")).toBeInTheDocument();
-    expect(within(selectedJustification).getByText("Tailored resume line")).toBeInTheDocument();
+    expect(within(selectedJustification).queryByText("Tailored resume line")).not.toBeInTheDocument();
     expect(within(selectedJustification).getByText("Built platform services.")).toBeVisible();
     expect(within(selectedAudit).getByText("Source check")).toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Source evidence")).not.toBeInTheDocument();
@@ -458,7 +458,7 @@ describe("<ApplyReviewView>", () => {
     fireEvent.click(pdfLineThree);
     const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
     expect(within(selectedAudit).getByText("Profile source field")).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Tailored resume line")).toBeInTheDocument();
+    expect(within(selectedAudit).queryByText("Tailored resume line")).not.toBeInTheDocument();
     expect(within(selectedAudit).getByText("Source check")).toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Source evidence")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Evidence basis")).not.toBeInTheDocument();
@@ -553,10 +553,9 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("No source evidence recorded for this line.")).not.toBeInTheDocument();
     expect(within(selectedAudit).getByText("Line justification")).toBeInTheDocument();
     expect(within(selectedAudit).getByText("Closest recorded Profile source field")).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Tailored resume line")).toBeInTheDocument();
+    expect(within(selectedAudit).queryByText("Tailored resume line")).not.toBeInTheDocument();
     const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
     expect(within(selectedJustification).getByText("Led incident response handovers.")).toBeVisible();
-    expect(within(selectedAudit).getByText("- Led incident response handovers.")).toBeInTheDocument();
     expect(within(selectedAudit).getByText(/No exact Profile source field was recorded/i)).toBeInTheDocument();
     expect(within(selectedAudit).getByText("Job signals reflected")).toBeInTheDocument();
     expect(within(selectedAudit).getAllByText("platform reliability").length).toBeGreaterThan(0);
@@ -622,7 +621,7 @@ describe("<ApplyReviewView>", () => {
     expect(pdfLineOne).toHaveAttribute("aria-pressed", "false");
     const selectedAudit = await screen.findByRole("article", { name: /Selected resume line audit for line 3/i });
     expect(screen.getAllByText("missing source").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).getByText("No Profile source field mapping was recorded for this tailored resume line.")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("No Profile source field mapping was recorded for this selected PDF line.")).toBeInTheDocument();
     fireEvent.click(pdfLineOne);
     await waitFor(() => expect(pdfLineOne).toHaveAttribute("aria-pressed", "true"));
     expect(pdfLineThree).toHaveAttribute("aria-pressed", "false");
@@ -682,7 +681,7 @@ describe("<ApplyReviewView>", () => {
       name: /Selected resume line audit for PDF page 3 line 15/i,
     });
     expect(within(selectedAudit).getByText("Line justification")).toBeInTheDocument();
-    expect(within(selectedAudit).getByText("Platform & Cloud: Kubernetes, Docker, GCP")).toBeInTheDocument();
+    expect(within(selectedAudit).queryByText("Tailored resume line")).not.toBeInTheDocument();
     expect(within(selectedAudit).getByText("Profile source field")).toBeInTheDocument();
     const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
     expect(within(selectedJustification).getByText("Platform & Cloud: Kubernetes, Docker, GCP, AWS")).toBeVisible();
@@ -734,13 +733,13 @@ describe("<ApplyReviewView>", () => {
     const selectedJustification = selectedAudit.querySelector(".resume-pin-justification") as HTMLElement;
     expect(within(selectedAudit).getByText("profile source")).toBeInTheDocument();
     expect(within(selectedJustification).getByText("Profile source field")).toBeInTheDocument();
-    expect(within(selectedJustification).getByText("Tailored resume line")).toBeInTheDocument();
+    expect(within(selectedJustification).queryByText("Tailored resume line")).not.toBeInTheDocument();
     expect(within(selectedJustification).getByText("Profile > Personal information > Full name: Jordan Candidate")).toBeVisible();
     expect(within(selectedAudit).queryByText("missing source")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Original source line")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Rendered resume line")).not.toBeInTheDocument();
     expect(
-      within(selectedAudit).queryByText("No Profile source field mapping was recorded for this tailored resume line."),
+      within(selectedAudit).queryByText("No Profile source field mapping was recorded for this selected PDF line."),
     ).not.toBeInTheDocument();
   });
 

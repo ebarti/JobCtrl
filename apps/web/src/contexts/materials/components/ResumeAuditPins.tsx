@@ -373,8 +373,8 @@ function pinFromProfileSourceLine(
     matchedSignals: [],
     rationale:
       match.fields.length === 1
-        ? "This tailored resume line is rendered from the Profile field shown above."
-        : "This tailored resume line is rendered from the Profile fields shown above.",
+        ? "This selected PDF line is rendered from the Profile field shown above."
+        : "This selected PDF line is rendered from the Profile fields shown above.",
   };
 }
 
@@ -407,7 +407,7 @@ function pinFromResumeLine(
       requirementIds: [],
       matchedSignals: [],
       rationale:
-        "This tailored resume line is document structure, not a generated claim requiring source attribution.",
+        "This selected PDF line is document structure, not a generated claim requiring source attribution.",
     };
   }
 
@@ -496,7 +496,7 @@ function pinFromResumeLine(
       requirementIds: [],
       matchedSignals: contextChange.jobSignals,
       rationale:
-        "No exact Profile source field was recorded for this tailored resume line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
+        "No exact Profile source field was recorded for this selected PDF line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
     };
   }
 
@@ -897,7 +897,7 @@ function SourceEvidencePreview({
     return <span className="resume-pin-source-evidence muted">Resume structure; no Profile source field required.</span>;
   }
   if (pin.sourceGranularity === "missing") {
-    return <span className="resume-pin-source-evidence missing">No Profile source field was recorded for this tailored resume line.</span>;
+    return <span className="resume-pin-source-evidence missing">No Profile source field was recorded for this selected PDF line.</span>;
   }
   if (!sourceText?.length) {
     return <span className="resume-pin-source-evidence missing">No Profile source text was resolved for this pointer.</span>;
@@ -960,7 +960,7 @@ function sourceLabelForJustification(pin: ResumeAuditPin): string {
 
 function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
   if (pin.sourceGranularity === "missing") {
-    return <p className="muted">No Profile source field mapping was recorded for this tailored resume line.</p>;
+    return <p className="muted">No Profile source field mapping was recorded for this selected PDF line.</p>;
   }
   if (pin.sourceGranularity === "structure") {
     return <p className="muted">This resume structure line does not require source attribution.</p>;
@@ -996,14 +996,10 @@ function LineJustification({ pin }: { readonly pin: ResumeAuditPin }): JSX.Eleme
             <SourceEvidencePreview expanded pin={pin} text={primarySourceText} />
             {pin.sourcePrecision === "section_span" ? (
               <span className="muted">
-                Exact Profile source-field provenance was not recorded for this tailored resume line.
+                Exact Profile source-field provenance was not recorded for this selected PDF line.
               </span>
             ) : null}
           </dd>
-        </div>
-        <div>
-          <dt>Tailored resume line</dt>
-          <dd>{pin.tailoredText.length ? pin.tailoredText.join(" ") : <span className="muted">none recorded</span>}</dd>
         </div>
         <div>
           <dt>Why</dt>
