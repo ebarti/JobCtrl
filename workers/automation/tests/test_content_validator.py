@@ -216,9 +216,20 @@ def test_validate_tailored_resume_flags_missing_required_company() -> None:
 
 
 def test_validate_cover_letter_passes_for_clean_letter() -> None:
-    text = "Dear Hiring Manager, I built distributed systems at Acme. Best, Jane"
+    text = "Dear Hiring Manager,\n\nI built distributed systems at Acme.\n\nJane"
     result = _VALIDATOR.validate_cover_letter(text)
     assert result.passed is True
+
+
+def test_validate_cover_letter_rejects_incomplete_mid_sentence_draft() -> None:
+    text = (
+        "Dear Hiring Manager,\n\n"
+        "At Welltech, I built an AI-assisted developer workflow that accelerated content production 3x "
+        "and decreased code review turnaround by 40%. This platform integrated LLM-based"
+    )
+    result = _VALIDATOR.validate_cover_letter(text)
+    assert result.passed is False
+    assert any("closing" in err.lower() for err in result.errors)
 
 
 def test_validate_cover_letter_rejects_em_dash() -> None:

@@ -244,8 +244,24 @@ export interface ApplyReviewDecisionResponse {
   decision: ApplyReviewDecision;
 }
 
+export interface ApplyReviewIdealRequirement {
+  id: string;
+  text: string;
+  tier: string | null;
+  weight: number | null;
+  evidence: string | null;
+  coverage: {
+    state: "covered" | "not_covered" | "not_recorded";
+    source: "tailored_resume_bullet_provenance";
+    bulletCount: number;
+    examples: string[];
+  };
+}
+
 export interface ApplyReviewPositionEvidence {
   descriptionPreview: string;
+  idealCandidate: string | null;
+  idealRequirements: ApplyReviewIdealRequirement[];
   requirements: string[];
   matched: string[];
   missing: string[];
@@ -253,10 +269,18 @@ export interface ApplyReviewPositionEvidence {
   keywords: string[];
 }
 
+export interface ApplyReviewProfileSourceField {
+  path: string;
+  label: string;
+  value: string;
+  section: string;
+}
+
 export interface ApplyReviewMaterialsPreview {
   resumeText: string | null;
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
+  profileSourceFields: ApplyReviewProfileSourceField[];
   coverLetterText: string | null;
 }
 
@@ -312,6 +336,13 @@ export interface ApplyReviewQueueItem {
   company: string;
   source: string;
   fitScore: number | null;
+  scoreBreakdown: ScoreBreakdown | null;
+  scoreKeywords: string[];
+  scoreReasoning: string;
+  scoreVersion: number | null;
+  scoredAt: string | null;
+  scoreCriteria: ScoringCriteriaSnapshot | null;
+  scoreTrace: ScoreTrace | null;
   applicationUrl: string | null;
   currentStage: Stage;
   currentState: StageState;
@@ -1447,6 +1478,7 @@ export interface BulletProvenanceEntry {
   section: string;
   sourceId: string | null;
   evidenceIds: string[];
+  sourceText: string[];
   requirementIds: string[];
   matchedKeywords: string[];
   transformType: string;

@@ -1,7 +1,12 @@
-import type { ArtifactTailoringExplanation, BulletProvenanceEntry } from "@jobhunter/contracts";
-import { useEffect, useMemo, useState, type JSX } from "react";
+import type {
+  ApplyReviewProfileSourceField,
+  ArtifactTailoringExplanation,
+  BulletProvenanceEntry,
+} from "@jobhunter/contracts";
+import { useEffect, useMemo, useState, type Dispatch, type JSX, type SetStateAction } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
+import type { PdfAuditLineSelection } from "../../../shared/ui/PdfPreviewViewer.js";
 import { useArtifactDetailQuery } from "../../operations/hooks/useArtifactDetailQuery.js";
 import { formatToken, scorePercent } from "../lib/audit-format.js";
 
@@ -10,33 +15,40 @@ type AnnotatedChange = ArtifactTailoringExplanation["annotatedChanges"][number];
 interface ResumeAuditPinsProps {
   readonly artifactId: string;
   readonly resumeText?: string | null;
+  readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
   readonly className?: string;
-  readonly selectedLineNumber?: number | null;
-  readonly onSelectedLineNumberChange?: (lineNumber: number | null) => void;
+  readonly selectedLine?: PdfAuditLineSelection | null;
+  readonly onSelectedLineChange?: Dispatch<SetStateAction<PdfAuditLineSelection | null>>;
 }
 
 interface ResumeLineEntry {
-  readonly lineNumber: number;
+  readonly lineLabel?: string | undefined;
+  readonly lineNumber?: number | undefined;
   readonly text: string;
   readonly kind: "name" | "contact" | "section" | "metadata" | "bullet" | "body";
 }
 
 interface ResumeAuditPin {
   readonly id: string;
+  readonly lineLabel?: string | undefined;
   readonly title: string;
   readonly section: string;
-  readonly lineNumber?: number;
+  readonly lineNumber?: number | undefined;
   readonly provenanceState: "recorded" | "missing" | "not_applicable";
-  readonly sourceGranularity: "bullet" | "change_span" | "missing" | "structure";
+  readonly sourceGranularity: "bullet" | "change_span" | "profile_field" | "missing" | "structure";
+  readonly sourcePrecision: "exact_line" | "section_span" | "profile_field" | "structure" | "missing";
   readonly sourceId: string | null;
   readonly sourceLabel: string | null;
   readonly sourceText: readonly string[] | null;
+  readonly sourceSpanText: readonly string[] | null;
   readonly tailoredText: readonly string[];
   readonly transformType: string;
   readonly controls: readonly string[];
   readonly evidenceIds: readonly string[];
+  readonly evidenceNotes: readonly string[];
   readonly requirementIds: readonly string[];
   readonly matchedSignals: readonly string[];
+  readonly matchedKeywords: readonly string[];
   readonly rationale: string | null;
 }
 
@@ -54,6 +66,11 @@ interface RiskSignals {
   readonly repairInstructions: readonly string[];
   readonly warningRepairAttempted: string;
   readonly residualWarnings: readonly string[];
+}
+
+interface ProfileSourceMatch {
+  readonly fields: readonly ApplyReviewProfileSourceField[];
+  readonly sourceText: readonly string[];
 }
 
 const RENDERED_RESUME_SECTION_HEADINGS = new Set([
@@ -76,16 +93,6 @@ function yesNo(value: boolean | null | undefined): string {
   return value ? "yes" : "no";
 }
 
-function originalTextFor(
-  entry: BulletProvenanceEntry,
-  annotatedChanges: readonly AnnotatedChange[],
-): readonly string[] | null {
-  const match = annotatedChanges.find(
-    (change) => change.section === entry.section && change.sourceId === entry.sourceId,
-  );
-  return match?.sourceText ?? null;
-}
-
 function changeFor(
   entry: BulletProvenanceEntry,
   annotatedChanges: readonly AnnotatedChange[],
@@ -93,6 +100,11 @@ function changeFor(
   return annotatedChanges.find(
     (change) => change.section === entry.section && change.sourceId === entry.sourceId,
   );
+}
+
+function bulletSourceText(entry: BulletProvenanceEntry): readonly string[] {
+  const entryWithSourceText = entry as BulletProvenanceEntry & { readonly sourceText?: readonly string[] };
+  return entryWithSourceText.sourceText?.filter(Boolean) ?? [];
 }
 
 function normalizeResumeLine(value: string): string {
@@ -110,11 +122,25 @@ function textsMatchLine(candidateText: string, lineText: string): boolean {
   return candidate === line || candidate.includes(line) || line.includes(candidate);
 }
 
-function changeForLine(
+interface LineChangeMatch {
+  readonly change: AnnotatedChange;
+  readonly sourceText: readonly string[] | null;
+}
+
+function changeMatchForLine(
   line: ResumeLineEntry,
   annotatedChanges: readonly AnnotatedChange[],
-): AnnotatedChange | undefined {
-  return annotatedChanges.find((change) => change.tailoredText.some((text) => textsMatchLine(text, line.text)));
+): LineChangeMatch | undefined {
+  for (const change of annotatedChanges) {
+    const tailoredMatch = change.tailoredText.find((text) => textsMatchLine(text, line.text));
+    if (tailoredMatch) {
+      return {
+        change,
+        sourceText: sourceTextForTailoredLine(line.text, change.sourceText),
+      };
+    }
+  }
+  return undefined;
 }
 
 function tokenSet(value: string): Set<string> {
@@ -124,6 +150,22 @@ function tokenSet(value: string): Set<string> {
       .split(/\s+/)
       .filter((token) => token.length > 2 && !["and", "the", "for", "with", "from"].includes(token)),
   );
+}
+
+function displayEvidenceNotes(notes: readonly string[]): string[] {
+  return notes
+    .map((note) => note.replace(/^[a-z0-9][a-z0-9_-]*:\s*/i, "").trim())
+    .filter(Boolean);
+}
+
+function displayRationale(rationale: string | null | undefined): string | null {
+  if (!rationale) return null;
+  return rationale
+    .replace(/\bevidence_reframing\b/gi, "source-backed wording")
+    .replace(/\bevidence controls?\b/gi, "source constraints")
+    .replace(/\bverified_only\b/gi, "verified source evidence")
+    .replace(/\bauto_approvable\b/gi, "auto approvable")
+    .trim();
 }
 
 function labelMatchesContext(changeLabel: string | null | undefined, sourceHeading: string | null): boolean {
@@ -157,6 +199,82 @@ function contextualChangeForLine(
   );
 }
 
+function sourceTextForTailoredLine(lineText: string, sourceText: readonly string[]): readonly string[] | null {
+  if (!sourceText.length) return null;
+  const scored = sourceText
+    .map((source, index) => ({ index, score: tokenOverlapScore(lineText, source), source }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  const best = scored[0];
+  if (!best || best.score < 16) {
+    return sourceText.slice(0, 1);
+  }
+  return [best.source];
+}
+
+function sourceLineForBullet(
+  entry: BulletProvenanceEntry,
+  annotatedChanges: readonly AnnotatedChange[],
+): readonly string[] | null {
+  const explicitSourceText = bulletSourceText(entry);
+  if (explicitSourceText.length) {
+    return sourceTextForTailoredLine(entry.generatedText, explicitSourceText);
+  }
+  const change = changeFor(entry, annotatedChanges);
+  if (!change?.sourceText.length) return null;
+  return sourceTextForTailoredLine(entry.generatedText, change.sourceText);
+}
+
+function compactComparable(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function profileFieldDisplay(field: ApplyReviewProfileSourceField): string {
+  return `${field.label}: ${field.value}`;
+}
+
+function profileFieldScore(line: ResumeLineEntry, field: ApplyReviewProfileSourceField): number {
+  const lineCompact = compactComparable(line.text);
+  const valueCompact = compactComparable(field.value);
+  if (!lineCompact || valueCompact.length < 4) return 0;
+  const allowShortDirectMatch = line.kind === "name" || line.kind === "contact";
+  const directMatch =
+    valueCompact.length >= (allowShortDirectMatch ? 4 : 8) &&
+    (lineCompact.includes(valueCompact) || valueCompact.includes(lineCompact));
+  if (directMatch) return 100;
+  return tokenOverlapScore(line.text, field.value);
+}
+
+function profileSourceMatchForLine(
+  line: ResumeLineEntry,
+  fields: readonly ApplyReviewProfileSourceField[],
+): ProfileSourceMatch | null {
+  if (!fields.length || line.kind === "section") return null;
+  const scored = fields
+    .map((field, index) => ({ field, index, score: profileFieldScore(line, field) }))
+    .filter((candidate) => candidate.score >= 60)
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+  const best = scored[0];
+  if (!best) return null;
+  const selected =
+    best.score === 100
+      ? scored.filter((candidate) => candidate.score === 100)
+      : scored.filter((candidate) => candidate.score >= Math.max(60, best.score - 15));
+  const fieldsForLine = selected.slice(0, 8).map((candidate) => candidate.field);
+  return {
+    fields: fieldsForLine,
+    sourceText: fieldsForLine.map(profileFieldDisplay),
+  };
+}
+
+function tokenOverlapScore(left: string, right: string): number {
+  const leftTokens = tokenSet(left);
+  const rightTokens = tokenSet(right);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  const matches = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  return Math.round((matches / Math.min(leftTokens.size, rightTokens.size)) * 100);
+}
+
 function bulletForLine(
   line: ResumeLineEntry,
   provenance: readonly BulletProvenanceEntry[],
@@ -165,7 +283,19 @@ function bulletForLine(
 }
 
 function isStructuralLine(line: ResumeLineEntry): boolean {
-  return line.kind === "name" || line.kind === "contact" || line.kind === "section" || line.kind === "metadata";
+  return line.kind === "name" || line.kind === "contact" || line.kind === "section" || /^\d+\/\d+$/.test(line.text);
+}
+
+function linePinId(line: ResumeLineEntry): string {
+  return line.lineNumber ? `resume-line:${line.lineNumber}` : `rendered-line:${line.lineLabel ?? line.text}`;
+}
+
+function lineTitle(line: ResumeLineEntry): string {
+  return line.lineNumber ? `Line ${line.lineNumber}` : line.lineLabel ?? "Rendered PDF line";
+}
+
+function lineLabelForSelection(selection: PdfAuditLineSelection): string {
+  return `PDF page ${selection.pageNumber} line ${selection.pageLineIndex}`;
 }
 
 function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeAuditPin[] {
@@ -178,16 +308,20 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
         section: entry.section,
         provenanceState: "recorded",
         sourceGranularity: "bullet",
+        sourcePrecision: "exact_line",
         sourceId: entry.sourceId,
         sourceLabel: change?.label ?? null,
-        sourceText: originalTextFor(entry, explanation.annotatedChanges),
+        sourceText: sourceLineForBullet(entry, explanation.annotatedChanges),
+        sourceSpanText: change?.sourceText.length ? change.sourceText : null,
         tailoredText: entry.generatedText ? [entry.generatedText] : [],
         transformType: entry.transformType,
         controls: entry.control ? [entry.control] : [],
         evidenceIds: entry.evidenceIds,
+        evidenceNotes: [],
         requirementIds: entry.requirementIds,
-        matchedSignals: entry.matchedKeywords,
-        rationale: entry.rationale || change?.rationale || null,
+        matchedSignals: change?.jobSignals ?? [],
+        matchedKeywords: entry.matchedKeywords,
+        rationale: displayRationale(entry.rationale || change?.rationale),
       };
     });
   }
@@ -198,128 +332,203 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
     section: change.section,
     provenanceState: "recorded",
     sourceGranularity: "change_span",
+    sourcePrecision: "section_span",
     sourceId: change.sourceId,
     sourceLabel: change.label,
     sourceText: change.sourceText.length ? change.sourceText : null,
+    sourceSpanText: change.sourceText.length ? change.sourceText : null,
     tailoredText: change.tailoredText,
     transformType: change.changeType,
     controls: change.controls,
     evidenceIds: change.evidenceIds,
+    evidenceNotes: displayEvidenceNotes(change.evidenceNotes),
     requirementIds: [],
     matchedSignals: change.jobSignals,
-    rationale: change.rationale,
+    matchedKeywords: [],
+    rationale: displayRationale(change.rationale),
   }));
+}
+
+function pinFromProfileSourceLine(
+  line: ResumeLineEntry,
+  match: ProfileSourceMatch,
+): ResumeAuditPin {
+  const sourceLabel = match.fields.length === 1 ? match.fields[0]?.label ?? "Profile source field" : "Profile source fields";
+  return {
+    id: linePinId(line),
+    title: lineTitle(line),
+    section: match.fields[0]?.section ?? "profile",
+    lineNumber: line.lineNumber,
+    lineLabel: line.lineLabel,
+    provenanceState: "recorded",
+    sourceGranularity: "profile_field",
+    sourcePrecision: "profile_field",
+    sourceId: match.fields.map((field) => field.path).join(", "),
+    sourceLabel,
+    sourceText: match.sourceText,
+    sourceSpanText: null,
+    tailoredText: [line.text],
+    transformType: "profile_field_rendered",
+    controls: [],
+    evidenceIds: [],
+    evidenceNotes: [],
+    requirementIds: [],
+    matchedSignals: [],
+    matchedKeywords: [],
+    rationale:
+      match.fields.length === 1
+        ? "This selected PDF line is rendered from the Profile field shown above."
+        : "This selected PDF line is rendered from the Profile fields shown above.",
+  };
 }
 
 function pinFromResumeLine(
   line: ResumeLineEntry,
   explanation: ArtifactTailoringExplanation | null,
+  profileSourceFields: readonly ApplyReviewProfileSourceField[],
   contextChange?: AnnotatedChange,
 ): ResumeAuditPin {
+  const isResumeStructure = line.kind === "section" || /^\d+\/\d+$/.test(line.text);
+  if (isResumeStructure) {
+    return {
+      id: linePinId(line),
+      title: lineTitle(line),
+      section: line.kind === "section" ? "resume_section" : `resume_${line.kind}`,
+      lineNumber: line.lineNumber,
+      lineLabel: line.lineLabel,
+      provenanceState: "not_applicable",
+      sourceGranularity: "structure",
+      sourcePrecision: "structure",
+      sourceId: null,
+      sourceLabel: null,
+      sourceText: null,
+      sourceSpanText: null,
+      tailoredText: [line.text],
+      transformType: "rendered_structure",
+      controls: [],
+      evidenceIds: [],
+      evidenceNotes: [],
+      requirementIds: [],
+      matchedSignals: [],
+      matchedKeywords: [],
+      rationale:
+        "This selected PDF line is document structure, not a generated claim requiring source attribution.",
+    };
+  }
+
+  const profileSourceMatch = profileSourceMatchForLine(line, profileSourceFields);
+  if (profileSourceMatch && (line.kind === "name" || line.kind === "contact")) {
+    return pinFromProfileSourceLine(line, profileSourceMatch);
+  }
+
   const bullet = explanation ? bulletForLine(line, explanation.bulletProvenance) : undefined;
   if (bullet) {
     const change = explanation ? changeFor(bullet, explanation.annotatedChanges) : undefined;
     return {
-      id: `resume-line:${line.lineNumber}`,
-      title: `Line ${line.lineNumber}`,
+      id: linePinId(line),
+      title: lineTitle(line),
       section: bullet.section,
       lineNumber: line.lineNumber,
+      lineLabel: line.lineLabel,
       provenanceState: "recorded",
       sourceGranularity: "bullet",
+      sourcePrecision: "exact_line",
       sourceId: bullet.sourceId,
       sourceLabel: change?.label ?? null,
-      sourceText: originalTextFor(bullet, explanation?.annotatedChanges ?? []),
+      sourceText: sourceLineForBullet(bullet, explanation?.annotatedChanges ?? []),
+      sourceSpanText: change?.sourceText.length ? change.sourceText : null,
       tailoredText: [line.text],
       transformType: bullet.transformType,
       controls: bullet.control ? [bullet.control] : [],
       evidenceIds: bullet.evidenceIds,
+      evidenceNotes: [],
       requirementIds: bullet.requirementIds,
-      matchedSignals: bullet.matchedKeywords,
-      rationale: bullet.rationale || change?.rationale || null,
+      matchedSignals: change?.jobSignals ?? [],
+      matchedKeywords: bullet.matchedKeywords,
+      rationale: displayRationale(bullet.rationale || change?.rationale),
     };
   }
 
-  const change = explanation ? changeForLine(line, explanation.annotatedChanges) : undefined;
-  if (change) {
+  const lineChangeMatch = explanation ? changeMatchForLine(line, explanation.annotatedChanges) : undefined;
+  if (lineChangeMatch) {
+    const { change } = lineChangeMatch;
     return {
-      id: `resume-line:${line.lineNumber}`,
-      title: `Line ${line.lineNumber}`,
+      id: linePinId(line),
+      title: lineTitle(line),
       section: change.section,
       lineNumber: line.lineNumber,
+      lineLabel: line.lineLabel,
       provenanceState: "recorded",
       sourceGranularity: "change_span",
+      sourcePrecision: "exact_line",
       sourceId: change.sourceId,
       sourceLabel: change.label,
-      sourceText: change.sourceText.length ? change.sourceText : null,
+      sourceText: lineChangeMatch.sourceText,
+      sourceSpanText: change.sourceText.length ? change.sourceText : null,
       tailoredText: [line.text],
       transformType: change.changeType,
       controls: change.controls,
       evidenceIds: change.evidenceIds,
+      evidenceNotes: displayEvidenceNotes(change.evidenceNotes),
       requirementIds: [],
       matchedSignals: change.jobSignals,
-      rationale: change.rationale,
+      matchedKeywords: [],
+      rationale: displayRationale(change.rationale),
     };
+  }
+
+  if (profileSourceMatch) {
+    return pinFromProfileSourceLine(line, profileSourceMatch);
   }
 
   if (contextChange) {
     return {
-      id: `resume-line:${line.lineNumber}`,
-      title: `Line ${line.lineNumber}`,
+      id: linePinId(line),
+      title: lineTitle(line),
       section: contextChange.section,
       lineNumber: line.lineNumber,
+      lineLabel: line.lineLabel,
       provenanceState: "recorded",
       sourceGranularity: "change_span",
+      sourcePrecision: "section_span",
       sourceId: contextChange.sourceId,
       sourceLabel: contextChange.label,
-      sourceText: contextChange.sourceText.length ? contextChange.sourceText : null,
+      sourceText: sourceTextForTailoredLine(line.text, contextChange.sourceText),
+      sourceSpanText: contextChange.sourceText.length ? contextChange.sourceText : null,
       tailoredText: [line.text],
       transformType: contextChange.changeType,
       controls: contextChange.controls,
       evidenceIds: contextChange.evidenceIds,
+      evidenceNotes: displayEvidenceNotes(contextChange.evidenceNotes),
       requirementIds: [],
       matchedSignals: contextChange.jobSignals,
-      rationale: contextChange.rationale,
-    };
-  }
-
-  if (isStructuralLine(line)) {
-    return {
-      id: `resume-line:${line.lineNumber}`,
-      title: `Line ${line.lineNumber}`,
-      section: line.kind === "section" ? "resume_section" : `resume_${line.kind}`,
-      lineNumber: line.lineNumber,
-      provenanceState: "not_applicable",
-      sourceGranularity: "structure",
-      sourceId: null,
-      sourceLabel: null,
-      sourceText: null,
-      tailoredText: [line.text],
-      transformType: "rendered_structure",
-      controls: ["rendered resume structure"],
-      evidenceIds: [],
-      requirementIds: [],
-      matchedSignals: [],
+      matchedKeywords: [],
       rationale:
-        "This rendered line is resume structure or identity text, not a generated claim requiring source attribution.",
+        "No exact Profile source field was recorded for this selected PDF line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
     };
   }
 
   return {
-    id: `resume-line:${line.lineNumber}`,
-    title: `Line ${line.lineNumber}`,
+    id: linePinId(line),
+    title: lineTitle(line),
     section: "rendered_resume",
     lineNumber: line.lineNumber,
+    lineLabel: line.lineLabel,
     provenanceState: "missing",
     sourceGranularity: "missing",
+    sourcePrecision: "missing",
     sourceId: null,
     sourceLabel: null,
     sourceText: null,
+    sourceSpanText: null,
     tailoredText: [line.text],
     transformType: explanation ? "unmapped_rendered_line" : "no_generation_provenance",
-    controls: [explanation ? "line not mapped to recorded change" : "rendered resume fallback"],
+    controls: [],
     evidenceIds: [],
+    evidenceNotes: [],
     requirementIds: [],
     matchedSignals: [],
+    matchedKeywords: [],
     rationale: explanation
       ? "This line is visible in the tailored resume, but it did not match a recorded generation-time source mapping."
       : "This line is visible in the tailored resume, but no generation-time source or evidence mapping was recorded.",
@@ -329,6 +538,7 @@ function pinFromResumeLine(
 function pinsFromResumeLines(
   lines: readonly ResumeLineEntry[],
   explanation: ArtifactTailoringExplanation | null,
+  profileSourceFields: readonly ApplyReviewProfileSourceField[],
 ): ResumeAuditPin[] {
   let currentSection: string | null = null;
   let currentSourceHeading: string | null = null;
@@ -339,16 +549,34 @@ function pinsFromResumeLines(
     } else if (looksLikeSourceHeading(line, currentSection)) {
       currentSourceHeading = line.text;
     }
-    const exactPin = pinFromResumeLine(line, explanation);
+    const exactPin = pinFromResumeLine(line, explanation, profileSourceFields);
     if (exactPin.provenanceState !== "missing" || !explanation) {
       return exactPin;
     }
     return pinFromResumeLine(
       line,
       explanation,
+      profileSourceFields,
       contextualChangeForLine(line, explanation.annotatedChanges, currentSection, currentSourceHeading),
     );
   });
+}
+
+function lineKindForText(text: string, index: number, firstContentLine: boolean): ResumeLineEntry["kind"] {
+  const lower = text.toLowerCase();
+  return firstContentLine
+    ? "name"
+    : RENDERED_RESUME_SECTION_HEADINGS.has(lower)
+      ? "section"
+      : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(text)
+        ? "contact"
+        : /^[-•○]\s+/.test(text)
+          ? "bullet"
+          : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(
+                text,
+              )
+            ? "metadata"
+            : "body";
 }
 
 function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineEntry[] {
@@ -357,20 +585,7 @@ function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineE
   (resumeText ?? "").split(/\r?\n/).forEach((line, index) => {
     const text = line.trim();
     if (!text) return;
-    const lower = text.toLowerCase();
-    const kind: ResumeLineEntry["kind"] = firstContentLine
-      ? "name"
-      : RENDERED_RESUME_SECTION_HEADINGS.has(lower)
-        ? "section"
-        : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(text)
-          ? "contact"
-          : /^[-•○]\s+/.test(text)
-            ? "bullet"
-            : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(
-                  text,
-                )
-              ? "metadata"
-              : "body";
+    const kind = lineKindForText(text, index, firstContentLine);
     firstContentLine = false;
     lines.push({
       lineNumber: index + 1,
@@ -381,20 +596,36 @@ function resumeLinesFromText(resumeText: string | null | undefined): ResumeLineE
   return lines;
 }
 
+function resumeLineFromPdfSelection(selection: PdfAuditLineSelection): ResumeLineEntry {
+  const text = selection.resumeLineText || selection.text;
+  return {
+    kind: lineKindForText(text, 999, false),
+    lineLabel: lineLabelForSelection(selection),
+    lineNumber: selection.lineNumber ?? undefined,
+    text,
+  };
+}
+
 function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
   const adversarial = explanation.adversarialReview;
   const auditGaps = explanation.quality.errors.filter((error) =>
     error.toLowerCase().startsWith("tailoring audit metadata incomplete"),
   );
-  const blockers = [
+  const blockers = uniqueRiskItems([
     ...explanation.quality.errors.filter((error) => !auditGaps.includes(error)),
     ...explanation.judge.issues,
     ...(adversarial?.blockers ?? []),
-  ];
-  const warnings = [
+  ]);
+  const rawWarnings = uniqueRiskItems([
     ...explanation.quality.warnings,
     ...(adversarial?.warnings ?? []),
-  ];
+  ]);
+  const residualWarnings = uniqueRiskItems([
+    ...explanation.reviewFeedback.acceptedWarnings,
+    ...(explanation.reviewFeedback.acceptedWithResidualWarnings ? rawWarnings : []),
+  ]);
+  const residualWarningKeys = new Set(residualWarnings.map(riskItemKey));
+  const warnings = rawWarnings.filter((warning) => !residualWarningKeys.has(riskItemKey(warning)));
   const hasAnyAudit =
     explanation.quality.passed !== null ||
     explanation.judge.verdict !== null ||
@@ -424,11 +655,26 @@ function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
       ...(adversarial?.repairInstructions ?? []),
     ],
     warningRepairAttempted: yesNo(explanation.reviewFeedback.warningRepairAttempted),
-    residualWarnings: [
-      ...explanation.reviewFeedback.acceptedWarnings,
-      ...(explanation.reviewFeedback.acceptedWithResidualWarnings ? warnings : []),
-    ],
+    residualWarnings,
   };
+}
+
+function uniqueRiskItems(items: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const text = item.replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    const key = riskItemKey(text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function riskItemKey(item: string): string {
+  return item.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function emptyRiskSignals(): RiskSignals {
@@ -458,6 +704,7 @@ function riskSearchFieldsForPin(pin: ResumeAuditPin): string[] {
     ...pin.evidenceIds,
     ...pin.requirementIds,
     ...pin.matchedSignals,
+    ...pin.matchedKeywords,
     ...pin.tailoredText,
   ]
     .map(normalizeResumeLine)
@@ -506,64 +753,73 @@ function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
     return "claim risk";
   }
   if (pin.provenanceState === "not_applicable") return "structure";
+  if (pin.sourceGranularity === "profile_field") return "profile source";
   if (pin.sourceGranularity === "bullet") {
-    return pin.evidenceIds.length ? "grounded" : "source pointer";
+    return pin.evidenceIds.length ? "line evidence" : "source pointer";
   }
   if (pin.sourceGranularity === "change_span") {
-    return "source span";
+    return pin.sourcePrecision === "exact_line" ? "profile field" : "profile section";
   }
   return "review";
 }
 
-function TagRow({
+function OptionalTagRow({
   label,
+  tone = "muted",
   values,
 }: {
   readonly label: string;
+  readonly tone?: "muted" | "ok" | "info" | "warn";
   readonly values: readonly string[];
-}): JSX.Element {
+}): JSX.Element | null {
+  if (!values.length) return null;
   return (
     <div>
       <dt>{label}</dt>
       <dd>
-        {values.length ? (
-          values.map((value) => (
-            <span className="tag muted" key={value}>
-              {value}
-            </span>
-          ))
-        ) : (
-          <span className="muted">none recorded</span>
-        )}
+        {values.map((value) => (
+          <span className={`tag ${tone}`} key={value}>
+            {value}
+          </span>
+        ))}
       </dd>
     </div>
   );
 }
 
 function CompactFindingList({
+  detail,
   label,
   items,
+  sourceLabel,
   tone,
 }: {
+  readonly detail?: string;
   readonly label: string;
   readonly items: readonly string[];
+  readonly sourceLabel?: string;
   readonly tone: "danger" | "warning";
 }): JSX.Element | null {
   if (!items.length) return null;
+  const remainingItems = items.slice(1);
   return (
     <details className={`artifact-risk-finding ${tone}`}>
       <summary>
         <span className="artifact-risk-finding-label">
           <b>{label}</b>
           <span className="tag muted">{items.length}</span>
+          {sourceLabel ? <span className="tag muted">{sourceLabel}</span> : null}
         </span>
         <span className="artifact-risk-finding-preview">{items[0]}</span>
       </summary>
-      <ul className="compact-list">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
+      {detail ? <p className="meta">{detail}</p> : null}
+      {remainingItems.length ? (
+        <ul className="compact-list">
+          {remainingItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
     </details>
   );
 }
@@ -608,7 +864,13 @@ function RiskPanel({
         <CompactFindingList label="Blockers" items={risk.blockers} tone="danger" />
         <CompactFindingList label="Audit metadata gaps" items={risk.auditGaps} tone="warning" />
         <CompactFindingList label="Warnings" items={risk.warnings} tone="warning" />
-        <CompactFindingList label="Accepted residual warnings" items={risk.residualWarnings} tone="warning" />
+        <CompactFindingList
+          detail="The material generation workflow selected this candidate after the warning-repair loop. No human approver is recorded for this warning state."
+          label="Residual warnings after automated review"
+          items={risk.residualWarnings}
+          sourceLabel="workflow-selected"
+          tone="warning"
+        />
         <CompactFindingList label="Repair instructions" items={risk.repairInstructions} tone="warning" />
       </div>
     </section>
@@ -629,7 +891,10 @@ export function ArtifactGroundingRiskPanel({
 
 function lineagePrecision(pin: ResumeAuditPin): string {
   if (pin.sourceGranularity === "bullet") return "Bullet provenance";
-  if (pin.sourceGranularity === "change_span") return "Section source span";
+  if (pin.sourceGranularity === "profile_field") return "Profile field match";
+  if (pin.sourceGranularity === "change_span") {
+    return pin.sourcePrecision === "exact_line" ? "Profile source field" : "Profile source span; exact field not recorded";
+  }
   if (pin.sourceGranularity === "structure") return "Resume structure";
   return "No source mapping";
 }
@@ -637,6 +902,7 @@ function lineagePrecision(pin: ResumeAuditPin): string {
 function sourcePointerLabel(pin: ResumeAuditPin): string {
   if (pin.sourceGranularity === "missing") return "No source pointer recorded";
   if (pin.sourceGranularity === "structure") return "Resume structure";
+  if (pin.sourceGranularity === "profile_field") return pin.sourceLabel || "Profile source field";
   const pointerLabel = pin.sourceLabel || formatToken(pin.section);
   return `${formatToken(pin.section)} -> ${pointerLabel}`;
 }
@@ -644,24 +910,27 @@ function sourcePointerLabel(pin: ResumeAuditPin): string {
 function SourceEvidencePreview({
   expanded,
   pin,
+  text,
 }: {
   readonly expanded: boolean;
   readonly pin: ResumeAuditPin;
+  readonly text?: readonly string[] | null;
 }): JSX.Element | null {
+  const sourceText = text ?? pin.sourceText;
   if (pin.sourceGranularity === "structure") {
-    return <span className="resume-pin-source-evidence muted">Resume structure; no source evidence required.</span>;
+    return <span className="resume-pin-source-evidence muted">Resume structure; no Profile source field required.</span>;
   }
   if (pin.sourceGranularity === "missing") {
-    return <span className="resume-pin-source-evidence missing">No source evidence recorded for this line.</span>;
+    return <span className="resume-pin-source-evidence missing">No Profile source field was recorded for this selected PDF line.</span>;
   }
-  if (!pin.sourceText?.length) {
-    return <span className="resume-pin-source-evidence missing">No source text recorded for this pointer.</span>;
+  if (!sourceText?.length) {
+    return <span className="resume-pin-source-evidence missing">No Profile source text was resolved for this pointer.</span>;
   }
 
-  const visibleLines = expanded ? pin.sourceText : pin.sourceText.slice(0, 2);
-  const hiddenLineCount = pin.sourceText.length - visibleLines.length;
+  const visibleLines = expanded ? sourceText : sourceText.slice(0, 2);
+  const hiddenLineCount = sourceText.length - visibleLines.length;
   return (
-    <span className="resume-pin-source-evidence" aria-label={`Source evidence: ${pin.sourceText.join(" ")}`}>
+    <span className="resume-pin-source-evidence" aria-label={`Profile source text: ${sourceText.join(" ")}`}>
       {visibleLines.map((line, index) => (
         <span className="resume-pin-source-line" key={`${pin.id}:source:${index}`}>
           {line}
@@ -669,16 +938,53 @@ function SourceEvidencePreview({
       ))}
       {hiddenLineCount > 0 ? (
         <span className="resume-pin-source-more">
-          +{hiddenLineCount} more source line{hiddenLineCount === 1 ? "" : "s"}
+          +{hiddenLineCount} more Profile source field{hiddenLineCount === 1 ? "" : "s"}
         </span>
       ) : null}
     </span>
   );
 }
 
+function SourceEvidenceBlock({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element | null {
+  const sourceSpanText = pin.sourceSpanText ?? pin.sourceText;
+  if (pin.sourceGranularity !== "change_span") {
+    return <SourceEvidencePreview expanded pin={pin} text={sourceSpanText} />;
+  }
+  if (!sourceSpanText?.length) {
+    return <SourceEvidencePreview expanded pin={pin} text={sourceSpanText} />;
+  }
+
+  return (
+    <details className="resume-pin-source-span-details">
+      <summary>
+        <span>{pin.sourceLabel || formatToken(pin.section)}</span>
+        <span className="muted">
+          {sourceSpanText.length} Profile source field{sourceSpanText.length === 1 ? "" : "s"}
+        </span>
+      </summary>
+      <SourceEvidencePreview expanded pin={pin} text={sourceSpanText} />
+    </details>
+  );
+}
+
+function primarySourceTextForPin(pin: ResumeAuditPin): readonly string[] | null {
+  if (!pin.sourceText?.length) return null;
+  if (pin.sourceGranularity === "profile_field") return pin.sourceText;
+  if (pin.sourceText.length === 1) return pin.sourceText;
+  return sourceTextForTailoredLine(pin.tailoredText.join(" "), pin.sourceText) ?? pin.sourceText.slice(0, 1);
+}
+
+function sourceLabelForJustification(pin: ResumeAuditPin): string {
+  if (pin.sourceGranularity === "profile_field") {
+    return pin.sourceText && pin.sourceText.length > 1 ? "Profile source fields" : "Profile source field";
+  }
+  if (pin.sourcePrecision === "section_span") return "Closest recorded Profile source field";
+  return "Profile source field";
+}
+
 function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
   if (pin.sourceGranularity === "missing") {
-    return <p className="muted">No source pointer was recorded for this resume line.</p>;
+    return <p className="muted">No Profile source field mapping was recorded for this selected PDF line.</p>;
   }
   if (pin.sourceGranularity === "structure") {
     return <p className="muted">This resume structure line does not require source attribution.</p>;
@@ -694,12 +1000,37 @@ function SourcePointer({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
           <dt>Lineage precision</dt>
           <dd>{lineagePrecision(pin)}</dd>
         </div>
-        <div>
-          <dt>Source ID</dt>
-          <dd>{pin.sourceId || <span className="muted">none recorded</span>}</dd>
-        </div>
       </dl>
     </div>
+  );
+}
+
+function LineJustification({ pin }: { readonly pin: ResumeAuditPin }): JSX.Element {
+  const signals = pin.matchedSignals.length ? ` Signals reflected: ${pin.matchedSignals.join(", ")}.` : "";
+  const why = pin.rationale ? `${pin.rationale}${signals}` : signals.trim();
+  const sourceLabel = sourceLabelForJustification(pin);
+  const primarySourceText = primarySourceTextForPin(pin);
+  return (
+    <section className="resume-pin-justification">
+      <h5>Line justification</h5>
+      <dl className="detail-list compact">
+        <div>
+          <dt>{sourceLabel}</dt>
+          <dd>
+            <SourceEvidencePreview expanded pin={pin} text={primarySourceText} />
+            {pin.sourcePrecision === "section_span" ? (
+              <span className="muted">
+                Exact Profile source-field provenance was not recorded for this selected PDF line.
+              </span>
+            ) : null}
+          </dd>
+        </div>
+        <div>
+          <dt>Why</dt>
+          <dd>{why || <span className="muted">no rationale recorded</span>}</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -713,7 +1044,13 @@ function SelectedPinInspector({
   const tone = pinTone(pin, risk);
   return (
     <article
-      aria-label={pin.lineNumber ? `Selected resume line audit for line ${pin.lineNumber}` : "Selected resume audit"}
+      aria-label={
+        pin.lineNumber
+          ? `Selected resume line audit for line ${pin.lineNumber}`
+          : pin.lineLabel
+            ? `Selected resume line audit for ${pin.lineLabel}`
+            : "Selected resume audit"
+      }
       className="resume-pin-detail"
       aria-live="polite"
     >
@@ -724,35 +1061,38 @@ function SelectedPinInspector({
         </div>
         <span className={`tag ${tone}`}>{pinStatus(pin, risk)}</span>
       </header>
-      <div className="resume-pin-diff">
-        <section>
-          <h5>Source evidence</h5>
-          <SourceEvidencePreview expanded pin={pin} />
-        </section>
-        <section>
-          <h5>Source pointer</h5>
-          <SourcePointer pin={pin} />
-        </section>
-      </div>
+      <LineJustification pin={pin} />
+      <details className="resume-pin-source-check">
+        <summary>
+          <span>Source check</span>
+          <span className="muted">{lineagePrecision(pin)}</span>
+        </summary>
+        <div className="resume-pin-source-check-body">
+          <section>
+            <h5>Recorded Profile source</h5>
+            <SourceEvidenceBlock pin={pin} />
+          </section>
+          <section>
+            <h5>Lineage</h5>
+            <SourcePointer pin={pin} />
+          </section>
+        </div>
+      </details>
       <dl className="detail-list compact">
         {pin.lineNumber ? (
           <div>
             <dt>Resume line</dt>
             <dd>{pin.lineNumber}</dd>
           </div>
+        ) : pin.lineLabel ? (
+          <div>
+            <dt>PDF line</dt>
+            <dd>{pin.lineLabel}</dd>
+          </div>
         ) : null}
-        <div>
-          <dt>Transform</dt>
-          <dd>{formatToken(pin.transformType)}</dd>
-        </div>
-        <TagRow label="Controls" values={pin.controls} />
-        <TagRow label="Requirement IDs" values={pin.requirementIds} />
-        <TagRow label="Evidence IDs" values={pin.evidenceIds} />
-        <TagRow label="Matched keywords" values={pin.matchedSignals} />
-        <div>
-          <dt>Why</dt>
-          <dd>{pin.rationale || <span className="muted">no rationale recorded</span>}</dd>
-        </div>
+        <OptionalTagRow label="Keywords demonstrated" tone="ok" values={pin.matchedKeywords} />
+        <OptionalTagRow label="Job signals reflected" values={pin.matchedSignals} />
+        <OptionalTagRow label="Evidence notes" values={pin.evidenceNotes} />
       </dl>
     </article>
   );
@@ -761,9 +1101,10 @@ function SelectedPinInspector({
 export function ResumeAuditPins({
   artifactId,
   resumeText,
+  profileSourceFields = [],
   className = "apply-review-resume-pins",
-  selectedLineNumber,
-  onSelectedLineNumberChange,
+  selectedLine,
+  onSelectedLineChange,
 }: ResumeAuditPinsProps): JSX.Element {
   const detail = useArtifactDetailQuery(artifactId);
   const explanation = detail.data?.tailoringExplanation ?? null;
@@ -773,9 +1114,16 @@ export function ResumeAuditPins({
     resumeLines.length && (explanation || detail.data || detail.error),
   );
   const linePins = useMemo(
-    () => (canUseResumeLines ? pinsFromResumeLines(resumeLines, explanation) : []),
-    [canUseResumeLines, explanation, resumeLines],
+    () => (canUseResumeLines ? pinsFromResumeLines(resumeLines, explanation, profileSourceFields) : []),
+    [canUseResumeLines, explanation, profileSourceFields, resumeLines],
   );
+  const selectedRenderedLinePin = useMemo(() => {
+    if (!selectedLine) return null;
+    if (selectedLine.lineNumber !== null && linePins.some((pin) => pin.lineNumber === selectedLine.lineNumber)) {
+      return null;
+    }
+    return pinFromResumeLine(resumeLineFromPdfSelection(selectedLine), explanation, profileSourceFields);
+  }, [explanation, linePins, profileSourceFields, selectedLine]);
   const pins = useMemo(
     () => (linePins.length ? linePins : explanationPins),
     [explanationPins, linePins],
@@ -790,9 +1138,9 @@ export function ResumeAuditPins({
       return;
     }
     const selectedLinePin =
-      selectedLineNumber === null || selectedLineNumber === undefined
+      selectedLine?.lineNumber === null || selectedLine?.lineNumber === undefined
         ? null
-        : pins.find((pin) => pin.lineNumber === selectedLineNumber) ?? null;
+        : pins.find((pin) => pin.lineNumber === selectedLine.lineNumber) ?? null;
     setSelectedPinId((currentPinId) => {
       if (selectedLinePin) {
         return selectedLinePin.id;
@@ -802,14 +1150,28 @@ export function ResumeAuditPins({
       }
       return pins[0]?.id ?? null;
     });
-  }, [artifactId, pins, selectedLineNumber]);
+  }, [artifactId, pins, selectedLine?.lineNumber]);
 
-  const selectedPin = pins.find((pin) => pin.id === selectedPinId) ?? pins[0] ?? null;
+  const selectedLinePin =
+    selectedLine?.lineNumber === null || selectedLine?.lineNumber === undefined
+      ? null
+      : pins.find((pin) => pin.lineNumber === selectedLine.lineNumber) ?? null;
+  const selectedPin = selectedRenderedLinePin ?? selectedLinePin ?? pins.find((pin) => pin.id === selectedPinId) ?? pins[0] ?? null;
   const errorMessage = detail.error instanceof Error ? detail.error.message : null;
 
   useEffect(() => {
-    onSelectedLineNumberChange?.(selectedPin?.lineNumber ?? null);
-  }, [onSelectedLineNumberChange, selectedPin?.lineNumber]);
+    if (selectedLine) return;
+    if (!selectedPin?.lineNumber) return;
+    const initialSelection = {
+      lineKey: `resume:${selectedPin.lineNumber}`,
+      lineNumber: selectedPin.lineNumber,
+      pageLineIndex: selectedPin.lineNumber,
+      pageNumber: 0,
+      resumeLineText: selectedPin.tailoredText[0] ?? null,
+      text: selectedPin.tailoredText[0] ?? "",
+    };
+    onSelectedLineChange?.((currentSelection) => currentSelection ?? initialSelection);
+  }, [onSelectedLineChange, selectedLine, selectedPin?.lineNumber, selectedPin?.tailoredText]);
 
   return (
     <section className={className} aria-label="Line-by-line resume audit">

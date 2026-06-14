@@ -541,8 +541,12 @@ export function TailoringExplanationSection({
             ) : null}
             {hasItems(warnings) ? (
               <div className="finding-list warning">
-                <b>Accepted residual warnings</b>
+                <b>Residual warnings after automated review</b>
                 <dl className="detail-list compact">
+                  <div>
+                    <dt>Warning decision source</dt>
+                    <dd>Material generation workflow; no human approver recorded.</dd>
+                  </div>
                   <div>
                     <dt>Warning repair attempted</dt>
                     <dd>

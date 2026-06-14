@@ -29,8 +29,13 @@ describe("<BulletProvenanceList>", () => {
   });
 
   it("renders an explicit not-recorded original when no annotated change matches (INSPECT-05)", () => {
-    // The second entry (exp-2) has no matching annotated change → honest missing state.
-    render(<BulletProvenanceList provenance={provenanceEntries} annotatedChanges={annotatedChanges} />);
+    const missingOriginal = {
+      ...provenanceEntries[1]!,
+      sourceId: "unmatched-source",
+      sourceText: [],
+    };
+
+    render(<BulletProvenanceList provenance={[missingOriginal]} annotatedChanges={annotatedChanges} />);
 
     expect(screen.getByText("Original profile bullet not recorded for this line.")).toBeInTheDocument();
   });

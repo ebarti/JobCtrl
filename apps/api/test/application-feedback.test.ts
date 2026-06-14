@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
+import type { ApplyReviewQueueResponse } from "../src/contracts.js";
 import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
@@ -53,6 +54,32 @@ describe("application feedback API", () => {
       title: "Principal Platform Engineer",
       currentStage: "apply",
       currentState: "pending",
+      fitScore: 9,
+      scoreBreakdown: {
+        technicalFit: 9,
+        experienceFit: 8,
+        roleFit: 8,
+        reasoning: "Strong platform leadership fit.",
+        fitBand: "strong",
+        confidence: "high",
+        eligibility: { status: "eligible", hardBlockers: [], warnings: [] },
+        matchedSignals: ["platform leadership"],
+        missingSignals: ["public company scale"],
+        transferableSignals: ["incident leadership"],
+      },
+      scoreKeywords: ["platform", "leadership"],
+      scoreReasoning: "Strong platform leadership fit.",
+      scoreVersion: 1,
+      scoredAt: NOW,
+      scoreCriteria: {
+        minFitScore: 7,
+        criteriaVersion: "criteria-test",
+      },
+      scoreTrace: {
+        rawWeightedScore: 8.6,
+        scoringPolicyVersion: 3,
+        resolutionReason: "weighted_dimensions",
+      },
       materials: {
         hasResume: true,
         ready: true,
@@ -64,7 +91,40 @@ describe("application feedback API", () => {
       },
       position: {
         descriptionPreview: "Full description",
-        requirements: ["platform leadership", "public company scale", "incident leadership"],
+        idealCandidate:
+          "A senior platform leader who improves developer experience and incident response across teams.",
+        idealRequirements: [
+          {
+            id: "r1",
+            text: "Lead platform reliability improvements across critical services.",
+            tier: "must_have",
+            weight: 0.9,
+            evidence: "lead platform reliability",
+            coverage: {
+              state: "covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 1,
+              examples: ["Owned platform reliability improvements for incident response."],
+            },
+          },
+          {
+            id: "r2",
+            text: "Improve developer experience and incident-response practices.",
+            tier: "important",
+            weight: 0.7,
+            evidence: "developer experience improvements",
+            coverage: {
+              state: "not_covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 0,
+              examples: [],
+            },
+          },
+        ],
+        requirements: [
+          "Lead platform reliability improvements across critical services.",
+          "Improve developer experience and incident-response practices.",
+        ],
         matched: ["platform leadership"],
         missing: ["public company scale"],
         transferable: ["incident leadership"],
@@ -187,6 +247,217 @@ describe("application feedback API", () => {
       applyAudit: {
         state: "ready",
         hardBlockers: [],
+      },
+    });
+
+    await app.close();
+  });
+
+  it("keeps resume text and PDF previews on the same material generation", async () => {
+    const newerResumePath = path.join(tempDir, "newer-resume.txt");
+    fs.writeFileSync(newerResumePath, "newer orphan resume text");
+    const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      2,
+      "apply-ready-resume-text-v2",
+      "tailored_resume",
+      "approved",
+      newerResumePath,
+      "2026-06-01T11:30:00.000Z",
+      24,
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      materialsPreview: {
+        resumeText: "tailored resume",
+        resumeTextArtifactId: "apply-ready-resume-text",
+        resumePdfArtifactId: "apply-ready-resume-pdf",
+      },
+    });
+
+    await app.close();
+  });
+
+  it("returns full resume text for apply-review PDF audit targets", async () => {
+    const longResumeText = [
+      "Eloi Example",
+      "",
+      "Experience",
+      ...Array.from({ length: 90 }, (_, index) =>
+        `- Earlier resume bullet ${index + 1} keeps the artifact long enough to exceed the generic preview limit.`,
+      ),
+      "- Wrote Python APIs for real-time factory floor communication, giving the Manufacturing Operating System (MOS) fast, high-volume links to the industrial control systems.",
+      "- Leadership: Team Building & Mentoring, Global Teams (30+ engineers), Remote-First Operations, Career Framework Design, Stakeholder Communication.",
+    ].join("\n");
+    const longResumePath = path.join(tempDir, "long-apply-review-resume.txt");
+    fs.writeFileSync(longResumePath, longResumeText);
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET path = ?, size_bytes = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(longResumePath, Buffer.byteLength(longResumeText), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const resumeText = queueItem(response.json(), READY_JOB)?.materialsPreview.resumeText ?? "";
+    expect(resumeText).toContain("Wrote Python APIs for real-time factory floor communication");
+    expect(resumeText).toContain("Stakeholder Communication.");
+    expect(resumeText).not.toMatch(/\.\.\.$/);
+
+    await app.close();
+  });
+
+  it("returns full cover letter text in the apply-review material preview", async () => {
+    const longCoverText = [
+      "Dear Hiring Manager,",
+      "",
+      ...Array.from({ length: 75 }, (_, index) =>
+        `Cover paragraph ${index + 1} keeps the letter long enough to exceed the generic preview limit while still being reviewable.`,
+      ),
+      "This final sentence must remain visible in the apply review cover letter panel.",
+      "",
+      "Jordan",
+    ].join("\n");
+    const longCoverPath = path.join(tempDir, "long-cover-letter.txt");
+    fs.writeFileSync(longCoverPath, longCoverText);
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      1,
+      "apply-ready-cover-letter-text",
+      "cover_letter",
+      "approved",
+      longCoverPath,
+      "2026-06-01T11:45:00.000Z",
+      Buffer.byteLength(longCoverText),
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const coverLetterText = queueItem(response.json(), READY_JOB)?.materialsPreview.coverLetterText ?? "";
+    expect(coverLetterText).toContain("Cover paragraph 75");
+    expect(coverLetterText).toContain("This final sentence must remain visible");
+    expect(coverLetterText).toContain("Jordan");
+    expect(coverLetterText).not.toMatch(/\.\.\.$/);
+
+    await app.close();
+  });
+
+  it("includes sanitized Profile source fields for apply-review PDF audit matching", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        personal_full_name TEXT NOT NULL DEFAULT '',
+        personal_address TEXT NOT NULL DEFAULT '',
+        personal_password TEXT NOT NULL DEFAULT '',
+        resume_baseline_text TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO candidate_profiles (
+         tenant_id, profile_id, personal_full_name, personal_address, personal_password, resume_baseline_text
+       ) VALUES ('local', 'default', ?, ?, ?, ?)`,
+    ).run(
+      "Jordan Candidate",
+      "42 Profile Street, Barcelona",
+      "do-not-send-this-field",
+      "Experienced platform leader with reliable operations depth.",
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const fields = queueItem(response.json(), READY_JOB)?.materialsPreview.profileSourceFields ?? [];
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        {
+          path: "personal.full_name",
+          label: "Profile > Personal information > Full name",
+          value: "Jordan Candidate",
+          section: "profile_personal",
+        },
+        {
+          path: "personal.address",
+          label: "Profile > Personal information > Address",
+          value: "42 Profile Street, Barcelona",
+          section: "profile_personal",
+        },
+        {
+          path: "resume.executive_profile.baseline_text",
+          label: "Profile > Resume baseline > Executive profile baseline",
+          value: "Experienced platform leader with reliable operations depth.",
+          section: "profile_summary",
+        },
+      ]),
+    );
+    expect(JSON.stringify(fields)).not.toContain("do-not-send-this-field");
+
+    await app.close();
+  });
+
+  it("keeps the PDF preview when no same-generation resume text is available", async () => {
+    const newerResumePath = path.join(tempDir, "newer-only-resume.txt");
+    fs.writeFileSync(newerResumePath, "newer only resume text");
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `DELETE FROM job_materials_artifacts
+        WHERE job_url = ?
+          AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_txt')`,
+    ).run(READY_JOB);
+    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      2,
+      "apply-ready-resume-text-v2",
+      "tailored_resume",
+      "approved",
+      newerResumePath,
+      "2026-06-01T11:30:00.000Z",
+      24,
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      materialsPreview: {
+        resumeText: null,
+        resumeTextArtifactId: null,
+        resumePdfArtifactId: "apply-ready-resume-pdf",
       },
     });
 
@@ -525,8 +796,8 @@ describe("application feedback API", () => {
   });
 });
 
-function queueItem(body: unknown, jobKey: string): unknown {
-  const items = (body as { items?: Array<{ jobKey: string }> }).items ?? [];
+function queueItem(body: unknown, jobKey: string): ApplyReviewQueueResponse["items"][number] | undefined {
+  const items = (body as ApplyReviewQueueResponse).items ?? [];
   return items.find((item) => item.jobKey === jobKey);
 }
 
@@ -634,6 +905,45 @@ function seedDatabase(dbPath: string): void {
       created_at TEXT,
       size_bytes INTEGER
     );
+    CREATE TABLE job_bullet_provenance (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      bullet_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      artifact_id TEXT NOT NULL,
+      section TEXT NOT NULL,
+      source_id TEXT,
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+      transform_type TEXT NOT NULL,
+      control TEXT NOT NULL,
+      rationale TEXT NOT NULL DEFAULT '',
+      generated_text TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, bullet_id)
+    );
+    CREATE TABLE job_employer_analysis (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+      requirements_json TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE job_employer_analysis_sub_analyses (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      analysis_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE job_employer_analysis_failures (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      raw_output TEXT
+    );
   `);
 
   insertJob(db, {
@@ -682,6 +992,7 @@ function seedDatabase(dbPath: string): void {
     "2026-05-31T09:00:00.000Z",
     "2026-05-31T09:01:00.000Z",
   );
+  insertBulletProvenance(db);
   db.close();
 }
 
@@ -730,7 +1041,40 @@ function insertJob(
   }
   insertStage(db, job.url, "apply", job.applyState);
   insertScore(db, job.url, job.fitScore);
+  insertEmployerAnalysis(db, job.url);
   insertMaterials(db, job.url, job.resumePath, job.resumePdfPath, job.rejectedResumePdfPath);
+}
+
+function insertEmployerAnalysis(db: Database.Database, jobUrl: string): void {
+  if (jobUrl !== READY_JOB) {
+    return;
+  }
+  db.prepare(
+    `INSERT INTO job_employer_analysis (
+       job_url, generation, tenant_id, ideal_candidate_narrative, requirements_json
+     ) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    jobUrl,
+    1,
+    "local",
+    "A senior platform leader who improves developer experience and incident response across teams.",
+    JSON.stringify([
+      {
+        id: "r1",
+        text: "Lead platform reliability improvements across critical services.",
+        tier: "must_have",
+        weight: 0.9,
+        evidence_span: "lead platform reliability",
+      },
+      {
+        id: "r2",
+        text: "Improve developer experience and incident-response practices.",
+        tier: "important",
+        weight: 0.7,
+        evidence_span: "developer experience improvements",
+      },
+    ]),
+  );
 }
 
 function insertMaterials(
@@ -769,6 +1113,33 @@ function insertMaterials(
   );
 }
 
+function insertBulletProvenance(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO job_bullet_provenance (
+       job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+       evidence_ids_json, requirement_ids_json, matched_keywords_json,
+       transform_type, control, rationale, generated_text, position, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    READY_JOB,
+    1,
+    "summary-1",
+    "local",
+    "apply-ready-resume-text",
+    "summary",
+    "exp-1",
+    JSON.stringify(["ev-platform"]),
+    JSON.stringify(["r1"]),
+    JSON.stringify(["platform reliability"]),
+    "rephrased",
+    "rephrase_allowed",
+    "Reframed the bullet toward platform reliability.",
+    "Owned platform reliability improvements for incident response.",
+    1,
+    NOW,
+  );
+}
+
 function insertScore(db: Database.Database, jobUrl: string, fitScore: number): void {
   db.prepare(
     `INSERT INTO job_scores (
@@ -795,8 +1166,27 @@ function insertScore(db: Database.Database, jobUrl: string, fitScore: number): v
     JSON.stringify(["platform", "leadership"]),
     NOW,
     "{}",
-    "{}",
-    "{}",
+    JSON.stringify({
+      min_fit_score: 7,
+      criteria_text: "Platform leadership and incident response.",
+      target_criteria: "Senior platform leader.",
+      criteria_version: "criteria-test",
+    }),
+    JSON.stringify({
+      prompt_version: "score-fit-assessment-v1",
+      schema_version: "score-fit-assessment-v1",
+      model: "fake-model",
+      criteria_version: "criteria-test",
+      profile_snapshot_version: 4,
+      scoring_policy_id: "local:scoring-policy-v3",
+      scoring_policy_version: 3,
+      rubric_version: "default-scoring-rubric-v1",
+      raw_weighted_score: 8.6,
+      calibration_adjustment: 0,
+      resolved_fit_band: "strong",
+      resolution_reason: "weighted_dimensions",
+      parser_warnings: [],
+    }),
   );
 }
 

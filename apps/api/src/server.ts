@@ -1,7 +1,10 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { type ZodType } from "zod";
 
 import {
@@ -156,12 +159,16 @@ import {
 } from "./write-model.js";
 
 const UNSAFE_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"]);
+const execFileAsync = promisify(execFile);
+
+export type ArtifactPdfPageRenderer = (pdfPath: string, pageNumber: number) => Promise<Buffer>;
 
 export interface BuildAppOptions {
   appDir?: string;
   dbPath: string;
   settingsPath: string;
   actionDispatcher?: ActionDispatcher;
+  artifactPdfPageRenderer?: ArtifactPdfPageRenderer;
   artifactOpener?: ArtifactOpener;
   credentialStore?: CredentialStore;
   manualCaptureImporter?: ManualCaptureImporter;
@@ -177,6 +184,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   const appDir = options.appDir ?? path.dirname(options.dbPath);
   const actionDispatcher = options.actionDispatcher ?? defaultActionDispatcher;
+  const artifactPdfPageRenderer = options.artifactPdfPageRenderer ?? defaultArtifactPdfPageRenderer;
   const artifactOpener = options.artifactOpener ?? defaultArtifactOpener;
   const credentialStore = options.credentialStore ?? new KeychainCredentialStore();
   const manualCaptureImporter = options.manualCaptureImporter ?? createWorkerManualCaptureImporter();
@@ -1191,6 +1199,51 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       .send(fs.createReadStream(detail.artifact.localPath));
   });
 
+  app.get<{ Params: { artifactId: string; pageNumber: string } }>(
+    "/v1/artifacts/:artifactId/preview/page/:pageNumber.png",
+    async (request, reply) => {
+      const pageNumber = Number.parseInt(request.params.pageNumber, 10);
+      if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 50) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_pdf_page" };
+      }
+      const detail = withDb(reply, options.dbPath, (db) =>
+        getArtifactDetail(db, decodeRouteParam(request.params.artifactId)),
+      );
+      if (!detail) {
+        void reply.code(404);
+        return { ok: false, error: "artifact_not_found" };
+      }
+      if ("ok" in detail && detail.ok === false) {
+        return detail;
+      }
+      if (!isPdfArtifact(detail.artifact.type, detail.artifact.localPath)) {
+        void reply.code(415);
+        return { ok: false, error: "artifact_preview_unsupported" };
+      }
+      if (!fs.existsSync(detail.artifact.localPath) || !fs.statSync(detail.artifact.localPath).isFile()) {
+        void reply.code(404);
+        return { ok: false, error: "artifact_missing" };
+      }
+
+      try {
+        const png = await artifactPdfPageRenderer(detail.artifact.localPath, pageNumber);
+        return reply
+          .type("image/png")
+          .header("cache-control", "no-store")
+          .send(png);
+      } catch (error) {
+        request.log.warn({ err: error, artifactId: detail.artifact.artifactId, pageNumber }, "PDF page preview failed");
+        void reply.code(502);
+        return {
+          ok: false,
+          error: "artifact_page_preview_failed",
+          message: error instanceof Error ? error.message : "Unable to render PDF page preview.",
+        };
+      }
+    },
+  );
+
   app.post<{ Params: { artifactId: string } }>("/v1/artifacts/:artifactId/open", async (request, reply) => {
     const detail = withDb(reply, options.dbPath, (db) => getArtifactDetail(db, decodeRouteParam(request.params.artifactId)));
     if (!detail) {
@@ -1393,6 +1446,27 @@ function requireWorkerReady(reply: FastifyReply, dbPath: string, enabled: boolea
 
 function isPdfArtifact(artifactType: string, localPath: string): boolean {
   return artifactType.toLowerCase().endsWith("_pdf") || localPath.toLowerCase().endsWith(".pdf");
+}
+
+async function defaultArtifactPdfPageRenderer(pdfPath: string, pageNumber: number): Promise<Buffer> {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobhunter-pdf-preview-"));
+  const outputPrefix = path.join(tempDir, "page");
+  const outputPath = `${outputPrefix}.png`;
+  try {
+    await execFileAsync(
+      "pdftoppm",
+      ["-png", "-r", "144", "-f", String(pageNumber), "-l", String(pageNumber), "-singlefile", pdfPath, outputPrefix],
+      { timeout: 15_000, maxBuffer: 1024 * 1024 },
+    );
+    return fs.readFileSync(outputPath);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      throw new Error("PDF page preview renderer is unavailable. Install Poppler so pdftoppm is on PATH.");
+    }
+    throw error;
+  } finally {
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  }
 }
 
 function retryContinuationStages(stage: Stage): Stage[] {

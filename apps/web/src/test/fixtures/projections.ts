@@ -191,6 +191,13 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       company: sampleSecondaryJob.company,
       source: sampleSecondaryJob.source,
       fitScore: sampleSecondaryJob.fitScore,
+      scoreBreakdown: sampleSecondaryJob.scoreBreakdown,
+      scoreKeywords: sampleSecondaryJob.scoreKeywords,
+      scoreReasoning: sampleSecondaryJob.scoreReasoning,
+      scoreVersion: sampleSecondaryJob.scoreVersion,
+      scoredAt: sampleSecondaryJob.scoredAt,
+      scoreCriteria: sampleSecondaryJob.scoreCriteria,
+      scoreTrace: sampleSecondaryJob.scoreTrace,
       applicationUrl: sampleSecondaryJob.applicationUrl,
       currentStage: "apply",
       currentState: "succeeded",
@@ -204,6 +211,36 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       position: {
         descriptionPreview:
           "Globex needs a principal engineer to lead platform reliability, incident response, and developer experience improvements.",
+        idealCandidate:
+          "A principal engineer who can lead platform reliability, improve developer experience, and guide incident-response practices across teams.",
+        idealRequirements: [
+          {
+            id: "r1",
+            text: "Lead platform reliability improvements across critical services.",
+            tier: "must_have",
+            weight: 0.9,
+            evidence: "lead platform reliability",
+            coverage: {
+              state: "covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 2,
+              examples: ["Owned platform reliability improvements for incident response."],
+            },
+          },
+          {
+            id: "r2",
+            text: "Improve incident-response practices and developer experience.",
+            tier: "important",
+            weight: 0.7,
+            evidence: "incident response, and developer experience improvements",
+            coverage: {
+              state: "not_covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 0,
+              examples: [],
+            },
+          },
+        ],
         requirements: ["platform reliability", "SRE leadership", "incident response"],
         matched: ["platform reliability", "SRE leadership"],
         missing: ["public company scale"],
@@ -215,6 +252,20 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
           "Principal Platform Engineer\n\nOwned platform reliability improvements for incident response.",
         resumeTextArtifactId: "resume-text-2",
         resumePdfArtifactId: "resume-pdf-2",
+        profileSourceFields: [
+          {
+            path: "personal.full_name",
+            label: "Profile > Personal information > Full name",
+            value: "Jordan Candidate",
+            section: "profile_personal",
+          },
+          {
+            path: "personal.email",
+            label: "Profile > Personal information > Email",
+            value: "jordan@example.com",
+            section: "profile_personal",
+          },
+        ],
         coverLetterText:
           "Dear Hiring Manager,\n\nI am excited to bring platform reliability leadership to Globex.",
       },
@@ -239,6 +290,13 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       company: sampleJob.company,
       source: sampleJob.source,
       fitScore: sampleJob.fitScore,
+      scoreBreakdown: sampleJob.scoreBreakdown,
+      scoreKeywords: sampleJob.scoreKeywords,
+      scoreReasoning: sampleJob.scoreReasoning,
+      scoreVersion: sampleJob.scoreVersion,
+      scoredAt: sampleJob.scoredAt,
+      scoreCriteria: sampleJob.scoreCriteria,
+      scoreTrace: sampleJob.scoreTrace,
       applicationUrl: sampleJob.applicationUrl,
       currentStage: "apply",
       currentState: "pending",
@@ -252,6 +310,8 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       position: {
         descriptionPreview:
           "Acme is hiring a staff software engineer to own platform reliability and product engineering workflows.",
+        idealCandidate: null,
+        idealRequirements: [],
         requirements: ["platform reliability", "team leadership"],
         matched: ["platform reliability"],
         missing: ["team leadership"],
@@ -263,6 +323,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
           "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
         resumeTextArtifactId: "resume-text-1",
         resumePdfArtifactId: "resume-pdf-1",
+        profileSourceFields: [],
         coverLetterText: null,
       },
       latestApplyRun: null,

@@ -86,6 +86,7 @@ Core pipeline:
   environment variables. Gemini keys default to `gemini-3.5-flash` unless
   `LLM_MODEL` overrides the model.
 - A TeX distribution with `pdflatex` for PDF output.
+- Poppler with `pdftoppm` on `PATH` for local PDF page previews in the web UI.
 - Temporal CLI with dev server support (`temporal server start-dev`) for the
   workflow engine the Python worker runs against. The local dev launcher starts
   it for you with persistent local workflow history; see
@@ -163,6 +164,7 @@ At minimum, confirm:
 - your search configuration is narrow enough for a first run;
 - your LLM key or local model endpoint is configured;
 - `pdflatex` is available if you need PDFs;
+- `pdftoppm` is available if you need PDF page previews in the web UI;
 - Chrome and Claude Code are available only if you intend to use auto-apply.
 
 ## Running The Pipeline

@@ -2124,7 +2124,9 @@ function tailoringExplanationForArtifact(
   // time) instead of recomputed from the resume file / job description at read
   // time. Honest empty when no canonical coverage exists for this generation.
   explanation.keywords = keywordsBlockFromCoverageAudit(explanation.coverageAudit);
+  attachCoverageKeywordsToBulletProvenance(explanation);
   backfillLegacyProfileEvidenceMapping(db, row, explanation);
+  attachProfileSourceTextToBulletProvenance(db, row.tenant_id, explanation);
   const missingAuditFields = missingTailoringAuditFields(explanation);
   if (missingAuditFields.length) {
     explanation.quality.errors = [
@@ -2179,6 +2181,24 @@ function keywordsBlockFromCoverageAudit(
       filteredMissing: 0,
     },
   };
+}
+
+function attachCoverageKeywordsToBulletProvenance(explanation: ArtifactTailoringExplanation): void {
+  const coverage = explanation.coverageAudit;
+  if (!coverage || !explanation.bulletProvenance.length) return;
+
+  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
+    const seen = new Set(entry.matchedKeywords.map((keyword) => keyword.toLowerCase()));
+    const matchedKeywords = [...entry.matchedKeywords];
+    for (const keyword of coverage.covered) {
+      if (coverage.coveredBy[keyword] !== entry.bulletId) continue;
+      const normalized = keyword.toLowerCase();
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      matchedKeywords.push(keyword);
+    }
+    return matchedKeywords.length === entry.matchedKeywords.length ? entry : { ...entry, matchedKeywords };
+  });
 }
 
 /**
@@ -2237,6 +2257,7 @@ function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
       section,
       sourceId: metadataText(record.source_id, 160),
       evidenceIds: metadataTextList(record.evidence_ids, 32, 160),
+      sourceText: metadataTextList(record.source_text ?? record.sourceText, 8, 1200),
       requirementIds: metadataTextList(record.requirement_ids, 32, 160),
       matchedKeywords: metadataTextList(record.matched_keywords, 32, 160),
       transformType,
@@ -2246,6 +2267,53 @@ function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
     });
   }
   return entries;
+}
+
+function attachProfileSourceTextToBulletProvenance(
+  db: SqliteDatabase,
+  tenantId: string,
+  explanation: ArtifactTailoringExplanation,
+): void {
+  const pointers = profileEvidencePointers(db, tenantId);
+  if (!pointers.length) return;
+
+  const byEvidenceId = new Map<string, ProfileEvidencePointer>();
+  const byEntryId = new Map<string, ProfileEvidencePointer[]>();
+  for (const pointer of pointers) {
+    byEvidenceId.set(pointer.evidenceId, pointer);
+    const entryPointers = byEntryId.get(pointer.entryId) ?? [];
+    entryPointers.push(pointer);
+    byEntryId.set(pointer.entryId, entryPointers);
+  }
+
+  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
+    const sourceText: string[] = [];
+    const sourceId = safeAuditText(entry.sourceId, 160);
+    const sourceIdPointers = sourceId ? (byEntryId.get(sourceId) ?? []) : [];
+    if (entry.section === "skills" && sourceIdPointers.length) {
+      for (const pointer of sourceIdPointers) {
+        sourceText.push(pointer.sourceText);
+      }
+    }
+    if (!sourceText.length) {
+      for (const evidenceId of entry.evidenceIds) {
+        const pointer = byEvidenceId.get(evidenceId);
+        if (pointer) sourceText.push(pointer.sourceText);
+      }
+    }
+    if (sourceId) {
+      const exactPointer = byEvidenceId.get(sourceId);
+      if (exactPointer) sourceText.push(exactPointer.sourceText);
+      if (!sourceText.length) {
+        for (const pointer of sourceIdPointers) {
+          sourceText.push(pointer.sourceText);
+        }
+      }
+    }
+
+    const resolvedSourceText = uniqueSourceTexts(sourceText.length ? sourceText : entry.sourceText).slice(0, 8);
+    return { ...entry, sourceText: resolvedSourceText };
+  });
 }
 
 function backfillLegacyProfileEvidenceMapping(
@@ -2303,7 +2371,6 @@ function backfillLegacyProfileEvidenceMapping(
 }
 
 function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileEvidencePointer[] {
-  if (!tableExists(db, "candidate_profile_experience_entries")) return [];
   const pointers: ProfileEvidencePointer[] = [];
   if (tableExists(db, "candidate_profile_achievement_evidence")) {
     const rows = allRows<{
@@ -2351,46 +2418,175 @@ function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileE
       });
     }
   }
-  if (!tableExists(db, "candidate_profile_experience_bullets")) {
-    return pointers;
+  if (tableExists(db, "candidate_profile_experience_entries") && tableExists(db, "candidate_profile_experience_bullets")) {
+    const rows = allRows<{
+      entry_id: string;
+      title: string;
+      company: string;
+      bullet_index: number;
+      bullet_text: string;
+    }>(
+      db,
+      `SELECT entries.entry_id,
+              entries.title,
+              entries.company,
+              bullets.bullet_index,
+              bullets.bullet_text
+         FROM candidate_profile_experience_entries AS entries
+         JOIN candidate_profile_experience_bullets AS bullets
+           ON bullets.tenant_id = entries.tenant_id
+          AND bullets.profile_id = entries.profile_id
+          AND bullets.entry_id = entries.entry_id
+        WHERE entries.tenant_id = ?
+          AND entries.profile_id = ?
+          AND TRIM(bullets.bullet_text) != ''
+        ORDER BY entries.position_index, bullets.bullet_index`,
+      [tenantId, DEFAULT_PROFILE_ID],
+    );
+    for (const bullet of rows) {
+      const entryId = safeAuditText(bullet.entry_id, 160);
+      const sourceText = safeAuditText(bullet.bullet_text, 1200);
+      if (!entryId || !sourceText) continue;
+      pointers.push({
+        entryId,
+        evidenceId: legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1),
+        sourceText,
+        normalizedSourceText: normalizeEvidenceText(sourceText),
+        senioritySignal: hasSenioritySignal([bullet.title, bullet.company, sourceText]),
+      });
+    }
   }
-  const rows = allRows<{
-    entry_id: string;
-    title: string;
-    company: string;
-    bullet_index: number;
-    bullet_text: string;
-  }>(
-    db,
-    `SELECT entries.entry_id,
-            entries.title,
-            entries.company,
-            bullets.bullet_index,
-            bullets.bullet_text
-       FROM candidate_profile_experience_entries AS entries
-       JOIN candidate_profile_experience_bullets AS bullets
-         ON bullets.tenant_id = entries.tenant_id
-        AND bullets.profile_id = entries.profile_id
-        AND bullets.entry_id = entries.entry_id
-      WHERE entries.tenant_id = ?
-        AND entries.profile_id = ?
-        AND TRIM(bullets.bullet_text) != ''
-      ORDER BY entries.position_index, bullets.bullet_index`,
-    [tenantId, DEFAULT_PROFILE_ID],
-  );
-  for (const bullet of rows) {
-    const entryId = safeAuditText(bullet.entry_id, 160);
-    const sourceText = safeAuditText(bullet.bullet_text, 1200);
-    if (!entryId || !sourceText) continue;
+  addSkillSourcePointers(db, tenantId, pointers);
+  return pointers;
+}
+
+function addSkillSourcePointers(db: SqliteDatabase, tenantId: string, pointers: ProfileEvidencePointer[]): void {
+  const hasSkillCategoryLabels = tableExists(db, "candidate_profile_skill_categories");
+  const grouped = new Map<string, { label: string; skills: string[] }>();
+  if (tableExists(db, "candidate_profile_skill_items")) {
+    const rows = allRows<{
+      category_id: string;
+      label: string;
+      skill_index: number;
+      skill_text: string;
+    }>(
+      db,
+      hasSkillCategoryLabels
+        ? `SELECT skills.category_id,
+                  COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label,
+                  skills.item_index AS skill_index,
+                  skills.item_text AS skill_text
+             FROM candidate_profile_skill_items AS skills
+             LEFT JOIN candidate_profile_skill_categories AS categories
+               ON categories.tenant_id = skills.tenant_id
+              AND categories.profile_id = skills.profile_id
+              AND categories.category_id = skills.category_id
+            WHERE skills.tenant_id = ?
+              AND skills.profile_id = ?
+              AND TRIM(skills.category_id) != ''
+              AND TRIM(skills.item_text) != ''
+            ORDER BY categories.position_index, skills.item_index`
+        : `SELECT category_id,
+                  category_id AS label,
+                  item_index AS skill_index,
+                  item_text AS skill_text
+             FROM candidate_profile_skill_items
+            WHERE tenant_id = ?
+              AND profile_id = ?
+              AND TRIM(category_id) != ''
+              AND TRIM(item_text) != ''
+            ORDER BY category_id, item_index`,
+      [tenantId, DEFAULT_PROFILE_ID],
+    );
+    appendSkillSourceGroups(grouped, rows);
+  }
+  if (tableExists(db, "candidate_profile_required_skills")) {
+    const rows = allRows<{
+      category_id: string;
+      label: string;
+      skill_index: number;
+      skill_text: string;
+    }>(
+      db,
+      hasSkillCategoryLabels
+        ? `SELECT skills.category_id,
+                  COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label,
+                  skills.skill_index,
+                  skills.skill_text
+             FROM candidate_profile_required_skills AS skills
+             LEFT JOIN candidate_profile_skill_categories AS categories
+               ON categories.tenant_id = skills.tenant_id
+              AND categories.profile_id = skills.profile_id
+              AND categories.category_id = skills.category_id
+            WHERE skills.tenant_id = ?
+              AND skills.profile_id = ?
+              AND TRIM(skills.category_id) != ''
+              AND TRIM(skills.skill_text) != ''
+            ORDER BY skills.category_id, skills.skill_index`
+        : `SELECT category_id,
+                  category_id AS label,
+                  skill_index,
+                  skill_text
+             FROM candidate_profile_required_skills
+            WHERE tenant_id = ?
+              AND profile_id = ?
+              AND TRIM(category_id) != ''
+              AND TRIM(skill_text) != ''
+            ORDER BY category_id, skill_index`,
+      [tenantId, DEFAULT_PROFILE_ID],
+    );
+    appendSkillSourceGroups(grouped, rows, { onlyMissingCategories: true });
+  }
+  for (const [categoryId, group] of grouped) {
+    const sourceText = `${group.label}: ${uniqueSourceTexts(group.skills).join(", ")}`;
     pointers.push({
-      entryId,
-      evidenceId: legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1),
+      entryId: categoryId,
+      evidenceId: skillCategoryEvidenceId(categoryId),
       sourceText,
       normalizedSourceText: normalizeEvidenceText(sourceText),
-      senioritySignal: hasSenioritySignal([bullet.title, bullet.company, sourceText]),
+      senioritySignal: hasSenioritySignal([categoryId, sourceText]),
     });
   }
-  return pointers;
+}
+
+function appendSkillSourceGroups(
+  grouped: Map<string, { label: string; skills: string[] }>,
+  rows: readonly { category_id: string; label: string; skill_index: number; skill_text: string }[],
+  options: { onlyMissingCategories?: boolean } = {},
+): void {
+  for (const row of rows) {
+    const categoryId = safeAuditText(row.category_id, 160);
+    if (!categoryId || (options.onlyMissingCategories && grouped.has(categoryId))) continue;
+    const label = safeAuditText(row.label, 160) || profileSkillCategoryLabel(categoryId);
+    const skillText = safeAuditText(row.skill_text, 220);
+    if (!skillText) continue;
+    const group = grouped.get(categoryId) ?? { label, skills: [] };
+    group.skills.push(skillText);
+    grouped.set(categoryId, group);
+  }
+}
+
+function uniqueSourceTexts(texts: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of texts) {
+    const text = safeAuditText(raw, 1200);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function skillCategoryEvidenceId(categoryId: string): string {
+  return `skills_${safeEvidenceId(categoryId) || "category"}`;
+}
+
+function profileSkillCategoryLabel(categoryId: string): string {
+  const words = categoryId.replace(/[_-]+/g, " ").trim();
+  if (!words) return "Skills";
+  return words.replace(/\b[a-z]/g, (char) => char.toUpperCase());
 }
 
 function matchProfileEvidencePointers(

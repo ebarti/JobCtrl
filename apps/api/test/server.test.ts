@@ -2306,7 +2306,7 @@ describe("local TypeScript API", () => {
       sourceId: "platform",
       evidenceIds: ["ev_platform"],
       requirementIds: ["req_iac"],
-      matchedKeywords: ["infrastructure as code"],
+      matchedKeywords: [],
       transformType: "reframe",
       control: "rephrase_allowed",
       generatedText: "Built infrastructure as code for the platform.",
@@ -2348,6 +2348,12 @@ describe("local TypeScript API", () => {
           covered: ["infrastructure as code"],
           missing: ["platform engineering"],
         },
+        bulletProvenance: [
+          expect.objectContaining({
+            bulletId: "experience:platform#0",
+            matchedKeywords: ["infrastructure as code"],
+          }),
+        ],
       },
     });
     // The file text (aws/gcp/java/observability) does NOT leak into the block.
@@ -2529,7 +2535,130 @@ describe("local TypeScript API", () => {
     expect(explanation.evidence.representedIds).toContain("acme_swe_bullet_1");
     expect(explanation.annotatedChanges[0].evidenceIds).toContain("acme_swe_bullet_1");
     expect(explanation.bulletProvenance[0].evidenceIds).toContain("acme_swe_bullet_1");
+    expect(explanation.bulletProvenance[0].sourceText).toEqual([
+      "Owned API latency 35% by replacing synchronous calls.",
+    ]);
     expect(explanation.quality.errors.join("\n")).not.toContain("profile evidence mapping");
+
+    await app.close();
+  });
+
+  it("resolves skill-category source text for bullet provenance", async () => {
+    const resumePath = path.join(tempDir, "tailoring-skill-source-resume.txt");
+    fs.writeFileSync(resumePath, "Leadership: Team Building & Mentoring, Global Teams (30+ engineers)");
+    const seedDb = new Database(options.dbPath);
+    createMaterialsTables(seedDb);
+    seedDb.exec(`
+      CREATE TABLE candidate_profile_skill_categories (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        position_index INTEGER NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (tenant_id, profile_id, category_id)
+      );
+      CREATE TABLE candidate_profile_skill_items (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        item_index INTEGER NOT NULL,
+        item_text TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id, category_id, item_index)
+      );
+      CREATE TABLE candidate_profile_required_skills (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        category_id TEXT NOT NULL,
+        skill_index INTEGER NOT NULL,
+        skill_text TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, profile_id, category_id, skill_index)
+      );
+      CREATE TABLE candidate_profile_achievement_evidence (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        evidence_index INTEGER NOT NULL,
+        evidence_id TEXT NOT NULL DEFAULT '',
+        source_text TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL DEFAULT '',
+        tools_json TEXT NOT NULL DEFAULT '[]',
+        metrics_json TEXT NOT NULL DEFAULT '[]',
+        outcome TEXT NOT NULL DEFAULT '',
+        seniority_signal TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (tenant_id, profile_id, entry_id, evidence_index)
+      );
+    `);
+    seedDb.prepare(`
+      INSERT INTO candidate_profile_skill_categories (
+        tenant_id, profile_id, category_id, position_index, label
+      ) VALUES ('local', 'default', 'leadership', 0, 'Leadership')
+    `).run();
+    const insertSkillItem = seedDb.prepare(`
+      INSERT INTO candidate_profile_skill_items (
+        tenant_id, profile_id, category_id, item_index, item_text
+      ) VALUES ('local', 'default', 'leadership', ?, ?)
+    `);
+    insertSkillItem.run(0, "Team Building & Mentoring");
+    insertSkillItem.run(1, "Global Teams (30+ engineers)");
+    seedDb.prepare(`
+      INSERT INTO candidate_profile_required_skills (
+        tenant_id, profile_id, category_id, skill_index, skill_text
+      ) VALUES ('local', 'default', 'leadership', 0, 'Wrong fallback skill')
+    `).run();
+    seedDb.prepare(`
+      INSERT INTO candidate_profile_achievement_evidence (
+        tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text
+      ) VALUES ('local', 'default', 'rider_law', 0, 'ev_rider_law', 'Preserved the Spanish market under aggressive legal deadlines.')
+    `).run();
+    insertJob(seedDb, {
+      url: "https://example.com/jobs/tailoring-skill-source",
+      title: "Engineering Director",
+      site: "EvidenceCo",
+      fitScore: 9,
+      tailoredPath: resumePath,
+      fullDescription: "Needs global team leadership.",
+    });
+    insertScore(seedDb, "https://example.com/jobs/tailoring-skill-source", 1, 9, {
+      keywords: ["global teams"],
+    });
+    insertMaterialsGeneration(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-skill-source",
+      artifactId: "artifact-tailoring-skill-source",
+      artifactType: "tailored_resume",
+      status: "approved",
+      path: resumePath,
+      metadata: completeTailoringAuditMetadata(),
+    });
+    insertBulletProvenanceRow(seedDb, {
+      jobUrl: "https://example.com/jobs/tailoring-skill-source",
+      artifactId: "artifact-tailoring-skill-source",
+      bulletId: "skills:leadership#0",
+      section: "skills",
+      sourceId: "leadership",
+      evidenceIds: ["ev_rider_law"],
+      requirementIds: ["req_leadership"],
+      matchedKeywords: ["global teams"],
+      transformType: "rephrase",
+      control: "rephrase_allowed",
+      rationale: "Skill ordering highlights job-matching signals while preserving profile skills.",
+      generatedText: "Leadership: Team Building & Mentoring, Global Teams (30+ engineers)",
+    });
+    seedDb.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/artifacts/artifact-tailoring-skill-source",
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const explanation = response.json().tailoringExplanation;
+    expect(explanation.bulletProvenance[0]).toMatchObject({
+      section: "skills",
+      sourceId: "leadership",
+      sourceText: ["Leadership: Team Building & Mentoring, Global Teams (30+ engineers)"],
+    });
 
     await app.close();
   });
@@ -3220,6 +3349,33 @@ describe("local TypeScript API", () => {
       path: artifact.localPath,
     });
     expect(opened).toEqual([artifact.localPath]);
+
+    await app.close();
+  });
+
+  it("serves a rendered PNG page preview for a known PDF artifact", async () => {
+    const rendered: Array<{ path: string; pageNumber: number }> = [];
+    const app = buildApp({
+      ...options,
+      artifactPdfPageRenderer: async (artifactPath, pageNumber) => {
+        rendered.push({ path: artifactPath, pageNumber });
+        return Buffer.from("png page");
+      },
+    });
+    const listResponse = await app.inject({ method: "GET", url: "/v1/artifacts?type=tailored_resume_pdf" });
+    const artifact = listResponse.json().items[0];
+    fs.writeFileSync(artifact.localPath, "%PDF test");
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/v1/artifacts/${encodeURIComponent(artifact.artifactId)}/preview/page/2.png`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers["content-type"]).toContain("image/png");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toBe("png page");
+    expect(rendered).toEqual([{ path: artifact.localPath, pageNumber: 2 }]);
 
     await app.close();
   });

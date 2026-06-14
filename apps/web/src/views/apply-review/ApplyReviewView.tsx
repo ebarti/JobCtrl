@@ -1,6 +1,10 @@
-import type { ApplyAuditFact, ApplyAuditSource, ApplyReviewQueueItem } from "@jobhunter/contracts";
+import type {
+  ApplyAuditFact,
+  ApplyAuditSource,
+  ApplyReviewQueueItem,
+} from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
@@ -11,7 +15,11 @@ import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
-import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
+import {
+  PdfAuditPreviewViewer,
+  type PdfAuditLineSelection,
+  type PdfAuditLineTarget,
+} from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
 type MaterialStatus = {
@@ -22,12 +30,13 @@ type MaterialStatus = {
 };
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
+type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
 
-interface RenderedResumeLine {
-  readonly lineNumber: number;
-  readonly text: string;
-  readonly kind: "blank" | "name" | "contact" | "section" | "metadata" | "bullet" | "body";
-}
+const SCORE_DIMENSIONS: ReadonlyArray<[ScoreDimensionKey, string]> = [
+  ["technicalFit", "Technical fit"],
+  ["experienceFit", "Experience fit"],
+  ["roleFit", "Role fit"],
+];
 
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
   return {
@@ -118,11 +127,75 @@ function activeApplyRun(item: ApplyReviewQueueItem): ApplyRun | null {
 
 function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; values: readonly string[] }> {
   return [
-    { label: "Matched", values: item.position.matched },
-    { label: "Missing", values: item.position.missing },
-    { label: "Transferable", values: item.position.transferable },
-    { label: "Keywords", values: item.position.keywords },
+    { label: "Profile evidence matched by scorer", values: item.position.matched },
+    { label: "Transferable profile evidence", values: item.position.transferable },
+    { label: "Job keywords used by scorer", values: item.position.keywords },
   ].filter((group) => group.values.length > 0);
+}
+
+function formatRequirementTier(tier: string | null): string | null {
+  const text = tier?.replace(/[_-]+/g, " ").trim();
+  return text || null;
+}
+
+function formatRequirementWeight(weight: number | null): string | null {
+  if (weight === null || !Number.isFinite(weight)) {
+    return null;
+  }
+  const percent = weight <= 1 ? weight * 100 : weight;
+  return `importance ${Math.round(percent)}%`;
+}
+
+function formatRequirementCoverage(
+  coverage: ApplyReviewQueueItem["position"]["idealRequirements"][number]["coverage"],
+): {
+  readonly label: string;
+  readonly tone: "muted" | "ok" | "warn";
+  readonly title: string;
+} {
+  if (coverage.state === "covered") {
+    return {
+      label: "covered in tailored resume",
+      tone: "ok",
+      title: "This requirement is linked to generated resume bullet provenance.",
+    };
+  }
+  if (coverage.state === "not_covered") {
+    return {
+      label: "not covered in tailored resume",
+      tone: "warn",
+      title: "Tailored resume bullet provenance was recorded, but no bullet is linked to this requirement.",
+    };
+  }
+  return {
+    label: "coverage not recorded",
+    tone: "muted",
+    title: "No tailored resume bullet provenance was recorded for this selected material.",
+  };
+}
+
+function formatBulletCount(count: number): string {
+  return `${count} resume bullet${count === 1 ? "" : "s"}`;
+}
+
+function formatScoreValue(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "not scored";
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function formatScoreBasis(item: ApplyReviewQueueItem): string | null {
+  const rawScore = item.scoreTrace?.rawWeightedScore;
+  if (rawScore === null || rawScore === undefined) {
+    return null;
+  }
+  const adjustment = item.scoreTrace?.calibrationAdjustment ?? 0;
+  if (!adjustment) {
+    return `Numeric basis: weighted dimension score ${formatScoreValue(rawScore)}/10 with no adjustment.`;
+  }
+  const sign = adjustment > 0 ? "+" : "";
+  return `Numeric basis: weighted dimension score ${formatScoreValue(rawScore)}/10 with ${sign}${adjustment} adjustment.`;
 }
 
 function sourceFacts(item: ApplyReviewQueueItem): ApplyAuditFact[] {
@@ -240,24 +313,133 @@ function ApplyReviewQueue({
 
 function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) {
   const groups = evidenceValues(item);
-  if (!groups.length) {
-    return <Empty title="No scoring requirement evidence captured yet." />;
+  const scoreBasis = formatScoreBasis(item);
+  const scoreReasoning = item.scoreBreakdown?.reasoning || item.scoreReasoning;
+  const hasIdealProfile = Boolean(item.position.idealCandidate || item.position.idealRequirements.length);
+  const hasScoreRationale = Boolean(item.scoreBreakdown || scoreReasoning || item.fitScore !== null);
+  if (!hasIdealProfile && !groups.length && !hasScoreRationale) {
+    return <Empty title="No job-need or scoring evidence captured yet." />;
   }
   return (
-    <dl className="apply-review-evidence-list">
-      {groups.map((group) => (
-        <div key={group.label}>
-          <dt>{group.label}</dt>
-          <dd>
-            {group.values.map((value) => (
-              <span className="tag muted" key={value}>
-                {value}
-              </span>
-            ))}
-          </dd>
+    <div className="apply-review-fit-evidence">
+      {hasIdealProfile ? (
+        <div className="apply-review-ideal-profile">
+          {item.position.idealCandidate ? (
+            <section>
+              <h4>Ideal profile from job post</h4>
+              <p>{item.position.idealCandidate}</p>
+            </section>
+          ) : null}
+          {item.position.idealRequirements.length ? (
+            <section>
+              <h4>Job needs from posting</h4>
+              <ol className="apply-review-ideal-requirements">
+                {item.position.idealRequirements.map((requirement) => {
+                  const tier = formatRequirementTier(requirement.tier);
+                  const weight = formatRequirementWeight(requirement.weight);
+                  const coverage = formatRequirementCoverage(requirement.coverage);
+                  return (
+                    <li key={`${requirement.id}:${requirement.text}`}>
+                      <div className="apply-review-ideal-requirement-head">
+                        <b>{requirement.text}</b>
+                        <span>
+                          <span className={`tag ${coverage.tone}`} title={coverage.title}>
+                            {coverage.label}
+                          </span>
+                          {requirement.coverage.state === "covered" ? (
+                            <span className="tag muted">
+                              {formatBulletCount(requirement.coverage.bulletCount)}
+                            </span>
+                          ) : null}
+                          {tier ? <span className="tag muted">{tier}</span> : null}
+                          {weight ? (
+                            <span
+                              className="tag muted"
+                              title="Relative priority from job-post analysis, not a match score"
+                            >
+                              {weight}
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                      {requirement.evidence ? (
+                        <p className="meta">Job post evidence: {requirement.evidence}</p>
+                      ) : null}
+                      {requirement.coverage.examples.length ? (
+                        <p className="meta">
+                          Tailored resume evidence: {requirement.coverage.examples.join("; ")}
+                        </p>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ) : null}
         </div>
-      ))}
-    </dl>
+      ) : null}
+      {hasScoreRationale ? (
+        <section className="apply-review-score-evidence apply-review-score-rationale" aria-label="Fit score rationale">
+          <h4>Why fit score is {formatScoreValue(item.fitScore)}/10</h4>
+          {scoreReasoning ? (
+            <p>{scoreReasoning}</p>
+          ) : (
+            <p className="meta">No score rationale was stored for this job.</p>
+          )}
+          {item.scoreBreakdown ? (
+            <div className="score-dimensions" aria-label="Score dimensions">
+              {SCORE_DIMENSIONS.map(([key, label]) => (
+                <div className="score-dimension" key={key}>
+                  <span>{label}</span>
+                  <b>{formatScoreValue(item.scoreBreakdown?.[key])} / 10</b>
+                </div>
+              ))}
+              <div className="score-dimension">
+                <span>Fit band</span>
+                <b>{item.scoreBreakdown.fitBand}</b>
+              </div>
+              <div className="score-dimension">
+                <span>Confidence</span>
+                <b>{item.scoreBreakdown.confidence}</b>
+              </div>
+              <div className="score-dimension">
+                <span>Eligibility</span>
+                <b>{item.scoreBreakdown.eligibility.status}</b>
+              </div>
+            </div>
+          ) : null}
+          {scoreBasis ? <p className="meta">{scoreBasis}</p> : null}
+          <dl className="apply-review-evidence-list">
+            {groups.map((group) => (
+              <div key={group.label}>
+                <dt>{group.label}</dt>
+                <dd>
+                  {group.values.map((value) => (
+                    <span className="tag muted" key={value}>
+                      {value}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ))}
+            <div>
+              <dt>Profile gaps found by scorer</dt>
+              <dd>
+                {item.position.missing.length ? (
+                  item.position.missing.map((value) => (
+                    <span className="tag muted" key={value}>
+                      {value}
+                    </span>
+                  ))
+                ) : (
+                  <span className="meta">No missing profile evidence recorded by the scorer.</span>
+                )}
+              </dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -278,133 +460,28 @@ function TextPreview({
   );
 }
 
-const RENDERED_RESUME_SECTION_HEADINGS = new Set([
-  "certifications",
-  "core skills",
-  "education",
-  "executive profile",
-  "experience",
-  "languages",
-  "professional profile",
-  "profile",
-  "projects",
-  "skills",
-  "summary",
-  "technical skills",
-]);
-
-function isRenderedResumeSectionHeading(text: string): boolean {
-  return RENDERED_RESUME_SECTION_HEADINGS.has(text.toLowerCase());
-}
-
-function renderedResumeLines(resumeText: string | null | undefined): RenderedResumeLine[] {
-  let firstContentLine = true;
+function resumeLineTargets(resumeText: string | null | undefined): PdfAuditLineTarget[] {
   return (resumeText ?? "")
     .split(/\r?\n/)
-    .map((line, index) => {
-      const text = line.replace(/\t/g, "  ").trimEnd();
-      const normalized = text.trim();
-      if (!normalized) {
-        return {
-          lineNumber: index + 1,
-          text: "",
-          kind: "blank" as const,
-        };
-      }
-      const kind = firstContentLine
-        ? "name"
-        : isRenderedResumeSectionHeading(normalized)
-          ? "section"
-          : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(normalized)
-            ? "contact"
-            : /^[-•○]\s+/.test(normalized)
-              ? "bullet"
-              : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(normalized)
-                ? "metadata"
-                : "body";
-      firstContentLine = false;
-      return {
-        lineNumber: index + 1,
-        text,
-        kind,
-      };
-    });
+    .map((line, index) => ({
+      lineNumber: index + 1,
+      text: line.replace(/\t/g, "  ").trimEnd(),
+    }))
+    .filter((line) => line.text.trim().length > 0);
 }
 
-function RenderedResumeLineReview({
-  resumeText,
-  selectedLineNumber,
+function PdfResumeLineReview({
+  item,
+  selectedLine,
   onSelectLine,
 }: {
-  readonly resumeText: string | null | undefined;
-  readonly selectedLineNumber: number | null;
-  readonly onSelectLine: (lineNumber: number) => void;
+  readonly item: ApplyReviewQueueItem;
+  readonly selectedLine: PdfAuditLineSelection | null;
+  readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
-  const lines = renderedResumeLines(resumeText);
-  const selectedLineRef = useRef<HTMLLIElement | null>(null);
-
-  useEffect(() => {
-    if (typeof selectedLineRef.current?.scrollIntoView === "function") {
-      selectedLineRef.current.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedLineNumber]);
-
-  return (
-    <section className="apply-review-preview-block apply-review-text-resume" aria-label="Rendered resume line review">
-      <h3 className="sr-only">Rendered resume line review</h3>
-      <p className="sr-only">
-        Select a rendered line to inspect provenance and risk. The faithful PDF preview remains below for visual
-        verification.
-      </p>
-      {lines.some((line) => line.kind !== "blank") ? (
-        <ol className="resume-line-review-list resume-line-review-page" aria-label="Rendered resume text lines">
-          {lines.map((line) => {
-            const selected = line.lineNumber === selectedLineNumber;
-            if (line.kind === "blank") {
-              return (
-                <li
-                  aria-hidden="true"
-                  className="resume-line-review-line blank"
-                  data-line-kind="blank"
-                  key={line.lineNumber}
-                  value={line.lineNumber}
-                />
-              );
-            }
-            return (
-              <li
-                className={`resume-line-review-line${selected ? " selected" : ""}`}
-                data-line-kind={line.kind}
-                key={line.lineNumber}
-                ref={selected ? selectedLineRef : undefined}
-                value={line.lineNumber}
-              >
-                <button
-                  aria-label={`Line ${line.lineNumber}: ${line.text}`}
-                  aria-pressed={selected}
-                  className="resume-line-review-button"
-                  type="button"
-                  onClick={() => onSelectLine(line.lineNumber)}
-                >
-                  <span aria-hidden="true" className="resume-line-review-number">
-                    {line.lineNumber}
-                  </span>
-                  <span className="resume-line-review-text">{line.text}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <Empty title="No rendered resume text is available for line review." />
-      )}
-    </section>
-  );
-}
-
-function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const { api } = usePorts();
   const artifactId = item.materialsPreview.resumePdfArtifactId;
+  const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
   if (!artifactId) {
     return (
       <TextPreview
@@ -415,16 +492,20 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
     );
   }
   return (
-    <section className="apply-review-preview-block apply-review-pdf-preview">
-      <h3>Tailored resume</h3>
-      <PdfPreviewViewer
+    <section className="apply-review-preview-block apply-review-pdf-line-review" aria-label="PDF resume line review">
+      <h3 className="sr-only">PDF resume line review</h3>
+      <PdfAuditPreviewViewer
         cacheKey={`${artifactId}:${item.jobKey}`}
+        lineTargets={lineTargets}
         loadingMessage="The tailored resume PDF is loading into the in-app preview."
         loadingTitle="Rendering tailored resume."
         openLabel="open PDF"
+        selectedLineKey={selectedLine?.lineKey ?? null}
+        selectedLineNumber={selectedLine?.lineNumber ?? null}
         pageAltPrefix={`${item.title} tailored resume`}
         title="Tailored resume PDF"
         url={api.artifactPreviewPdfUrl(artifactId, `${artifactId}:${item.jobKey}`)}
+        onSelectLine={onSelectLine}
       />
     </section>
   );
@@ -432,30 +513,28 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
 
 function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
-  const [selectedLineNumber, setSelectedLineNumber] = useState<number | null>(null);
+  const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
 
   useEffect(() => {
-    setSelectedLineNumber(null);
+    setSelectedLine(null);
   }, [item.jobKey]);
 
   return (
-    <section className="apply-review-preview-block apply-review-resume-review" aria-label="Rendered resume audit">
+    <section className="apply-review-preview-block apply-review-resume-review" aria-label="PDF resume audit">
       <div className="apply-review-resume-main">
-        <RenderedResumeLineReview
-          resumeText={item.materialsPreview.resumeText}
-          selectedLineNumber={selectedLineNumber}
-          onSelectLine={setSelectedLineNumber}
+        <PdfResumeLineReview
+          item={item}
+          selectedLine={selectedLine}
+          onSelectLine={setSelectedLine}
         />
-        <div className="apply-review-faithful-resume">
-          <ResumePreview item={item} />
-        </div>
       </div>
       {auditArtifactId ? (
         <ResumeAuditPins
           artifactId={auditArtifactId}
+          profileSourceFields={item.materialsPreview.profileSourceFields}
           resumeText={item.materialsPreview.resumeText}
-          selectedLineNumber={selectedLineNumber}
-          onSelectedLineNumberChange={setSelectedLineNumber}
+          selectedLine={selectedLine}
+          onSelectedLineChange={setSelectedLine}
         />
       ) : (
         <section className="apply-review-resume-pins" aria-label="Line-by-line resume audit">
@@ -469,7 +548,6 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
 
 function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const status = materialStatus(item);
-  const evidenceGroups = evidenceValues(item).length;
   const reviewState = reviewStateLabel(item);
   const activeRun = activeApplyRun(item);
   const resumeAuditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
@@ -534,10 +612,6 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
           <div className="apply-review-pane-scroll">
             <section className="apply-review-preview-block">
               <h3>Requirement evidence</h3>
-              <p className="meta">
-                Derived from existing scoring evidence for this v1 review workspace.
-                {evidenceGroups ? ` ${evidenceGroups} evidence group${evidenceGroups === 1 ? "" : "s"} available.` : ""}
-              </p>
               <RequirementEvidence item={item} />
             </section>
             <section className="apply-review-preview-block">

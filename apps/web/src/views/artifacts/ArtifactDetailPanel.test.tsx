@@ -277,7 +277,10 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.queryByText("none recorded")).not.toBeInTheDocument();
     expect(screen.getByText("91% / minimum 82%")).toBeInTheDocument();
     expect(screen.getByText("Review outcome")).toBeInTheDocument();
-    expect(screen.getByText("Accepted residual warnings")).toBeInTheDocument();
+    expect(screen.getByText("Residual warnings after automated review")).toBeInTheDocument();
+    expect(screen.getByText("Warning decision source")).toBeInTheDocument();
+    expect(screen.getByText("Material generation workflow; no human approver recorded.")).toBeInTheDocument();
+    expect(screen.queryByText("Accepted residual warnings")).not.toBeInTheDocument();
     expect(screen.getByText("Warning repair attempted")).toBeInTheDocument();
     expect(screen.getAllByText("Bullet could be more concise.").length).toBeGreaterThan(0);
     expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();

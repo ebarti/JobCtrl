@@ -34,6 +34,7 @@ from jobhunter.domain.materials.adversarial import ADVERSARIAL_REVIEW_RESPONSE_S
 from jobhunter.domain.materials.aggregate import MaterialsLifecycle
 from jobhunter.domain.materials.services import ContentValidator, ResumeAssembler
 from jobhunter.domain.materials.use_cases import (
+    COVER_LETTER_COMPLETION_MARKER,
     GenerateCoverLetterUseCase,
     RenderPdfUseCase,
     TAILORED_RESUME_RESPONSE_SCHEMA,
@@ -1251,7 +1252,11 @@ def test_cover_letter_use_case_happy_path(
     )
     repo.save(materials)
     llm = _ScriptedLlm([
-        "Dear Hiring Manager, I built distributed systems. Best, Jane",
+        (
+            "Dear Hiring Manager,\n\n"
+            "I built distributed systems that map to this role.\n\n"
+            f"Jane\n{COVER_LETTER_COMPLETION_MARKER}"
+        ),
     ])
     publisher = _RecordingPublisher()
     use_case = GenerateCoverLetterUseCase(
@@ -1265,7 +1270,70 @@ def test_cover_letter_use_case_happy_path(
     )
     assert outcome.status == "ok"
     assert outcome.text_path is not None
+    saved_text = Path(outcome.text_path).read_text(encoding="utf-8")
+    assert COVER_LETTER_COMPLETION_MARKER not in saved_text
+    assert saved_text.endswith("Jane")
+    assert llm.kwargs[0]["max_tokens"] == 8192
+    assert "thinking_budget" not in llm.kwargs[0]
+    assert COVER_LETTER_COMPLETION_MARKER in llm.calls[0][0].content
     assert any(getattr(e, "event_type", "") == "CoverLetterGenerated" for e in publisher.events)
+
+
+def test_cover_letter_use_case_retries_when_completion_marker_missing(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict
+) -> None:
+    repo = _FakeRepository()
+    resume_path = tmp_path / "resume.txt"
+    resume_path.write_text("Tailored resume body", encoding="utf-8")
+    materials = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME,
+            path=str(resume_path),
+            created_at="2024-01-01T00:00:00+00:00",
+            render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(),
+        verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-02T00:00:00+00:00",
+    ).with_resume_pdf(
+        Artifact.create(
+            type=ArtifactType.RESUME_PDF,
+            path=str(tmp_path / "resume.pdf"),
+            created_at="2024-01-02T01:00:00+00:00",
+            render_format=RenderFormat.LATEX_PDF,
+        ),
+        updated_at="2024-01-02T01:00:00+00:00",
+    )
+    repo.save(materials)
+    llm = _ScriptedLlm([
+        "Dear Hiring Manager,\n\nI built distributed systems that map to this role.\n\nJane",
+        (
+            "Dear Hiring Manager,\n\n"
+            "I built distributed systems that map to this role.\n\n"
+            f"Jane\n{COVER_LETTER_COMPLETION_MARKER}"
+        ),
+    ])
+    use_case = GenerateCoverLetterUseCase(
+        repository=repo,
+        llm=llm,
+        validator=ContentValidator(),
+    )
+
+    outcome = use_case.execute(
+        job=job, profile_snapshot=snapshot, cover_letter_dir=tmp_path
+    )
+
+    assert outcome.status == "ok"
+    assert len(llm.calls) == 2
+    assert "Missing END_OF_COVER_LETTER completion marker" in llm.calls[1][0].content
+    assert outcome.text_path is not None
+    assert COVER_LETTER_COMPLETION_MARKER not in Path(outcome.text_path).read_text(
+        encoding="utf-8"
+    )
 
 
 # ---------------------------------------------------------------------------

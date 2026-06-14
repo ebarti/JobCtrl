@@ -103,6 +103,12 @@ FABRICATION_WATCHLIST: set[str] = {
     "certified", "pmp", "scrum master", "aws certified",
 }
 
+_COVER_LETTER_CLOSING_RE = re.compile(
+    r"^(?:(?:best|sincerely|regards|kind regards|warm regards|thanks|thank you),?\s+)?"
+    r"[A-Z][A-Za-z .'-]{1,60}$",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers (formerly module-private in scoring/validator.py)
@@ -401,6 +407,15 @@ def _validate_cover_letter(text: str, mode: str = "normal") -> ValidationResult:
     stripped = text.strip()
     if not stripped.lower().startswith("dear"):
         errors.append("Must start with 'Dear Hiring Manager,'")
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    closing_line = lines[-1] if lines else ""
+    if (
+        len(lines) < 3
+        or len(closing_line.split()) > 6
+        or closing_line.endswith((".", "!", "?"))
+        or not _COVER_LETTER_CLOSING_RE.fullmatch(closing_line)
+    ):
+        errors.append("Must end with a short closing/sign-off line.")
 
     if errors:
         return ValidationResult.failure(tuple(errors), warnings=tuple(warnings))

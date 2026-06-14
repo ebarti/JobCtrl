@@ -132,7 +132,9 @@ describe("<JobDetailDrawer>", () => {
     expect(within(triage).getByText("Strong fit on platform reliability.")).toBeInTheDocument();
     expect(within(triage).getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(within(triage).getByText("public company scale")).toBeInTheDocument();
-    expect(within(triage).getByText("missing apply link")).toBeInTheDocument();
+    const readiness = within(drawer).getByLabelText("Apply readiness");
+    expect(within(readiness).getByText("missing apply link")).toBeInTheDocument();
+    expect(within(triage).getByText("Apply concerns")).toBeInTheDocument();
     expect(
       within(triage).getByText("Missing apply link: No application or posting URL is recorded, so apply review cannot proceed."),
     ).toBeInTheDocument();
@@ -144,7 +146,12 @@ describe("<JobDetailDrawer>", () => {
     expect(handoffUrl.pathname).toBe("/apply-review");
     expect(handoffUrl.searchParams.get("jobKey")).toBe("https://example.com/jobs/1");
     expect(screen.getByText("Preparation diagnostics")).toBeInTheDocument();
-    expect(screen.getByText("Score breakdown")).toBeInTheDocument();
+    expect(screen.queryByText("Score breakdown")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tailoring rationale")).not.toBeInTheDocument();
+    const description = screen.getByText("Description").closest("section");
+    expect(description).not.toBeNull();
+    expect(description).toHaveClass("job-detail-description");
+    expect(triage.compareDocumentPosition(description as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows a not-found state instead of the raw API 404 for missing jobs", async () => {
@@ -189,7 +196,7 @@ describe("<JobDetailDrawer>", () => {
     const sections = Array.from(drawer.querySelectorAll("section.section"));
     expect(sections.at(-1)).toContainElement(auditDisclosure);
     expect(sections.at(-1)).toHaveTextContent("Audit history");
-    expect(sections.at(-2)).toHaveTextContent("Description");
+    expect(sections[1]).toHaveTextContent("Description");
 
     await user.click(auditSummary);
     expect(auditDisclosure).toHaveAttribute("open");

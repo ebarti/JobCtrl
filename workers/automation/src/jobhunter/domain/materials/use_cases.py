@@ -155,6 +155,7 @@ TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "ats_readability",
     "specificity_and_metrics",
 )
+COVER_LETTER_COMPLETION_MARKER = "END_OF_COVER_LETTER"
 
 
 def _score_schema() -> dict[str, Any]:
@@ -352,6 +353,17 @@ def _strip_preamble(text: str) -> str:
     if dear_idx > 0:
         return text[dear_idx:]
     return text
+
+
+def _strip_cover_letter_completion_marker(text: str) -> tuple[str, bool]:
+    """Remove the internal cover-letter completion marker from model output."""
+    marker_line = re.compile(
+        rf"(?im)^\s*{re.escape(COVER_LETTER_COMPLETION_MARKER)}\s*$"
+    )
+    match = marker_line.search(text)
+    if match is None:
+        return text.rstrip(), False
+    return text[: match.start()].rstrip(), True
 
 
 def _extract_json(raw: str) -> dict:
@@ -775,6 +787,18 @@ def build_cover_letter_prompt(snapshot: ProfileSnapshot) -> str:
 
 STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
 
+REQUIRED OUTPUT SHAPE:
+Dear Hiring Manager,
+
+[paragraph 1]
+
+[paragraph 2]
+
+[paragraph 3]
+
+{sign_off_name}
+{COVER_LETTER_COMPLETION_MARKER}
+
 PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
 
 PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
@@ -802,8 +826,11 @@ Do NOT mention ANY tool not in this list. If the job asks for tools not listed, 
 
 Sign off: just "{sign_off_name}"
 
-Output ONLY the letter text. No subject lines. No "Here is the cover letter:" preamble. No notes after the sign-off.
-Start DIRECTLY with "Dear Hiring Manager," and end with the name."""
+The final line must be exactly {COVER_LETTER_COMPLETION_MARKER}. This internal completion marker proves the response was not cut off; it is stripped before saving.
+Never stop after a partial sentence. If you are running long, use fewer words, but always include the sign-off name and the completion marker.
+
+Output ONLY the letter text plus the required completion marker. No subject lines. No "Here is the cover letter:" preamble. No notes after the marker.
+Start DIRECTLY with "Dear Hiring Manager," and end with the completion marker."""
 
 
 # ---------------------------------------------------------------------------
@@ -2338,11 +2365,24 @@ class GenerateCoverLetterUseCase:
                     ),
                 ),
             ]
-            raw = self._llm.chat(messages, max_tokens=1024, temperature=0.7)
+            raw = self._llm.chat(
+                messages,
+                max_tokens=8192,
+                temperature=0.7,
+            )
             letter = sanitize_text(raw)
             letter = _strip_preamble(letter)
+            letter, has_completion_marker = _strip_cover_letter_completion_marker(letter)
 
             validation = self._validator.validate_cover_letter(letter, mode=validation_mode)
+            if not has_completion_marker:
+                validation = ValidationResult.failure(
+                    (
+                        *validation.errors,
+                        f"Missing {COVER_LETTER_COMPLETION_MARKER} completion marker.",
+                    ),
+                    warnings=validation.warnings,
+                )
             last_validation = validation
             if validation.passed:
                 return letter, validation

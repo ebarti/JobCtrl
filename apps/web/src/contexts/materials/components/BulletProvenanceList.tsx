@@ -22,6 +22,9 @@ function originalTextFor(
   entry: BulletProvenanceEntry,
   annotatedChanges: readonly AnnotatedChange[],
 ): string[] | null {
+  if (entry.sourceText.length) {
+    return [...entry.sourceText];
+  }
   const match = annotatedChanges.find(
     (change) => change.section === entry.section && change.sourceId === entry.sourceId,
   );

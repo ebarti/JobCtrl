@@ -1,20 +1,15 @@
 import { JobHunterApiError } from "@jobhunter/api-client";
-import type { ArtifactSummary, JobAuditEntry, StageSummary } from "@jobhunter/contracts";
+import type { JobAuditEntry, StageSummary } from "@jobhunter/contracts";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import { JobOutcomePanel } from "../../contexts/apply/components/ApplicationOutcomes.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
-import { ArtifactTailoringInspector } from "../../contexts/materials/components/ArtifactTailoringInspector.js";
 import { EmployerAnalysisPanel } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
-import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
-import { ScoreBreakdown } from "../../contexts/scoring/components/ScoreBreakdown.js";
-import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
-import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
@@ -43,17 +38,6 @@ function canRetryStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && ["failed", "exhausted"].includes(stage.state));
 }
 
-// Prefer the rendered PDF (provenance/coverage hang off it), else the text resume.
-const TAILORED_RESUME_TYPES = ["tailored_resume_pdf", "resume_pdf", "tailored_resume", "tailored_resume_txt"];
-
-function tailoredResumeArtifact(artifacts: readonly ArtifactSummary[]): ArtifactSummary | undefined {
-  for (const type of TAILORED_RESUME_TYPES) {
-    const match = artifacts.find((artifact) => artifact.type === type);
-    if (match) return match;
-  }
-  return undefined;
-}
-
 function JobAuditHistorySection({
   entries,
 }: {
@@ -80,7 +64,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const currentSubstage = detail?.stages.find(
     (stage) => stage.stage === detail.job.currentSubstage,
   );
-  const resumeArtifact = detail ? tailoredResumeArtifact(detail.artifacts) : undefined;
 
   return (
     <DetailDrawerBackdrop onDismiss={onClose}>
@@ -100,6 +83,10 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             <JobOverview detail={detail} />
             <div className="job-detail-drawer-content">
               <JobAuditTriage detail={detail} />
+              <section className="section job-detail-description">
+                <h3>Description</h3>
+                <JobDescription text={detail.job.descriptionPreview} />
+              </section>
               <JobActions
                 jobId={detail.job.jobKey}
                 currentStage={detail.job.currentSubstage}
@@ -131,51 +118,11 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   )}
                 </Section>
                 <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section" />
-                {resumeArtifact ? (
-                  <ArtifactTailoringInspector
-                    artifactId={resumeArtifact.artifactId}
-                    className="section"
-                  />
-                ) : null}
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />
                 </Section>
                 <Section title="Application outcomes">
                   <JobOutcomePanel jobId={detail.job.jobKey} />
-                </Section>
-                <Section title="Score breakdown">
-                  {detail.job.scoreStaleness.isStale ? (
-                    <div className="score-policy-row">
-                      <ScoreStalenessBadge staleness={detail.job.scoreStaleness} />
-                      <span className="muted">
-                        scoring policy updated; reset this score before rescoring
-                      </span>
-                      <ResetStaleScoresButton
-                        className="tab on"
-                        jobKeys={[detail.job.jobKey]}
-                        label="reset for rescore"
-                        staleCount={1}
-                      />
-                    </div>
-                  ) : null}
-                  <ScoreBreakdown
-                    fitScore={detail.job.fitScore}
-                    scoreBreakdown={detail.job.scoreBreakdown}
-                    scoreKeywords={detail.job.scoreKeywords}
-                    scoreReasoning={detail.job.scoreReasoning}
-                    scoreVersion={detail.job.scoreVersion}
-                    scoredAt={detail.job.scoredAt}
-                    scoreCriteria={detail.job.scoreCriteria}
-                    scoreTrace={detail.job.scoreTrace}
-                    scoreCorrection={detail.job.scoreCorrection}
-                  />
-                  <ScoreCorrectionControl
-                    jobId={detail.job.jobKey}
-                    currentScore={detail.job.fitScore}
-                  />
-                </Section>
-                <Section title="Description">
-                  <JobDescription text={detail.job.descriptionPreview} />
                 </Section>
                 <JobAuditHistorySection entries={detail.auditHistory} />
               </div>
