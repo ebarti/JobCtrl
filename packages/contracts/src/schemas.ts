@@ -250,6 +250,12 @@ export interface ApplyReviewIdealRequirement {
   tier: string | null;
   weight: number | null;
   evidence: string | null;
+  coverage: {
+    state: "covered" | "not_covered" | "not_recorded";
+    source: "tailored_resume_bullet_provenance";
+    bulletCount: number;
+    examples: string[];
+  };
 }
 
 export interface ApplyReviewPositionEvidence {

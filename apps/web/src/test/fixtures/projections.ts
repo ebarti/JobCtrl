@@ -220,6 +220,12 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
             tier: "must_have",
             weight: 0.9,
             evidence: "lead platform reliability",
+            coverage: {
+              state: "covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 2,
+              examples: ["Owned platform reliability improvements for incident response."],
+            },
           },
           {
             id: "r2",
@@ -227,6 +233,12 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
             tier: "important",
             weight: 0.7,
             evidence: "incident response, and developer experience improvements",
+            coverage: {
+              state: "not_covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 0,
+              examples: [],
+            },
           },
         ],
         requirements: ["platform reliability", "SRE leadership", "incident response"],

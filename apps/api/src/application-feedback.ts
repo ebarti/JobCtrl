@@ -641,7 +641,13 @@ function reviewQueueItemFromRow(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
   );
-  const idealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
+  const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
+  const idealRequirements = requirementsWithTailoredResumeCoverage(
+    db,
+    row.job_id,
+    rawIdealRequirements,
+    materialsPreview.resumeTextArtifactId,
+  );
   const scoreEvidenceRequirements = boundedEvidenceList([
     ...(scoreBreakdown?.matchedSignals ?? []),
     ...(scoreBreakdown?.missingSignals ?? []),
@@ -935,7 +941,83 @@ function idealRequirementFromValue(value: unknown, index: number): ApplyReviewId
       cleanLimitedText(data.evidence_span, IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT) ||
       cleanLimitedText(data.evidenceSpan, IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT) ||
       null,
+    coverage: emptyRequirementCoverage(),
   };
+}
+
+function emptyRequirementCoverage(): ApplyReviewIdealRequirement["coverage"] {
+  return {
+    state: "not_recorded",
+    source: "tailored_resume_bullet_provenance",
+    bulletCount: 0,
+    examples: [],
+  };
+}
+
+function requirementsWithTailoredResumeCoverage(
+  db: SqliteDatabase,
+  jobKey: string,
+  requirements: readonly ApplyReviewIdealRequirement[],
+  resumeTextArtifactId: string | null,
+): ApplyReviewIdealRequirement[] {
+  if (!requirements.length) {
+    return [];
+  }
+  if (!resumeTextArtifactId || !tableExists(db, "job_bullet_provenance")) {
+    return requirements.map((requirement) => ({ ...requirement, coverage: emptyRequirementCoverage() }));
+  }
+  const requirementIds = new Set(requirements.map((requirement) => requirement.id));
+  const rows = allRows<{
+    generated_text: string;
+    requirement_ids_json: string;
+  }>(
+    db,
+    `SELECT generated_text, requirement_ids_json
+       FROM job_bullet_provenance
+      WHERE tenant_id = ?
+        AND job_url = ?
+        AND artifact_id = ?
+      ORDER BY position, bullet_id`,
+    [DEFAULT_TENANT, jobKey, resumeTextArtifactId],
+  );
+  if (!rows.length) {
+    return requirements.map((requirement) => ({ ...requirement, coverage: emptyRequirementCoverage() }));
+  }
+
+  const covered = new Map<string, { bulletCount: number; examples: string[] }>();
+  for (const row of rows) {
+    const ids = parseStringListJson(row.requirement_ids_json).filter((id) => requirementIds.has(id));
+    if (!ids.length) continue;
+    const example = cleanLimitedText(row.generated_text, EVIDENCE_TEXT_LIMIT);
+    for (const id of ids) {
+      const current = covered.get(id) ?? { bulletCount: 0, examples: [] };
+      current.bulletCount += 1;
+      if (example && current.examples.length < 3) {
+        current.examples.push(example);
+      }
+      covered.set(id, current);
+    }
+  }
+
+  return requirements.map((requirement) => {
+    const hit = covered.get(requirement.id);
+    return {
+      ...requirement,
+      coverage: hit
+        ? {
+            state: "covered",
+            source: "tailored_resume_bullet_provenance",
+            bulletCount: hit.bulletCount,
+            examples: hit.examples,
+          }
+        : {
+            state: "not_covered",
+            source: "tailored_resume_bullet_provenance",
+            bulletCount: 0,
+            examples: [],
+          },
+    };
+  });
 }
 
 function cleanRequirementWeight(value: unknown): number | null {

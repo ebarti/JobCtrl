@@ -100,6 +100,12 @@ describe("application feedback API", () => {
             tier: "must_have",
             weight: 0.9,
             evidence: "lead platform reliability",
+            coverage: {
+              state: "covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 1,
+              examples: ["Owned platform reliability improvements for incident response."],
+            },
           },
           {
             id: "r2",
@@ -107,6 +113,12 @@ describe("application feedback API", () => {
             tier: "important",
             weight: 0.7,
             evidence: "developer experience improvements",
+            coverage: {
+              state: "not_covered",
+              source: "tailored_resume_bullet_provenance",
+              bulletCount: 0,
+              examples: [],
+            },
           },
         ],
         requirements: [
@@ -893,6 +905,25 @@ function seedDatabase(dbPath: string): void {
       created_at TEXT,
       size_bytes INTEGER
     );
+    CREATE TABLE job_bullet_provenance (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      bullet_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      artifact_id TEXT NOT NULL,
+      section TEXT NOT NULL,
+      source_id TEXT,
+      evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+      requirement_ids_json TEXT NOT NULL DEFAULT '[]',
+      matched_keywords_json TEXT NOT NULL DEFAULT '[]',
+      transform_type TEXT NOT NULL,
+      control TEXT NOT NULL,
+      rationale TEXT NOT NULL DEFAULT '',
+      generated_text TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, bullet_id)
+    );
     CREATE TABLE job_employer_analysis (
       job_url TEXT NOT NULL,
       generation INTEGER NOT NULL,
@@ -961,6 +992,7 @@ function seedDatabase(dbPath: string): void {
     "2026-05-31T09:00:00.000Z",
     "2026-05-31T09:01:00.000Z",
   );
+  insertBulletProvenance(db);
   db.close();
 }
 
@@ -1078,6 +1110,33 @@ function insertMaterials(
     rejectedResumePdfPath,
     "2026-06-01T11:00:00.000Z",
     22,
+  );
+}
+
+function insertBulletProvenance(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO job_bullet_provenance (
+       job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+       evidence_ids_json, requirement_ids_json, matched_keywords_json,
+       transform_type, control, rationale, generated_text, position, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    READY_JOB,
+    1,
+    "summary-1",
+    "local",
+    "apply-ready-resume-text",
+    "summary",
+    "exp-1",
+    JSON.stringify(["ev-platform"]),
+    JSON.stringify(["r1"]),
+    JSON.stringify(["platform reliability"]),
+    "rephrased",
+    "rephrase_allowed",
+    "Reframed the bullet toward platform reliability.",
+    "Owned platform reliability improvements for incident response.",
+    1,
+    NOW,
   );
 }
 

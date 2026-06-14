@@ -146,6 +146,38 @@ function formatRequirementWeight(weight: number | null): string | null {
   return `importance ${Math.round(percent)}%`;
 }
 
+function formatRequirementCoverage(
+  coverage: ApplyReviewQueueItem["position"]["idealRequirements"][number]["coverage"],
+): {
+  readonly label: string;
+  readonly tone: "muted" | "ok" | "warn";
+  readonly title: string;
+} {
+  if (coverage.state === "covered") {
+    return {
+      label: "covered in tailored resume",
+      tone: "ok",
+      title: "This requirement is linked to generated resume bullet provenance.",
+    };
+  }
+  if (coverage.state === "not_covered") {
+    return {
+      label: "not covered in tailored resume",
+      tone: "warn",
+      title: "Tailored resume bullet provenance was recorded, but no bullet is linked to this requirement.",
+    };
+  }
+  return {
+    label: "coverage not recorded",
+    tone: "muted",
+    title: "No tailored resume bullet provenance was recorded for this selected material.",
+  };
+}
+
+function formatBulletCount(count: number): string {
+  return `${count} resume bullet${count === 1 ? "" : "s"}`;
+}
+
 function formatScoreValue(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) {
     return "not scored";
@@ -305,11 +337,20 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                 {item.position.idealRequirements.map((requirement) => {
                   const tier = formatRequirementTier(requirement.tier);
                   const weight = formatRequirementWeight(requirement.weight);
+                  const coverage = formatRequirementCoverage(requirement.coverage);
                   return (
                     <li key={`${requirement.id}:${requirement.text}`}>
                       <div className="apply-review-ideal-requirement-head">
                         <b>{requirement.text}</b>
                         <span>
+                          <span className={`tag ${coverage.tone}`} title={coverage.title}>
+                            {coverage.label}
+                          </span>
+                          {requirement.coverage.state === "covered" ? (
+                            <span className="tag muted">
+                              {formatBulletCount(requirement.coverage.bulletCount)}
+                            </span>
+                          ) : null}
                           {tier ? <span className="tag muted">{tier}</span> : null}
                           {weight ? (
                             <span
@@ -323,6 +364,11 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                       </div>
                       {requirement.evidence ? (
                         <p className="meta">Job post evidence: {requirement.evidence}</p>
+                      ) : null}
+                      {requirement.coverage.examples.length ? (
+                        <p className="meta">
+                          Tailored resume evidence: {requirement.coverage.examples.join("; ")}
+                        </p>
                       ) : null}
                     </li>
                   );
