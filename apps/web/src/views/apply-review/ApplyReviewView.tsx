@@ -120,10 +120,10 @@ function activeApplyRun(item: ApplyReviewQueueItem): ApplyRun | null {
 
 function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; values: readonly string[] }> {
   return [
-    { label: "Matched", values: item.position.matched },
-    { label: "Missing", values: item.position.missing },
-    { label: "Transferable", values: item.position.transferable },
-    { label: "Keywords", values: item.position.keywords },
+    { label: "Matched job signals", values: item.position.matched },
+    { label: "Missing job signals", values: item.position.missing },
+    { label: "Transferable signals", values: item.position.transferable },
+    { label: "Job keywords", values: item.position.keywords },
   ].filter((group) => group.values.length > 0);
 }
 
