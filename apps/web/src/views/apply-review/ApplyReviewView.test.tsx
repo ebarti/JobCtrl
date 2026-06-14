@@ -341,12 +341,13 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("materials ready").length).toBeGreaterThan(0);
     expect(screen.getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(screen.getByText("public company scale")).toBeInTheDocument();
-    expect(screen.getByText("Matched job signals")).toBeInTheDocument();
-    expect(screen.getByText("Missing job signals")).toBeInTheDocument();
-    expect(screen.getByText("Transferable signals")).toBeInTheDocument();
-    expect(screen.getByText("Job keywords")).toBeInTheDocument();
+    expect(screen.getByText("Evidence matching job needs")).toBeInTheDocument();
+    expect(screen.getByText("Job needs not covered")).toBeInTheDocument();
+    expect(screen.getByText("Related profile evidence")).toBeInTheDocument();
+    expect(screen.getByText("Job keywords from post")).toBeInTheDocument();
     expect(screen.queryByText("Matched")).not.toBeInTheDocument();
     expect(screen.queryByText("Keywords")).not.toBeInTheDocument();
+    expect(screen.queryByText(/signals/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Derived from existing scoring evidence/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Evidence groups/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Dry run completed/i)).toBeInTheDocument();
