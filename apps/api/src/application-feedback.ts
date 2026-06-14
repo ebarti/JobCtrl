@@ -11,6 +11,7 @@ import type {
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
   ApplyReviewDecisionValue,
+  ApplyReviewProfileSourceField,
   ApplyReviewQueueItem,
   ApplyReviewQueueResponse,
   JobApplicationOutcomeListResponse,
@@ -36,6 +37,7 @@ import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobUrl } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
+const DEFAULT_PROFILE_ID = "default";
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"];
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
@@ -43,6 +45,8 @@ const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
 const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
+const PROFILE_SOURCE_FIELD_LIMIT = 160;
+const PROFILE_SOURCE_VALUE_LIMIT = 1200;
 
 interface ReviewQueueRow extends Record<string, unknown> {
   job_id: string;
@@ -264,9 +268,10 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     [DEFAULT_TENANT, DEFAULT_TENANT, DEFAULT_TENANT, ...closedParams],
   );
 
+  const profileSourceFields = profileSourceFieldsForApplyReview(db);
   return {
     ok: true,
-    items: rows.map((row) => reviewQueueItemFromRow(db, row)),
+    items: rows.map((row) => reviewQueueItemFromRow(db, row, profileSourceFields)),
   };
 }
 
@@ -569,12 +574,16 @@ function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionR
   );
 }
 
-function reviewQueueItemFromRow(db: SqliteDatabase, row: ReviewQueueRow): ApplyReviewQueueItem {
+function reviewQueueItemFromRow(
+  db: SqliteDatabase,
+  row: ReviewQueueRow,
+  profileSourceFields: readonly ApplyReviewProfileSourceField[],
+): ApplyReviewQueueItem {
   const currentState = stageState(row.current_state);
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const applicationUrl = applyTargetUrl(row);
-  const materialsPreview = materialPreviewsForJob(db, row.job_id);
+  const materialsPreview = materialPreviewsForJob(db, row.job_id, profileSourceFields);
   const latestApplyRun = row.run_id
     ? {
         runId: row.run_id,
@@ -772,12 +781,254 @@ function previewText(value: string | null | undefined, limit: number): string {
 function materialPreviewsForJob(
   db: SqliteDatabase,
   jobKey: string,
+  profileSourceFields: readonly ApplyReviewProfileSourceField[],
 ): ApplyReviewQueueItem["materialsPreview"] {
   const resumePreview = resumeMaterialPreviewForJob(db, jobKey);
   return {
     ...resumePreview,
+    profileSourceFields: [...profileSourceFields],
     coverLetterText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "cover")),
   };
+}
+
+const PROFILE_ROOT_SOURCE_FIELDS: Array<{
+  readonly column: string;
+  readonly label: string;
+  readonly path: string;
+  readonly section: string;
+}> = [
+  { column: "personal_full_name", label: "Profile > Personal information > Full name", path: "personal.full_name", section: "profile_personal" },
+  { column: "personal_preferred_name", label: "Profile > Personal information > Preferred name", path: "personal.preferred_name", section: "profile_personal" },
+  { column: "personal_email", label: "Profile > Personal information > Email", path: "personal.email", section: "profile_personal" },
+  { column: "personal_phone", label: "Profile > Personal information > Phone", path: "personal.phone", section: "profile_personal" },
+  { column: "personal_address", label: "Profile > Personal information > Address", path: "personal.address", section: "profile_personal" },
+  { column: "personal_city", label: "Profile > Personal information > City", path: "personal.city", section: "profile_personal" },
+  { column: "personal_province_state", label: "Profile > Personal information > State / province", path: "personal.province_state", section: "profile_personal" },
+  { column: "personal_country", label: "Profile > Personal information > Country", path: "personal.country", section: "profile_personal" },
+  { column: "personal_postal_code", label: "Profile > Personal information > Postal code", path: "personal.postal_code", section: "profile_personal" },
+  { column: "personal_linkedin_url", label: "Profile > Personal information > LinkedIn URL", path: "personal.linkedin_url", section: "profile_personal" },
+  { column: "personal_github_url", label: "Profile > Personal information > GitHub URL", path: "personal.github_url", section: "profile_personal" },
+  { column: "personal_portfolio_url", label: "Profile > Personal information > Portfolio URL", path: "personal.portfolio_url", section: "profile_personal" },
+  { column: "personal_website_url", label: "Profile > Personal information > Website URL", path: "personal.website_url", section: "profile_personal" },
+  { column: "resume_baseline_text", label: "Profile > Resume baseline > Executive profile baseline", path: "resume.executive_profile.baseline_text", section: "profile_summary" },
+];
+
+function profileSourceFieldsForApplyReview(db: SqliteDatabase): ApplyReviewProfileSourceField[] {
+  const fields: ApplyReviewProfileSourceField[] = [];
+  appendProfileRootSourceFields(db, fields);
+  appendProfileExperienceSourceFields(db, fields);
+  appendProfileEducationSourceFields(db, fields);
+  appendProfileSkillSourceFields(db, fields);
+  return uniqueProfileSourceFields(fields).slice(0, PROFILE_SOURCE_FIELD_LIMIT);
+}
+
+function appendProfileRootSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
+  if (!tableExists(db, "candidate_profiles")) return;
+  const columns = tableColumnSet(db, "candidate_profiles");
+  const available = PROFILE_ROOT_SOURCE_FIELDS.filter((field) => columns.has(field.column));
+  if (!available.length) return;
+  const row = getRow<Record<string, unknown>>(
+    db,
+    `SELECT ${available.map((field) => field.column).join(", ")}
+       FROM candidate_profiles
+      WHERE tenant_id = ? AND profile_id = ?`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  if (!row) return;
+  for (const field of available) {
+    addProfileSourceField(fields, field, row[field.column]);
+  }
+}
+
+function appendProfileExperienceSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
+  if (!tableExists(db, "candidate_profile_experience_entries")) return;
+  const entries = allRows<{
+    entry_id: string;
+    position_index: number;
+    date_range: string;
+    title: string;
+    company: string;
+    location: string;
+  }>(
+    db,
+    `SELECT entry_id, position_index, date_range, title, company, location
+       FROM candidate_profile_experience_entries
+      WHERE tenant_id = ? AND profile_id = ?
+      ORDER BY position_index`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  for (const entry of entries) {
+    const index = Number(entry.position_index ?? 0);
+    const heading = profileEntryHeading(entry.title, entry.company, `Experience ${index + 1}`);
+    addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Title`, `resume.experience_entries.${index}.title`, "profile_experience"), entry.title);
+    addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Company`, `resume.experience_entries.${index}.company`, "profile_experience"), entry.company);
+    addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Location`, `resume.experience_entries.${index}.location`, "profile_experience"), entry.location);
+    addProfileSourceField(fields, profileField(`Profile > Experience entries > ${heading} > Date range`, `resume.experience_entries.${index}.date_range`, "profile_experience"), entry.date_range);
+  }
+  if (!tableExists(db, "candidate_profile_experience_bullets")) return;
+  const bullets = allRows<{
+    position_index: number;
+    title: string;
+    company: string;
+    bullet_index: number;
+    bullet_text: string;
+  }>(
+    db,
+    `SELECT entries.position_index,
+            entries.title,
+            entries.company,
+            bullets.bullet_index,
+            bullets.bullet_text
+       FROM candidate_profile_experience_entries AS entries
+       JOIN candidate_profile_experience_bullets AS bullets
+         ON bullets.tenant_id = entries.tenant_id
+        AND bullets.profile_id = entries.profile_id
+        AND bullets.entry_id = entries.entry_id
+      WHERE entries.tenant_id = ? AND entries.profile_id = ?
+      ORDER BY entries.position_index, bullets.bullet_index`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  for (const bullet of bullets) {
+    const entryIndex = Number(bullet.position_index ?? 0);
+    const bulletIndex = Number(bullet.bullet_index ?? 0);
+    const heading = profileEntryHeading(bullet.title, bullet.company, `Experience ${entryIndex + 1}`);
+    addProfileSourceField(
+      fields,
+      profileField(
+        `Profile > Experience entries > ${heading} > Bullet ${bulletIndex + 1}`,
+        `resume.experience_entries.${entryIndex}.bullets.${bulletIndex}`,
+        "profile_experience",
+      ),
+      bullet.bullet_text,
+    );
+  }
+}
+
+function appendProfileEducationSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
+  if (!tableExists(db, "candidate_profile_education_entries")) return;
+  const rows = allRows<{
+    position_index: number;
+    date: string;
+    degree: string;
+    institution: string;
+    location: string;
+  }>(
+    db,
+    `SELECT position_index, date, degree, institution, location
+       FROM candidate_profile_education_entries
+      WHERE tenant_id = ? AND profile_id = ?
+      ORDER BY position_index`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  for (const row of rows) {
+    const index = Number(row.position_index ?? 0);
+    const heading = profileEntryHeading(row.degree, row.institution, `Education ${index + 1}`);
+    addProfileSourceField(fields, profileField(`Profile > Education > ${heading} > Degree`, `resume.education_entries.${index}.degree`, "profile_education"), row.degree);
+    addProfileSourceField(fields, profileField(`Profile > Education > ${heading} > Institution`, `resume.education_entries.${index}.institution`, "profile_education"), row.institution);
+    addProfileSourceField(fields, profileField(`Profile > Education > ${heading} > Location`, `resume.education_entries.${index}.location`, "profile_education"), row.location);
+    addProfileSourceField(fields, profileField(`Profile > Education > ${heading} > Completion month`, `resume.education_entries.${index}.date`, "profile_education"), row.date);
+  }
+}
+
+function appendProfileSkillSourceFields(db: SqliteDatabase, fields: ApplyReviewProfileSourceField[]): void {
+  if (!tableExists(db, "candidate_profile_skill_categories")) return;
+  const categories = allRows<{
+    category_id: string;
+    position_index: number;
+    label: string;
+  }>(
+    db,
+    `SELECT category_id, position_index, label
+       FROM candidate_profile_skill_categories
+      WHERE tenant_id = ? AND profile_id = ?
+      ORDER BY position_index`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  for (const category of categories) {
+    const index = Number(category.position_index ?? 0);
+    const label = profileEntryHeading(category.label, category.category_id, `Skill category ${index + 1}`);
+    addProfileSourceField(fields, profileField(`Profile > Skills > ${label} > Label`, `resume.skill_categories.${index}.label`, "profile_skills"), category.label);
+  }
+  if (!tableExists(db, "candidate_profile_skill_items")) return;
+  const skills = allRows<{
+    position_index: number;
+    label: string;
+    category_id: string;
+    item_index: number;
+    item_text: string;
+  }>(
+    db,
+    `SELECT categories.position_index,
+            categories.label,
+            skills.category_id,
+            skills.item_index,
+            skills.item_text
+       FROM candidate_profile_skill_items AS skills
+       LEFT JOIN candidate_profile_skill_categories AS categories
+         ON categories.tenant_id = skills.tenant_id
+        AND categories.profile_id = skills.profile_id
+        AND categories.category_id = skills.category_id
+      WHERE skills.tenant_id = ? AND skills.profile_id = ?
+      ORDER BY categories.position_index, skills.item_index`,
+    [DEFAULT_TENANT, DEFAULT_PROFILE_ID],
+  );
+  for (const skill of skills) {
+    const categoryIndex = Number(skill.position_index ?? 0);
+    const skillIndex = Number(skill.item_index ?? 0);
+    const label = profileEntryHeading(skill.label, skill.category_id, `Skill category ${categoryIndex + 1}`);
+    addProfileSourceField(
+      fields,
+      profileField(
+        `Profile > Skills > ${label} > Skill ${skillIndex + 1}`,
+        `resume.skill_categories.${categoryIndex}.items.${skillIndex}`,
+        "profile_skills",
+      ),
+      skill.item_text,
+    );
+  }
+}
+
+function tableColumnSet(db: SqliteDatabase, table: string): Set<string> {
+  return new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${table})`).map((row) => row.name));
+}
+
+function profileField(label: string, path: string, section: string): Omit<ApplyReviewProfileSourceField, "value"> {
+  return { label, path, section };
+}
+
+function addProfileSourceField(
+  fields: ApplyReviewProfileSourceField[],
+  field: Omit<ApplyReviewProfileSourceField, "value">,
+  value: unknown,
+): void {
+  const text = safeProfileSourceText(value);
+  if (!text) return;
+  fields.push({ label: field.label, path: field.path, section: field.section, value: text });
+}
+
+function safeProfileSourceText(value: unknown, maxLength = PROFILE_SOURCE_VALUE_LIMIT): string {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
+}
+
+function profileEntryHeading(primary: unknown, secondary: unknown, fallback: string): string {
+  const primaryText = safeProfileSourceText(primary, 80);
+  const secondaryText = safeProfileSourceText(secondary, 80);
+  if (primaryText && secondaryText && primaryText !== secondaryText) return `${primaryText} at ${secondaryText}`;
+  return primaryText || secondaryText || fallback;
+}
+
+function uniqueProfileSourceFields(fields: readonly ApplyReviewProfileSourceField[]): ApplyReviewProfileSourceField[] {
+  const seen = new Set<string>();
+  const out: ApplyReviewProfileSourceField[] = [];
+  for (const field of fields) {
+    const key = `${field.path}:${field.value}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(field);
+  }
+  return out;
 }
 
 type ResumeMaterialPreview = Pick<

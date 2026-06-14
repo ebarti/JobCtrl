@@ -351,6 +351,7 @@ function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) 
       {auditArtifactId ? (
         <ResumeAuditPins
           artifactId={auditArtifactId}
+          profileSourceFields={item.materialsPreview.profileSourceFields}
           resumeText={item.materialsPreview.resumeText}
           selectedLine={selectedLine}
           onSelectedLineChange={setSelectedLine}

@@ -264,6 +264,63 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("includes sanitized Profile source fields for apply-review PDF audit matching", async () => {
+    const db = new Database(options.dbPath);
+    db.exec(`
+      CREATE TABLE candidate_profiles (
+        tenant_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        personal_full_name TEXT NOT NULL DEFAULT '',
+        personal_address TEXT NOT NULL DEFAULT '',
+        personal_password TEXT NOT NULL DEFAULT '',
+        resume_baseline_text TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (tenant_id, profile_id)
+      );
+    `);
+    db.prepare(
+      `INSERT INTO candidate_profiles (
+         tenant_id, profile_id, personal_full_name, personal_address, personal_password, resume_baseline_text
+       ) VALUES ('local', 'default', ?, ?, ?, ?)`,
+    ).run(
+      "Jordan Candidate",
+      "42 Profile Street, Barcelona",
+      "do-not-send-this-field",
+      "Experienced platform leader with reliable operations depth.",
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const fields = queueItem(response.json(), READY_JOB)?.materialsPreview.profileSourceFields ?? [];
+    expect(fields).toEqual(
+      expect.arrayContaining([
+        {
+          path: "personal.full_name",
+          label: "Profile > Personal information > Full name",
+          value: "Jordan Candidate",
+          section: "profile_personal",
+        },
+        {
+          path: "personal.address",
+          label: "Profile > Personal information > Address",
+          value: "42 Profile Street, Barcelona",
+          section: "profile_personal",
+        },
+        {
+          path: "resume.executive_profile.baseline_text",
+          label: "Profile > Resume baseline > Executive profile baseline",
+          value: "Experienced platform leader with reliable operations depth.",
+          section: "profile_summary",
+        },
+      ]),
+    );
+    expect(JSON.stringify(fields)).not.toContain("do-not-send-this-field");
+
+    await app.close();
+  });
+
   it("keeps the PDF preview when no same-generation resume text is available", async () => {
     const newerResumePath = path.join(tempDir, "newer-only-resume.txt");
     fs.writeFileSync(newerResumePath, "newer only resume text");

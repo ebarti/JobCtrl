@@ -215,6 +215,20 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
           "Principal Platform Engineer\n\nOwned platform reliability improvements for incident response.",
         resumeTextArtifactId: "resume-text-2",
         resumePdfArtifactId: "resume-pdf-2",
+        profileSourceFields: [
+          {
+            path: "personal.full_name",
+            label: "Profile > Personal information > Full name",
+            value: "Jordan Candidate",
+            section: "profile_personal",
+          },
+          {
+            path: "personal.email",
+            label: "Profile > Personal information > Email",
+            value: "jordan@example.com",
+            section: "profile_personal",
+          },
+        ],
         coverLetterText:
           "Dear Hiring Manager,\n\nI am excited to bring platform reliability leadership to Globex.",
       },
@@ -263,6 +277,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
           "Staff Software Engineer\n\nTailored resume draft focused on reliability, TypeScript, and product platform delivery.",
         resumeTextArtifactId: "resume-text-1",
         resumePdfArtifactId: "resume-pdf-1",
+        profileSourceFields: [],
         coverLetterText: null,
       },
       latestApplyRun: null,

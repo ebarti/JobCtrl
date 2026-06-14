@@ -253,10 +253,18 @@ export interface ApplyReviewPositionEvidence {
   keywords: string[];
 }
 
+export interface ApplyReviewProfileSourceField {
+  path: string;
+  label: string;
+  value: string;
+  section: string;
+}
+
 export interface ApplyReviewMaterialsPreview {
   resumeText: string | null;
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
+  profileSourceFields: ApplyReviewProfileSourceField[];
   coverLetterText: string | null;
 }
 
