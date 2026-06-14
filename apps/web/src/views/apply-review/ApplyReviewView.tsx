@@ -137,7 +137,7 @@ function formatRequirementWeight(weight: number | null): string | null {
     return null;
   }
   const percent = weight <= 1 ? weight * 100 : weight;
-  return `weight ${Math.round(percent)}%`;
+  return `importance ${Math.round(percent)}%`;
 }
 
 function sourceFacts(item: ApplyReviewQueueItem): ApplyAuditFact[] {
@@ -282,7 +282,14 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                         <b>{requirement.text}</b>
                         <span>
                           {tier ? <span className="tag muted">{tier}</span> : null}
-                          {weight ? <span className="tag muted">{weight}</span> : null}
+                          {weight ? (
+                            <span
+                              className="tag muted"
+                              title="Relative priority from job-post analysis, not a match score"
+                            >
+                              {weight}
+                            </span>
+                          ) : null}
                         </span>
                       </div>
                       {requirement.evidence ? (

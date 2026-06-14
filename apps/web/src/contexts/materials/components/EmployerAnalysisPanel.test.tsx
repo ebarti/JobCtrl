@@ -9,17 +9,17 @@ import {
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
 describe("<EmployerAnalysisPanel>", () => {
-  it("renders requirements with tier + weight and quoted evidence spans", () => {
+  it("renders requirements with tier + importance and quoted evidence spans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
     expect(screen.getByText("Lead platform reliability programs across multiple teams")).toBeInTheDocument();
     expect(screen.getByText("Must Have")).toBeInTheDocument();
-    expect(screen.getByText("weight 90%")).toBeInTheDocument();
+    expect(screen.getByText("importance 90%")).toBeInTheDocument();
     expect(
       screen.getByText("Lead our platform reliability initiatives across the engineering org"),
     ).toBeInTheDocument();
     expect(screen.getByText("Nice To Have")).toBeInTheDocument();
-    expect(screen.getByText("weight 55%")).toBeInTheDocument();
+    expect(screen.getByText("importance 55%")).toBeInTheDocument();
   });
 
   it("renders reasoned keywords with evidence spans and flags orphans", () => {

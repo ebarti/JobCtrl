@@ -25,8 +25,11 @@ function RequirementItem({
     <article className="employer-analysis-requirement">
       <header>
         <span className={`tag ${tier}`}>{formatToken(requirement.tier)}</span>
-        <span className="tag muted" title="Priority weight">
-          weight {weightPercent(requirement.weight)}
+        <span
+          className="tag muted"
+          title="Relative priority from job-post analysis, not a match score"
+        >
+          importance {weightPercent(requirement.weight)}
         </span>
       </header>
       <p className="employer-analysis-requirement-text">{requirement.text}</p>
