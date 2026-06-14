@@ -120,11 +120,24 @@ function activeApplyRun(item: ApplyReviewQueueItem): ApplyRun | null {
 
 function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; values: readonly string[] }> {
   return [
-    { label: "Evidence matching job needs", values: item.position.matched },
-    { label: "Job needs not covered", values: item.position.missing },
-    { label: "Related profile evidence", values: item.position.transferable },
-    { label: "Job keywords from post", values: item.position.keywords },
+    { label: "Profile evidence matched by scorer", values: item.position.matched },
+    { label: "Profile gaps found by scorer", values: item.position.missing },
+    { label: "Transferable profile evidence", values: item.position.transferable },
+    { label: "Job keywords used by scorer", values: item.position.keywords },
   ].filter((group) => group.values.length > 0);
+}
+
+function formatRequirementTier(tier: string | null): string | null {
+  const text = tier?.replace(/[_-]+/g, " ").trim();
+  return text || null;
+}
+
+function formatRequirementWeight(weight: number | null): string | null {
+  if (weight === null || !Number.isFinite(weight)) {
+    return null;
+  }
+  const percent = weight <= 1 ? weight * 100 : weight;
+  return `weight ${Math.round(percent)}%`;
 }
 
 function sourceFacts(item: ApplyReviewQueueItem): ApplyAuditFact[] {
@@ -242,24 +255,67 @@ function ApplyReviewQueue({
 
 function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) {
   const groups = evidenceValues(item);
-  if (!groups.length) {
-    return <Empty title="No scoring requirement evidence captured yet." />;
+  const hasIdealProfile = Boolean(item.position.idealCandidate || item.position.idealRequirements.length);
+  if (!hasIdealProfile && !groups.length) {
+    return <Empty title="No job-need or scoring evidence captured yet." />;
   }
   return (
-    <dl className="apply-review-evidence-list">
-      {groups.map((group) => (
-        <div key={group.label}>
-          <dt>{group.label}</dt>
-          <dd>
-            {group.values.map((value) => (
-              <span className="tag muted" key={value}>
-                {value}
-              </span>
-            ))}
-          </dd>
+    <div className="apply-review-fit-evidence">
+      {hasIdealProfile ? (
+        <div className="apply-review-ideal-profile">
+          {item.position.idealCandidate ? (
+            <section>
+              <h4>Ideal profile from job post</h4>
+              <p>{item.position.idealCandidate}</p>
+            </section>
+          ) : null}
+          {item.position.idealRequirements.length ? (
+            <section>
+              <h4>Job needs from posting</h4>
+              <ol className="apply-review-ideal-requirements">
+                {item.position.idealRequirements.map((requirement) => {
+                  const tier = formatRequirementTier(requirement.tier);
+                  const weight = formatRequirementWeight(requirement.weight);
+                  return (
+                    <li key={`${requirement.id}:${requirement.text}`}>
+                      <div className="apply-review-ideal-requirement-head">
+                        <b>{requirement.text}</b>
+                        <span>
+                          {tier ? <span className="tag muted">{tier}</span> : null}
+                          {weight ? <span className="tag muted">{weight}</span> : null}
+                        </span>
+                      </div>
+                      {requirement.evidence ? (
+                        <p className="meta">Job post evidence: {requirement.evidence}</p>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          ) : null}
         </div>
-      ))}
-    </dl>
+      ) : null}
+      {groups.length ? (
+        <section className="apply-review-score-evidence" aria-label="Score evidence summary">
+          <h4>Score evidence summary</h4>
+          <dl className="apply-review-evidence-list">
+            {groups.map((group) => (
+              <div key={group.label}>
+                <dt>{group.label}</dt>
+                <dd>
+                  {group.values.map((value) => (
+                    <span className="tag muted" key={value}>
+                      {value}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
+    </div>
   );
 }
 

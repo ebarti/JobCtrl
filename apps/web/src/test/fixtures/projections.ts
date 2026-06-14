@@ -204,6 +204,24 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       position: {
         descriptionPreview:
           "Globex needs a principal engineer to lead platform reliability, incident response, and developer experience improvements.",
+        idealCandidate:
+          "A principal engineer who can lead platform reliability, improve developer experience, and guide incident-response practices across teams.",
+        idealRequirements: [
+          {
+            id: "r1",
+            text: "Lead platform reliability improvements across critical services.",
+            tier: "must_have",
+            weight: 0.9,
+            evidence: "lead platform reliability",
+          },
+          {
+            id: "r2",
+            text: "Improve incident-response practices and developer experience.",
+            tier: "important",
+            weight: 0.7,
+            evidence: "incident response, and developer experience improvements",
+          },
+        ],
         requirements: ["platform reliability", "SRE leadership", "incident response"],
         matched: ["platform reliability", "SRE leadership"],
         missing: ["public company scale"],
@@ -266,6 +284,8 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
       position: {
         descriptionPreview:
           "Acme is hiring a staff software engineer to own platform reliability and product engineering workflows.",
+        idealCandidate: null,
+        idealRequirements: [],
         requirements: ["platform reliability", "team leadership"],
         matched: ["platform reliability"],
         missing: ["team leadership"],

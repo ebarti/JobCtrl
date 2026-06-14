@@ -1233,6 +1233,66 @@ textarea:focus-visible {
   margin: 0;
 }
 
+.apply-review-fit-evidence,
+.apply-review-ideal-profile,
+.apply-review-score-evidence,
+.apply-review-ideal-profile section {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.apply-review-fit-evidence h4,
+.apply-review-ideal-profile p,
+.apply-review-ideal-requirements {
+  margin: 0;
+}
+
+.apply-review-fit-evidence h4 {
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.apply-review-ideal-profile section {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+}
+
+.apply-review-ideal-requirements {
+  display: grid;
+  gap: 8px;
+  padding-left: 22px;
+}
+
+.apply-review-ideal-requirements li {
+  min-width: 0;
+  padding-left: 2px;
+}
+
+.apply-review-ideal-requirement-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 8px;
+  align-items: start;
+}
+
+.apply-review-ideal-requirement-head > span {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+@media (max-width: 720px) {
+  .apply-review-ideal-requirement-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .apply-review-ideal-requirement-head > span {
+    justify-content: flex-start;
+  }
+}
+
 .apply-review-evidence-list > div {
   display: grid;
   grid-template-columns: 152px minmax(0, 1fr);

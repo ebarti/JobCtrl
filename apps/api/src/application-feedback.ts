@@ -11,6 +11,7 @@ import type {
   ApplyReviewDecisionRequest,
   ApplyReviewDecisionResponse,
   ApplyReviewDecisionValue,
+  ApplyReviewIdealRequirement,
   ApplyReviewProfileSourceField,
   ApplyReviewQueueItem,
   ApplyReviewQueueResponse,
@@ -46,6 +47,9 @@ const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
 const COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
+const IDEAL_CANDIDATE_TEXT_LIMIT = 1400;
+const IDEAL_REQUIREMENT_TEXT_LIMIT = 420;
+const IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT = 260;
 const PROFILE_SOURCE_FIELD_LIMIT = 160;
 const PROFILE_SOURCE_VALUE_LIMIT = 1200;
 
@@ -76,6 +80,8 @@ interface ReviewQueueRow extends Record<string, unknown> {
   dry_run: number | null;
   started_at: string | null;
   finished_at: string | null;
+  employer_ideal_candidate_narrative: string | null;
+  employer_requirements_json: string | null;
 }
 
 interface OutcomeRow extends Record<string, unknown> {
@@ -201,6 +207,33 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
        )`
     : "";
   const closedParams = tableExists(db, "posting_snapshot_sets") ? CLOSED_ACTIVE_STATES : [];
+  const hasEmployerAnalysis = tableExists(db, "job_employer_analysis");
+  const employerAnalysisCte = hasEmployerAnalysis
+    ? `,
+    latest_employer_analysis AS (
+      SELECT job_url, ideal_candidate_narrative, requirements_json
+      FROM (
+        SELECT job_url, ideal_candidate_narrative, requirements_json,
+               ROW_NUMBER() OVER (
+                 PARTITION BY tenant_id, job_url
+                 ORDER BY generation DESC
+               ) AS row_num
+        FROM job_employer_analysis
+        WHERE tenant_id = ?
+      )
+      WHERE row_num = 1
+    )`
+    : "";
+  const employerAnalysisSelect = hasEmployerAnalysis
+    ? `,
+           latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
+           latest_employer_analysis.requirements_json AS employer_requirements_json`
+    : `,
+           NULL AS employer_ideal_candidate_narrative,
+           NULL AS employer_requirements_json`;
+  const employerAnalysisJoin = hasEmployerAnalysis
+    ? "LEFT JOIN latest_employer_analysis ON latest_employer_analysis.job_url = jlp.job_id"
+    : "";
   const rows = allRows<ReviewQueueRow>(
     db,
     `
@@ -230,6 +263,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       )
       WHERE row_num = 1
     )
+    ${employerAnalysisCte}
     SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source, jlp.application_url,
            jlp.fit_score, jlp.description, jlp.full_description,
            jlp.score_breakdown_json, jlp.score_keywords_json,
@@ -241,9 +275,11 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            latest_apply_run.run_id, latest_apply_run.status AS apply_run_status,
            latest_apply_run.result, latest_apply_run.dry_run,
            latest_apply_run.started_at, latest_apply_run.finished_at
+           ${employerAnalysisSelect}
     FROM job_list_projections jlp
     LEFT JOIN latest_decision ON latest_decision.job_key = jlp.job_id
     LEFT JOIN latest_apply_run ON latest_apply_run.job_id = jlp.job_id
+    ${employerAnalysisJoin}
     WHERE jlp.tenant_id = ?
       AND jlp.deleted_at IS NULL
       ${hiddenWhere}
@@ -266,7 +302,13 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       jlp.fit_score DESC,
       jlp.title ASC
     `,
-    [DEFAULT_TENANT, DEFAULT_TENANT, DEFAULT_TENANT, ...closedParams],
+    [
+      DEFAULT_TENANT,
+      DEFAULT_TENANT,
+      ...(hasEmployerAnalysis ? [DEFAULT_TENANT] : []),
+      DEFAULT_TENANT,
+      ...closedParams,
+    ],
   );
 
   const profileSourceFields = profileSourceFieldsForApplyReview(db);
@@ -585,6 +627,16 @@ function reviewQueueItemFromRow(
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
   const applicationUrl = applyTargetUrl(row);
   const materialsPreview = materialPreviewsForJob(db, row.job_id, profileSourceFields);
+  const idealCandidate = cleanLimitedText(
+    row.employer_ideal_candidate_narrative,
+    IDEAL_CANDIDATE_TEXT_LIMIT,
+  );
+  const idealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
+  const scoreEvidenceRequirements = boundedEvidenceList([
+    ...(scoreBreakdown?.matchedSignals ?? []),
+    ...(scoreBreakdown?.missingSignals ?? []),
+    ...(scoreBreakdown?.transferableSignals ?? []),
+  ]);
   const latestApplyRun = row.run_id
     ? {
         runId: row.run_id,
@@ -636,11 +688,11 @@ function reviewQueueItemFromRow(
         row.full_description || row.description,
         POSITION_PREVIEW_CHAR_LIMIT,
       ),
-      requirements: boundedEvidenceList([
-        ...(scoreBreakdown?.matchedSignals ?? []),
-        ...(scoreBreakdown?.missingSignals ?? []),
-        ...(scoreBreakdown?.transferableSignals ?? []),
-      ]),
+      idealCandidate: idealCandidate || null,
+      idealRequirements,
+      requirements: idealRequirements.length
+        ? idealRequirements.map((requirement) => requirement.text)
+        : scoreEvidenceRequirements,
       matched: boundedEvidenceList(scoreBreakdown?.matchedSignals ?? []),
       missing: boundedEvidenceList(scoreBreakdown?.missingSignals ?? []),
       transferable: boundedEvidenceList(scoreBreakdown?.transferableSignals ?? []),
@@ -755,17 +807,72 @@ function parseStringList(value: unknown): string[] {
   return boundedEvidenceList(value);
 }
 
+function parseIdealRequirementsJson(value: string | null): ApplyReviewIdealRequirement[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((item, index) => idealRequirementFromValue(item, index))
+      .filter((requirement): requirement is ApplyReviewIdealRequirement => requirement !== null)
+      .slice(0, EVIDENCE_LIST_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function idealRequirementFromValue(value: unknown, index: number): ApplyReviewIdealRequirement | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const data = value as Record<string, unknown>;
+  const text = cleanLimitedText(data.text, IDEAL_REQUIREMENT_TEXT_LIMIT);
+  if (!text) {
+    return null;
+  }
+  const id = cleanLimitedText(data.id, 80) || `requirement-${index + 1}`;
+  return {
+    id,
+    text,
+    tier: cleanLimitedText(data.tier, 80) || null,
+    weight: cleanRequirementWeight(data.weight),
+    evidence:
+      cleanLimitedText(data.evidence_span, IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT) ||
+      cleanLimitedText(data.evidenceSpan, IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT) ||
+      null,
+  };
+}
+
+function cleanRequirementWeight(value: unknown): number | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.max(0, numeric);
+}
+
+function cleanLimitedText(value: unknown, limit: number): string {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
+}
+
 function boundedEvidenceList(values: readonly unknown[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const value of values) {
-    const text = String(value ?? "").replace(/\s+/g, " ").trim();
+    const text = cleanLimitedText(value, EVIDENCE_TEXT_LIMIT);
     if (!text) continue;
-    const bounded = text.length > EVIDENCE_TEXT_LIMIT ? `${text.slice(0, EVIDENCE_TEXT_LIMIT).trim()}...` : text;
-    const key = bounded.toLowerCase();
+    const key = text.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(bounded);
+    out.push(text);
     if (out.length >= EVIDENCE_LIST_LIMIT) break;
   }
   return out;

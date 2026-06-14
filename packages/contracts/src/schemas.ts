@@ -244,8 +244,18 @@ export interface ApplyReviewDecisionResponse {
   decision: ApplyReviewDecision;
 }
 
+export interface ApplyReviewIdealRequirement {
+  id: string;
+  text: string;
+  tier: string | null;
+  weight: number | null;
+  evidence: string | null;
+}
+
 export interface ApplyReviewPositionEvidence {
   descriptionPreview: string;
+  idealCandidate: string | null;
+  idealRequirements: ApplyReviewIdealRequirement[];
   requirements: string[];
   matched: string[];
   missing: string[];

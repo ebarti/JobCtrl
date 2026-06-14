@@ -65,7 +65,28 @@ describe("application feedback API", () => {
       },
       position: {
         descriptionPreview: "Full description",
-        requirements: ["platform leadership", "public company scale", "incident leadership"],
+        idealCandidate:
+          "A senior platform leader who improves developer experience and incident response across teams.",
+        idealRequirements: [
+          {
+            id: "r1",
+            text: "Lead platform reliability improvements across critical services.",
+            tier: "must_have",
+            weight: 0.9,
+            evidence: "lead platform reliability",
+          },
+          {
+            id: "r2",
+            text: "Improve developer experience and incident-response practices.",
+            tier: "important",
+            weight: 0.7,
+            evidence: "developer experience improvements",
+          },
+        ],
+        requirements: [
+          "Lead platform reliability improvements across critical services.",
+          "Improve developer experience and incident-response practices.",
+        ],
         matched: ["platform leadership"],
         missing: ["public company scale"],
         transferable: ["incident leadership"],
@@ -846,6 +867,26 @@ function seedDatabase(dbPath: string): void {
       created_at TEXT,
       size_bytes INTEGER
     );
+    CREATE TABLE job_employer_analysis (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+      requirements_json TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE TABLE job_employer_analysis_sub_analyses (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      analysis_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE job_employer_analysis_failures (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      raw_output TEXT
+    );
   `);
 
   insertJob(db, {
@@ -942,7 +983,40 @@ function insertJob(
   }
   insertStage(db, job.url, "apply", job.applyState);
   insertScore(db, job.url, job.fitScore);
+  insertEmployerAnalysis(db, job.url);
   insertMaterials(db, job.url, job.resumePath, job.resumePdfPath, job.rejectedResumePdfPath);
+}
+
+function insertEmployerAnalysis(db: Database.Database, jobUrl: string): void {
+  if (jobUrl !== READY_JOB) {
+    return;
+  }
+  db.prepare(
+    `INSERT INTO job_employer_analysis (
+       job_url, generation, tenant_id, ideal_candidate_narrative, requirements_json
+     ) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    jobUrl,
+    1,
+    "local",
+    "A senior platform leader who improves developer experience and incident response across teams.",
+    JSON.stringify([
+      {
+        id: "r1",
+        text: "Lead platform reliability improvements across critical services.",
+        tier: "must_have",
+        weight: 0.9,
+        evidence_span: "lead platform reliability",
+      },
+      {
+        id: "r2",
+        text: "Improve developer experience and incident-response practices.",
+        tier: "important",
+        weight: 0.7,
+        evidence_span: "developer experience improvements",
+      },
+    ]),
+  );
 }
 
 function insertMaterials(
