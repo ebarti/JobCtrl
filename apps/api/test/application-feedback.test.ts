@@ -264,6 +264,49 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("returns full cover letter text in the apply-review material preview", async () => {
+    const longCoverText = [
+      "Dear Hiring Manager,",
+      "",
+      ...Array.from({ length: 75 }, (_, index) =>
+        `Cover paragraph ${index + 1} keeps the letter long enough to exceed the generic preview limit while still being reviewable.`,
+      ),
+      "This final sentence must remain visible in the apply review cover letter panel.",
+      "",
+      "Jordan",
+    ].join("\n");
+    const longCoverPath = path.join(tempDir, "long-cover-letter.txt");
+    fs.writeFileSync(longCoverPath, longCoverText);
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      1,
+      "apply-ready-cover-letter-text",
+      "cover_letter",
+      "approved",
+      longCoverPath,
+      "2026-06-01T11:45:00.000Z",
+      Buffer.byteLength(longCoverText),
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const coverLetterText = queueItem(response.json(), READY_JOB)?.materialsPreview.coverLetterText ?? "";
+    expect(coverLetterText).toContain("Cover paragraph 75");
+    expect(coverLetterText).toContain("This final sentence must remain visible");
+    expect(coverLetterText).toContain("Jordan");
+    expect(coverLetterText).not.toMatch(/\.\.\.$/);
+
+    await app.close();
+  });
+
   it("includes sanitized Profile source fields for apply-review PDF audit matching", async () => {
     const db = new Database(options.dbPath);
     db.exec(`

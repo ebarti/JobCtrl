@@ -43,6 +43,7 @@ const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
 const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
 const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
+const COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
 const PROFILE_SOURCE_FIELD_LIMIT = 160;
@@ -787,7 +788,7 @@ function materialPreviewsForJob(
   return {
     ...resumePreview,
     profileSourceFields: [...profileSourceFields],
-    coverLetterText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "cover")),
+    coverLetterText: coverLetterMaterialPreviewForJob(db, jobKey),
   };
 }
 
@@ -1047,6 +1048,20 @@ interface MaterialArtifactCandidate {
 
 const RESUME_TEXT_ARTIFACT_TYPES = ["tailored_resume", "tailored_resume_txt", "resume_txt"] as const;
 const RESUME_PDF_ARTIFACT_TYPES = ["tailored_resume_pdf", "resume_pdf"] as const;
+const COVER_LETTER_TEXT_ARTIFACT_TYPES = ["cover_letter", "cover_letter_txt"] as const;
+
+function coverLetterMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): string | null {
+  const text = firstReadableTextCandidate(
+    materialArtifactCandidates(db, {
+      artifactTypes: COVER_LETTER_TEXT_ARTIFACT_TYPES,
+      binary: false,
+      includeLegacyJobColumn: "cover_letter_path",
+      jobKey,
+    }),
+    { byteLimit: COVER_LETTER_REVIEW_TEXT_BYTE_LIMIT, charLimit: null },
+  );
+  return text?.preview ?? null;
+}
 
 function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): ResumeMaterialPreview {
   const textCandidates = materialArtifactCandidates(db, {
@@ -1296,78 +1311,6 @@ function artifactPathExists(artifactPath: string, { binary }: { readonly binary:
     // In that case the review UI should fall back to the next available source.
     return false;
   }
-}
-
-function materialPreviewPaths(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string[] {
-  const paths: string[] = [];
-  const artifactTypes =
-    kind === "resume"
-      ? ["tailored_resume", "tailored_resume_txt", "resume_txt"]
-      : ["cover_letter", "cover_letter_txt"];
-
-  if (tableExists(db, "job_materials_artifacts")) {
-    const placeholders = artifactTypes.map(() => "?").join(", ");
-    paths.push(
-      ...allRows<{ path: string }>(
-        db,
-        `SELECT path
-         FROM job_materials_artifacts
-         WHERE job_url = ?
-           AND artifact_type IN (${placeholders})
-           AND COALESCE(status, 'approved') IN ('approved', 'active')
-           AND path IS NOT NULL
-           AND path != ''
-         ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC`,
-        [jobKey, ...artifactTypes],
-      ).map((row) => row.path),
-    );
-  }
-
-  if (tableExists(db, "job_artifacts")) {
-    const placeholders = artifactTypes.map(() => "?").join(", ");
-    paths.push(
-      ...allRows<{ path: string }>(
-        db,
-        `SELECT path
-         FROM job_artifacts
-         WHERE job_url = ?
-           AND artifact_type IN (${placeholders})
-           AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
-           AND path IS NOT NULL
-           AND path != ''
-         ORDER BY COALESCE(created_at, '') DESC, rowid DESC`,
-        [jobKey, ...artifactTypes],
-      ).map((row) => row.path),
-    );
-  }
-
-  if (tableExists(db, "jobs")) {
-    const legacyColumn = kind === "resume" ? "tailored_resume_path" : "cover_letter_path";
-    const legacyRow = getRow<{ path: string | null }>(
-      db,
-      `SELECT ${legacyColumn} AS path FROM jobs WHERE url = ?`,
-      [jobKey],
-    );
-    if (legacyRow?.path) {
-      paths.push(legacyRow.path);
-    }
-  }
-
-  return paths;
-}
-
-function firstReadableTextPreview(paths: readonly string[]): string | null {
-  const seen = new Set<string>();
-  for (const artifactPath of paths) {
-    const path = artifactPath.trim();
-    if (!path || seen.has(path) || isBinaryPreviewPath(path)) continue;
-    seen.add(path);
-    const preview = readTextPreview(path);
-    if (preview) {
-      return preview;
-    }
-  }
-  return null;
 }
 
 function isBinaryPreviewPath(artifactPath: string): boolean {
