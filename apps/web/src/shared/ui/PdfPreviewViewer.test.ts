@@ -155,6 +155,53 @@ describe("PdfAuditPreviewViewer line geometry", () => {
     expect(lines[0]?.heightPct).toBeLessThan(4);
   });
 
+  it("keeps heading rows separate while grouping wrapped bullet blocks", () => {
+    const targets: PdfAuditLineTarget[] = [
+      { lineNumber: 61, text: "Software Engineer | Tesla" },
+      { lineNumber: 62, text: "Fremont & Palo Alto, USA | Feb 2016 -- Nov 2018" },
+      {
+        lineNumber: 63,
+        text:
+          "- Designed the conveyor control layers for Model 3 general assembly automation and led 15 engineers through testing and deployment to get it running at production scale.",
+      },
+      {
+        lineNumber: 64,
+        text:
+          "- Wrote Python APIs for real-time factory floor communication, giving the Manufacturing Operating System (MOS) fast, high-volume links to the industrial control systems.",
+      },
+    ];
+
+    const lines = pdfTextLines(
+      pdfjs,
+      [
+        textItem("Tesla Fremont & Palo Alto, USA", 80, 120, 330),
+        textItem("Software Engineer Feb 2016 – Nov 2018", 80, 134, 320),
+        textItem(
+          "○ Designed the conveyor control layers for Model 3 general assembly automation and led 15 engineers through testing and",
+          80,
+          158,
+          610,
+        ),
+        textItem("deployment to get it running at production scale.", 100, 172, 330),
+        textItem(
+          "○ Wrote Python APIs for real-time factory floor communication, giving the Manufacturing Operating System (MOS) fast,",
+          80,
+          196,
+          610,
+        ),
+        textItem("high-volume links to the industrial control systems.", 100, 210, 340),
+      ],
+      viewport,
+      targets,
+    );
+
+    expect(lines.map((line) => line.resumeLineNumber)).toEqual([null, 61, 63, 64]);
+    expect(lines[2]?.text).toContain("deployment to get it running at production scale");
+    expect(lines[2]?.heightPct).toBeGreaterThan(3);
+    expect(lines[3]?.text).toContain("high-volume links to the industrial control systems");
+    expect(lines[3]?.heightPct).toBeGreaterThan(3);
+  });
+
   it("does not match later generic rows to long bullets that only share a few words", () => {
     const targets: PdfAuditLineTarget[] = [
       {

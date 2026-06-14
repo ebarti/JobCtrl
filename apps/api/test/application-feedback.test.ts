@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureApplicationFeedbackTables } from "../src/application-feedback.js";
+import type { ApplyReviewQueueResponse } from "../src/contracts.js";
 import { GmailFeedbackScanError, type GmailFeedbackScanner } from "../src/gmail-feedback-worker.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
@@ -225,6 +226,40 @@ describe("application feedback API", () => {
         resumePdfArtifactId: "apply-ready-resume-pdf",
       },
     });
+
+    await app.close();
+  });
+
+  it("returns full resume text for apply-review PDF audit targets", async () => {
+    const longResumeText = [
+      "Eloi Example",
+      "",
+      "Experience",
+      ...Array.from({ length: 90 }, (_, index) =>
+        `- Earlier resume bullet ${index + 1} keeps the artifact long enough to exceed the generic preview limit.`,
+      ),
+      "- Wrote Python APIs for real-time factory floor communication, giving the Manufacturing Operating System (MOS) fast, high-volume links to the industrial control systems.",
+      "- Leadership: Team Building & Mentoring, Global Teams (30+ engineers), Remote-First Operations, Career Framework Design, Stakeholder Communication.",
+    ].join("\n");
+    const longResumePath = path.join(tempDir, "long-apply-review-resume.txt");
+    fs.writeFileSync(longResumePath, longResumeText);
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET path = ?, size_bytes = ?
+        WHERE job_url = ?
+          AND artifact_id = 'apply-ready-resume-text'`,
+    ).run(longResumePath, Buffer.byteLength(longResumeText), READY_JOB);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const resumeText = queueItem(response.json(), READY_JOB)?.materialsPreview.resumeText ?? "";
+    expect(resumeText).toContain("Wrote Python APIs for real-time factory floor communication");
+    expect(resumeText).toContain("Stakeholder Communication.");
+    expect(resumeText).not.toMatch(/\.\.\.$/);
 
     await app.close();
   });
@@ -602,8 +637,8 @@ describe("application feedback API", () => {
   });
 });
 
-function queueItem(body: unknown, jobKey: string): unknown {
-  const items = (body as { items?: Array<{ jobKey: string }> }).items ?? [];
+function queueItem(body: unknown, jobKey: string): ApplyReviewQueueResponse["items"][number] | undefined {
+  const items = (body as ApplyReviewQueueResponse).items ?? [];
   return items.find((item) => item.jobKey === jobKey);
 }
 

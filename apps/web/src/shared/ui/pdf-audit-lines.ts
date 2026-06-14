@@ -158,7 +158,7 @@ function bestLineWindowAt(
     const text = rowGroupText(candidateRows);
     const match = bestLineTargetWithScore(text, targets, "strict");
     if (!match) continue;
-    if (span > 1 && !canUseMultiRowFallbackTarget(match.target)) continue;
+    if (span > 1 && (!canUseMultiRowFallbackTarget(match.target) || !canStartMultiRowFallback(firstRow, match.target))) continue;
     if (
       !best ||
       match.score > best.score ||
@@ -179,6 +179,12 @@ function bestLineWindowAt(
 
 function canUseMultiRowFallbackTarget(target: PdfAuditLineTarget): boolean {
   return target.text.length >= 100 && !looksLikeSingleLineStructureTarget(target.text);
+}
+
+function canStartMultiRowFallback(firstRow: PdfLineRow, target: PdfAuditLineTarget): boolean {
+  const text = rowText(firstRow);
+  if (looksLikeStandalonePdfStructureRow(text)) return false;
+  return rowLooksLikeTargetContinuation(text, target.text);
 }
 
 function canAttachContinuationRow(
@@ -203,6 +209,15 @@ function canAttachContinuationRow(
 
 function looksLikeSingleLineStructureTarget(value: string): boolean {
   return /(@|https?:\/\/|\+\d|\s\|\s)/i.test(value);
+}
+
+function looksLikeStandalonePdfStructureRow(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return (
+    /^(education|experience|skills|executive profile)$/.test(normalized) ||
+    /^\d+\/\d+$/.test(normalized) ||
+    hasDateRange(value)
+  );
 }
 
 function looksLikeCompactMatchTarget(value: string): boolean {

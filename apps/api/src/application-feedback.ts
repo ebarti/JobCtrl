@@ -40,6 +40,7 @@ const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompat
 const POSITION_PREVIEW_CHAR_LIMIT = 6000;
 const MATERIAL_PREVIEW_CHAR_LIMIT = 4000;
 const MATERIAL_PREVIEW_BYTE_LIMIT = 24_000;
+const RESUME_AUDIT_TEXT_BYTE_LIMIT = 128_000;
 const EVIDENCE_LIST_LIMIT = 12;
 const EVIDENCE_TEXT_LIMIT = 180;
 
@@ -812,6 +813,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
   for (const pdf of pdfCandidates) {
     const text = firstReadableTextCandidate(
       textCandidates.filter((candidate) => sameMaterialGeneration(candidate, pdf)),
+      { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null },
     );
     if (text) {
       return {
@@ -831,7 +833,7 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
     };
   }
 
-  const text = firstReadableTextCandidate(textCandidates);
+  const text = firstReadableTextCandidate(textCandidates, { byteLimit: RESUME_AUDIT_TEXT_BYTE_LIMIT, charLimit: null });
   if (text) {
     return {
       resumeText: text.preview,
@@ -849,9 +851,10 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): Resume
 
 function firstReadableTextCandidate(
   candidates: readonly MaterialArtifactCandidate[],
+  options: ReadTextOptions = {},
 ): { candidate: MaterialArtifactCandidate; preview: string } | null {
   for (const candidate of candidates) {
-    const preview = readTextPreview(candidate.path);
+    const preview = readTextPreview(candidate.path, options);
     if (preview) {
       return { candidate, preview };
     }
@@ -1120,14 +1123,19 @@ function isBinaryPreviewPath(artifactPath: string): boolean {
   return /\.(pdf|docx?|png|jpe?g|webp|gif|zip)$/i.test(artifactPath);
 }
 
-function readTextPreview(artifactPath: string): string | null {
+interface ReadTextOptions {
+  readonly byteLimit?: number;
+  readonly charLimit?: number | null;
+}
+
+function readTextPreview(artifactPath: string, options: ReadTextOptions = {}): string | null {
   let fd: number | null = null;
   try {
     const stats = fs.statSync(artifactPath);
     if (!stats.isFile()) {
       return null;
     }
-    const byteCount = Math.min(stats.size, MATERIAL_PREVIEW_BYTE_LIMIT);
+    const byteCount = Math.min(stats.size, options.byteLimit ?? MATERIAL_PREVIEW_BYTE_LIMIT);
     if (byteCount <= 0) {
       return null;
     }
@@ -1138,7 +1146,7 @@ function readTextPreview(artifactPath: string): string | null {
     if (!text.trim() || text.includes("\u0000")) {
       return null;
     }
-    return previewText(text, MATERIAL_PREVIEW_CHAR_LIMIT);
+    return options.charLimit === null ? previewText(text, text.length) : previewText(text, options.charLimit ?? MATERIAL_PREVIEW_CHAR_LIMIT);
   } catch {
     return null;
   } finally {
