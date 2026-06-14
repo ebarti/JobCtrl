@@ -788,12 +788,16 @@ function OptionalTagRow({
 }
 
 function CompactFindingList({
+  detail,
   label,
   items,
+  sourceLabel,
   tone,
 }: {
+  readonly detail?: string;
   readonly label: string;
   readonly items: readonly string[];
+  readonly sourceLabel?: string;
   readonly tone: "danger" | "warning";
 }): JSX.Element | null {
   if (!items.length) return null;
@@ -804,9 +808,11 @@ function CompactFindingList({
         <span className="artifact-risk-finding-label">
           <b>{label}</b>
           <span className="tag muted">{items.length}</span>
+          {sourceLabel ? <span className="tag muted">{sourceLabel}</span> : null}
         </span>
         <span className="artifact-risk-finding-preview">{items[0]}</span>
       </summary>
+      {detail ? <p className="meta">{detail}</p> : null}
       {remainingItems.length ? (
         <ul className="compact-list">
           {remainingItems.map((item) => (
@@ -858,7 +864,13 @@ function RiskPanel({
         <CompactFindingList label="Blockers" items={risk.blockers} tone="danger" />
         <CompactFindingList label="Audit metadata gaps" items={risk.auditGaps} tone="warning" />
         <CompactFindingList label="Warnings" items={risk.warnings} tone="warning" />
-        <CompactFindingList label="Accepted residual warnings" items={risk.residualWarnings} tone="warning" />
+        <CompactFindingList
+          detail="The material generation workflow selected this candidate after the warning-repair loop. No human approver is recorded for this warning state."
+          label="Residual warnings after automated review"
+          items={risk.residualWarnings}
+          sourceLabel="workflow-selected"
+          tone="warning"
+        />
         <CompactFindingList label="Repair instructions" items={risk.repairInstructions} tone="warning" />
       </div>
     </section>

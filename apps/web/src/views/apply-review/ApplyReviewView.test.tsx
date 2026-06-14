@@ -500,7 +500,9 @@ describe("<ApplyReviewView>", () => {
     const artifactRisk = screen.getByRole("region", { name: "Artifact-level grounding and claim risk" });
     expect(within(selectedAudit).queryByText("Artifact-level grounding and claim risk")).not.toBeInTheDocument();
     expect(within(artifactRisk).queryByText("Warnings")).not.toBeInTheDocument();
-    expect(within(artifactRisk).getByText("Accepted residual warnings")).toBeInTheDocument();
+    expect(within(artifactRisk).getByText("Residual warnings after automated review")).toBeInTheDocument();
+    expect(within(artifactRisk).getByText("workflow-selected")).toBeInTheDocument();
+    expect(within(artifactRisk).queryByText("Accepted residual warnings")).not.toBeInTheDocument();
     expect(within(artifactRisk).getAllByText("Keyword repetition: 'platform' repeated 7 times")).toHaveLength(1);
     expect(within(artifactRisk).getAllByText("Keyword repetition: 'architecture' repeated 5 times")).toHaveLength(1);
     expect(screen.getAllByText("claim risk").length).toBeGreaterThan(0);
