@@ -22,6 +22,8 @@ import type {
   OutcomeSuggestionDecisionResponse,
   OutcomeSuggestionStatus,
   ScoreBreakdown,
+  ScoreTrace,
+  ScoringCriteriaSnapshot,
   Stage,
   StageState,
 } from "./contracts.js";
@@ -64,6 +66,11 @@ interface ReviewQueueRow extends Record<string, unknown> {
   full_description: string;
   score_breakdown_json: string | null;
   score_keywords_json: string | null;
+  score_reasoning: string | null;
+  score_version: number | null;
+  scored_at: string | null;
+  score_criteria_json: string | null;
+  score_trace_json: string | null;
   current_stage: string;
   current_state: string;
   current_error_code: string | null;
@@ -267,6 +274,8 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
     SELECT jlp.job_id, jlp.title, jlp.employer, jlp.source, jlp.application_url,
            jlp.fit_score, jlp.description, jlp.full_description,
            jlp.score_breakdown_json, jlp.score_keywords_json,
+           jlp.score_reasoning, jlp.score_version, jlp.scored_at,
+           jlp.score_criteria_json, jlp.score_trace_json,
            jlp.current_stage, jlp.current_state,
            jlp.current_error_code, jlp.current_error_message,
            jlp.has_resume, jlp.has_cover_letter, jlp.has_pdf,
@@ -625,6 +634,7 @@ function reviewQueueItemFromRow(
   const currentState = stageState(row.current_state);
   const blockers = queueBlockers(row, currentState);
   const scoreBreakdown = parseQueueScoreBreakdown(row.score_breakdown_json);
+  const scoreKeywords = boundedEvidenceList(parseStringListJson(row.score_keywords_json));
   const applicationUrl = applyTargetUrl(row);
   const materialsPreview = materialPreviewsForJob(db, row.job_id, profileSourceFields);
   const idealCandidate = cleanLimitedText(
@@ -673,6 +683,13 @@ function reviewQueueItemFromRow(
     company: row.employer || "Unknown company",
     source: row.source || "unknown",
     fitScore: nullableNumber(row.fit_score),
+    scoreBreakdown,
+    scoreKeywords,
+    scoreReasoning: cleanLimitedText(row.score_reasoning, IDEAL_CANDIDATE_TEXT_LIMIT),
+    scoreVersion: nullableNumber(row.score_version),
+    scoredAt: row.scored_at,
+    scoreCriteria: parseQueueScoreCriteria(row.score_criteria_json),
+    scoreTrace: parseQueueScoreTrace(row.score_trace_json),
     applicationUrl,
     currentStage: stage(row.current_stage),
     currentState,
@@ -696,7 +713,7 @@ function reviewQueueItemFromRow(
       matched: boundedEvidenceList(scoreBreakdown?.matchedSignals ?? []),
       missing: boundedEvidenceList(scoreBreakdown?.missingSignals ?? []),
       transferable: boundedEvidenceList(scoreBreakdown?.transferableSignals ?? []),
-      keywords: boundedEvidenceList(parseStringListJson(row.score_keywords_json)),
+      keywords: scoreKeywords,
     },
     materialsPreview,
     latestApplyRun,
@@ -749,39 +766,113 @@ function isGenericStageCode(value: string): boolean {
 }
 
 function parseQueueScoreBreakdown(value: string | null): ScoreBreakdown | null {
+  const parsed = parseJsonRecord(value);
+  if (!parsed || parsed.legacy === true) {
+    return null;
+  }
+  const eligibility = asRecord(parsed.eligibility);
+  return {
+    technicalFit: scoreDimension(recordValue(parsed, "technicalFit", "technical_fit")),
+    experienceFit: scoreDimension(recordValue(parsed, "experienceFit", "experience_fit")),
+    roleFit: scoreDimension(recordValue(parsed, "roleFit", "role_fit")),
+    reasoning: stringValue(parsed.reasoning),
+    fitBand: parseChoice(recordValue(parsed, "fitBand", "fit_band"), "plausible", [
+      "excellent",
+      "strong",
+      "plausible",
+      "stretch",
+      "poor",
+    ]),
+    confidence: parseChoice(parsed.confidence, "medium", ["high", "medium", "low"]),
+    eligibility: {
+      status: parseChoice(eligibility?.status, "unknown", ["eligible", "warning", "blocked", "unknown"]),
+      hardBlockers: parseStringList(recordValue(eligibility, "hardBlockers", "hard_blockers")),
+      warnings: parseStringList(eligibility?.warnings),
+    },
+    matchedSignals: parseStringList(recordValue(parsed, "matchedSignals", "matched_signals")),
+    missingSignals: parseStringList(recordValue(parsed, "missingSignals", "missing_signals")),
+    transferableSignals: parseStringList(recordValue(parsed, "transferableSignals", "transferable_signals")),
+  };
+}
+
+function parseQueueScoreCriteria(value: string | null): ScoringCriteriaSnapshot | null {
+  const parsed = parseJsonRecord(value);
+  if (!parsed) {
+    return null;
+  }
+  return {
+    minFitScore: scoreDimension(recordValue(parsed, "minFitScore", "min_fit_score")),
+    criteriaText: cleanLimitedText(recordValue(parsed, "criteriaText", "criteria_text"), IDEAL_CANDIDATE_TEXT_LIMIT),
+    targetCriteria: cleanLimitedText(recordValue(parsed, "targetCriteria", "target_criteria"), IDEAL_CANDIDATE_TEXT_LIMIT),
+    criteriaVersion: stringValue(recordValue(parsed, "criteriaVersion", "criteria_version")),
+  };
+}
+
+function parseQueueScoreTrace(value: string | null): ScoreTrace | null {
+  const parsed = parseJsonRecord(value);
+  if (!parsed) {
+    return null;
+  }
+  return {
+    promptVersion: stringValue(recordValue(parsed, "promptVersion", "prompt_version")),
+    schemaVersion: stringValue(recordValue(parsed, "schemaVersion", "schema_version")),
+    model: stringValue(parsed.model),
+    criteriaVersion: stringValue(recordValue(parsed, "criteriaVersion", "criteria_version")),
+    profileSnapshotVersion: numberValue(recordValue(parsed, "profileSnapshotVersion", "profile_snapshot_version")),
+    scoringPolicyId: stringValue(recordValue(parsed, "scoringPolicyId", "scoring_policy_id")),
+    scoringPolicyVersion: numberValue(recordValue(parsed, "scoringPolicyVersion", "scoring_policy_version")),
+    rubricVersion: stringValue(recordValue(parsed, "rubricVersion", "rubric_version")),
+    rawWeightedScore: nullableNumber(recordValue(parsed, "rawWeightedScore", "raw_weighted_score")),
+    calibrationAdjustment: numberValue(recordValue(parsed, "calibrationAdjustment", "calibration_adjustment")),
+    policyAnchorCount: parseStringList(recordValue(parsed, "anchorIds", "anchor_ids")).length,
+    resolvedFitBand: stringValue(recordValue(parsed, "resolvedFitBand", "resolved_fit_band")),
+    resolutionReason: stringValue(recordValue(parsed, "resolutionReason", "resolution_reason")),
+    parserWarnings: parseStringList(recordValue(parsed, "parserWarnings", "parser_warnings")),
+    correctionHistory: [],
+  };
+}
+
+function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   if (!value) {
     return null;
   }
   try {
-    const parsed = JSON.parse(value) as Partial<ScoreBreakdown> | null;
-    if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).legacy === true) {
-      return null;
-    }
-    const eligibility = parsed.eligibility as (Partial<ScoreBreakdown["eligibility"]> & Record<string, unknown>) | undefined;
-    const hardBlockers = Array.isArray(eligibility?.hardBlockers)
-      ? eligibility.hardBlockers
-      : Array.isArray(eligibility?.hard_blockers)
-        ? eligibility.hard_blockers
-        : [];
-    return {
-      technicalFit: scoreDimension(parsed.technicalFit),
-      experienceFit: scoreDimension(parsed.experienceFit),
-      roleFit: scoreDimension(parsed.roleFit),
-      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
-      fitBand: parsed.fitBand ?? "plausible",
-      confidence: parsed.confidence ?? "medium",
-      eligibility: {
-        status: eligibility?.status ?? "unknown",
-        hardBlockers: boundedEvidenceList(hardBlockers),
-        warnings: boundedEvidenceList(eligibility?.warnings ?? []),
-      },
-      matchedSignals: boundedEvidenceList(parsed.matchedSignals ?? []),
-      missingSignals: boundedEvidenceList(parsed.missingSignals ?? []),
-      transferableSignals: boundedEvidenceList(parsed.transferableSignals ?? []),
-    };
+    return asRecord(JSON.parse(value));
   } catch {
     return null;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function recordValue(
+  record: Record<string, unknown> | null | undefined,
+  camelKey: string,
+  snakeKey: string,
+): unknown {
+  if (!record) {
+    return undefined;
+  }
+  return record[camelKey] ?? record[snakeKey];
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function parseChoice<const T extends readonly string[]>(
+  value: unknown,
+  fallback: T[number],
+  choices: T,
+): T[number] {
+  return typeof value === "string" && choices.includes(value) ? value : fallback;
 }
 
 function scoreDimension(value: unknown): number {

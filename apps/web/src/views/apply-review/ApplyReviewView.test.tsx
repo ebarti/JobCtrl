@@ -345,7 +345,12 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/principal engineer who can lead platform reliability/i)).toBeInTheDocument();
     expect(screen.getByText("Job needs from posting")).toBeInTheDocument();
     expect(screen.getByText("Lead platform reliability improvements across critical services.")).toBeInTheDocument();
-    expect(screen.getByText("Score evidence summary")).toBeInTheDocument();
+    expect(screen.getByText("Why fit score is 9/10")).toBeInTheDocument();
+    expect(screen.getByText("Strong fit on platform reliability.")).toBeInTheDocument();
+    expect(screen.getByText("Technical fit")).toBeInTheDocument();
+    expect(screen.getByText("Experience fit")).toBeInTheDocument();
+    expect(screen.getByText("Role fit")).toBeInTheDocument();
+    expect(screen.getByText("Numeric basis: weighted dimension score 8.1/10 with no adjustment.")).toBeInTheDocument();
     expect(screen.getByText("Profile evidence matched by scorer")).toBeInTheDocument();
     expect(screen.getByText("Profile gaps found by scorer")).toBeInTheDocument();
     expect(screen.getByText("Transferable profile evidence")).toBeInTheDocument();

@@ -330,6 +330,13 @@ export interface ApplyReviewQueueItem {
   company: string;
   source: string;
   fitScore: number | null;
+  scoreBreakdown: ScoreBreakdown | null;
+  scoreKeywords: string[];
+  scoreReasoning: string;
+  scoreVersion: number | null;
+  scoredAt: string | null;
+  scoreCriteria: ScoringCriteriaSnapshot | null;
+  scoreTrace: ScoreTrace | null;
   applicationUrl: string | null;
   currentStage: Stage;
   currentState: StageState;

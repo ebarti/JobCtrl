@@ -30,6 +30,13 @@ type MaterialStatus = {
 };
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
+type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
+
+const SCORE_DIMENSIONS: ReadonlyArray<[ScoreDimensionKey, string]> = [
+  ["technicalFit", "Technical fit"],
+  ["experienceFit", "Experience fit"],
+  ["roleFit", "Role fit"],
+];
 
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
   return {
@@ -121,7 +128,6 @@ function activeApplyRun(item: ApplyReviewQueueItem): ApplyRun | null {
 function evidenceValues(item: ApplyReviewQueueItem): Array<{ label: string; values: readonly string[] }> {
   return [
     { label: "Profile evidence matched by scorer", values: item.position.matched },
-    { label: "Profile gaps found by scorer", values: item.position.missing },
     { label: "Transferable profile evidence", values: item.position.transferable },
     { label: "Job keywords used by scorer", values: item.position.keywords },
   ].filter((group) => group.values.length > 0);
@@ -138,6 +144,26 @@ function formatRequirementWeight(weight: number | null): string | null {
   }
   const percent = weight <= 1 ? weight * 100 : weight;
   return `importance ${Math.round(percent)}%`;
+}
+
+function formatScoreValue(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "not scored";
+  }
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function formatScoreBasis(item: ApplyReviewQueueItem): string | null {
+  const rawScore = item.scoreTrace?.rawWeightedScore;
+  if (rawScore === null || rawScore === undefined) {
+    return null;
+  }
+  const adjustment = item.scoreTrace?.calibrationAdjustment ?? 0;
+  if (!adjustment) {
+    return `Numeric basis: weighted dimension score ${formatScoreValue(rawScore)}/10 with no adjustment.`;
+  }
+  const sign = adjustment > 0 ? "+" : "";
+  return `Numeric basis: weighted dimension score ${formatScoreValue(rawScore)}/10 with ${sign}${adjustment} adjustment.`;
 }
 
 function sourceFacts(item: ApplyReviewQueueItem): ApplyAuditFact[] {
@@ -255,8 +281,11 @@ function ApplyReviewQueue({
 
 function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) {
   const groups = evidenceValues(item);
+  const scoreBasis = formatScoreBasis(item);
+  const scoreReasoning = item.scoreBreakdown?.reasoning || item.scoreReasoning;
   const hasIdealProfile = Boolean(item.position.idealCandidate || item.position.idealRequirements.length);
-  if (!hasIdealProfile && !groups.length) {
+  const hasScoreRationale = Boolean(item.scoreBreakdown || scoreReasoning || item.fitScore !== null);
+  if (!hasIdealProfile && !groups.length && !hasScoreRationale) {
     return <Empty title="No job-need or scoring evidence captured yet." />;
   }
   return (
@@ -303,9 +332,37 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
           ) : null}
         </div>
       ) : null}
-      {groups.length ? (
-        <section className="apply-review-score-evidence" aria-label="Score evidence summary">
-          <h4>Score evidence summary</h4>
+      {hasScoreRationale ? (
+        <section className="apply-review-score-evidence apply-review-score-rationale" aria-label="Fit score rationale">
+          <h4>Why fit score is {formatScoreValue(item.fitScore)}/10</h4>
+          {scoreReasoning ? (
+            <p>{scoreReasoning}</p>
+          ) : (
+            <p className="meta">No score rationale was stored for this job.</p>
+          )}
+          {item.scoreBreakdown ? (
+            <div className="score-dimensions" aria-label="Score dimensions">
+              {SCORE_DIMENSIONS.map(([key, label]) => (
+                <div className="score-dimension" key={key}>
+                  <span>{label}</span>
+                  <b>{formatScoreValue(item.scoreBreakdown?.[key])} / 10</b>
+                </div>
+              ))}
+              <div className="score-dimension">
+                <span>Fit band</span>
+                <b>{item.scoreBreakdown.fitBand}</b>
+              </div>
+              <div className="score-dimension">
+                <span>Confidence</span>
+                <b>{item.scoreBreakdown.confidence}</b>
+              </div>
+              <div className="score-dimension">
+                <span>Eligibility</span>
+                <b>{item.scoreBreakdown.eligibility.status}</b>
+              </div>
+            </div>
+          ) : null}
+          {scoreBasis ? <p className="meta">{scoreBasis}</p> : null}
           <dl className="apply-review-evidence-list">
             {groups.map((group) => (
               <div key={group.label}>
@@ -319,6 +376,20 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                 </dd>
               </div>
             ))}
+            <div>
+              <dt>Profile gaps found by scorer</dt>
+              <dd>
+                {item.position.missing.length ? (
+                  item.position.missing.map((value) => (
+                    <span className="tag muted" key={value}>
+                      {value}
+                    </span>
+                  ))
+                ) : (
+                  <span className="meta">No missing profile evidence recorded by the scorer.</span>
+                )}
+              </dd>
+            </div>
           </dl>
         </section>
       ) : null}
