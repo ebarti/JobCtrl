@@ -193,6 +193,83 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it("keeps resume text and PDF previews on the same material generation", async () => {
+    const newerResumePath = path.join(tempDir, "newer-resume.txt");
+    fs.writeFileSync(newerResumePath, "newer orphan resume text");
+    const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      2,
+      "apply-ready-resume-text-v2",
+      "tailored_resume",
+      "approved",
+      newerResumePath,
+      "2026-06-01T11:30:00.000Z",
+      24,
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      materialsPreview: {
+        resumeText: "tailored resume",
+        resumeTextArtifactId: "apply-ready-resume-text",
+        resumePdfArtifactId: "apply-ready-resume-pdf",
+      },
+    });
+
+    await app.close();
+  });
+
+  it("keeps the PDF preview when no same-generation resume text is available", async () => {
+    const newerResumePath = path.join(tempDir, "newer-only-resume.txt");
+    fs.writeFileSync(newerResumePath, "newer only resume text");
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `DELETE FROM job_materials_artifacts
+        WHERE job_url = ?
+          AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_txt')`,
+    ).run(READY_JOB);
+    db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(READY_JOB, 2);
+    db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      READY_JOB,
+      2,
+      "apply-ready-resume-text-v2",
+      "tailored_resume",
+      "approved",
+      newerResumePath,
+      "2026-06-01T11:30:00.000Z",
+      24,
+    );
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB)).toMatchObject({
+      materialsPreview: {
+        resumeText: null,
+        resumeTextArtifactId: null,
+        resumePdfArtifactId: "apply-ready-resume-pdf",
+      },
+    });
+
+    await app.close();
+  });
+
   it("records approve, defer, reset, and decline review decisions without dispatching apply", async () => {
     const app = buildApp(options);
     const readyKey = encodeURIComponent(READY_JOB);

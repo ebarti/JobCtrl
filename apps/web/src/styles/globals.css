@@ -828,11 +828,11 @@ textarea:focus-visible {
   scrollbar-gutter: stable;
 }
 
-.apply-review-pdf-preview {
+.apply-review-pdf-line-review {
   container-type: inline-size;
 }
 
-.apply-review-pdf-preview .pdf-preview-viewer {
+.apply-review-pdf-line-review .pdf-preview-viewer {
   height: min(66dvh, 720px);
   min-height: 520px;
   overflow: hidden;
@@ -844,6 +844,8 @@ textarea:focus-visible {
 }
 
 .apply-review-resume-review {
+  --resume-review-page-width: 729px;
+
   container-type: inline-size;
   display: grid;
   gap: 12px;
@@ -864,19 +866,25 @@ textarea:focus-visible {
   padding-bottom: 0;
 }
 
-.apply-review-faithful-resume {
-  min-width: 0;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
+.apply-review-pdf-line-review {
+  overflow: hidden;
+  background:
+    linear-gradient(var(--muted), var(--muted)) padding-box,
+    var(--card);
+  padding: 12px;
 }
 
-.apply-review-faithful-resume .apply-review-preview-block {
-  padding-bottom: 0;
+.apply-review-pdf-line-review .pdf-preview-viewer {
+  height: min(78dvh, 960px);
+  min-height: 620px;
 }
 
-.apply-review-faithful-resume .pdf-preview-viewer {
-  height: min(42dvh, 520px);
-  min-height: 360px;
+.apply-review-pdf-line-review .pdf-audit-page-frame {
+  width: 100%;
+}
+
+.apply-review-pdf-line-review .pdf-preview-page {
+  width: min(100%, var(--resume-review-page-width));
 }
 
 @media (min-width: 960px) {
@@ -896,123 +904,6 @@ textarea:focus-visible {
   color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.5;
-}
-
-.apply-review-text-resume {
-  overflow: hidden;
-  background:
-    linear-gradient(var(--muted), var(--muted)) padding-box,
-    var(--card);
-  padding: 12px;
-}
-
-.resume-line-review-list {
-  display: block;
-  inline-size: min(100%, 760px);
-  block-size: min(68dvh, 129cqi, 860px);
-  min-width: 0;
-  margin: 0 auto;
-  overflow: auto;
-  list-style: none;
-  scrollbar-gutter: stable;
-}
-
-.resume-line-review-page {
-  color-scheme: light;
-  color: #111827;
-  background: #fff;
-  border: 1px solid color-mix(in oklab, #111827 12%, transparent);
-  border-radius: 2px;
-  box-shadow: 0 18px 44px color-mix(in oklab, #111827 14%, transparent);
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 0.68rem;
-  line-height: 1.34;
-  padding: clamp(2rem, 5cqi, 3.5rem) clamp(2rem, 6cqi, 4.25rem);
-  page-break-inside: avoid;
-}
-
-.resume-line-review-line {
-  min-width: 0;
-}
-
-.resume-line-review-line.blank {
-  block-size: 0.72rem;
-}
-
-.resume-line-review-button {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  border-radius: 2px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 0.06rem 0.12rem;
-  text-align: left;
-}
-
-.resume-line-review-button:hover {
-  outline: 1px solid color-mix(in oklab, var(--status-info) 26%, transparent);
-  background: color-mix(in oklab, var(--status-info) 7%, transparent);
-}
-
-.resume-line-review-button[aria-pressed="true"] {
-  outline: 1px solid color-mix(in oklab, var(--status-info) 52%, transparent);
-  background: color-mix(in oklab, var(--status-info) 14%, transparent);
-  box-shadow: inset 0 0 0 999px color-mix(in oklab, var(--status-info) 4%, transparent);
-}
-
-.resume-line-review-number {
-  display: none;
-}
-
-.resume-line-review-text {
-  min-width: 0;
-  overflow-wrap: break-word;
-  white-space: pre-wrap;
-}
-
-.resume-line-review-line[data-line-kind="name"] .resume-line-review-button {
-  margin-block-end: 0.18rem;
-  font-size: 1.32rem;
-  font-weight: 500;
-  line-height: 1.12;
-  text-align: center;
-}
-
-.resume-line-review-line[data-line-kind="contact"] .resume-line-review-button {
-  color: #1f2937;
-  font-size: 0.54rem;
-  line-height: 1.2;
-  text-align: center;
-}
-
-.resume-line-review-line[data-line-kind="section"] .resume-line-review-button {
-  margin-block-start: 0.5rem;
-  border-bottom: 1px solid currentColor;
-  border-radius: 0;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  line-height: 1.35;
-  text-transform: uppercase;
-}
-
-.resume-line-review-line[data-line-kind="metadata"] .resume-line-review-button {
-  font-size: 0.62rem;
-  font-style: italic;
-  line-height: 1.25;
-}
-
-.resume-line-review-line[data-line-kind="bullet"] .resume-line-review-button {
-  padding-inline-start: 0.75rem;
-  text-indent: -0.55rem;
-}
-
-.resume-line-review-line[data-line-kind="body"] .resume-line-review-button {
-  line-height: 1.35;
 }
 
 .resume-pin-shell {
@@ -1055,8 +946,34 @@ textarea:focus-visible {
   display: block;
 }
 
+.resume-pin-source-span-details {
+  min-width: 0;
+}
+
+.resume-pin-source-span-details summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  border-left: 2px solid color-mix(in srgb, var(--status-info) 50%, var(--border));
+  background: color-mix(in srgb, var(--status-info) 5%, var(--card));
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.resume-pin-source-span-details summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.resume-pin-source-span-details .resume-pin-source-evidence {
+  margin-top: 4px;
+}
+
 .resume-pin-detail,
-.resume-pin-diff > section,
+.resume-pin-source-check,
 .resume-pin-risk {
   min-width: 0;
   border: 1px solid var(--border);
@@ -1085,7 +1002,7 @@ textarea:focus-visible {
 
 .resume-pin-detail h4,
 .resume-pin-risk h4,
-.resume-pin-diff h5 {
+.resume-pin-source-check h5 {
   margin: 0;
 }
 
@@ -1094,27 +1011,73 @@ textarea:focus-visible {
 }
 
 .resume-pin-risk h4,
-.resume-pin-diff h5 {
+.resume-pin-source-check h5 {
   color: var(--muted-foreground);
   font-size: 11px;
   text-transform: uppercase;
 }
 
-.resume-pin-diff {
+.resume-pin-justification {
   display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--muted);
+  padding: 10px;
+}
+
+.resume-pin-justification h5 {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.resume-pin-justification .detail-list {
+  margin: 0;
+}
+
+.resume-pin-source-check {
+  display: block;
+  padding: 0;
+  background: var(--card);
+}
+
+.resume-pin-source-check > summary {
+  display: flex;
   gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.resume-pin-source-check > summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.resume-pin-source-check-body {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  background: var(--muted);
+  padding: 10px;
+}
+
+.resume-pin-source-check-body > section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 @container (min-width: 640px) {
-  .resume-pin-diff {
+  .resume-pin-source-check-body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-.resume-pin-diff > section {
-  display: grid;
-  gap: 6px;
-  background: var(--muted);
 }
 
 .source-pointer {
@@ -1262,12 +1225,6 @@ textarea:focus-visible {
 
 .artifact-risk-finding .compact-list {
   padding: 0 7px 7px;
-}
-
-@container (max-width: 520px) {
-  .apply-review-pdf-preview .pdf-preview-viewer {
-    min-height: 420px;
-  }
 }
 
 .apply-review-evidence-list {
@@ -4147,18 +4104,59 @@ textarea:focus-visible {
 }
 
 .pdf-preview-page {
+  width: min(100%, 920px);
   margin: 0 auto;
   color: #c8c8c8;
   text-align: center;
 }
 
+.pdf-audit-page-frame {
+  position: relative;
+  width: 100%;
+  margin-inline: auto;
+}
+
 .pdf-preview-page img {
   display: block;
-  width: min(100%, 920px);
+  width: 100%;
   height: auto;
   border-radius: 2px;
   background: white;
   box-shadow: 0 10px 36px rgb(0 0 0 / 32%);
+}
+
+.pdf-audit-page-frame img {
+  width: 100%;
+}
+
+.pdf-audit-line-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.pdf-audit-line-target {
+  position: absolute;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.pdf-audit-line-target:hover,
+.pdf-audit-line-target:focus-visible {
+  outline: 0;
+  background: color-mix(in oklab, var(--status-info) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--status-info) 34%, transparent);
+}
+
+.pdf-audit-line-target[aria-pressed="true"] {
+  outline: 0;
+  background: color-mix(in oklab, var(--status-info) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--status-info) 48%, transparent);
 }
 
 .pdf-preview-page figcaption {

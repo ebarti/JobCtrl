@@ -1,6 +1,10 @@
-import type { ApplyAuditFact, ApplyAuditSource, ApplyReviewQueueItem } from "@jobhunter/contracts";
+import type {
+  ApplyAuditFact,
+  ApplyAuditSource,
+  ApplyReviewQueueItem,
+} from "@jobhunter/contracts";
 import { IconExternalLink } from "@tabler/icons-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ACTIVE_APPLY_RUN_STATUSES, CancelApplyButton } from "../../contexts/apply/components/CancelApplyButton.js";
 import { ApplyReviewDecisionControls } from "../../contexts/apply/components/ApplyReviewDecisionControls.js";
@@ -11,7 +15,11 @@ import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import { Empty } from "../../shared/ui/empty.js";
 import { MarkdownDocument } from "../../shared/ui/MarkdownDocument.js";
-import { PdfPreviewViewer } from "../../shared/ui/PdfPreviewViewer.js";
+import {
+  PdfAuditPreviewViewer,
+  type PdfAuditLineSelection,
+  type PdfAuditLineTarget,
+} from "../../shared/ui/PdfPreviewViewer.js";
 import { JobDetailDrawer } from "../jobs/JobDetailDrawer.js";
 
 type MaterialStatus = {
@@ -22,12 +30,6 @@ type MaterialStatus = {
 };
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
-
-interface RenderedResumeLine {
-  readonly lineNumber: number;
-  readonly text: string;
-  readonly kind: "blank" | "name" | "contact" | "section" | "metadata" | "bullet" | "body";
-}
 
 function materialStatus(item: ApplyReviewQueueItem): MaterialStatus {
   return {
@@ -278,133 +280,28 @@ function TextPreview({
   );
 }
 
-const RENDERED_RESUME_SECTION_HEADINGS = new Set([
-  "certifications",
-  "core skills",
-  "education",
-  "executive profile",
-  "experience",
-  "languages",
-  "professional profile",
-  "profile",
-  "projects",
-  "skills",
-  "summary",
-  "technical skills",
-]);
-
-function isRenderedResumeSectionHeading(text: string): boolean {
-  return RENDERED_RESUME_SECTION_HEADINGS.has(text.toLowerCase());
-}
-
-function renderedResumeLines(resumeText: string | null | undefined): RenderedResumeLine[] {
-  let firstContentLine = true;
+function resumeLineTargets(resumeText: string | null | undefined): PdfAuditLineTarget[] {
   return (resumeText ?? "")
     .split(/\r?\n/)
-    .map((line, index) => {
-      const text = line.replace(/\t/g, "  ").trimEnd();
-      const normalized = text.trim();
-      if (!normalized) {
-        return {
-          lineNumber: index + 1,
-          text: "",
-          kind: "blank" as const,
-        };
-      }
-      const kind = firstContentLine
-        ? "name"
-        : isRenderedResumeSectionHeading(normalized)
-          ? "section"
-          : index < 4 && /(@|https?:\/\/|linkedin|github|\+\d|\|)/i.test(normalized)
-            ? "contact"
-            : /^[-•○]\s+/.test(normalized)
-              ? "bullet"
-              : /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{4}\b|\s\|\s)/i.test(normalized)
-                ? "metadata"
-                : "body";
-      firstContentLine = false;
-      return {
-        lineNumber: index + 1,
-        text,
-        kind,
-      };
-    });
+    .map((line, index) => ({
+      lineNumber: index + 1,
+      text: line.replace(/\t/g, "  ").trimEnd(),
+    }))
+    .filter((line) => line.text.trim().length > 0);
 }
 
-function RenderedResumeLineReview({
-  resumeText,
-  selectedLineNumber,
+function PdfResumeLineReview({
+  item,
+  selectedLine,
   onSelectLine,
 }: {
-  readonly resumeText: string | null | undefined;
-  readonly selectedLineNumber: number | null;
-  readonly onSelectLine: (lineNumber: number) => void;
+  readonly item: ApplyReviewQueueItem;
+  readonly selectedLine: PdfAuditLineSelection | null;
+  readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
-  const lines = renderedResumeLines(resumeText);
-  const selectedLineRef = useRef<HTMLLIElement | null>(null);
-
-  useEffect(() => {
-    if (typeof selectedLineRef.current?.scrollIntoView === "function") {
-      selectedLineRef.current.scrollIntoView({ block: "nearest" });
-    }
-  }, [selectedLineNumber]);
-
-  return (
-    <section className="apply-review-preview-block apply-review-text-resume" aria-label="Rendered resume line review">
-      <h3 className="sr-only">Rendered resume line review</h3>
-      <p className="sr-only">
-        Select a rendered line to inspect provenance and risk. The faithful PDF preview remains below for visual
-        verification.
-      </p>
-      {lines.some((line) => line.kind !== "blank") ? (
-        <ol className="resume-line-review-list resume-line-review-page" aria-label="Rendered resume text lines">
-          {lines.map((line) => {
-            const selected = line.lineNumber === selectedLineNumber;
-            if (line.kind === "blank") {
-              return (
-                <li
-                  aria-hidden="true"
-                  className="resume-line-review-line blank"
-                  data-line-kind="blank"
-                  key={line.lineNumber}
-                  value={line.lineNumber}
-                />
-              );
-            }
-            return (
-              <li
-                className={`resume-line-review-line${selected ? " selected" : ""}`}
-                data-line-kind={line.kind}
-                key={line.lineNumber}
-                ref={selected ? selectedLineRef : undefined}
-                value={line.lineNumber}
-              >
-                <button
-                  aria-label={`Line ${line.lineNumber}: ${line.text}`}
-                  aria-pressed={selected}
-                  className="resume-line-review-button"
-                  type="button"
-                  onClick={() => onSelectLine(line.lineNumber)}
-                >
-                  <span aria-hidden="true" className="resume-line-review-number">
-                    {line.lineNumber}
-                  </span>
-                  <span className="resume-line-review-text">{line.text}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      ) : (
-        <Empty title="No rendered resume text is available for line review." />
-      )}
-    </section>
-  );
-}
-
-function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
   const { api } = usePorts();
   const artifactId = item.materialsPreview.resumePdfArtifactId;
+  const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
   if (!artifactId) {
     return (
       <TextPreview
@@ -415,16 +312,20 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
     );
   }
   return (
-    <section className="apply-review-preview-block apply-review-pdf-preview">
-      <h3>Tailored resume</h3>
-      <PdfPreviewViewer
+    <section className="apply-review-preview-block apply-review-pdf-line-review" aria-label="PDF resume line review">
+      <h3 className="sr-only">PDF resume line review</h3>
+      <PdfAuditPreviewViewer
         cacheKey={`${artifactId}:${item.jobKey}`}
+        lineTargets={lineTargets}
         loadingMessage="The tailored resume PDF is loading into the in-app preview."
         loadingTitle="Rendering tailored resume."
         openLabel="open PDF"
+        selectedLineKey={selectedLine?.lineKey ?? null}
+        selectedLineNumber={selectedLine?.lineNumber ?? null}
         pageAltPrefix={`${item.title} tailored resume`}
         title="Tailored resume PDF"
         url={api.artifactPreviewPdfUrl(artifactId, `${artifactId}:${item.jobKey}`)}
+        onSelectLine={onSelectLine}
       />
     </section>
   );
@@ -432,30 +333,27 @@ function ResumePreview({ item }: { readonly item: ApplyReviewQueueItem }) {
 
 function ResumeReviewSurface({ item }: { readonly item: ApplyReviewQueueItem }) {
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? item.materialsPreview.resumePdfArtifactId;
-  const [selectedLineNumber, setSelectedLineNumber] = useState<number | null>(null);
+  const [selectedLine, setSelectedLine] = useState<PdfAuditLineSelection | null>(null);
 
   useEffect(() => {
-    setSelectedLineNumber(null);
+    setSelectedLine(null);
   }, [item.jobKey]);
 
   return (
-    <section className="apply-review-preview-block apply-review-resume-review" aria-label="Rendered resume audit">
+    <section className="apply-review-preview-block apply-review-resume-review" aria-label="PDF resume audit">
       <div className="apply-review-resume-main">
-        <RenderedResumeLineReview
-          resumeText={item.materialsPreview.resumeText}
-          selectedLineNumber={selectedLineNumber}
-          onSelectLine={setSelectedLineNumber}
+        <PdfResumeLineReview
+          item={item}
+          selectedLine={selectedLine}
+          onSelectLine={setSelectedLine}
         />
-        <div className="apply-review-faithful-resume">
-          <ResumePreview item={item} />
-        </div>
       </div>
       {auditArtifactId ? (
         <ResumeAuditPins
           artifactId={auditArtifactId}
           resumeText={item.materialsPreview.resumeText}
-          selectedLineNumber={selectedLineNumber}
-          onSelectedLineNumberChange={setSelectedLineNumber}
+          selectedLine={selectedLine}
+          onSelectedLineChange={setSelectedLine}
         />
       ) : (
         <section className="apply-review-resume-pins" aria-label="Line-by-line resume audit">

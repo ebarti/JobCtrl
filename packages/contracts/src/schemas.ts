@@ -1447,6 +1447,7 @@ export interface BulletProvenanceEntry {
   section: string;
   sourceId: string | null;
   evidenceIds: string[];
+  sourceText: string[];
   requirementIds: string[];
   matchedKeywords: string[];
   transformType: string;

@@ -32,10 +32,14 @@ Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
 Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
 `GET /v1/artifacts/:artifactId/preview.pdf` for inline preview of registered
-PDF artifacts. The preview route serves only known PDF artifact files from the
-local artifact projection; it returns `404` for missing metadata/files and
-`415` for non-PDF artifacts. The separate `POST /v1/artifacts/:artifactId/open`
-route still delegates to the local OS opener.
+PDF artifacts. `GET /v1/artifacts/:artifactId/preview/page/:pageNumber.png`
+renders a single registered PDF artifact page through local Poppler
+`pdftoppm`, which the web UI uses for stable PDF-page images while mapping
+selectable text lines in the browser. The preview routes serve only known PDF
+artifact files from the local artifact projection; they return `404` for
+missing metadata/files, `415` for non-PDF artifacts, and `400` for invalid page
+numbers. The separate `POST /v1/artifacts/:artifactId/open` route still
+delegates to the local OS opener.
 Tailored resume artifact detail responses include safe tailoring evidence only:
 keyword coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,

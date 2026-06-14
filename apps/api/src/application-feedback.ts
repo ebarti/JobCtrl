@@ -772,98 +772,263 @@ function materialPreviewsForJob(
   db: SqliteDatabase,
   jobKey: string,
 ): ApplyReviewQueueItem["materialsPreview"] {
+  const resumePreview = resumeMaterialPreviewForJob(db, jobKey);
   return {
-    resumeText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "resume")),
-    resumeTextArtifactId: latestMaterialTextArtifactId(db, jobKey, "resume"),
-    resumePdfArtifactId: latestMaterialPdfArtifactId(db, jobKey, "resume"),
+    ...resumePreview,
     coverLetterText: firstReadableTextPreview(materialPreviewPaths(db, jobKey, "cover")),
   };
 }
 
-function latestMaterialTextArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
-  const artifactTypes =
-    kind === "resume"
-      ? ["tailored_resume", "tailored_resume_txt", "resume_txt"]
-      : ["cover_letter", "cover_letter_txt"];
-  const projectionId = latestExistingArtifactId(db, {
-    jobKey,
-    artifactTypes,
+type ResumeMaterialPreview = Pick<
+  ApplyReviewQueueItem["materialsPreview"],
+  "resumeText" | "resumeTextArtifactId" | "resumePdfArtifactId"
+>;
+
+interface MaterialArtifactCandidate {
+  readonly artifactId: string | null;
+  readonly createdAt: string;
+  readonly generation: number | null;
+  readonly path: string;
+  readonly rowRank: number;
+  readonly sourceRank: number;
+}
+
+const RESUME_TEXT_ARTIFACT_TYPES = ["tailored_resume", "tailored_resume_txt", "resume_txt"] as const;
+const RESUME_PDF_ARTIFACT_TYPES = ["tailored_resume_pdf", "resume_pdf"] as const;
+
+function resumeMaterialPreviewForJob(db: SqliteDatabase, jobKey: string): ResumeMaterialPreview {
+  const textCandidates = materialArtifactCandidates(db, {
+    artifactTypes: RESUME_TEXT_ARTIFACT_TYPES,
     binary: false,
+    includeLegacyJobColumn: "tailored_resume_path",
+    jobKey,
   });
-  if (projectionId) {
-    return projectionId;
+  const pdfCandidates = materialArtifactCandidates(db, {
+    artifactTypes: RESUME_PDF_ARTIFACT_TYPES,
+    binary: true,
+    jobKey,
+  }).filter((candidate) => candidate.artifactId);
+
+  for (const pdf of pdfCandidates) {
+    const text = firstReadableTextCandidate(
+      textCandidates.filter((candidate) => sameMaterialGeneration(candidate, pdf)),
+    );
+    if (text) {
+      return {
+        resumeText: text.preview,
+        resumeTextArtifactId: text.candidate.artifactId,
+        resumePdfArtifactId: pdf.artifactId,
+      };
+    }
   }
-  if (!tableExists(db, "job_materials_artifacts")) {
-    return null;
+
+  const pdfOnly = pdfCandidates[0];
+  if (pdfOnly) {
+    return {
+      resumeText: null,
+      resumeTextArtifactId: null,
+      resumePdfArtifactId: pdfOnly.artifactId,
+    };
   }
-  const placeholders = artifactTypes.map(() => "?").join(", ");
-  const rows = allRows<{ artifact_id: string | null; path: string | null }>(
-    db,
-    `SELECT artifact_id, path
-     FROM job_materials_artifacts
-     WHERE job_url = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'approved') IN ('approved', 'active')
-       AND path IS NOT NULL
-       AND path != ''
-     ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC, rowid DESC
-     LIMIT 8`,
-    [jobKey, ...artifactTypes],
-  );
-  for (const row of rows) {
-    if (!row.artifact_id || !row.path) continue;
-    if (artifactPathExists(row.path, { binary: false })) {
-      return row.artifact_id;
+
+  const text = firstReadableTextCandidate(textCandidates);
+  if (text) {
+    return {
+      resumeText: text.preview,
+      resumeTextArtifactId: text.candidate.artifactId,
+      resumePdfArtifactId: null,
+    };
+  }
+
+  return {
+    resumeText: null,
+    resumeTextArtifactId: null,
+    resumePdfArtifactId: pdfCandidates[0]?.artifactId ?? null,
+  };
+}
+
+function firstReadableTextCandidate(
+  candidates: readonly MaterialArtifactCandidate[],
+): { candidate: MaterialArtifactCandidate; preview: string } | null {
+  for (const candidate of candidates) {
+    const preview = readTextPreview(candidate.path);
+    if (preview) {
+      return { candidate, preview };
     }
   }
   return null;
 }
 
-function latestMaterialPdfArtifactId(db: SqliteDatabase, jobKey: string, kind: "resume" | "cover"): string | null {
-  const artifactTypes =
-    kind === "resume" ? ["tailored_resume_pdf", "resume_pdf"] : ["cover_letter_pdf"];
-  return latestExistingArtifactId(db, {
-    jobKey,
-    artifactTypes,
-    binary: true,
-  });
-}
-
-function latestExistingArtifactId(
+function materialArtifactCandidates(
   db: SqliteDatabase,
   {
     artifactTypes,
     binary,
+    includeLegacyJobColumn,
     jobKey,
   }: {
     readonly artifactTypes: readonly string[];
     readonly binary: boolean;
+    readonly includeLegacyJobColumn?: "tailored_resume_path" | "cover_letter_path";
     readonly jobKey: string;
   },
-): string | null {
-  if (!tableExists(db, "artifact_list_projections")) {
-    return null;
-  }
+): MaterialArtifactCandidate[] {
+  const candidates: MaterialArtifactCandidate[] = [];
   const placeholders = artifactTypes.map(() => "?").join(", ");
-  const rows = allRows<{ artifact_id: string; local_path: string }>(
-    db,
-    `SELECT artifact_id, local_path
-     FROM artifact_list_projections
-     WHERE job_id = ?
-       AND artifact_type IN (${placeholders})
-       AND COALESCE(status, 'active') IN ('approved', 'active')
-       AND local_path IS NOT NULL
-       AND local_path != ''
-     ORDER BY COALESCE(generation, 0) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
-     LIMIT 8`,
-    [jobKey, ...artifactTypes],
-  );
-  for (const row of rows) {
-    if (artifactPathExists(row.local_path, { binary })) {
-      return row.artifact_id;
+
+  if (tableExists(db, "artifact_list_projections")) {
+    const rows = allRows<{
+      artifact_id: string | null;
+      created_at: string | null;
+      generation: number | null;
+      local_path: string | null;
+    }>(
+      db,
+      `SELECT artifact_id, local_path, generation, created_at
+       FROM artifact_list_projections
+       WHERE job_id = ?
+         AND artifact_type IN (${placeholders})
+         AND COALESCE(status, 'active') IN ('approved', 'active')
+         AND local_path IS NOT NULL
+         AND local_path != ''
+       ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, artifact_id DESC
+       LIMIT 16`,
+      [jobKey, ...artifactTypes],
+    );
+    for (const [index, row] of rows.entries()) {
+      pushMaterialCandidate(candidates, {
+        artifactId: row.artifact_id,
+        binary,
+        createdAt: row.created_at,
+        generation: row.generation,
+        path: row.local_path,
+        rowRank: index,
+        sourceRank: 0,
+      });
     }
   }
-  return null;
+
+  if (tableExists(db, "job_materials_artifacts")) {
+    const rows = allRows<{
+      artifact_id: string | null;
+      created_at: string | null;
+      generation: number | null;
+      path: string | null;
+    }>(
+      db,
+      `SELECT artifact_id, path, generation, created_at
+       FROM job_materials_artifacts
+       WHERE job_url = ?
+         AND artifact_type IN (${placeholders})
+         AND COALESCE(status, 'approved') IN ('approved', 'active')
+         AND path IS NOT NULL
+         AND path != ''
+       ORDER BY COALESCE(generation, -1) DESC, COALESCE(created_at, '') DESC, rowid DESC
+       LIMIT 16`,
+      [jobKey, ...artifactTypes],
+    );
+    for (const [index, row] of rows.entries()) {
+      pushMaterialCandidate(candidates, {
+        artifactId: row.artifact_id,
+        binary,
+        createdAt: row.created_at,
+        generation: row.generation,
+        path: row.path,
+        rowRank: index,
+        sourceRank: 1,
+      });
+    }
+  }
+
+  if (tableExists(db, "job_artifacts")) {
+    const rows = allRows<{
+      created_at: string | null;
+      path: string | null;
+      row_id: string | number | null;
+    }>(
+      db,
+      `SELECT rowid AS row_id, path, created_at
+       FROM job_artifacts
+       WHERE job_url = ?
+         AND artifact_type IN (${placeholders})
+         AND COALESCE(status, 'active') NOT IN ('missing', 'failed', 'superseded', 'suppressed')
+         AND path IS NOT NULL
+         AND path != ''
+       ORDER BY COALESCE(created_at, '') DESC, rowid DESC
+       LIMIT 16`,
+      [jobKey, ...artifactTypes],
+    );
+    for (const [index, row] of rows.entries()) {
+      pushMaterialCandidate(candidates, {
+        artifactId: row.row_id === null || row.row_id === undefined ? null : String(row.row_id),
+        binary,
+        createdAt: row.created_at,
+        generation: null,
+        path: row.path,
+        rowRank: index,
+        sourceRank: 2,
+      });
+    }
+  }
+
+  if (includeLegacyJobColumn && tableExists(db, "jobs")) {
+    const legacyRow = getRow<{ path: string | null }>(
+      db,
+      `SELECT ${includeLegacyJobColumn} AS path FROM jobs WHERE url = ?`,
+      [jobKey],
+    );
+    pushMaterialCandidate(candidates, {
+      artifactId: null,
+      binary,
+      createdAt: "",
+      generation: null,
+      path: legacyRow?.path ?? null,
+      rowRank: 0,
+      sourceRank: 3,
+    });
+  }
+
+  return candidates.sort(compareMaterialCandidates);
+}
+
+function pushMaterialCandidate(
+  candidates: MaterialArtifactCandidate[],
+  input: {
+    readonly artifactId: string | null | undefined;
+    readonly binary: boolean;
+    readonly createdAt: string | null | undefined;
+    readonly generation: number | null | undefined;
+    readonly path: string | null | undefined;
+    readonly rowRank: number;
+    readonly sourceRank: number;
+  },
+): void {
+  const path = String(input.path ?? "").trim();
+  if (!path || !artifactPathExists(path, { binary: input.binary })) {
+    return;
+  }
+  candidates.push({
+    artifactId: input.artifactId ? String(input.artifactId) : null,
+    createdAt: String(input.createdAt ?? ""),
+    generation: nullableNumber(input.generation),
+    path,
+    rowRank: input.rowRank,
+    sourceRank: input.sourceRank,
+  });
+}
+
+function compareMaterialCandidates(a: MaterialArtifactCandidate, b: MaterialArtifactCandidate): number {
+  const generation = (b.generation ?? -1) - (a.generation ?? -1);
+  if (generation !== 0) return generation;
+  const createdAt = b.createdAt.localeCompare(a.createdAt);
+  if (createdAt !== 0) return createdAt;
+  const source = a.sourceRank - b.sourceRank;
+  if (source !== 0) return source;
+  return a.rowRank - b.rowRank;
+}
+
+function sameMaterialGeneration(a: MaterialArtifactCandidate, b: MaterialArtifactCandidate): boolean {
+  return a.generation === b.generation;
 }
 
 function artifactPathExists(artifactPath: string, { binary }: { readonly binary: boolean }): boolean {
