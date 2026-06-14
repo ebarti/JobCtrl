@@ -5,8 +5,14 @@ export interface JobOverviewProps {
   detail: JobDetail;
 }
 
+function auditTone(state: JobDetail["applyAudit"]["state"]): "ok" | "info" | "warn" {
+  if (state === "ready") return "ok";
+  if (state === "preparing") return "info";
+  return "warn";
+}
+
 export function JobOverview({ detail }: JobOverviewProps) {
-  const { job } = detail;
+  const { applyAudit, job } = detail;
   return (
     <div className="drawer-head">
       <ScoreBadge score={job.fitScore} />
@@ -23,6 +29,12 @@ export function JobOverview({ detail }: JobOverviewProps) {
         <a className="external-link" href={job.url} rel="noreferrer" target="_blank">
           open original posting
         </a>
+        <div className="job-overview-readiness" aria-label="Apply readiness">
+          <span className="job-overview-readiness-label">Apply readiness</span>
+          <span className={`tag ${auditTone(applyAudit.state)}`} title={applyAudit.summary}>
+            {applyAudit.label}
+          </span>
+        </div>
       </span>
     </div>
   );

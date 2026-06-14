@@ -2669,12 +2669,33 @@ textarea:focus-visible {
 }
 
 .drawer-head > span:last-child {
+  display: grid;
+  gap: 4px;
   min-width: 0;
 }
 
 .drawer-head h2 {
   margin: 4px 0;
   font-size: 22px;
+}
+
+.drawer-head p {
+  margin: 0;
+}
+
+.job-overview-readiness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.job-overview-readiness-label {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
 }
 
 .job-detail-drawer-content {
@@ -2717,7 +2738,6 @@ textarea:focus-visible {
 
 .job-audit-triage-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -2726,11 +2746,6 @@ textarea:focus-visible {
   align-content: start;
   gap: 10px;
   min-width: 0;
-}
-
-.job-audit-triage-column + .job-audit-triage-column {
-  border-left: 1px solid var(--border);
-  padding-left: 18px;
 }
 
 .job-audit-triage-kicker {
@@ -2780,17 +2795,7 @@ textarea:focus-visible {
   margin: 0;
 }
 
-.job-audit-readiness-line {
-  display: grid;
-  gap: 6px;
-  align-items: start;
-}
-
-.job-audit-readiness-line > .tag {
-  width: max-content;
-  max-width: 100%;
-}
-
+.job-audit-concerns,
 .job-audit-fact-list {
   display: grid;
   gap: 8px;
@@ -4333,17 +4338,6 @@ textarea:focus-visible {
     width: calc(100dvw - 16px);
     block-size: calc(100dvh - 16px);
     margin: 8px;
-  }
-
-  .job-audit-triage-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .job-audit-triage-column + .job-audit-triage-column {
-    border-top: 1px solid var(--border);
-    border-left: 0;
-    padding-top: 14px;
-    padding-left: 0;
   }
 
   .artifact-detail-drawer {

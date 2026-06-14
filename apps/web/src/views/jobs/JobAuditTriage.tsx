@@ -2,6 +2,9 @@ import type { ApplyAuditFact, ApplyAuditSource } from "@jobhunter/contracts";
 import { Link } from "@tanstack/react-router";
 
 import type { JobDetail } from "../../contexts/operations/types.js";
+import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
+import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
+import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 
 export interface JobAuditTriageProps {
   detail: JobDetail;
@@ -49,35 +52,44 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
           <TagGroup label="Transferable signals" values={score?.transferableSignals} />
           <TagGroup label="Keywords" values={job.scoreKeywords} />
           <ScoreMetadata detail={detail} />
-        </div>
-
-        <div className="job-audit-triage-column">
-          <div className="job-audit-triage-kicker">Apply readiness</div>
-          <div className="job-audit-readiness-line">
-            <span className={`tag ${auditTone(applyAudit.state)}`}>{applyAudit.label}</span>
-            <span>{applyAudit.summary}</span>
-          </div>
+          {job.scoreStaleness.isStale ? (
+            <div className="score-policy-row">
+              <ScoreStalenessBadge staleness={job.scoreStaleness} />
+              <span className="muted">scoring policy updated; reset this score before rescoring</span>
+              <ResetStaleScoresButton
+                className="tab on"
+                jobKeys={[job.jobKey]}
+                label="reset for rescore"
+                staleCount={1}
+              />
+            </div>
+          ) : null}
+          <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
           {factGroups.length ? (
-            <dl className="job-audit-fact-list">
-              {factGroups.map((group) => (
-                <div key={group.label}>
-                  <dt>{group.label}</dt>
-                  <dd>
-                    {group.facts.map((fact) => (
-                      <span
-                        className={`tag ${factTone(fact)}`}
-                        key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
-                      >
-                        {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
-                      </span>
-                    ))}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="muted">No missing prerequisites, blockers, or eligibility concerns recorded.</p>
-          )}
+            <div className="job-audit-concerns">
+              <div className="job-audit-triage-kicker">Apply concerns</div>
+              <dl className="job-audit-fact-list">
+                {factGroups.map((group) => (
+                  <div key={group.label}>
+                    <dt>{group.label}</dt>
+                    <dd>
+                      {group.facts.map((fact) => (
+                        <span
+                          className={`tag ${factTone(fact)}`}
+                          key={`${group.label}:${fact.code}:${fact.detail ?? ""}`}
+                        >
+                          {fact.detail ? `${fact.label}: ${fact.detail}` : fact.label}
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
+          {applyAudit.state !== "ready" && !factGroups.length ? (
+            <p className="muted">{applyAudit.summary}</p>
+          ) : null}
         </div>
       </div>
     </section>
@@ -173,12 +185,6 @@ function isInspectableSource(source: ApplyAuditSource): boolean {
 function sourceDetail(source: ApplyAuditSource): string {
   const status = source.status.replace(/_/g, " ");
   return source.detail ? `${status}: ${source.detail}` : status;
-}
-
-function auditTone(state: JobDetail["applyAudit"]["state"]): "ok" | "info" | "warn" {
-  if (state === "ready") return "ok";
-  if (state === "preparing") return "info";
-  return "warn";
 }
 
 function factTone(fact: ApplyAuditFact): "muted" | "info" | "ok" | "warn" {

@@ -2124,6 +2124,7 @@ function tailoringExplanationForArtifact(
   // time) instead of recomputed from the resume file / job description at read
   // time. Honest empty when no canonical coverage exists for this generation.
   explanation.keywords = keywordsBlockFromCoverageAudit(explanation.coverageAudit);
+  attachCoverageKeywordsToBulletProvenance(explanation);
   backfillLegacyProfileEvidenceMapping(db, row, explanation);
   attachProfileSourceTextToBulletProvenance(db, row.tenant_id, explanation);
   const missingAuditFields = missingTailoringAuditFields(explanation);
@@ -2180,6 +2181,24 @@ function keywordsBlockFromCoverageAudit(
       filteredMissing: 0,
     },
   };
+}
+
+function attachCoverageKeywordsToBulletProvenance(explanation: ArtifactTailoringExplanation): void {
+  const coverage = explanation.coverageAudit;
+  if (!coverage || !explanation.bulletProvenance.length) return;
+
+  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
+    const seen = new Set(entry.matchedKeywords.map((keyword) => keyword.toLowerCase()));
+    const matchedKeywords = [...entry.matchedKeywords];
+    for (const keyword of coverage.covered) {
+      if (coverage.coveredBy[keyword] !== entry.bulletId) continue;
+      const normalized = keyword.toLowerCase();
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      matchedKeywords.push(keyword);
+    }
+    return matchedKeywords.length === entry.matchedKeywords.length ? entry : { ...entry, matchedKeywords };
+  });
 }
 
 /**

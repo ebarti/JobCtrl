@@ -12,8 +12,7 @@ export interface ArtifactTailoringInspectorProps {
 /**
  * Context-owned inspector for one tailored artifact: fetches the artifact detail
  * via the Operations read hook and renders the tailoring explanation (rationale,
- * coverage, voice pass, per-bullet provenance + diff). Shared by the jobs detail
- * drawer and apply-review so both surfaces show identical provenance.
+ * coverage, voice pass, per-bullet provenance + diff).
  *
  * INSPECT-05: when no explanation has been recorded it renders an explicit empty
  * state — never a blank.

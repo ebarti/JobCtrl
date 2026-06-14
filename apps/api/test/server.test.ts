@@ -2306,7 +2306,7 @@ describe("local TypeScript API", () => {
       sourceId: "platform",
       evidenceIds: ["ev_platform"],
       requirementIds: ["req_iac"],
-      matchedKeywords: ["infrastructure as code"],
+      matchedKeywords: [],
       transformType: "reframe",
       control: "rephrase_allowed",
       generatedText: "Built infrastructure as code for the platform.",
@@ -2348,6 +2348,12 @@ describe("local TypeScript API", () => {
           covered: ["infrastructure as code"],
           missing: ["platform engineering"],
         },
+        bulletProvenance: [
+          expect.objectContaining({
+            bulletId: "experience:platform#0",
+            matchedKeywords: ["infrastructure as code"],
+          }),
+        ],
       },
     });
     // The file text (aws/gcp/java/observability) does NOT leak into the block.

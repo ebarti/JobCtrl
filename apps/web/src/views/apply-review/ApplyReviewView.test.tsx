@@ -481,7 +481,7 @@ describe("<ApplyReviewView>", () => {
     expect(within(selectedAudit).getAllByText("Bullet provenance").length).toBeGreaterThan(0);
     expect(screen.queryByText("Tailored artifact text")).not.toBeInTheDocument();
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
-    expect(within(selectedAudit).getByText("Job signals reflected")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Keywords demonstrated")).toBeInTheDocument();
     expect(within(selectedAudit).getAllByText("platform reliability").length).toBeGreaterThan(0);
     expect(within(selectedAudit).queryByText("Achievement Reframed")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("evidence_reframing")).not.toBeInTheDocument();
@@ -703,6 +703,8 @@ describe("<ApplyReviewView>", () => {
     expect(within(selectedAudit).getAllByText("PDF page 3 line 15").length).toBeGreaterThan(0);
     expect(within(selectedAudit).queryByText("missing source")).not.toBeInTheDocument();
     expect(within(selectedAudit).getByText(/Skill category is preserved/i)).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("Keywords demonstrated")).toBeInTheDocument();
+    expect(within(selectedAudit).getByText("kubernetes")).toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Evidence IDs")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Requirement IDs")).not.toBeInTheDocument();
     expect(within(selectedAudit).queryByText("Source ID")).not.toBeInTheDocument();

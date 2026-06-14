@@ -48,6 +48,7 @@ interface ResumeAuditPin {
   readonly evidenceNotes: readonly string[];
   readonly requirementIds: readonly string[];
   readonly matchedSignals: readonly string[];
+  readonly matchedKeywords: readonly string[];
   readonly rationale: string | null;
 }
 
@@ -318,7 +319,8 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
         evidenceIds: entry.evidenceIds,
         evidenceNotes: [],
         requirementIds: entry.requirementIds,
-        matchedSignals: entry.matchedKeywords,
+        matchedSignals: change?.jobSignals ?? [],
+        matchedKeywords: entry.matchedKeywords,
         rationale: displayRationale(entry.rationale || change?.rationale),
       };
     });
@@ -342,6 +344,7 @@ function pinsFromExplanation(explanation: ArtifactTailoringExplanation): ResumeA
     evidenceNotes: displayEvidenceNotes(change.evidenceNotes),
     requirementIds: [],
     matchedSignals: change.jobSignals,
+    matchedKeywords: [],
     rationale: displayRationale(change.rationale),
   }));
 }
@@ -371,6 +374,7 @@ function pinFromProfileSourceLine(
     evidenceNotes: [],
     requirementIds: [],
     matchedSignals: [],
+    matchedKeywords: [],
     rationale:
       match.fields.length === 1
         ? "This selected PDF line is rendered from the Profile field shown above."
@@ -406,6 +410,7 @@ function pinFromResumeLine(
       evidenceNotes: [],
       requirementIds: [],
       matchedSignals: [],
+      matchedKeywords: [],
       rationale:
         "This selected PDF line is document structure, not a generated claim requiring source attribution.",
     };
@@ -438,7 +443,8 @@ function pinFromResumeLine(
       evidenceIds: bullet.evidenceIds,
       evidenceNotes: [],
       requirementIds: bullet.requirementIds,
-      matchedSignals: bullet.matchedKeywords,
+      matchedSignals: change?.jobSignals ?? [],
+      matchedKeywords: bullet.matchedKeywords,
       rationale: displayRationale(bullet.rationale || change?.rationale),
     };
   }
@@ -466,6 +472,7 @@ function pinFromResumeLine(
       evidenceNotes: displayEvidenceNotes(change.evidenceNotes),
       requirementIds: [],
       matchedSignals: change.jobSignals,
+      matchedKeywords: [],
       rationale: displayRationale(change.rationale),
     };
   }
@@ -495,6 +502,7 @@ function pinFromResumeLine(
       evidenceNotes: displayEvidenceNotes(contextChange.evidenceNotes),
       requirementIds: [],
       matchedSignals: contextChange.jobSignals,
+      matchedKeywords: [],
       rationale:
         "No exact Profile source field was recorded for this selected PDF line. The generator recorded this nearby Profile source section, so review the recorded source before approving the claim.",
     };
@@ -520,6 +528,7 @@ function pinFromResumeLine(
     evidenceNotes: [],
     requirementIds: [],
     matchedSignals: [],
+    matchedKeywords: [],
     rationale: explanation
       ? "This line is visible in the tailored resume, but it did not match a recorded generation-time source mapping."
       : "This line is visible in the tailored resume, but no generation-time source or evidence mapping was recorded.",
@@ -695,6 +704,7 @@ function riskSearchFieldsForPin(pin: ResumeAuditPin): string[] {
     ...pin.evidenceIds,
     ...pin.requirementIds,
     ...pin.matchedSignals,
+    ...pin.matchedKeywords,
     ...pin.tailoredText,
   ]
     .map(normalizeResumeLine)
@@ -755,9 +765,11 @@ function pinStatus(pin: ResumeAuditPin, risk: RiskSignals): string {
 
 function OptionalTagRow({
   label,
+  tone = "muted",
   values,
 }: {
   readonly label: string;
+  readonly tone?: "muted" | "ok" | "info" | "warn";
   readonly values: readonly string[];
 }): JSX.Element | null {
   if (!values.length) return null;
@@ -766,7 +778,7 @@ function OptionalTagRow({
       <dt>{label}</dt>
       <dd>
         {values.map((value) => (
-          <span className="tag muted" key={value}>
+          <span className={`tag ${tone}`} key={value}>
             {value}
           </span>
         ))}
@@ -1066,6 +1078,7 @@ function SelectedPinInspector({
             <dd>{pin.lineLabel}</dd>
           </div>
         ) : null}
+        <OptionalTagRow label="Keywords demonstrated" tone="ok" values={pin.matchedKeywords} />
         <OptionalTagRow label="Job signals reflected" values={pin.matchedSignals} />
         <OptionalTagRow label="Evidence notes" values={pin.evidenceNotes} />
       </dl>
