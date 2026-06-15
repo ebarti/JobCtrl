@@ -514,7 +514,11 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getAllByText("claim risk").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Owned platform reliability improvements for incident response.").length).toBeGreaterThan(0);
     expect(screen.getAllByText("req-platform-scale").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Warning repair attempted").length).toBeGreaterThan(0);
+    expect(within(artifactRisk).getByText("Warning handling")).toBeInTheDocument();
+    expect(
+      within(artifactRisk).getByText("retry attempted; selected artifact still has residual warnings"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Warning repair attempted")).not.toBeInTheDocument();
   });
 
   it("does not promote source-span fallback lines with audit metadata gaps to claim risk", async () => {

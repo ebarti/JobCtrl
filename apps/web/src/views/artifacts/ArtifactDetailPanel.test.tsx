@@ -281,7 +281,9 @@ describe("<ArtifactDetailPanel>", () => {
     expect(screen.getByText("Warning decision source")).toBeInTheDocument();
     expect(screen.getByText("Material generation workflow; no human approver recorded.")).toBeInTheDocument();
     expect(screen.queryByText("Accepted residual warnings")).not.toBeInTheDocument();
-    expect(screen.getByText("Warning repair attempted")).toBeInTheDocument();
+    expect(screen.getByText("Warning handling")).toBeInTheDocument();
+    expect(screen.getByText("retry attempted; selected artifact still has residual warnings")).toBeInTheDocument();
+    expect(screen.queryByText("Warning repair attempted")).not.toBeInTheDocument();
     expect(screen.getAllByText("Bullet could be more concise.").length).toBeGreaterThan(0);
     expect(screen.getByText("Annotated resume changes")).toBeInTheDocument();
     expect(screen.getByText("Summary was reframed toward platform reliability.")).toBeInTheDocument();

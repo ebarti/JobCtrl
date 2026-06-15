@@ -117,7 +117,11 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     <Empty title="No active apply-ready artifacts." />
                   )}
                 </Section>
-                <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section" />
+                <EmployerAnalysisPanel
+                  analysis={detail.employerAnalysis}
+                  className="section"
+                  scoreEvidence={detail.job.scoreBreakdown}
+                />
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />
                 </Section>

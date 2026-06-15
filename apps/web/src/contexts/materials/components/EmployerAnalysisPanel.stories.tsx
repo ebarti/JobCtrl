@@ -16,7 +16,14 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Populated: Story = {
-  args: { analysis: populatedEmployerAnalysis },
+  args: {
+    analysis: populatedEmployerAnalysis,
+    scoreEvidence: {
+      matchedSignals: ["platform reliability"],
+      missingSignals: ["Kubernetes-based developer platforms"],
+      transferableSignals: ["incident leadership"],
+    },
+  },
 };
 
 export const Degraded: Story = {

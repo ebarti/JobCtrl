@@ -3107,6 +3107,22 @@ textarea:focus-visible {
   padding: 10px;
 }
 
+.employer-analysis-requirement-list {
+  container-type: inline-size;
+}
+
+.employer-analysis-requirement {
+  display: grid;
+  gap: 10px;
+}
+
+@container (min-width: 500px) {
+  .employer-analysis-requirement {
+    grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr);
+    align-items: start;
+  }
+}
+
 .employer-analysis-requirement header,
 .employer-analysis-keyword header,
 .bullet-provenance header {
@@ -3115,6 +3131,39 @@ textarea:focus-visible {
   align-items: baseline;
   gap: 6px;
   margin-bottom: 8px;
+}
+
+.employer-analysis-match-side {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--muted) 42%, transparent);
+  padding: 8px;
+}
+
+.employer-analysis-match-side header {
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.employer-analysis-match-side header > span:first-child,
+.employer-analysis-signal-row > span:first-child {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.employer-analysis-signal-row,
+.employer-analysis-signal-row > span:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.employer-analysis-signal-row {
+  flex-direction: column;
 }
 
 .employer-analysis-requirement-text,

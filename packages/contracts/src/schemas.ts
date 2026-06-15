@@ -1080,6 +1080,87 @@ export interface ScoreEligibility {
   warnings: string[];
 }
 
+export type RequirementFitStatus =
+  | {
+      kind: "matched";
+      evidenceIds: string[];
+      strength: "direct" | "strong";
+    }
+  | {
+      kind: "transferable";
+      evidenceIds: string[];
+      gap: string;
+      bridge: string;
+    }
+  | {
+      kind: "missing";
+      reason: string;
+    }
+  | {
+      kind: "blocked";
+      blocker: string;
+    }
+  | {
+      kind: "not_assessed";
+      reason: string;
+    };
+
+export interface RequirementScoreContribution {
+  maxPoints: number;
+  awardedPoints: number;
+  weightedImpact: number;
+  rationale: string;
+}
+
+export interface RequirementTailoringDirective {
+  action: "double_down" | "bridge_gap" | "avoid_claim" | "low_priority";
+  priority: number;
+  allowedEvidenceIds: string[];
+  targetKeywords: string[];
+  prohibitedClaims: string[];
+  instruction: string;
+}
+
+export interface RequirementArtifactCoverage {
+  state: "covered" | "not_covered" | "not_recorded";
+  source: "tailored_resume_bullet_provenance";
+  bulletCount: number;
+  examples: string[];
+}
+
+export interface RequirementFitAssessment {
+  requirementId: string;
+  requirementText: string;
+  tier: "must_have" | "nice_to_have";
+  weight: number;
+  jobEvidenceSpan: string;
+  fit: RequirementFitStatus;
+  contribution: RequirementScoreContribution;
+  tailoring: RequirementTailoringDirective;
+  artifactCoverage: RequirementArtifactCoverage | null;
+}
+
+export interface RequirementFitSummary {
+  weightedFit: number;
+  mustHaveCoverage: number;
+  blockerCount: number;
+  missingHighWeightCount: number;
+}
+
+export interface RequirementFitReport {
+  jobKey: string;
+  scoreVersion: number;
+  employerAnalysisGeneration: number;
+  profileSnapshotVersion: number;
+  scoringPolicyVersion: number;
+  formulaVersion: string;
+  resolvedFitScore: number | null;
+  fitBand: "excellent" | "strong" | "plausible" | "stretch" | "poor";
+  confidence: "high" | "medium" | "low";
+  summary: RequirementFitSummary;
+  assessments: RequirementFitAssessment[];
+}
+
 export interface ScoringCriteriaSnapshot {
   minFitScore: number;
   criteriaText: string;

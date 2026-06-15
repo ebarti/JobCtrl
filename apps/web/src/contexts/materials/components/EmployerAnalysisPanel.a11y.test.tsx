@@ -10,7 +10,16 @@ import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
 describe("<EmployerAnalysisPanel> a11y", () => {
   it("has no critical/serious axe violations when populated", async () => {
-    const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
+    const view = render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        scoreEvidence={{
+          matchedSignals: ["platform reliability"],
+          missingSignals: ["Kubernetes-based developer platforms"],
+          transferableSignals: ["incident leadership"],
+        }}
+      />,
+    );
     expect(await axe(view.container)).toHaveNoViolations();
   });
 

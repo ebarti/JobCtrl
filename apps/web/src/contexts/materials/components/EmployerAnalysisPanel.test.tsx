@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -22,6 +22,69 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(screen.getByText("importance 55%")).toBeInTheDocument();
   });
 
+  it("renders each requirement beside its fit-score match evidence", () => {
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        scoreEvidence={{
+          matchedSignals: ["platform reliability"],
+          missingSignals: ["Kubernetes-based developer platforms"],
+          transferableSignals: ["incident leadership"],
+        }}
+      />,
+    );
+
+    const matched = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(matched).getByText("Fit-score match")).toBeInTheDocument();
+    expect(within(matched).getByText("matched")).toBeInTheDocument();
+    expect(within(matched).getByText("Matched score signal")).toBeInTheDocument();
+    expect(within(matched).getByText("platform reliability")).toBeInTheDocument();
+
+    const missing = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(missing).getByText("not matched")).toBeInTheDocument();
+    expect(within(missing).getByText("Missing score signal")).toBeInTheDocument();
+    expect(within(missing).getByText("Kubernetes-based developer platforms")).toBeInTheDocument();
+  });
+
+  it("shows an honest no-explicit-match state when score evidence has no linked signal", () => {
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        scoreEvidence={{ matchedSignals: [], missingSignals: [], transferableSignals: [] }}
+      />,
+    );
+
+    expect(screen.getAllByText("no explicit match")).toHaveLength(2);
+    expect(
+      screen.getAllByText("No matched, missing, or transferable score signal was linked to this requirement."),
+    ).toHaveLength(2);
+  });
+
+  it("links long narrative score signals to requirements through meaningful token overlap", () => {
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        scoreEvidence={{
+          matchedSignals: [
+            "Pioneered self-service internal developer platforms with Kubernetes workflows across engineering teams",
+          ],
+          missingSignals: [],
+          transferableSignals: [],
+        }}
+      />,
+    );
+
+    const platformRequirement = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(platformRequirement).getByText("matched")).toBeInTheDocument();
+    expect(within(platformRequirement).getByText("Matched score signal")).toBeInTheDocument();
+  });
+
   it("renders reasoned keywords with evidence spans and flags orphans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
@@ -35,6 +98,7 @@ describe("<EmployerAnalysisPanel>", () => {
     render(<EmployerAnalysisPanel analysis={degradedEmployerAnalysis} />);
 
     expect(screen.getByText("degraded (1/2)")).toBeInTheDocument();
+    expect(screen.getByText("ensemble divergence")).toBeInTheDocument();
     expect(screen.getByText("codex: timeout after 60s")).toBeInTheDocument();
   });
 

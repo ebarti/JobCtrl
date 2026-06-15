@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
+import { populatedEmployerAnalysis } from "../../test/fixtures/materials-inspector.js";
 import { makeApplyAudit, makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
@@ -165,6 +166,46 @@ describe("<JobDetailDrawer>", () => {
 
     await waitFor(() => expect(screen.getByText("Job not found.")).toBeInTheDocument());
     expect(screen.queryByText(/JobHunter API request failed: 404/i)).not.toBeInTheDocument();
+  });
+
+  it("shows employer requirements beside fit-score match evidence", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        return HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleJob,
+              jobKey: String(params["jobKey"]),
+              scoreBreakdown: {
+                ...sampleJob.scoreBreakdown!,
+                matchedSignals: ["platform reliability"],
+                missingSignals: ["Kubernetes-based developer platforms"],
+                transferableSignals: [],
+              },
+            },
+            {
+              employerAnalysis: populatedEmployerAnalysis,
+            },
+          ),
+        );
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    const requirement = await screen.findByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(requirement).getByText("Fit-score match")).toBeInTheDocument();
+    expect(within(requirement).getByText("matched")).toBeInTheDocument();
+    expect(within(requirement).getByText("Matched score signal")).toBeInTheDocument();
+    expect(within(requirement).getByText("platform reliability")).toBeInTheDocument();
+
+    const missingRequirement = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(missingRequirement).getByText("not matched")).toBeInTheDocument();
+    expect(within(missingRequirement).getByText("Missing score signal")).toBeInTheDocument();
   });
 
   it("closes when clicking the backdrop without treating drawer content as backdrop", async () => {

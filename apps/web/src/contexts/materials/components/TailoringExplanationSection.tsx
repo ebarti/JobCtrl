@@ -42,6 +42,21 @@ function yesNo(value: boolean | null): string {
   return value ? "yes" : "no";
 }
 
+function warningHandlingText(
+  warningRepairAttempted: boolean | null,
+  hasResidualWarnings: boolean,
+): string {
+  if (warningRepairAttempted === null) return "not recorded";
+  if (warningRepairAttempted) {
+    return hasResidualWarnings
+      ? "retry attempted; selected artifact still has residual warnings"
+      : "retry cleared warnings before selection";
+  }
+  return hasResidualWarnings
+    ? "no retry; workflow selected artifact with residual warnings"
+    : "no warning retry recorded";
+}
+
 function countSummary(count: number, displayed: number): string {
   if (!count) return "none recorded";
   const parts = [`${count} total`];
@@ -534,8 +549,8 @@ export function TailoringExplanationSection({
             {warningRepairAttempted === true && !hasItems(warnings) ? (
               <dl className="detail-list compact">
                 <div>
-                  <dt>Warning repair attempted</dt>
-                  <dd>yes</dd>
+                  <dt>Warning handling</dt>
+                  <dd>{warningHandlingText(warningRepairAttempted, false)}</dd>
                 </div>
               </dl>
             ) : null}
@@ -548,12 +563,8 @@ export function TailoringExplanationSection({
                     <dd>Material generation workflow; no human approver recorded.</dd>
                   </div>
                   <div>
-                    <dt>Warning repair attempted</dt>
-                    <dd>
-                      {warningRepairAttempted === null
-                        ? "not recorded"
-                        : yesNo(warningRepairAttempted)}
-                    </dd>
+                    <dt>Warning handling</dt>
+                    <dd>{warningHandlingText(warningRepairAttempted, true)}</dd>
                   </div>
                 </dl>
                 <EvidenceList items={warnings} />

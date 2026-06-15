@@ -48,6 +48,11 @@ _FIT_SCORE_MAX = 10
 FIT_BANDS = ("excellent", "strong", "plausible", "stretch", "poor")
 CONFIDENCE_LEVELS = ("high", "medium", "low")
 ELIGIBILITY_STATUSES = ("eligible", "warning", "blocked", "unknown")
+REQUIREMENT_TIERS = ("must_have", "nice_to_have")
+REQUIREMENT_FIT_KINDS = ("matched", "transferable", "missing", "blocked", "not_assessed")
+REQUIREMENT_MATCH_STRENGTHS = ("direct", "strong")
+REQUIREMENT_TAILORING_ACTIONS = ("double_down", "bridge_gap", "avoid_claim", "low_priority")
+REQUIREMENT_ARTIFACT_COVERAGE_STATES = ("covered", "not_covered", "not_recorded")
 
 
 def _clean_strings(values: Iterable[Any] | Any) -> tuple[str, ...]:
@@ -311,6 +316,505 @@ class ScoreBreakdown:
             "matched_signals": list(self.matched_signals),
             "missing_signals": list(self.missing_signals),
             "transferable_signals": list(self.transferable_signals),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Requirement fit report — canonical requirement-led score explanation
+# ---------------------------------------------------------------------------
+
+
+def _clean_enum(value: Any, allowed: tuple[str, ...], default: str) -> str:
+    text = str(value or default).strip().lower()
+    if text not in allowed:
+        raise ValueError(f"value must be one of {allowed}, got {text!r}")
+    return text
+
+
+def _clean_non_empty_text(value: Any, *, field_name: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} must be non-empty")
+    return text
+
+
+def _non_negative_float(value: Any, *, field_name: str) -> float:
+    parsed = _float_or_default(value, 0.0)
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be non-negative")
+    return parsed
+
+
+def _bounded_ratio(value: Any, *, field_name: str) -> float:
+    parsed = _float_or_default(value, 0.0)
+    if parsed < 0 or parsed > 1:
+        raise ValueError(f"{field_name} must be in [0, 1]")
+    return parsed
+
+
+@dataclass(frozen=True)
+class RequirementFitStatus:
+    """Pre-tailoring candidate fit for one employer requirement."""
+
+    kind: str
+    evidence_ids: tuple[str, ...] = ()
+    strength: str | None = None
+    gap: str = ""
+    bridge: str = ""
+    reason: str = ""
+    blocker: str = ""
+
+    def __post_init__(self) -> None:
+        kind = _clean_enum(self.kind, REQUIREMENT_FIT_KINDS, "not_assessed")
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "evidence_ids", _clean_strings(self.evidence_ids))
+        object.__setattr__(self, "gap", str(self.gap or "").strip())
+        object.__setattr__(self, "bridge", str(self.bridge or "").strip())
+        object.__setattr__(self, "reason", str(self.reason or "").strip())
+        object.__setattr__(self, "blocker", str(self.blocker or "").strip())
+        if kind == "matched":
+            if not self.evidence_ids:
+                raise ValueError("matched requirement fit requires at least one evidence id")
+            strength = _clean_enum(self.strength, REQUIREMENT_MATCH_STRENGTHS, "direct")
+            object.__setattr__(self, "strength", strength)
+            return
+        object.__setattr__(self, "strength", None)
+        if kind == "transferable":
+            if not self.evidence_ids:
+                raise ValueError("transferable requirement fit requires at least one evidence id")
+            if not self.bridge:
+                raise ValueError("transferable requirement fit requires a bridge")
+        elif kind == "missing":
+            if not self.reason:
+                raise ValueError("missing requirement fit requires a reason")
+        elif kind == "blocked":
+            if not self.blocker:
+                raise ValueError("blocked requirement fit requires a blocker")
+        elif kind == "not_assessed" and not self.reason:
+            raise ValueError("not_assessed requirement fit requires a reason")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementFitStatus":
+        data = data or {}
+        return cls(
+            kind=str(data.get("kind") or "not_assessed"),
+            evidence_ids=_clean_strings(data.get("evidence_ids", data.get("evidenceIds", ()))),
+            strength=data.get("strength"),
+            gap=str(data.get("gap") or ""),
+            bridge=str(data.get("bridge") or ""),
+            reason=str(data.get("reason") or ""),
+            blocker=str(data.get("blocker") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"kind": self.kind}
+        if self.evidence_ids:
+            payload["evidence_ids"] = list(self.evidence_ids)
+        if self.strength:
+            payload["strength"] = self.strength
+        if self.gap:
+            payload["gap"] = self.gap
+        if self.bridge:
+            payload["bridge"] = self.bridge
+        if self.reason:
+            payload["reason"] = self.reason
+        if self.blocker:
+            payload["blocker"] = self.blocker
+        return payload
+
+
+@dataclass(frozen=True)
+class RequirementScoreContribution:
+    """How one requirement contributes to the resolved fit score."""
+
+    max_points: float
+    awarded_points: float
+    weighted_impact: float
+    rationale: str = ""
+
+    def __post_init__(self) -> None:
+        max_points = _non_negative_float(self.max_points, field_name="RequirementScoreContribution.max_points")
+        awarded_points = _non_negative_float(
+            self.awarded_points,
+            field_name="RequirementScoreContribution.awarded_points",
+        )
+        if awarded_points > max_points:
+            raise ValueError("RequirementScoreContribution.awarded_points cannot exceed max_points")
+        object.__setattr__(self, "max_points", max_points)
+        object.__setattr__(self, "awarded_points", awarded_points)
+        object.__setattr__(
+            self,
+            "weighted_impact",
+            _non_negative_float(self.weighted_impact, field_name="RequirementScoreContribution.weighted_impact"),
+        )
+        object.__setattr__(self, "rationale", str(self.rationale or "").strip())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementScoreContribution":
+        data = data or {}
+        return cls(
+            max_points=data.get("max_points", data.get("maxPoints", 0.0)),
+            awarded_points=data.get("awarded_points", data.get("awardedPoints", 0.0)),
+            weighted_impact=data.get("weighted_impact", data.get("weightedImpact", 0.0)),
+            rationale=str(data.get("rationale") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_points": self.max_points,
+            "awarded_points": self.awarded_points,
+            "weighted_impact": self.weighted_impact,
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True)
+class RequirementTailoringDirective:
+    """How the resume tailor should handle one assessed requirement."""
+
+    action: str
+    priority: float = 0.0
+    allowed_evidence_ids: tuple[str, ...] = ()
+    target_keywords: tuple[str, ...] = ()
+    prohibited_claims: tuple[str, ...] = ()
+    instruction: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "action",
+            _clean_enum(self.action, REQUIREMENT_TAILORING_ACTIONS, "low_priority"),
+        )
+        object.__setattr__(self, "priority", _non_negative_float(self.priority, field_name="priority"))
+        object.__setattr__(self, "allowed_evidence_ids", _clean_strings(self.allowed_evidence_ids))
+        object.__setattr__(self, "target_keywords", _clean_strings(self.target_keywords))
+        object.__setattr__(self, "prohibited_claims", _clean_strings(self.prohibited_claims))
+        object.__setattr__(self, "instruction", str(self.instruction or "").strip())
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementTailoringDirective":
+        data = data or {}
+        return cls(
+            action=str(data.get("action") or "low_priority"),
+            priority=data.get("priority", 0.0),
+            allowed_evidence_ids=_clean_strings(
+                data.get("allowed_evidence_ids", data.get("allowedEvidenceIds", ()))
+            ),
+            target_keywords=_clean_strings(data.get("target_keywords", data.get("targetKeywords", ()))),
+            prohibited_claims=_clean_strings(
+                data.get("prohibited_claims", data.get("prohibitedClaims", ()))
+            ),
+            instruction=str(data.get("instruction") or ""),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action": self.action,
+            "priority": self.priority,
+            "allowed_evidence_ids": list(self.allowed_evidence_ids),
+            "target_keywords": list(self.target_keywords),
+            "prohibited_claims": list(self.prohibited_claims),
+            "instruction": self.instruction,
+        }
+
+
+@dataclass(frozen=True)
+class RequirementArtifactCoverage:
+    """Post-generation coverage for one requirement in the accepted artifact."""
+
+    state: str = "not_recorded"
+    source: str = "tailored_resume_bullet_provenance"
+    bullet_count: int = 0
+    examples: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "state",
+            _clean_enum(self.state, REQUIREMENT_ARTIFACT_COVERAGE_STATES, "not_recorded"),
+        )
+        source = str(self.source or "tailored_resume_bullet_provenance").strip()
+        if source != "tailored_resume_bullet_provenance":
+            raise ValueError("RequirementArtifactCoverage.source must be tailored_resume_bullet_provenance")
+        object.__setattr__(self, "source", source)
+        count = _int_or_default(self.bullet_count, 0)
+        if count < 0:
+            raise ValueError("RequirementArtifactCoverage.bullet_count must be non-negative")
+        object.__setattr__(self, "bullet_count", count)
+        object.__setattr__(self, "examples", _clean_strings(self.examples))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementArtifactCoverage":
+        data = data or {}
+        return cls(
+            state=str(data.get("state") or "not_recorded"),
+            source=str(data.get("source") or "tailored_resume_bullet_provenance"),
+            bullet_count=_int_or_default(data.get("bullet_count", data.get("bulletCount", 0)), 0),
+            examples=_clean_strings(data.get("examples", ())),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "source": self.source,
+            "bullet_count": self.bullet_count,
+            "examples": list(self.examples),
+        }
+
+
+@dataclass(frozen=True)
+class RequirementFitAssessment:
+    """One requirement row in the canonical requirement-led score explanation."""
+
+    requirement_id: str
+    requirement_text: str
+    tier: str
+    weight: float
+    job_evidence_span: str
+    fit: RequirementFitStatus
+    contribution: RequirementScoreContribution
+    tailoring: RequirementTailoringDirective
+    artifact_coverage: RequirementArtifactCoverage | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "requirement_id",
+            _clean_non_empty_text(self.requirement_id, field_name="RequirementFitAssessment.requirement_id"),
+        )
+        object.__setattr__(
+            self,
+            "requirement_text",
+            _clean_non_empty_text(self.requirement_text, field_name="RequirementFitAssessment.requirement_text"),
+        )
+        object.__setattr__(self, "tier", _clean_enum(self.tier, REQUIREMENT_TIERS, "nice_to_have"))
+        object.__setattr__(self, "weight", _bounded_ratio(self.weight, field_name="RequirementFitAssessment.weight"))
+        object.__setattr__(self, "job_evidence_span", str(self.job_evidence_span or "").strip())
+        if not isinstance(self.fit, RequirementFitStatus):
+            object.__setattr__(
+                self,
+                "fit",
+                RequirementFitStatus.from_dict(self.fit if isinstance(self.fit, dict) else None),
+            )
+        if not isinstance(self.contribution, RequirementScoreContribution):
+            object.__setattr__(
+                self,
+                "contribution",
+                RequirementScoreContribution.from_dict(
+                    self.contribution if isinstance(self.contribution, dict) else None
+                ),
+            )
+        if not isinstance(self.tailoring, RequirementTailoringDirective):
+            object.__setattr__(
+                self,
+                "tailoring",
+                RequirementTailoringDirective.from_dict(
+                    self.tailoring if isinstance(self.tailoring, dict) else None
+                ),
+            )
+        if self.artifact_coverage is not None and not isinstance(
+            self.artifact_coverage,
+            RequirementArtifactCoverage,
+        ):
+            object.__setattr__(
+                self,
+                "artifact_coverage",
+                RequirementArtifactCoverage.from_dict(
+                    self.artifact_coverage if isinstance(self.artifact_coverage, dict) else None
+                ),
+            )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementFitAssessment":
+        data = data or {}
+        coverage = data.get("artifact_coverage", data.get("artifactCoverage"))
+        return cls(
+            requirement_id=str(data.get("requirement_id", data.get("requirementId", "")) or ""),
+            requirement_text=str(data.get("requirement_text", data.get("requirementText", "")) or ""),
+            tier=str(data.get("tier") or "nice_to_have"),
+            weight=data.get("weight", 0.0),
+            job_evidence_span=str(data.get("job_evidence_span", data.get("jobEvidenceSpan", "")) or ""),
+            fit=RequirementFitStatus.from_dict(data.get("fit") if isinstance(data.get("fit"), dict) else None),
+            contribution=RequirementScoreContribution.from_dict(
+                data.get("contribution") if isinstance(data.get("contribution"), dict) else None
+            ),
+            tailoring=RequirementTailoringDirective.from_dict(
+                data.get("tailoring") if isinstance(data.get("tailoring"), dict) else None
+            ),
+            artifact_coverage=(
+                RequirementArtifactCoverage.from_dict(coverage)
+                if isinstance(coverage, dict)
+                else None
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requirement_id": self.requirement_id,
+            "requirement_text": self.requirement_text,
+            "tier": self.tier,
+            "weight": self.weight,
+            "job_evidence_span": self.job_evidence_span,
+            "fit": self.fit.to_dict(),
+            "contribution": self.contribution.to_dict(),
+            "tailoring": self.tailoring.to_dict(),
+            "artifact_coverage": self.artifact_coverage.to_dict()
+            if self.artifact_coverage is not None
+            else None,
+        }
+
+
+@dataclass(frozen=True)
+class RequirementFitSummary:
+    weighted_fit: float = 0.0
+    must_have_coverage: float = 0.0
+    blocker_count: int = 0
+    missing_high_weight_count: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "weighted_fit", _bounded_ratio(self.weighted_fit, field_name="weighted_fit"))
+        object.__setattr__(
+            self,
+            "must_have_coverage",
+            _bounded_ratio(self.must_have_coverage, field_name="must_have_coverage"),
+        )
+        for name in ("blocker_count", "missing_high_weight_count"):
+            value = _int_or_default(getattr(self, name), 0)
+            if value < 0:
+                raise ValueError(f"RequirementFitSummary.{name} must be non-negative")
+            object.__setattr__(self, name, value)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementFitSummary":
+        data = data or {}
+        return cls(
+            weighted_fit=data.get("weighted_fit", data.get("weightedFit", 0.0)),
+            must_have_coverage=data.get("must_have_coverage", data.get("mustHaveCoverage", 0.0)),
+            blocker_count=_int_or_default(data.get("blocker_count", data.get("blockerCount", 0)), 0),
+            missing_high_weight_count=_int_or_default(
+                data.get("missing_high_weight_count", data.get("missingHighWeightCount", 0)),
+                0,
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "weighted_fit": self.weighted_fit,
+            "must_have_coverage": self.must_have_coverage,
+            "blocker_count": self.blocker_count,
+            "missing_high_weight_count": self.missing_high_weight_count,
+        }
+
+
+@dataclass(frozen=True)
+class RequirementFitReport:
+    """Canonical requirement-led audit record for a score version."""
+
+    job_id: str
+    score_version: int
+    employer_analysis_generation: int
+    profile_snapshot_version: int
+    scoring_policy_version: int
+    formula_version: str
+    fit_band: str
+    confidence: str
+    summary: RequirementFitSummary = field(default_factory=RequirementFitSummary)
+    assessments: tuple[RequirementFitAssessment, ...] = ()
+    resolved_fit_score: FitScore | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "job_id",
+            _clean_non_empty_text(self.job_id, field_name="RequirementFitReport.job_id"),
+        )
+        for name in (
+            "score_version",
+            "employer_analysis_generation",
+            "profile_snapshot_version",
+            "scoring_policy_version",
+        ):
+            value = _int_or_default(getattr(self, name), 0)
+            if value < 0:
+                raise ValueError(f"RequirementFitReport.{name} must be non-negative")
+            object.__setattr__(self, name, value)
+        object.__setattr__(
+            self,
+            "formula_version",
+            _clean_non_empty_text(self.formula_version, field_name="RequirementFitReport.formula_version"),
+        )
+        object.__setattr__(self, "fit_band", _clean_enum(self.fit_band, FIT_BANDS, "plausible"))
+        object.__setattr__(self, "confidence", _clean_enum(self.confidence, CONFIDENCE_LEVELS, "medium"))
+        if not isinstance(self.summary, RequirementFitSummary):
+            object.__setattr__(
+                self,
+                "summary",
+                RequirementFitSummary.from_dict(self.summary if isinstance(self.summary, dict) else None),
+            )
+        assessments = self.assessments
+        if not isinstance(assessments, tuple):
+            assessments = tuple(assessments) if isinstance(assessments, IterableABC) else ()
+        object.__setattr__(
+            self,
+            "assessments",
+            tuple(
+                item if isinstance(item, RequirementFitAssessment) else RequirementFitAssessment.from_dict(item)
+                for item in assessments
+                if isinstance(item, (RequirementFitAssessment, MappingABC))
+            ),
+        )
+        if self.resolved_fit_score is not None and not isinstance(self.resolved_fit_score, FitScore):
+            object.__setattr__(self, "resolved_fit_score", FitScore.from_optional(self.resolved_fit_score))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "RequirementFitReport":
+        data = data or {}
+        return cls(
+            job_id=str(data.get("job_id", data.get("jobKey", data.get("jobId", ""))) or ""),
+            score_version=_int_or_default(data.get("score_version", data.get("scoreVersion", 0)), 0),
+            employer_analysis_generation=_int_or_default(
+                data.get("employer_analysis_generation", data.get("employerAnalysisGeneration", 0)),
+                0,
+            ),
+            profile_snapshot_version=_int_or_default(
+                data.get("profile_snapshot_version", data.get("profileSnapshotVersion", 0)),
+                0,
+            ),
+            scoring_policy_version=_int_or_default(
+                data.get("scoring_policy_version", data.get("scoringPolicyVersion", 0)),
+                0,
+            ),
+            formula_version=str(data.get("formula_version", data.get("formulaVersion", "")) or ""),
+            resolved_fit_score=FitScore.from_optional(
+                data.get("resolved_fit_score", data.get("resolvedFitScore"))
+            ),
+            fit_band=str(data.get("fit_band", data.get("fitBand", "plausible")) or "plausible"),
+            confidence=str(data.get("confidence") or "medium"),
+            summary=RequirementFitSummary.from_dict(
+                data.get("summary") if isinstance(data.get("summary"), dict) else None
+            ),
+            assessments=tuple(
+                RequirementFitAssessment.from_dict(item)
+                for item in data.get("assessments", ())
+                if isinstance(item, MappingABC)
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "score_version": self.score_version,
+            "employer_analysis_generation": self.employer_analysis_generation,
+            "profile_snapshot_version": self.profile_snapshot_version,
+            "scoring_policy_version": self.scoring_policy_version,
+            "formula_version": self.formula_version,
+            "resolved_fit_score": self.resolved_fit_score.value
+            if self.resolved_fit_score is not None
+            else None,
+            "fit_band": self.fit_band,
+            "confidence": self.confidence,
+            "summary": self.summary.to_dict(),
+            "assessments": [assessment.to_dict() for assessment in self.assessments],
         }
 
 
