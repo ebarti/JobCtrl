@@ -23,11 +23,12 @@ import logging
 import time
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Mapping
 
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.job_content_identity import job_content_fingerprint
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
@@ -120,6 +121,7 @@ def score_job(
     tenant_id: TenantId = LOCAL_TENANT,
     resume_text: str | None = None,
     criteria: ScoringCriteria | None = None,
+    employer_analysis: EmployerAnalysis | None = None,
 ) -> ScoreJobOutcome:
     """Score a single job and persist the result.
 
@@ -142,6 +144,7 @@ def score_job(
         tenant_id=tenant_id,
         resume_text=resume_text,
         criteria=criteria,
+        employer_analysis=employer_analysis,
     )
 
 
@@ -160,6 +163,7 @@ def run_scoring(
     resume_text: str | None = None,
     search_index: HybridSearchIndex | None = None,
     criteria: ScoringCriteria | None = None,
+    employer_analyses_by_job: Mapping[str, EmployerAnalysis] | None = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -290,6 +294,7 @@ def run_scoring(
     t0 = time.time()
     results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
     errors = 0
+    analyses_by_job = employer_analyses_by_job or {}
 
     # Worker threads run the LLM step only — the SQLite connection is not
     # safe to share across threads. Persistence happens below on the main
@@ -302,6 +307,7 @@ def run_scoring(
                 profile_snapshot=profile_snapshot,
                 resume_text=resume_text,
                 criteria=criteria,
+                employer_analysis=analyses_by_job.get(str(job.get("url") or "")),
             ): job
             for job in jobs_to_compute
         }
@@ -435,6 +441,7 @@ def score_job_by_url(
     policy_repository: ScoringPolicyRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
+    employer_analysis: EmployerAnalysis | None = None,
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by URL.
 
@@ -500,6 +507,7 @@ def score_job_by_url(
         tenant_id=tenant_id,
         resume_text=resume_text,
         criteria=criteria,
+        employer_analysis=employer_analysis,
     )
     finished_at = utc_now()
     if outcome.ok and outcome.score is not None:

@@ -13,6 +13,14 @@ import pytest
 
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    Requirement,
+    compute_snapshot_hash,
+)
 from jobhunter.domain.ports.events import Subscription
 from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.profile.aggregate import Profile
@@ -199,6 +207,73 @@ def _job(url: str = "https://example.com/job/1") -> dict[str, Any]:
         "location": "Remote",
         "full_description": "We need a Python and FastAPI engineer.",
     }
+
+
+def _profile_snapshot_with_evidence(tmp_path):
+    profile = {
+        "personal": {"full_name": "Tester"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Engineering leader."},
+            "experience_entries": [
+                {
+                    "id": "acme_platform",
+                    "title": "Director of Engineering",
+                    "company": "Acme",
+                    "bullets": ["Led Python platform reliability for distributed APIs."],
+                    "achievement_evidence": [
+                        {
+                            "id": "ev_python_platform",
+                            "source_text": "Led Python platform reliability for distributed APIs.",
+                            "tools": ["Python", "FastAPI"],
+                            "metrics": [],
+                            "seniority_signal": "technical ownership",
+                            "tags": ["python", "platform", "reliability"],
+                        }
+                    ],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [],
+        },
+    }
+    repo = build_profile_repository(db_path=tmp_path / "profile-evidence.db")
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
+    return repo.load_snapshot(LOCAL_TENANT)
+
+
+def _employer_analysis(job_url: str = "https://example.com/job/1") -> EmployerAnalysis:
+    canonical = JobAnalysis(
+        role_framing="Platform ownership.",
+        inferred_seniority="director",
+        ideal_candidate_narrative="A hands-on platform reliability leader.",
+        requirements=[
+            Requirement(
+                id="req-platform",
+                text="Lead Python platform reliability across distributed APIs.",
+                tier="must_have",
+                weight=0.95,
+                evidence_span="Python platform reliability",
+            )
+        ],
+        keywords=[
+            ReasonedKeyword(
+                keyword="Python",
+                evidence_span="Python",
+                requirement_ref="req-platform",
+            )
+        ],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job_url),
+        generation=3,
+        snapshot_hash=compute_snapshot_hash("Python platform reliability"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
 
 
 def _strong_llm_response() -> dict[str, Any]:
@@ -486,6 +561,29 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
     assert persisted.criteria.criteria_version == criteria.criteria_version
     assert persisted.trace.criteria_version == criteria.criteria_version
     assert persisted.breakdown.fit_band == "excellent"
+
+
+def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+    job = _job("https://example.com/job/requirement-fit-input")
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=job,
+        profile_snapshot=snapshot,
+        employer_analysis=_employer_analysis(job["url"]),
+    )
+
+    assert outcome.ok is True
+    prompt_payload = llm.calls[0][1].content
+    assert "REQUIREMENT FIT INPUTS" in prompt_payload
+    assert '"employer_analysis_generation": 3' in prompt_payload
+    assert '"id": "req-platform"' in prompt_payload
+    assert '"tier": "must_have"' in prompt_payload
+    assert '"weight": 0.95' in prompt_payload
+    assert '"id": "ev_python_platform"' in prompt_payload
+    assert "Led Python platform reliability for distributed APIs." in prompt_payload
 
 
 def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:

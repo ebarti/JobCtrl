@@ -35,6 +35,7 @@ from jobhunter.domain.events import (
     create_score_corrected,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.ports.scoring import (
@@ -56,6 +57,7 @@ from jobhunter.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
+from jobhunter.resume_profile import get_achievement_evidence
 
 log = logging.getLogger(__name__)
 
@@ -289,6 +291,90 @@ def _build_profile_preferences_blob(criteria: ScoringCriteria) -> str:
     return json_dumps(criteria.to_dict())
 
 
+def _build_requirement_fit_inputs_blob(
+    *,
+    job: dict[str, Any],
+    profile_snapshot: ProfileSnapshot,
+    employer_analysis: EmployerAnalysis | None,
+) -> str:
+    if employer_analysis is None:
+        return ""
+    job_url = str(job.get("url") or "").strip()
+    if job_url and str(employer_analysis.job_id) != job_url:
+        log.warning(
+            "Ignoring employer analysis for %s while scoring %s",
+            employer_analysis.job_id,
+            job_url,
+        )
+        return ""
+
+    requirements = [
+        {
+            "id": requirement.id,
+            "text": requirement.text,
+            "tier": requirement.tier,
+            "weight": requirement.weight,
+            "evidence_span": requirement.evidence_span,
+        }
+        for requirement in employer_analysis.canonical.requirements
+        if requirement.id and requirement.text
+    ]
+    if not requirements:
+        return ""
+
+    payload = {
+        "employer_analysis_generation": employer_analysis.generation,
+        "requirements": requirements,
+        "profile_evidence": _profile_evidence_prompt_items(profile_snapshot),
+    }
+    return "REQUIREMENT FIT INPUTS:\n" + json_dumps(payload)
+
+
+def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for raw in get_achievement_evidence(profile_snapshot.as_dict()):
+        if not isinstance(raw, dict):
+            continue
+        evidence_id = str(raw.get("id") or "").strip()
+        source_text = str(raw.get("source_text") or "").strip()
+        if not evidence_id or not source_text:
+            continue
+        item = {
+            "id": evidence_id,
+            "source_text": source_text,
+            "experience_entry_id": str(raw.get("experience_entry_id") or "").strip(),
+            "tools": _text_list(raw.get("tools")),
+            "metrics": _text_list(raw.get("metrics")),
+            "seniority_signal": str(raw.get("seniority_signal") or "").strip(),
+            "tags": _text_list(raw.get("tags")),
+        }
+        items.append({key: value for key, value in item.items() if value})
+        if len(items) >= 24:
+            break
+    return items
+
+
+def _text_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in value:
+        text = str(raw or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _optional_prompt_section(text: str) -> str:
+    if not text:
+        return ""
+    return f"---\n\n{text}\n\n"
+
+
 def json_dumps(value: Any) -> str:
     import json
 
@@ -357,6 +443,7 @@ class ScoreJobUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreJobOutcome:
         """**Preferred entry point** for single-threaded callers.
 
@@ -377,6 +464,7 @@ class ScoreJobUseCase:
             profile_snapshot=profile_snapshot,
             resume_text=resume_text,
             criteria=criteria,
+            employer_analysis=employer_analysis,
         )
         return self.persist_outcome(job=job, parse=parse_result, tenant_id=tenant_id)
 
@@ -387,6 +475,7 @@ class ScoreJobUseCase:
         profile_snapshot: ProfileSnapshot,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreParseResult:
         """LLM call + parse only — does NOT touch the repository.
 
@@ -408,6 +497,7 @@ class ScoreJobUseCase:
             resume_text=text,
             profile_snapshot=profile_snapshot,
             criteria=scoring_criteria,
+            employer_analysis=employer_analysis,
         )
 
     def persist_outcome(
@@ -457,6 +547,7 @@ class ScoreJobUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreJobOutcome:
         return self.score(
             job=job,
@@ -464,6 +555,7 @@ class ScoreJobUseCase:
             tenant_id=tenant_id,
             resume_text=resume_text,
             criteria=criteria,
+            employer_analysis=employer_analysis,
         )
 
     # ------------------------------------------------------------------
@@ -477,6 +569,7 @@ class ScoreJobUseCase:
         resume_text: str,
         profile_snapshot: ProfileSnapshot,
         criteria: ScoringCriteria,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreParseResult:
         trace = ScoreTrace(
             prompt_version=SCORE_PROMPT_VERSION,
@@ -484,6 +577,11 @@ class ScoreJobUseCase:
             model=str(getattr(self._llm, "model", "llm-port-default")),
             criteria_version=criteria.criteria_version,
             profile_snapshot_version=profile_snapshot.version,
+        )
+        requirement_fit_inputs = _build_requirement_fit_inputs_blob(
+            job=job,
+            profile_snapshot=profile_snapshot,
+            employer_analysis=employer_analysis,
         )
         messages = [
             LlmMessage(role="system", content=self._prompt),
@@ -493,6 +591,7 @@ class ScoreJobUseCase:
                     f"RESUME BASELINE:\n{resume_text}\n\n"
                     f"---\n\nSCORING CRITERIA AND PROFILE PREFERENCES:\n"
                     f"{_build_profile_preferences_blob(criteria)}\n\n"
+                    f"{_optional_prompt_section(requirement_fit_inputs)}"
                     f"---\n\nJOB POSTING:\n{_build_job_blob(job)}"
                 ),
             ),
