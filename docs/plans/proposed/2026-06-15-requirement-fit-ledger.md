@@ -191,6 +191,8 @@ Lifecycle labels must be explicit:
 
 ### Phase 3: Scoring V2
 
+- [x] Add the pure deterministic requirement-fit resolver and legacy signal
+      derivation helper.
 - [ ] Ensure employer analysis exists before scoring.
 - [ ] Update the scoring prompt/schema to classify fit per requirement.
 - [ ] Resolve `FitScore` deterministically from requirement contributions.

@@ -48,6 +48,13 @@ from jobhunter.domain.scoring.retrieval import (
     preselect_jobs_for_scoring,
     tokenize_text,
 )
+from jobhunter.domain.scoring.requirement_fit import (
+    RequirementFitSignals,
+    derive_requirement_fit_signals,
+    requirement_fit_value,
+    resolve_requirement_fit_report,
+    score_breakdown_from_requirement_fit,
+)
 
 __all__ = [
     "EligibilityAssessment",
@@ -84,4 +91,9 @@ __all__ = [
     "normalize_text",
     "preselect_jobs_for_scoring",
     "tokenize_text",
+    "RequirementFitSignals",
+    "derive_requirement_fit_signals",
+    "requirement_fit_value",
+    "resolve_requirement_fit_report",
+    "score_breakdown_from_requirement_fit",
 ]
