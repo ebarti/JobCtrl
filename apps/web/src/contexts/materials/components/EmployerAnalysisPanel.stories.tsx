@@ -20,11 +20,6 @@ export const Populated: Story = {
   args: {
     analysis: populatedEmployerAnalysis,
     requirementFitReport: populatedRequirementFitReport,
-    scoreEvidence: {
-      matchedSignals: ["platform reliability"],
-      missingSignals: ["Kubernetes-based developer platforms"],
-      transferableSignals: ["incident leadership"],
-    },
   },
 };
 
