@@ -193,6 +193,8 @@ Lifecycle labels must be explicit:
 
 - [x] Add the pure deterministic requirement-fit resolver and legacy signal
       derivation helper.
+- [x] Add backward-compatible parser and schema support for requirement-level
+      fit rows without accepting uncited matched claims.
 - [ ] Ensure employer analysis exists before scoring.
 - [ ] Update the scoring prompt/schema to classify fit per requirement.
 - [ ] Resolve `FitScore` deterministically from requirement contributions.

@@ -65,8 +65,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v1"
-SCORE_SCHEMA_VERSION = "score-fit-assessment-v1"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v2"
+SCORE_SCHEMA_VERSION = "score-fit-assessment-v2"
 
 
 SCORE_PROMPT = """You are a job fit evaluator for an applicant-side local tool. Given a candidate profile, saved scoring criteria, and a job description, produce an explainable fit assessment.
@@ -86,6 +86,8 @@ DIMENSION SCORES (0..10 each — be strict, do not anchor on the overall score):
 ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, location/work model, compensation, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker is visible.
 
 EVIDENCE: name matched signals, missing signals, and transferable signals. Do not invent candidate experience to close a gap.
+
+REQUIREMENT ASSESSMENTS: when the input includes explicit employer requirement IDs and profile evidence IDs, include `requirement_assessments`. Each row must classify the candidate's pre-tailoring fit for one requirement. Use `matched` or `transferable` only when citing provided profile evidence IDs. If explicit IDs are absent, omit `requirement_assessments`; do not invent requirement IDs or evidence IDs.
 
 CONFIDENCE: use `low` when the posting is thin, the profile is incomplete, evidence conflicts, or the score needs manual review.
 
@@ -166,6 +168,81 @@ SCORE_SCHEMA: dict = {
             "type": "array",
             "items": {"type": "string"},
             "description": "Adjacent experience that could bridge a gap",
+        },
+        "requirement_assessments": {
+            "type": "array",
+            "description": (
+                "Optional pre-tailoring fit rows keyed by explicit employer "
+                "requirement IDs. Omit unless requirement and profile evidence "
+                "IDs were provided in the prompt input."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "requirement_id": {
+                        "type": "string",
+                        "description": "Stable employer requirement ID from the prompt input",
+                    },
+                    "requirement_text": {
+                        "type": "string",
+                        "description": "Requirement text from the job post",
+                    },
+                    "tier": {
+                        "type": "string",
+                        "enum": ["must_have", "nice_to_have"],
+                    },
+                    "weight": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                    },
+                    "job_evidence_span": {
+                        "type": "string",
+                        "description": "Verbatim job-post span supporting this requirement",
+                    },
+                    "fit": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "matched",
+                                    "transferable",
+                                    "missing",
+                                    "blocked",
+                                    "not_assessed",
+                                ],
+                            },
+                            "evidence_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Provided profile evidence IDs; required for matched/transferable",
+                            },
+                            "strength": {
+                                "type": "string",
+                                "enum": ["direct", "strong"],
+                            },
+                            "gap": {"type": "string"},
+                            "bridge": {"type": "string"},
+                            "reason": {"type": "string"},
+                            "blocker": {"type": "string"},
+                        },
+                        "required": ["kind"],
+                    },
+                    "target_keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": [
+                    "requirement_id",
+                    "requirement_text",
+                    "tier",
+                    "weight",
+                    "job_evidence_span",
+                    "fit",
+                ],
+            },
         },
         "keywords": {
             "type": "array",

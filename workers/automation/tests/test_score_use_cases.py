@@ -304,6 +304,99 @@ def test_score_parser_supports_fit_assessment_fields() -> None:
     assert result.trace.parser_warnings == ()
 
 
+def test_score_parser_parses_requirement_assessments() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 8,
+            "role_fit": 7,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["platform leadership"],
+            "missing_signals": ["public company scale"],
+            "transferable_signals": ["incident command"],
+            "keywords": ["platform", "reliability"],
+            "reasoning": "Strong direct fit with one gap.",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-1",
+                    "requirement_text": "Lead platform reliability across distributed systems.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Lead platform reliability",
+                    "fit": {
+                        "kind": "matched",
+                        "evidence_ids": ["profile-exp-1"],
+                        "strength": "direct",
+                    },
+                    "target_keywords": ["reliability"],
+                },
+                {
+                    "requirement_id": "req-2",
+                    "requirement_text": "Own public company operating cadence.",
+                    "tier": "nice_to_have",
+                    "weight": 0.4,
+                    "job_evidence_span": "public company",
+                    "fit": {"kind": "missing", "reason": "No public-company profile evidence."},
+                },
+            ],
+        }
+    )
+
+    assert result.ok is True
+    assert len(result.requirement_assessments) == 2
+    matched, missing = result.requirement_assessments
+    assert matched.fit.kind == "matched"
+    assert matched.fit.evidence_ids == ("profile-exp-1",)
+    assert matched.tailoring.action == "double_down"
+    assert matched.tailoring.allowed_evidence_ids == ("profile-exp-1",)
+    assert matched.contribution.rationale == "Pending deterministic requirement-fit resolution."
+    assert missing.fit.kind == "missing"
+    assert missing.tailoring.action == "avoid_claim"
+    assert missing.tailoring.prohibited_claims == (
+        "Own public company operating cadence.",
+    )
+    assert result.trace.parser_warnings == ()
+
+
+def test_score_parser_does_not_accept_matched_requirement_without_evidence() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 8,
+            "role_fit": 7,
+            "fit_band": "strong",
+            "confidence": "medium",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["platform leadership"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["platform"],
+            "reasoning": "Strong fit.",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-1",
+                    "requirement_text": "Lead platform reliability across distributed systems.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Lead platform reliability",
+                    "fit": {"kind": "matched"},
+                },
+            ],
+        }
+    )
+
+    assert result.ok is True
+    assert result.requirement_assessments[0].fit.kind == "not_assessed"
+    assert result.requirement_assessments[0].tailoring.action == "low_priority"
+    assert result.trace.parser_warnings == (
+        "requirement_fit_matched_without_evidence:req-1",
+    )
+
+
 # ---------------------------------------------------------------------------
 # ScoreJobUseCase
 # ---------------------------------------------------------------------------
