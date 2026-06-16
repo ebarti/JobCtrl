@@ -62,6 +62,7 @@ VITE_JOBHUNTER_API_BASE_URL=http://127.0.0.1:8766 pnpm web:dev -- --port 5173
 | Activity events overload Dashboard or stop being inspectable from the Debug tab | `apps/api/test/server.test.ts`; `apps/web/src/views/dashboard/DashboardView.test.tsx`; `apps/web/src/views/debug/DebugActivityTable.test.tsx`; `apps/web/src/views/debug/DebugView.test.tsx` |
 | Job detail audit history misses user-relevant lifecycle milestones, duplicates raw event payloads, or exposes debug messages, raw notes, email bodies, or local paths | `apps/api/test/server.test.ts`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx` |
 | Job detail drawer stops opening as an almost full-screen audit workspace, or stops showing top-level ranking rationale, apply readiness, blockers, eligibility concerns, or Apply Review handoff from the shared audit contract | `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; browser smoke on `/jobs` drawer |
+| Requirement-fit explanation regresses by deriving requirement matches from legacy broad score-signal text, hiding the `not_assessed` state for old scores, omitting the current-policy re-score path, or letting Apply Review requirement coverage disagree with the projected requirement-fit report | `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.test.tsx`; `apps/web/src/views/jobs/JobDetailDrawer.test.tsx`; `apps/web/src/views/apply-review/ApplyReviewView.test.tsx`; browser smoke on `/jobs` drawer and `/apply-review` |
 | Jobs delete/hide lifecycle regresses, causing temporary deletes not to resurface, hidden jobs to leak into active/deleted views, or permanent deletes to leave suppressing tombstones behind | `apps/api/test/server.test.ts`; `workers/automation/tests/test_discovery_identity.py`; `apps/web/src/views/jobs/JobBulkActions.test.tsx`; `apps/web/src/views/jobs/JobsView.test.tsx` |
 | Destructive UI workflows touch real user data | `apps/api/test/qa-workflow.test.ts` with `pnpm qa:seed` |
 | Source registry compatibility drops legacy discovery config | `workers/automation/tests/test_source_registry.py` covers packaged `sites.yaml` migration, `employers.yaml` migration, JobSpy `boards` selection, and the one-release legacy `sites` alias warning |
@@ -224,6 +225,11 @@ shared `applyAudit` contract. The drawer should use almost the full viewport on
 desktop and arrange detailed sections in a wide audit workspace rather than a
 narrow side panel. When touching score visuals, sort by fit score and verify
 score badges use the numeric color contract: 10 green, 5 gray, and 0 red.
+When touching requirement-fit explanation, verify scored jobs show requirement
+fit as the explanation of the numeric score and legacy jobs without
+`requirementFitReport` show "not assessed" plus a current-policy re-score action;
+the drawer must not derive requirement matches from old broad matched/missing
+signal text.
 Do not run apply submission, mailbox scanning,
 material regeneration, destructive profile/database actions, or worker-backed
 jobs for this smoke.

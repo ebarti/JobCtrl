@@ -11,19 +11,11 @@ import type { JSX } from "react";
 
 import { formatToken, scorePercent, weightPercent } from "../lib/audit-format.js";
 
-export interface EmployerRequirementScoreEvidence {
-  readonly matchedSignals?: readonly string[];
-  readonly missingSignals?: readonly string[];
-  readonly transferableSignals?: readonly string[];
-}
-
 export interface EmployerAnalysisPanelProps {
   /** The canonical employer analysis, or null when none has been produced yet. */
   readonly analysis: EmployerAnalysis | null;
   /** Canonical requirement-led score report for the same job, or null for legacy scores. */
   readonly requirementFitReport?: RequirementFitReport | null;
-  /** Fit-score evidence used to explain whether extracted requirements were matched. */
-  readonly scoreEvidence?: EmployerRequirementScoreEvidence | null;
   readonly className?: string;
 }
 
@@ -31,7 +23,6 @@ interface RequirementAssessment {
   readonly label: string;
   readonly tone: "ok" | "warn" | "info" | "muted";
   readonly title: string;
-  readonly source: "requirement_fit" | "legacy_signals";
   readonly explanation: string;
   readonly rows: readonly RequirementAssessmentRow[];
 }
@@ -42,73 +33,12 @@ interface RequirementAssessmentRow {
   readonly tone?: "ok" | "warn" | "info" | "muted";
 }
 
-const STOPWORDS = new Set([
-  "an",
-  "and",
-  "are",
-  "as",
-  "at",
-  "be",
-  "by",
-  "for",
-  "from",
-  "have",
-  "if",
-  "in",
-  "into",
-  "is",
-  "it",
-  "no",
-  "of",
-  "on",
-  "or",
-  "our",
-  "so",
-  "the",
-  "that",
-  "this",
-  "to",
-  "we",
-  "with",
-  "your",
-]);
-
 function normalizeText(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-}
-
-function signalTokens(value: string): string[] {
-  return normalizeText(value)
-    .split(" ")
-    .filter((token) => token.length >= 2 && !STOPWORDS.has(token));
-}
-
-function signalMatchesRequirement(signal: string, requirement: EmployerAnalysisRequirement): boolean {
-  const normalizedSignal = normalizeText(signal);
-  if (!normalizedSignal) return false;
-
-  const haystack = normalizeText(`${requirement.text} ${requirement.evidence_span}`);
-  if (haystack.includes(normalizedSignal)) return true;
-
-  const tokens = signalTokens(normalizedSignal);
-  if (!tokens.length) return false;
-  const haystackTokens = new Set(signalTokens(haystack));
-  const overlap = tokens.filter((token) => haystackTokens.has(token)).length;
-  if (tokens.length <= 2) {
-    return overlap === tokens.length;
-  }
-  return overlap >= 3 || (overlap >= 2 && overlap / tokens.length >= 0.35);
-}
-
-function matchingSignals(
-  requirement: EmployerAnalysisRequirement,
-  signals: readonly string[] | undefined,
-): readonly string[] {
-  return (signals ?? []).filter((signal) => signalMatchesRequirement(signal, requirement));
 }
 
 function isFlaggedByAgreement(
@@ -130,66 +60,17 @@ function isFlaggedByAgreement(
 function requirementAssessment(
   requirement: EmployerAnalysisRequirement,
   requirementFitReport: RequirementFitReport | null | undefined,
-  scoreEvidence: EmployerRequirementScoreEvidence | null | undefined,
 ): RequirementAssessment {
   const fitAssessment = matchingRequirementFit(requirement, requirementFitReport);
   if (fitAssessment) {
     return requirementFitAssessment(fitAssessment);
   }
 
-  if (!scoreEvidence) {
-    return {
-      label: "score evidence not recorded",
-      tone: "muted",
-      title: "No fit-score signal evidence was recorded for this job.",
-      source: "legacy_signals",
-      explanation: "No matched, missing, or transferable score signals were recorded for this job.",
-      rows: [],
-    };
-  }
-
-  const missing = matchingSignals(requirement, scoreEvidence.missingSignals);
-  if (missing.length) {
-    return {
-      label: "not matched",
-      tone: "warn",
-      title: "The scoring evidence names this requirement as a missing signal.",
-      source: "legacy_signals",
-      explanation: "The fit-score assessment explicitly recorded this requirement as missing.",
-      rows: [{ label: "Missing score signal", values: missing, tone: "warn" }],
-    };
-  }
-
-  const matched = matchingSignals(requirement, scoreEvidence.matchedSignals);
-  if (matched.length) {
-    return {
-      label: "matched",
-      tone: "ok",
-      title: "The scoring evidence names this requirement as a matched signal.",
-      source: "legacy_signals",
-      explanation: "The fit-score assessment explicitly recorded matching profile evidence.",
-      rows: [{ label: "Matched score signal", values: matched, tone: "ok" }],
-    };
-  }
-
-  const transferable = matchingSignals(requirement, scoreEvidence.transferableSignals);
-  if (transferable.length) {
-    return {
-      label: "transferable",
-      tone: "info",
-      title: "The scoring evidence names this requirement as a transferable signal.",
-      source: "legacy_signals",
-      explanation: "The fit-score assessment recorded related experience rather than a direct match.",
-      rows: [{ label: "Transferable score signal", values: transferable, tone: "info" }],
-    };
-  }
-
   return {
-    label: "no explicit match",
+    label: "not assessed",
     tone: "muted",
-    title: "The score evidence did not name this requirement as matched, missing, or transferable.",
-    source: "legacy_signals",
-    explanation: "No matched, missing, or transferable score signal was linked to this requirement.",
+    title: "This job has employer requirements, but no requirement-fit report for this score.",
+    explanation: "Re-score this job with the current policy to produce requirement-level candidate fit.",
     rows: [],
   };
 }
@@ -216,7 +97,6 @@ function requirementFitAssessment(assessment: RequirementFitAssessment): Require
       label: "matched",
       tone: "ok",
       title: "The requirement-fit report records direct profile evidence for this requirement.",
-      source: "requirement_fit",
       explanation: assessment.contribution.rationale || "Profile evidence covers this requirement.",
       rows,
     };
@@ -226,7 +106,6 @@ function requirementFitAssessment(assessment: RequirementFitAssessment): Require
       label: "transferable",
       tone: "info",
       title: "The requirement-fit report records related evidence that can bridge this requirement.",
-      source: "requirement_fit",
       explanation: assessment.contribution.rationale || status.bridge,
       rows,
     };
@@ -236,7 +115,6 @@ function requirementFitAssessment(assessment: RequirementFitAssessment): Require
       label: "missing",
       tone: "warn",
       title: "The requirement-fit report records this requirement as missing.",
-      source: "requirement_fit",
       explanation: assessment.contribution.rationale || status.reason,
       rows,
     };
@@ -246,7 +124,6 @@ function requirementFitAssessment(assessment: RequirementFitAssessment): Require
       label: "blocked",
       tone: "warn",
       title: "The requirement-fit report records this requirement as a blocker.",
-      source: "requirement_fit",
       explanation: assessment.contribution.rationale || status.blocker,
       rows,
     };
@@ -255,7 +132,6 @@ function requirementFitAssessment(assessment: RequirementFitAssessment): Require
     label: "not assessed",
     tone: "muted",
     title: "The requirement-fit report did not assess this requirement.",
-    source: "requirement_fit",
     explanation: assessment.contribution.rationale || status.reason,
     rows,
   };
@@ -342,16 +218,14 @@ function formatPoints(value: number): string {
 function RequirementItem({
   requirement,
   requirementFitReport,
-  scoreEvidence,
   flaggedRequirements,
 }: {
   readonly requirement: EmployerAnalysisRequirement;
   readonly requirementFitReport?: RequirementFitReport | null;
-  readonly scoreEvidence?: EmployerRequirementScoreEvidence | null;
   readonly flaggedRequirements: readonly string[];
 }): JSX.Element {
   const tier = requirement.tier === "must_have" ? "warn" : "muted";
-  const assessment = requirementAssessment(requirement, requirementFitReport, scoreEvidence);
+  const assessment = requirementAssessment(requirement, requirementFitReport);
   const flagged = isFlaggedByAgreement(requirement, flaggedRequirements);
   return (
     <article className="employer-analysis-requirement" aria-label={`Requirement: ${requirement.text}`}>
@@ -382,7 +256,7 @@ function RequirementItem({
       </div>
       <div className="employer-analysis-match-side">
         <header>
-          <span>{assessment.source === "requirement_fit" ? "Requirement fit" : "Legacy score signals"}</span>
+          <span>Requirement fit</span>
           <span className={`tag ${assessment.tone}`} title={assessment.title}>
             {assessment.label}
           </span>
@@ -488,7 +362,6 @@ function SubAnalysisDetails({
 export function EmployerAnalysisPanel({
   analysis,
   requirementFitReport = null,
-  scoreEvidence = null,
   className = "section",
 }: EmployerAnalysisPanelProps): JSX.Element {
   if (!analysis) {
@@ -556,7 +429,6 @@ export function EmployerAnalysisPanel({
                   key={requirement.id}
                   requirement={requirement}
                   requirementFitReport={requirementFitReport}
-                  scoreEvidence={scoreEvidence}
                   flaggedRequirements={analysis.agreement.flagged_requirements}
                 />
               ))}

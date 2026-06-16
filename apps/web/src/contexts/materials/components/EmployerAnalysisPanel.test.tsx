@@ -99,67 +99,23 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(within(transferable).getByText("missing from profile · 0 bullets")).toBeInTheDocument();
   });
 
-  it("falls back to legacy fit-score signals when no requirement fit report exists", () => {
-    render(
-      <EmployerAnalysisPanel
-        analysis={populatedEmployerAnalysis}
-        scoreEvidence={{
-          matchedSignals: ["platform reliability"],
-          missingSignals: ["Kubernetes-based developer platforms"],
-          transferableSignals: ["incident leadership"],
-        }}
-      />,
-    );
+  it("shows not assessed when no requirement fit report exists", () => {
+    render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    expect(within(matched).getByText("Legacy score signals")).toBeInTheDocument();
-    expect(within(matched).getByText("matched")).toBeInTheDocument();
-    expect(within(matched).getByText("Matched score signal")).toBeInTheDocument();
-    expect(within(matched).getByText("platform reliability")).toBeInTheDocument();
+    expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(matched).getByText("not assessed")).toBeInTheDocument();
+    expect(
+      within(matched).getByText("Re-score this job with the current policy to produce requirement-level candidate fit."),
+    ).toBeInTheDocument();
 
     const missing = screen.getByRole("article", {
       name: "Requirement: Experience with Kubernetes-based developer platforms",
     });
-    expect(within(missing).getByText("not matched")).toBeInTheDocument();
-    expect(within(missing).getByText("Missing score signal")).toBeInTheDocument();
-    expect(within(missing).getByText("Kubernetes-based developer platforms")).toBeInTheDocument();
-  });
-
-  it("shows an honest no-explicit-match state when score evidence has no linked signal", () => {
-    render(
-      <EmployerAnalysisPanel
-        analysis={populatedEmployerAnalysis}
-        scoreEvidence={{ matchedSignals: [], missingSignals: [], transferableSignals: [] }}
-      />,
-    );
-
-    expect(screen.getAllByText("no explicit match")).toHaveLength(2);
-    expect(
-      screen.getAllByText("No matched, missing, or transferable score signal was linked to this requirement."),
-    ).toHaveLength(2);
-  });
-
-  it("links long narrative score signals to requirements through meaningful token overlap", () => {
-    render(
-      <EmployerAnalysisPanel
-        analysis={populatedEmployerAnalysis}
-        scoreEvidence={{
-          matchedSignals: [
-            "Pioneered self-service internal developer platforms with Kubernetes workflows across engineering teams",
-          ],
-          missingSignals: [],
-          transferableSignals: [],
-        }}
-      />,
-    );
-
-    const platformRequirement = screen.getByRole("article", {
-      name: "Requirement: Experience with Kubernetes-based developer platforms",
-    });
-    expect(within(platformRequirement).getByText("matched")).toBeInTheDocument();
-    expect(within(platformRequirement).getByText("Matched score signal")).toBeInTheDocument();
+    expect(within(missing).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(missing).getByText("not assessed")).toBeInTheDocument();
   });
 
   it("renders reasoned keywords with evidence spans and flags orphans", () => {
