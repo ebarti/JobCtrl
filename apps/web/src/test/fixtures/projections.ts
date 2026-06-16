@@ -473,6 +473,7 @@ export function makeJobDetail(
     auditHistory: overrides.auditHistory ?? sampleJobAuditHistory,
     applyAudit: overrides.applyAudit ?? makeApplyAudit(),
     employerAnalysis: overrides.employerAnalysis ?? null,
+    requirementFitReport: overrides.requirementFitReport ?? null,
   };
 }
 

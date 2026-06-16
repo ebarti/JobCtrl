@@ -1534,6 +1534,9 @@ export interface JobDetail {
   // Phase 1: the canonical employer analysis served from projection rows, or
   // null when no analysis has been produced for this job yet.
   employerAnalysis: EmployerAnalysis | null;
+  // Requirement-led fit audit served from projection rows, or null when this
+  // job has not been scored with requirement-level assessments yet.
+  requirementFitReport: RequirementFitReport | null;
 }
 
 export interface ArtifactDetail {

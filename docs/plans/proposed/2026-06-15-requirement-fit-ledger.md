@@ -210,10 +210,10 @@ Lifecycle labels must be explicit:
 
 ### Phase 4: Projections And API
 
-- [ ] Project `RequirementFitReport` onto job detail.
-- [ ] Expose the report in API contracts and read-model responses.
+- [x] Project `RequirementFitReport` onto job detail.
+- [x] Expose the report in API contracts and read-model responses.
 - [ ] Preserve old fields until UI migration is complete.
-- [ ] Add Python/TypeScript projection parity coverage.
+- [x] Add Python/TypeScript projection parity coverage.
 
 ### Phase 5: Tailoring Integration
 

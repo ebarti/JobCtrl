@@ -103,6 +103,91 @@ export interface ScoreTrace {
 }
 
 // ---------------------------------------------------------------------------
+// RequirementFitReport
+// ---------------------------------------------------------------------------
+
+export type RequirementFitStatus =
+  | {
+      readonly kind: "matched";
+      readonly evidenceIds: readonly string[];
+      readonly strength: "direct" | "strong";
+    }
+  | {
+      readonly kind: "transferable";
+      readonly evidenceIds: readonly string[];
+      readonly gap: string;
+      readonly bridge: string;
+    }
+  | {
+      readonly kind: "missing";
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "blocked";
+      readonly blocker: string;
+    }
+  | {
+      readonly kind: "not_assessed";
+      readonly reason: string;
+    };
+
+export interface RequirementScoreContribution {
+  readonly maxPoints: number;
+  readonly awardedPoints: number;
+  readonly weightedImpact: number;
+  readonly rationale: string;
+}
+
+export interface RequirementTailoringDirective {
+  readonly action: "double_down" | "bridge_gap" | "avoid_claim" | "low_priority";
+  readonly priority: number;
+  readonly allowedEvidenceIds: readonly string[];
+  readonly targetKeywords: readonly string[];
+  readonly prohibitedClaims: readonly string[];
+  readonly instruction: string;
+}
+
+export interface RequirementArtifactCoverage {
+  readonly state: "covered" | "not_covered" | "not_recorded";
+  readonly source: "tailored_resume_bullet_provenance";
+  readonly bulletCount: number;
+  readonly examples: readonly string[];
+}
+
+export interface RequirementFitAssessment {
+  readonly requirementId: string;
+  readonly requirementText: string;
+  readonly tier: "must_have" | "nice_to_have";
+  readonly weight: number;
+  readonly jobEvidenceSpan: string;
+  readonly fit: RequirementFitStatus;
+  readonly contribution: RequirementScoreContribution;
+  readonly tailoring: RequirementTailoringDirective;
+  readonly artifactCoverage: RequirementArtifactCoverage | null;
+}
+
+export interface RequirementFitSummary {
+  readonly weightedFit: number;
+  readonly mustHaveCoverage: number;
+  readonly blockerCount: number;
+  readonly missingHighWeightCount: number;
+}
+
+export interface RequirementFitReport {
+  readonly jobKey: string;
+  readonly scoreVersion: number;
+  readonly employerAnalysisGeneration: number;
+  readonly profileSnapshotVersion: number;
+  readonly scoringPolicyVersion: number;
+  readonly formulaVersion: string;
+  readonly resolvedFitScore: number | null;
+  readonly fitBand: "excellent" | "strong" | "plausible" | "stretch" | "poor";
+  readonly confidence: "high" | "medium" | "low";
+  readonly summary: RequirementFitSummary;
+  readonly assessments: readonly RequirementFitAssessment[];
+}
+
+// ---------------------------------------------------------------------------
 // JobScore aggregate
 // ---------------------------------------------------------------------------
 
