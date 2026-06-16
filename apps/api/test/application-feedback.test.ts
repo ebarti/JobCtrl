@@ -100,6 +100,25 @@ describe("application feedback API", () => {
             tier: "must_have",
             weight: 0.9,
             evidence: "lead platform reliability",
+            fit: {
+              kind: "matched",
+              evidenceIds: ["ev-platform"],
+              strength: "direct",
+            },
+            contribution: {
+              maxPoints: 1.125,
+              awardedPoints: 1.125,
+              weightedImpact: 1.125,
+              rationale: "Direct platform reliability evidence covers the requirement.",
+            },
+            tailoring: {
+              action: "double_down",
+              priority: 0.9,
+              allowedEvidenceIds: ["ev-platform"],
+              targetKeywords: ["platform reliability"],
+              prohibitedClaims: [],
+              instruction: "Keep platform reliability ownership prominent.",
+            },
             coverage: {
               state: "covered",
               source: "tailored_resume_bullet_provenance",
@@ -113,6 +132,26 @@ describe("application feedback API", () => {
             tier: "important",
             weight: 0.7,
             evidence: "developer experience improvements",
+            fit: {
+              kind: "transferable",
+              evidenceIds: ["ev-incident"],
+              gap: "No direct developer-experience ownership evidence was recorded.",
+              bridge: "Incident leadership can support adjacent developer-experience expectations.",
+            },
+            contribution: {
+              maxPoints: 0.7,
+              awardedPoints: 0.42,
+              weightedImpact: 0.42,
+              rationale: "Transferable incident leadership partially covers the requirement.",
+            },
+            tailoring: {
+              action: "bridge_gap",
+              priority: 0.7,
+              allowedEvidenceIds: ["ev-incident"],
+              targetKeywords: ["incident response", "developer experience"],
+              prohibitedClaims: ["owned developer experience end to end"],
+              instruction: "Bridge from incident leadership without claiming direct developer-experience ownership.",
+            },
             coverage: {
               state: "missing_from_resume",
               source: "tailored_resume_bullet_provenance",
@@ -944,6 +983,36 @@ function seedDatabase(dbPath: string): void {
       error TEXT NOT NULL DEFAULT '',
       raw_output TEXT
     );
+    CREATE TABLE job_requirement_fit_reports (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      employer_analysis_generation INTEGER NOT NULL,
+      profile_snapshot_version INTEGER NOT NULL,
+      scoring_policy_version INTEGER NOT NULL,
+      formula_version TEXT NOT NULL,
+      resolved_fit_score INTEGER,
+      fit_band TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      summary_json TEXT NOT NULL DEFAULT '{}',
+      PRIMARY KEY (tenant_id, job_url, score_version)
+    );
+    CREATE TABLE job_requirement_fit_items (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      requirement_id TEXT NOT NULL,
+      requirement_text TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      weight REAL NOT NULL,
+      job_evidence_span TEXT NOT NULL,
+      fit_json TEXT NOT NULL DEFAULT '{}',
+      contribution_json TEXT NOT NULL DEFAULT '{}',
+      tailoring_json TEXT NOT NULL DEFAULT '{}',
+      artifact_coverage_json TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (tenant_id, job_url, score_version, requirement_id)
+    );
   `);
 
   insertJob(db, {
@@ -1042,6 +1111,7 @@ function insertJob(
   insertStage(db, job.url, "apply", job.applyState);
   insertScore(db, job.url, job.fitScore);
   insertEmployerAnalysis(db, job.url);
+  insertRequirementFitReport(db, job.url);
   insertMaterials(db, job.url, job.resumePath, job.resumePdfPath, job.rejectedResumePdfPath);
 }
 
@@ -1110,6 +1180,97 @@ function insertMaterials(
     rejectedResumePdfPath,
     "2026-06-01T11:00:00.000Z",
     22,
+  );
+}
+
+function insertRequirementFitReport(db: Database.Database, jobUrl: string): void {
+  if (jobUrl !== READY_JOB) {
+    return;
+  }
+  db.prepare(
+    `INSERT INTO job_requirement_fit_reports (
+       tenant_id, job_url, score_version, employer_analysis_generation,
+       profile_snapshot_version, scoring_policy_version, formula_version,
+       resolved_fit_score, fit_band, confidence, summary_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    1,
+    1,
+    4,
+    3,
+    "requirement-fit-v1",
+    9,
+    "strong",
+    "high",
+    JSON.stringify({ weighted_fit: 0.86, must_have_coverage: 1, blocker_count: 0, missing_high_weight_count: 0 }),
+  );
+  const insertItem = db.prepare(
+    `INSERT INTO job_requirement_fit_items (
+       tenant_id, job_url, score_version, requirement_id, requirement_text,
+       tier, weight, job_evidence_span, fit_json, contribution_json,
+       tailoring_json, artifact_coverage_json, position
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertItem.run(
+    "local",
+    jobUrl,
+    1,
+    "r1",
+    "Lead platform reliability improvements across critical services.",
+    "must_have",
+    0.9,
+    "lead platform reliability",
+    JSON.stringify({ kind: "matched", evidence_ids: ["ev-platform"], strength: "direct" }),
+    JSON.stringify({
+      max_points: 1.125,
+      awarded_points: 1.125,
+      weighted_impact: 1.125,
+      rationale: "Direct platform reliability evidence covers the requirement.",
+    }),
+    JSON.stringify({
+      action: "double_down",
+      priority: 0.9,
+      allowed_evidence_ids: ["ev-platform"],
+      target_keywords: ["platform reliability"],
+      prohibited_claims: [],
+      instruction: "Keep platform reliability ownership prominent.",
+    }),
+    null,
+    1,
+  );
+  insertItem.run(
+    "local",
+    jobUrl,
+    1,
+    "r2",
+    "Improve developer experience and incident-response practices.",
+    "nice_to_have",
+    0.7,
+    "developer experience improvements",
+    JSON.stringify({
+      kind: "transferable",
+      evidence_ids: ["ev-incident"],
+      gap: "No direct developer-experience ownership evidence was recorded.",
+      bridge: "Incident leadership can support adjacent developer-experience expectations.",
+    }),
+    JSON.stringify({
+      max_points: 0.7,
+      awarded_points: 0.42,
+      weighted_impact: 0.42,
+      rationale: "Transferable incident leadership partially covers the requirement.",
+    }),
+    JSON.stringify({
+      action: "bridge_gap",
+      priority: 0.7,
+      allowed_evidence_ids: ["ev-incident"],
+      target_keywords: ["incident response", "developer experience"],
+      prohibited_claims: ["owned developer experience end to end"],
+      instruction: "Bridge from incident leadership without claiming direct developer-experience ownership.",
+    }),
+    null,
+    2,
   );
 }
 

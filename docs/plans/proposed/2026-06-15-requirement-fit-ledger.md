@@ -233,7 +233,7 @@ Lifecycle labels must be explicit:
 - [x] Replace the heuristic requirement/signal matcher in the job drawer with
       the projected requirement fit report.
 - [x] Replace separate matched/missing chips as the primary explanation.
-- [ ] Update Apply Review to show pre-tailor fit beside selected-artifact
+- [x] Update Apply Review to show pre-tailor fit beside selected-artifact
       coverage.
 - [ ] Add visual regression and browser QA for the job drawer and apply review.
 

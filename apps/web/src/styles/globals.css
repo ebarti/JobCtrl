@@ -1284,6 +1284,29 @@ textarea:focus-visible {
   gap: 5px;
 }
 
+.apply-review-requirement-fit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.apply-review-requirement-fit-grid > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 4px;
+}
+
+.apply-review-requirement-fit-grid > div > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.apply-review-requirement-fit-grid .tag {
+  justify-self: start;
+}
+
 @media (max-width: 720px) {
   .apply-review-ideal-requirement-head {
     grid-template-columns: minmax(0, 1fr);
@@ -1291,6 +1314,10 @@ textarea:focus-visible {
 
   .apply-review-ideal-requirement-head > span {
     justify-content: flex-start;
+  }
+
+  .apply-review-requirement-fit-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
