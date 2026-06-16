@@ -197,6 +197,8 @@ Lifecycle labels must be explicit:
       fit rows without accepting uncited matched claims.
 - [x] Add canonical employer requirement and profile evidence input context to
       scoring when the caller supplies an `EmployerAnalysis`.
+- [x] Load existing persisted employer analyses automatically in the scoring
+      runner and single-job scoring path.
 - [ ] Ensure employer analysis exists before scoring.
 - [ ] Update the scoring prompt/schema to classify fit per requirement.
 - [ ] Resolve `FitScore` deterministically from requirement contributions.

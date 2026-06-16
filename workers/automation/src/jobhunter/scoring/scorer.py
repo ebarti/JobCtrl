@@ -28,9 +28,10 @@ from typing import Any, Mapping
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.job_content_identity import job_content_fingerprint
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.ports.events import EventPublisher
+from jobhunter.domain.ports.materials import EmployerAnalysisRepository
 from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
@@ -45,6 +46,7 @@ from jobhunter.domain.scoring.use_cases import (
 from jobhunter.domain.scoring.value_objects import ScoringCriteria
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import LlmAdapter, get_llm_adapter
+from jobhunter.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.infrastructure.profile.factory import get_profile_repository
 from jobhunter.infrastructure.scoring import (
@@ -122,6 +124,7 @@ def score_job(
     resume_text: str | None = None,
     criteria: ScoringCriteria | None = None,
     employer_analysis: EmployerAnalysis | None = None,
+    employer_analysis_repository: EmployerAnalysisRepository | None = None,
 ) -> ScoreJobOutcome:
     """Score a single job and persist the result.
 
@@ -137,6 +140,12 @@ def score_job(
             llm_port=llm_port,
             llm_model=llm_model,
             publisher=publisher,
+        )
+    if employer_analysis is None and employer_analysis_repository is not None:
+        employer_analysis = _load_employer_analysis_for_job(
+            repository=employer_analysis_repository,
+            tenant_id=tenant_id,
+            job=job,
         )
     return use_case.score(
         job=job,
@@ -164,6 +173,7 @@ def run_scoring(
     search_index: HybridSearchIndex | None = None,
     criteria: ScoringCriteria | None = None,
     employer_analyses_by_job: Mapping[str, EmployerAnalysis] | None = None,
+    employer_analysis_repository: EmployerAnalysisRepository | None = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -188,6 +198,8 @@ def run_scoring(
         repository = SqliteScoreRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
+    if employer_analysis_repository is None:
+        employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
 
     use_case = _build_use_case(
         repository=repository,
@@ -294,7 +306,12 @@ def run_scoring(
     t0 = time.time()
     results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
     errors = 0
-    analyses_by_job = employer_analyses_by_job or {}
+    analyses_by_job = _employer_analyses_for_jobs(
+        repository=employer_analysis_repository,
+        tenant_id=tenant_id,
+        jobs=jobs_to_compute,
+        overrides=employer_analyses_by_job,
+    )
 
     # Worker threads run the LLM step only — the SQLite connection is not
     # safe to share across threads. Persistence happens below on the main
@@ -442,6 +459,7 @@ def score_job_by_url(
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
     employer_analysis: EmployerAnalysis | None = None,
+    employer_analysis_repository: EmployerAnalysisRepository | None = None,
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by URL.
 
@@ -471,6 +489,14 @@ def score_job_by_url(
         repository = SqliteScoreRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
+    if employer_analysis is None:
+        if employer_analysis_repository is None:
+            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+        employer_analysis = _load_employer_analysis_for_job(
+            repository=employer_analysis_repository,
+            tenant_id=tenant_id,
+            job=job,
+        )
     existing = repository.load(tenant_id, JobId(job_url))
     if existing is not None and not rescore:
         _ensure_existing_score_stage_succeeded(
@@ -647,6 +673,45 @@ def _row_value(row: Any, key: str, index: int) -> Any:
     if isinstance(row, sqlite3.Row):
         return row[key]
     return row[index]
+
+
+def _load_employer_analysis_for_job(
+    *,
+    repository: EmployerAnalysisRepository,
+    tenant_id: TenantId,
+    job: dict[str, Any],
+) -> EmployerAnalysis | None:
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        return None
+    analysis = repository.load(tenant_id, JobId(job_url))
+    if analysis is None or not analysis.canonical.requirements:
+        return None
+    return analysis
+
+
+def _employer_analyses_for_jobs(
+    *,
+    repository: EmployerAnalysisRepository | None,
+    tenant_id: TenantId,
+    jobs: list[dict[str, Any]],
+    overrides: Mapping[str, EmployerAnalysis] | None = None,
+) -> dict[str, EmployerAnalysis]:
+    analyses = dict(overrides or {})
+    if repository is None:
+        return analyses
+    for job in jobs:
+        job_url = str(job.get("url") or "").strip()
+        if not job_url or job_url in analyses:
+            continue
+        analysis = _load_employer_analysis_for_job(
+            repository=repository,
+            tenant_id=tenant_id,
+            job=job,
+        )
+        if analysis is not None:
+            analyses[job_url] = analysis
+    return analyses
 
 
 # ---------------------------------------------------------------------------
