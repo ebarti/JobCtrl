@@ -345,6 +345,13 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/principal engineer who can lead platform reliability/i)).toBeInTheDocument();
     expect(screen.getByText("Job needs from posting")).toBeInTheDocument();
     expect(screen.getByText("Lead platform reliability improvements across critical services.")).toBeInTheDocument();
+    expect(screen.getAllByText("Candidate fit").length).toBeGreaterThan(0);
+    expect(screen.getByText("matched direct")).toBeInTheDocument();
+    expect(screen.getByText("transferable")).toBeInTheDocument();
+    expect(screen.getAllByText("Tailoring action").length).toBeGreaterThan(0);
+    expect(screen.getByText("double down")).toBeInTheDocument();
+    expect(screen.getByText("bridge gap")).toBeInTheDocument();
+    expect(screen.getAllByText("Resume coverage").length).toBeGreaterThan(0);
     expect(screen.getByText("covered in tailored resume")).toBeInTheDocument();
     expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
     expect(screen.getByText("2 resume bullets")).toBeInTheDocument();

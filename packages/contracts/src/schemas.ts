@@ -250,6 +250,9 @@ export interface ApplyReviewIdealRequirement {
   tier: string | null;
   weight: number | null;
   evidence: string | null;
+  fit: RequirementFitStatus | null;
+  contribution: RequirementScoreContribution | null;
+  tailoring: RequirementTailoringDirective | null;
   coverage: {
     state:
       | "covered"

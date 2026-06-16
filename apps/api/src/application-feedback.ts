@@ -21,6 +21,8 @@ import type {
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
   OutcomeSuggestionStatus,
+  RequirementFitAssessment,
+  RequirementFitReport,
   ScoreBreakdown,
   ScoreTrace,
   ScoringCriteriaSnapshot,
@@ -89,6 +91,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   finished_at: string | null;
   employer_ideal_candidate_narrative: string | null;
   employer_requirements_json: string | null;
+  requirement_fit_report_json: string | null;
 }
 
 interface OutcomeRow extends Record<string, unknown> {
@@ -283,9 +286,11 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
            latest_decision.decided_at,
            latest_apply_run.run_id, latest_apply_run.status AS apply_run_status,
            latest_apply_run.result, latest_apply_run.dry_run,
-           latest_apply_run.started_at, latest_apply_run.finished_at
+           latest_apply_run.started_at, latest_apply_run.finished_at,
+           jdp.requirement_fit_report_json
            ${employerAnalysisSelect}
     FROM job_list_projections jlp
+    LEFT JOIN job_detail_projections jdp ON jdp.tenant_id = jlp.tenant_id AND jdp.job_id = jlp.job_id
     LEFT JOIN latest_decision ON latest_decision.job_key = jlp.job_id
     LEFT JOIN latest_apply_run ON latest_apply_run.job_id = jlp.job_id
     ${employerAnalysisJoin}
@@ -641,12 +646,14 @@ function reviewQueueItemFromRow(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
   );
+  const requirementFitReport = parseRequirementFitReport(row.requirement_fit_report_json);
   const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
   const idealRequirements = requirementsWithTailoredResumeCoverage(
     db,
     row.job_id,
     rawIdealRequirements,
     materialsPreview.resumeTextArtifactId,
+    requirementFitReport,
   );
   const scoreEvidenceRequirements = boundedEvidenceList([
     ...(scoreBreakdown?.matchedSignals ?? []),
@@ -838,6 +845,14 @@ function parseQueueScoreTrace(value: string | null): ScoreTrace | null {
   };
 }
 
+function parseRequirementFitReport(value: string | null): RequirementFitReport | null {
+  const parsed = parseJsonRecord(value);
+  if (!parsed || !Array.isArray(parsed.assessments)) {
+    return null;
+  }
+  return parsed as unknown as RequirementFitReport;
+}
+
 function parseJsonRecord(value: string | null): Record<string, unknown> | null {
   if (!value) {
     return null;
@@ -941,6 +956,9 @@ function idealRequirementFromValue(value: unknown, index: number): ApplyReviewId
       cleanLimitedText(data.evidence_span, IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT) ||
       cleanLimitedText(data.evidenceSpan, IDEAL_REQUIREMENT_EVIDENCE_TEXT_LIMIT) ||
       null,
+    fit: null,
+    contribution: null,
+    tailoring: null,
     coverage: emptyRequirementCoverage(),
   };
 }
@@ -959,12 +977,16 @@ function requirementsWithTailoredResumeCoverage(
   jobKey: string,
   requirements: readonly ApplyReviewIdealRequirement[],
   resumeTextArtifactId: string | null,
+  requirementFitReport: RequirementFitReport | null,
 ): ApplyReviewIdealRequirement[] {
   if (!requirements.length) {
     return [];
   }
+  const fitByRequirement = requirementFitByRequirementId(requirementFitReport);
   if (!resumeTextArtifactId || !tableExists(db, "job_bullet_provenance")) {
-    return requirements.map((requirement) => ({ ...requirement, coverage: emptyRequirementCoverage() }));
+    return requirements.map((requirement) =>
+      requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
+    );
   }
   const requirementIds = new Set(requirements.map((requirement) => requirement.id));
   const rows = allRows<{
@@ -981,7 +1003,9 @@ function requirementsWithTailoredResumeCoverage(
     [DEFAULT_TENANT, jobKey, resumeTextArtifactId],
   );
   if (!rows.length) {
-    return requirements.map((requirement) => ({ ...requirement, coverage: emptyRequirementCoverage() }));
+    return requirements.map((requirement) =>
+      requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
+    );
   }
 
   const covered = new Map<string, { bulletCount: number; examples: string[] }>();
@@ -1001,23 +1025,71 @@ function requirementsWithTailoredResumeCoverage(
 
   return requirements.map((requirement) => {
     const hit = covered.get(requirement.id);
-    return {
-      ...requirement,
-      coverage: hit
+    const assessment = fitByRequirement.get(requirement.id);
+    return requirementWithFitAssessment(
+      requirement,
+      assessment,
+      hit
         ? {
             state: "covered",
             source: "tailored_resume_bullet_provenance",
             bulletCount: hit.bulletCount,
             examples: hit.examples,
           }
-        : {
-            state: "missing_from_resume",
-            source: "tailored_resume_bullet_provenance",
-            bulletCount: 0,
-            examples: [],
-          },
-    };
+        : uncoveredRequirementCoverage(assessment),
+    );
   });
+}
+
+function requirementFitByRequirementId(
+  report: RequirementFitReport | null,
+): Map<string, RequirementFitAssessment> {
+  const result = new Map<string, RequirementFitAssessment>();
+  if (!report) {
+    return result;
+  }
+  for (const assessment of report.assessments) {
+    if (assessment.requirementId) {
+      result.set(assessment.requirementId, assessment);
+    }
+  }
+  return result;
+}
+
+function requirementWithFitAssessment(
+  requirement: ApplyReviewIdealRequirement,
+  assessment: RequirementFitAssessment | undefined,
+  coverage: ApplyReviewIdealRequirement["coverage"],
+): ApplyReviewIdealRequirement {
+  return {
+    ...requirement,
+    fit: assessment?.fit ?? null,
+    contribution: assessment?.contribution ?? null,
+    tailoring: assessment?.tailoring ?? null,
+    coverage,
+  };
+}
+
+function uncoveredRequirementCoverage(
+  assessment: RequirementFitAssessment | undefined,
+): ApplyReviewIdealRequirement["coverage"] {
+  if (assessment?.fit.kind === "missing" || assessment?.fit.kind === "blocked") {
+    return {
+      state: "missing_from_profile",
+      source: "tailored_resume_bullet_provenance",
+      bulletCount: 0,
+      examples: [],
+    };
+  }
+  if (assessment?.fit.kind === "matched" || assessment?.fit.kind === "transferable") {
+    return {
+      state: "missing_from_resume",
+      source: "tailored_resume_bullet_provenance",
+      bulletCount: 0,
+      examples: [],
+    };
+  }
+  return emptyRequirementCoverage();
 }
 
 function cleanRequirementWeight(value: unknown): number | null {

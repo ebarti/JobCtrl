@@ -212,7 +212,7 @@ Lifecycle labels must be explicit:
 
 - [x] Project `RequirementFitReport` onto job detail.
 - [x] Expose the report in API contracts and read-model responses.
-- [ ] Preserve old fields until UI migration is complete.
+- [x] Preserve old fields until UI migration is complete.
 - [x] Add Python/TypeScript projection parity coverage.
 
 ### Phase 5: Tailoring Integration
@@ -233,15 +233,16 @@ Lifecycle labels must be explicit:
 - [x] Replace the heuristic requirement/signal matcher in the job drawer with
       the projected requirement fit report.
 - [x] Replace separate matched/missing chips as the primary explanation.
-- [ ] Update Apply Review to show pre-tailor fit beside selected-artifact
+- [x] Update Apply Review to show pre-tailor fit beside selected-artifact
       coverage.
-- [ ] Add visual regression and browser QA for the job drawer and apply review.
+- [x] Browser QA for the job drawer and Apply Review.
+- [x] Add visual regression coverage for the job drawer and Apply Review.
 
 ### Phase 8: Backfill And Cleanup
 
-- [ ] For old jobs without reports, show `not_assessed` and a re-score path.
-- [ ] Remove heuristic matching once the report is available everywhere.
-- [ ] Update canonical docs and delivered notes when behavior lands.
+- [x] For old jobs without reports, show `not_assessed` and a re-score path.
+- [x] Remove heuristic matching once the report is available everywhere.
+- [x] Update canonical docs and delivered notes when behavior lands.
 
 ## Verification Plan
 

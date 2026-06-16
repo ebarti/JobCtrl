@@ -86,6 +86,10 @@ const DENSITY_ROUTES = [
   { path: "/debug", table: "table.activity-data-grid-table" },
 ] as const;
 
+const REQUIREMENT_FIT_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
+const JOB_FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
+const PRIMARY_REQUIREMENT_TEXT = "Lead platform reliability improvements across critical services.";
+
 function expectPainted(value: string, label: string): void {
   expect(value, `${label} should not be empty`).not.toBe("");
   expect(value, `${label} should not be transparent`).not.toMatch(
@@ -138,6 +142,25 @@ async function expectBorderedSurface(
   ).toBeGreaterThan(0);
   expect(styles.borderBottomStyle, `${label} border style`).not.toBe("none");
   expectPainted(styles.borderBottomColor, `${label} border`);
+}
+
+async function expectVisualSnapshot(
+  locator: Locator,
+  snapshotName: string,
+  label: string,
+): Promise<void> {
+  await expect(locator, `${label} should be visible`).toBeVisible({
+    timeout: 30_000,
+  });
+  const box = await locator.boundingBox();
+  expect(box?.width ?? 0, `${label} width`).toBeGreaterThan(0);
+  expect(box?.height ?? 0, `${label} height`).toBeGreaterThan(0);
+  await locator.scrollIntoViewIfNeeded();
+  await expect(locator, `${label} visual snapshot`).toHaveScreenshot(snapshotName, {
+    animations: "disabled",
+    caret: "hide",
+    maxDiffPixelRatio: 0.01,
+  });
 }
 
 async function expectNoDocumentInlineOverflow(page: Page): Promise<void> {
@@ -470,5 +493,46 @@ test("route overlays open with seeded data and dismiss from the keyboard", async
     page,
     page.getByRole("button", { name: /Open activity/i }).first(),
     "debug activity activation",
+  );
+});
+
+test("requirement-fit drawer and Apply Review cards have visual regression coverage", async ({
+  page,
+}) => {
+  await page.goto(`/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`);
+  const drawer = page.getByRole("dialog", { name: "Job details" });
+  await expect(drawer).toBeVisible({ timeout: 30_000 });
+
+  const drawerRequirement = drawer
+    .locator(".employer-analysis-requirement")
+    .filter({ hasText: PRIMARY_REQUIREMENT_TEXT });
+  await expect(drawerRequirement).toHaveCount(1);
+  await expect(drawerRequirement).toContainText("Requirement fit");
+  await expect(drawerRequirement).toContainText("matched");
+  await expect(drawerRequirement).toContainText("Score contribution");
+  await expect(drawerRequirement).toContainText("Double Down");
+  await expectVisualSnapshot(
+    drawerRequirement,
+    "job-drawer-requirement-fit-card.png",
+    "job drawer requirement-fit card",
+  );
+
+  await page.goto(`/apply-review?jobKey=${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}`);
+  const selectedApplication = page.locator(".apply-review-selected");
+  await expect(selectedApplication).toBeVisible({ timeout: 30_000 });
+
+  const applyReviewRequirement = selectedApplication
+    .locator(".apply-review-ideal-requirements li")
+    .filter({ hasText: PRIMARY_REQUIREMENT_TEXT });
+  await expect(applyReviewRequirement).toHaveCount(1);
+  await expect(applyReviewRequirement).toContainText("Candidate fit");
+  await expect(applyReviewRequirement).toContainText("matched direct");
+  await expect(applyReviewRequirement).toContainText("Tailoring action");
+  await expect(applyReviewRequirement).toContainText("Resume coverage");
+  await expect(applyReviewRequirement).toContainText("covered in tailored resume");
+  await expectVisualSnapshot(
+    applyReviewRequirement,
+    "apply-review-requirement-fit-card.png",
+    "Apply Review requirement-fit card",
   );
 });
