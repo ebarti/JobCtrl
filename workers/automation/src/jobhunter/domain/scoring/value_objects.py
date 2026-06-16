@@ -52,7 +52,13 @@ REQUIREMENT_TIERS = ("must_have", "nice_to_have")
 REQUIREMENT_FIT_KINDS = ("matched", "transferable", "missing", "blocked", "not_assessed")
 REQUIREMENT_MATCH_STRENGTHS = ("direct", "strong")
 REQUIREMENT_TAILORING_ACTIONS = ("double_down", "bridge_gap", "avoid_claim", "low_priority")
-REQUIREMENT_ARTIFACT_COVERAGE_STATES = ("covered", "not_covered", "not_recorded")
+REQUIREMENT_ARTIFACT_COVERAGE_STATES = (
+    "covered",
+    "missing_from_resume",
+    "missing_from_profile",
+    "not_covered",
+    "not_recorded",
+)
 
 
 def _clean_strings(values: Iterable[Any] | Any) -> tuple[str, ...]:

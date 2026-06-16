@@ -148,7 +148,12 @@ export interface RequirementTailoringDirective {
 }
 
 export interface RequirementArtifactCoverage {
-  readonly state: "covered" | "not_covered" | "not_recorded";
+  readonly state:
+    | "covered"
+    | "missing_from_resume"
+    | "missing_from_profile"
+    | "not_covered"
+    | "not_recorded";
   readonly source: "tailored_resume_bullet_provenance";
   readonly bulletCount: number;
   readonly examples: readonly string[];
