@@ -206,6 +206,12 @@ AI runs through agent SDKs, never the legacy httpx `jobhunter.llm.LLMClient`.
   parity test covers the table on both runtimes. The inspector UI for this
   analysis is deferred to a later milestone; this milestone lands the backend,
   contracts, and read path only.
+- **Requirement fit read path**: requirement-led scoring persists canonical
+  `job_requirement_fit_reports` and ordered `job_requirement_fit_items` rows.
+  The Operations projection publishes the latest report to
+  `job_detail_projections.requirement_fit_report_json` and the API serves it as
+  `JobDetail.requirementFitReport`, preserving legacy score fields until the UI
+  fully migrates to the requirement-led explanation.
 
 ## Per-Bullet Provenance + Granular Controls (Materials sub-step)
 

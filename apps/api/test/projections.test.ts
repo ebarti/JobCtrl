@@ -1198,6 +1198,191 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("serves the canonical requirement fit report from projection rows", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    const jobUrl = "https://example.com/jobs/event-driven";
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.exec(`
+        CREATE TABLE job_requirement_fit_reports (
+          job_url TEXT NOT NULL,
+          score_version INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          employer_analysis_generation INTEGER NOT NULL,
+          profile_snapshot_version INTEGER NOT NULL,
+          scoring_policy_version INTEGER NOT NULL,
+          formula_version TEXT NOT NULL,
+          resolved_fit_score INTEGER,
+          fit_band TEXT NOT NULL,
+          confidence TEXT NOT NULL,
+          summary_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (job_url, score_version, tenant_id)
+        );
+        CREATE TABLE job_requirement_fit_items (
+          job_url TEXT NOT NULL,
+          score_version INTEGER NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'local',
+          requirement_id TEXT NOT NULL,
+          requirement_text TEXT NOT NULL,
+          tier TEXT NOT NULL,
+          weight REAL NOT NULL,
+          job_evidence_span TEXT NOT NULL DEFAULT '',
+          fit_json TEXT NOT NULL DEFAULT '{}',
+          contribution_json TEXT NOT NULL DEFAULT '{}',
+          tailoring_json TEXT NOT NULL DEFAULT '{}',
+          artifact_coverage_json TEXT,
+          position INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+        );
+      `);
+      const insertReport = db.prepare(
+        `INSERT INTO job_requirement_fit_reports (
+          job_url, score_version, tenant_id, employer_analysis_generation,
+          profile_snapshot_version, scoring_policy_version, formula_version,
+          resolved_fit_score, fit_band, confidence, summary_json, created_at
+        ) VALUES (?, ?, 'local', ?, ?, ?, 'requirement-fit-v1', ?, ?, ?, ?, ?)`,
+      );
+      insertReport.run(
+        jobUrl,
+        1,
+        1,
+        2,
+        3,
+        6,
+        "plausible",
+        "medium",
+        JSON.stringify({
+          weighted_fit: 0.55,
+          must_have_coverage: 0.55,
+          blocker_count: 0,
+          missing_high_weight_count: 1,
+        }),
+        "2026-05-04T11:00:00+00:00",
+      );
+      insertReport.run(
+        jobUrl,
+        2,
+        2,
+        3,
+        4,
+        8,
+        "strong",
+        "high",
+        JSON.stringify({
+          weighted_fit: 0.82,
+          must_have_coverage: 1.0,
+          blocker_count: 0,
+          missing_high_weight_count: 0,
+        }),
+        "2026-05-04T12:00:00+00:00",
+      );
+      db.prepare(
+        `INSERT INTO job_requirement_fit_items (
+          job_url, score_version, tenant_id, requirement_id, requirement_text,
+          tier, weight, job_evidence_span, fit_json, contribution_json,
+          tailoring_json, artifact_coverage_json, position
+        ) VALUES (?, 2, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        jobUrl,
+        "r1",
+        "5+ years Python",
+        "must_have",
+        0.9,
+        "5+ years Python",
+        JSON.stringify({
+          kind: "matched",
+          evidence_ids: ["ev-python"],
+          strength: "direct",
+        }),
+        JSON.stringify({
+          max_points: 1.125,
+          awarded_points: 1.125,
+          weighted_impact: 1.125,
+          rationale: "Direct Python evidence covers r1.",
+        }),
+        JSON.stringify({
+          action: "double_down",
+          priority: 0.9,
+          allowed_evidence_ids: ["ev-python"],
+          target_keywords: ["Python"],
+          prohibited_claims: [],
+          instruction: "Keep Python evidence prominent.",
+        }),
+        JSON.stringify({
+          state: "covered",
+          source: "tailored_resume_bullet_provenance",
+          bullet_count: 1,
+          examples: ["Built Python event services."],
+        }),
+        0,
+      );
+      db.close();
+
+      const app = buildApp({
+        dbPath,
+        settingsPath: path.join(path.dirname(dbPath), "dashboard.json"),
+      });
+      try {
+        const detailRes = await app.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent(jobUrl)}`,
+        });
+        expect(detailRes.statusCode, detailRes.body).toBe(200);
+        const report = detailRes.json().requirementFitReport;
+        expect(report).toMatchObject({
+          jobKey: jobUrl,
+          scoreVersion: 2,
+          employerAnalysisGeneration: 2,
+          profileSnapshotVersion: 3,
+          scoringPolicyVersion: 4,
+          formulaVersion: "requirement-fit-v1",
+          resolvedFitScore: 8,
+          fitBand: "strong",
+          confidence: "high",
+          summary: {
+            weightedFit: 0.82,
+            mustHaveCoverage: 1.0,
+            blockerCount: 0,
+            missingHighWeightCount: 0,
+          },
+        });
+        expect(report.assessments[0]).toMatchObject({
+          requirementId: "r1",
+          requirementText: "5+ years Python",
+          tier: "must_have",
+          weight: 0.9,
+          jobEvidenceSpan: "5+ years Python",
+          fit: {
+            kind: "matched",
+            evidenceIds: ["ev-python"],
+            strength: "direct",
+          },
+          contribution: {
+            maxPoints: 1.125,
+            awardedPoints: 1.125,
+            weightedImpact: 1.125,
+          },
+          tailoring: {
+            action: "double_down",
+            allowedEvidenceIds: ["ev-python"],
+            targetKeywords: ["Python"],
+          },
+          artifactCoverage: {
+            state: "covered",
+            bulletCount: 1,
+            examples: ["Built Python event services."],
+          },
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("serves canonical per-bullet provenance from projection rows (TS↔Python parity)", async () => {
     // AUDIT-02-style cross-runtime parity for Phase 2: seed the canonical
     // ``job_bullet_provenance`` rows exactly as the Python repository writes
