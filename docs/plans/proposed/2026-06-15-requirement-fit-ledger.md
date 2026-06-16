@@ -217,10 +217,10 @@ Lifecycle labels must be explicit:
 
 ### Phase 5: Tailoring Integration
 
-- [ ] Replace keyword-only plan selection with requirement directives.
-- [ ] Select required evidence from directive evidence IDs.
-- [ ] Keep current no-fabrication and verified-metric gates.
-- [ ] Treat unsupported missing requirements as prohibited claims.
+- [x] Replace keyword-only plan selection with requirement directives.
+- [x] Select required evidence from directive evidence IDs.
+- [x] Keep current no-fabrication and verified-metric gates.
+- [x] Treat unsupported missing requirements as prohibited claims.
 
 ### Phase 6: Artifact Coverage Integration
 

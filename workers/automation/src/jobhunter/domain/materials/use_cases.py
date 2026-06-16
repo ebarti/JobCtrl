@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover — type-only import, avoids any import cycle
     from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase
+    from jobhunter.domain.scoring.value_objects import RequirementFitReport
 
 from jobhunter.domain.events import (
     BulletProvenanceRecordedPayload,
@@ -936,6 +937,7 @@ class TailorResumeUseCase:
         retailor: bool = False,
         suppress_existing_artifacts: bool = False,
         employer_analysis: EmployerAnalysis | None = None,
+        requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> TailorOutcome:
         job_id = JobId(str(job["url"]))
         # D-20: run/reuse the canonical employer analysis as the front-half
@@ -986,6 +988,7 @@ class TailorResumeUseCase:
             profile_snapshot=profile_snapshot,
             validation_mode=validation_mode,
             employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
         )
         attempts = report["attempts"]
 
@@ -1024,6 +1027,7 @@ class TailorResumeUseCase:
             job=job,
             tailored_payload=parsed_payload,
             employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
         )
         if fabrication_error is not None:
             validation = ValidationResult.failure(
@@ -1208,6 +1212,7 @@ class TailorResumeUseCase:
         profile_snapshot: ProfileSnapshot,
         validation_mode: str,
         employer_analysis: EmployerAnalysis,
+        requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> tuple[dict, dict | None, ValidationResult, JudgeVerdict | None]:
         """Run the LLM ⇒ validate ⇒ judge attempt loop.
 
@@ -1216,7 +1221,10 @@ class TailorResumeUseCase:
         :class:`ValidationResult` and :class:`JudgeVerdict`.
         """
         tailoring_plan = build_tailoring_plan(
-            profile_snapshot.as_dict(), job, employer_analysis=employer_analysis
+            profile_snapshot.as_dict(),
+            job,
+            employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
         )
         tailor_prompt_base = build_master_tailor_prompt(
             profile_snapshot,
@@ -1885,6 +1893,7 @@ class TailorResumeUseCase:
         job: dict,
         tailored_payload: dict,
         employer_analysis: EmployerAnalysis,
+        requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> tuple[tuple[BulletProvenance, ...], str | None]:
         """Compute per-bullet provenance + run the deterministic fabrication gate.
 
@@ -1900,7 +1909,12 @@ class TailorResumeUseCase:
         never the model's self-reported provenance.
         """
         profile = profile_snapshot.as_dict()
-        plan = build_tailoring_plan(profile, job, employer_analysis=employer_analysis)
+        plan = build_tailoring_plan(
+            profile,
+            job,
+            employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
+        )
         try:
             rows = build_bullet_provenance(
                 profile, job, tailored_payload, plan, employer_analysis
@@ -1935,6 +1949,7 @@ class TailorResumeUseCase:
         job: dict,
         tailored_payload: dict,
         employer_analysis: EmployerAnalysis,
+        requirement_fit_report: "RequirementFitReport | None" = None,
     ) -> tuple[
         dict,
         tuple[BulletProvenance, ...],
@@ -1971,6 +1986,7 @@ class TailorResumeUseCase:
             job=job,
             tailored_payload=tailored_payload,
             employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
         )
 
         # No voice port, or the pre-voice candidate is already ungrounded: keep the
@@ -1998,6 +2014,7 @@ class TailorResumeUseCase:
             job=job,
             tailored_payload=voiced_payload,
             employer_analysis=employer_analysis,
+            requirement_fit_report=requirement_fit_report,
         )
         if voiced_error is not None:
             # VOICE-03: the voice pass introduced a fabrication / broke a binding.

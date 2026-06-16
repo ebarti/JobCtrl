@@ -61,7 +61,10 @@ from jobhunter.infrastructure.materials import (
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
 )
-from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.infrastructure.scoring import (
+    SqliteRequirementFitReportRepository,
+    SqliteScoreRepository,
+)
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.scoring.employer_analysis import build_analyze_use_case
 from jobhunter.state import (
@@ -198,6 +201,16 @@ def _build_pdf_renderer() -> PdfRendererPort:
     return LatexPdfAdapter()
 
 
+def _load_requirement_fit_report_for_job(*, tenant_id: TenantId, job: dict):
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        return None
+    return SqliteRequirementFitReportRepository(get_connection()).load(
+        tenant_id,
+        JobId(job_url),
+    )
+
+
 def _selected_candidate_payload(report: dict) -> dict | None:
     """Return the selected tailored JSON payload from a quality-gated report."""
     selected_candidate_id = str(report.get("selected_candidate") or "")
@@ -317,6 +330,12 @@ def _tailor_one_job(
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
         use_case = _build_use_case(llm_policy=llm_policy)
+        requirement_fit_report = _load_requirement_fit_report_for_job(
+            tenant_id=tenant_id,
+            job=job,
+        )
+    else:
+        requirement_fit_report = None
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
 
@@ -328,6 +347,7 @@ def _tailor_one_job(
         tenant_id=tenant_id,
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
+        requirement_fit_report=requirement_fit_report,
     )
 
     pdf_path: str | None = None
@@ -421,6 +441,10 @@ def tailor_resume(
         profile_snapshot=snapshot,
         tailored_dir=TAILORED_DIR,
         validation_mode=validation_mode,
+        requirement_fit_report=_load_requirement_fit_report_for_job(
+            tenant_id=LOCAL_TENANT,
+            job=job,
+        ),
     )
     text = ""
     if outcome.text_path:
