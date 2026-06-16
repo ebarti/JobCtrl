@@ -30,6 +30,7 @@ type MaterialStatus = {
 };
 
 type ApplyRun = NonNullable<ApplyReviewQueueItem["latestApplyRun"]>;
+type ApplyReviewRequirement = ApplyReviewQueueItem["position"]["idealRequirements"][number];
 type ScoreDimensionKey = "technicalFit" | "experienceFit" | "roleFit";
 
 const SCORE_DIMENSIONS: ReadonlyArray<[ScoreDimensionKey, string]> = [
@@ -147,7 +148,7 @@ function formatRequirementWeight(weight: number | null): string | null {
 }
 
 function formatRequirementCoverage(
-  coverage: ApplyReviewQueueItem["position"]["idealRequirements"][number]["coverage"],
+  coverage: ApplyReviewRequirement["coverage"],
 ): {
   readonly label: string;
   readonly tone: "muted" | "ok" | "warn";
@@ -167,11 +168,110 @@ function formatRequirementCoverage(
       title: "Tailored resume bullet provenance was recorded, but no bullet is linked to this requirement.",
     };
   }
+  if (coverage.state === "missing_from_resume") {
+    return {
+      label: "missing from tailored resume",
+      tone: "warn",
+      title: "Profile evidence may exist, but the accepted tailored resume has no provenance-linked bullet for this requirement.",
+    };
+  }
+  if (coverage.state === "missing_from_profile") {
+    return {
+      label: "missing from profile",
+      tone: "warn",
+      title: "The pre-tailor fit audit found no grounded profile evidence for this requirement.",
+    };
+  }
   return {
     label: "coverage not recorded",
     tone: "muted",
     title: "No tailored resume bullet provenance was recorded for this selected material.",
   };
+}
+
+function formatRequirementFit(requirement: ApplyReviewRequirement): {
+  readonly label: string;
+  readonly tone: "muted" | "ok" | "info" | "warn";
+  readonly title: string;
+} {
+  const fit = requirement.fit;
+  const contribution = requirement.contribution;
+  const impact =
+    contribution && contribution.maxPoints > 0
+      ? ` Score impact: ${formatPoints(contribution.awardedPoints)} / ${formatPoints(
+          contribution.maxPoints,
+        )} points.`
+      : "";
+  if (!fit) {
+    return {
+      label: "not assessed",
+      tone: "muted",
+      title: "No pre-tailor requirement fit assessment was recorded.",
+    };
+  }
+  if (fit.kind === "matched") {
+    return {
+      label: `matched ${fit.strength}`,
+      tone: "ok",
+      title: `Candidate evidence matched this requirement before tailoring.${impact}`,
+    };
+  }
+  if (fit.kind === "transferable") {
+    return {
+      label: "transferable",
+      tone: "info",
+      title: `${fit.bridge || fit.gap || "Adjacent profile evidence can support this requirement."}${impact}`,
+    };
+  }
+  if (fit.kind === "missing") {
+    return {
+      label: "missing from profile",
+      tone: "warn",
+      title: `${fit.reason || "No grounded profile evidence was recorded for this requirement."}${impact}`,
+    };
+  }
+  if (fit.kind === "blocked") {
+    return {
+      label: "blocked",
+      tone: "warn",
+      title: `${fit.blocker || "This requirement blocks fit."}${impact}`,
+    };
+  }
+  return {
+    label: "not assessed",
+    tone: "muted",
+    title: `${fit.reason || "No pre-tailor requirement fit assessment was recorded."}${impact}`,
+  };
+}
+
+function formatRequirementTailoring(requirement: ApplyReviewRequirement): {
+  readonly label: string;
+  readonly tone: "muted" | "info" | "warn";
+  readonly title: string;
+} {
+  const tailoring = requirement.tailoring;
+  if (!tailoring) {
+    return {
+      label: "not recorded",
+      tone: "muted",
+      title: "No requirement-level tailoring directive was recorded.",
+    };
+  }
+  return {
+    label: formatReadableToken(tailoring.action),
+    tone: tailoring.action === "avoid_claim" ? "warn" : "info",
+    title:
+      tailoring.instruction ||
+      `Priority ${Math.round((tailoring.priority <= 1 ? tailoring.priority * 100 : tailoring.priority) || 0)}%.`,
+  };
+}
+
+function formatReadableToken(value: string): string {
+  return value.replace(/[_-]+/g, " ").trim() || "not recorded";
+}
+
+function formatPoints(value: number): string {
+  return Number.isInteger(value) ? `${value}` : value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function formatBulletCount(count: number): string {
@@ -338,19 +438,13 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                   const tier = formatRequirementTier(requirement.tier);
                   const weight = formatRequirementWeight(requirement.weight);
                   const coverage = formatRequirementCoverage(requirement.coverage);
+                  const fit = formatRequirementFit(requirement);
+                  const tailoring = formatRequirementTailoring(requirement);
                   return (
                     <li key={`${requirement.id}:${requirement.text}`}>
                       <div className="apply-review-ideal-requirement-head">
                         <b>{requirement.text}</b>
                         <span>
-                          <span className={`tag ${coverage.tone}`} title={coverage.title}>
-                            {coverage.label}
-                          </span>
-                          {requirement.coverage.state === "covered" ? (
-                            <span className="tag muted">
-                              {formatBulletCount(requirement.coverage.bulletCount)}
-                            </span>
-                          ) : null}
                           {tier ? <span className="tag muted">{tier}</span> : null}
                           {weight ? (
                             <span
@@ -361,6 +455,34 @@ function RequirementEvidence({ item }: { readonly item: ApplyReviewQueueItem }) 
                             </span>
                           ) : null}
                         </span>
+                      </div>
+                      <div
+                        className="apply-review-requirement-fit-grid"
+                        aria-label={`Requirement audit for ${requirement.text}`}
+                      >
+                        <div>
+                          <span>Candidate fit</span>
+                          <b className={`tag ${fit.tone}`} title={fit.title}>
+                            {fit.label}
+                          </b>
+                        </div>
+                        <div>
+                          <span>Tailoring action</span>
+                          <b className={`tag ${tailoring.tone}`} title={tailoring.title}>
+                            {tailoring.label}
+                          </b>
+                        </div>
+                        <div>
+                          <span>Resume coverage</span>
+                          <b className={`tag ${coverage.tone}`} title={coverage.title}>
+                            {coverage.label}
+                          </b>
+                          {requirement.coverage.state === "covered" ? (
+                            <b className="tag muted">
+                              {formatBulletCount(requirement.coverage.bulletCount)}
+                            </b>
+                          ) : null}
+                        </div>
                       </div>
                       {requirement.evidence ? (
                         <p className="meta">Job post evidence: {requirement.evidence}</p>

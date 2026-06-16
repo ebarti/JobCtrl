@@ -2,6 +2,7 @@ import type {
   BulletProvenanceEntry,
   EmployerAnalysis,
   ArtifactTailoringExplanation,
+  RequirementFitReport,
 } from "@jobhunter/contracts";
 
 /**
@@ -108,6 +109,91 @@ export const emptyEmployerAnalysis: EmployerAnalysis = {
   requirements: [],
   keywords: [],
   sub_analyses: [],
+};
+
+export const populatedRequirementFitReport: RequirementFitReport = {
+  jobKey: "job-1",
+  scoreVersion: 4,
+  employerAnalysisGeneration: populatedEmployerAnalysis.generation,
+  profileSnapshotVersion: 7,
+  scoringPolicyVersion: 3,
+  formulaVersion: "requirement-fit-v1",
+  resolvedFitScore: 8,
+  fitBand: "strong",
+  confidence: "high",
+  summary: {
+    weightedFit: 0.78,
+    mustHaveCoverage: 1,
+    blockerCount: 0,
+    missingHighWeightCount: 0,
+  },
+  assessments: [
+    {
+      requirementId: "req-1",
+      requirementText: "Lead platform reliability programs across multiple teams",
+      tier: "must_have",
+      weight: 0.9,
+      jobEvidenceSpan: "Lead our platform reliability initiatives across the engineering org",
+      fit: {
+        kind: "matched",
+        evidenceIds: ["ev-platform", "ev-reliability"],
+        strength: "direct",
+      },
+      contribution: {
+        maxPoints: 1.125,
+        awardedPoints: 1.125,
+        weightedImpact: 1.125,
+        rationale: "Direct platform leadership evidence covers req-1.",
+      },
+      tailoring: {
+        action: "double_down",
+        priority: 0.9,
+        allowedEvidenceIds: ["ev-platform", "ev-reliability"],
+        targetKeywords: ["platform reliability"],
+        prohibitedClaims: [],
+        instruction: "Keep platform reliability leadership prominent.",
+      },
+      artifactCoverage: {
+        state: "covered",
+        source: "tailored_resume_bullet_provenance",
+        bulletCount: 1,
+        examples: ["Led platform reliability programs across 4 engineering teams."],
+      },
+    },
+    {
+      requirementId: "req-2",
+      requirementText: "Experience with Kubernetes-based developer platforms",
+      tier: "nice_to_have",
+      weight: 0.55,
+      jobEvidenceSpan: "Familiarity with Kubernetes and internal developer platforms is a plus",
+      fit: {
+        kind: "transferable",
+        evidenceIds: ["ev-k8s"],
+        gap: "No direct ownership of Kubernetes developer platforms is recorded.",
+        bridge: "Kubernetes operations evidence can support adjacent platform experience.",
+      },
+      contribution: {
+        maxPoints: 0.55,
+        awardedPoints: 0.33,
+        weightedImpact: 0.33,
+        rationale: "Transferable Kubernetes operations evidence partially covers req-2.",
+      },
+      tailoring: {
+        action: "bridge_gap",
+        priority: 0.55,
+        allowedEvidenceIds: ["ev-k8s"],
+        targetKeywords: ["Kubernetes", "developer platforms"],
+        prohibitedClaims: ["owned Kubernetes developer platforms end to end"],
+        instruction: "Bridge from Kubernetes operations without claiming direct platform ownership.",
+      },
+      artifactCoverage: {
+        state: "not_recorded",
+        source: "tailored_resume_bullet_provenance",
+        bulletCount: 0,
+        examples: [],
+      },
+    },
+  ],
 };
 
 export const provenanceEntries: BulletProvenanceEntry[] = [

@@ -13,6 +13,7 @@ export interface JobAuditTriageProps {
 export function JobAuditTriage({ detail }: JobAuditTriageProps) {
   const { job, applyAudit } = detail;
   const score = job.scoreBreakdown;
+  const requirementFitReport = detail.requirementFitReport;
   const reasoning = score?.reasoning || job.scoreReasoning;
   const factGroups = auditFactGroups(detail);
 
@@ -41,15 +42,27 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
             <Metric label="Band" value={score?.fitBand ?? "not recorded"} />
             <Metric label="Confidence" value={score?.confidence ?? "not recorded"} />
             <Metric label="Eligibility" value={score?.eligibility.status ?? "unknown"} />
+            {requirementFitReport ? (
+              <>
+                <Metric label="Requirement fit" value={percent(requirementFitReport.summary.weightedFit)} />
+                <Metric label="Must-haves" value={percent(requirementFitReport.summary.mustHaveCoverage)} />
+              </>
+            ) : null}
           </div>
           {reasoning ? (
             <p>{reasoning}</p>
           ) : (
             <p className="muted">No score rationale was stored for this job.</p>
           )}
-          <TagGroup label="Matched signals" values={score?.matchedSignals} />
-          <TagGroup label="Missing signals" values={score?.missingSignals} tone="warn" />
-          <TagGroup label="Transferable signals" values={score?.transferableSignals} />
+          {requirementFitReport ? (
+            <RequirementFitGroups report={requirementFitReport} />
+          ) : (
+            <>
+              <TagGroup label="Matched signals" values={score?.matchedSignals} />
+              <TagGroup label="Missing signals" values={score?.missingSignals} tone="warn" />
+              <TagGroup label="Transferable signals" values={score?.transferableSignals} />
+            </>
+          )}
           <TagGroup label="Keywords" values={job.scoreKeywords} />
           <ScoreMetadata detail={detail} />
           {job.scoreStaleness.isStale ? (
@@ -105,6 +118,42 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function RequirementFitGroups({
+  report,
+}: {
+  report: NonNullable<JobDetail["requirementFitReport"]>;
+}) {
+  const matched = requirementTexts(report.assessments, ["matched"]);
+  const missing = requirementTexts(report.assessments, ["missing", "blocked"]);
+  const transferable = requirementTexts(report.assessments, ["transferable"]);
+  const unassessed = requirementTexts(report.assessments, ["not_assessed"]);
+  return (
+    <>
+      <TagGroup label="Matched requirements" values={matched} />
+      <TagGroup label="Missing requirements" values={missing} tone="warn" />
+      <TagGroup label="Transferable requirements" values={transferable} />
+      <TagGroup label="Unassessed requirements" values={unassessed} tone="warn" />
+      {report.summary.blockerCount || report.summary.missingHighWeightCount ? (
+        <p className="muted">
+          {report.summary.blockerCount} blocker{report.summary.blockerCount === 1 ? "" : "s"} ·{" "}
+          {report.summary.missingHighWeightCount} high-weight miss
+          {report.summary.missingHighWeightCount === 1 ? "" : "es"}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function requirementTexts(
+  assessments: NonNullable<JobDetail["requirementFitReport"]>["assessments"],
+  kinds: readonly string[],
+): string[] {
+  const wanted = new Set(kinds);
+  return assessments
+    .filter((assessment) => wanted.has(assessment.fit.kind))
+    .map((assessment) => assessment.requirementText);
+}
+
 function TagGroup({
   label,
   values,
@@ -137,6 +186,7 @@ function ScoreMetadata({ detail }: { detail: JobDetail }) {
     job.scoreCriteria ? `minimum ${job.scoreCriteria.minFitScore}/10` : null,
     job.scoreTrace?.scoringPolicyVersion ? `policy v${job.scoreTrace.scoringPolicyVersion}` : null,
     job.scoreTrace?.rubricVersion ?? null,
+    detail.requirementFitReport ? detail.requirementFitReport.formulaVersion : null,
     job.scoreTrace?.policyAnchorCount ? `${job.scoreTrace.policyAnchorCount} anchors` : null,
     job.scoredAt ? `scored ${job.scoredAt}` : null,
   ].filter(Boolean);
@@ -146,6 +196,10 @@ function ScoreMetadata({ detail }: { detail: JobDetail }) {
   }
 
   return <p className="muted">{metadata.join(" | ")}</p>;
+}
+
+function percent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
 function auditFactGroups(detail: JobDetail): Array<{ label: string; facts: ApplyAuditFact[] }> {
