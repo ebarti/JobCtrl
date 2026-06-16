@@ -10,7 +10,7 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.materials.value_objects import ValidationResult
@@ -27,6 +27,9 @@ from jobhunter.resume_profile import (
     tailored_experience_title,
     tailored_skill_items,
 )
+
+if TYPE_CHECKING:  # pragma: no cover -- type-only to avoid cross-context import cycles
+    from jobhunter.domain.scoring.value_objects import RequirementFitReport
 
 
 SENIORITY_LEVELS = {"junior", "mid", "senior", "staff", "executive"}
@@ -228,6 +231,50 @@ class EvidencePlanItem:
 
 
 @dataclass(frozen=True)
+class RequirementDirectivePlanItem:
+    requirement_id: str
+    requirement_text: str
+    tier: str
+    weight: float
+    fit_kind: str
+    action: str
+    priority: float = 0.0
+    allowed_evidence_ids: tuple[str, ...] = ()
+    target_keywords: tuple[str, ...] = ()
+    prohibited_claims: tuple[str, ...] = ()
+    instruction: str = ""
+
+    @property
+    def prompt_dict(self) -> dict[str, Any]:
+        return {
+            "requirement_id": self.requirement_id,
+            "requirement_text": self.requirement_text,
+            "tier": self.tier,
+            "weight": self.weight,
+            "pre_tailor_fit": self.fit_kind,
+            "action": self.action,
+            "priority": self.priority,
+            "allowed_evidence_ids": list(self.allowed_evidence_ids),
+            "target_keywords": list(self.target_keywords),
+            "prohibited_claims": list(self.prohibited_claims),
+            "instruction": self.instruction,
+        }
+
+    @property
+    def metadata_dict(self) -> dict[str, Any]:
+        return {
+            "requirement_id": self.requirement_id,
+            "requirement_text": self.requirement_text,
+            "fit": self.fit_kind,
+            "action": self.action,
+            "priority": self.priority,
+            "allowed_evidence_ids": list(self.allowed_evidence_ids),
+            "target_keywords": list(self.target_keywords),
+            "prohibited_claims": list(self.prohibited_claims),
+        }
+
+
+@dataclass(frozen=True)
 class TailoringPlan:
     claim_mode: str
     auto_approvable_claim_modes: tuple[str, ...]
@@ -239,6 +286,8 @@ class TailoringPlan:
     seniority_evidence_ids: tuple[str, ...] = ()
     verified_metrics: tuple[str, ...] = ()
     evidence_items: tuple[EvidencePlanItem, ...] = ()
+    requirement_directives: tuple[RequirementDirectivePlanItem, ...] = ()
+    prohibited_claims: tuple[str, ...] = ()
 
     @property
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
@@ -253,6 +302,9 @@ class TailoringPlan:
             "writing_style": dict(self.writing_style),
             "target_seniority": self.target_seniority,
             "job_keywords": list(self.job_keywords),
+            "requirement_directives": [
+                directive.prompt_dict for directive in self.requirement_directives
+            ],
             "required_evidence": [
                 required[evidence_id].prompt_dict
                 for evidence_id in self.required_evidence_ids
@@ -260,9 +312,12 @@ class TailoringPlan:
             ],
             "seniority_evidence_ids": list(self.seniority_evidence_ids),
             "verified_metrics": list(self.verified_metrics),
+            "prohibited_claims": list(self.prohibited_claims),
             "deterministic_checks": [
                 "Use standard sections: EXECUTIVE PROFILE, EXPERIENCE, EDUCATION, SKILLS.",
                 "Use only verified profile metrics or evidence metrics.",
+                "Use requirement directives to decide which evidence to emphasize or bridge.",
+                "Do not claim prohibited missing requirements unless grounded evidence exists.",
                 "Cover relevant job keywords naturally; do not stuff repeated keywords.",
                 "Match seniority to the job title and responsibilities.",
                 "Avoid AI-sounding stock phrases and inflated claims.",
@@ -290,6 +345,10 @@ class TailoringPlan:
             "required_evidence_ids": list(self.required_evidence_ids),
             "seniority_evidence_ids": list(self.seniority_evidence_ids),
             "verified_metric_count": len(self.verified_metrics),
+            "requirement_directives": [
+                directive.metadata_dict for directive in self.requirement_directives
+            ],
+            "prohibited_claims": list(self.prohibited_claims),
         }
 
 
@@ -368,6 +427,7 @@ def build_tailoring_plan(
     job: dict,
     *,
     employer_analysis: EmployerAnalysis,
+    requirement_fit_report: "RequirementFitReport | None" = None,
 ) -> TailoringPlan:
     """Build the deterministic tailoring plan from the profile + canonical analysis.
 
@@ -380,7 +440,17 @@ def build_tailoring_plan(
     controls = get_tailoring_quality_controls(profile)
     writing_style = get_writing_style(profile)
     evidence_items = tuple(_evidence_item(item) for item in get_achievement_evidence(profile))
-    job_keywords = _analysis_job_keywords(employer_analysis)
+    requirement_directives = _requirement_directive_items(
+        requirement_fit_report=requirement_fit_report,
+        job=job,
+        employer_analysis=employer_analysis,
+    )
+    directive_keywords = tuple(
+        keyword
+        for directive in requirement_directives
+        for keyword in directive.target_keywords
+    )
+    job_keywords = _merge_keywords(directive_keywords, _analysis_job_keywords(employer_analysis))
     target_seniority = _target_seniority(job)
     seniority_evidence_ids = tuple(
         item.evidence_id for item in evidence_items if _has_seniority_signal(item)
@@ -388,6 +458,7 @@ def build_tailoring_plan(
     required_evidence_ids = _select_required_evidence_ids(
         evidence_items=evidence_items,
         job_keywords=job_keywords,
+        directive_evidence_ids=_directive_evidence_ids(requirement_directives),
         target_seniority=target_seniority,
         seniority_evidence_ids=seniority_evidence_ids,
     )
@@ -414,6 +485,8 @@ def build_tailoring_plan(
         seniority_evidence_ids=seniority_evidence_ids,
         verified_metrics=verified_metrics,
         evidence_items=evidence_items,
+        requirement_directives=requirement_directives,
+        prohibited_claims=_directive_prohibited_claims(requirement_directives),
     )
 
 
@@ -577,6 +650,10 @@ def evaluate_tailoring_quality(
     for metric in unknown_metrics:
         errors.append(f"Unknown metric not found in verified profile evidence: {metric}")
 
+    found_prohibited_claims = _prohibited_claims_found(generated_lower, plan.prohibited_claims)
+    for claim in found_prohibited_claims:
+        errors.append(f"Unsupported prohibited claim appeared: {claim}")
+
     covered_keywords, missing_keywords = _keyword_coverage(generated_lower, plan.job_keywords)
     if plan.job_keywords:
         coverage_ratio = len(covered_keywords) / len(plan.job_keywords)
@@ -668,11 +745,20 @@ def _select_required_evidence_ids(
     *,
     evidence_items: tuple[EvidencePlanItem, ...],
     job_keywords: tuple[str, ...],
+    directive_evidence_ids: tuple[str, ...],
     target_seniority: str,
     seniority_evidence_ids: tuple[str, ...],
 ) -> tuple[str, ...]:
     if not evidence_items:
         return ()
+
+    valid_evidence_ids = {item.evidence_id for item in evidence_items if item.evidence_id}
+    selected = [
+        evidence_id
+        for evidence_id in directive_evidence_ids
+        if evidence_id in valid_evidence_ids
+    ]
+    selected = list(dict.fromkeys(selected))[:6]
 
     scored: list[tuple[int, str]] = []
     keyword_set = set(job_keywords)
@@ -683,13 +769,136 @@ def _select_required_evidence_ids(
             scored.append((overlap, item.evidence_id))
 
     scored.sort(key=lambda pair: (-pair[0], pair[1]))
-    selected = [evidence_id for _, evidence_id in scored[:3]]
+    for _, evidence_id in scored:
+        if evidence_id not in selected:
+            selected.append(evidence_id)
+        if len(selected) >= 6:
+            break
     if target_seniority in SENIORITY_REQUIRED_LEVELS:
         for evidence_id in seniority_evidence_ids:
             if evidence_id not in selected:
                 selected.append(evidence_id)
                 break
     return tuple(selected)
+
+
+def _requirement_directive_items(
+    *,
+    requirement_fit_report: "RequirementFitReport | None",
+    job: dict,
+    employer_analysis: EmployerAnalysis,
+) -> tuple[RequirementDirectivePlanItem, ...]:
+    if not _requirement_fit_report_matches(requirement_fit_report, job, employer_analysis):
+        return ()
+    items: list[RequirementDirectivePlanItem] = []
+    for assessment in getattr(requirement_fit_report, "assessments", ()) or ():
+        fit = getattr(assessment, "fit", None)
+        directive = getattr(assessment, "tailoring", None)
+        requirement_id = str(getattr(assessment, "requirement_id", "") or "").strip()
+        requirement_text = str(getattr(assessment, "requirement_text", "") or "").strip()
+        if not requirement_id or not requirement_text:
+            continue
+        fit_kind = str(getattr(fit, "kind", "not_assessed") or "not_assessed")
+        action = str(getattr(directive, "action", "low_priority") or "low_priority")
+        allowed_evidence_ids = _merge_strings(
+            tuple(getattr(fit, "evidence_ids", ()) or ()),
+            tuple(getattr(directive, "allowed_evidence_ids", ()) or ()),
+        )
+        target_keywords = _merge_keywords(
+            tuple(getattr(directive, "target_keywords", ()) or ()),
+            _requirement_keywords(employer_analysis, requirement_id),
+        )
+        prohibited_claims = tuple(getattr(directive, "prohibited_claims", ()) or ())
+        if fit_kind in {"missing", "blocked"} and not prohibited_claims:
+            prohibited_claims = (requirement_text,)
+        instruction = str(getattr(directive, "instruction", "") or "").strip()
+        items.append(
+            RequirementDirectivePlanItem(
+                requirement_id=requirement_id,
+                requirement_text=requirement_text,
+                tier=str(getattr(assessment, "tier", "nice_to_have") or "nice_to_have"),
+                weight=float(getattr(assessment, "weight", 0.0) or 0.0),
+                fit_kind=fit_kind,
+                action=action,
+                priority=float(getattr(directive, "priority", 0.0) or 0.0),
+                allowed_evidence_ids=allowed_evidence_ids,
+                target_keywords=target_keywords,
+                prohibited_claims=tuple(_text_list(prohibited_claims)),
+                instruction=instruction,
+            )
+        )
+    items.sort(key=lambda item: (-item.priority, -item.weight, item.requirement_id))
+    return tuple(items)
+
+
+def _requirement_fit_report_matches(
+    requirement_fit_report: "RequirementFitReport | None",
+    job: dict,
+    employer_analysis: EmployerAnalysis,
+) -> bool:
+    if requirement_fit_report is None:
+        return False
+    job_url = str(job.get("url") or "").strip()
+    if job_url and str(getattr(requirement_fit_report, "job_id", "") or "") != job_url:
+        return False
+    generation = int(getattr(requirement_fit_report, "employer_analysis_generation", 0) or 0)
+    return generation == employer_analysis.generation
+
+
+def _requirement_keywords(
+    employer_analysis: EmployerAnalysis,
+    requirement_id: str,
+) -> tuple[str, ...]:
+    keywords: list[str] = []
+    for keyword in employer_analysis.canonical.keywords:
+        if str(keyword.requirement_ref or "") != requirement_id:
+            continue
+        normalized = _normalize_phrase(keyword.keyword)
+        if normalized:
+            keywords.append(normalized)
+    return tuple(dict.fromkeys(keywords))
+
+
+def _directive_evidence_ids(
+    directives: tuple[RequirementDirectivePlanItem, ...],
+) -> tuple[str, ...]:
+    ids: list[str] = []
+    for directive in directives:
+        if directive.action not in {"double_down", "bridge_gap"}:
+            continue
+        ids.extend(directive.allowed_evidence_ids)
+    return tuple(dict.fromkeys(ids))
+
+
+def _directive_prohibited_claims(
+    directives: tuple[RequirementDirectivePlanItem, ...],
+) -> tuple[str, ...]:
+    claims: list[str] = []
+    for directive in directives:
+        if directive.action != "avoid_claim":
+            continue
+        claims.extend(directive.prohibited_claims)
+    return tuple(dict.fromkeys(_normalize_space(claim) for claim in claims if claim))
+
+
+def _merge_keywords(
+    preferred: tuple[str, ...],
+    fallback: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            normalized
+            for keyword in [*preferred, *fallback]
+            if (normalized := _normalize_phrase(keyword))
+        )
+    )[:32]
+
+
+def _merge_strings(*groups: tuple[str, ...]) -> tuple[str, ...]:
+    values: list[str] = []
+    for group in groups:
+        values.extend(_text_list(group))
+    return tuple(dict.fromkeys(values))
 
 
 def _analysis_job_keywords(employer_analysis: EmployerAnalysis) -> tuple[str, ...]:
@@ -939,6 +1148,25 @@ def _check_metrics(
         metric for metric in metric_claims if metric and not _contains_metric_text(allowed_text, metric)
     )
     return metric_claims, unknown
+
+
+def _prohibited_claims_found(
+    generated_lower: str,
+    prohibited_claims: tuple[str, ...],
+) -> tuple[str, ...]:
+    found: list[str] = []
+    normalized_text = _normalize_claim_phrase(generated_lower)
+    for claim in prohibited_claims:
+        normalized = _normalize_claim_phrase(claim)
+        if len(normalized) < 3:
+            continue
+        if normalized in normalized_text:
+            found.append(claim)
+    return tuple(dict.fromkeys(found))
+
+
+def _normalize_claim_phrase(value: str) -> str:
+    return " ".join(token.strip(".,;:") for token in _normalize_phrase(value).split()).strip()
 
 
 def _baseline_experience_metrics(profile: dict) -> list[str]:

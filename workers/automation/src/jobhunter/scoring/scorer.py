@@ -23,14 +23,21 @@ import logging
 import time
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Mapping, Protocol
 
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.job_content_identity import job_content_fingerprint
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.ports.events import EventPublisher
-from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
+from jobhunter.domain.ports.materials import EmployerAnalysisRepository
+from jobhunter.domain.ports.scoring import (
+    LlmPort,
+    RequirementFitReportRepository,
+    ScoreRepository,
+    ScoringPolicyRepository,
+)
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.retrieval import (
@@ -44,10 +51,12 @@ from jobhunter.domain.scoring.use_cases import (
 from jobhunter.domain.scoring.value_objects import ScoringCriteria
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
 from jobhunter.infrastructure.llm import LlmAdapter, get_llm_adapter
+from jobhunter.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.infrastructure.profile.factory import get_profile_repository
 from jobhunter.infrastructure.scoring import (
     LocalScoringCriteriaProvider,
+    SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoringPolicyRepository,
 )
@@ -58,8 +67,22 @@ from jobhunter.state import (
     set_stage_state,
     utc_now,
 )
+from jobhunter.scoring.employer_analysis import build_analyze_use_case
 
 log = logging.getLogger(__name__)
+
+
+class AnalyzeJobUseCaseLike(Protocol):
+    """Small protocol for the canonical employer-analysis front-half step."""
+
+    def execute(
+        self,
+        *,
+        job: dict,
+        tenant_id: TenantId = LOCAL_TENANT,
+        force: bool = False,
+    ) -> Any:
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +94,7 @@ def _build_use_case(
     *,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = None,
     publisher: EventPublisher | None = None,
@@ -86,8 +110,13 @@ def _build_use_case(
         repository = SqliteScoreRepository(conn)
         if policy_repository is None:
             policy_repository = SqliteScoringPolicyRepository(conn)
-    elif policy_repository is None and isinstance(repository, SqliteScoreRepository):
-        policy_repository = SqliteScoringPolicyRepository(repository.connection)
+        if requirement_fit_repository is None:
+            requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
+    elif isinstance(repository, SqliteScoreRepository):
+        if policy_repository is None:
+            policy_repository = SqliteScoringPolicyRepository(repository.connection)
+        if requirement_fit_repository is None:
+            requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
     if llm_port is None:
         llm_port = (
             LlmAdapter(default_model=llm_model)
@@ -99,6 +128,7 @@ def _build_use_case(
         llm=llm_port,
         publisher=publisher,
         policy_repository=policy_repository,
+        requirement_fit_repository=requirement_fit_repository,
     )
 
 
@@ -114,12 +144,17 @@ def score_job(
     use_case: ScoreJobUseCase | None = None,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = None,
     publisher: EventPublisher | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     resume_text: str | None = None,
     criteria: ScoringCriteria | None = None,
+    employer_analysis: EmployerAnalysis | None = None,
+    employer_analysis_repository: EmployerAnalysisRepository | None = None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None = None,
+    require_employer_analysis: bool = False,
 ) -> ScoreJobOutcome:
     """Score a single job and persist the result.
 
@@ -132,9 +167,30 @@ def score_job(
         use_case = _build_use_case(
             repository=repository,
             policy_repository=policy_repository,
+            requirement_fit_repository=requirement_fit_repository,
             llm_port=llm_port,
             llm_model=llm_model,
             publisher=publisher,
+        )
+    if (
+        employer_analysis is None
+        and (
+            employer_analysis_repository is not None
+            or analyze_use_case is not None
+            or require_employer_analysis
+        )
+    ):
+        conn = _analysis_connection_for_repository(repository)
+        if employer_analysis_repository is None:
+            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+        if analyze_use_case is None and require_employer_analysis:
+            analyze_use_case = build_analyze_use_case(conn=conn, publisher=publisher, event_stage="score")
+        employer_analysis = _ensure_employer_analysis_for_job(
+            repository=employer_analysis_repository,
+            analyze_use_case=analyze_use_case,
+            tenant_id=tenant_id,
+            job=job,
+            require=require_employer_analysis,
         )
     return use_case.score(
         job=job,
@@ -142,6 +198,7 @@ def score_job(
         tenant_id=tenant_id,
         resume_text=resume_text,
         criteria=criteria,
+        employer_analysis=employer_analysis,
     )
 
 
@@ -152,6 +209,7 @@ def run_scoring(
     *,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     publisher: EventPublisher | None = None,
@@ -160,6 +218,10 @@ def run_scoring(
     resume_text: str | None = None,
     search_index: HybridSearchIndex | None = None,
     criteria: ScoringCriteria | None = None,
+    employer_analyses_by_job: Mapping[str, EmployerAnalysis] | None = None,
+    employer_analysis_repository: EmployerAnalysisRepository | None = None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None = None,
+    require_employer_analysis: bool = True,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -184,10 +246,15 @@ def run_scoring(
         repository = SqliteScoreRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
+    if employer_analysis_repository is None:
+        employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+    if analyze_use_case is None and require_employer_analysis:
+        analyze_use_case = build_analyze_use_case(conn=conn, publisher=publisher, event_stage="score")
 
     use_case = _build_use_case(
         repository=repository,
         policy_repository=policy_repository,
+        requirement_fit_repository=requirement_fit_repository,
         llm_port=llm_port,
         llm_model=llm_model,
         publisher=publisher,
@@ -290,6 +357,34 @@ def run_scoring(
     t0 = time.time()
     results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
     errors = 0
+    analyses_by_job: dict[str, EmployerAnalysis] = {}
+    analysis_ready_jobs: list[dict[str, Any]] = []
+    for job in jobs_to_compute:
+        job_url = str(job.get("url") or "")
+        try:
+            analysis = _ensure_employer_analysis_for_job(
+                repository=employer_analysis_repository,
+                analyze_use_case=analyze_use_case,
+                tenant_id=tenant_id,
+                job=job,
+                existing=(employer_analyses_by_job or {}).get(job_url),
+                require=require_employer_analysis,
+            )
+        except Exception as exc:  # noqa: BLE001 -- surface as a stage failure
+            log.error("Employer analysis failed for %r: %s", job.get("title", "?"), exc)
+            outcome = ScoreJobOutcome(
+                ok=False,
+                score=None,
+                error=f"Employer analysis failed: {exc}",
+            )
+            results.append((job, outcome))
+            for duplicate_job in duplicate_jobs_by_representative.get(job_url, ()):
+                results.append((duplicate_job, outcome))
+            continue
+        if analysis is not None:
+            analyses_by_job[job_url] = analysis
+        analysis_ready_jobs.append(job)
+    jobs_to_compute = analysis_ready_jobs
 
     # Worker threads run the LLM step only — the SQLite connection is not
     # safe to share across threads. Persistence happens below on the main
@@ -302,6 +397,7 @@ def run_scoring(
                 profile_snapshot=profile_snapshot,
                 resume_text=resume_text,
                 criteria=criteria,
+                employer_analysis=analyses_by_job.get(str(job.get("url") or "")),
             ): job
             for job in jobs_to_compute
         }
@@ -433,8 +529,13 @@ def score_job_by_url(
     criteria: ScoringCriteria | None = None,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
+    employer_analysis: EmployerAnalysis | None = None,
+    employer_analysis_repository: EmployerAnalysisRepository | None = None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None = None,
+    require_employer_analysis: bool = True,
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by URL.
 
@@ -473,6 +574,18 @@ def score_job_by_url(
             tenant_id=tenant_id,
         )
         return ScoreJobOutcome(ok=True, score=existing)
+    if employer_analysis is None:
+        if employer_analysis_repository is None:
+            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+        if analyze_use_case is None and require_employer_analysis:
+            analyze_use_case = build_analyze_use_case(conn=conn, publisher=publisher, event_stage="score")
+        employer_analysis = _ensure_employer_analysis_for_job(
+            repository=employer_analysis_repository,
+            analyze_use_case=analyze_use_case,
+            tenant_id=tenant_id,
+            job=job,
+            require=require_employer_analysis,
+        )
 
     ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
     started_at = utc_now()
@@ -493,6 +606,7 @@ def score_job_by_url(
         use_case=_build_use_case(
             repository=repository,
             policy_repository=policy_repository,
+            requirement_fit_repository=requirement_fit_repository,
             llm_port=llm_port,
             llm_model=llm_model,
             publisher=publisher,
@@ -500,6 +614,8 @@ def score_job_by_url(
         tenant_id=tenant_id,
         resume_text=resume_text,
         criteria=criteria,
+        employer_analysis=employer_analysis,
+        require_employer_analysis=require_employer_analysis,
     )
     finished_at = utc_now()
     if outcome.ok and outcome.score is not None:
@@ -639,6 +755,80 @@ def _row_value(row: Any, key: str, index: int) -> Any:
     if isinstance(row, sqlite3.Row):
         return row[key]
     return row[index]
+
+
+def _analysis_connection_for_repository(repository: ScoreRepository | None) -> sqlite3.Connection:
+    if isinstance(repository, SqliteScoreRepository):
+        return repository.connection
+    return get_connection()
+
+
+def _ensure_employer_analysis_for_job(
+    *,
+    repository: EmployerAnalysisRepository | None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None,
+    tenant_id: TenantId,
+    job: dict[str, Any],
+    existing: EmployerAnalysis | None = None,
+    require: bool,
+) -> EmployerAnalysis | None:
+    """Resolve the canonical requirement source before a fresh score attempt."""
+
+    if _is_usable_employer_analysis(existing, job):
+        return existing
+    if repository is not None:
+        loaded = _load_employer_analysis_for_job(
+            repository=repository,
+            tenant_id=tenant_id,
+            job=job,
+        )
+        if loaded is not None:
+            return loaded
+    if analyze_use_case is not None:
+        outcome = analyze_use_case.execute(job=job, tenant_id=tenant_id)
+        analysis = getattr(outcome, "analysis", None)
+        if _is_usable_employer_analysis(analysis, job):
+            return analysis
+        raise ValueError(
+            "Employer analysis did not produce grounded requirements for this job."
+        )
+    if require:
+        raise ValueError(
+            "Scoring requires employer analysis before a fresh score can be computed."
+        )
+    return None
+
+
+def _is_usable_employer_analysis(
+    analysis: EmployerAnalysis | None,
+    job: dict[str, Any],
+) -> bool:
+    if analysis is None:
+        return False
+    job_url = str(job.get("url") or "").strip()
+    if job_url and str(analysis.job_id) != job_url:
+        log.warning(
+            "Ignoring employer analysis for %s while scoring %s",
+            analysis.job_id,
+            job_url,
+        )
+        return False
+    return bool(analysis.canonical.requirements)
+
+
+def _load_employer_analysis_for_job(
+    *,
+    repository: EmployerAnalysisRepository,
+    tenant_id: TenantId,
+    job: dict[str, Any],
+) -> EmployerAnalysis | None:
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        return None
+    analysis = repository.load(tenant_id, JobId(job_url))
+    if not _is_usable_employer_analysis(analysis, job):
+        return None
+    return analysis
 
 
 # ---------------------------------------------------------------------------

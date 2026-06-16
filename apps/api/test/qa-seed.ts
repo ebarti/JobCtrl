@@ -25,6 +25,7 @@ interface QaJobSeed {
 }
 
 const QA_NOW = "2026-05-04T12:00:00+00:00";
+const QA_PLATFORM_JOB_URL = "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
 const QA_RESUME_TEMPLATE = String.raw`\documentclass[11pt,a4paper,sans]{moderncv}
 
 \moderncvstyle{banking}
@@ -236,6 +237,124 @@ export function seedQaDatabase(dbPath: string): void {
       started_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
     );
+    CREATE TABLE job_scores (
+      job_url TEXT,
+      version INTEGER,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      fit_score INTEGER,
+      breakdown_json TEXT,
+      keywords_json TEXT,
+      scored_at TEXT,
+      correction_json TEXT,
+      criteria_json TEXT,
+      trace_json TEXT,
+      PRIMARY KEY (job_url, version, tenant_id)
+    );
+    CREATE TABLE job_materials (
+      job_url TEXT,
+      generation INTEGER,
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE job_materials_artifacts (
+      job_url TEXT,
+      generation INTEGER,
+      artifact_id TEXT,
+      artifact_type TEXT,
+      status TEXT,
+      path TEXT,
+      created_at TEXT,
+      size_bytes INTEGER,
+      metadata_json TEXT,
+      PRIMARY KEY (job_url, generation, artifact_id)
+    );
+    CREATE TABLE job_bullet_provenance (
+      job_url TEXT,
+      generation INTEGER,
+      bullet_id TEXT,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      artifact_id TEXT,
+      section TEXT,
+      source_id TEXT,
+      evidence_ids_json TEXT,
+      requirement_ids_json TEXT,
+      matched_keywords_json TEXT,
+      transform_type TEXT,
+      control TEXT,
+      rationale TEXT,
+      generated_text TEXT,
+      position INTEGER,
+      created_at TEXT,
+      coverage_json TEXT,
+      voice_json TEXT
+    );
+    CREATE TABLE job_employer_analysis (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      snapshot_hash TEXT NOT NULL DEFAULT '',
+      prompt_version TEXT NOT NULL DEFAULT '',
+      sdk_set_version TEXT NOT NULL DEFAULT '',
+      cache_key TEXT NOT NULL DEFAULT '',
+      role_framing TEXT NOT NULL DEFAULT '',
+      inferred_seniority TEXT NOT NULL DEFAULT '',
+      ideal_candidate_narrative TEXT NOT NULL DEFAULT '',
+      requirements_json TEXT NOT NULL DEFAULT '[]',
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      agreement_json TEXT NOT NULL DEFAULT '{}',
+      eeo_screen_json TEXT NOT NULL DEFAULT '[]',
+      legs_attempted INTEGER NOT NULL,
+      legs_succeeded INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation)
+    );
+    CREATE TABLE job_employer_analysis_sub_analyses (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      analysis_json TEXT NOT NULL,
+      PRIMARY KEY (job_url, generation, model_id)
+    );
+    CREATE TABLE job_employer_analysis_failures (
+      job_url TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      model_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      error TEXT NOT NULL,
+      raw_output TEXT,
+      PRIMARY KEY (job_url, generation, model_id)
+    );
+    CREATE TABLE job_requirement_fit_reports (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      employer_analysis_generation INTEGER NOT NULL,
+      profile_snapshot_version INTEGER NOT NULL,
+      scoring_policy_version INTEGER NOT NULL,
+      formula_version TEXT NOT NULL,
+      resolved_fit_score INTEGER,
+      fit_band TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      summary_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (job_url, score_version, tenant_id)
+    );
+    CREATE TABLE job_requirement_fit_items (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      score_version INTEGER NOT NULL,
+      requirement_id TEXT NOT NULL,
+      requirement_text TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      weight REAL NOT NULL,
+      job_evidence_span TEXT NOT NULL DEFAULT '',
+      fit_json TEXT NOT NULL DEFAULT '{}',
+      contribution_json TEXT NOT NULL DEFAULT '{}',
+      tailoring_json TEXT NOT NULL DEFAULT '{}',
+      artifact_coverage_json TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (job_url, score_version, tenant_id, requirement_id)
+    );
   `);
   writeProfileConfig(db, {
     profile: QA_PROFILE,
@@ -307,6 +426,12 @@ export function seedQaDatabase(dbPath: string): void {
   insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_txt", coverTxt);
   insertArtifact(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "cover_letter_pdf", coverPdf);
   insertArtifact(db, "https://linkedin.com/jobs/view/qa-risk-manager", "tailored_resume_pdf", path.join(artifactDir, "missing.pdf"));
+  insertRequirementFitAuditFixture(db, {
+    coverPdf,
+    coverTxt,
+    resumePdf,
+    resumeTxt,
+  });
 
   insertEvent(db, "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director", "apply", "info", "QA apply run queued");
   insertEvent(db, "https://linkedin.com/jobs/view/qa-risk-manager", "score", "error", "QA score action failed");
@@ -324,6 +449,325 @@ export function seedQaDatabase(dbPath: string): void {
     QA_NOW,
   );
   db.close();
+}
+
+function insertRequirementFitAuditFixture(
+  db: Database.Database,
+  paths: {
+    coverPdf: string;
+    coverTxt: string;
+    resumePdf: string;
+    resumeTxt: string;
+  },
+): void {
+  insertScore(db, QA_PLATFORM_JOB_URL, 9);
+  insertCanonicalMaterials(db, paths);
+  insertEmployerAnalysis(db);
+  insertRequirementFitReport(db);
+  insertBulletProvenance(db);
+}
+
+function insertCanonicalMaterials(
+  db: Database.Database,
+  paths: {
+    coverPdf: string;
+    coverTxt: string;
+    resumePdf: string;
+    resumeTxt: string;
+  },
+): void {
+  db.prepare("INSERT INTO job_materials (job_url, generation) VALUES (?, ?)").run(QA_PLATFORM_JOB_URL, 1);
+  const insert = db.prepare(
+    `INSERT INTO job_materials_artifacts (
+      job_url, generation, artifact_id, artifact_type, status, path, created_at, size_bytes, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "qa-platform-resume-text",
+    "tailored_resume",
+    "approved",
+    paths.resumeTxt,
+    QA_NOW,
+    localFileSize(paths.resumeTxt),
+    null,
+  );
+  insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "qa-platform-resume-pdf",
+    "resume_pdf",
+    "approved",
+    paths.resumePdf,
+    QA_NOW,
+    localFileSize(paths.resumePdf),
+    null,
+  );
+  insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "qa-platform-cover-text",
+    "cover_letter",
+    "approved",
+    paths.coverTxt,
+    QA_NOW,
+    localFileSize(paths.coverTxt),
+    null,
+  );
+  insert.run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "qa-platform-cover-pdf",
+    "cover_letter_pdf",
+    "approved",
+    paths.coverPdf,
+    QA_NOW,
+    localFileSize(paths.coverPdf),
+    null,
+  );
+}
+
+function insertEmployerAnalysis(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO job_employer_analysis (
+      job_url, generation, tenant_id, snapshot_hash, prompt_version, sdk_set_version,
+      cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
+      requirements_json, keywords_json, agreement_json, eeo_screen_json,
+      legs_attempted, legs_succeeded, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "local",
+    "qa-snapshot",
+    "employer-analysis-v1",
+    "qa-sdk-set",
+    "qa-cache-key",
+    "Platform engineering leader",
+    "Director / senior engineering leadership",
+    "A senior platform leader who improves developer experience, reliability, and incident response across teams.",
+    JSON.stringify([
+      {
+        id: "r1",
+        text: "Lead platform reliability improvements across critical services.",
+        tier: "must_have",
+        weight: 0.9,
+        evidence_span: "Lead platform security, reliability, and developer experience programs.",
+      },
+      {
+        id: "r2",
+        text: "Improve developer experience and incident-response practices.",
+        tier: "nice_to_have",
+        weight: 0.7,
+        evidence_span: "developer experience programs",
+      },
+    ]),
+    JSON.stringify([
+      {
+        keyword: "platform reliability",
+        requirement_id: "r1",
+        evidence_span: "Lead platform security, reliability",
+        rationale: "Critical operating domain for the role.",
+      },
+      {
+        keyword: "developer experience",
+        requirement_id: "r2",
+        evidence_span: "developer experience programs",
+        rationale: "The posting asks for developer-experience improvements.",
+      },
+    ]),
+    JSON.stringify({
+      score: 1,
+      rationale: "Single seeded QA analysis.",
+      flagged_requirements: [],
+    }),
+    "[]",
+    1,
+    1,
+    QA_NOW,
+  );
+}
+
+function insertRequirementFitReport(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO job_requirement_fit_reports (
+      tenant_id, job_url, score_version, employer_analysis_generation,
+      profile_snapshot_version, scoring_policy_version, formula_version,
+      resolved_fit_score, fit_band, confidence, summary_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    QA_PLATFORM_JOB_URL,
+    1,
+    1,
+    4,
+    3,
+    "requirement-fit-v1",
+    9,
+    "strong",
+    "high",
+    JSON.stringify({
+      weighted_fit: 0.86,
+      must_have_coverage: 1,
+      blocker_count: 0,
+      missing_high_weight_count: 0,
+    }),
+    QA_NOW,
+  );
+  const insertItem = db.prepare(
+    `INSERT INTO job_requirement_fit_items (
+      tenant_id, job_url, score_version, requirement_id, requirement_text,
+      tier, weight, job_evidence_span, fit_json, contribution_json,
+      tailoring_json, artifact_coverage_json, position
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insertItem.run(
+    "local",
+    QA_PLATFORM_JOB_URL,
+    1,
+    "r1",
+    "Lead platform reliability improvements across critical services.",
+    "must_have",
+    0.9,
+    "Lead platform security, reliability, and developer experience programs.",
+    JSON.stringify({ kind: "matched", evidence_ids: ["ev-platform"], strength: "direct" }),
+    JSON.stringify({
+      max_points: 1.125,
+      awarded_points: 1.125,
+      weighted_impact: 1.125,
+      rationale: "Direct platform reliability evidence covers the requirement.",
+    }),
+    JSON.stringify({
+      action: "double_down",
+      priority: 0.9,
+      allowed_evidence_ids: ["ev-platform"],
+      target_keywords: ["platform reliability"],
+      prohibited_claims: [],
+      instruction: "Keep platform reliability ownership prominent.",
+    }),
+    JSON.stringify({
+      state: "covered",
+      source: "tailored_resume_bullet_provenance",
+      bullet_count: 1,
+      examples: ["Owned platform reliability improvements for incident response."],
+    }),
+    1,
+  );
+  insertItem.run(
+    "local",
+    QA_PLATFORM_JOB_URL,
+    1,
+    "r2",
+    "Improve developer experience and incident-response practices.",
+    "nice_to_have",
+    0.7,
+    "developer experience programs",
+    JSON.stringify({
+      kind: "transferable",
+      evidence_ids: ["ev-incident"],
+      gap: "No direct developer-experience ownership evidence was recorded.",
+      bridge: "Incident leadership can support adjacent developer-experience expectations.",
+    }),
+    JSON.stringify({
+      max_points: 0.7,
+      awarded_points: 0.42,
+      weighted_impact: 0.42,
+      rationale: "Transferable incident leadership partially covers the requirement.",
+    }),
+    JSON.stringify({
+      action: "bridge_gap",
+      priority: 0.7,
+      allowed_evidence_ids: ["ev-incident"],
+      target_keywords: ["incident response", "developer experience"],
+      prohibited_claims: ["owned developer experience end to end"],
+      instruction: "Bridge from incident leadership without claiming direct developer-experience ownership.",
+    }),
+    JSON.stringify({
+      state: "missing_from_resume",
+      source: "tailored_resume_bullet_provenance",
+      bullet_count: 0,
+      examples: [],
+    }),
+    2,
+  );
+}
+
+function insertBulletProvenance(db: Database.Database): void {
+  db.prepare(
+    `INSERT INTO job_bullet_provenance (
+      job_url, generation, bullet_id, tenant_id, artifact_id, section, source_id,
+      evidence_ids_json, requirement_ids_json, matched_keywords_json,
+      transform_type, control, rationale, generated_text, position, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    QA_PLATFORM_JOB_URL,
+    1,
+    "summary-1",
+    "local",
+    "qa-platform-resume-text",
+    "summary",
+    "qa_platform",
+    JSON.stringify(["ev-platform"]),
+    JSON.stringify(["r1"]),
+    JSON.stringify(["platform reliability"]),
+    "rephrased",
+    "rephrase_allowed",
+    "Reframed the bullet toward platform reliability.",
+    "Owned platform reliability improvements for incident response.",
+    1,
+    QA_NOW,
+  );
+}
+
+function insertScore(db: Database.Database, jobUrl: string, fitScore: number): void {
+  db.prepare(
+    `INSERT INTO job_scores (
+      job_url, version, tenant_id, fit_score, breakdown_json, keywords_json,
+      scored_at, correction_json, criteria_json, trace_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    jobUrl,
+    1,
+    "local",
+    fitScore,
+    JSON.stringify({
+      reasoning: "Strong platform leadership fit.",
+      technical_fit: 9,
+      experience_fit: 8,
+      role_fit: 8,
+      fit_band: "strong",
+      confidence: "high",
+      eligibility: { status: "eligible", hard_blockers: [], warnings: [] },
+      matched_signals: ["platform leadership"],
+      missing_signals: ["public company scale"],
+      transferable_signals: ["incident leadership"],
+    }),
+    JSON.stringify(["platform", "leadership", "reliability"]),
+    QA_NOW,
+    "{}",
+    JSON.stringify({
+      min_fit_score: 7,
+      criteria_text: "Platform leadership and incident response.",
+      target_criteria: "Senior platform leader.",
+      criteria_version: "criteria-test",
+    }),
+    JSON.stringify({
+      prompt_version: "score-fit-assessment-v1",
+      schema_version: "score-fit-assessment-v1",
+      model: "fake-model",
+      criteria_version: "criteria-test",
+      profile_snapshot_version: 4,
+      scoring_policy_id: "local:scoring-policy-v3",
+      scoring_policy_version: 3,
+      rubric_version: "default-scoring-rubric-v1",
+      raw_weighted_score: 8.6,
+      calibration_adjustment: 0,
+      resolved_fit_band: "strong",
+      resolution_reason: "requirement_fit_report",
+      parser_warnings: [],
+    }),
+  );
 }
 
 function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {

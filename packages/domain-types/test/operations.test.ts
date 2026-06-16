@@ -63,6 +63,7 @@ describe("Operations projection types", () => {
       scoreVersion: listProjection.scoreVersion,
       scoredAt: listProjection.scoredAt,
       stages: [],
+      requirementFitReport: null,
       lastUpdatedAt: listProjection.lastUpdatedAt,
     };
 
