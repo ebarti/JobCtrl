@@ -35,10 +35,12 @@ from jobhunter.domain.events import (
     create_score_corrected,
 )
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.ports.scoring import (
     LlmPort,
+    RequirementFitReportRepository,
     ScoreRepository,
     ScoreStalenessRepository,
     ScoringPolicyRepository,
@@ -46,16 +48,23 @@ from jobhunter.domain.ports.scoring import (
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
+from jobhunter.domain.scoring.requirement_fit import (
+    REQUIREMENT_FIT_FORMULA_VERSION,
+    derive_requirement_fit_signals,
+    resolve_requirement_fit_report,
+)
 from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
+    RequirementFitReport,
     ScoreBreakdown,
     ScoreCorrection,
     ScoreTrace,
     ScoringCriteria,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
+from jobhunter.resume_profile import get_achievement_evidence
 
 log = logging.getLogger(__name__)
 
@@ -289,6 +298,94 @@ def _build_profile_preferences_blob(criteria: ScoringCriteria) -> str:
     return json_dumps(criteria.to_dict())
 
 
+def _build_requirement_fit_inputs_blob(
+    *,
+    job: dict[str, Any],
+    profile_snapshot: ProfileSnapshot,
+    employer_analysis: EmployerAnalysis | None,
+) -> str:
+    if employer_analysis is None:
+        return ""
+    job_url = str(job.get("url") or "").strip()
+    if job_url and str(employer_analysis.job_id) != job_url:
+        log.warning(
+            "Ignoring employer analysis for %s while scoring %s",
+            employer_analysis.job_id,
+            job_url,
+        )
+        return ""
+
+    requirements = [
+        {
+            "id": requirement.id,
+            "text": requirement.text,
+            "tier": requirement.tier,
+            "weight": requirement.weight,
+            "evidence_span": requirement.evidence_span,
+        }
+        for requirement in employer_analysis.canonical.requirements
+        if requirement.id and requirement.text
+    ]
+    if not requirements:
+        return ""
+
+    payload = {
+        "employer_analysis_generation": employer_analysis.generation,
+        "requirements": requirements,
+        "profile_evidence": _profile_evidence_prompt_items(profile_snapshot),
+    }
+    return "REQUIREMENT FIT INPUTS:\n" + json_dumps(payload)
+
+
+def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for raw in get_achievement_evidence(profile_snapshot.as_dict()):
+        if not isinstance(raw, dict):
+            continue
+        evidence_id = str(raw.get("id") or "").strip()
+        source_text = str(raw.get("source_text") or "").strip()
+        if not evidence_id or not source_text:
+            continue
+        item = {
+            "id": evidence_id,
+            "source_text": source_text,
+            "experience_entry_id": str(raw.get("experience_entry_id") or "").strip(),
+            "tools": _text_list(raw.get("tools")),
+            "metrics": _text_list(raw.get("metrics")),
+            "seniority_signal": str(raw.get("seniority_signal") or "").strip(),
+            "tags": _text_list(raw.get("tags")),
+        }
+        items.append({key: value for key, value in item.items() if value})
+        if len(items) >= 24:
+            break
+    return items
+
+
+def _text_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in value:
+        text = str(raw or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _optional_prompt_section(text: str) -> str:
+    if not text:
+        return ""
+    return f"---\n\n{text}\n\n"
+
+
+def _has_requirement_fit(parse: ScoreParseResult) -> bool:
+    return bool(parse.requirement_assessments) and parse.employer_analysis_generation > 0
+
+
 def json_dumps(value: Any) -> str:
     import json
 
@@ -333,6 +430,7 @@ class ScoreJobUseCase:
         parser: ScoreParser | None = None,
         constraints: ConstraintChecker | None = None,
         policy_repository: ScoringPolicyRepository | None = None,
+        requirement_fit_repository: RequirementFitReportRepository | None = None,
         policy: ScoringPolicy | None = None,
         prompt: str = SCORE_PROMPT,
     ) -> None:
@@ -342,6 +440,7 @@ class ScoreJobUseCase:
         self._parser = parser or ScoreParser()
         self._constraints = constraints or ConstraintChecker()
         self._policy_repository = policy_repository
+        self._requirement_fit_repository = requirement_fit_repository
         self._policy = policy
         self._prompt = prompt
 
@@ -357,6 +456,7 @@ class ScoreJobUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreJobOutcome:
         """**Preferred entry point** for single-threaded callers.
 
@@ -377,6 +477,7 @@ class ScoreJobUseCase:
             profile_snapshot=profile_snapshot,
             resume_text=resume_text,
             criteria=criteria,
+            employer_analysis=employer_analysis,
         )
         return self.persist_outcome(job=job, parse=parse_result, tenant_id=tenant_id)
 
@@ -387,6 +488,7 @@ class ScoreJobUseCase:
         profile_snapshot: ProfileSnapshot,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreParseResult:
         """LLM call + parse only — does NOT touch the repository.
 
@@ -408,6 +510,7 @@ class ScoreJobUseCase:
             resume_text=text,
             profile_snapshot=profile_snapshot,
             criteria=scoring_criteria,
+            employer_analysis=employer_analysis,
         )
 
     def persist_outcome(
@@ -435,7 +538,16 @@ class ScoreJobUseCase:
                 error=parse.error or "Unknown parse error",
             )
 
-        resolved_parse = self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
+        job_id = JobId(str(job["url"]))
+        resolved_parse = (
+            self._resolve_with_requirement_fit(
+                parse=parse,
+                tenant_id=tenant_id,
+                job_id=job_id,
+            )
+            if _has_requirement_fit(parse)
+            else self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
+        )
         scored_at = _utc_now()
         new_score = self._build_aggregate(
             tenant_id=tenant_id,
@@ -444,6 +556,11 @@ class ScoreJobUseCase:
             scored_at=scored_at,
         )
         self._repository.save(new_score)
+        self._persist_requirement_fit_report(
+            tenant_id=tenant_id,
+            score=new_score,
+            parse=resolved_parse,
+        )
         self._publish_scored(new_score)
         return ScoreJobOutcome(ok=True, score=new_score)
 
@@ -457,6 +574,7 @@ class ScoreJobUseCase:
         tenant_id: TenantId = LOCAL_TENANT,
         resume_text: str | None = None,
         criteria: ScoringCriteria | None = None,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreJobOutcome:
         return self.score(
             job=job,
@@ -464,6 +582,7 @@ class ScoreJobUseCase:
             tenant_id=tenant_id,
             resume_text=resume_text,
             criteria=criteria,
+            employer_analysis=employer_analysis,
         )
 
     # ------------------------------------------------------------------
@@ -477,6 +596,7 @@ class ScoreJobUseCase:
         resume_text: str,
         profile_snapshot: ProfileSnapshot,
         criteria: ScoringCriteria,
+        employer_analysis: EmployerAnalysis | None = None,
     ) -> ScoreParseResult:
         trace = ScoreTrace(
             prompt_version=SCORE_PROMPT_VERSION,
@@ -484,6 +604,11 @@ class ScoreJobUseCase:
             model=str(getattr(self._llm, "model", "llm-port-default")),
             criteria_version=criteria.criteria_version,
             profile_snapshot_version=profile_snapshot.version,
+        )
+        requirement_fit_inputs = _build_requirement_fit_inputs_blob(
+            job=job,
+            profile_snapshot=profile_snapshot,
+            employer_analysis=employer_analysis,
         )
         messages = [
             LlmMessage(role="system", content=self._prompt),
@@ -493,6 +618,7 @@ class ScoreJobUseCase:
                     f"RESUME BASELINE:\n{resume_text}\n\n"
                     f"---\n\nSCORING CRITERIA AND PROFILE PREFERENCES:\n"
                     f"{_build_profile_preferences_blob(criteria)}\n\n"
+                    f"{_optional_prompt_section(requirement_fit_inputs)}"
                     f"---\n\nJOB POSTING:\n{_build_job_blob(job)}"
                 ),
             ),
@@ -536,6 +662,11 @@ class ScoreJobUseCase:
             parsed = self._parser.parse_json(payload, criteria=criteria, trace=trace)
             if parsed.ok:
                 parsed = self._constraints.apply(parse=parsed, job=job)
+                if employer_analysis is not None:
+                    parsed = replace(
+                        parsed,
+                        employer_analysis_generation=employer_analysis.generation,
+                    )
             span.set_attribute("jobhunter.scoring.parse.ok", parsed.ok)
             span.set_attribute("jobhunter.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
             span.set_attribute("jobhunter.scoring.eligibility", parsed.breakdown.eligibility.status)
@@ -611,6 +742,72 @@ class ScoreJobUseCase:
             trace=parse.trace.with_policy_resolution(resolved),
         )
 
+    def _resolve_with_requirement_fit(
+        self,
+        *,
+        parse: ScoreParseResult,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> ScoreParseResult:
+        policy = (
+            self._policy_repository.get_current(tenant_id)
+            if self._policy_repository is not None
+            else self._policy or ScoringPolicy.default(tenant_id)
+        )
+        report = self._build_requirement_fit_report(
+            parse=parse,
+            job_id=job_id,
+            score_version=0,
+        )
+        assert report is not None
+        signals = derive_requirement_fit_signals(report)
+        resolved_score = report.resolved_fit_score or parse.fit_score
+        assert resolved_score is not None
+        breakdown = ScoreBreakdown(
+            technical_fit=parse.breakdown.technical_fit,
+            experience_fit=parse.breakdown.experience_fit,
+            role_fit=parse.breakdown.role_fit,
+            reasoning=parse.breakdown.reasoning,
+            fit_band=report.fit_band,
+            confidence=parse.breakdown.confidence,
+            eligibility=parse.breakdown.eligibility,
+            matched_signals=signals.matched_signals,
+            missing_signals=signals.missing_signals,
+            transferable_signals=signals.transferable_signals,
+        )
+        trace = replace(
+            parse.trace,
+            scoring_policy_id=policy.policy_id,
+            scoring_policy_version=policy.version,
+            rubric_version=policy.rubric_version,
+            raw_weighted_score=round(1 + (9 * report.summary.weighted_fit), 4),
+            calibration_adjustment=0.0,
+            anchor_ids=tuple(anchor.anchor_id for anchor in policy.anchors),
+            resolved_fit_band=report.fit_band,
+            resolution_reason="requirement_fit_report",
+            resolved_dimensions=(
+                {
+                    "name": "requirement_fit",
+                    "value": report.summary.weighted_fit,
+                    "weight": 1.0,
+                    "weighted_value": report.summary.weighted_fit,
+                },
+            ),
+            fit_band_thresholds=tuple(threshold.to_dict() for threshold in policy.fit_band_thresholds),
+            policy_evidence={
+                "formula_version": report.formula_version,
+                "employer_analysis_generation": report.employer_analysis_generation,
+                "summary": report.summary.to_dict(),
+            },
+        )
+        return replace(
+            parse,
+            fit_score=resolved_score,
+            breakdown=breakdown,
+            requirement_assessments=report.assessments,
+            trace=trace,
+        )
+
     def _publish_scored(self, score: JobScore) -> None:
         if self._publisher is None:
             return
@@ -632,6 +829,47 @@ class ScoreJobUseCase:
             self._publisher.publish(event)
         except Exception:  # noqa: BLE001 — event publication never blocks save
             log.exception("Failed to publish JobScored event for %s", score.job_id)
+
+    def _persist_requirement_fit_report(
+        self,
+        *,
+        tenant_id: TenantId,
+        score: JobScore,
+        parse: ScoreParseResult,
+    ) -> None:
+        if self._requirement_fit_repository is None:
+            return
+        report = self._build_requirement_fit_report(
+            parse=parse,
+            job_id=score.job_id,
+            score_version=score.version,
+        )
+        if report is None:
+            return
+        self._requirement_fit_repository.save(tenant_id, report)
+
+    def _build_requirement_fit_report(
+        self,
+        *,
+        parse: ScoreParseResult,
+        job_id: JobId,
+        score_version: int,
+    ) -> RequirementFitReport | None:
+        if not _has_requirement_fit(parse):
+            return None
+        return resolve_requirement_fit_report(
+            RequirementFitReport(
+                job_id=str(job_id),
+                score_version=score_version,
+                employer_analysis_generation=parse.employer_analysis_generation,
+                profile_snapshot_version=parse.trace.profile_snapshot_version,
+                scoring_policy_version=parse.trace.scoring_policy_version,
+                formula_version=REQUIREMENT_FIT_FORMULA_VERSION,
+                fit_band=parse.breakdown.fit_band,
+                confidence=parse.breakdown.confidence,
+                assessments=parse.requirement_assessments,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
