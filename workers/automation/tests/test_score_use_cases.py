@@ -13,6 +13,14 @@ import pytest
 
 from jobhunter.domain.events.base import DomainEvent
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    Requirement,
+    compute_snapshot_hash,
+)
 from jobhunter.domain.ports.events import Subscription
 from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.profile.aggregate import Profile
@@ -20,6 +28,7 @@ from jobhunter.domain.scoring import (
     FitScore,
     JobScore,
     MatchedKeywords,
+    RequirementFitReport,
     ScoreBreakdown,
     ScoringPolicy,
     ScoringCriteria,
@@ -97,6 +106,24 @@ class _MemoryPolicyRepo:
         policy = current.with_correction_signal(signal)
         self.save(policy)
         return policy
+
+
+class _MemoryRequirementFitRepo:
+    def __init__(self) -> None:
+        self.saved: list[tuple[str, RequirementFitReport]] = []
+
+    def load(self, tenant_id, job_id, *, score_version=None):  # pragma: no cover
+        reports = [
+            report
+            for tenant, report in self.saved
+            if tenant == str(tenant_id) and report.job_id == str(job_id)
+        ]
+        if score_version is not None:
+            reports = [report for report in reports if report.score_version == score_version]
+        return reports[-1] if reports else None
+
+    def save(self, tenant_id, report: RequirementFitReport) -> None:
+        self.saved.append((str(tenant_id), report))
 
 
 class _ScriptedLlm:
@@ -199,6 +226,73 @@ def _job(url: str = "https://example.com/job/1") -> dict[str, Any]:
         "location": "Remote",
         "full_description": "We need a Python and FastAPI engineer.",
     }
+
+
+def _profile_snapshot_with_evidence(tmp_path):
+    profile = {
+        "personal": {"full_name": "Tester"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Engineering leader."},
+            "experience_entries": [
+                {
+                    "id": "acme_platform",
+                    "title": "Director of Engineering",
+                    "company": "Acme",
+                    "bullets": ["Led Python platform reliability for distributed APIs."],
+                    "achievement_evidence": [
+                        {
+                            "id": "ev_python_platform",
+                            "source_text": "Led Python platform reliability for distributed APIs.",
+                            "tools": ["Python", "FastAPI"],
+                            "metrics": [],
+                            "seniority_signal": "technical ownership",
+                            "tags": ["python", "platform", "reliability"],
+                        }
+                    ],
+                }
+            ],
+            "education_entries": [],
+            "skill_categories": [],
+        },
+    }
+    repo = build_profile_repository(db_path=tmp_path / "profile-evidence.db")
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
+    return repo.load_snapshot(LOCAL_TENANT)
+
+
+def _employer_analysis(job_url: str = "https://example.com/job/1") -> EmployerAnalysis:
+    canonical = JobAnalysis(
+        role_framing="Platform ownership.",
+        inferred_seniority="director",
+        ideal_candidate_narrative="A hands-on platform reliability leader.",
+        requirements=[
+            Requirement(
+                id="req-platform",
+                text="Lead Python platform reliability across distributed APIs.",
+                tier="must_have",
+                weight=0.95,
+                evidence_span="Python platform reliability",
+            )
+        ],
+        keywords=[
+            ReasonedKeyword(
+                keyword="Python",
+                evidence_span="Python",
+                requirement_ref="req-platform",
+            )
+        ],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job_url),
+        generation=3,
+        snapshot_hash=compute_snapshot_hash("Python platform reliability"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
 
 
 def _strong_llm_response() -> dict[str, Any]:
@@ -304,6 +398,99 @@ def test_score_parser_supports_fit_assessment_fields() -> None:
     assert result.trace.parser_warnings == ()
 
 
+def test_score_parser_parses_requirement_assessments() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 8,
+            "role_fit": 7,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["platform leadership"],
+            "missing_signals": ["public company scale"],
+            "transferable_signals": ["incident command"],
+            "keywords": ["platform", "reliability"],
+            "reasoning": "Strong direct fit with one gap.",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-1",
+                    "requirement_text": "Lead platform reliability across distributed systems.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Lead platform reliability",
+                    "fit": {
+                        "kind": "matched",
+                        "evidence_ids": ["profile-exp-1"],
+                        "strength": "direct",
+                    },
+                    "target_keywords": ["reliability"],
+                },
+                {
+                    "requirement_id": "req-2",
+                    "requirement_text": "Own public company operating cadence.",
+                    "tier": "nice_to_have",
+                    "weight": 0.4,
+                    "job_evidence_span": "public company",
+                    "fit": {"kind": "missing", "reason": "No public-company profile evidence."},
+                },
+            ],
+        }
+    )
+
+    assert result.ok is True
+    assert len(result.requirement_assessments) == 2
+    matched, missing = result.requirement_assessments
+    assert matched.fit.kind == "matched"
+    assert matched.fit.evidence_ids == ("profile-exp-1",)
+    assert matched.tailoring.action == "double_down"
+    assert matched.tailoring.allowed_evidence_ids == ("profile-exp-1",)
+    assert matched.contribution.rationale == "Pending deterministic requirement-fit resolution."
+    assert missing.fit.kind == "missing"
+    assert missing.tailoring.action == "avoid_claim"
+    assert missing.tailoring.prohibited_claims == (
+        "Own public company operating cadence.",
+    )
+    assert result.trace.parser_warnings == ()
+
+
+def test_score_parser_does_not_accept_matched_requirement_without_evidence() -> None:
+    result = ScoreParser().parse_json(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 8,
+            "role_fit": 7,
+            "fit_band": "strong",
+            "confidence": "medium",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["platform leadership"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["platform"],
+            "reasoning": "Strong fit.",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-1",
+                    "requirement_text": "Lead platform reliability across distributed systems.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Lead platform reliability",
+                    "fit": {"kind": "matched"},
+                },
+            ],
+        }
+    )
+
+    assert result.ok is True
+    assert result.requirement_assessments[0].fit.kind == "not_assessed"
+    assert result.requirement_assessments[0].tailoring.action == "low_priority"
+    assert result.trace.parser_warnings == (
+        "requirement_fit_matched_without_evidence:req-1",
+    )
+
+
 # ---------------------------------------------------------------------------
 # ScoreJobUseCase
 # ---------------------------------------------------------------------------
@@ -393,6 +580,136 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
     assert persisted.criteria.criteria_version == criteria.criteria_version
     assert persisted.trace.criteria_version == criteria.criteria_version
     assert persisted.breakdown.fit_band == "excellent"
+
+
+def test_score_job_includes_requirement_fit_inputs_in_prompt(tmp_path) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+    job = _job("https://example.com/job/requirement-fit-input")
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=job,
+        profile_snapshot=snapshot,
+        employer_analysis=_employer_analysis(job["url"]),
+    )
+
+    assert outcome.ok is True
+    prompt_payload = llm.calls[0][1].content
+    assert "REQUIREMENT FIT INPUTS" in prompt_payload
+    assert '"employer_analysis_generation": 3' in prompt_payload
+    assert '"id": "req-platform"' in prompt_payload
+    assert '"tier": "must_have"' in prompt_payload
+    assert '"weight": 0.95' in prompt_payload
+    assert '"id": "ev_python_platform"' in prompt_payload
+    assert "Led Python platform reliability for distributed APIs." in prompt_payload
+
+
+def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
+    score_repo = _MemoryRepo()
+    report_repo = _MemoryRequirementFitRepo()
+    job = _job("https://example.com/job/requirement-fit-report")
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+    llm = _ScriptedLlm(
+        {
+            **_strong_llm_response(),
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-platform",
+                    "requirement_text": "Lead Python platform reliability across distributed APIs.",
+                    "tier": "must_have",
+                    "weight": 0.95,
+                    "job_evidence_span": "Python platform reliability",
+                    "fit": {
+                        "kind": "matched",
+                        "evidence_ids": ["ev_python_platform"],
+                        "strength": "direct",
+                    },
+                }
+            ],
+        }
+    )
+
+    outcome = ScoreJobUseCase(
+        repository=score_repo,
+        llm=llm,
+        requirement_fit_repository=report_repo,
+    ).score(
+        job=job,
+        profile_snapshot=snapshot,
+        employer_analysis=_employer_analysis(job["url"]),
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 10
+    assert outcome.score.breakdown.matched_signals == (
+        "Lead Python platform reliability across distributed APIs.",
+    )
+    assert outcome.score.trace.resolution_reason == "requirement_fit_report"
+    assert len(report_repo.saved) == 1
+    tenant, report = report_repo.saved[0]
+    assert tenant == str(LOCAL_TENANT)
+    assert report.job_id == job["url"]
+    assert report.score_version == 1
+    assert report.employer_analysis_generation == 3
+    assert report.profile_snapshot_version == snapshot.version
+    assert report.scoring_policy_version == 1
+    assert report.formula_version == "requirement-fit-v1"
+    assert report.resolved_fit_score is not None
+    assert report.resolved_fit_score.value == 10
+    assert report.summary.weighted_fit == 1.0
+    assert report.assessments[0].contribution.max_points == 1.1875
+    assert report.assessments[0].contribution.awarded_points == 1.1875
+
+
+def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) -> None:
+    score_repo = _MemoryRepo()
+    report_repo = _MemoryRequirementFitRepo()
+    job = _job("https://example.com/job/requirement-fit-missing")
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+    llm = _ScriptedLlm(
+        {
+            **_strong_llm_response(),
+            "score": 10,
+            "technical_fit": 10,
+            "experience_fit": 10,
+            "role_fit": 10,
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-platform",
+                    "requirement_text": "Lead Python platform reliability across distributed APIs.",
+                    "tier": "must_have",
+                    "weight": 0.95,
+                    "job_evidence_span": "Python platform reliability",
+                    "fit": {
+                        "kind": "missing",
+                        "reason": "No grounded profile evidence.",
+                    },
+                }
+            ],
+        }
+    )
+
+    outcome = ScoreJobUseCase(
+        repository=score_repo,
+        llm=llm,
+        requirement_fit_repository=report_repo,
+    ).score(
+        job=job,
+        profile_snapshot=snapshot,
+        employer_analysis=_employer_analysis(job["url"]),
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 1
+    assert outcome.score.breakdown.fit_band == "poor"
+    assert outcome.score.breakdown.missing_signals == (
+        "Lead Python platform reliability across distributed APIs.",
+    )
+    assert report_repo.saved[0][1].resolved_fit_score is not None
+    assert report_repo.saved[0][1].resolved_fit_score.value == 1
 
 
 def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:

@@ -9,12 +9,21 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from jobhunter.database import init_db
 from jobhunter.domain.identifiers import JobId
+from jobhunter.domain.materials.analysis import (
+    AnalysisAgreement,
+    EmployerAnalysis,
+    JobAnalysis,
+    ReasonedKeyword,
+    Requirement,
+    compute_snapshot_hash,
+)
 from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.scoring import (
     EligibilityAssessment,
@@ -28,9 +37,11 @@ from jobhunter.domain.scoring import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import (
+    SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoringPolicyRepository,
 )
+from jobhunter.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobhunter.scoring import scorer as scorer_module
 from jobhunter.state import set_stage_state
 
@@ -101,10 +112,38 @@ class _CriteriaProvider:
         return self.criteria
 
 
+class _AnalyzeUseCase:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def execute(self, *, job: dict, tenant_id=LOCAL_TENANT, force: bool = False):
+        self.calls.append({"job": job, "tenant_id": tenant_id, "force": force})
+        return SimpleNamespace(analysis=_employer_analysis(str(job["url"])))
+
+
+class _FailingAnalyzeUseCase:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.calls = 0
+
+    def execute(self, *, job: dict, tenant_id=LOCAL_TENANT, force: bool = False):
+        self.calls += 1
+        raise self.error
+
+
 @pytest.fixture()
 def conn(tmp_path: Path) -> sqlite3.Connection:
     db_path = tmp_path / "jobhunter.db"
     return init_db(db_path)
+
+
+@pytest.fixture(autouse=True)
+def _stub_default_analyzer(monkeypatch) -> None:
+    monkeypatch.setattr(
+        scorer_module,
+        "build_analyze_use_case",
+        lambda *, conn, publisher=None, event_stage: _AnalyzeUseCase(),
+    )
 
 
 def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
@@ -114,6 +153,41 @@ def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
         (url, "Engineer", "Acme", "Need Python.", "2024-01-01T00:00:00+00:00"),
     )
     conn.commit()
+
+
+def _employer_analysis(job_url: str) -> EmployerAnalysis:
+    canonical = JobAnalysis(
+        role_framing="Platform ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A Python platform engineer.",
+        requirements=[
+            Requirement(
+                id="req-python-platform",
+                text="Own Python platform reliability.",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="Need Python.",
+            )
+        ],
+        keywords=[
+            ReasonedKeyword(
+                keyword="Python",
+                evidence_span="Need Python.",
+                requirement_ref="req-python-platform",
+            )
+        ],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job_url),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash("Need Python."),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
 
 
 def _seed_pending_job_with_description(
@@ -513,6 +587,159 @@ def test_run_scoring_loads_and_persists_local_scoring_criteria(
     assert loaded.criteria.criteria_text == "Favor platform reliability leadership."
     assert loaded.criteria.target_criteria == "Remote infrastructure roles."
     assert loaded.trace.criteria_version == criteria.criteria_version
+
+
+def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/analysis-loaded"
+    _seed_pending_job(conn, url)
+    SqliteEmployerAnalysisRepository(conn).save(_employer_analysis(url))
+    repo = SqliteScoreRepository(conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "ok",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-python-platform",
+                    "requirement_text": "Own Python platform reliability.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Need Python.",
+                    "fit": {"kind": "missing", "reason": "No profile evidence."},
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+    )
+
+    assert summary["errors"] == 0
+    prompt_payload = llm.messages[0][1].content
+    assert "REQUIREMENT FIT INPUTS" in prompt_payload
+    assert '"id": "req-python-platform"' in prompt_payload
+    assert '"employer_analysis_generation": 1' in prompt_payload
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, JobId(url))
+    assert report is not None
+    assert report.score_version == 1
+    assert report.employer_analysis_generation == 1
+    assert report.assessments[0].fit.kind == "missing"
+
+
+def test_run_scoring_generates_employer_analysis_before_prompt(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/analysis-generated"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    analyze = _AnalyzeUseCase()
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 8,
+            "role_fit": 9,
+            "fit_band": "excellent",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": ["Python"],
+            "missing_signals": [],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "ok",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-python-platform",
+                    "requirement_text": "Own Python platform reliability.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Need Python.",
+                    "fit": {"kind": "missing", "reason": "No profile evidence."},
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+        analyze_use_case=analyze,
+    )
+
+    assert summary["errors"] == 0
+    assert len(analyze.calls) == 1
+    prompt_payload = llm.messages[0][1].content
+    assert "REQUIREMENT FIT INPUTS" in prompt_payload
+    assert '"id": "req-python-platform"' in prompt_payload
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, JobId(url))
+    assert report is not None
+    assert report.employer_analysis_generation == 1
+
+
+def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    url = "https://example.com/job/analysis-fails"
+    _seed_pending_job(conn, url)
+    repo = SqliteScoreRepository(conn)
+    analyze = _FailingAnalyzeUseCase(RuntimeError("analysis unavailable"))
+    llm = _ScriptedLlm(
+        {
+            "score": 9,
+            "technical_fit": 9,
+            "experience_fit": 8,
+            "role_fit": 9,
+            "keywords": ["python"],
+            "reasoning": "should not be called",
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="Engineer with Python.",
+        analyze_use_case=analyze,
+    )
+
+    assert summary["errors"] == 1
+    assert analyze.calls == 1
+    assert llm.calls == 0
+    stage_row = conn.execute(
+        "SELECT state, error_code, error_message "
+        "FROM job_stage_states WHERE job_url = ? AND stage = 'score'",
+        (url,),
+    ).fetchone()
+    assert stage_row["state"] == "failed"
+    assert stage_row["error_code"] == "SCORE_FAILED"
+    assert "analysis unavailable" in stage_row["error_message"]
 
 
 def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(

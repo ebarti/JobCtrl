@@ -60,6 +60,7 @@ SCORE_EVIDENCE_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("job_detail_projections", "score_version", "INTEGER"),
     ("job_detail_projections", "scored_at", "TEXT"),
     ("job_detail_projections", "employer_analysis_json", "TEXT"),
+    ("job_detail_projections", "requirement_fit_report_json", "TEXT"),
     ("artifact_list_projections", "metadata_json", "TEXT"),
     ("artifact_list_projections", "bullet_provenance_json", "TEXT"),
     ("artifact_list_projections", "coverage_audit_json", "TEXT"),
@@ -145,6 +146,7 @@ def ensure_projection_tables(conn: sqlite3.Connection) -> list[str]:
             scored_at              TEXT,
             stages_json            TEXT NOT NULL DEFAULT '[]',
             employer_analysis_json TEXT,
+            requirement_fit_report_json TEXT,
             last_updated_at        TEXT,
             PRIMARY KEY (tenant_id, job_id)
         )
@@ -478,8 +480,9 @@ class SqliteProjectionStore:
             INSERT INTO job_detail_projections (
                 tenant_id, job_id, description_preview, score_breakdown_json,
                 score_keywords_json, score_reasoning, score_version, scored_at,
-                stages_json, employer_analysis_json, last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                stages_json, employer_analysis_json, requirement_fit_report_json,
+                last_updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, job_id) DO UPDATE SET
                 description_preview    = excluded.description_preview,
                 score_breakdown_json   = excluded.score_breakdown_json,
@@ -489,6 +492,7 @@ class SqliteProjectionStore:
                 scored_at              = excluded.scored_at,
                 stages_json            = excluded.stages_json,
                 employer_analysis_json = excluded.employer_analysis_json,
+                requirement_fit_report_json = excluded.requirement_fit_report_json,
                 last_updated_at        = excluded.last_updated_at
             """,
             (
@@ -521,6 +525,7 @@ class SqliteProjectionStore:
                     ]
                 ),
                 projection.employer_analysis_json,
+                projection.requirement_fit_report_json,
                 projection.last_updated_at,
             ),
         )

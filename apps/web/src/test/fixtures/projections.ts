@@ -220,6 +220,25 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
             tier: "must_have",
             weight: 0.9,
             evidence: "lead platform reliability",
+            fit: {
+              kind: "matched",
+              evidenceIds: ["ev_platform_reliability"],
+              strength: "direct",
+            },
+            contribution: {
+              maxPoints: 1.125,
+              awardedPoints: 1.125,
+              weightedImpact: 1.125,
+              rationale: "Direct platform reliability evidence covers the must-have requirement.",
+            },
+            tailoring: {
+              action: "double_down",
+              priority: 0.9,
+              allowedEvidenceIds: ["ev_platform_reliability"],
+              targetKeywords: ["platform reliability"],
+              prohibitedClaims: [],
+              instruction: "Keep platform reliability ownership prominent in the resume.",
+            },
             coverage: {
               state: "covered",
               source: "tailored_resume_bullet_provenance",
@@ -233,8 +252,28 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
             tier: "important",
             weight: 0.7,
             evidence: "incident response, and developer experience improvements",
+            fit: {
+              kind: "transferable",
+              evidenceIds: ["ev_incident_leadership"],
+              gap: "No direct developer-experience ownership evidence was recorded.",
+              bridge: "Incident leadership can support adjacent developer-experience expectations.",
+            },
+            contribution: {
+              maxPoints: 0.7,
+              awardedPoints: 0.42,
+              weightedImpact: 0.42,
+              rationale: "Transferable incident leadership partially covers the requirement.",
+            },
+            tailoring: {
+              action: "bridge_gap",
+              priority: 0.7,
+              allowedEvidenceIds: ["ev_incident_leadership"],
+              targetKeywords: ["incident response", "developer experience"],
+              prohibitedClaims: ["owned developer experience end to end"],
+              instruction: "Bridge from incident leadership without claiming direct developer-experience ownership.",
+            },
             coverage: {
-              state: "not_covered",
+              state: "missing_from_resume",
               source: "tailored_resume_bullet_provenance",
               bulletCount: 0,
               examples: [],
@@ -473,6 +512,7 @@ export function makeJobDetail(
     auditHistory: overrides.auditHistory ?? sampleJobAuditHistory,
     applyAudit: overrides.applyAudit ?? makeApplyAudit(),
     employerAnalysis: overrides.employerAnalysis ?? null,
+    requirementFitReport: overrides.requirementFitReport ?? null,
   };
 }
 
