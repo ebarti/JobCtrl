@@ -15,6 +15,7 @@ from typing import Protocol
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring.aggregate import JobScore, ScoreStaleMarker
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
+from jobhunter.domain.scoring.value_objects import RequirementFitReport
 from jobhunter.domain.tenant import TenantId
 
 # Re-export the shared LLM port — Scoring is one of its consumers.
@@ -22,6 +23,7 @@ from jobhunter.domain.ports.llm import LlmMessage, LlmPort, LlmRole
 
 __all__ = [
     "ScoreRepository",
+    "RequirementFitReportRepository",
     "ScoreStalenessRepository",
     "ScoringPolicyRepository",
     "LlmPort",
@@ -99,6 +101,24 @@ class ScoringPolicyRepository(Protocol):
 
     def save_correction_signal(self, signal: CorrectionSignal) -> ScoringPolicy:
         """Persist the next policy version derived from a correction signal."""
+        ...
+
+
+class RequirementFitReportRepository(Protocol):
+    """Persistence port for requirement-led score explanation reports."""
+
+    def load(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        score_version: int | None = None,
+    ) -> RequirementFitReport | None:
+        """Return the latest or requested requirement fit report."""
+        ...
+
+    def save(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
+        """Persist a requirement fit report and its item rows."""
         ...
 
 

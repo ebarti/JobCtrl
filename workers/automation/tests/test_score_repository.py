@@ -21,6 +21,13 @@ from jobhunter.domain.scoring import (
     FitScore,
     JobScore,
     MatchedKeywords,
+    RequirementArtifactCoverage,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
     ScoreBreakdown,
     ScoreCorrection,
     ScoreParseResult,
@@ -30,6 +37,7 @@ from jobhunter.domain.scoring import (
 from jobhunter.domain.scoring.use_cases import CorrectScoreUseCase, ScoreJobUseCase
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import (
+    SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoreStalenessRepository,
     SqliteScoringPolicyRepository,
@@ -73,6 +81,86 @@ def _build_score(
         scored_at=datetime.now(timezone.utc).isoformat(),
         trace=trace or ScoreTrace(),
         correction=correction,
+    )
+
+
+def _requirement_assessment(
+    requirement_id: str = "r1",
+    *,
+    status: str = "matched",
+    action: str = "double_down",
+) -> RequirementFitAssessment:
+    if status == "matched":
+        fit = RequirementFitStatus(
+            kind="matched",
+            evidence_ids=(f"ev-{requirement_id}",),
+            strength="direct",
+        )
+        awarded = 8.0
+    elif status == "transferable":
+        fit = RequirementFitStatus(
+            kind="transferable",
+            evidence_ids=(f"ev-{requirement_id}",),
+            gap="No direct platform ownership",
+            bridge="Related incident ownership evidence applies",
+        )
+        awarded = 5.0
+    else:
+        fit = RequirementFitStatus(kind="missing", reason="No profile evidence")
+        awarded = 0.0
+    return RequirementFitAssessment(
+        requirement_id=requirement_id,
+        requirement_text=f"Requirement {requirement_id}",
+        tier="must_have",
+        weight=0.8,
+        job_evidence_span=f"Requirement {requirement_id}",
+        fit=fit,
+        contribution=RequirementScoreContribution(
+            max_points=8.0,
+            awarded_points=awarded,
+            weighted_impact=0.4,
+            rationale="Requirement contribution rationale.",
+        ),
+        tailoring=RequirementTailoringDirective(
+            action=action,
+            priority=0.8,
+            allowed_evidence_ids=(f"ev-{requirement_id}",) if status != "missing" else (),
+            target_keywords=(f"keyword-{requirement_id}",),
+            prohibited_claims=("unsupported claim",) if status == "missing" else (),
+            instruction="Use the allowed evidence without inventing claims.",
+        ),
+        artifact_coverage=RequirementArtifactCoverage(
+            state="covered" if status != "missing" else "not_recorded",
+            bullet_count=1 if status != "missing" else 0,
+            examples=("Generated requirement evidence.",) if status != "missing" else (),
+        ),
+    )
+
+
+def _requirement_report(
+    url: str,
+    *,
+    score_version: int = 1,
+    fit: int = 8,
+    assessments: tuple[RequirementFitAssessment, ...] | None = None,
+) -> RequirementFitReport:
+    return RequirementFitReport(
+        job_id=url,
+        score_version=score_version,
+        employer_analysis_generation=2,
+        profile_snapshot_version=3,
+        scoring_policy_version=4,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(fit),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(
+            weighted_fit=0.78,
+            must_have_coverage=0.8,
+            blocker_count=0,
+            missing_high_weight_count=0,
+        ),
+        assessments=assessments or (_requirement_assessment(),),
     )
 
 
@@ -215,6 +303,100 @@ def test_load_returns_none_when_no_score(conn: sqlite3.Connection) -> None:
     url = _seed_job(conn)
     repo = SqliteScoreRepository(conn)
     assert repo.load(LOCAL_TENANT, JobId(url)) is None
+
+
+# ---------------------------------------------------------------------------
+# Requirement fit report persistence
+# ---------------------------------------------------------------------------
+
+
+def test_init_db_creates_requirement_fit_tables(conn: sqlite3.Connection) -> None:
+    table_names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    assert "job_requirement_fit_reports" in table_names
+    assert "job_requirement_fit_items" in table_names
+
+
+def test_requirement_fit_report_repository_round_trips(conn: sqlite3.Connection) -> None:
+    url = _seed_job(conn)
+    SqliteScoreRepository(conn).save(_build_score(url, fit=8))
+    report = _requirement_report(url)
+
+    repo = SqliteRequirementFitReportRepository(conn)
+    repo.save(LOCAL_TENANT, report)
+
+    loaded = repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+
+    assert loaded == report
+    assert loaded is not None
+    assert loaded.assessments[0].fit.kind == "matched"
+    assert loaded.assessments[0].tailoring.action == "double_down"
+    assert loaded.assessments[0].artifact_coverage is not None
+    assert loaded.assessments[0].artifact_coverage.state == "covered"
+
+
+def test_requirement_fit_report_repository_replaces_item_rows(conn: sqlite3.Connection) -> None:
+    url = _seed_job(conn)
+    SqliteScoreRepository(conn).save(_build_score(url, fit=8))
+    repo = SqliteRequirementFitReportRepository(conn)
+    repo.save(
+        LOCAL_TENANT,
+        _requirement_report(
+            url,
+            assessments=(
+                _requirement_assessment("r1"),
+                _requirement_assessment("r2", status="transferable", action="bridge_gap"),
+            ),
+        ),
+    )
+    repo.save(
+        LOCAL_TENANT,
+        _requirement_report(
+            url,
+            assessments=(
+                _requirement_assessment("r1", status="missing", action="avoid_claim"),
+            ),
+        ),
+    )
+
+    loaded = repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+
+    assert loaded is not None
+    assert [item.requirement_id for item in loaded.assessments] == ["r1"]
+    assert loaded.assessments[0].fit.kind == "missing"
+    assert loaded.assessments[0].tailoring.action == "avoid_claim"
+
+
+def test_requirement_fit_report_repository_loads_latest_version(conn: sqlite3.Connection) -> None:
+    url = _seed_job(conn)
+    score_repo = SqliteScoreRepository(conn)
+    score_repo.save(_build_score(url, version=1, fit=7))
+    score_repo.save(_build_score(url, version=2, fit=9))
+    report_repo = SqliteRequirementFitReportRepository(conn)
+    report_repo.save(LOCAL_TENANT, _requirement_report(url, score_version=1, fit=7))
+    report_repo.save(
+        LOCAL_TENANT,
+        _requirement_report(
+            url,
+            score_version=2,
+            fit=9,
+            assessments=(_requirement_assessment("r9"),),
+        ),
+    )
+
+    latest = report_repo.load(LOCAL_TENANT, JobId(url))
+    first = report_repo.load(LOCAL_TENANT, JobId(url), score_version=1)
+
+    assert latest is not None
+    assert latest.score_version == 2
+    assert latest.resolved_fit_score == FitScore.create(9)
+    assert latest.assessments[0].requirement_id == "r9"
+    assert first is not None
+    assert first.score_version == 1
 
 
 # ---------------------------------------------------------------------------

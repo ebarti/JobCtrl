@@ -176,17 +176,17 @@ Lifecycle labels must be explicit:
 
 ### Phase 1: Contracts And Domain Types
 
-- [ ] Add TypeScript contract types for the requirement fit report.
-- [ ] Add Python scoring value objects with `to_dict` and `from_dict`.
-- [ ] Add focused serialization tests.
-- [ ] Keep old score breakdown fields readable.
+- [x] Add TypeScript contract types for the requirement fit report.
+- [x] Add Python scoring value objects with `to_dict` and `from_dict`.
+- [x] Add focused serialization tests.
+- [x] Keep old score breakdown fields readable.
 
 ### Phase 2: Persistence
 
-- [ ] Add canonical tables for requirement fit reports and items.
-- [ ] Store score version, employer-analysis generation, profile snapshot
+- [x] Add canonical tables for requirement fit reports and items.
+- [x] Store score version, employer-analysis generation, profile snapshot
       version, scoring policy version, and scoring formula version.
-- [ ] Persist item-level status, evidence IDs, contribution, and tailoring
+- [x] Persist item-level status, evidence IDs, contribution, and tailoring
       directive.
 
 ### Phase 3: Scoring V2
