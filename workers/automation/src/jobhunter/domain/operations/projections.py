@@ -148,6 +148,10 @@ class JobDetailProjection:
     # analysis exists yet. Built by the single projection owner from canonical
     # rows so the inspector read path has one source of truth.
     employer_analysis_json: str | None = None
+    # Requirement-led fit audit read shape (JSON of the latest
+    # ``RequirementFitReport.to_read_model()``), or None when this job has not
+    # been scored with requirement-level assessments yet.
+    requirement_fit_report_json: str | None = None
 
 
 @dataclass(frozen=True)

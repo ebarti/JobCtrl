@@ -65,6 +65,7 @@ class ScoreParseResult:
     breakdown: ScoreBreakdown
     keywords: MatchedKeywords
     requirement_assessments: tuple[RequirementFitAssessment, ...] = ()
+    employer_analysis_generation: int = 0
     criteria: ScoringCriteria = field(default_factory=ScoringCriteria)
     trace: ScoreTrace = field(default_factory=ScoreTrace)
     error: str = ""
@@ -579,6 +580,7 @@ class ConstraintChecker:
             breakdown=breakdown,
             keywords=parse.keywords,
             requirement_assessments=parse.requirement_assessments,
+            employer_analysis_generation=parse.employer_analysis_generation,
             criteria=parse.criteria,
             trace=parse.trace,
             error=parse.error,

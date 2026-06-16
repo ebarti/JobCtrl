@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 const FILTER_PARAMS = "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
 
-test("Job drawer: opens with score/stages/artifacts, survives reload, close preserves the URL filter", async ({
+test("Job drawer: opens with requirement fit, stages, artifacts, survives reload, close preserves the URL filter", async ({
   page,
 }) => {
   await page.goto(`/jobs?${FILTER_PARAMS}`);
@@ -20,8 +20,12 @@ test("Job drawer: opens with score/stages/artifacts, survives reload, close pres
   const drawer = page.getByRole("dialog", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
   await expect(drawer.getByRole("heading", { name: /Preparation diagnostics/i })).toBeVisible();
-  await expect(drawer.getByRole("heading", { name: /Score breakdown/i })).toBeVisible();
   await expect(drawer.getByRole("heading", { name: /Active artifacts/i })).toBeVisible();
+  await expect(drawer.getByRole("heading", { name: /Employer analysis/i })).toBeVisible();
+  await expect(drawer.getByText("Requirement fit").first()).toBeVisible();
+  await expect(
+    drawer.getByLabel("Requirement: Lead platform reliability improvements across critical services."),
+  ).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Job details" })).toBeVisible({ timeout: 30_000 });

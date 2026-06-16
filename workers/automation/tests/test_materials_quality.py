@@ -8,12 +8,22 @@ from jobhunter.domain.materials.analysis import (
     EmployerAnalysis,
     JobAnalysis,
     ReasonedKeyword,
+    Requirement,
     compute_snapshot_hash,
 )
 from jobhunter.domain.materials.quality import (
     build_tailoring_change_annotations,
     build_tailoring_plan,
     evaluate_tailoring_quality,
+)
+from jobhunter.domain.scoring import (
+    FitScore,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 
@@ -42,6 +52,116 @@ def _employer_analysis(*keywords: str, job_url: str = "https://example.com/senio
         failures=(),
         agreement=AnalysisAgreement(score=1.0),
         legs_attempted=1,
+    )
+
+
+def _requirement_analysis(job_url: str = "https://example.com/senior-backend") -> EmployerAnalysis:
+    canonical = JobAnalysis(
+        role_framing="Backend ownership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A hands-on backend owner.",
+        requirements=[
+            Requirement(
+                id="req_latency",
+                text="Own Python API reliability.",
+                tier="must_have",
+                weight=0.9,
+                evidence_span="Own Python API reliability.",
+            ),
+            Requirement(
+                id="req_salesforce",
+                text="Direct Salesforce administration.",
+                tier="must_have",
+                weight=0.85,
+                evidence_span="Direct Salesforce administration.",
+            ),
+        ],
+        keywords=[
+            ReasonedKeyword(
+                keyword="Python API reliability",
+                evidence_span="Python API reliability",
+                requirement_ref="req_latency",
+            ),
+            ReasonedKeyword(
+                keyword="Salesforce administration",
+                evidence_span="Salesforce administration",
+                requirement_ref="req_salesforce",
+            ),
+        ],
+    )
+    return EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job_url),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash("Python API Salesforce"),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
+
+
+def _requirement_fit_report(job_url: str = "https://example.com/senior-backend") -> RequirementFitReport:
+    return RequirementFitReport(
+        job_id=job_url,
+        score_version=1,
+        employer_analysis_generation=1,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(7),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=0.7, must_have_coverage=0.6),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id="req_latency",
+                requirement_text="Own Python API reliability.",
+                tier="must_have",
+                weight=0.9,
+                job_evidence_span="Own Python API reliability.",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="direct",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.125,
+                    awarded_points=1.125,
+                    weighted_impact=1.125,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.9,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("Python API reliability",),
+                    instruction="Emphasize the verified latency evidence.",
+                ),
+            ),
+            RequirementFitAssessment(
+                requirement_id="req_salesforce",
+                requirement_text="Direct Salesforce administration.",
+                tier="must_have",
+                weight=0.85,
+                job_evidence_span="Direct Salesforce administration.",
+                fit=RequirementFitStatus(
+                    kind="missing",
+                    reason="No grounded Salesforce evidence.",
+                ),
+                contribution=RequirementScoreContribution(
+                    max_points=1.0625,
+                    awarded_points=0.0,
+                    weighted_impact=0.0,
+                ),
+                tailoring=RequirementTailoringDirective(
+                    action="avoid_claim",
+                    priority=0.85,
+                    prohibited_claims=("Direct Salesforce administration.",),
+                    instruction="Do not claim Salesforce administration.",
+                ),
+            ),
+        ),
     )
 
 
@@ -246,6 +366,57 @@ def test_build_tailoring_plan_sources_keywords_from_canonical_analysis() -> None
     assert "join" not in plan.job_keywords
     assert "impress" not in plan.job_keywords
     assert "innovator" not in plan.job_keywords
+
+
+def test_build_tailoring_plan_uses_requirement_fit_directives() -> None:
+    analysis = _requirement_analysis()
+    report = _requirement_fit_report()
+
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=analysis,
+        requirement_fit_report=report,
+    )
+
+    assert plan.required_evidence_ids[0] == "ev_latency"
+    assert plan.job_keywords[0] == "python api reliability"
+    assert plan.prohibited_claims == ("Direct Salesforce administration.",)
+    assert [item.action for item in plan.requirement_directives] == [
+        "double_down",
+        "avoid_claim",
+    ]
+    prompt = plan.to_prompt_dict()
+    assert prompt["requirement_directives"][0]["allowed_evidence_ids"] == ["ev_latency"]
+    assert prompt["requirement_directives"][1]["prohibited_claims"] == [
+        "Direct Salesforce administration."
+    ]
+
+
+def test_quality_rejects_prohibited_missing_requirement_claim() -> None:
+    plan = build_tailoring_plan(
+        _profile(),
+        _senior_job(),
+        employer_analysis=_requirement_analysis(),
+        requirement_fit_report=_requirement_fit_report(),
+    )
+    bullet = (
+        "Owned Python API reliability and direct Salesforce administration "
+        "while reducing latency 35%."
+    )
+
+    result = evaluate_tailoring_quality(
+        _payload(bullet=bullet),
+        _resume_text(bullet=bullet),
+        plan,
+    )
+
+    assert result.passed is False
+    assert any(
+        "Unsupported prohibited claim appeared" in error
+        and "Direct Salesforce administration" in error
+        for error in result.errors
+    )
 
 
 def test_tailoring_plan_metadata_preserves_full_keyword_audit_set() -> None:
