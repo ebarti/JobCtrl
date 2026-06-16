@@ -33,6 +33,15 @@ from jobhunter.domain.materials.use_cases import TailorResumeUseCase
 from jobhunter.domain.profile.aggregate import Profile
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.ports.llm import LlmMessage
+from jobhunter.domain.scoring import (
+    FitScore,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
+)
 from jobhunter.domain.tenant import LOCAL_TENANT
 
 JOB_URL = "https://example.com/job/provenance"
@@ -58,6 +67,20 @@ class _FakeAnalyze:
                     tier="must_have",
                     weight=0.9,
                     evidence_span="improve API latency",
+                ),
+                Requirement(
+                    id="req_platform",
+                    text="operate Kubernetes platform",
+                    tier="must_have",
+                    weight=0.8,
+                    evidence_span="operate Kubernetes platform",
+                ),
+                Requirement(
+                    id="req_salesforce",
+                    text="direct Salesforce administration",
+                    tier="must_have",
+                    weight=0.7,
+                    evidence_span="direct Salesforce administration",
                 ),
             ],
             keywords=[
@@ -134,6 +157,23 @@ class _FakeProvenanceRepo:
         if provenance.is_empty:
             return
         self.saved.append(provenance)
+
+
+class _FakeRequirementFitRepo:
+    def __init__(self, report: RequirementFitReport | None = None) -> None:
+        self.saved: list[RequirementFitReport] = []
+        self._report = report
+
+    def load(self, tenant_id, job_id, *, score_version=None) -> RequirementFitReport | None:
+        _ = tenant_id, score_version
+        if self._report is None or str(self._report.job_id) != str(job_id):
+            return None
+        return self._report
+
+    def save(self, tenant_id, report: RequirementFitReport) -> None:
+        _ = tenant_id
+        self._report = report
+        self.saved.append(report)
 
 
 class _ScriptedLlm:
@@ -232,6 +272,85 @@ def _job() -> dict:
     }
 
 
+def _requirement_fit_report() -> RequirementFitReport:
+    def contribution(max_points: float, awarded: float) -> RequirementScoreContribution:
+        return RequirementScoreContribution(
+            max_points=max_points,
+            awarded_points=awarded,
+            weighted_impact=awarded,
+        )
+
+    return RequirementFitReport(
+        job_id=JOB_URL,
+        score_version=1,
+        employer_analysis_generation=1,
+        profile_snapshot_version=1,
+        scoring_policy_version=1,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(7),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(weighted_fit=0.7, must_have_coverage=0.6),
+        assessments=(
+            RequirementFitAssessment(
+                requirement_id="req_latency",
+                requirement_text="improve API latency",
+                tier="must_have",
+                weight=0.9,
+                job_evidence_span="improve API latency",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="direct",
+                ),
+                contribution=contribution(1.125, 1.125),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.9,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("latency", "python"),
+                ),
+            ),
+            RequirementFitAssessment(
+                requirement_id="req_platform",
+                requirement_text="operate Kubernetes platform",
+                tier="must_have",
+                weight=0.8,
+                job_evidence_span="operate Kubernetes platform",
+                fit=RequirementFitStatus(
+                    kind="matched",
+                    evidence_ids=("ev_latency",),
+                    strength="strong",
+                ),
+                contribution=contribution(1.0, 0.85),
+                tailoring=RequirementTailoringDirective(
+                    action="double_down",
+                    priority=0.8,
+                    allowed_evidence_ids=("ev_latency",),
+                    target_keywords=("kubernetes platform",),
+                ),
+            ),
+            RequirementFitAssessment(
+                requirement_id="req_salesforce",
+                requirement_text="direct Salesforce administration",
+                tier="must_have",
+                weight=0.7,
+                job_evidence_span="direct Salesforce administration",
+                fit=RequirementFitStatus(
+                    kind="missing",
+                    reason="No grounded Salesforce evidence.",
+                ),
+                contribution=contribution(0.875, 0.0),
+                tailoring=RequirementTailoringDirective(
+                    action="avoid_claim",
+                    priority=0.7,
+                    prohibited_claims=("direct Salesforce administration",),
+                ),
+            ),
+        ),
+    )
+
+
 def _payload(bullet: str) -> str:
     return json.dumps(
         {
@@ -269,6 +388,7 @@ def _use_case(
     provenance_repo: _FakeProvenanceRepo,
     llm: _ScriptedLlm,
     publisher: _RecordingPublisher,
+    requirement_fit_repo: _FakeRequirementFitRepo | None = None,
 ) -> TailorResumeUseCase:
     return TailorResumeUseCase(
         repository=materials_repo,
@@ -277,6 +397,7 @@ def _use_case(
         assembler=ResumeAssembler(),
         analyze_use_case=_FakeAnalyze(),
         provenance_repository=provenance_repo,
+        requirement_fit_repository=requirement_fit_repo,
         publisher=publisher,
     )
 
@@ -323,6 +444,46 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
     assert len(provenance_events) == 1
     assert provenance_events[0].payload["bullet_count"] == len(saved.bullets)
     assert provenance_events[0].payload["artifact_id"] == saved.artifact_id
+
+
+def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Path) -> None:
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    requirement_fit_repo = _FakeRequirementFitRepo(_requirement_fit_report())
+    publisher = _RecordingPublisher()
+    llm = _ScriptedLlm(
+        [
+            _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls."),
+            _judge_pass(),
+        ]
+    )
+
+    outcome = _use_case(
+        materials_repo,
+        provenance_repo,
+        llm,
+        publisher,
+        requirement_fit_repo=requirement_fit_repo,
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(requirement_fit_repo.saved) == 1
+    updated = requirement_fit_repo.saved[0]
+    coverage_by_id = {
+        assessment.requirement_id: assessment.artifact_coverage
+        for assessment in updated.assessments
+    }
+    latency_coverage = coverage_by_id["req_latency"]
+    platform_coverage = coverage_by_id["req_platform"]
+    salesforce_coverage = coverage_by_id["req_salesforce"]
+    assert latency_coverage is not None
+    assert latency_coverage.state == "covered"
+    assert latency_coverage.bullet_count >= 1
+    assert any("cut latency 40%" in example for example in latency_coverage.examples)
+    assert platform_coverage is not None
+    assert platform_coverage.state == "missing_from_resume"
+    assert salesforce_coverage is not None
+    assert salesforce_coverage.state == "missing_from_profile"
 
 
 def test_suffixed_bare_magnitude_is_hard_rejected_by_detector_and_writes_no_provenance(

@@ -2761,12 +2761,18 @@ def run_single_job(
         if existing_score is None:
             console.print("  [cyan]Scoring job...[/cyan]")
             if not dry_run:
+                from jobhunter.scoring.employer_analysis import build_analyze_use_case
                 from jobhunter.scoring.scorer import score_job
                 outcome = score_job(
                     snapshot,
                     job,
                     repository=score_repo,
                     resume_text=resume_text,
+                    analyze_use_case=build_analyze_use_case(
+                        conn=conn,
+                        event_stage="score",
+                    ),
+                    require_employer_analysis=True,
                 )
                 if outcome.ok and outcome.score is not None:
                     score_for_downstream = outcome.score

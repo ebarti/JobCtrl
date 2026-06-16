@@ -250,8 +250,16 @@ export interface ApplyReviewIdealRequirement {
   tier: string | null;
   weight: number | null;
   evidence: string | null;
+  fit: RequirementFitStatus | null;
+  contribution: RequirementScoreContribution | null;
+  tailoring: RequirementTailoringDirective | null;
   coverage: {
-    state: "covered" | "not_covered" | "not_recorded";
+    state:
+      | "covered"
+      | "missing_from_resume"
+      | "missing_from_profile"
+      | "not_covered"
+      | "not_recorded";
     source: "tailored_resume_bullet_provenance";
     bulletCount: number;
     examples: string[];
@@ -1122,7 +1130,12 @@ export interface RequirementTailoringDirective {
 }
 
 export interface RequirementArtifactCoverage {
-  state: "covered" | "not_covered" | "not_recorded";
+  state:
+    | "covered"
+    | "missing_from_resume"
+    | "missing_from_profile"
+    | "not_covered"
+    | "not_recorded";
   source: "tailored_resume_bullet_provenance";
   bulletCount: number;
   examples: string[];
