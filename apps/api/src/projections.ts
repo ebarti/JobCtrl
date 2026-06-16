@@ -382,6 +382,7 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
       score_correction_json  TEXT,
       stages_json            TEXT NOT NULL DEFAULT '[]',
       employer_analysis_json TEXT,
+      requirement_fit_report_json TEXT,
       last_updated_at        TEXT,
       PRIMARY KEY (tenant_id, job_id)
     );
@@ -516,6 +517,8 @@ export function ensureProjectionTables(db: SqliteDatabase): boolean {
   schemaChanged = ensureProjectionColumn(db, "job_detail_projections", "score_correction_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "job_detail_projections", "employer_analysis_json", "TEXT") || schemaChanged;
+  schemaChanged =
+    ensureProjectionColumn(db, "job_detail_projections", "requirement_fit_report_json", "TEXT") || schemaChanged;
   schemaChanged = ensureProjectionColumn(db, "artifact_list_projections", "metadata_json", "TEXT") || schemaChanged;
   schemaChanged =
     ensureProjectionColumn(db, "artifact_list_projections", "bullet_provenance_json", "TEXT") || schemaChanged;
@@ -764,6 +767,31 @@ interface EmployerAnalysisRow extends Record<string, unknown> {
   created_at: string;
 }
 
+interface RequirementFitReportRow extends Record<string, unknown> {
+  job_url: string;
+  score_version: number;
+  employer_analysis_generation: number;
+  profile_snapshot_version: number;
+  scoring_policy_version: number;
+  formula_version: string;
+  resolved_fit_score: number | null;
+  fit_band: string;
+  confidence: string;
+  summary_json: string;
+}
+
+interface RequirementFitItemRow extends Record<string, unknown> {
+  requirement_id: string;
+  requirement_text: string;
+  tier: string;
+  weight: number;
+  job_evidence_span: string;
+  fit_json: string;
+  contribution_json: string;
+  tailoring_json: string;
+  artifact_coverage_json: string | null;
+}
+
 interface BulletProvenanceRow extends Record<string, unknown> {
   artifact_id: string;
   bullet_id: string;
@@ -840,6 +868,131 @@ function loadEmployerAnalysisJson(db: SqliteDatabase, jobUrl: string): string | 
     })),
   };
   return JSON.stringify(readModel);
+}
+
+function loadRequirementFitReportJson(
+  db: SqliteDatabase,
+  tenantId: string,
+  jobUrl: string,
+): string | null {
+  if (!tableExists(db, "job_requirement_fit_reports")) return null;
+  if (!tableExists(db, "job_requirement_fit_items")) return null;
+  const row = getRow<RequirementFitReportRow>(
+    db,
+    `SELECT job_url, score_version, tenant_id, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json
+       FROM job_requirement_fit_reports
+      WHERE tenant_id = ? AND job_url = ?
+      ORDER BY score_version DESC
+      LIMIT 1`,
+    [tenantId, jobUrl],
+  );
+  if (!row) return null;
+  const scoreVersion = Number(row.score_version);
+  const items = allRows<RequirementFitItemRow>(
+    db,
+    `SELECT requirement_id, requirement_text, tier, weight, job_evidence_span,
+            fit_json, contribution_json, tailoring_json, artifact_coverage_json
+       FROM job_requirement_fit_items
+      WHERE tenant_id = ? AND job_url = ? AND score_version = ?
+      ORDER BY position ASC, requirement_id ASC`,
+    [tenantId, jobUrl, scoreVersion],
+  );
+  const readModel = {
+    jobKey: row.job_url,
+    scoreVersion,
+    employerAnalysisGeneration: Number(row.employer_analysis_generation ?? 0),
+    profileSnapshotVersion: Number(row.profile_snapshot_version ?? 0),
+    scoringPolicyVersion: Number(row.scoring_policy_version ?? 0),
+    formulaVersion: row.formula_version,
+    resolvedFitScore: nullableNumber(row.resolved_fit_score),
+    fitBand: row.fit_band,
+    confidence: row.confidence,
+    summary: requirementFitSummaryToReadModel(parseJsonObject(row.summary_json)),
+    assessments: items.map(requirementFitAssessmentToReadModel),
+  };
+  return JSON.stringify(readModel);
+}
+
+function requirementFitAssessmentToReadModel(row: RequirementFitItemRow): Record<string, unknown> {
+  return {
+    requirementId: row.requirement_id,
+    requirementText: row.requirement_text,
+    tier: row.tier,
+    weight: nullableNumber(row.weight) ?? 0,
+    jobEvidenceSpan: row.job_evidence_span,
+    fit: requirementFitStatusToReadModel(parseJsonObject(row.fit_json)),
+    contribution: requirementContributionToReadModel(parseJsonObject(row.contribution_json)),
+    tailoring: requirementTailoringToReadModel(parseJsonObject(row.tailoring_json)),
+    artifactCoverage: row.artifact_coverage_json
+      ? requirementArtifactCoverageToReadModel(parseJsonObject(row.artifact_coverage_json))
+      : null,
+  };
+}
+
+function requirementFitStatusToReadModel(value: Record<string, unknown>): Record<string, unknown> {
+  const kind = stringField(value.kind) || "not_assessed";
+  if (kind === "matched") {
+    return {
+      kind,
+      evidenceIds: parseStringList(value.evidence_ids ?? value.evidenceIds),
+      strength: stringField(value.strength) || "direct",
+    };
+  }
+  if (kind === "transferable") {
+    return {
+      kind,
+      evidenceIds: parseStringList(value.evidence_ids ?? value.evidenceIds),
+      gap: stringField(value.gap),
+      bridge: stringField(value.bridge),
+    };
+  }
+  if (kind === "missing") {
+    return { kind, reason: stringField(value.reason) };
+  }
+  if (kind === "blocked") {
+    return { kind, blocker: stringField(value.blocker) };
+  }
+  return { kind: "not_assessed", reason: stringField(value.reason) };
+}
+
+function requirementContributionToReadModel(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    maxPoints: nullableNumber(value.max_points ?? value.maxPoints) ?? 0,
+    awardedPoints: nullableNumber(value.awarded_points ?? value.awardedPoints) ?? 0,
+    weightedImpact: nullableNumber(value.weighted_impact ?? value.weightedImpact) ?? 0,
+    rationale: stringField(value.rationale),
+  };
+}
+
+function requirementTailoringToReadModel(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    action: stringField(value.action) || "low_priority",
+    priority: nullableNumber(value.priority) ?? 0,
+    allowedEvidenceIds: parseStringList(value.allowed_evidence_ids ?? value.allowedEvidenceIds),
+    targetKeywords: parseStringList(value.target_keywords ?? value.targetKeywords),
+    prohibitedClaims: parseStringList(value.prohibited_claims ?? value.prohibitedClaims),
+    instruction: stringField(value.instruction),
+  };
+}
+
+function requirementArtifactCoverageToReadModel(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    state: stringField(value.state) || "not_recorded",
+    source: stringField(value.source) || "tailored_resume_bullet_provenance",
+    bulletCount: nullableNumber(value.bullet_count ?? value.bulletCount) ?? 0,
+    examples: parseStringList(value.examples),
+  };
+}
+
+function requirementFitSummaryToReadModel(value: Record<string, unknown>): Record<string, unknown> {
+  return {
+    weightedFit: nullableNumber(value.weighted_fit ?? value.weightedFit) ?? 0,
+    mustHaveCoverage: nullableNumber(value.must_have_coverage ?? value.mustHaveCoverage) ?? 0,
+    blockerCount: nullableNumber(value.blocker_count ?? value.blockerCount) ?? 0,
+    missingHighWeightCount: nullableNumber(value.missing_high_weight_count ?? value.missingHighWeightCount) ?? 0,
+  };
 }
 
 /**
@@ -1437,6 +1590,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
   const score = loadLatestScore(db, jobUrl);
   const materials = loadLatestMaterials(db, jobUrl);
   const employerAnalysisJson = loadEmployerAnalysisJson(db, jobUrl);
+  const requirementFitReportJson = loadRequirementFitReportJson(db, tenantId, jobUrl);
   const enrichment = loadEnrichment(db, jobUrl);
   const apply = loadLatestApplyRun(db, jobUrl);
   const deletedAt = loadDeletedAt(db, jobUrl);
@@ -1567,8 +1721,9 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        tenant_id, job_id, description_preview, score_breakdown_json,
        score_keywords_json, score_reasoning, score_version, scored_at,
        score_criteria_json, score_trace_json, score_correction_json,
-       stages_json, employer_analysis_json, last_updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       stages_json, employer_analysis_json, requirement_fit_report_json,
+       last_updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(tenant_id, job_id) DO UPDATE SET
        description_preview    = excluded.description_preview,
        score_breakdown_json   = excluded.score_breakdown_json,
@@ -1581,6 +1736,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
        score_correction_json  = excluded.score_correction_json,
        stages_json            = excluded.stages_json,
        employer_analysis_json = excluded.employer_analysis_json,
+       requirement_fit_report_json = excluded.requirement_fit_report_json,
        last_updated_at        = excluded.last_updated_at`,
   ).run(
     tenantId,
@@ -1596,6 +1752,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobUrl: str
     score.correctionJson,
     JSON.stringify(stages),
     employerAnalysisJson,
+    requirementFitReportJson,
     lastUpdatedAt,
   );
 

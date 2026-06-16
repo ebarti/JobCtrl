@@ -38,6 +38,7 @@ import type {
   PaginatedResponse,
   PreparationSummary,
   ProfileShape,
+  RequirementFitReport,
   ScoreBreakdown,
   SettingsResponse,
   Stage,
@@ -158,6 +159,7 @@ interface JobDetailProjectionRow extends Record<string, unknown> {
   score_correction_json: string | null;
   stages_json: string;
   employer_analysis_json: string | null;
+  requirement_fit_report_json: string | null;
   last_updated_at: string | null;
 }
 
@@ -639,6 +641,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     artifacts,
     auditHistory,
     employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
+    requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
   };
 }
 
@@ -680,6 +683,15 @@ function parseEmployerAnalysis(value: string | null): EmployerAnalysis | null {
   if (!value) return null;
   try {
     return JSON.parse(value) as EmployerAnalysis;
+  } catch {
+    return null;
+  }
+}
+
+function parseRequirementFitReport(value: string | null): RequirementFitReport | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as RequirementFitReport;
   } catch {
     return null;
   }
