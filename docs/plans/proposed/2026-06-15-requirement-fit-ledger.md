@@ -212,36 +212,37 @@ Lifecycle labels must be explicit:
 
 - [x] Project `RequirementFitReport` onto job detail.
 - [x] Expose the report in API contracts and read-model responses.
-- [ ] Preserve old fields until UI migration is complete.
+- [x] Preserve old fields until UI migration is complete.
 - [x] Add Python/TypeScript projection parity coverage.
 
 ### Phase 5: Tailoring Integration
 
-- [ ] Replace keyword-only plan selection with requirement directives.
-- [ ] Select required evidence from directive evidence IDs.
-- [ ] Keep current no-fabrication and verified-metric gates.
-- [ ] Treat unsupported missing requirements as prohibited claims.
+- [x] Replace keyword-only plan selection with requirement directives.
+- [x] Select required evidence from directive evidence IDs.
+- [x] Keep current no-fabrication and verified-metric gates.
+- [x] Treat unsupported missing requirements as prohibited claims.
 
 ### Phase 6: Artifact Coverage Integration
 
-- [ ] Keep provenance as the post-generation source of truth.
-- [ ] Map artifact coverage back to requirement fit rows by requirement ID.
-- [ ] Show missing-from-profile separately from missing-from-resume.
+- [x] Keep provenance as the post-generation source of truth.
+- [x] Map artifact coverage back to requirement fit rows by requirement ID.
+- [x] Show missing-from-profile separately from missing-from-resume.
 
 ### Phase 7: UI Migration
 
 - [x] Replace the heuristic requirement/signal matcher in the job drawer with
       the projected requirement fit report.
 - [x] Replace separate matched/missing chips as the primary explanation.
-- [ ] Update Apply Review to show pre-tailor fit beside selected-artifact
+- [x] Update Apply Review to show pre-tailor fit beside selected-artifact
       coverage.
-- [ ] Add visual regression and browser QA for the job drawer and apply review.
+- [x] Browser QA for the job drawer and Apply Review.
+- [x] Add visual regression coverage for the job drawer and Apply Review.
 
 ### Phase 8: Backfill And Cleanup
 
-- [ ] For old jobs without reports, show `not_assessed` and a re-score path.
-- [ ] Remove heuristic matching once the report is available everywhere.
-- [ ] Update canonical docs and delivered notes when behavior lands.
+- [x] For old jobs without reports, show `not_assessed` and a re-score path.
+- [x] Remove heuristic matching once the report is available everywhere.
+- [x] Update canonical docs and delivered notes when behavior lands.
 
 ## Verification Plan
 

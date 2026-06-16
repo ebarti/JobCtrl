@@ -454,8 +454,12 @@ The job detail drawer and Apply review both surface an in-app inspector for the
 tailored resume. The employer-analysis panel shows the reasoned "ideal candidate"
 analysis — requirements classified must-have vs nice-to-have with a priority
 weight, and reasoned keywords each tied to a quoted job-description evidence span,
-plus the ensemble audit trail and a degraded-ensemble indicator. The per-bullet
-provenance list shows, for each generated bullet, the original-profile-bullet →
+plus the ensemble audit trail and a degraded-ensemble indicator. When the latest
+score has requirement-level evidence, each requirement shows the candidate fit,
+score contribution, and tailoring action that explain the fit score. Older scores
+that predate requirement-fit reports show an explicit "not assessed" state with a
+re-score action instead of inferring matches from broad score-signal text. The
+per-bullet provenance list shows, for each generated bullet, the original-profile-bullet →
 tailored-bullet diff and the evidence × requirement × transform × control ×
 rationale that produced it. The tailoring rationale also includes keyword
 coverage counts for actionable high-signal terms derived from the material audit

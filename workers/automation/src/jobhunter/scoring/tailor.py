@@ -61,7 +61,10 @@ from jobhunter.infrastructure.materials import (
     SqliteMaterialsRepository,
     SqliteTailoringPolicyRepository,
 )
-from jobhunter.infrastructure.scoring import SqliteScoreRepository
+from jobhunter.infrastructure.scoring import (
+    SqliteRequirementFitReportRepository,
+    SqliteScoreRepository,
+)
 from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.scoring.employer_analysis import build_analyze_use_case
 from jobhunter.state import (
@@ -157,6 +160,7 @@ def _build_use_case(
     llm_policy: TailoringLlmPolicy | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
     provenance_repository: BulletProvenanceRepository | None = None,
+    requirement_fit_repository=None,
     analyze_use_case=None,
     voice=None,
 ) -> TailorResumeUseCase:
@@ -168,6 +172,8 @@ def _build_use_case(
         policy_repository = SqliteTailoringPolicyRepository(conn)
     if provenance_repository is None:
         provenance_repository = SqliteBulletProvenanceRepository(conn)
+    if requirement_fit_repository is None:
+        requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
     if llm_port is None:
         llm_port = get_llm_adapter()
     if validator is None:
@@ -189,6 +195,7 @@ def _build_use_case(
         llm_policy=llm_policy,
         policy_repository=policy_repository,
         provenance_repository=provenance_repository,
+        requirement_fit_repository=requirement_fit_repository,
         analyze_use_case=analyze_use_case,
         voice=voice,
     )
@@ -196,6 +203,16 @@ def _build_use_case(
 
 def _build_pdf_renderer() -> PdfRendererPort:
     return LatexPdfAdapter()
+
+
+def _load_requirement_fit_report_for_job(*, tenant_id: TenantId, job: dict):
+    job_url = str(job.get("url") or "").strip()
+    if not job_url:
+        return None
+    return SqliteRequirementFitReportRepository(get_connection()).load(
+        tenant_id,
+        JobId(job_url),
+    )
 
 
 def _selected_candidate_payload(report: dict) -> dict | None:
@@ -317,6 +334,12 @@ def _tailor_one_job(
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
         use_case = _build_use_case(llm_policy=llm_policy)
+        requirement_fit_report = _load_requirement_fit_report_for_job(
+            tenant_id=tenant_id,
+            job=job,
+        )
+    else:
+        requirement_fit_report = None
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
 
@@ -328,6 +351,7 @@ def _tailor_one_job(
         tenant_id=tenant_id,
         retailor=retailor,
         suppress_existing_artifacts=suppress_existing_artifacts,
+        requirement_fit_report=requirement_fit_report,
     )
 
     pdf_path: str | None = None
@@ -421,6 +445,10 @@ def tailor_resume(
         profile_snapshot=snapshot,
         tailored_dir=TAILORED_DIR,
         validation_mode=validation_mode,
+        requirement_fit_report=_load_requirement_fit_report_for_job(
+            tenant_id=LOCAL_TENANT,
+            job=job,
+        ),
     )
     text = ""
     if outcome.text_path:
