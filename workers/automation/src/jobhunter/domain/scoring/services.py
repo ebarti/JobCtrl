@@ -33,6 +33,10 @@ from jobhunter.domain.scoring.value_objects import (
     EligibilityAssessment,
     FitScore,
     MatchedKeywords,
+    RequirementFitAssessment,
+    RequirementFitStatus,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
     ScoreBreakdown,
     ScoreTrace,
     ScoringCriteria,
@@ -60,6 +64,8 @@ class ScoreParseResult:
     fit_score: FitScore | None
     breakdown: ScoreBreakdown
     keywords: MatchedKeywords
+    requirement_assessments: tuple[RequirementFitAssessment, ...] = ()
+    employer_analysis_generation: int = 0
     criteria: ScoringCriteria = field(default_factory=ScoringCriteria)
     trace: ScoreTrace = field(default_factory=ScoreTrace)
     error: str = ""
@@ -175,6 +181,10 @@ class ScoreParser:
             parser_warnings.append("missing_confidence")
         if "fit_band" not in payload:
             parser_warnings.append("missing_fit_band")
+        requirement_assessments = _parse_requirement_assessments(
+            payload.get("requirement_assessments", payload.get("requirementAssessments")),
+            parser_warnings,
+        )
 
         fit_band = _choice_or_default(
             payload.get("fit_band"),
@@ -213,6 +223,7 @@ class ScoreParser:
             fit_score=fit_score,
             breakdown=breakdown,
             keywords=keywords,
+            requirement_assessments=requirement_assessments,
             criteria=criteria,
             trace=trace.with_parser_warnings(parser_warnings),
             error="",
@@ -271,6 +282,210 @@ def _choice_or_default(
     if value not in (None, ""):
         warnings.append(warning_name)
     return default
+
+
+def _parse_requirement_assessments(
+    value: Any,
+    warnings: list[str],
+) -> tuple[RequirementFitAssessment, ...]:
+    if value in (None, ""):
+        return ()
+    if not isinstance(value, list):
+        warnings.append("invalid_requirement_assessments")
+        return ()
+
+    assessments: list[RequirementFitAssessment] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value, start=1):
+        row_id = f"row_{index}"
+        if isinstance(raw, dict):
+            row_id = _text_field(raw, "requirement_id", "requirementId") or row_id
+        if not isinstance(raw, dict):
+            warnings.append(f"invalid_requirement_assessment:{row_id}")
+            continue
+        try:
+            assessment = _parse_requirement_assessment(raw, row_id, warnings)
+        except ValueError:
+            warnings.append(f"invalid_requirement_assessment:{row_id}")
+            continue
+        key = assessment.requirement_id.lower()
+        if key in seen:
+            warnings.append(f"duplicate_requirement_assessment:{assessment.requirement_id}")
+            continue
+        seen.add(key)
+        assessments.append(assessment)
+    return tuple(assessments)
+
+
+def _parse_requirement_assessment(
+    raw: dict[str, Any],
+    row_id: str,
+    warnings: list[str],
+) -> RequirementFitAssessment:
+    requirement_id = _text_field(raw, "requirement_id", "requirementId") or row_id
+    requirement_text = _text_field(raw, "requirement_text", "requirementText", "text")
+    if not requirement_text:
+        raise ValueError("requirement assessment requires text")
+
+    fit = _parse_requirement_fit(raw, requirement_id, warnings)
+    contribution = _parse_requirement_contribution(raw, requirement_id, warnings)
+    tailoring = _parse_requirement_tailoring(raw, fit, requirement_text, requirement_id, warnings)
+    return RequirementFitAssessment(
+        requirement_id=requirement_id,
+        requirement_text=requirement_text,
+        tier=_text_field(raw, "tier") or "nice_to_have",
+        weight=_number_field(raw, "weight"),
+        job_evidence_span=_text_field(raw, "job_evidence_span", "jobEvidenceSpan", "evidence_span", "evidenceSpan"),
+        fit=fit,
+        contribution=contribution,
+        tailoring=tailoring,
+    )
+
+
+def _parse_requirement_fit(
+    raw: dict[str, Any],
+    requirement_id: str,
+    warnings: list[str],
+) -> RequirementFitStatus:
+    fit_raw = raw.get("fit") if isinstance(raw.get("fit"), dict) else {}
+    assert isinstance(fit_raw, dict)
+    kind = _text_field(fit_raw, "kind") or _text_field(raw, "fit_kind", "fitKind") or "not_assessed"
+    kind = kind.strip().lower()
+    evidence_ids = _strings_or_empty(
+        fit_raw.get(
+            "evidence_ids",
+            fit_raw.get("evidenceIds", raw.get("evidence_ids", raw.get("evidenceIds", ()))),
+        )
+    )
+
+    if kind == "matched" and not evidence_ids:
+        warnings.append(f"requirement_fit_matched_without_evidence:{requirement_id}")
+        kind = "not_assessed"
+    if kind == "transferable" and not evidence_ids:
+        warnings.append(f"requirement_fit_transferable_without_evidence:{requirement_id}")
+        kind = "missing"
+
+    if kind == "matched":
+        return RequirementFitStatus(
+            kind="matched",
+            evidence_ids=evidence_ids,
+            strength=_text_field(fit_raw, "strength") or "direct",
+        )
+    if kind == "transferable":
+        return RequirementFitStatus(
+            kind="transferable",
+            evidence_ids=evidence_ids,
+            gap=_text_field(fit_raw, "gap"),
+            bridge=_text_field(fit_raw, "bridge")
+            or "Candidate has adjacent evidence but no direct match.",
+        )
+    if kind == "missing":
+        return RequirementFitStatus(
+            kind="missing",
+            reason=_text_field(fit_raw, "reason") or "No grounded profile evidence was found.",
+        )
+    if kind == "blocked":
+        return RequirementFitStatus(
+            kind="blocked",
+            blocker=_text_field(fit_raw, "blocker") or "Requirement appears to be a hard blocker.",
+        )
+    return RequirementFitStatus(
+        kind="not_assessed",
+        reason=_text_field(fit_raw, "reason") or "Requirement fit was not assessed.",
+    )
+
+
+def _parse_requirement_contribution(
+    raw: dict[str, Any],
+    requirement_id: str,
+    warnings: list[str],
+) -> RequirementScoreContribution:
+    contribution = raw.get("contribution")
+    if not isinstance(contribution, dict):
+        return RequirementScoreContribution(
+            max_points=0.0,
+            awarded_points=0.0,
+            weighted_impact=0.0,
+            rationale="Pending deterministic requirement-fit resolution.",
+        )
+    try:
+        return RequirementScoreContribution.from_dict(contribution)
+    except ValueError:
+        warnings.append(f"invalid_requirement_contribution:{requirement_id}")
+        return RequirementScoreContribution(
+            max_points=0.0,
+            awarded_points=0.0,
+            weighted_impact=0.0,
+            rationale="Invalid provider contribution ignored before deterministic resolution.",
+        )
+
+
+def _parse_requirement_tailoring(
+    raw: dict[str, Any],
+    fit: RequirementFitStatus,
+    requirement_text: str,
+    requirement_id: str,
+    warnings: list[str],
+) -> RequirementTailoringDirective:
+    tailoring = raw.get("tailoring")
+    if isinstance(tailoring, dict):
+        try:
+            return RequirementTailoringDirective.from_dict(tailoring)
+        except ValueError:
+            warnings.append(f"invalid_requirement_tailoring:{requirement_id}")
+
+    priority = _number_field(raw, "weight")
+    if fit.kind == "matched":
+        return RequirementTailoringDirective(
+            action="double_down",
+            priority=priority,
+            allowed_evidence_ids=fit.evidence_ids,
+            target_keywords=_strings_or_empty(raw.get("target_keywords", raw.get("targetKeywords", ()))),
+            instruction="Emphasize the cited profile evidence for this requirement.",
+        )
+    if fit.kind == "transferable":
+        return RequirementTailoringDirective(
+            action="bridge_gap",
+            priority=priority,
+            allowed_evidence_ids=fit.evidence_ids,
+            target_keywords=_strings_or_empty(raw.get("target_keywords", raw.get("targetKeywords", ()))),
+            instruction="Bridge from adjacent profile evidence without overstating direct experience.",
+        )
+    if fit.kind in {"missing", "blocked"}:
+        return RequirementTailoringDirective(
+            action="avoid_claim",
+            priority=priority,
+            prohibited_claims=(requirement_text,),
+            instruction="Do not fabricate this requirement in generated materials.",
+        )
+    return RequirementTailoringDirective(
+        action="low_priority",
+        priority=priority,
+        instruction="Leave unassessed requirements out unless later evidence supports them.",
+    )
+
+
+def _text_field(data: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        if key in data:
+            return str(data.get(key) or "").strip()
+    return ""
+
+
+def _number_field(data: dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        if key not in data:
+            continue
+        try:
+            value = float(data.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if value < 0.0:
+            return 0.0
+        if value > 1.0:
+            return 1.0
+        return value
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +579,8 @@ class ConstraintChecker:
             fit_score=parse.fit_score,
             breakdown=breakdown,
             keywords=parse.keywords,
+            requirement_assessments=parse.requirement_assessments,
+            employer_analysis_generation=parse.employer_analysis_generation,
             criteria=parse.criteria,
             trace=parse.trace,
             error=parse.error,

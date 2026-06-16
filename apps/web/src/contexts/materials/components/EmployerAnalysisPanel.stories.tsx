@@ -4,6 +4,7 @@ import {
   degradedEmployerAnalysis,
   emptyEmployerAnalysis,
   populatedEmployerAnalysis,
+  populatedRequirementFitReport,
 } from "../../../test/fixtures/materials-inspector.js";
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
@@ -18,11 +19,7 @@ type Story = StoryObj<typeof meta>;
 export const Populated: Story = {
   args: {
     analysis: populatedEmployerAnalysis,
-    scoreEvidence: {
-      matchedSignals: ["platform reliability"],
-      missingSignals: ["Kubernetes-based developer platforms"],
-      transferableSignals: ["incident leadership"],
-    },
+    requirementFitReport: populatedRequirementFitReport,
   },
 };
 

@@ -387,6 +387,7 @@ class ProjectionBuilder:
         score = self._load_latest_score(job_url)
         materials = self._load_latest_materials(job_url)
         employer_analysis_json = self._load_employer_analysis(job_url)
+        requirement_fit_report_json = self._load_requirement_fit_report(job_url)
         provenance_by_artifact = self._load_bullet_provenance_by_artifact(job_url)
         enrichment = self._load_enrichment(job_url)
         apply_run = self._load_latest_apply_run(job_url)
@@ -520,6 +521,7 @@ class ProjectionBuilder:
             scored_at=scored_at,
             stages=tuple(stages),
             employer_analysis_json=employer_analysis_json,
+            requirement_fit_report_json=requirement_fit_report_json,
             last_updated_at=last_updated_at,
         )
         self._store.upsert_job_detail(detail_proj)
@@ -699,6 +701,26 @@ class ProjectionBuilder:
 
         try:
             record = SqliteEmployerAnalysisRepository(self._conn).load(
+                self._tenant_id, JobId(job_url)
+            )
+        except sqlite3.OperationalError:
+            return None
+        if record is None:
+            return None
+        return json.dumps(record.to_read_model(), ensure_ascii=False)
+
+    def _load_requirement_fit_report(self, job_url: str) -> str | None:
+        """Project the latest canonical requirement-fit report read shape.
+
+        The score aggregate owns the source rows. The detail projection exposes
+        the latest ``RequirementFitReport.to_read_model()`` so the UI can show
+        exactly which requirements produced the fit score and what tailoring
+        directives were generated from them.
+        """
+        from jobhunter.infrastructure.scoring import SqliteRequirementFitReportRepository
+
+        try:
+            record = SqliteRequirementFitReportRepository(self._conn).load(
                 self._tenant_id, JobId(job_url)
             )
         except sqlite3.OperationalError:

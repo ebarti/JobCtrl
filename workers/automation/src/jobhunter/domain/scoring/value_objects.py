@@ -52,7 +52,13 @@ REQUIREMENT_TIERS = ("must_have", "nice_to_have")
 REQUIREMENT_FIT_KINDS = ("matched", "transferable", "missing", "blocked", "not_assessed")
 REQUIREMENT_MATCH_STRENGTHS = ("direct", "strong")
 REQUIREMENT_TAILORING_ACTIONS = ("double_down", "bridge_gap", "avoid_claim", "low_priority")
-REQUIREMENT_ARTIFACT_COVERAGE_STATES = ("covered", "not_covered", "not_recorded")
+REQUIREMENT_ARTIFACT_COVERAGE_STATES = (
+    "covered",
+    "missing_from_resume",
+    "missing_from_profile",
+    "not_covered",
+    "not_recorded",
+)
 
 
 def _clean_strings(values: Iterable[Any] | Any) -> tuple[str, ...]:
@@ -422,6 +428,22 @@ class RequirementFitStatus:
             payload["blocker"] = self.blocker
         return payload
 
+    def to_read_model(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"kind": self.kind}
+        if self.evidence_ids:
+            payload["evidenceIds"] = list(self.evidence_ids)
+        if self.strength:
+            payload["strength"] = self.strength
+        if self.gap:
+            payload["gap"] = self.gap
+        if self.bridge:
+            payload["bridge"] = self.bridge
+        if self.reason:
+            payload["reason"] = self.reason
+        if self.blocker:
+            payload["blocker"] = self.blocker
+        return payload
+
 
 @dataclass(frozen=True)
 class RequirementScoreContribution:
@@ -464,6 +486,14 @@ class RequirementScoreContribution:
             "max_points": self.max_points,
             "awarded_points": self.awarded_points,
             "weighted_impact": self.weighted_impact,
+            "rationale": self.rationale,
+        }
+
+    def to_read_model(self) -> dict[str, Any]:
+        return {
+            "maxPoints": self.max_points,
+            "awardedPoints": self.awarded_points,
+            "weightedImpact": self.weighted_impact,
             "rationale": self.rationale,
         }
 
@@ -517,6 +547,16 @@ class RequirementTailoringDirective:
             "instruction": self.instruction,
         }
 
+    def to_read_model(self) -> dict[str, Any]:
+        return {
+            "action": self.action,
+            "priority": self.priority,
+            "allowedEvidenceIds": list(self.allowed_evidence_ids),
+            "targetKeywords": list(self.target_keywords),
+            "prohibitedClaims": list(self.prohibited_claims),
+            "instruction": self.instruction,
+        }
+
 
 @dataclass(frozen=True)
 class RequirementArtifactCoverage:
@@ -558,6 +598,14 @@ class RequirementArtifactCoverage:
             "state": self.state,
             "source": self.source,
             "bullet_count": self.bullet_count,
+            "examples": list(self.examples),
+        }
+
+    def to_read_model(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "source": self.source,
+            "bulletCount": self.bullet_count,
             "examples": list(self.examples),
         }
 
@@ -663,6 +711,21 @@ class RequirementFitAssessment:
             else None,
         }
 
+    def to_read_model(self) -> dict[str, Any]:
+        return {
+            "requirementId": self.requirement_id,
+            "requirementText": self.requirement_text,
+            "tier": self.tier,
+            "weight": self.weight,
+            "jobEvidenceSpan": self.job_evidence_span,
+            "fit": self.fit.to_read_model(),
+            "contribution": self.contribution.to_read_model(),
+            "tailoring": self.tailoring.to_read_model(),
+            "artifactCoverage": self.artifact_coverage.to_read_model()
+            if self.artifact_coverage is not None
+            else None,
+        }
+
 
 @dataclass(frozen=True)
 class RequirementFitSummary:
@@ -703,6 +766,14 @@ class RequirementFitSummary:
             "must_have_coverage": self.must_have_coverage,
             "blocker_count": self.blocker_count,
             "missing_high_weight_count": self.missing_high_weight_count,
+        }
+
+    def to_read_model(self) -> dict[str, Any]:
+        return {
+            "weightedFit": self.weighted_fit,
+            "mustHaveCoverage": self.must_have_coverage,
+            "blockerCount": self.blocker_count,
+            "missingHighWeightCount": self.missing_high_weight_count,
         }
 
 
@@ -815,6 +886,25 @@ class RequirementFitReport:
             "confidence": self.confidence,
             "summary": self.summary.to_dict(),
             "assessments": [assessment.to_dict() for assessment in self.assessments],
+        }
+
+    def to_read_model(self) -> dict[str, Any]:
+        """Serialise the API/detail DTO for requirement-led fit evidence."""
+
+        return {
+            "jobKey": self.job_id,
+            "scoreVersion": self.score_version,
+            "employerAnalysisGeneration": self.employer_analysis_generation,
+            "profileSnapshotVersion": self.profile_snapshot_version,
+            "scoringPolicyVersion": self.scoring_policy_version,
+            "formulaVersion": self.formula_version,
+            "resolvedFitScore": self.resolved_fit_score.value
+            if self.resolved_fit_score is not None
+            else None,
+            "fitBand": self.fit_band,
+            "confidence": self.confidence,
+            "summary": self.summary.to_read_model(),
+            "assessments": [assessment.to_read_model() for assessment in self.assessments],
         }
 
 

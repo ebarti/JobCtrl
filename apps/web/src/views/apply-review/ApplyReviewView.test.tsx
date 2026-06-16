@@ -345,8 +345,15 @@ describe("<ApplyReviewView>", () => {
     expect(screen.getByText(/principal engineer who can lead platform reliability/i)).toBeInTheDocument();
     expect(screen.getByText("Job needs from posting")).toBeInTheDocument();
     expect(screen.getByText("Lead platform reliability improvements across critical services.")).toBeInTheDocument();
+    expect(screen.getAllByText("Candidate fit").length).toBeGreaterThan(0);
+    expect(screen.getByText("matched direct")).toBeInTheDocument();
+    expect(screen.getByText("transferable")).toBeInTheDocument();
+    expect(screen.getAllByText("Tailoring action").length).toBeGreaterThan(0);
+    expect(screen.getByText("double down")).toBeInTheDocument();
+    expect(screen.getByText("bridge gap")).toBeInTheDocument();
+    expect(screen.getAllByText("Resume coverage").length).toBeGreaterThan(0);
     expect(screen.getByText("covered in tailored resume")).toBeInTheDocument();
-    expect(screen.getByText("not covered in tailored resume")).toBeInTheDocument();
+    expect(screen.getByText("missing from tailored resume")).toBeInTheDocument();
     expect(screen.getByText("2 resume bullets")).toBeInTheDocument();
     expect(
       screen.getByText(/Tailored resume evidence: Owned platform reliability improvements/i),
@@ -377,6 +384,45 @@ describe("<ApplyReviewView>", () => {
     const resumePdf = screen.getByRole("img", { name: "Tailored resume PDF" });
     expect(resumePdf.getAttribute("data-url")).toContain("/v1/artifacts/resume-pdf-2/preview.pdf");
     expect(screen.queryByText("Recruiter reply indicates an interview request.")).not.toBeInTheDocument();
+  });
+
+  it("distinguishes pre-tailor profile gaps from accepted-resume coverage gaps", async () => {
+    const queue = {
+      ...sampleApplyReviewQueue,
+      items: sampleApplyReviewQueue.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              position: {
+                ...item.position,
+                idealRequirements: item.position.idealRequirements.map((requirement, requirementIndex) => ({
+                  ...requirement,
+                  coverage: {
+                    ...requirement.coverage,
+                    state:
+                      requirementIndex === 0
+                        ? ("missing_from_resume" as const)
+                        : ("missing_from_profile" as const),
+                    bulletCount: 0,
+                    examples: [],
+                  },
+                })),
+              },
+            }
+          : item,
+      ),
+    };
+
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({
+        api: {
+          applyReviewQueue: vi.fn(async () => queue),
+        },
+      }),
+    });
+
+    expect(await screen.findByText("missing from tailored resume")).toBeInTheDocument();
+    expect(screen.getByText("missing from profile")).toBeInTheDocument();
   });
 
   it("surfaces resume tailoring rationale in the apply review workspace", async () => {
