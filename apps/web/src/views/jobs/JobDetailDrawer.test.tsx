@@ -220,6 +220,51 @@ describe("<JobDetailDrawer>", () => {
     expect(within(transferableRequirement).getByText("Bridge Gap · priority 55%")).toBeInTheDocument();
   });
 
+  it("shows not assessed plus a re-score path for legacy jobs without requirement fit reports", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        return HttpResponse.json(
+          makeJobDetail(
+            {
+              ...sampleJob,
+              jobKey: String(params["jobKey"]),
+              scoreBreakdown: {
+                ...sampleJob.scoreBreakdown!,
+                matchedSignals: ["platform reliability"],
+                missingSignals: ["Kubernetes-based developer platforms"],
+                transferableSignals: [],
+              },
+            },
+            {
+              employerAnalysis: populatedEmployerAnalysis,
+              requirementFitReport: null,
+            },
+          ),
+        );
+      }),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/legacy-fit");
+
+    const callout = await screen.findByRole("region", { name: "Requirement fit not assessed" });
+    expect(within(callout).getByText("Requirement fit not assessed")).toBeInTheDocument();
+    expect(
+      within(callout).getByText(/stored score predates requirement-level fit/i),
+    ).toBeInTheDocument();
+    expect(within(callout).getByRole("button", { name: "re-score requirement fit" })).toBeInTheDocument();
+
+    const requirement = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(requirement).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(requirement).getByText("not assessed")).toBeInTheDocument();
+    expect(
+      within(requirement).getByText("Re-score this job with the current policy to produce requirement-level candidate fit."),
+    ).toBeInTheDocument();
+    expect(within(requirement).queryByText("Legacy score signals")).not.toBeInTheDocument();
+    expect(within(requirement).queryByText("Matched score signal")).not.toBeInTheDocument();
+  });
+
   it("closes when clicking the backdrop without treating drawer content as backdrop", async () => {
     const user = userEvent.setup();
     const { container, router } = renderJobDetailDrawer("job-1");
