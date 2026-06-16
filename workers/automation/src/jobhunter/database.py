@@ -999,6 +999,7 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
     """)
     ensure_scoring_policy_tables(conn)
     ensure_score_staleness_tables(conn)
+    ensure_requirement_fit_tables(conn)
 
     # One-shot backfill from the legacy columns. Only fires when
     # job_scores has no rows AND there are jobs with a legacy fit_score.
@@ -1062,7 +1063,79 @@ def ensure_score_tables(conn: sqlite3.Connection | None = None) -> list[str]:
                 )
 
     conn.commit()
-    return ["job_scores", "scoring_policies", "job_score_staleness"]
+    return [
+        "job_scores",
+        "scoring_policies",
+        "job_score_staleness",
+        "job_requirement_fit_reports",
+        "job_requirement_fit_items",
+    ]
+
+
+def ensure_requirement_fit_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create canonical requirement-fit report persistence tables.
+
+    The report belongs to the Scoring context and is keyed by a score version.
+    Item rows preserve the requirement-level status, evidence, score
+    contribution, and tailoring directive that downstream tailoring and review
+    surfaces will consume in later phases.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_requirement_fit_reports (
+            job_url                       TEXT NOT NULL,
+            score_version                 INTEGER NOT NULL,
+            tenant_id                     TEXT NOT NULL DEFAULT 'local',
+            employer_analysis_generation  INTEGER NOT NULL,
+            profile_snapshot_version      INTEGER NOT NULL,
+            scoring_policy_version        INTEGER NOT NULL,
+            formula_version               TEXT NOT NULL,
+            resolved_fit_score            INTEGER CHECK(
+                resolved_fit_score IS NULL
+                OR resolved_fit_score BETWEEN 1 AND 10
+            ),
+            fit_band                      TEXT NOT NULL,
+            confidence                    TEXT NOT NULL,
+            summary_json                  TEXT NOT NULL DEFAULT '{}',
+            created_at                    TEXT NOT NULL,
+            PRIMARY KEY (job_url, score_version, tenant_id),
+            FOREIGN KEY (job_url, score_version)
+                REFERENCES job_scores(job_url, version) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_requirement_fit_items (
+            job_url                 TEXT NOT NULL,
+            score_version           INTEGER NOT NULL,
+            tenant_id               TEXT NOT NULL DEFAULT 'local',
+            requirement_id          TEXT NOT NULL,
+            requirement_text        TEXT NOT NULL,
+            tier                    TEXT NOT NULL CHECK(tier IN ('must_have', 'nice_to_have')),
+            weight                  REAL NOT NULL CHECK(weight >= 0 AND weight <= 1),
+            job_evidence_span       TEXT NOT NULL,
+            fit_json                TEXT NOT NULL,
+            contribution_json       TEXT NOT NULL,
+            tailoring_json          TEXT NOT NULL,
+            artifact_coverage_json  TEXT,
+            position                INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (job_url, score_version, tenant_id, requirement_id),
+            FOREIGN KEY (job_url, score_version, tenant_id)
+                REFERENCES job_requirement_fit_reports(job_url, score_version, tenant_id)
+                ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_requirement_fit_reports_tenant_job
+        ON job_requirement_fit_reports(tenant_id, job_url, score_version DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_requirement_fit_items_requirement
+        ON job_requirement_fit_items(tenant_id, requirement_id)
+    """)
+    conn.commit()
+    return ["job_requirement_fit_reports", "job_requirement_fit_items"]
 
 
 def ensure_scoring_policy_tables(conn: sqlite3.Connection | None = None) -> list[str]:

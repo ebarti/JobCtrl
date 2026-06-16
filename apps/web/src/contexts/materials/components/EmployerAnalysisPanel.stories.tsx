@@ -4,6 +4,7 @@ import {
   degradedEmployerAnalysis,
   emptyEmployerAnalysis,
   populatedEmployerAnalysis,
+  populatedRequirementFitReport,
 } from "../../../test/fixtures/materials-inspector.js";
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
@@ -16,7 +17,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Populated: Story = {
-  args: { analysis: populatedEmployerAnalysis },
+  args: {
+    analysis: populatedEmployerAnalysis,
+    requirementFitReport: populatedRequirementFitReport,
+  },
 };
 
 export const Degraded: Story = {

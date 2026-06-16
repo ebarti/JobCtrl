@@ -21,13 +21,24 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from jobhunter.database import ensure_score_staleness_tables, ensure_scoring_policy_tables
+from jobhunter.database import (
+    ensure_requirement_fit_tables,
+    ensure_score_staleness_tables,
+    ensure_scoring_policy_tables,
+)
 from jobhunter.domain.identifiers import JobId
 from jobhunter.domain.scoring.aggregate import JobScore, ScoreStaleMarker
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
+    RequirementArtifactCoverage,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
     ScoreBreakdown,
     ScoreCorrection,
     ScoreTrace,
@@ -316,6 +327,195 @@ class SqliteScoreStalenessRepository:
             resolved=bool(_row_value(row, "resolved", 8)),
             resolved_at=_row_value(row, "resolved_at", 9),
             resolved_by_score_version=_row_value(row, "resolved_by_score_version", 10),
+        )
+
+
+class SqliteRequirementFitReportRepository:
+    """SQLite-backed requirement fit report adapter."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        ensure_requirement_fit_tables(conn)
+
+    def load(
+        self,
+        tenant_id: TenantId,
+        job_id: JobId,
+        *,
+        score_version: int | None = None,
+    ) -> RequirementFitReport | None:
+        if score_version is None:
+            row = self._conn.execute(
+                """
+                SELECT job_url, score_version, tenant_id,
+                       employer_analysis_generation, profile_snapshot_version,
+                       scoring_policy_version, formula_version,
+                       resolved_fit_score, fit_band, confidence, summary_json
+                  FROM job_requirement_fit_reports
+                 WHERE tenant_id = ?
+                   AND job_url = ?
+                 ORDER BY score_version DESC
+                 LIMIT 1
+                """,
+                (str(tenant_id), str(job_id)),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                """
+                SELECT job_url, score_version, tenant_id,
+                       employer_analysis_generation, profile_snapshot_version,
+                       scoring_policy_version, formula_version,
+                       resolved_fit_score, fit_band, confidence, summary_json
+                  FROM job_requirement_fit_reports
+                 WHERE tenant_id = ?
+                   AND job_url = ?
+                   AND score_version = ?
+                 LIMIT 1
+                """,
+                (str(tenant_id), str(job_id), score_version),
+            ).fetchone()
+        if row is None:
+            return None
+
+        job_url = str(_row_value(row, "job_url", 0))
+        version = _int_or_default(_row_value(row, "score_version", 1), 0)
+        item_rows = self._conn.execute(
+            """
+            SELECT requirement_id, requirement_text, tier, weight,
+                   job_evidence_span, fit_json, contribution_json,
+                   tailoring_json, artifact_coverage_json
+              FROM job_requirement_fit_items
+             WHERE tenant_id = ?
+               AND job_url = ?
+               AND score_version = ?
+             ORDER BY position ASC, requirement_id ASC
+            """,
+            (str(tenant_id), job_url, version),
+        ).fetchall()
+        assessments = tuple(self._row_to_assessment(item) for item in item_rows)
+        return RequirementFitReport(
+            job_id=job_url,
+            score_version=version,
+            employer_analysis_generation=_int_or_default(
+                _row_value(row, "employer_analysis_generation", 3),
+                0,
+            ),
+            profile_snapshot_version=_int_or_default(
+                _row_value(row, "profile_snapshot_version", 4),
+                0,
+            ),
+            scoring_policy_version=_int_or_default(
+                _row_value(row, "scoring_policy_version", 5),
+                0,
+            ),
+            formula_version=str(_row_value(row, "formula_version", 6) or ""),
+            resolved_fit_score=FitScore.from_optional(_row_value(row, "resolved_fit_score", 7)),
+            fit_band=str(_row_value(row, "fit_band", 8) or "plausible"),
+            confidence=str(_row_value(row, "confidence", 9) or "medium"),
+            summary=RequirementFitSummary.from_dict(_json_object(_row_value(row, "summary_json", 10))),
+            assessments=assessments,
+        )
+
+    def save(self, tenant_id: TenantId, report: RequirementFitReport) -> None:
+        now = _utc_now()
+        self._conn.execute(
+            """
+            INSERT INTO job_requirement_fit_reports (
+                job_url, score_version, tenant_id,
+                employer_analysis_generation, profile_snapshot_version,
+                scoring_policy_version, formula_version, resolved_fit_score,
+                fit_band, confidence, summary_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(job_url, score_version, tenant_id) DO UPDATE SET
+                employer_analysis_generation = excluded.employer_analysis_generation,
+                profile_snapshot_version = excluded.profile_snapshot_version,
+                scoring_policy_version = excluded.scoring_policy_version,
+                formula_version = excluded.formula_version,
+                resolved_fit_score = excluded.resolved_fit_score,
+                fit_band = excluded.fit_band,
+                confidence = excluded.confidence,
+                summary_json = excluded.summary_json,
+                created_at = excluded.created_at
+            """,
+            (
+                report.job_id,
+                report.score_version,
+                str(tenant_id),
+                report.employer_analysis_generation,
+                report.profile_snapshot_version,
+                report.scoring_policy_version,
+                report.formula_version,
+                report.resolved_fit_score.value
+                if report.resolved_fit_score is not None
+                else None,
+                report.fit_band,
+                report.confidence,
+                json.dumps(report.summary.to_dict(), sort_keys=True),
+                now,
+            ),
+        )
+        self._conn.execute(
+            """
+            DELETE FROM job_requirement_fit_items
+             WHERE job_url = ?
+               AND score_version = ?
+               AND tenant_id = ?
+            """,
+            (report.job_id, report.score_version, str(tenant_id)),
+        )
+        for position, assessment in enumerate(report.assessments):
+            self._conn.execute(
+                """
+                INSERT INTO job_requirement_fit_items (
+                    job_url, score_version, tenant_id, requirement_id,
+                    requirement_text, tier, weight, job_evidence_span,
+                    fit_json, contribution_json, tailoring_json,
+                    artifact_coverage_json, position
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    report.job_id,
+                    report.score_version,
+                    str(tenant_id),
+                    assessment.requirement_id,
+                    assessment.requirement_text,
+                    assessment.tier,
+                    assessment.weight,
+                    assessment.job_evidence_span,
+                    json.dumps(assessment.fit.to_dict(), sort_keys=True),
+                    json.dumps(assessment.contribution.to_dict(), sort_keys=True),
+                    json.dumps(assessment.tailoring.to_dict(), sort_keys=True),
+                    (
+                        json.dumps(assessment.artifact_coverage.to_dict(), sort_keys=True)
+                        if assessment.artifact_coverage is not None
+                        else None
+                    ),
+                    position,
+                ),
+            )
+        self._conn.commit()
+
+    @staticmethod
+    def _row_to_assessment(row: Any) -> RequirementFitAssessment:
+        coverage = _row_value(row, "artifact_coverage_json", 8)
+        return RequirementFitAssessment(
+            requirement_id=str(_row_value(row, "requirement_id", 0)),
+            requirement_text=str(_row_value(row, "requirement_text", 1)),
+            tier=str(_row_value(row, "tier", 2)),
+            weight=float(_row_value(row, "weight", 3) or 0.0),
+            job_evidence_span=str(_row_value(row, "job_evidence_span", 4) or ""),
+            fit=RequirementFitStatus.from_dict(_json_object(_row_value(row, "fit_json", 5))),
+            contribution=RequirementScoreContribution.from_dict(
+                _json_object(_row_value(row, "contribution_json", 6))
+            ),
+            tailoring=RequirementTailoringDirective.from_dict(
+                _json_object(_row_value(row, "tailoring_json", 7))
+            ),
+            artifact_coverage=(
+                RequirementArtifactCoverage.from_dict(_json_object(coverage))
+                if coverage
+                else None
+            ),
         )
 
 

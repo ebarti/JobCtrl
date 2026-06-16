@@ -83,6 +83,12 @@ unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
 reset. `scoreReasoning` remains on the wire as a compatibility summary during
 the scoring evidence migration.
+`/v1/jobs/:key` also exposes `requirementFitReport` when the latest score has
+canonical requirement-level assessments. The report is projected from
+`job_requirement_fit_reports` and ordered `job_requirement_fit_items` rows and
+shows the requirement weights, match status, score contribution, and tailoring
+directive that explain the resolved fit score. It is `null` for jobs that have
+not yet been scored with requirement-level evidence.
 `/v1/jobs/:key` also returns `auditHistory[]`, a user-facing timeline assembled
 from allow-listed `job_events` milestones plus append-only apply review and
 outcome feedback records. The timeline summarizes discovery, enrichment,

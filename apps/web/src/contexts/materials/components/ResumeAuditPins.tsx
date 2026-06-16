@@ -64,7 +64,7 @@ interface RiskSignals {
   readonly fabrications: readonly string[];
   readonly missingRequiredEvidence: readonly string[];
   readonly repairInstructions: readonly string[];
-  readonly warningRepairAttempted: string;
+  readonly warningHandling: string;
   readonly residualWarnings: readonly string[];
 }
 
@@ -654,9 +654,27 @@ function riskSignals(explanation: ArtifactTailoringExplanation): RiskSignals {
       ...explanation.judge.repairInstructions,
       ...(adversarial?.repairInstructions ?? []),
     ],
-    warningRepairAttempted: yesNo(explanation.reviewFeedback.warningRepairAttempted),
+    warningHandling: warningHandlingText(
+      explanation.reviewFeedback.warningRepairAttempted,
+      residualWarnings.length > 0,
+    ),
     residualWarnings,
   };
+}
+
+function warningHandlingText(
+  warningRepairAttempted: boolean | null,
+  hasResidualWarnings: boolean,
+): string {
+  if (warningRepairAttempted === null) return "not recorded";
+  if (warningRepairAttempted) {
+    return hasResidualWarnings
+      ? "retry attempted; selected artifact still has residual warnings"
+      : "retry cleared warnings before selection";
+  }
+  return hasResidualWarnings
+    ? "no retry; workflow selected artifact with residual warnings"
+    : "no warning retry recorded";
 }
 
 function uniqueRiskItems(items: readonly string[]): string[] {
@@ -690,7 +708,7 @@ function emptyRiskSignals(): RiskSignals {
     fabrications: [],
     missingRequiredEvidence: [],
     repairInstructions: [],
-    warningRepairAttempted: "not recorded",
+    warningHandling: "not recorded",
     residualWarnings: [],
   };
 }
@@ -849,8 +867,8 @@ function RiskPanel({
             <dd>{risk.adversarial}</dd>
           </div>
           <div>
-            <dt>Warning repair attempted</dt>
-            <dd>{risk.warningRepairAttempted}</dd>
+            <dt>Warning handling</dt>
+            <dd>{risk.warningHandling}</dd>
           </div>
         </dl>
       </div>

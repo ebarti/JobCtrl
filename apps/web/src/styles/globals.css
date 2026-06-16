@@ -766,7 +766,7 @@ textarea:focus-visible {
 
 .apply-review-workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 0.36fr) minmax(520px, 0.64fr);
+  grid-template-columns: minmax(340px, 0.42fr) minmax(0, 0.58fr);
   gap: 12px;
   min-width: 0;
   padding: 12px;
@@ -1284,6 +1284,31 @@ textarea:focus-visible {
   gap: 5px;
 }
 
+.apply-review-requirement-fit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.apply-review-requirement-fit-grid > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 4px;
+}
+
+.apply-review-requirement-fit-grid > div > span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.apply-review-requirement-fit-grid .tag {
+  max-width: 100%;
+  white-space: normal;
+  justify-self: start;
+}
+
 @media (max-width: 720px) {
   .apply-review-ideal-requirement-head {
     grid-template-columns: minmax(0, 1fr);
@@ -1291,6 +1316,10 @@ textarea:focus-visible {
 
   .apply-review-ideal-requirement-head > span {
     justify-content: flex-start;
+  }
+
+  .apply-review-requirement-fit-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -2502,6 +2531,27 @@ textarea:focus-visible {
   padding: 0 0 12px;
 }
 
+.requirement-fit-missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-color: color-mix(in oklch, var(--warning) 45%, var(--border));
+}
+
+.requirement-fit-missing > div {
+  display: grid;
+  min-width: min(100%, 360px);
+  flex: 1 1 360px;
+  gap: 4px;
+}
+
+.requirement-fit-missing h3,
+.requirement-fit-missing p {
+  margin: 0;
+}
+
 .tag,
 .stage-pill {
   display: inline-flex;
@@ -3107,6 +3157,22 @@ textarea:focus-visible {
   padding: 10px;
 }
 
+.employer-analysis-requirement-list {
+  container-type: inline-size;
+}
+
+.employer-analysis-requirement {
+  display: grid;
+  gap: 10px;
+}
+
+@container (min-width: 500px) {
+  .employer-analysis-requirement {
+    grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr);
+    align-items: start;
+  }
+}
+
 .employer-analysis-requirement header,
 .employer-analysis-keyword header,
 .bullet-provenance header {
@@ -3115,6 +3181,47 @@ textarea:focus-visible {
   align-items: baseline;
   gap: 6px;
   margin-bottom: 8px;
+}
+
+.employer-analysis-match-side {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--muted) 42%, transparent);
+  padding: 8px;
+}
+
+.employer-analysis-match-side header {
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.employer-analysis-match-side header > span:first-child,
+.employer-analysis-signal-row > span:first-child {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.employer-analysis-signal-row,
+.employer-analysis-signal-row > span:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.employer-analysis-signal-row {
+  flex-direction: column;
+}
+
+.employer-analysis-signal-row .tag {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .employer-analysis-requirement-text,

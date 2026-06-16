@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
   degradedEmployerAnalysis,
   emptyEmployerAnalysis,
   populatedEmployerAnalysis,
+  populatedRequirementFitReport,
 } from "../../../test/fixtures/materials-inspector.js";
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
@@ -22,6 +23,101 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(screen.getByText("importance 55%")).toBeInTheDocument();
   });
 
+  it("renders each requirement beside canonical requirement fit evidence", () => {
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        requirementFitReport={populatedRequirementFitReport}
+      />,
+    );
+
+    const matched = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(matched).getByText("matched")).toBeInTheDocument();
+    expect(within(matched).getByText("Score contribution")).toBeInTheDocument();
+    expect(within(matched).getByText("1.125 / 1.125 points")).toBeInTheDocument();
+    expect(within(matched).getByText("Tailoring directive")).toBeInTheDocument();
+    expect(within(matched).getByText("Double Down · priority 90%")).toBeInTheDocument();
+    expect(within(matched).getByText("ev-platform")).toBeInTheDocument();
+    expect(within(matched).getByText("platform reliability")).toBeInTheDocument();
+    expect(within(matched).getByText("Covered · 1 bullet")).toBeInTheDocument();
+
+    const transferable = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(transferable).getByText("transferable")).toBeInTheDocument();
+    expect(within(transferable).getByText("Bridge Gap · priority 55%")).toBeInTheDocument();
+    expect(
+      within(transferable).getByText("Kubernetes operations evidence can support adjacent platform experience."),
+    ).toBeInTheDocument();
+    expect(within(transferable).getByText("owned Kubernetes developer platforms end to end")).toBeInTheDocument();
+  });
+
+  it("distinguishes requirement gaps in profile evidence from gaps in the accepted tailored resume", () => {
+    const directAssessment = populatedRequirementFitReport.assessments[0]!;
+    const transferableAssessment = populatedRequirementFitReport.assessments[1]!;
+
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        requirementFitReport={{
+          ...populatedRequirementFitReport,
+          assessments: [
+            {
+              ...directAssessment,
+              artifactCoverage: {
+                state: "missing_from_resume",
+                source: "tailored_resume_bullet_provenance",
+                bulletCount: 0,
+                examples: [],
+              },
+            },
+            {
+              ...transferableAssessment,
+              artifactCoverage: {
+                state: "missing_from_profile",
+                source: "tailored_resume_bullet_provenance",
+                bulletCount: 0,
+                examples: [],
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    const matched = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(matched).getByText("missing from tailored resume · 0 bullets")).toBeInTheDocument();
+
+    const transferable = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(transferable).getByText("missing from profile · 0 bullets")).toBeInTheDocument();
+  });
+
+  it("shows not assessed when no requirement fit report exists", () => {
+    render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
+
+    const matched = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(matched).getByText("not assessed")).toBeInTheDocument();
+    expect(
+      within(matched).getByText("Re-score this job with the current policy to produce requirement-level candidate fit."),
+    ).toBeInTheDocument();
+
+    const missing = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(missing).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(missing).getByText("not assessed")).toBeInTheDocument();
+  });
+
   it("renders reasoned keywords with evidence spans and flags orphans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
@@ -35,6 +131,7 @@ describe("<EmployerAnalysisPanel>", () => {
     render(<EmployerAnalysisPanel analysis={degradedEmployerAnalysis} />);
 
     expect(screen.getByText("degraded (1/2)")).toBeInTheDocument();
+    expect(screen.getByText("ensemble divergence")).toBeInTheDocument();
     expect(screen.getByText("codex: timeout after 60s")).toBeInTheDocument();
   });
 

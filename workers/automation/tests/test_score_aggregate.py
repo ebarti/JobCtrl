@@ -16,6 +16,13 @@ from jobhunter.domain.scoring import (
     FitScore,
     JobScore,
     MatchedKeywords,
+    RequirementArtifactCoverage,
+    RequirementFitAssessment,
+    RequirementFitReport,
+    RequirementFitStatus,
+    RequirementFitSummary,
+    RequirementScoreContribution,
+    RequirementTailoringDirective,
     ScoreBreakdown,
     ScoreCorrection,
     ScoringCriteria,
@@ -75,6 +82,134 @@ def test_score_breakdown_round_trips_through_dict() -> None:
 def test_score_breakdown_rejects_out_of_range_components(name: str) -> None:
     with pytest.raises(ValueError):
         ScoreBreakdown(**{name: 11})
+
+
+# ---------------------------------------------------------------------------
+# Requirement fit report
+# ---------------------------------------------------------------------------
+
+
+def test_requirement_fit_report_round_trips_through_dict() -> None:
+    assessment = RequirementFitAssessment(
+        requirement_id="r1",
+        requirement_text="Operate as a senior technical engineering leader",
+        tier="must_have",
+        weight=0.95,
+        job_evidence_span="Operate as a senior technical engineering leader",
+        fit=RequirementFitStatus(
+            kind="matched",
+            evidence_ids=("ev-platform-leadership",),
+            strength="direct",
+        ),
+        contribution=RequirementScoreContribution(
+            max_points=9.5,
+            awarded_points=9.5,
+            weighted_impact=0.41,
+            rationale="Direct platform leadership evidence covers this requirement.",
+        ),
+        tailoring=RequirementTailoringDirective(
+            action="double_down",
+            priority=0.95,
+            allowed_evidence_ids=("ev-platform-leadership",),
+            target_keywords=("platform leadership",),
+            instruction="Make the existing leadership evidence prominent.",
+        ),
+        artifact_coverage=RequirementArtifactCoverage(
+            state="covered",
+            bullet_count=1,
+            examples=("Led platform engineering across reliability and tooling.",),
+        ),
+    )
+    original = RequirementFitReport(
+        job_id="https://example.com/job/1",
+        score_version=3,
+        employer_analysis_generation=2,
+        profile_snapshot_version=7,
+        scoring_policy_version=4,
+        formula_version="requirement-fit-v1",
+        resolved_fit_score=FitScore.create(8),
+        fit_band="strong",
+        confidence="high",
+        summary=RequirementFitSummary(
+            weighted_fit=0.78,
+            must_have_coverage=0.9,
+            blocker_count=0,
+            missing_high_weight_count=1,
+        ),
+        assessments=(assessment,),
+    )
+
+    restored = RequirementFitReport.from_dict(original.to_dict())
+
+    assert restored == original
+    assert restored.assessments[0].fit.evidence_ids == ("ev-platform-leadership",)
+    assert restored.assessments[0].tailoring.action == "double_down"
+    assert original.to_read_model() == {
+        "jobKey": "https://example.com/job/1",
+        "scoreVersion": 3,
+        "employerAnalysisGeneration": 2,
+        "profileSnapshotVersion": 7,
+        "scoringPolicyVersion": 4,
+        "formulaVersion": "requirement-fit-v1",
+        "resolvedFitScore": 8,
+        "fitBand": "strong",
+        "confidence": "high",
+        "summary": {
+            "weightedFit": 0.78,
+            "mustHaveCoverage": 0.9,
+            "blockerCount": 0,
+            "missingHighWeightCount": 1,
+        },
+        "assessments": [
+            {
+                "requirementId": "r1",
+                "requirementText": "Operate as a senior technical engineering leader",
+                "tier": "must_have",
+                "weight": 0.95,
+                "jobEvidenceSpan": "Operate as a senior technical engineering leader",
+                "fit": {
+                    "kind": "matched",
+                    "evidenceIds": ["ev-platform-leadership"],
+                    "strength": "direct",
+                },
+                "contribution": {
+                    "maxPoints": 9.5,
+                    "awardedPoints": 9.5,
+                    "weightedImpact": 0.41,
+                    "rationale": "Direct platform leadership evidence covers this requirement.",
+                },
+                "tailoring": {
+                    "action": "double_down",
+                    "priority": 0.95,
+                    "allowedEvidenceIds": ["ev-platform-leadership"],
+                    "targetKeywords": ["platform leadership"],
+                    "prohibitedClaims": [],
+                    "instruction": "Make the existing leadership evidence prominent.",
+                },
+                "artifactCoverage": {
+                    "state": "covered",
+                    "source": "tailored_resume_bullet_provenance",
+                    "bulletCount": 1,
+                    "examples": ["Led platform engineering across reliability and tooling."],
+                },
+            }
+        ],
+    }
+
+
+def test_requirement_fit_status_requires_evidence_for_matched() -> None:
+    with pytest.raises(ValueError, match="matched requirement fit requires"):
+        RequirementFitStatus(kind="matched", strength="direct")
+
+
+def test_requirement_fit_status_requires_reason_for_missing() -> None:
+    with pytest.raises(ValueError, match="missing requirement fit requires"):
+        RequirementFitStatus(kind="missing")
+
+
+def test_requirement_score_contribution_rejects_awarded_over_max() -> None:
+    with pytest.raises(ValueError, match="cannot exceed"):
+        RequirementScoreContribution(max_points=1, awarded_points=2, weighted_impact=1)
 
 
 # ---------------------------------------------------------------------------

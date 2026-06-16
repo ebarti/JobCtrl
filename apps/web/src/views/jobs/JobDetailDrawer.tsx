@@ -10,6 +10,7 @@ import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHi
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
+import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { useEscapeKey } from "../../shared/hooks/useEscapeKey.js";
 import { DetailDrawerBackdrop } from "../../shared/ui/detail-drawer-backdrop.js";
 import { Empty } from "../../shared/ui/empty.js";
@@ -52,6 +53,22 @@ function JobAuditHistorySection({
         </summary>
         <JobAuditHistory entries={entries} />
       </details>
+    </section>
+  );
+}
+
+function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
+  return (
+    <section className="section requirement-fit-missing" aria-label="Requirement fit not assessed">
+      <div>
+        <h3>Requirement fit not assessed</h3>
+        <p className="muted">
+          This job has employer requirements, but the stored score predates requirement-level fit.
+          Re-score it to produce candidate fit, score impact, and tailoring actions for each
+          requirement.
+        </p>
+      </div>
+      <RescoreJobButton className="tab on" jobId={jobId} label="re-score requirement fit" />
     </section>
   );
 }
@@ -117,7 +134,14 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     <Empty title="No active apply-ready artifacts." />
                   )}
                 </Section>
-                <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section" />
+                {detail.employerAnalysis && !detail.requirementFitReport ? (
+                  <RequirementFitMissingCallout jobId={detail.job.jobKey} />
+                ) : null}
+                <EmployerAnalysisPanel
+                  analysis={detail.employerAnalysis}
+                  className="section"
+                  requirementFitReport={detail.requirementFitReport}
+                />
                 <Section title="Apply history">
                   <ApplyHistory jobId={detail.job.jobKey} />
                 </Section>
