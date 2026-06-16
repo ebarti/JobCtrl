@@ -160,6 +160,7 @@ def _build_use_case(
     llm_policy: TailoringLlmPolicy | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
     provenance_repository: BulletProvenanceRepository | None = None,
+    requirement_fit_repository=None,
     analyze_use_case=None,
     voice=None,
 ) -> TailorResumeUseCase:
@@ -171,6 +172,8 @@ def _build_use_case(
         policy_repository = SqliteTailoringPolicyRepository(conn)
     if provenance_repository is None:
         provenance_repository = SqliteBulletProvenanceRepository(conn)
+    if requirement_fit_repository is None:
+        requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
     if llm_port is None:
         llm_port = get_llm_adapter()
     if validator is None:
@@ -192,6 +195,7 @@ def _build_use_case(
         llm_policy=llm_policy,
         policy_repository=policy_repository,
         provenance_repository=provenance_repository,
+        requirement_fit_repository=requirement_fit_repository,
         analyze_use_case=analyze_use_case,
         voice=voice,
     )

@@ -114,7 +114,7 @@ describe("application feedback API", () => {
             weight: 0.7,
             evidence: "developer experience improvements",
             coverage: {
-              state: "not_covered",
+              state: "missing_from_resume",
               source: "tailored_resume_bullet_provenance",
               bulletCount: 0,
               examples: [],

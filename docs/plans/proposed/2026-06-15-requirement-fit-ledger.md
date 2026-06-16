@@ -224,9 +224,9 @@ Lifecycle labels must be explicit:
 
 ### Phase 6: Artifact Coverage Integration
 
-- [ ] Keep provenance as the post-generation source of truth.
-- [ ] Map artifact coverage back to requirement fit rows by requirement ID.
-- [ ] Show missing-from-profile separately from missing-from-resume.
+- [x] Keep provenance as the post-generation source of truth.
+- [x] Map artifact coverage back to requirement fit rows by requirement ID.
+- [x] Show missing-from-profile separately from missing-from-resume.
 
 ### Phase 7: UI Migration
 

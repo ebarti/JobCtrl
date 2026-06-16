@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover — type-only import, avoids any import cycle
     from jobhunter.domain.materials.analyze_use_case import AnalyzeJobUseCase
+    from jobhunter.domain.ports.scoring import RequirementFitReportRepository
     from jobhunter.domain.scoring.value_objects import RequirementFitReport
 
 from jobhunter.domain.events import (
@@ -503,6 +504,58 @@ def _mark_voiced_rows(
     return tuple(marked)
 
 
+def _requirement_report_with_artifact_coverage(
+    report: "RequirementFitReport",
+    bullets: tuple[BulletProvenance, ...],
+) -> "RequirementFitReport":
+    """Return ``report`` with coverage derived from accepted artifact provenance."""
+    from jobhunter.domain.scoring.value_objects import RequirementArtifactCoverage
+
+    covered: dict[str, list[str]] = {}
+    for row in bullets:
+        example = _coverage_example(row.generated_text)
+        for requirement_id in row.requirement_ids:
+            if not requirement_id:
+                continue
+            examples = covered.setdefault(requirement_id, [])
+            if example and example not in examples:
+                examples.append(example)
+
+    assessments = []
+    for assessment in report.assessments:
+        examples = tuple(covered.get(assessment.requirement_id, ())[:3])
+        if examples:
+            coverage = RequirementArtifactCoverage(
+                state="covered",
+                bullet_count=len(covered.get(assessment.requirement_id, ())),
+                examples=examples,
+            )
+        elif assessment.fit.kind in {"missing", "blocked"}:
+            coverage = RequirementArtifactCoverage(
+                state="missing_from_profile",
+                bullet_count=0,
+                examples=(),
+            )
+        elif assessment.fit.kind in {"matched", "transferable"}:
+            coverage = RequirementArtifactCoverage(
+                state="missing_from_resume",
+                bullet_count=0,
+                examples=(),
+            )
+        else:
+            coverage = RequirementArtifactCoverage(
+                state="not_recorded",
+                bullet_count=0,
+                examples=(),
+            )
+        assessments.append(replace(assessment, artifact_coverage=coverage))
+    return replace(report, assessments=tuple(assessments))
+
+
+def _coverage_example(value: str) -> str:
+    return " ".join(str(value or "").split())[:320]
+
+
 # ---------------------------------------------------------------------------
 # Prompt builders (snapshot-driven)
 # ---------------------------------------------------------------------------
@@ -891,6 +944,7 @@ class TailorResumeUseCase:
         llm_policy: TailoringLlmPolicy | None = None,
         policy_repository: TailoringPolicyRepository | None = None,
         provenance_repository: BulletProvenanceRepository | None = None,
+        requirement_fit_repository: "RequirementFitReportRepository | None" = None,
         analyze_use_case: "AnalyzeJobUseCase | None" = None,
         voice: VoicePort | None = None,
     ) -> None:
@@ -907,6 +961,7 @@ class TailorResumeUseCase:
         # bullet (computed vs the generated text), gated by the deterministic
         # never-fabricate detector, and publishes ``BulletProvenanceRecorded``.
         self._provenance_repository = provenance_repository
+        self._requirement_fit_repository = requirement_fit_repository
         # D-20: the canonical employer analysis is the front-half sub-step of
         # tailor. When an ``analyze_use_case`` is injected, ``execute`` runs
         # ``_run_analyze`` to produce/reuse it before tailoring; otherwise the
@@ -2146,7 +2201,31 @@ class TailorResumeUseCase:
         except Exception:  # noqa: BLE001 — persistence must not break the use case
             log.exception("Failed to persist bullet provenance for %s", materials.job_id)
             return
+        self._record_requirement_artifact_coverage(materials=materials, bullets=bullets)
         self._publish_provenance(materials, artifact_id=artifact_id, bullet_count=len(bullets))
+
+    def _record_requirement_artifact_coverage(
+        self,
+        *,
+        materials: MaterialsSet,
+        bullets: tuple[BulletProvenance, ...],
+    ) -> None:
+        """Map accepted artifact provenance back onto the latest requirement fit report."""
+        if self._requirement_fit_repository is None:
+            return
+        try:
+            report = self._requirement_fit_repository.load(
+                materials.tenant_id,
+                materials.job_id,
+            )
+            if report is None:
+                return
+            self._requirement_fit_repository.save(
+                materials.tenant_id,
+                _requirement_report_with_artifact_coverage(report, bullets),
+            )
+        except Exception:  # noqa: BLE001 -- audit update must not break accepted materials
+            log.exception("Failed to update requirement artifact coverage for %s", materials.job_id)
 
     def _publish_provenance(
         self,

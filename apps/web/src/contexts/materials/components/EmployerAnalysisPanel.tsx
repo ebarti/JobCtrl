@@ -314,7 +314,7 @@ function requirementFitRows(assessment: RequirementFitAssessment): RequirementAs
   if (assessment.artifactCoverage) {
     const coverage = assessment.artifactCoverage;
     const coverageValues = [
-      `${formatToken(coverage.state)} · ${coverage.bulletCount} bullet${
+      `${formatArtifactCoverageState(coverage.state)} · ${coverage.bulletCount} bullet${
         coverage.bulletCount === 1 ? "" : "s"
       }`,
       ...coverage.examples,
@@ -322,10 +322,17 @@ function requirementFitRows(assessment: RequirementFitAssessment): RequirementAs
     rows.push({
       label: "Artifact coverage",
       values: coverageValues,
-      tone: coverage.state === "covered" ? "ok" : coverage.state === "not_covered" ? "warn" : "muted",
+      tone: coverage.state === "covered" ? "ok" : coverage.state === "not_recorded" ? "muted" : "warn",
     });
   }
   return rows.filter((row) => row.values.some((value) => value.trim().length > 0));
+}
+
+function formatArtifactCoverageState(state: string): string {
+  if (state === "missing_from_resume") return "missing from tailored resume";
+  if (state === "missing_from_profile") return "missing from profile";
+  if (state === "not_covered") return "not covered in tailored resume";
+  return formatToken(state);
 }
 
 function formatPoints(value: number): string {

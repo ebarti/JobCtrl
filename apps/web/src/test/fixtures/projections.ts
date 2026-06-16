@@ -234,7 +234,7 @@ export const sampleApplyReviewQueue: ApplyReviewQueueResponse = {
             weight: 0.7,
             evidence: "incident response, and developer experience improvements",
             coverage: {
-              state: "not_covered",
+              state: "missing_from_resume",
               source: "tailored_resume_bullet_provenance",
               bulletCount: 0,
               examples: [],

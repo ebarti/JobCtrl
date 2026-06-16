@@ -55,6 +55,50 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(within(transferable).getByText("owned Kubernetes developer platforms end to end")).toBeInTheDocument();
   });
 
+  it("distinguishes requirement gaps in profile evidence from gaps in the accepted tailored resume", () => {
+    const directAssessment = populatedRequirementFitReport.assessments[0]!;
+    const transferableAssessment = populatedRequirementFitReport.assessments[1]!;
+
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        requirementFitReport={{
+          ...populatedRequirementFitReport,
+          assessments: [
+            {
+              ...directAssessment,
+              artifactCoverage: {
+                state: "missing_from_resume",
+                source: "tailored_resume_bullet_provenance",
+                bulletCount: 0,
+                examples: [],
+              },
+            },
+            {
+              ...transferableAssessment,
+              artifactCoverage: {
+                state: "missing_from_profile",
+                source: "tailored_resume_bullet_provenance",
+                bulletCount: 0,
+                examples: [],
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    const matched = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(matched).getByText("missing from tailored resume · 0 bullets")).toBeInTheDocument();
+
+    const transferable = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(transferable).getByText("missing from profile · 0 bullets")).toBeInTheDocument();
+  });
+
   it("falls back to legacy fit-score signals when no requirement fit report exists", () => {
     render(
       <EmployerAnalysisPanel

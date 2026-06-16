@@ -167,6 +167,20 @@ function formatRequirementCoverage(
       title: "Tailored resume bullet provenance was recorded, but no bullet is linked to this requirement.",
     };
   }
+  if (coverage.state === "missing_from_resume") {
+    return {
+      label: "missing from tailored resume",
+      tone: "warn",
+      title: "Profile evidence may exist, but the accepted tailored resume has no provenance-linked bullet for this requirement.",
+    };
+  }
+  if (coverage.state === "missing_from_profile") {
+    return {
+      label: "missing from profile",
+      tone: "warn",
+      title: "The pre-tailor fit audit found no grounded profile evidence for this requirement.",
+    };
+  }
   return {
     label: "coverage not recorded",
     tone: "muted",
