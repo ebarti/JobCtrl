@@ -766,7 +766,7 @@ textarea:focus-visible {
 
 .apply-review-workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 0.36fr) minmax(520px, 0.64fr);
+  grid-template-columns: minmax(340px, 0.42fr) minmax(0, 0.58fr);
   gap: 12px;
   min-width: 0;
   padding: 12px;
@@ -1286,7 +1286,7 @@ textarea:focus-visible {
 
 .apply-review-requirement-fit-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 6px;
   margin-top: 6px;
 }
@@ -1304,6 +1304,8 @@ textarea:focus-visible {
 }
 
 .apply-review-requirement-fit-grid .tag {
+  max-width: 100%;
+  white-space: normal;
   justify-self: start;
 }
 
