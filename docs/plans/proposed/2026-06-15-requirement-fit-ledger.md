@@ -236,7 +236,7 @@ Lifecycle labels must be explicit:
 - [x] Update Apply Review to show pre-tailor fit beside selected-artifact
       coverage.
 - [x] Browser QA for the job drawer and Apply Review.
-- [ ] Add visual regression coverage for the job drawer and Apply Review.
+- [x] Add visual regression coverage for the job drawer and Apply Review.
 
 ### Phase 8: Backfill And Cleanup
 
