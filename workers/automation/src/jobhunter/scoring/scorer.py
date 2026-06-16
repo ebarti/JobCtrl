@@ -23,7 +23,7 @@ import logging
 import time
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
@@ -67,8 +67,22 @@ from jobhunter.state import (
     set_stage_state,
     utc_now,
 )
+from jobhunter.scoring.employer_analysis import build_analyze_use_case
 
 log = logging.getLogger(__name__)
+
+
+class AnalyzeJobUseCaseLike(Protocol):
+    """Small protocol for the canonical employer-analysis front-half step."""
+
+    def execute(
+        self,
+        *,
+        job: dict,
+        tenant_id: TenantId = LOCAL_TENANT,
+        force: bool = False,
+    ) -> Any:
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +153,8 @@ def score_job(
     criteria: ScoringCriteria | None = None,
     employer_analysis: EmployerAnalysis | None = None,
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None = None,
+    require_employer_analysis: bool = False,
 ) -> ScoreJobOutcome:
     """Score a single job and persist the result.
 
@@ -156,11 +172,25 @@ def score_job(
             llm_model=llm_model,
             publisher=publisher,
         )
-    if employer_analysis is None and employer_analysis_repository is not None:
-        employer_analysis = _load_employer_analysis_for_job(
+    if (
+        employer_analysis is None
+        and (
+            employer_analysis_repository is not None
+            or analyze_use_case is not None
+            or require_employer_analysis
+        )
+    ):
+        conn = _analysis_connection_for_repository(repository)
+        if employer_analysis_repository is None:
+            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+        if analyze_use_case is None and require_employer_analysis:
+            analyze_use_case = build_analyze_use_case(conn=conn, publisher=publisher, event_stage="score")
+        employer_analysis = _ensure_employer_analysis_for_job(
             repository=employer_analysis_repository,
+            analyze_use_case=analyze_use_case,
             tenant_id=tenant_id,
             job=job,
+            require=require_employer_analysis,
         )
     return use_case.score(
         job=job,
@@ -190,6 +220,8 @@ def run_scoring(
     criteria: ScoringCriteria | None = None,
     employer_analyses_by_job: Mapping[str, EmployerAnalysis] | None = None,
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None = None,
+    require_employer_analysis: bool = True,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -216,6 +248,8 @@ def run_scoring(
         policy_repository = SqliteScoringPolicyRepository(conn)
     if employer_analysis_repository is None:
         employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+    if analyze_use_case is None and require_employer_analysis:
+        analyze_use_case = build_analyze_use_case(conn=conn, publisher=publisher, event_stage="score")
 
     use_case = _build_use_case(
         repository=repository,
@@ -323,12 +357,34 @@ def run_scoring(
     t0 = time.time()
     results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
     errors = 0
-    analyses_by_job = _employer_analyses_for_jobs(
-        repository=employer_analysis_repository,
-        tenant_id=tenant_id,
-        jobs=jobs_to_compute,
-        overrides=employer_analyses_by_job,
-    )
+    analyses_by_job: dict[str, EmployerAnalysis] = {}
+    analysis_ready_jobs: list[dict[str, Any]] = []
+    for job in jobs_to_compute:
+        job_url = str(job.get("url") or "")
+        try:
+            analysis = _ensure_employer_analysis_for_job(
+                repository=employer_analysis_repository,
+                analyze_use_case=analyze_use_case,
+                tenant_id=tenant_id,
+                job=job,
+                existing=(employer_analyses_by_job or {}).get(job_url),
+                require=require_employer_analysis,
+            )
+        except Exception as exc:  # noqa: BLE001 -- surface as a stage failure
+            log.error("Employer analysis failed for %r: %s", job.get("title", "?"), exc)
+            outcome = ScoreJobOutcome(
+                ok=False,
+                score=None,
+                error=f"Employer analysis failed: {exc}",
+            )
+            results.append((job, outcome))
+            for duplicate_job in duplicate_jobs_by_representative.get(job_url, ()):
+                results.append((duplicate_job, outcome))
+            continue
+        if analysis is not None:
+            analyses_by_job[job_url] = analysis
+        analysis_ready_jobs.append(job)
+    jobs_to_compute = analysis_ready_jobs
 
     # Worker threads run the LLM step only — the SQLite connection is not
     # safe to share across threads. Persistence happens below on the main
@@ -478,6 +534,8 @@ def score_job_by_url(
     publisher: EventPublisher | None = None,
     employer_analysis: EmployerAnalysis | None = None,
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None = None,
+    require_employer_analysis: bool = True,
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by URL.
 
@@ -507,14 +565,6 @@ def score_job_by_url(
         repository = SqliteScoreRepository(conn)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
-    if employer_analysis is None:
-        if employer_analysis_repository is None:
-            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
-        employer_analysis = _load_employer_analysis_for_job(
-            repository=employer_analysis_repository,
-            tenant_id=tenant_id,
-            job=job,
-        )
     existing = repository.load(tenant_id, JobId(job_url))
     if existing is not None and not rescore:
         _ensure_existing_score_stage_succeeded(
@@ -524,6 +574,18 @@ def score_job_by_url(
             tenant_id=tenant_id,
         )
         return ScoreJobOutcome(ok=True, score=existing)
+    if employer_analysis is None:
+        if employer_analysis_repository is None:
+            employer_analysis_repository = SqliteEmployerAnalysisRepository(conn)
+        if analyze_use_case is None and require_employer_analysis:
+            analyze_use_case = build_analyze_use_case(conn=conn, publisher=publisher, event_stage="score")
+        employer_analysis = _ensure_employer_analysis_for_job(
+            repository=employer_analysis_repository,
+            analyze_use_case=analyze_use_case,
+            tenant_id=tenant_id,
+            job=job,
+            require=require_employer_analysis,
+        )
 
     ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
     started_at = utc_now()
@@ -553,6 +615,7 @@ def score_job_by_url(
         resume_text=resume_text,
         criteria=criteria,
         employer_analysis=employer_analysis,
+        require_employer_analysis=require_employer_analysis,
     )
     finished_at = utc_now()
     if outcome.ok and outcome.score is not None:
@@ -694,6 +757,65 @@ def _row_value(row: Any, key: str, index: int) -> Any:
     return row[index]
 
 
+def _analysis_connection_for_repository(repository: ScoreRepository | None) -> sqlite3.Connection:
+    if isinstance(repository, SqliteScoreRepository):
+        return repository.connection
+    return get_connection()
+
+
+def _ensure_employer_analysis_for_job(
+    *,
+    repository: EmployerAnalysisRepository | None,
+    analyze_use_case: AnalyzeJobUseCaseLike | None,
+    tenant_id: TenantId,
+    job: dict[str, Any],
+    existing: EmployerAnalysis | None = None,
+    require: bool,
+) -> EmployerAnalysis | None:
+    """Resolve the canonical requirement source before a fresh score attempt."""
+
+    if _is_usable_employer_analysis(existing, job):
+        return existing
+    if repository is not None:
+        loaded = _load_employer_analysis_for_job(
+            repository=repository,
+            tenant_id=tenant_id,
+            job=job,
+        )
+        if loaded is not None:
+            return loaded
+    if analyze_use_case is not None:
+        outcome = analyze_use_case.execute(job=job, tenant_id=tenant_id)
+        analysis = getattr(outcome, "analysis", None)
+        if _is_usable_employer_analysis(analysis, job):
+            return analysis
+        raise ValueError(
+            "Employer analysis did not produce grounded requirements for this job."
+        )
+    if require:
+        raise ValueError(
+            "Scoring requires employer analysis before a fresh score can be computed."
+        )
+    return None
+
+
+def _is_usable_employer_analysis(
+    analysis: EmployerAnalysis | None,
+    job: dict[str, Any],
+) -> bool:
+    if analysis is None:
+        return False
+    job_url = str(job.get("url") or "").strip()
+    if job_url and str(analysis.job_id) != job_url:
+        log.warning(
+            "Ignoring employer analysis for %s while scoring %s",
+            analysis.job_id,
+            job_url,
+        )
+        return False
+    return bool(analysis.canonical.requirements)
+
+
 def _load_employer_analysis_for_job(
     *,
     repository: EmployerAnalysisRepository,
@@ -704,33 +826,9 @@ def _load_employer_analysis_for_job(
     if not job_url:
         return None
     analysis = repository.load(tenant_id, JobId(job_url))
-    if analysis is None or not analysis.canonical.requirements:
+    if not _is_usable_employer_analysis(analysis, job):
         return None
     return analysis
-
-
-def _employer_analyses_for_jobs(
-    *,
-    repository: EmployerAnalysisRepository | None,
-    tenant_id: TenantId,
-    jobs: list[dict[str, Any]],
-    overrides: Mapping[str, EmployerAnalysis] | None = None,
-) -> dict[str, EmployerAnalysis]:
-    analyses = dict(overrides or {})
-    if repository is None:
-        return analyses
-    for job in jobs:
-        job_url = str(job.get("url") or "").strip()
-        if not job_url or job_url in analyses:
-            continue
-        analysis = _load_employer_analysis_for_job(
-            repository=repository,
-            tenant_id=tenant_id,
-            job=job,
-        )
-        if analysis is not None:
-            analyses[job_url] = analysis
-    return analyses
 
 
 # ---------------------------------------------------------------------------
