@@ -16,7 +16,10 @@ import { describe, expect, it } from "vitest";
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
-import { populatedEmployerAnalysis } from "../../test/fixtures/materials-inspector.js";
+import {
+  populatedEmployerAnalysis,
+  populatedRequirementFitReport,
+} from "../../test/fixtures/materials-inspector.js";
 import { makeApplyAudit, makeJobDetail, sampleJob } from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
@@ -114,6 +117,7 @@ describe("<JobDetailDrawer>", () => {
                 },
               ],
             }),
+            requirementFitReport: populatedRequirementFitReport,
           }),
         );
       }),
@@ -130,9 +134,16 @@ describe("<JobDetailDrawer>", () => {
     expect(within(triage).getByText("8/10")).toBeInTheDocument();
     expect(within(triage).getByText("strong")).toBeInTheDocument();
     expect(within(triage).getByText("high")).toBeInTheDocument();
+    expect(within(triage).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(triage).getByText("78%")).toBeInTheDocument();
+    expect(within(triage).getByText("Must-haves")).toBeInTheDocument();
+    expect(within(triage).getByText("100%")).toBeInTheDocument();
     expect(within(triage).getByText("Strong fit on platform reliability.")).toBeInTheDocument();
     expect(within(triage).getAllByText("platform reliability").length).toBeGreaterThan(0);
-    expect(within(triage).getByText("public company scale")).toBeInTheDocument();
+    expect(within(triage).getByText("Matched requirements")).toBeInTheDocument();
+    expect(within(triage).getByText("Lead platform reliability programs across multiple teams")).toBeInTheDocument();
+    expect(within(triage).getByText("Transferable requirements")).toBeInTheDocument();
+    expect(within(triage).getByText("Experience with Kubernetes-based developer platforms")).toBeInTheDocument();
     const readiness = within(drawer).getByLabelText("Apply readiness");
     expect(within(readiness).getByText("missing apply link")).toBeInTheDocument();
     expect(within(triage).getByText("Apply concerns")).toBeInTheDocument();
@@ -168,7 +179,7 @@ describe("<JobDetailDrawer>", () => {
     expect(screen.queryByText(/JobHunter API request failed: 404/i)).not.toBeInTheDocument();
   });
 
-  it("shows employer requirements beside fit-score match evidence", async () => {
+  it("shows employer requirements beside canonical requirement fit evidence", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) => {
         return HttpResponse.json(
@@ -185,6 +196,7 @@ describe("<JobDetailDrawer>", () => {
             },
             {
               employerAnalysis: populatedEmployerAnalysis,
+              requirementFitReport: populatedRequirementFitReport,
             },
           ),
         );
@@ -196,16 +208,16 @@ describe("<JobDetailDrawer>", () => {
     const requirement = await screen.findByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    expect(within(requirement).getByText("Fit-score match")).toBeInTheDocument();
+    expect(within(requirement).getByText("Requirement fit")).toBeInTheDocument();
     expect(within(requirement).getByText("matched")).toBeInTheDocument();
-    expect(within(requirement).getByText("Matched score signal")).toBeInTheDocument();
-    expect(within(requirement).getByText("platform reliability")).toBeInTheDocument();
+    expect(within(requirement).getByText("Score contribution")).toBeInTheDocument();
+    expect(within(requirement).getByText("Double Down · priority 90%")).toBeInTheDocument();
 
-    const missingRequirement = screen.getByRole("article", {
+    const transferableRequirement = screen.getByRole("article", {
       name: "Requirement: Experience with Kubernetes-based developer platforms",
     });
-    expect(within(missingRequirement).getByText("not matched")).toBeInTheDocument();
-    expect(within(missingRequirement).getByText("Missing score signal")).toBeInTheDocument();
+    expect(within(transferableRequirement).getByText("transferable")).toBeInTheDocument();
+    expect(within(transferableRequirement).getByText("Bridge Gap · priority 55%")).toBeInTheDocument();
   });
 
   it("closes when clicking the backdrop without treating drawer content as backdrop", async () => {

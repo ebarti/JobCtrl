@@ -5,6 +5,7 @@ import {
   degradedEmployerAnalysis,
   emptyEmployerAnalysis,
   populatedEmployerAnalysis,
+  populatedRequirementFitReport,
 } from "../../../test/fixtures/materials-inspector.js";
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
@@ -22,7 +23,39 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(screen.getByText("importance 55%")).toBeInTheDocument();
   });
 
-  it("renders each requirement beside its fit-score match evidence", () => {
+  it("renders each requirement beside canonical requirement fit evidence", () => {
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        requirementFitReport={populatedRequirementFitReport}
+      />,
+    );
+
+    const matched = screen.getByRole("article", {
+      name: "Requirement: Lead platform reliability programs across multiple teams",
+    });
+    expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
+    expect(within(matched).getByText("matched")).toBeInTheDocument();
+    expect(within(matched).getByText("Score contribution")).toBeInTheDocument();
+    expect(within(matched).getByText("1.125 / 1.125 points")).toBeInTheDocument();
+    expect(within(matched).getByText("Tailoring directive")).toBeInTheDocument();
+    expect(within(matched).getByText("Double Down · priority 90%")).toBeInTheDocument();
+    expect(within(matched).getByText("ev-platform")).toBeInTheDocument();
+    expect(within(matched).getByText("platform reliability")).toBeInTheDocument();
+    expect(within(matched).getByText("Covered · 1 bullet")).toBeInTheDocument();
+
+    const transferable = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(transferable).getByText("transferable")).toBeInTheDocument();
+    expect(within(transferable).getByText("Bridge Gap · priority 55%")).toBeInTheDocument();
+    expect(
+      within(transferable).getByText("Kubernetes operations evidence can support adjacent platform experience."),
+    ).toBeInTheDocument();
+    expect(within(transferable).getByText("owned Kubernetes developer platforms end to end")).toBeInTheDocument();
+  });
+
+  it("falls back to legacy fit-score signals when no requirement fit report exists", () => {
     render(
       <EmployerAnalysisPanel
         analysis={populatedEmployerAnalysis}
@@ -37,7 +70,7 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    expect(within(matched).getByText("Fit-score match")).toBeInTheDocument();
+    expect(within(matched).getByText("Legacy score signals")).toBeInTheDocument();
     expect(within(matched).getByText("matched")).toBeInTheDocument();
     expect(within(matched).getByText("Matched score signal")).toBeInTheDocument();
     expect(within(matched).getByText("platform reliability")).toBeInTheDocument();

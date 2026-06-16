@@ -120,6 +120,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 <EmployerAnalysisPanel
                   analysis={detail.employerAnalysis}
                   className="section"
+                  requirementFitReport={detail.requirementFitReport}
                   scoreEvidence={detail.job.scoreBreakdown}
                 />
                 <Section title="Apply history">

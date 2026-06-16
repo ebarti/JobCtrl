@@ -230,9 +230,9 @@ Lifecycle labels must be explicit:
 
 ### Phase 7: UI Migration
 
-- [ ] Replace the heuristic requirement/signal matcher in the job drawer with
+- [x] Replace the heuristic requirement/signal matcher in the job drawer with
       the projected requirement fit report.
-- [ ] Replace separate matched/missing chips as the primary explanation.
+- [x] Replace separate matched/missing chips as the primary explanation.
 - [ ] Update Apply Review to show pre-tailor fit beside selected-artifact
       coverage.
 - [ ] Add visual regression and browser QA for the job drawer and apply review.

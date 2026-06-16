@@ -3160,10 +3160,18 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .employer-analysis-signal-row {
   flex-direction: column;
+}
+
+.employer-analysis-signal-row .tag {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .employer-analysis-requirement-text,
