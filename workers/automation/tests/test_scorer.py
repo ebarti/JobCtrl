@@ -36,6 +36,7 @@ from jobhunter.domain.scoring import (
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.scoring import (
+    SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoringPolicyRepository,
 )
@@ -582,6 +583,16 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
             "transferable_signals": [],
             "keywords": ["python"],
             "reasoning": "ok",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-python-platform",
+                    "requirement_text": "Own Python platform reliability.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Need Python.",
+                    "fit": {"kind": "missing", "reason": "No profile evidence."},
+                }
+            ],
         }
     )
     monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
@@ -598,6 +609,11 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
     assert '"id": "req-python-platform"' in prompt_payload
     assert '"employer_analysis_generation": 1' in prompt_payload
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, JobId(url))
+    assert report is not None
+    assert report.score_version == 1
+    assert report.employer_analysis_generation == 1
+    assert report.assessments[0].fit.kind == "missing"
 
 
 def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(

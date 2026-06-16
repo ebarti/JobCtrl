@@ -199,6 +199,8 @@ Lifecycle labels must be explicit:
       scoring when the caller supplies an `EmployerAnalysis`.
 - [x] Load existing persisted employer analyses automatically in the scoring
       runner and single-job scoring path.
+- [x] Persist resolved requirement fit reports when scoring returns requirement
+      assessments tied to an employer-analysis generation.
 - [ ] Ensure employer analysis exists before scoring.
 - [ ] Update the scoring prompt/schema to classify fit per requirement.
 - [ ] Resolve `FitScore` deterministically from requirement contributions.

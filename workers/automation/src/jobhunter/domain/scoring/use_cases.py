@@ -40,6 +40,7 @@ from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.llm import LlmMessage
 from jobhunter.domain.ports.scoring import (
     LlmPort,
+    RequirementFitReportRepository,
     ScoreRepository,
     ScoreStalenessRepository,
     ScoringPolicyRepository,
@@ -47,10 +48,15 @@ from jobhunter.domain.ports.scoring import (
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
+from jobhunter.domain.scoring.requirement_fit import (
+    REQUIREMENT_FIT_FORMULA_VERSION,
+    resolve_requirement_fit_report,
+)
 from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
 from jobhunter.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
+    RequirementFitReport,
     ScoreBreakdown,
     ScoreCorrection,
     ScoreTrace,
@@ -419,6 +425,7 @@ class ScoreJobUseCase:
         parser: ScoreParser | None = None,
         constraints: ConstraintChecker | None = None,
         policy_repository: ScoringPolicyRepository | None = None,
+        requirement_fit_repository: RequirementFitReportRepository | None = None,
         policy: ScoringPolicy | None = None,
         prompt: str = SCORE_PROMPT,
     ) -> None:
@@ -428,6 +435,7 @@ class ScoreJobUseCase:
         self._parser = parser or ScoreParser()
         self._constraints = constraints or ConstraintChecker()
         self._policy_repository = policy_repository
+        self._requirement_fit_repository = requirement_fit_repository
         self._policy = policy
         self._prompt = prompt
 
@@ -534,6 +542,11 @@ class ScoreJobUseCase:
             scored_at=scored_at,
         )
         self._repository.save(new_score)
+        self._persist_requirement_fit_report(
+            tenant_id=tenant_id,
+            score=new_score,
+            parse=resolved_parse,
+        )
         self._publish_scored(new_score)
         return ScoreJobOutcome(ok=True, score=new_score)
 
@@ -635,6 +648,11 @@ class ScoreJobUseCase:
             parsed = self._parser.parse_json(payload, criteria=criteria, trace=trace)
             if parsed.ok:
                 parsed = self._constraints.apply(parse=parsed, job=job)
+                if employer_analysis is not None:
+                    parsed = replace(
+                        parsed,
+                        employer_analysis_generation=employer_analysis.generation,
+                    )
             span.set_attribute("jobhunter.scoring.parse.ok", parsed.ok)
             span.set_attribute("jobhunter.scoring.parser_warning_count", len(parsed.trace.parser_warnings))
             span.set_attribute("jobhunter.scoring.eligibility", parsed.breakdown.eligibility.status)
@@ -731,6 +749,32 @@ class ScoreJobUseCase:
             self._publisher.publish(event)
         except Exception:  # noqa: BLE001 — event publication never blocks save
             log.exception("Failed to publish JobScored event for %s", score.job_id)
+
+    def _persist_requirement_fit_report(
+        self,
+        *,
+        tenant_id: TenantId,
+        score: JobScore,
+        parse: ScoreParseResult,
+    ) -> None:
+        if self._requirement_fit_repository is None:
+            return
+        if not parse.requirement_assessments or parse.employer_analysis_generation <= 0:
+            return
+        report = resolve_requirement_fit_report(
+            RequirementFitReport(
+                job_id=str(score.job_id),
+                score_version=score.version,
+                employer_analysis_generation=parse.employer_analysis_generation,
+                profile_snapshot_version=parse.trace.profile_snapshot_version,
+                scoring_policy_version=parse.trace.scoring_policy_version,
+                formula_version=REQUIREMENT_FIT_FORMULA_VERSION,
+                fit_band=score.breakdown.fit_band,
+                confidence=score.breakdown.confidence,
+                assessments=parse.requirement_assessments,
+            )
+        )
+        self._requirement_fit_repository.save(tenant_id, report)
 
 
 # ---------------------------------------------------------------------------

@@ -32,7 +32,12 @@ from jobhunter.domain.job_content_identity import job_content_fingerprint
 from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.materials import EmployerAnalysisRepository
-from jobhunter.domain.ports.scoring import LlmPort, ScoreRepository, ScoringPolicyRepository
+from jobhunter.domain.ports.scoring import (
+    LlmPort,
+    RequirementFitReportRepository,
+    ScoreRepository,
+    ScoringPolicyRepository,
+)
 from jobhunter.domain.profile.snapshot import ProfileSnapshot
 from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.retrieval import (
@@ -51,6 +56,7 @@ from jobhunter.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobhunter.infrastructure.profile.factory import get_profile_repository
 from jobhunter.infrastructure.scoring import (
     LocalScoringCriteriaProvider,
+    SqliteRequirementFitReportRepository,
     SqliteScoreRepository,
     SqliteScoringPolicyRepository,
 )
@@ -74,6 +80,7 @@ def _build_use_case(
     *,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = None,
     publisher: EventPublisher | None = None,
@@ -89,8 +96,13 @@ def _build_use_case(
         repository = SqliteScoreRepository(conn)
         if policy_repository is None:
             policy_repository = SqliteScoringPolicyRepository(conn)
-    elif policy_repository is None and isinstance(repository, SqliteScoreRepository):
-        policy_repository = SqliteScoringPolicyRepository(repository.connection)
+        if requirement_fit_repository is None:
+            requirement_fit_repository = SqliteRequirementFitReportRepository(conn)
+    elif isinstance(repository, SqliteScoreRepository):
+        if policy_repository is None:
+            policy_repository = SqliteScoringPolicyRepository(repository.connection)
+        if requirement_fit_repository is None:
+            requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
     if llm_port is None:
         llm_port = (
             LlmAdapter(default_model=llm_model)
@@ -102,6 +114,7 @@ def _build_use_case(
         llm=llm_port,
         publisher=publisher,
         policy_repository=policy_repository,
+        requirement_fit_repository=requirement_fit_repository,
     )
 
 
@@ -117,6 +130,7 @@ def score_job(
     use_case: ScoreJobUseCase | None = None,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = None,
     publisher: EventPublisher | None = None,
@@ -137,6 +151,7 @@ def score_job(
         use_case = _build_use_case(
             repository=repository,
             policy_repository=policy_repository,
+            requirement_fit_repository=requirement_fit_repository,
             llm_port=llm_port,
             llm_model=llm_model,
             publisher=publisher,
@@ -164,6 +179,7 @@ def run_scoring(
     *,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     publisher: EventPublisher | None = None,
@@ -204,6 +220,7 @@ def run_scoring(
     use_case = _build_use_case(
         repository=repository,
         policy_repository=policy_repository,
+        requirement_fit_repository=requirement_fit_repository,
         llm_port=llm_port,
         llm_model=llm_model,
         publisher=publisher,
@@ -456,6 +473,7 @@ def score_job_by_url(
     criteria: ScoringCriteria | None = None,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
+    requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
     employer_analysis: EmployerAnalysis | None = None,
@@ -526,6 +544,7 @@ def score_job_by_url(
         use_case=_build_use_case(
             repository=repository,
             policy_repository=policy_repository,
+            requirement_fit_repository=requirement_fit_repository,
             llm_port=llm_port,
             llm_model=llm_model,
             publisher=publisher,
