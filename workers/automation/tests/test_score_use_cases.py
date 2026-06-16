@@ -641,6 +641,12 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     )
 
     assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 10
+    assert outcome.score.breakdown.matched_signals == (
+        "Lead Python platform reliability across distributed APIs.",
+    )
+    assert outcome.score.trace.resolution_reason == "requirement_fit_report"
     assert len(report_repo.saved) == 1
     tenant, report = report_repo.saved[0]
     assert tenant == str(LOCAL_TENANT)
@@ -655,6 +661,55 @@ def test_score_job_persists_resolved_requirement_fit_report(tmp_path) -> None:
     assert report.summary.weighted_fit == 1.0
     assert report.assessments[0].contribution.max_points == 1.1875
     assert report.assessments[0].contribution.awarded_points == 1.1875
+
+
+def test_score_job_requirement_fit_missing_must_have_drives_low_score(tmp_path) -> None:
+    score_repo = _MemoryRepo()
+    report_repo = _MemoryRequirementFitRepo()
+    job = _job("https://example.com/job/requirement-fit-missing")
+    snapshot = _profile_snapshot_with_evidence(tmp_path)
+    llm = _ScriptedLlm(
+        {
+            **_strong_llm_response(),
+            "score": 10,
+            "technical_fit": 10,
+            "experience_fit": 10,
+            "role_fit": 10,
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-platform",
+                    "requirement_text": "Lead Python platform reliability across distributed APIs.",
+                    "tier": "must_have",
+                    "weight": 0.95,
+                    "job_evidence_span": "Python platform reliability",
+                    "fit": {
+                        "kind": "missing",
+                        "reason": "No grounded profile evidence.",
+                    },
+                }
+            ],
+        }
+    )
+
+    outcome = ScoreJobUseCase(
+        repository=score_repo,
+        llm=llm,
+        requirement_fit_repository=report_repo,
+    ).score(
+        job=job,
+        profile_snapshot=snapshot,
+        employer_analysis=_employer_analysis(job["url"]),
+    )
+
+    assert outcome.ok is True
+    assert outcome.score is not None
+    assert outcome.score.fit_score.value == 1
+    assert outcome.score.breakdown.fit_band == "poor"
+    assert outcome.score.breakdown.missing_signals == (
+        "Lead Python platform reliability across distributed APIs.",
+    )
+    assert report_repo.saved[0][1].resolved_fit_score is not None
+    assert report_repo.saved[0][1].resolved_fit_score.value == 1
 
 
 def test_score_job_keeps_hard_blockers_separate_from_high_score(profile_snapshot) -> None:

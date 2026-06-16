@@ -202,11 +202,11 @@ Lifecycle labels must be explicit:
 - [x] Persist resolved requirement fit reports when scoring returns requirement
       assessments tied to an employer-analysis generation.
 - [ ] Ensure employer analysis exists before scoring.
-- [ ] Update the scoring prompt/schema to classify fit per requirement.
-- [ ] Resolve `FitScore` deterministically from requirement contributions.
-- [ ] Derive legacy matched/missing/transferable signals from requirement fit
+- [x] Update the scoring prompt/schema to classify fit per requirement.
+- [x] Resolve `FitScore` deterministically from requirement contributions.
+- [x] Derive legacy matched/missing/transferable signals from requirement fit
       rows.
-- [ ] Add fixtures proving high-weight missing requirements reduce the score.
+- [x] Add fixtures proving high-weight missing requirements reduce the score.
 
 ### Phase 4: Projections And API
 

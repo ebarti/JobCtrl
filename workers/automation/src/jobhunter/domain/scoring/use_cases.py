@@ -50,6 +50,7 @@ from jobhunter.domain.scoring.aggregate import JobScore
 from jobhunter.domain.scoring.policy import CorrectionSignal, ScoringPolicy
 from jobhunter.domain.scoring.requirement_fit import (
     REQUIREMENT_FIT_FORMULA_VERSION,
+    derive_requirement_fit_signals,
     resolve_requirement_fit_report,
 )
 from jobhunter.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
@@ -381,6 +382,10 @@ def _optional_prompt_section(text: str) -> str:
     return f"---\n\n{text}\n\n"
 
 
+def _has_requirement_fit(parse: ScoreParseResult) -> bool:
+    return bool(parse.requirement_assessments) and parse.employer_analysis_generation > 0
+
+
 def json_dumps(value: Any) -> str:
     import json
 
@@ -533,7 +538,16 @@ class ScoreJobUseCase:
                 error=parse.error or "Unknown parse error",
             )
 
-        resolved_parse = self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
+        job_id = JobId(str(job["url"]))
+        resolved_parse = (
+            self._resolve_with_requirement_fit(
+                parse=parse,
+                tenant_id=tenant_id,
+                job_id=job_id,
+            )
+            if _has_requirement_fit(parse)
+            else self._resolve_with_policy(parse=parse, tenant_id=tenant_id)
+        )
         scored_at = _utc_now()
         new_score = self._build_aggregate(
             tenant_id=tenant_id,
@@ -728,6 +742,72 @@ class ScoreJobUseCase:
             trace=parse.trace.with_policy_resolution(resolved),
         )
 
+    def _resolve_with_requirement_fit(
+        self,
+        *,
+        parse: ScoreParseResult,
+        tenant_id: TenantId,
+        job_id: JobId,
+    ) -> ScoreParseResult:
+        policy = (
+            self._policy_repository.get_current(tenant_id)
+            if self._policy_repository is not None
+            else self._policy or ScoringPolicy.default(tenant_id)
+        )
+        report = self._build_requirement_fit_report(
+            parse=parse,
+            job_id=job_id,
+            score_version=0,
+        )
+        assert report is not None
+        signals = derive_requirement_fit_signals(report)
+        resolved_score = report.resolved_fit_score or parse.fit_score
+        assert resolved_score is not None
+        breakdown = ScoreBreakdown(
+            technical_fit=parse.breakdown.technical_fit,
+            experience_fit=parse.breakdown.experience_fit,
+            role_fit=parse.breakdown.role_fit,
+            reasoning=parse.breakdown.reasoning,
+            fit_band=report.fit_band,
+            confidence=parse.breakdown.confidence,
+            eligibility=parse.breakdown.eligibility,
+            matched_signals=signals.matched_signals,
+            missing_signals=signals.missing_signals,
+            transferable_signals=signals.transferable_signals,
+        )
+        trace = replace(
+            parse.trace,
+            scoring_policy_id=policy.policy_id,
+            scoring_policy_version=policy.version,
+            rubric_version=policy.rubric_version,
+            raw_weighted_score=round(1 + (9 * report.summary.weighted_fit), 4),
+            calibration_adjustment=0.0,
+            anchor_ids=tuple(anchor.anchor_id for anchor in policy.anchors),
+            resolved_fit_band=report.fit_band,
+            resolution_reason="requirement_fit_report",
+            resolved_dimensions=(
+                {
+                    "name": "requirement_fit",
+                    "value": report.summary.weighted_fit,
+                    "weight": 1.0,
+                    "weighted_value": report.summary.weighted_fit,
+                },
+            ),
+            fit_band_thresholds=tuple(threshold.to_dict() for threshold in policy.fit_band_thresholds),
+            policy_evidence={
+                "formula_version": report.formula_version,
+                "employer_analysis_generation": report.employer_analysis_generation,
+                "summary": report.summary.to_dict(),
+            },
+        )
+        return replace(
+            parse,
+            fit_score=resolved_score,
+            breakdown=breakdown,
+            requirement_assessments=report.assessments,
+            trace=trace,
+        )
+
     def _publish_scored(self, score: JobScore) -> None:
         if self._publisher is None:
             return
@@ -759,22 +839,37 @@ class ScoreJobUseCase:
     ) -> None:
         if self._requirement_fit_repository is None:
             return
-        if not parse.requirement_assessments or parse.employer_analysis_generation <= 0:
+        report = self._build_requirement_fit_report(
+            parse=parse,
+            job_id=score.job_id,
+            score_version=score.version,
+        )
+        if report is None:
             return
-        report = resolve_requirement_fit_report(
+        self._requirement_fit_repository.save(tenant_id, report)
+
+    def _build_requirement_fit_report(
+        self,
+        *,
+        parse: ScoreParseResult,
+        job_id: JobId,
+        score_version: int,
+    ) -> RequirementFitReport | None:
+        if not _has_requirement_fit(parse):
+            return None
+        return resolve_requirement_fit_report(
             RequirementFitReport(
-                job_id=str(score.job_id),
-                score_version=score.version,
+                job_id=str(job_id),
+                score_version=score_version,
                 employer_analysis_generation=parse.employer_analysis_generation,
                 profile_snapshot_version=parse.trace.profile_snapshot_version,
                 scoring_policy_version=parse.trace.scoring_policy_version,
                 formula_version=REQUIREMENT_FIT_FORMULA_VERSION,
-                fit_band=score.breakdown.fit_band,
-                confidence=score.breakdown.confidence,
+                fit_band=parse.breakdown.fit_band,
+                confidence=parse.breakdown.confidence,
                 assessments=parse.requirement_assessments,
             )
         )
-        self._requirement_fit_repository.save(tenant_id, report)
 
 
 # ---------------------------------------------------------------------------
