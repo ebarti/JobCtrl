@@ -77,9 +77,12 @@ async function loadingTaskForUrl(
   return pdfjs.getDocument({ data });
 }
 
-function pageImageUrlForPreview(pdfUrl: string, pageNumber: number): string | null {
+export function pageImageUrlForPreview(pdfUrl: string, pageNumber: number): string | null {
   try {
     const url = new URL(pdfUrl, window.location.href);
+    if (!/^\/v1\/artifacts\/[^/]+\/preview\.pdf$/.test(url.pathname)) {
+      return null;
+    }
     const nextPath = url.pathname.replace(/\/preview\.pdf$/, `/preview/page/${pageNumber}.png`);
     if (nextPath === url.pathname) {
       return null;
