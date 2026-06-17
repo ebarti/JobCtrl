@@ -368,6 +368,38 @@ textarea:focus-visible {
   resize: vertical;
 }
 
+.field-hint {
+  min-height: 16px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.google-address-field input[type="search"] {
+  appearance: textfield;
+}
+
+.google-address-widget-host,
+.google-address-widget {
+  width: 100%;
+}
+
+.google-address-widget-host {
+  min-height: 35px;
+}
+
+.google-address-widget {
+  display: block;
+}
+
+.address-validation-status.validated {
+  color: var(--status-success);
+}
+
+.address-validation-status.error {
+  color: var(--destructive);
+}
+
 .field.wide,
 .form-actions {
   grid-column: 1 / -1;

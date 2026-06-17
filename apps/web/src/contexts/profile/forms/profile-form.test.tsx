@@ -23,6 +23,17 @@ describe("<ProfileForm>", () => {
     expect(screen.queryByRole("button", { name: "preferences" })).not.toBeInTheDocument();
   });
 
+  it("keeps the address field editable when Google Maps is not configured", async () => {
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
+      withRouter: true,
+    });
+
+    const address = await screen.findByLabelText("Address");
+    expect(address).toHaveAttribute("type", "search");
+    expect(address).toHaveAttribute("autocomplete", "street-address");
+    expect(screen.getByText("manual")).toBeInTheDocument();
+  });
+
   it("does not expose raw profile source editors", async () => {
     renderWithProviders(<ProfileForm initial={sampleProfileResponse} />, {
       withRouter: true,

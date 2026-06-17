@@ -137,16 +137,19 @@ ensure_not_running() {
   fi
 }
 
-# Load $ROOT/.env into the current shell so spawned children inherit
-# secrets (Langfuse keys, Gemini keys, etc.). Node and Python do not
-# auto-source .env at startup — leaving this off would silently disable
-# observability in the dev fleet.
+# Load env files into the current shell so spawned children inherit
+# secrets (Langfuse keys, Gemini keys, local web keys, etc.). Node and Python do
+# not auto-source .env at startup — leaving this off would silently disable
+# observability and optional local UI integrations in the dev fleet.
 load_env_file() {
-  [[ -f "$ROOT/.env" ]] || return 0
-  set -a
-  # shellcheck disable=SC1090,SC1091
-  source "$ROOT/.env"
-  set +a
+  local env_file
+  for env_file in "$HOME/.jobhunter/.env" "$ROOT/.env" "${JOBHUNTER_USER_ENV_PATH:-$HOME/Jobhunter/.env}"; do
+    [[ -f "$env_file" ]] || continue
+    set -a
+    # shellcheck disable=SC1090,SC1091
+    source "$env_file"
+    set +a
+  done
 }
 
 set_default_env() {

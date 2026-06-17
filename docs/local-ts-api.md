@@ -23,6 +23,11 @@ The web Profile, Preferences, Discovery target search, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
+When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
+Address field progressively enhances into a Google Maps Places address search.
+Selecting a Google result updates the existing address, city, state/province,
+country, and postal-code profile fields; without the key, the field remains a
+normal editable street-address input.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables

@@ -96,6 +96,8 @@ Local API and web UI:
 
 - Node.js 20.19 or newer.
 - pnpm through Corepack.
+- Optional `VITE_GOOGLE_MAPS_API_KEY` for Google Maps address search in the
+  Profile form.
 
 Auto-apply:
 
@@ -163,6 +165,9 @@ At minimum, confirm:
 - your profile and resume facts are accurate;
 - your search configuration is narrow enough for a first run;
 - your LLM key or local model endpoint is configured;
+- optional frontend-only keys such as `VITE_GOOGLE_MAPS_API_KEY` are available
+  from repo `.env`, `~/.jobhunter/.env`, or `~/Jobhunter/.env` before starting
+  `pnpm dev`;
 - `pdflatex` is available if you need PDFs;
 - `pdftoppm` is available if you need PDF page previews in the web UI;
 - Chrome and Claude Code are available only if you intend to use auto-apply.

@@ -2,6 +2,10 @@ import { useEffect, useRef } from "react";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 
 import {
+  GoogleAddressSearchField,
+  type GoogleAddressSelection,
+} from "./GoogleAddressSearchField.js";
+import {
   asTextArray,
   cloneJsonRecord,
   defaultRepeatItem,
@@ -112,6 +116,7 @@ const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
 const ROLE_AREA_LABEL = "Role areas";
 const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
 const TARGET_LOCATION_LABEL = "Locations and work models";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
 
 export interface StructuredProfileEditorProps {
   mode?: "profile" | "preferences" | "target-search";
@@ -360,6 +365,35 @@ export function StructuredProfileEditor({
           }
         />
       </label>
+    );
+  };
+
+  const addressSearchField = () => {
+    const applyAddressSelection = (selection: GoogleAddressSelection) => {
+      updateProfileDraft((draft) => {
+        setPathValue(draft, "personal.address", selection.address);
+        if (selection.city) {
+          setPathValue(draft, "personal.city", selection.city);
+        }
+        if (selection.provinceState) {
+          setPathValue(draft, "personal.province_state", selection.provinceState);
+        }
+        if (selection.country) {
+          setPathValue(draft, "personal.country", selection.country);
+        }
+        if (selection.postalCode) {
+          setPathValue(draft, "personal.postal_code", selection.postalCode);
+        }
+      });
+    };
+
+    return (
+      <GoogleAddressSearchField
+        apiKey={GOOGLE_MAPS_API_KEY}
+        value={textAt(profile, "personal.address")}
+        onAddressChange={(value) => updateProfilePath("personal.address", value)}
+        onAddressSelect={applyAddressSelection}
+      />
     );
   };
 
@@ -895,7 +929,7 @@ export function StructuredProfileEditor({
               {textField("personal.preferred_name", "Preferred name")}
               {textField("personal.email", "Email", "email", { required: true })}
               {textField("personal.phone", "Phone", "tel")}
-              {textField("personal.address", "Address")}
+              {addressSearchField()}
               {textField("personal.city", "City")}
               {textField("personal.province_state", "State / province")}
               {textField("personal.country", "Country")}
