@@ -41,6 +41,8 @@ vi.mock("./GoogleAddressSearchField.js", () => ({
       </button>
     </div>
   ),
+  isUnitedStatesAddressCountry: (country: string) =>
+    ["us", "usa", "united states", "united states of america"].includes(country.trim().toLowerCase()),
 }));
 
 function StatefulEditor({
@@ -112,6 +114,39 @@ describe("<StructuredProfileEditor>", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Remove achievement evidence 1" }));
     expect(JSON.parse(latestProfile).resume.experience_entries[0].achievement_evidence).toEqual([]);
+  });
+
+  it("hides state/province for non-US profiles", () => {
+    const baseProfile = sampleProfileResponse.profile as ProfileFixture;
+    const initialProfile = {
+      ...baseProfile,
+      personal: {
+        ...baseProfile.personal,
+        country: "Spain",
+        province_state: "Catalunya",
+      },
+    };
+
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={() => undefined} />);
+
+    expect(screen.queryByLabelText("State / province")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Country")).toHaveValue("Spain");
+  });
+
+  it("shows state/province for US profiles", () => {
+    const baseProfile = sampleProfileResponse.profile as ProfileFixture;
+    const initialProfile = {
+      ...baseProfile,
+      personal: {
+        ...baseProfile.personal,
+        country: "United States",
+        province_state: "California",
+      },
+    };
+
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={() => undefined} />);
+
+    expect(screen.getByLabelText("State / province")).toHaveValue("California");
   });
 
   it("replaces structured address fields from a validated Google address selection", () => {

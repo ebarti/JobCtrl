@@ -3,6 +3,7 @@ import { IconPlus, IconTrash } from "@tabler/icons-react";
 
 import {
   GoogleAddressSearchField,
+  isUnitedStatesAddressCountry,
   type GoogleAddressSelection,
 } from "./GoogleAddressSearchField.js";
 import {
@@ -911,6 +912,7 @@ export function StructuredProfileEditor({
   const requiredSkillIds = new Set(
     textArrayAt(profile, "resume.tailoring_rules.required_skill_category_ids"),
   );
+  const showProvinceStateField = isUnitedStatesAddressCountry(textAt(profile, "personal.country"));
 
   return (
     <div className="profile-sections">
@@ -925,9 +927,11 @@ export function StructuredProfileEditor({
               {textField("personal.phone", "Phone", "tel")}
               {addressSearchField()}
               {textField("personal.city", "City", "text", { autoComplete: "address-level2" })}
-              {textField("personal.province_state", "State / province", "text", {
-                autoComplete: "address-level1",
-              })}
+              {showProvinceStateField
+                ? textField("personal.province_state", "State / province", "text", {
+                    autoComplete: "address-level1",
+                  })
+                : null}
               {textField("personal.country", "Country", "text", { autoComplete: "country-name" })}
               {textField("personal.postal_code", "Postal code", "text", { autoComplete: "postal-code" })}
               {textField("personal.linkedin_url", "LinkedIn URL", "url")}

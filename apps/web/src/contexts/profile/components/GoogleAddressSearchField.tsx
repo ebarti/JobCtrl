@@ -284,7 +284,7 @@ export function addressSelectionFromGooglePlace(
     postalCode: [componentLongName(components, "postal_code"), componentLongName(components, "postal_code_suffix")]
       .filter(Boolean)
       .join("-"),
-    provinceState: isUnitedStatesCountry(country, countryCode)
+    provinceState: isUnitedStatesAddressCountry(country, countryCode)
       ? componentLongName(components, "administrative_area_level_1")
       : "",
   };
@@ -300,7 +300,7 @@ function componentShortName(components: GoogleAddressComponent[], type: string):
   return component?.shortText ?? component?.short_name ?? "";
 }
 
-function isUnitedStatesCountry(country: string, countryCode: string): boolean {
+export function isUnitedStatesAddressCountry(country: string, countryCode = ""): boolean {
   const normalizedCountryCode = countryCode.trim().toUpperCase();
   if (normalizedCountryCode === "US" || normalizedCountryCode === "USA") {
     return true;
