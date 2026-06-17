@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import type { DashboardSettings } from "../../operations/types.js";
 import { ProfileForm } from "../forms/profile-form.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useSettingsQuery } from "../hooks/useSettingsQuery.js";
-import { useUpdateSettingsMutation } from "../hooks/useUpdateSettingsMutation.js";
 import { ResumePreviewIframe } from "./ResumePreviewIframe.js";
 
 const SPLIT_STORAGE_KEY = "profile-preview-split-width";
@@ -80,8 +78,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           meta={
             settingsQuery.data
               ? section === "preferences"
-                ? <MinimumFitScoreControl settings={settingsQuery.data.settings} />
-                : `min fit ${settingsQuery.data.settings.minFitScore}`
+                ? "application configuration"
+                : "resume data"
               : "loading"
           }
         />
@@ -127,49 +125,6 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
         </>
       ) : null}
     </div>
-  );
-}
-
-function MinimumFitScoreControl({ settings }: { settings: DashboardSettings }) {
-  const updateSettings = useUpdateSettingsMutation();
-  const [draft, setDraft] = useState(String(settings.minFitScore));
-
-  useEffect(() => {
-    setDraft(String(settings.minFitScore));
-  }, [settings.minFitScore]);
-
-  const commit = () => {
-    const parsed = Number(draft);
-    const next = Number.isFinite(parsed) ? Math.min(10, Math.max(0, Math.round(parsed))) : settings.minFitScore;
-    setDraft(String(next));
-    if (next !== settings.minFitScore) {
-      updateSettings.mutate({ minFitScore: next });
-    }
-  };
-
-  return (
-    <label className="min-fit-control">
-      <span>min fit</span>
-      <input
-        aria-label="Minimum fit score"
-        type="number"
-        min={0}
-        max={10}
-        step={1}
-        value={draft}
-        disabled={updateSettings.isPending}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter") {
-            return;
-          }
-          event.preventDefault();
-          commit();
-          event.currentTarget.blur();
-        }}
-      />
-    </label>
   );
 }
 

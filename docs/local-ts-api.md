@@ -25,12 +25,9 @@ mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
 The Preferences Application configurations section owns the user-editable
 Location filter control and persists it through the local settings mutation;
-the Settings page keeps the remaining scoring and targeting runtime controls.
-Those scoring controls are bounded rubric selectors for ranking priorities,
-seniority bar, stretch tolerance, company context, and exclusions; the web form
-serializes those selections into the existing `scoreCriteria` and
-`targetCriteria` settings strings so the Python scoring worker still receives
-the established criteria payload.
+the Discovery page owns target search plus automation controls such as minimum
+fit score and auto apply. The Settings page keeps execution-only controls such
+as apply concurrency.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,

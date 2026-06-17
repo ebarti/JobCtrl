@@ -433,30 +433,6 @@ textarea:focus-visible {
   gap: 8px;
 }
 
-.scoring-rubric-field {
-  border: 0;
-  margin: 0;
-  padding: 0;
-}
-
-.scoring-rubric-field > legend {
-  margin: 0 0 6px;
-  padding: 0;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-
-.scoring-rubric-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 16px;
-}
-
-.scoring-rubric-priorities,
-.scoring-rubric-exclusions {
-  grid-column: 1 / -1;
-}
-
 .checkbox-option-group {
   display: grid;
   grid-template-columns: minmax(96px, 0.28fr) minmax(0, 1fr);
@@ -598,21 +574,6 @@ textarea:focus-visible {
 .meta {
   font-family: var(--font-mono);
   font-size: 11px;
-}
-
-.min-fit-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.min-fit-control input {
-  width: 48px;
-  height: 26px;
-  padding: 4px 6px;
-  text-align: center;
 }
 
 .bar {
@@ -4440,7 +4401,6 @@ textarea:focus-visible {
   .dashboard-grid,
   .discovery-control-grid,
   .field-grid,
-  .scoring-rubric-grid,
   .stage-trigger-grid,
   .target-preferences-grid,
   .config-form,

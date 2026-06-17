@@ -397,14 +397,22 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
   });
   await expectKeyboardFocusIndicator(
     page,
-    page.getByLabel("Target role"),
-    "settings target role input",
+    page.getByLabel("Apply concurrency"),
+    "settings apply concurrency input",
   );
 
   await page.goto("/discovery");
   await expect(
     page.getByRole("heading", { name: "Runtime settings" }),
   ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByRole("heading", { name: "Automation settings" }),
+  ).toBeVisible();
+  await expectKeyboardFocusIndicator(
+    page,
+    page.getByLabel("Minimum fit score"),
+    "discovery minimum fit score input",
+  );
   await expectKeyboardFocusIndicator(
     page,
     page.getByLabel("Results per board"),

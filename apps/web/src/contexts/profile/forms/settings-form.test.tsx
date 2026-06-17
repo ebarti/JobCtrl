@@ -5,9 +5,7 @@ import { sampleSettingsResponse } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
-  buildScoreCriteriaText,
-  buildTargetCriteriaText,
-  parseScoringRubric,
+  DiscoveryAutomationSettingsForm,
   SettingsForm,
 } from "./settings-form.js";
 import type { SettingsResponse } from "../../operations/types.js";
@@ -17,7 +15,19 @@ describe("<SettingsForm>", () => {
     vi.useRealTimers();
   });
 
-  it("autosaves edited settings after five seconds", async () => {
+  it("renders Settings as execution-only config", () => {
+    const { container } = renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
+
+    expect(screen.getByLabelText("Apply concurrency")).toHaveValue(2);
+    expect(screen.queryByLabelText("Minimum fit score")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Auto apply")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Scoring rubric" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Exclusions")).not.toBeInTheDocument();
+    expect(container.querySelector("textarea")).not.toBeInTheDocument();
+  });
+
+  it("autosaves execution settings after five seconds", async () => {
     vi.useFakeTimers();
     const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
       ok: true,
@@ -28,9 +38,8 @@ describe("<SettingsForm>", () => {
       ports: buildTestPorts({ api: { updateSettings } }),
     });
 
-    expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Target role"), {
-      target: { value: "Engineering Director" },
+    fireEvent.change(screen.getByLabelText("Apply concurrency"), {
+      target: { value: "4" },
     });
 
     act(() => vi.advanceTimersByTime(4_999));
@@ -41,52 +50,10 @@ describe("<SettingsForm>", () => {
     });
 
     expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ targetRole: "Engineering Director" }),
-    );
+    expect(updateSettings).toHaveBeenCalledWith({ applyConcurrency: 4 });
   });
 
-  it("renders scoring criteria as bounded controls", () => {
-    const { container } = renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
-
-    expect(screen.getByRole("group", { name: "Scoring rubric" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Score criteria")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Targeting criteria")).not.toBeInTheDocument();
-    expect(container.querySelector("textarea")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Platform reliability")).toBeChecked();
-    expect(screen.getByLabelText("Leadership scope")).toBeChecked();
-    expect(screen.getByLabelText("Seniority bar")).toHaveValue("director_plus");
-  });
-
-  it("saves selected scoring controls as generated criteria text", async () => {
-    const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
-      ok: true,
-      settings: { ...sampleSettingsResponse.settings, ...request },
-      paths: sampleSettingsResponse.paths,
-    }));
-    renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />, {
-      ports: buildTestPorts({ api: { updateSettings } }),
-    });
-
-    fireEvent.click(screen.getByLabelText("Security and compliance"));
-    fireEvent.change(screen.getByLabelText("Company context"), {
-      target: { value: "regulated" },
-    });
-    fireEvent.click(screen.getByLabelText("Exclude sales quota roles"));
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
-
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
-    expect(updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scoreCriteria: expect.stringContaining("Prioritize security, privacy, compliance"),
-        targetCriteria: expect.stringContaining("Exclude quota-carrying sales"),
-      }),
-    );
-    const request = updateSettings.mock.calls[0]?.[0];
-    expect(request?.scoreCriteria).toContain("Favor regulated, high-security");
-  });
-
-  it("keeps newer edits when an autosave response returns for an older snapshot", async () => {
+  it("keeps newer execution edits when an autosave response returns for an older snapshot", async () => {
     vi.useFakeTimers();
     let resolveUpdate: ((response: SettingsResponse) => void) | undefined;
     const updateSettings = vi.fn(
@@ -100,9 +67,9 @@ describe("<SettingsForm>", () => {
       ports: buildTestPorts({ api: { updateSettings } }),
     });
 
-    const targetRole = screen.getByLabelText("Target role");
-    fireEvent.change(targetRole, {
-      target: { value: "Engineering Director" },
+    const applyConcurrency = screen.getByLabelText("Apply concurrency");
+    fireEvent.change(applyConcurrency, {
+      target: { value: "3" },
     });
 
     await act(async () => {
@@ -111,8 +78,8 @@ describe("<SettingsForm>", () => {
     });
     expect(updateSettings).toHaveBeenCalledTimes(1);
 
-    fireEvent.change(targetRole, {
-      target: { value: "VP Engineering" },
+    fireEvent.change(applyConcurrency, {
+      target: { value: "5" },
     });
     const request = updateSettings.mock.calls[0]?.[0];
     await act(async () => {
@@ -124,32 +91,55 @@ describe("<SettingsForm>", () => {
       await Promise.resolve();
     });
 
-    expect(targetRole).toHaveValue("VP Engineering");
+    expect(applyConcurrency).toHaveValue(5);
     expect(screen.getByText("saved; newer changes pending")).toBeInTheDocument();
   });
+});
 
-  it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {
-    const { rerender } = renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
-
-    const targetRole = screen.getByLabelText("Target role");
-    fireEvent.change(targetRole, {
-      target: { value: "VP Engineering" },
-    });
-
-    rerender(
-      <SettingsForm
-        initial={{
-          ...sampleSettingsResponse.settings,
-          targetRole: "Engineering Director",
-        }}
-      />,
-    );
-
-    expect(targetRole).toHaveValue("VP Engineering");
+describe("<DiscoveryAutomationSettingsForm>", () => {
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("undos checkbox setting changes with the keyboard shortcut", async () => {
-    renderWithProviders(<SettingsForm initial={sampleSettingsResponse.settings} />);
+  it("renders Discovery automation controls without duplicated targeting filters", () => {
+    const { container } = renderWithProviders(
+      <DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />,
+    );
+
+    expect(screen.getByLabelText("Minimum fit score")).toHaveValue(7);
+    expect(screen.getByLabelText("Auto apply")).not.toBeChecked();
+    expect(screen.queryByLabelText("Apply concurrency")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Scoring rubric" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Ranking priorities")).not.toBeInTheDocument();
+    expect(screen.queryByText("Exclusions")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Exclude onsite-only")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Exclude junior roles")).not.toBeInTheDocument();
+    expect(container.querySelector("textarea")).not.toBeInTheDocument();
+  });
+
+  it("saves automation settings as a partial settings update", async () => {
+    const updateSettings = vi.fn(async (request): Promise<SettingsResponse> => ({
+      ok: true,
+      settings: { ...sampleSettingsResponse.settings, ...request },
+      paths: sampleSettingsResponse.paths,
+    }));
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />, {
+      ports: buildTestPorts({ api: { updateSettings } }),
+    });
+
+    fireEvent.change(screen.getByLabelText("Minimum fit score"), {
+      target: { value: "9" },
+    });
+    fireEvent.click(screen.getByLabelText("Auto apply"));
+    fireEvent.click(screen.getByRole("button", { name: /^save automation settings$/i }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+    expect(updateSettings).toHaveBeenCalledWith({ autoApply: true, minFitScore: 9 });
+  });
+
+  it("undos automation checkbox changes with the keyboard shortcut", async () => {
+    renderWithProviders(<DiscoveryAutomationSettingsForm initial={sampleSettingsResponse.settings} />);
 
     const autoApply = screen.getByLabelText("Auto apply");
     fireEvent.click(autoApply);
@@ -158,45 +148,5 @@ describe("<SettingsForm>", () => {
     fireEvent.keyDown(autoApply, { key: "z", metaKey: true });
 
     await waitFor(() => expect(autoApply).not.toBeChecked());
-  });
-});
-
-describe("scoring rubric serialization", () => {
-  it("maps legacy criteria text into controlled rubric values", () => {
-    const rubric = parseScoringRubric(
-      "Prioritize platform reliability, security, and engineering leadership.",
-      "Director-plus infrastructure roles.",
-    );
-
-    expect(rubric.priorities).toEqual(["leadership_scope", "platform_reliability", "security_compliance"]);
-    expect(rubric.seniority).toBe("director_plus");
-  });
-
-  it("builds deterministic score and target criteria from selected controls", () => {
-    const rubric = parseScoringRubric("", "");
-    rubric.company = "startup_scaleup";
-    rubric.exclusions = ["junior_roles"];
-    rubric.priorities = ["technical_depth", "business_impact"];
-    rubric.seniority = "current_or_above";
-    rubric.stretch = "conservative";
-
-    expect(buildScoreCriteriaText(rubric)).toContain("Prioritize hands-on technical depth");
-    expect(buildScoreCriteriaText(rubric)).toContain("Favor startup or scale-up");
-    expect(buildTargetCriteriaText(rubric)).toContain("Exclude junior, entry-level");
-  });
-
-  it("round-trips generated criteria without broad alias matches", () => {
-    const rubric = parseScoringRubric("", "");
-    rubric.company = "regulated";
-    rubric.exclusions = ["onsite_only"];
-    rubric.priorities = ["security_compliance"];
-    rubric.seniority = "executive";
-
-    const generatedRubric = parseScoringRubric(
-      buildScoreCriteriaText(rubric),
-      buildTargetCriteriaText(rubric),
-    );
-
-    expect(generatedRubric).toEqual(rubric);
   });
 });

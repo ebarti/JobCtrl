@@ -553,10 +553,10 @@ Create or update the Candidate Profile through the local Profile page or the
 resume-import flow so profile data, rendering settings, and template text are
 stored in SQLite.
 
-Profile, Preferences, Discovery target search, and Settings forms autosave five
-seconds after the last edit through the same local API mutations as the Save
-buttons. Checkbox, select, and other non-text setting controls keep an
-in-session undo history for Ctrl+Z / Cmd+Z.
+Profile, Preferences, Discovery target search, Discovery automation settings,
+and Settings forms autosave five seconds after the last edit through the same
+local API mutations as the Save buttons. Checkbox, select, and other non-text
+setting controls keep an in-session undo history for Ctrl+Z / Cmd+Z.
 
 Preferences includes resume tailoring controls for claim mode, auto-approvable
 claim modes, adjacent achievement drafts, writing style, and custom tailoring
@@ -569,7 +569,9 @@ claims remain review material.
 Discovery runtime settings are edited on the Discovery page and stored in the
 SQLite `discovery_settings` table. JobSpy board selection uses the `boards`
 field in that row, and target roles/locations from the Discovery target-search
-form are overlaid by the worker before any source persists jobs.
+form are overlaid by the worker before any source persists jobs. The Discovery
+page also owns the automation settings for minimum fit score and auto apply;
+the Settings page keeps execution controls such as apply concurrency.
 
 The legacy `sites` key is still accepted for the compatibility window and logs
 a warning instead of failing. When both keys are present, `boards` wins. The
