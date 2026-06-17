@@ -270,6 +270,8 @@ export function addressSelectionFromGooglePlace(
   const streetAddress = componentLongName(components, "street_address");
   const formattedAddress = (place.formattedAddress ?? place.formatted_address)?.split(",").at(0)?.trim() ?? "";
   const address = [streetNumber, route].filter(Boolean).join(" ") || streetAddress || formattedAddress || typedAddress;
+  const country = componentLongName(components, "country");
+  const countryCode = componentShortName(components, "country");
 
   return {
     address,
@@ -278,17 +280,33 @@ export function addressSelectionFromGooglePlace(
       componentLongName(components, "postal_town") ||
       componentLongName(components, "sublocality_level_1") ||
       componentLongName(components, "administrative_area_level_2"),
-    country: componentLongName(components, "country"),
+    country,
     postalCode: [componentLongName(components, "postal_code"), componentLongName(components, "postal_code_suffix")]
       .filter(Boolean)
       .join("-"),
-    provinceState: componentLongName(components, "administrative_area_level_1"),
+    provinceState: isUnitedStatesCountry(country, countryCode)
+      ? componentLongName(components, "administrative_area_level_1")
+      : "",
   };
 }
 
 function componentLongName(components: GoogleAddressComponent[], type: string): string {
   const component = components.find((candidate) => candidate.types.includes(type));
   return component?.longText ?? component?.long_name ?? "";
+}
+
+function componentShortName(components: GoogleAddressComponent[], type: string): string {
+  const component = components.find((candidate) => candidate.types.includes(type));
+  return component?.shortText ?? component?.short_name ?? "";
+}
+
+function isUnitedStatesCountry(country: string, countryCode: string): boolean {
+  const normalizedCountryCode = countryCode.trim().toUpperCase();
+  if (normalizedCountryCode === "US" || normalizedCountryCode === "USA") {
+    return true;
+  }
+  const normalizedCountry = country.trim().toLowerCase();
+  return normalizedCountry === "united states" || normalizedCountry === "united states of america";
 }
 
 function addressStatusText(

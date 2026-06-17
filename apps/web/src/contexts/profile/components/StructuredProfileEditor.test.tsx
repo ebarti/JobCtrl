@@ -15,7 +15,7 @@ const googleAddressSelection = vi.hoisted(() => ({
     city: "Cabrera de Mar",
     country: "Spain",
     postalCode: "08349",
-    provinceState: "Catalunya",
+    provinceState: "",
   },
 }));
 
@@ -144,7 +144,7 @@ describe("<StructuredProfileEditor>", () => {
       city: "Cabrera de Mar",
       country: "Spain",
       postal_code: "08349",
-      province_state: "Catalunya",
+      province_state: "",
     });
 
     googleAddressSelection.current = {

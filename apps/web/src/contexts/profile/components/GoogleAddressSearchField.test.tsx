@@ -29,7 +29,7 @@ describe("<GoogleAddressSearchField>", () => {
     expect(screen.getByText("manual")).toBeInTheDocument();
   });
 
-  it("maps a selected Google address into the profile address fields", () => {
+  it("maps a selected non-US Google address without province/state", () => {
     expect(
       addressSelectionFromGooglePlace(
         {
@@ -49,7 +49,39 @@ describe("<GoogleAddressSearchField>", () => {
       city: "Cabrera de Mar",
       country: "Spain",
       postalCode: "08349",
-      provinceState: "Barcelona",
+      provinceState: "",
+    });
+  });
+
+  it("maps a selected US Google address with state", () => {
+    expect(
+      addressSelectionFromGooglePlace(
+        {
+          addressComponents: [
+            { longText: "1600", shortText: "1600", types: ["street_number"] },
+            {
+              longText: "Pennsylvania Avenue Northwest",
+              shortText: "Pennsylvania Ave NW",
+              types: ["route"],
+            },
+            { longText: "Washington", shortText: "Washington", types: ["locality"] },
+            {
+              longText: "District of Columbia",
+              shortText: "DC",
+              types: ["administrative_area_level_1"],
+            },
+            { longText: "United States", shortText: "US", types: ["country"] },
+            { longText: "20500", shortText: "20500", types: ["postal_code"] },
+          ],
+        },
+        "1600 Pennsylvania Ave NW",
+      ),
+    ).toEqual({
+      address: "1600 Pennsylvania Avenue Northwest",
+      city: "Washington",
+      country: "United States",
+      postalCode: "20500",
+      provinceState: "District of Columbia",
     });
   });
 
@@ -118,7 +150,7 @@ describe("<GoogleAddressSearchField>", () => {
       city: "Cabrera de Mar",
       country: "Spain",
       postalCode: "08349",
-      provinceState: "Barcelona",
+      provinceState: "",
     });
     expect(screen.getByText("validated")).toBeInTheDocument();
   });
