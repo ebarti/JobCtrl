@@ -374,18 +374,10 @@ export function StructuredProfileEditor({
     const applyAddressSelection = (selection: GoogleAddressSelection) => {
       updateProfileDraft((draft) => {
         setPathValue(draft, "personal.address", selection.address);
-        if (selection.city) {
-          setPathValue(draft, "personal.city", selection.city);
-        }
-        if (selection.provinceState) {
-          setPathValue(draft, "personal.province_state", selection.provinceState);
-        }
-        if (selection.country) {
-          setPathValue(draft, "personal.country", selection.country);
-        }
-        if (selection.postalCode) {
-          setPathValue(draft, "personal.postal_code", selection.postalCode);
-        }
+        setPathValue(draft, "personal.city", selection.city);
+        setPathValue(draft, "personal.province_state", selection.provinceState);
+        setPathValue(draft, "personal.country", selection.country);
+        setPathValue(draft, "personal.postal_code", selection.postalCode);
       });
     };
 
@@ -932,10 +924,12 @@ export function StructuredProfileEditor({
               {textField("personal.email", "Email", "email", { required: true })}
               {textField("personal.phone", "Phone", "tel")}
               {addressSearchField()}
-              {textField("personal.city", "City")}
-              {textField("personal.province_state", "State / province")}
-              {textField("personal.country", "Country")}
-              {textField("personal.postal_code", "Postal code")}
+              {textField("personal.city", "City", "text", { autoComplete: "address-level2" })}
+              {textField("personal.province_state", "State / province", "text", {
+                autoComplete: "address-level1",
+              })}
+              {textField("personal.country", "Country", "text", { autoComplete: "country-name" })}
+              {textField("personal.postal_code", "Postal code", "text", { autoComplete: "postal-code" })}
               {textField("personal.linkedin_url", "LinkedIn URL", "url")}
               {textField("personal.github_url", "GitHub URL", "url")}
               {textField("personal.portfolio_url", "Portfolio URL", "url")}

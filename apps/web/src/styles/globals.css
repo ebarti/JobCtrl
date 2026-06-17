@@ -379,21 +379,74 @@ textarea:focus-visible {
   appearance: textfield;
 }
 
+.google-address-label-row {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.google-address-label-row label {
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
 .google-address-widget-host,
 .google-address-widget {
   width: 100%;
 }
 
 .google-address-widget-host {
-  min-height: 35px;
+  display: flex;
+  min-height: 33px;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--popover);
+}
+
+.google-address-widget-host:focus-within {
+  border-color: var(--ring);
 }
 
 .google-address-widget {
   display: block;
+  min-width: 0;
+  flex: 1;
+  min-height: 33px;
+  color: var(--foreground);
+  color-scheme: light;
+  font: inherit;
+}
+
+:root[data-theme="dark"] .google-address-widget {
+  color-scheme: dark;
+}
+
+.google-address-widget::part(input),
+.google-address-widget::part(text-field) {
+  min-height: 33px;
+  border-color: var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--popover);
+  color: var(--foreground);
+  font: inherit;
+}
+
+.google-address-widget::part(input):focus-visible,
+.google-address-widget::part(text-field):focus-visible {
+  border-color: var(--ring);
+}
+
+.address-validation-status {
+  min-height: 0;
+  flex: 0 0 auto;
 }
 
 .address-validation-status.validated {
-  color: var(--status-success);
+  color: var(--success);
 }
 
 .address-validation-status.error {

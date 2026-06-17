@@ -226,7 +226,16 @@ export function GoogleAddressSearchField({
 
   return (
     <div className="field google-address-field">
-      <label htmlFor={ADDRESS_INPUT_ID}>Address</label>
+      <div className="google-address-label-row">
+        <label htmlFor={ADDRESS_INPUT_ID}>Address</label>
+        <span
+          className={`field-hint address-validation-status ${status}`}
+          id={ADDRESS_STATUS_ID}
+          role={status === "error" ? "alert" : "status"}
+        >
+          {statusText}
+        </span>
+      </div>
       <div className="google-address-widget-host" hidden={!showGoogleWidget} ref={widgetHostRef} />
       {!showGoogleWidget ? (
         <input
@@ -243,13 +252,6 @@ export function GoogleAddressSearchField({
           }}
         />
       ) : null}
-      <span
-        className={`field-hint address-validation-status ${status}`}
-        id={ADDRESS_STATUS_ID}
-        role={status === "error" ? "alert" : "status"}
-      >
-        {statusText}
-      </span>
     </div>
   );
 }
