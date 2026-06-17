@@ -23,6 +23,9 @@ The web Profile, Preferences, Discovery target search, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
+The Preferences Application configurations section owns the user-editable
+Location filter control and persists it through the local settings mutation;
+the Settings page keeps the remaining scoring and targeting runtime controls.
 When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
 Address field progressively enhances into a Google Maps Places address search.
 Selecting a Google result updates the existing address, city, state/province,

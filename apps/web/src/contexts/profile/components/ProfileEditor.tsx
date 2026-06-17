@@ -86,10 +86,18 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
           }
         />
         {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-        {profileQuery.data ? (
-          <ProfileForm initial={profileQuery.data} section={section} />
+        {profileQuery.data && (section !== "preferences" || settingsQuery.data) ? (
+          section === "preferences" && settingsQuery.data ? (
+            <ProfileForm
+              initial={profileQuery.data}
+              section={section}
+              settings={settingsQuery.data.settings}
+            />
+          ) : (
+            <ProfileForm initial={profileQuery.data} section={section} />
+          )
         ) : (
-          <Empty title="Loading profile." />
+          <Empty title={section === "preferences" ? "Loading preferences." : "Loading profile."} />
         )}
       </section>
       {showPreview ? (

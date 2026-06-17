@@ -23,6 +23,7 @@ describe("<SettingsForm>", () => {
       ports: buildTestPorts({ api: { updateSettings } }),
     });
 
+    expect(screen.queryByLabelText("Location filter")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Target role"), {
       target: { value: "Engineering Director" },
     });

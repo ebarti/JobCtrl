@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 
 import {
@@ -119,6 +119,7 @@ const TARGET_LOCATION_LABEL = "Locations and work models";
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
 
 export interface StructuredProfileEditorProps {
+  applicationConfigurationFields?: ReactNode;
   mode?: "profile" | "preferences" | "target-search";
   profileText: string;
   styleText: string;
@@ -127,6 +128,7 @@ export interface StructuredProfileEditorProps {
 }
 
 export function StructuredProfileEditor({
+  applicationConfigurationFields,
   mode = "profile",
   profileText,
   styleText,
@@ -1327,8 +1329,9 @@ export function StructuredProfileEditor({
       ) : (
         <>
           <section className="form-section">
-            <h3>Application defaults</h3>
+            <h3>Application configurations</h3>
             <div className="field-grid">
+              {applicationConfigurationFields}
               {selectField("work_authorization.legally_authorized_to_work", "Legally authorized to work", [
                 "Yes",
                 "No",

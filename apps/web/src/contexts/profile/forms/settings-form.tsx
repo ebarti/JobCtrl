@@ -13,19 +13,20 @@ export interface SettingsFormProps {
   initial: DashboardSettings;
 }
 
-function toFormValues(values: DashboardSettings): SettingsUpdateRequest {
+type SettingsFormValues = Omit<SettingsUpdateRequest, "locationFilter">;
+
+function toFormValues(values: DashboardSettings): SettingsFormValues {
   return {
     minFitScore: values.minFitScore,
     autoApply: values.autoApply,
     applyConcurrency: values.applyConcurrency,
     targetRole: values.targetRole,
-    locationFilter: values.locationFilter,
     scoreCriteria: values.scoreCriteria,
     targetCriteria: values.targetCriteria,
   };
 }
 
-function serializeSettingsValues(values: SettingsUpdateRequest): string {
+function serializeSettingsValues(values: SettingsFormValues): string {
   return JSON.stringify(values);
 }
 
@@ -137,18 +138,6 @@ export function SettingsForm({ initial }: SettingsFormProps) {
         {(field) => (
           <label className="field">
             <span>Target role</span>
-            <input
-              value={field.state.value ?? ""}
-              onBlur={field.handleBlur}
-              onChange={(event) => field.handleChange(event.target.value)}
-            />
-          </label>
-        )}
-      </form.Field>
-      <form.Field name="locationFilter">
-        {(field) => (
-          <label className="field">
-            <span>Location filter</span>
             <input
               value={field.state.value ?? ""}
               onBlur={field.handleBlur}

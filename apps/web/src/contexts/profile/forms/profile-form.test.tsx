@@ -2,7 +2,10 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import {
+  sampleProfileResponse,
+  sampleSettingsResponse,
+} from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { ProfileForm } from "./profile-form.js";
@@ -18,7 +21,7 @@ describe("<ProfileForm>", () => {
     });
 
     expect(await screen.findByRole("heading", { name: "Personal information" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Application defaults" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Application configurations" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Target role")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "preferences" })).not.toBeInTheDocument();
   });
@@ -92,13 +95,47 @@ describe("<ProfileForm>", () => {
   });
 
   it("renders preferences as their own section", async () => {
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="preferences" />);
+    renderWithProviders(
+      <ProfileForm
+        initial={sampleProfileResponse}
+        section="preferences"
+        settings={sampleSettingsResponse.settings}
+      />,
+    );
 
-    expect(await screen.findByRole("heading", { name: "Application defaults" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Application configurations" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Location filter")).toHaveValue("Remote");
     expect(screen.getByRole("heading", { name: "Tailoring controls" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Target search" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Target tracks" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
+  });
+
+  it("saves the Preferences location filter through settings", async () => {
+    const user = userEvent.setup();
+    const updateProfile = vi.fn(async () => sampleProfileResponse);
+    const updateSettings = vi.fn(async (request) => ({
+      ...sampleSettingsResponse,
+      settings: { ...sampleSettingsResponse.settings, ...request },
+    }));
+    renderWithProviders(
+      <ProfileForm
+        initial={sampleProfileResponse}
+        section="preferences"
+        settings={sampleSettingsResponse.settings}
+      />,
+      {
+        ports: buildTestPorts({ api: { updateProfile, updateSettings } }),
+      },
+    );
+
+    const locationFilter = await screen.findByLabelText("Location filter");
+    await user.clear(locationFilter);
+    await user.type(locationFilter, "Barcelona, Spain");
+    await user.click(screen.getByRole("button", { name: /^save all$/i }));
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ locationFilter: "Barcelona, Spain" }));
+    expect(updateProfile).not.toHaveBeenCalled();
   });
 
   it("renders target search as a discovery settings section", async () => {
@@ -122,7 +159,7 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("group", { name: "Target work model 1" })).toBeInTheDocument();
     expect(screen.getByLabelText("Remote")).toBeInTheDocument();
     expect(screen.getByLabelText("Hybrid")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Application defaults" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Application configurations" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Personal information" })).not.toBeInTheDocument();
   });
 
