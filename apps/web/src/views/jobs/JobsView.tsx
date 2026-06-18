@@ -316,14 +316,12 @@ export function JobsView() {
     : restoring
       ? restoreJobs
       : deleteJobs;
-  const bulkMutationBusy =
+  const selectionMutationBusy =
     deleteJobs.isPending ||
     hideJobs.isPending ||
     permanentlyDeleteJobs.isPending ||
     restoreJobs.isPending ||
-    unhideJobs.isPending ||
-    retryFailedJobs.isPending ||
-    runPendingPreparation.isPending;
+    unhideJobs.isPending;
 
   const selectedPayloads = (): BulkJobMutationRequest[] =>
     allMatchingSelected
@@ -536,7 +534,9 @@ export function JobsView() {
           hasItems={visiblePageKeys.length > 0}
           hasAnyMatching={Boolean(data?.pagination.total)}
           hasLocalFilters={hasLocalFilters}
-          loading={bulkMutationBusy}
+          loading={selectionMutationBusy}
+          retryLoading={retryFailedJobs.isPending}
+          pendingPreparationLoading={runPendingPreparation.isPending}
           onSetDeleted={(deleted) => setSearch({ deleted, page: 1 })}
           onSelectPage={selectPage}
           onSelectAllMatching={selectAllMatching}

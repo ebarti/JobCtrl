@@ -13,6 +13,8 @@ export interface JobBulkActionsProps {
   hasAnyMatching: boolean;
   hasLocalFilters?: boolean;
   loading: boolean;
+  retryLoading?: boolean;
+  pendingPreparationLoading?: boolean;
   onSetDeleted: (deleted: JobsSearch["deleted"]) => void;
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
@@ -37,6 +39,8 @@ export function JobBulkActions({
   hasAnyMatching,
   hasLocalFilters = false,
   loading,
+  retryLoading = loading,
+  pendingPreparationLoading = loading,
   onSetDeleted,
   onSelectPage,
   onSelectAllMatching,
@@ -155,7 +159,7 @@ export function JobBulkActions({
           <button
             className="tab on"
             type="button"
-            disabled={!selectedCount || loading}
+            disabled={!selectedCount || retryLoading}
             onClick={onRetryFailedSelected}
           >
             retry selected
@@ -166,7 +170,7 @@ export function JobBulkActions({
           <button
             className="tab"
             type="button"
-            disabled={hasLocalFilters || loading}
+            disabled={hasLocalFilters || pendingPreparationLoading}
             onClick={onRunPendingPreparation}
           >
             continue pending prep
@@ -174,7 +178,7 @@ export function JobBulkActions({
           <button
             className="tab"
             type="button"
-            disabled={hasLocalFilters || loading}
+            disabled={hasLocalFilters || retryLoading}
             onClick={onRetryAllFailed}
           >
             retry all failed
