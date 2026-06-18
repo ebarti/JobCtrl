@@ -14,6 +14,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkRunPendingPreparationRequest,
+  BulkRunPendingPreparationResponse,
+  BulkRetryFailedRequest,
+  BulkRetryFailedResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
@@ -174,7 +178,8 @@ export interface ApiClientPort {
   hideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
   unhideJob(jobKey: string): Promise<JobMutationResponse>;
   unhideJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
-  retryFailedJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse>;
+  retryFailedJobs(body: BulkRetryFailedRequest): Promise<BulkRetryFailedResponse>;
+  runPendingPreparation(body: BulkRunPendingPreparationRequest): Promise<BulkRunPendingPreparationResponse>;
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse>;
   resetStaleScoresForRescore(
     body: ResetStaleScoresForRescoreRequest,

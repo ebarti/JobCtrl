@@ -14,6 +14,10 @@ import type {
   ArtifactOpenResponse,
   ArtifactSummary,
   BulkJobMutationRequest,
+  BulkRunPendingPreparationRequest,
+  BulkRunPendingPreparationResponse,
+  BulkRetryFailedRequest,
+  BulkRetryFailedResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
@@ -328,8 +332,12 @@ export class JobHunterApiClient {
     return this.post("/v1/jobs/bulk-unhide", body);
   }
 
-  retryFailedJobs(body: BulkJobMutationRequest): Promise<JobMutationResponse> {
+  retryFailedJobs(body: BulkRetryFailedRequest): Promise<BulkRetryFailedResponse> {
     return this.post("/v1/jobs/bulk-retry-failed", body);
+  }
+
+  runPendingPreparation(body: BulkRunPendingPreparationRequest): Promise<BulkRunPendingPreparationResponse> {
+    return this.post("/v1/jobs/bulk-run-pending-preparation", body);
   }
 
   correctScore(jobKey: string, body: CorrectScoreRequest): Promise<CorrectScoreResponse> {

@@ -402,6 +402,15 @@ export const handlers = [
     const body = (await request.json()) as { jobKeys?: string[] };
     return HttpResponse.json(jobMutationResponse(body.jobKeys ?? []));
   }),
+  http.post("*/v1/jobs/bulk-run-pending-preparation", async ({ request }) => {
+    const body = (await request.json()) as { jobKeys?: string[] };
+    return HttpResponse.json({
+      ...jobMutationResponse(body.jobKeys ?? []),
+      stageCounts: {},
+      status: "accepted",
+      actions: [],
+    });
+  }),
   http.get("*/v1/jobs/:jobKey", ({ params }) =>
     HttpResponse.json(makeJobDetail({
       ...makeJobsPage().items[0]!,

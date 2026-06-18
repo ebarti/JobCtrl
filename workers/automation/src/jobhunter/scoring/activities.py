@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 import time
 from typing import Any
@@ -140,13 +141,24 @@ def _run_selected_scores(payload: ScoreActivityInput) -> dict[str, Any]:
     t0 = time.time()
     errors: dict[str, str] = {}
     scored = 0
-    for url in urls:
-        outcome = score_job_by_url(
+
+    def score_one(url: str):
+        return url, score_job_by_url(
             url,
             tenant_id=TenantId(payload.tenant_id),
             rescore=payload.rescore,
             llm_model=payload.llm_model,
         )
+
+    worker_count = max(1, int(payload.workers or 1))
+    if worker_count == 1 or len(urls) <= 1:
+        results = [score_one(url) for url in urls]
+    else:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(score_one, url) for url in urls]
+            results = [future.result() for future in as_completed(futures)]
+
+    for url, outcome in results:
         if outcome.ok:
             scored += 1
         else:

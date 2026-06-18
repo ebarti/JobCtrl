@@ -258,12 +258,17 @@ In the local web UI, dashboard KPIs open matching Jobs filters. Failures opens
 failed jobs so you can retry selected failures or retry all currently matching
 failed jobs after confirmation. The active Jobs toolbar keeps `retry all failed`
 available outside the failed-state filter; it retries failed jobs matching the
-current non-state filters. Viewing the Jobs page also picks up eligible visible
-pending preparation substages (`enrich`, `score`, `tailor`, or `cover`) by
-starting the job-scoped pipeline at that substage. This pickup is paced and
-eligibility-gated, so a page of pending rows does not start skip-only worker
-runs for jobs that are not ready for the requested substage. A retry from a job
-detail drawer resumes
+current non-state filters. Bulk failed retries reset the failed preparation
+substage and immediately queue grouped preparation workflows for `enrich`,
+`score`, `tailor`, or `cover` with the worker count from the saved pipeline
+controls. The same toolbar also exposes `continue pending prep`, which queues
+eligible active pending preparation work without resetting failures. Both bulk
+actions run only preparation substages (`enrich`, `score`, `tailor`, or
+`cover`) and do not auto-run `apply`. Viewing the Jobs page also picks up
+eligible visible pending preparation substages by starting the job-scoped
+pipeline at that substage. This pickup is paced and eligibility-gated, so a
+page of pending rows does not start skip-only worker runs for jobs that are not
+ready for the requested substage. A retry from a job detail drawer resumes
 the remaining preparation pipeline for that job (`enrich` -> `score` ->
 `tailor` -> `cover`, starting at the retried stage); application submission
 remains a separate explicit action. Cover remains retryable preparation work,
@@ -420,6 +425,9 @@ The Vite dev server proxies `/v1/*` to the local API by default. Set
 The Jobs tab can filter by stage, state, and fit-score range. Its source column
 shows the posting owner and the discovery source separately when available, so
 broad-board results can be distinguished from canonical employer or ATS sources.
+Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
+Debug activity, expose resizable column handles in the headers so long local
+data can be inspected without changing code or global density settings.
 
 The Jobs tab separates posting lifecycle state from manual suppression. Closed
 jobs are postings the system verified as unavailable, expired, removed, or

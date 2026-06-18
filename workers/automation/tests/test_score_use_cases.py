@@ -132,6 +132,7 @@ class _ScriptedLlm:
     def __init__(self, *responses: dict) -> None:
         self._queue: list[dict] = [dict(r) for r in responses]
         self.calls: list[list[LlmMessage]] = []
+        self.kwargs: list[dict[str, Any]] = []
 
     def chat(  # pragma: no cover — structured-output cutover routes through chat_json
         self,
@@ -156,6 +157,15 @@ class _ScriptedLlm:
         thinking_budget=None,
     ) -> dict:
         self.calls.append(list(messages))
+        self.kwargs.append(
+            {
+                "response_schema": response_schema,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "thinking_budget": thinking_budget,
+            }
+        )
         if not self._queue:
             raise AssertionError("ScriptedLlm exhausted")
         return self._queue.pop(0)
@@ -532,6 +542,20 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
     assert len(received) == 1
     assert received[0].event_type == "JobScored"
     assert received[0].payload["fit_score"] == 8
+
+
+def test_score_job_omits_structured_output_token_cap(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=_job(),
+        profile_snapshot=profile_snapshot,
+    )
+
+    assert outcome.ok is True
+    assert llm.kwargs[0]["max_tokens"] is None
+    assert llm.kwargs[0]["thinking_budget"] == 0
 
 
 def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_snapshot) -> None:

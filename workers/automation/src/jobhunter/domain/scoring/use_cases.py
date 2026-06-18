@@ -76,6 +76,7 @@ log = logging.getLogger(__name__)
 
 SCORE_PROMPT_VERSION = "score-fit-assessment-v2"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v2"
+SCORE_THINKING_BUDGET = 0
 
 
 SCORE_PROMPT = """You are a job fit evaluator for an applicant-side local tool. Given a candidate profile, saved scoring criteria, and a job description, produce an explainable fit assessment.
@@ -624,9 +625,9 @@ class ScoreJobUseCase:
             ),
         ]
         # Structured outputs: the LLM gateway returns a JSON object that
-        # already conforms to SCORE_SCHEMA. max_tokens is generous because
-        # Gemini thinking models spend invisible tokens on internal
-        # reasoning before emitting the schema fill.
+        # already conforms to SCORE_SCHEMA. Do not pass max_tokens here:
+        # long postings plus requirement assessments need room to emit the
+        # full schema fill.
         with otel_trace.get_tracer("jobhunter.scoring").start_as_current_span("scoring.score_job") as span:
             span.set_attribute("langfuse.observation.type", "span")
             span.set_attribute("jobhunter.scoring.prompt_version", SCORE_PROMPT_VERSION)
@@ -638,8 +639,8 @@ class ScoreJobUseCase:
                 payload = self._llm.chat_json(
                     messages,
                     response_schema=SCORE_SCHEMA,
-                    max_tokens=4096,
                     temperature=0.2,
+                    thinking_budget=SCORE_THINKING_BUDGET,
                 )
             except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
                 log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)

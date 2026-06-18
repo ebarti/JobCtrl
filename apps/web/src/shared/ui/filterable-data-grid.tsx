@@ -5,7 +5,16 @@ import {
   IconTable,
   IconX,
 } from "@tabler/icons-react";
-import { type MouseEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   Dialog,
@@ -46,6 +55,9 @@ export interface DataGridColumn<TData> {
   className?: string;
   headerClassName?: string;
   filterValueLimit?: number;
+  width?: number;
+  minWidth?: number;
+  maxWidth?: number;
   rowHeader?: boolean;
 }
 
@@ -99,6 +111,7 @@ export interface FilterableDataGridProps<TData> {
   summary?: ReactNode;
   toolbarActions?: ReactNode;
   tableClassName?: string;
+  resizableColumns?: boolean;
   rowClassName?: (row: TData) => string | undefined;
   rowAriaSelected?: (row: TData) => boolean;
   onRowActivate?: (row: TData) => void;
@@ -162,6 +175,15 @@ function shouldIgnoreRowActivation(event: MouseEvent<HTMLElement>): boolean {
     return true;
   }
   return event.target instanceof Element && Boolean(event.target.closest(ROW_ACTIVATION_IGNORE_SELECTOR));
+}
+
+function classNames(...values: Array<string | undefined | false>): string | undefined {
+  const joined = values.filter(Boolean).join(" ");
+  return joined || undefined;
+}
+
+function clampWidth(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 export function isActiveDataGridFilter(
@@ -336,6 +358,7 @@ export function FilterableDataGrid<TData>({
   summary,
   toolbarActions,
   tableClassName,
+  resizableColumns = true,
   rowClassName,
   rowAriaSelected,
   onRowActivate,
@@ -348,6 +371,9 @@ export function FilterableDataGrid<TData>({
   const [localPage, setLocalPage] = useState(1);
   const [localPageSize, setLocalPageSize] = useState(initialPageSize);
   const [valueQueries, setValueQueries] = useState<Record<string, string>>({});
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const stopColumnResizeRef = useRef<(() => void) | null>(null);
   const sort = controlledSort ?? localSort;
   const filters = controlledFilters ?? localFilters;
   const paginationEnabled = paginate || Boolean(pagination);
@@ -450,6 +476,23 @@ export function FilterableDataGrid<TData>({
     onPageRowsChange?.(pageRows);
   }, [onPageRowsChange, pageRows]);
 
+  useEffect(() => {
+    setColumnWidths((current) => {
+      const columnIds = new Set(columns.map((column) => column.id));
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([columnId]) => columnIds.has(columnId)),
+      );
+      return Object.keys(next).length === Object.keys(current).length ? current : next;
+    });
+  }, [columns]);
+
+  useEffect(
+    () => () => {
+      stopColumnResizeRef.current?.();
+    },
+    [],
+  );
+
   const setFilters = (
     updater: (current: DataGridFilterState) => DataGridFilterState,
   ) => {
@@ -522,11 +565,109 @@ export function FilterableDataGrid<TData>({
     }
   };
 
+  const measuredColumnWidths = () => {
+    const widths: Record<string, number> = {};
+    tableRef.current
+      ?.querySelectorAll<HTMLElement>("thead th[data-column-id]")
+      .forEach((header) => {
+        const columnId = header.dataset["columnId"];
+        if (!columnId) return;
+        const measured = Math.round(header.getBoundingClientRect().width);
+        if (measured > 0) {
+          widths[columnId] = measured;
+        }
+      });
+    for (const column of columns) {
+      if (widths[column.id] === undefined && column.width !== undefined) {
+        widths[column.id] = column.width;
+      }
+    }
+    return widths;
+  };
+
+  const resizeColumnBy = (column: DataGridColumn<TData>, delta: number) => {
+    const minWidth = column.minWidth ?? 56;
+    const maxWidth = column.maxWidth ?? 1600;
+    const measured = measuredColumnWidths();
+    setColumnWidths((current) => {
+      const currentWidth =
+        current[column.id] ?? measured[column.id] ?? column.width ?? minWidth;
+      return {
+        ...measured,
+        ...current,
+        [column.id]: clampWidth(currentWidth + delta, minWidth, maxWidth),
+      };
+    });
+  };
+
+  const startColumnResize = (
+    column: DataGridColumn<TData>,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => {
+    if (!resizableColumns) return;
+    event.preventDefault();
+    event.stopPropagation();
+    stopColumnResizeRef.current?.();
+
+    const minWidth = column.minWidth ?? 56;
+    const maxWidth = column.maxWidth ?? 1600;
+    const startingWidths = measuredColumnWidths();
+    const startWidth = columnWidths[column.id] ?? startingWidths[column.id] ?? column.width ?? minWidth;
+    const startX = event.clientX;
+
+    setColumnWidths((current) => ({ ...startingWidths, ...current }));
+    document.body.classList.add("data-grid-column-resizing");
+
+    const stopResize = () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      document.body.classList.remove("data-grid-column-resizing");
+      stopColumnResizeRef.current = null;
+    };
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampWidth(
+        startWidth + moveEvent.clientX - startX,
+        minWidth,
+        maxWidth,
+      );
+      setColumnWidths((current) => ({
+        ...startingWidths,
+        ...current,
+        [column.id]: nextWidth,
+      }));
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    stopColumnResizeRef.current = stopResize;
+  };
+
+  const handleColumnResizeKeyDown = (
+    column: DataGridColumn<TData>,
+    event: KeyboardEvent<HTMLButtonElement>,
+  ) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 40 : 16;
+    resizeColumnBy(column, event.key === "ArrowLeft" ? -step : step);
+  };
+
   const summaryText = pagination
     ? `${data.length} shown / ${totalRows ?? data.length} total`
     : paginationEnabled
       ? `${pageRows.length} shown / ${visibleRows.length} filtered / ${data.length} loaded`
       : `${visibleRows.length} shown / ${data.length} loaded`;
+  const columnWidthTotal = resizableColumns
+    ? columns.reduce((total, column) => total + (columnWidths[column.id] ?? column.width ?? 0), 0)
+    : 0;
+  const tableStyle = columnWidthTotal
+    ? { width: `max(100%, ${columnWidthTotal}px)` }
+    : undefined;
 
   return (
     <div className="filterable-data-grid">
@@ -565,12 +706,28 @@ export function FilterableDataGrid<TData>({
       ) : null}
       <div className="filterable-data-grid-scroll">
         <table
+          ref={tableRef}
           className={
             tableClassName
               ? `filterable-data-grid-table ${tableClassName}`
               : "filterable-data-grid-table"
           }
+          style={tableStyle}
         >
+          {resizableColumns ? (
+            <colgroup>
+              {columns.map((column) => {
+                const width = columnWidths[column.id] ?? column.width;
+                return (
+                  <col
+                    key={column.id}
+                    data-column-id={column.id}
+                    style={width ? { width: `${width}px` } : undefined}
+                  />
+                );
+              })}
+            </colgroup>
+          ) : null}
           <thead>
             <tr>
               {columns.map((column) => {
@@ -588,6 +745,7 @@ export function FilterableDataGrid<TData>({
                 return (
                   <th
                     key={column.id}
+                    data-column-id={column.id}
                     aria-sort={
                       active
                         ? sort.direction === "asc"
@@ -597,7 +755,10 @@ export function FilterableDataGrid<TData>({
                           ? "none"
                           : undefined
                     }
-                    className={column.headerClassName}
+                    className={classNames(
+                      column.headerClassName,
+                      resizableColumns && "data-grid-column-resizable",
+                    )}
                     scope="col"
                   >
                     <div className="data-grid-column-head">
@@ -653,6 +814,25 @@ export function FilterableDataGrid<TData>({
                         />
                       ) : null}
                     </div>
+                    {resizableColumns ? (
+                      <button
+                        type="button"
+                        className="data-grid-column-resizer"
+                        aria-label={`Resize ${column.label} column`}
+                        title={`Resize ${column.label} column`}
+                        data-row-activation-ignore
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onKeyDown={(event) =>
+                          handleColumnResizeKeyDown(column, event)
+                        }
+                        onPointerDown={(event) =>
+                          startColumnResize(column, event)
+                        }
+                      />
+                    ) : null}
                   </th>
                 );
               })}

@@ -217,6 +217,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   runPipelineStages(body: Parameters<JobHunterApiClient["runPipelineStages"]>[0]) {
     return this.client.runPipelineStages(body);
   }
+  runPendingPreparation(body: Parameters<JobHunterApiClient["runPendingPreparation"]>[0]) {
+    return this.client.runPendingPreparation(body);
+  }
   credentials() {
     return this.client.credentials();
   }

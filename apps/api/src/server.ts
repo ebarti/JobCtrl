@@ -15,6 +15,12 @@ import {
   ApplyJobRequestSchema,
   ArtifactListQuerySchema,
   BulkJobMutationRequestSchema,
+  type BulkRunPendingPreparationRequest,
+  BulkRunPendingPreparationRequestSchema,
+  type BulkRunPendingPreparationResponse,
+  type BulkRetryFailedRequest,
+  BulkRetryFailedRequestSchema,
+  type BulkRetryFailedResponse,
   BulkRescoreJobsNotOnCurrentScoringPolicyRequestSchema,
   BulkRetailorCurrentPolicyRequestSchema,
   CancelJobActionRequestSchema,
@@ -86,6 +92,7 @@ import {
 import { registerEventStreamRoute } from "./event-stream.js";
 import { KeychainCredentialStore, type CredentialStore } from "./credentials.js";
 import {
+  type ActionDispatchResult,
   buildActionResponse,
   defaultActionDispatcher,
   defaultArtifactOpener,
@@ -115,6 +122,7 @@ import {
   listActivity,
   listArtifacts,
   listJobs,
+  matchingJobKeys,
   listWorkflowRuns,
   readSettingsConfig,
 } from "./read-model.js";
@@ -145,8 +153,10 @@ import {
   markJobSkipped,
   permanentlyDeleteJob,
   permanentlyDeleteJobs,
+  queueRetriedJobsForWorkflow,
   resetJobStage,
   retryFailedJobs,
+  type RetryFailedJobTarget,
   restoreJob,
   restoreJobs,
   resetStaleScoresForRescore,
@@ -554,11 +564,130 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
 
   app.post("/v1/jobs/bulk-retry-failed", async (request, reply) => {
-    const body = parseBody(reply, BulkJobMutationRequestSchema, request.body ?? {});
+    const body = parseBody(reply, BulkRetryFailedRequestSchema, request.body ?? {});
     if (!body) {
       return undefined;
     }
-    return withWritableDb(reply, options.dbPath, (db) => retryFailedJobs(db, body));
+    if (body.runAfter) {
+      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+      if (!workerReady) {
+        return undefined;
+      }
+    }
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      const reset = retryFailedJobs(db, body);
+      const actions: ActionRunResponse[] = [];
+      const runnableGroups = body.runAfter
+        ? groupRunnableBulkRetryTargets(reset.targets)
+        : [];
+
+      for (const group of runnableGroups) {
+        const command = bulkRetryRunStageCommand(group.stage, group.jobUrls, body);
+        const dispatch = await actionDispatcher(command, actionContext);
+        if (dispatch.workflowId) {
+          recordPipelineWorkflowStarted(
+            options.dbPath,
+            group.stage,
+            dispatch.workflowId,
+            dispatch.runId,
+            bulkRetryWorkflowPayload(command, dispatch, group.jobUrls),
+          );
+        }
+        if (dispatch.status === "queued") {
+          queueRetriedJobsForWorkflow(
+            db,
+            group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
+            {
+              ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
+              ...(dispatch.runId ? { runId: dispatch.runId } : {}),
+              ...(dispatch.actionId ? { actionId: dispatch.actionId } : {}),
+              ...(command.workers !== undefined ? { requestedWorkers: command.workers } : {}),
+              ...(command.limit !== undefined ? { requestedLimit: command.limit } : {}),
+            },
+          );
+        }
+        actions.push(buildActionResponse(command, dispatch));
+      }
+
+      const status = body.runAfter ? stageRunStatus(actions) : "reset";
+      void reply.code(body.runAfter && actions.some((action) => action.status === "queued") ? 202 : 200);
+      return {
+        ok: true,
+        count: reset.count,
+        jobKeys: reset.jobKeys,
+        stageCounts: reset.stageCounts,
+        runAfter: body.runAfter,
+        status,
+        actions,
+        ...(body.runAfter && reset.count > 0 && actions.length === 0
+          ? { message: "Failed stages were reset; no preparation stages were eligible for automatic run-after dispatch." }
+          : {}),
+      } satisfies BulkRetryFailedResponse;
+    });
+  });
+
+  app.post("/v1/jobs/bulk-run-pending-preparation", async (request, reply) => {
+    const body = parseBody(reply, BulkRunPendingPreparationRequestSchema, request.body ?? {});
+    if (!body) {
+      return undefined;
+    }
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      refreshProjections(db);
+      const targets = pendingPreparationTargets(db, body);
+      const actions: ActionRunResponse[] = [];
+      const runnableGroups = groupRunnableBulkRetryTargets(targets);
+
+      if (targets.length > 0) {
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
+      }
+
+      for (const group of runnableGroups) {
+        const command = pendingPreparationRunStageCommand(group.stage, group.jobUrls, body);
+        const dispatch = await actionDispatcher(command, actionContext);
+        if (dispatch.workflowId) {
+          recordPipelineWorkflowStarted(
+            options.dbPath,
+            group.stage,
+            dispatch.workflowId,
+            dispatch.runId,
+            pendingPreparationWorkflowPayload(command, dispatch, group.jobUrls),
+          );
+        }
+        if (dispatch.status === "queued") {
+          queueRetriedJobsForWorkflow(
+            db,
+            group.jobUrls.map((jobUrl) => ({ jobUrl, stage: group.stage })),
+            {
+              ...(dispatch.workflowId ? { workflowId: dispatch.workflowId } : {}),
+              ...(dispatch.runId ? { runId: dispatch.runId } : {}),
+              ...(dispatch.actionId ? { actionId: dispatch.actionId } : {}),
+              ...(command.workers !== undefined ? { requestedWorkers: command.workers } : {}),
+              ...(command.limit !== undefined ? { requestedLimit: command.limit } : {}),
+              source: "bulk_run_pending_preparation",
+              message: `${group.stage} queued by pending preparation action`,
+            },
+          );
+        }
+        actions.push(buildActionResponse(command, dispatch));
+      }
+
+      const status = stageRunStatus(actions);
+      void reply.code(actions.some((action) => action.status === "queued") ? 202 : 200);
+      return {
+        ok: true,
+        count: targets.length,
+        jobKeys: targets.map((target) => target.jobUrl),
+        stageCounts: stageCountsForTargets(targets),
+        status,
+        actions,
+        ...(targets.length === 0
+          ? { message: "No eligible pending preparation jobs matched the request." }
+          : {}),
+      } satisfies BulkRunPendingPreparationResponse;
+    });
   });
 
   app.get<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey", async (request, reply) =>
@@ -1487,10 +1616,161 @@ function retryContinuationStages(stage: Stage): Stage[] {
 }
 
 const PREPARATION_PICKUP_STAGES: ReadonlySet<Stage> = new Set(["enrich", "score", "tailor", "cover"]);
+const PREPARATION_STAGE_ORDER = ["enrich", "score", "tailor", "cover"] as const satisfies readonly Stage[];
 const PREPARATION_PICKUP_MAX_ATTEMPTS: Partial<Record<Stage, number>> = {
   tailor: 5,
   cover: 5,
 };
+
+interface BulkRetryTargetGroup {
+  readonly stage: Stage;
+  readonly jobUrls: string[];
+}
+
+function groupRunnableBulkRetryTargets(targets: readonly RetryFailedJobTarget[]): BulkRetryTargetGroup[] {
+  const groups = new Map<Stage, string[]>();
+  for (const target of targets) {
+    if (!PREPARATION_PICKUP_STAGES.has(target.stage)) {
+      continue;
+    }
+    const group = groups.get(target.stage) ?? [];
+    group.push(target.jobUrl);
+    groups.set(target.stage, group);
+  }
+  return [...groups.entries()].map(([stage, jobUrls]) => ({ stage, jobUrls }));
+}
+
+function pendingPreparationTargets(
+  db: ApiDb,
+  request: BulkRunPendingPreparationRequest,
+): RetryFailedJobTarget[] {
+  const targets: RetryFailedJobTarget[] = [];
+  for (const jobUrl of candidateJobUrls(db, request)) {
+    const stage = firstEligiblePendingPreparationStage(db, jobUrl, request.minScore);
+    if (stage) {
+      targets.push({ jobUrl, stage });
+    }
+  }
+  return targets;
+}
+
+function candidateJobUrls(
+  db: ApiDb,
+  request: Pick<BulkRunPendingPreparationRequest, "allMatching" | "filter" | "jobKeys">,
+): string[] {
+  const jobKeys = request.allMatching
+    ? matchingJobKeys(db, request.filter ?? {})
+    : request.jobKeys;
+  const unique = new Set<string>();
+  for (const jobKey of jobKeys) {
+    const jobUrl = resolveJobUrl(db, jobKey);
+    if (jobUrl) {
+      unique.add(jobUrl);
+    }
+  }
+  return [...unique];
+}
+
+function firstEligiblePendingPreparationStage(
+  db: ApiDb,
+  jobUrl: string,
+  minScore: number,
+): Stage | null {
+  for (const stage of PREPARATION_STAGE_ORDER) {
+    const eligibility = preparationPickupEligibility(db, jobUrl, stage, minScore);
+    if (eligibility.eligible) {
+      return stage;
+    }
+  }
+  return null;
+}
+
+function stageCountsForTargets(targets: readonly RetryFailedJobTarget[]): Partial<Record<Stage, number>> {
+  const counts: Partial<Record<Stage, number>> = {};
+  for (const target of targets) {
+    counts[target.stage] = (counts[target.stage] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function bulkRetryRunStageCommand(
+  stage: Stage,
+  jobUrls: readonly string[],
+  request: BulkRetryFailedRequest,
+): ActionCommandPayload {
+  const stages = retryContinuationStages(stage);
+  const command: ActionCommandPayload = {
+    action: "run_stage",
+    jobKey: PIPELINE_ACTION_JOB_KEY,
+    jobKeys: [...jobUrls],
+    stage,
+    stages,
+    dryRun: request.dryRun,
+    limit: jobUrls.length,
+    workers: request.workers,
+    minScore: request.minScore,
+    validationMode: request.validationMode,
+    llmModel: request.llmModel,
+  };
+  if (request.reason) {
+    command.reason = request.reason;
+  }
+  return command;
+}
+
+function pendingPreparationRunStageCommand(
+  stage: Stage,
+  jobUrls: readonly string[],
+  request: BulkRunPendingPreparationRequest,
+): ActionCommandPayload {
+  const command = bulkRetryRunStageCommand(stage, jobUrls, {
+    allMatching: false,
+    jobKeys: [...jobUrls],
+    runAfter: true,
+    workers: request.workers,
+    minScore: request.minScore,
+    validationMode: request.validationMode,
+    dryRun: request.dryRun,
+    llmModel: request.llmModel,
+    ...(request.reason ? { reason: request.reason } : {}),
+  });
+  if (request.reason) {
+    command.reason = request.reason;
+  }
+  return command;
+}
+
+function bulkRetryWorkflowPayload(
+  command: ActionCommandPayload,
+  dispatch: ActionDispatchResult,
+  jobUrls: readonly string[],
+): Record<string, unknown> {
+  return {
+    source: "bulk_retry_failed",
+    action: command.action,
+    stage: command.stage,
+    stages: command.stages ?? [],
+    jobUrls: [...jobUrls],
+    jobCount: jobUrls.length,
+    requestedWorkers: command.workers,
+    requestedLimit: command.limit,
+    requestedMinScore: command.minScore,
+    validationMode: command.validationMode,
+    dryRun: Boolean(command.dryRun),
+    status: dispatch.status,
+  };
+}
+
+function pendingPreparationWorkflowPayload(
+  command: ActionCommandPayload,
+  dispatch: ActionDispatchResult,
+  jobUrls: readonly string[],
+): Record<string, unknown> {
+  return {
+    ...bulkRetryWorkflowPayload(command, dispatch, jobUrls),
+    source: "bulk_run_pending_preparation",
+  };
+}
 
 interface PreparationPickupEligibility {
   eligible: boolean;
@@ -1769,6 +2049,7 @@ function recordPipelineWorkflowStarted(
   stage: Stage,
   workflowId: string,
   runId: string | undefined,
+  extraPayload: Record<string, unknown> = {},
 ): void {
   recordPipelineWorkflowEvent(dbPath, {
     stage,
@@ -1778,6 +2059,7 @@ function recordPipelineWorkflowStarted(
     workflowId,
     runId,
     progressStatus: "running",
+    extraPayload,
   });
 }
 
@@ -1902,6 +2184,7 @@ function recordPipelineWorkflowEvent(
     workflowId: string;
     runId: string | undefined;
     progressStatus: "running" | "failed";
+    extraPayload?: Record<string, unknown>;
   },
 ): void {
   if (!databaseExists(dbPath)) return;
@@ -1921,6 +2204,7 @@ function recordPipelineWorkflowEvent(
         workflowId: event.workflowId,
         workflow_id: event.workflowId,
         ...(event.runId ? { runId: event.runId, run_id: event.runId } : {}),
+        ...(event.extraPayload ?? {}),
         progress: {
           completed: 0,
           total: 1,

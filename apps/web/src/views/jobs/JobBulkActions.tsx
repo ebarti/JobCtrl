@@ -22,6 +22,7 @@ export interface JobBulkActionsProps {
   onPermanentlyDeleteSelected: () => void;
   onRetryFailedSelected?: () => void;
   onRetryAllFailed?: () => void;
+  onRunPendingPreparation?: () => void;
   onResetStaleSuccess?: () => void;
   onMaintenanceSuccess?: () => void;
 }
@@ -45,6 +46,7 @@ export function JobBulkActions({
   onPermanentlyDeleteSelected,
   onRetryFailedSelected = () => {},
   onRetryAllFailed = () => {},
+  onRunPendingPreparation = () => {},
   onResetStaleSuccess = () => {},
   onMaintenanceSuccess = () => {},
 }: JobBulkActionsProps) {
@@ -160,14 +162,24 @@ export function JobBulkActions({
           </button>
       ) : null}
       {retryAllFailures ? (
-        <button
-          className="tab"
-          type="button"
-          disabled={hasLocalFilters || loading}
-          onClick={onRetryAllFailed}
-        >
-          retry all failed
-        </button>
+        <>
+          <button
+            className="tab"
+            type="button"
+            disabled={hasLocalFilters || loading}
+            onClick={onRunPendingPreparation}
+          >
+            continue pending prep
+          </button>
+          <button
+            className="tab"
+            type="button"
+            disabled={hasLocalFilters || loading}
+            onClick={onRetryAllFailed}
+          >
+            retry all failed
+          </button>
+        </>
       ) : null}
       {!hidden ? (
         <button

@@ -7,6 +7,7 @@ export { useMarkSkippedMutation } from "./hooks/useMarkSkippedMutation.js";
 export { useRetryStageMutation } from "./hooks/useRetryStageMutation.js";
 export { useRetryFailedJobsMutation } from "./hooks/useRetryFailedJobsMutation.js";
 export { useRunJobStageMutation } from "./hooks/useRunJobStageMutation.js";
+export { useRunPendingPreparationMutation } from "./hooks/useRunPendingPreparationMutation.js";
 export { useRunPipelineStagesMutation } from "./hooks/useRunPipelineStagesMutation.js";
 
 export { CancelStageButton, type CancelStageButtonProps } from "./components/CancelStageButton.js";

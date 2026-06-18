@@ -729,6 +729,7 @@ def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
         analyze_use_case=analyze,
     )
 
+    assert summary["scored"] == 0
     assert summary["errors"] == 1
     assert analyze.calls == 1
     assert llm.calls == 0
@@ -893,7 +894,7 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
         llm_port=llm,
         resume_text="anything",
     )
-    assert summary["scored"] == 1
+    assert summary["scored"] == 0
     assert summary["errors"] == 1
     assert repo.load(LOCAL_TENANT, JobId(url)) is None
 

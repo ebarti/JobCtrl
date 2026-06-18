@@ -456,6 +456,7 @@ def run_scoring(
             )
 
     errors = sum(1 for _, outcome in results if not outcome.ok)
+    scored_count = len(results) - errors
 
     finished_at = utc_now()
     for job, outcome in results:
@@ -505,13 +506,13 @@ def run_scoring(
 
     elapsed = time.time() - t0
     log.info(
-        "Done: %d scored in %.1fs (%.1f jobs/sec)",
-        len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0,
+        "Done: %d scored, %d failed in %.1fs (%.1f jobs/sec)",
+        scored_count, errors, elapsed, scored_count / elapsed if elapsed > 0 else 0,
     )
 
     distribution = _score_distribution(repository, tenant_id)
     return {
-        "scored": len(results),
+        "scored": scored_count,
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,

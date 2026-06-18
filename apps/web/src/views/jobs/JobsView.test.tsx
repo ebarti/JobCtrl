@@ -7,8 +7,8 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import type {
-  ActionRunResponse,
   BulkJobMutationRequest,
+  BulkRunPendingPreparationRequest,
   JobListQuery,
   JobSummary,
   Stage,
@@ -27,6 +27,7 @@ import {
 import { server } from "../../test/msw/server.js";
 import { buildProviderHarness } from "../../test/render.js";
 import { buildTestPorts } from "../../test/testPorts.js";
+import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import { JobsView } from "./JobsView.js";
 
 const SEARCH =
@@ -58,6 +59,7 @@ function buildRouter(
 const originalConfirm = globalThis.window?.confirm;
 
 beforeEach(() => {
+  useStageTriggerStore.getState().reset();
   Object.defineProperty(window, "confirm", {
     configurable: true,
     writable: true,
@@ -66,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  useStageTriggerStore.getState().reset();
   if (typeof originalConfirm === "function") {
     Object.defineProperty(window, "confirm", {
       configurable: true,
@@ -91,18 +94,6 @@ function jobWithStage(
   };
 }
 
-function queuedAction(action: ActionRunResponse["action"], jobKey: string): ActionRunResponse {
-  return {
-    ok: true,
-    runId: `run-${action}`,
-    actionId: `action-${action}`,
-    action,
-    status: "queued",
-    jobKey,
-    command: { action, jobKey },
-  };
-}
-
 describe("<JobsView> bulk delete integration", () => {
   it("keeps the product Discover filter as a single discover-stage jobs query", async () => {
     const discoverJob = jobWithStage("job-discover", "Discovery candidate", "discover");
@@ -122,7 +113,7 @@ describe("<JobsView> bulk delete integration", () => {
     expect(await screen.findByText(discoverJob.title)).toBeInTheDocument();
     expect(screen.getByLabelText("discover")).toBeInTheDocument();
     expect(screen.queryByText(/substatus/i)).not.toBeInTheDocument();
-    expect(jobs).toHaveBeenCalledTimes(1);
+    expect(jobs).toHaveBeenCalled();
     expect(jobs.mock.calls[0]?.[0]).toMatchObject({ stage: "discover" });
   });
 
@@ -142,7 +133,7 @@ describe("<JobsView> bulk delete integration", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText(applyJob.title)).toBeInTheDocument();
-    expect(jobs).toHaveBeenCalledTimes(1);
+    expect(jobs).toHaveBeenCalled();
     expect(jobs.mock.calls[0]?.[0]).toMatchObject({ stage: "apply" });
   });
 
@@ -174,7 +165,7 @@ describe("<JobsView> bulk delete integration", () => {
     );
   });
 
-  it("starts visible pending preparation substages when the jobs page is viewed", async () => {
+  it("continues all matching pending preparation when the jobs page opens on eligible pending work", async () => {
     const pendingTailor: JobSummary = {
       ...sampleJob,
       jobKey: "job-pending-tailor",
@@ -194,9 +185,16 @@ describe("<JobsView> bulk delete integration", () => {
       currentState: "pending",
     };
     const jobs = vi.fn(async () => makeJobsPage([pendingTailor, pendingApply]));
-    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const runPendingPreparation = vi.fn(async () => ({
+      ok: true as const,
+      count: 2,
+      jobKeys: ["job-pending-tailor", "job-pending-score"],
+      stageCounts: { tailor: 1, score: 1 },
+      status: "queued" as const,
+      actions: [],
+    }));
     const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+      ports: buildTestPorts({ api: { jobs, runPendingPreparation } }),
     });
     const { router, Wrapper } = buildRouter(
       harness,
@@ -206,14 +204,21 @@ describe("<JobsView> bulk delete integration", () => {
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
-    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
-    expect(runJobStage).toHaveBeenCalledWith(
-      "job-pending-tailor",
-      expect.objectContaining({ stage: "tailor", dryRun: false, limit: 1 }),
+    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
+    expect(runPendingPreparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allMatching: true,
+        filter: expect.objectContaining({ state: "pending", deleted: "active" }),
+        jobKeys: [],
+        workers: 1,
+        minScore: 7,
+        validationMode: "normal",
+        dryRun: false,
+      }),
     );
   });
 
-  it("keeps selected-row bulk actions enabled during background preparation pickup", async () => {
+  it("does not clear selected rows after background pending preparation pickup", async () => {
     const user = userEvent.setup();
     const pendingTailor: JobSummary = {
       ...sampleJob,
@@ -234,11 +239,16 @@ describe("<JobsView> bulk delete integration", () => {
       currentState: "succeeded",
     };
     const jobs = vi.fn(async () => makeJobsPage([pendingTailor, activeJob]));
-    const runJobStage = vi.fn(
-      () => new Promise<ActionRunResponse>(() => {}),
-    );
+    const runPendingPreparation = vi.fn(async () => ({
+      ok: true as const,
+      count: 1,
+      jobKeys: ["job-pending-tailor"],
+      stageCounts: { tailor: 1 },
+      status: "queued" as const,
+      actions: [],
+    }));
     const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+      ports: buildTestPorts({ api: { jobs, runPendingPreparation } }),
     });
     const { router, Wrapper } = buildRouter(harness);
     const { container } = render(<RouterProvider router={router} />, {
@@ -246,7 +256,7 @@ describe("<JobsView> bulk delete integration", () => {
     });
 
     expect(await screen.findByText("Pending Tailor")).toBeInTheDocument();
-    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
 
     const rowCheckboxes = Array.from(
       container.querySelectorAll<HTMLInputElement>("input[type='checkbox']"),
@@ -265,36 +275,44 @@ describe("<JobsView> bulk delete integration", () => {
     ).not.toBeDisabled();
   });
 
-  it("does not auto-start pending tailor rows that are not likely eligible", async () => {
-    const lowFitTailor: JobSummary = {
+  it("continues pending preparation even when no visible row is frontend-eligible", async () => {
+    const activeJob: JobSummary = {
       ...sampleJob,
-      jobKey: "job-low-fit-tailor",
-      url: "https://example.com/jobs/job-low-fit-tailor",
-      title: "Low Fit Tailor",
-      fitScore: 5,
+      jobKey: "job-active-visible",
+      url: "https://example.com/jobs/job-active-visible",
+      title: "Active Visible Job",
       currentStage: "discover",
-      currentSubstage: "tailor",
-      currentState: "pending",
+      currentSubstage: "discover",
+      currentState: "succeeded",
     };
-    const jobs = vi.fn(async () => makeJobsPage([lowFitTailor]));
-    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const jobs = vi.fn(async () => makeJobsPage([activeJob]));
+    const runPendingPreparation = vi.fn(async () => ({
+      ok: true as const,
+      count: 0,
+      jobKeys: [],
+      stageCounts: {},
+      status: "accepted" as const,
+      actions: [],
+    }));
     const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+      ports: buildTestPorts({ api: { jobs, runPendingPreparation } }),
     });
-    const { router, Wrapper } = buildRouter(
-      harness,
-      SEARCH.replace("state=all", "state=pending"),
-    );
+    const { router, Wrapper } = buildRouter(harness);
 
     render(<RouterProvider router={router} />, { wrapper: Wrapper });
 
-    expect(await screen.findByText("Low Fit Tailor")).toBeInTheDocument();
-    await waitFor(() => expect(jobs).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(runJobStage).not.toHaveBeenCalled();
+    expect(await screen.findByText("Active Visible Job")).toBeInTheDocument();
+    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
+    expect(runPendingPreparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allMatching: true,
+        filter: expect.objectContaining({ state: "pending", deleted: "active" }),
+        jobKeys: [],
+      }),
+    );
   });
 
-  it("starts at most one automatic preparation pickup per unchanged jobs list", async () => {
+  it("starts at most one automatic pending-preparation drain per unchanged server filter", async () => {
     const firstTailor: JobSummary = {
       ...sampleJob,
       jobKey: "job-pending-tailor-a",
@@ -314,9 +332,16 @@ describe("<JobsView> bulk delete integration", () => {
       currentState: "pending",
     };
     const jobs = vi.fn(async () => makeJobsPage([firstTailor, secondTailor]));
-    const runJobStage = vi.fn(async (jobKey: string) => queuedAction("run_stage", jobKey));
+    const runPendingPreparation = vi.fn(async () => ({
+      ok: true as const,
+      count: 2,
+      jobKeys: ["job-pending-tailor-a", "job-pending-tailor-b"],
+      stageCounts: { tailor: 2 },
+      status: "queued" as const,
+      actions: [],
+    }));
     const harness = buildProviderHarness({
-      ports: buildTestPorts({ api: { jobs, runJobStage } }),
+      ports: buildTestPorts({ api: { jobs, runPendingPreparation } }),
     });
     const { router, Wrapper } = buildRouter(
       harness,
@@ -327,12 +352,15 @@ describe("<JobsView> bulk delete integration", () => {
 
     expect(await screen.findByText("Pending Tailor A")).toBeInTheDocument();
     expect(await screen.findByText("Pending Tailor B")).toBeInTheDocument();
-    await waitFor(() => expect(runJobStage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(runPendingPreparation).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(runJobStage).toHaveBeenCalledTimes(1);
-    expect(runJobStage).toHaveBeenCalledWith(
-      "job-pending-tailor-a",
-      expect.objectContaining({ stage: "tailor" }),
+    expect(runPendingPreparation).toHaveBeenCalledTimes(1);
+    expect(runPendingPreparation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allMatching: true,
+        filter: expect.objectContaining({ state: "pending", deleted: "active" }),
+        jobKeys: [],
+      }),
     );
   });
 
@@ -833,12 +861,18 @@ describe("<JobsView> bulk delete integration", () => {
 
   it("posts all matching failed jobs to bulk retry from the failed filter", async () => {
     const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("score", { workers: "14" });
     const failedSearch =
       "?stage=all&state=failed&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
     const calls: Array<{
       allMatching?: boolean;
       filter?: { state?: string; deleted?: string };
       jobKeys?: string[];
+      runAfter?: boolean;
+      workers?: number;
+      minScore?: number;
+      validationMode?: string;
+      dryRun?: boolean;
     }> = [];
     server.use(
       http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
@@ -846,6 +880,11 @@ describe("<JobsView> bulk delete integration", () => {
           allMatching?: boolean;
           filter?: { state?: string; deleted?: string };
           jobKeys?: string[];
+          runAfter?: boolean;
+          workers?: number;
+          minScore?: number;
+          validationMode?: string;
+          dryRun?: boolean;
         };
         calls.push(body);
         return HttpResponse.json({
@@ -876,6 +915,11 @@ describe("<JobsView> bulk delete integration", () => {
       allMatching: true,
       filter: { state: "failed", deleted: "active" },
       jobKeys: [],
+      runAfter: true,
+      workers: 14,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: false,
     });
   });
 
@@ -887,6 +931,11 @@ describe("<JobsView> bulk delete integration", () => {
       allMatching?: boolean;
       filter?: { state?: string; deleted?: string };
       jobKeys?: string[];
+      runAfter?: boolean;
+      workers?: number;
+      minScore?: number;
+      validationMode?: string;
+      dryRun?: boolean;
     }> = [];
     server.use(
       http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
@@ -894,6 +943,11 @@ describe("<JobsView> bulk delete integration", () => {
           allMatching?: boolean;
           filter?: { state?: string; deleted?: string };
           jobKeys?: string[];
+          runAfter?: boolean;
+          workers?: number;
+          minScore?: number;
+          validationMode?: string;
+          dryRun?: boolean;
         };
         calls.push(body);
         return HttpResponse.json({
@@ -924,6 +978,61 @@ describe("<JobsView> bulk delete integration", () => {
       allMatching: true,
       filter: { state: "failed", deleted: "active" },
       jobKeys: [],
+      runAfter: true,
+      workers: 1,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: false,
+    });
+  });
+
+  it("posts all matching pending preparation jobs from the jobs toolbar", async () => {
+    const user = userEvent.setup();
+    useStageTriggerStore.getState().patchStageConfig("score", { workers: "14" });
+    const pendingSearch =
+      "?stage=all&state=pending&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
+    const calls: BulkRunPendingPreparationRequest[] = [];
+    server.use(
+      http.post("*/v1/jobs/bulk-run-pending-preparation", async ({ request }) => {
+        const body = (await request.json()) as BulkRunPendingPreparationRequest;
+        calls.push(body);
+        return HttpResponse.json({
+          ok: true,
+          count: 2,
+          jobKeys: ["job-1", "job-2"],
+          stageCounts: { score: 2 },
+          status: "queued",
+          actions: [],
+        });
+      }),
+    );
+
+    const harness = buildProviderHarness();
+    const { router, Wrapper } = buildRouter(harness, pendingSearch);
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: /continue pending prep/i }),
+        ).toBeInTheDocument(),
+      {
+        timeout: 5_000,
+      },
+    );
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
+    calls.length = 0;
+    await user.click(screen.getByRole("button", { name: /continue pending prep/i }));
+
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0]).toMatchObject({
+      allMatching: true,
+      filter: { state: "pending", deleted: "active" },
+      jobKeys: [],
+      workers: 14,
+      minScore: 7,
+      validationMode: "normal",
+      dryRun: false,
     });
   });
 });

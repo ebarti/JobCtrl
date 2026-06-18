@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import type { SortingState } from "@tanstack/react-table";
@@ -83,5 +85,35 @@ describe("<DebugActivityTable>", () => {
     await user.keyboard("{Enter}");
 
     expect(onOpenActivity).toHaveBeenLastCalledWith("evt-01");
+  });
+
+  it("keeps long activity messages inside the activity column", () => {
+    const longMessage =
+      "Score eligibility blocks tailoring: The role requires extensive physical security, crisis management, and life-safety operations in high-risk conflict zones, whereas the candidate background is strictly in digital cybersecurity and software engineering.";
+
+    renderTable({
+      data: makeActivityPage([
+        {
+          ...baseActivity,
+          eventId: "evt-long",
+          message: longMessage,
+        },
+      ]),
+    });
+
+    expect(screen.getByText(longMessage).closest("th")).toHaveClass(
+      "activity-message-cell",
+    );
+
+    const css = readFileSync("src/styles/globals.css", "utf8");
+    expect(css).toMatch(
+      /\.activity-data-grid-table\s*\{[^}]*table-layout:\s*fixed/s,
+    );
+    expect(css).toMatch(
+      /\.activity-data-grid-table \.activity-message-cell\s*\{[^}]*white-space:\s*normal/s,
+    );
+    expect(css).toMatch(
+      /\.activity-data-grid-table \.activity-message-cell \.activity-main b\s*\{[^}]*overflow-wrap:\s*anywhere/s,
+    );
   });
 });

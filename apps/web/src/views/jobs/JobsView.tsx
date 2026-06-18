@@ -1,9 +1,11 @@
 import {
+  DEFAULT_PIPELINE_LLM_MODEL,
   type BulkJobMutationRequest,
+  type BulkRunPendingPreparationRequest,
+  type BulkRetryFailedRequest,
   type JobMutationResponse,
   type JobSortField,
   type JobSummary,
-  type Stage,
   STAGE_STATES,
 } from "@jobhunter/contracts";
 import { Outlet, useNavigate, useSearch } from "@tanstack/react-router";
@@ -18,7 +20,8 @@ import { useRestoreJobsBulkMutation } from "../../contexts/discovery/hooks/useRe
 import { useUnhideJobsBulkMutation } from "../../contexts/discovery/hooks/useUnhideJobsBulkMutation.js";
 import { useJobsListQuery } from "../../contexts/operations/hooks/useJobsListQuery.js";
 import { useRetryFailedJobsMutation } from "../../contexts/pipeline/hooks/useRetryFailedJobsMutation.js";
-import { useRunJobStageMutation } from "../../contexts/pipeline/hooks/useRunJobStageMutation.js";
+import { useRunPendingPreparationMutation } from "../../contexts/pipeline/hooks/useRunPendingPreparationMutation.js";
+import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigger-store.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import { CardHeader } from "../../shared/ui/card-header.js";
 import {
@@ -45,6 +48,8 @@ type BulkJobMutation = UseMutationResult<
   Error,
   BulkJobMutationRequest
 >;
+type RetryFailedMutation = ReturnType<typeof useRetryFailedJobsMutation>;
+type RunPendingPreparationMutation = ReturnType<typeof useRunPendingPreparationMutation>;
 
 const SEARCH_FILTER_COLUMNS = new Set([
   "current_stage",
@@ -52,8 +57,6 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "apply_status",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
-const AUTONOMOUS_PICKUP_STAGES: ReadonlySet<Stage> = new Set(["enrich", "score", "tailor", "cover"]);
-const AUTONOMOUS_PICKUP_MIN_SCORE = 7;
 
 function filterFor(value: string | undefined): DataGridTextFilter | undefined {
   if (!value) return undefined;
@@ -89,6 +92,49 @@ function localFiltersOnly(filters: DataGridFilterState): DataGridFilterState {
   );
 }
 
+function boundedInt(value: string, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function retryWorkersFromConfigs(
+  configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
+): number {
+  return Math.max(
+    boundedInt(configs.discover.workers, 1, 1, 16),
+    boundedInt(configs.score.workers, 1, 1, 16),
+    boundedInt(configs.tailor.workers, 1, 1, 16),
+  );
+}
+
+function retryRunOptions(
+  configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
+): Pick<BulkRetryFailedRequest, "runAfter" | "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"> {
+  return {
+    runAfter: true,
+    workers: retryWorkersFromConfigs(configs),
+    minScore: boundedInt(configs.tailor.minScore, 7, 0, 10),
+    validationMode: configs.tailor.validationMode,
+    dryRun: false,
+    llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+  };
+}
+
+function pendingPreparationRunOptions(
+  configs: ReturnType<typeof useStageTriggerStore.getState>["configs"],
+): Pick<BulkRunPendingPreparationRequest, "workers" | "minScore" | "validationMode" | "dryRun" | "llmModel"> {
+  return {
+    workers: retryWorkersFromConfigs(configs),
+    minScore: boundedInt(configs.tailor.minScore, 7, 0, 10),
+    validationMode: configs.tailor.validationMode,
+    dryRun: false,
+    llmModel: DEFAULT_PIPELINE_LLM_MODEL,
+  };
+}
+
 function isJobSortField(value: string): value is JobSortField {
   return SORTABLE_JOB_FIELDS.has(value as JobSortField);
 }
@@ -103,53 +149,6 @@ function sameKeys(
   );
 }
 
-function autoPickupSnapshotKey(jobs: readonly JobSummary[]): string {
-  return jobs
-    .map((job) =>
-      [
-        job.jobKey,
-        job.currentStage,
-        job.currentSubstage,
-        job.currentState,
-        job.fitScore ?? "",
-        job.scoredAt ?? "",
-        job.scoreStaleness.isStale ? "stale" : "fresh",
-        job.scoreBreakdown?.eligibility.status ?? "",
-        job.scoreBreakdown?.eligibility.hardBlockers.join(",") ?? "",
-      ].join(":"),
-    )
-    .join("|");
-}
-
-function scoreBlocksMaterials(job: JobSummary): boolean {
-  const eligibility = job.scoreBreakdown?.eligibility;
-  return eligibility?.status === "blocked" || Boolean(eligibility?.hardBlockers.length);
-}
-
-function isPotentialAutonomousPickup(job: JobSummary): boolean {
-  if (job.currentState !== "pending" || !AUTONOMOUS_PICKUP_STAGES.has(job.currentSubstage)) {
-    return false;
-  }
-  if (job.currentSubstage === "enrich") {
-    return true;
-  }
-  if (job.currentSubstage === "score") {
-    return job.fitScore === null || job.scoreStaleness.isStale;
-  }
-  if (
-    job.fitScore === null ||
-    job.fitScore < AUTONOMOUS_PICKUP_MIN_SCORE ||
-    job.scoreStaleness.isStale ||
-    scoreBlocksMaterials(job)
-  ) {
-    return false;
-  }
-  if (job.currentSubstage === "cover") {
-    return job.currentStage === "apply";
-  }
-  return true;
-}
-
 export function JobsView() {
   const search = useSearch({ from: "/jobs" });
   const navigate = useNavigate({ from: "/jobs" });
@@ -161,7 +160,8 @@ export function JobsView() {
   const restoreJobs = useRestoreJobsBulkMutation();
   const unhideJobs = useUnhideJobsBulkMutation();
   const retryFailedJobs = useRetryFailedJobsMutation();
-  const runJobStage = useRunJobStageMutation();
+  const runPendingPreparation = useRunPendingPreparationMutation();
+  const stageTriggerConfigs = useStageTriggerStore((state) => state.configs);
   const message = error instanceof Error ? error.message : null;
 
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -169,8 +169,7 @@ export function JobsView() {
   const [localTableFilters, setLocalTableFilters] =
     useState<DataGridFilterState>({});
   const [visiblePageKeys, setVisiblePageKeys] = useState<string[]>([]);
-  const autoPickupKeys = useRef<Set<string>>(new Set());
-  const autoPickupSnapshots = useRef<Set<string>>(new Set());
+  const autoPendingPreparationKeys = useRef<Set<string>>(new Set());
   const tableFilters = useMemo<DataGridFilterState>(
     () => ({
       ...localTableFilters,
@@ -282,27 +281,6 @@ export function JobsView() {
     [allMatchingSelected, selectedKeys, staleKeysOnPage],
   );
 
-  useEffect(() => {
-    const jobs = data?.items ?? [];
-    if (runJobStage.isPending || jobs.length === 0) {
-      return;
-    }
-    const snapshotKey = autoPickupSnapshotKey(jobs);
-    if (autoPickupSnapshots.current.has(snapshotKey)) {
-      return;
-    }
-    autoPickupSnapshots.current.add(snapshotKey);
-    const job = jobs.find((candidate) => {
-      const pickupKey = `${candidate.jobKey}:${candidate.currentSubstage}`;
-      return !autoPickupKeys.current.has(pickupKey) && isPotentialAutonomousPickup(candidate);
-    });
-    if (!job) {
-      return;
-    }
-    autoPickupKeys.current.add(`${job.jobKey}:${job.currentSubstage}`);
-    runJobStage.mutate({ jobId: job.jobKey, stage: job.currentSubstage });
-  }, [data?.items, runJobStage]);
-
   const selectAllMatching = () => {
     setRowSelection({});
     setAllMatchingSelected(Boolean(data?.pagination.total));
@@ -344,7 +322,8 @@ export function JobsView() {
     permanentlyDeleteJobs.isPending ||
     restoreJobs.isPending ||
     unhideJobs.isPending ||
-    retryFailedJobs.isPending;
+    retryFailedJobs.isPending ||
+    runPendingPreparation.isPending;
 
   const selectedPayloads = (): BulkJobMutationRequest[] =>
     allMatchingSelected
@@ -354,6 +333,20 @@ export function JobsView() {
           jobKeys: [],
         }))
       : [{ allMatching: false, jobKeys: selectedKeys }];
+
+  const selectedRetryPayloads = (): BulkRetryFailedRequest[] =>
+    selectedPayloads().map((payload) => ({
+      ...payload,
+      ...retryRunOptions(stageTriggerConfigs),
+    }));
+
+  const pendingPreparationPayloads = (): BulkRunPendingPreparationRequest[] =>
+    bulkJobFilters(search, { deleted: "active", state: "pending" }).map((filter) => ({
+      allMatching: true,
+      filter,
+      jobKeys: [],
+      ...pendingPreparationRunOptions(stageTriggerConfigs),
+    }));
 
   const mutatePayloads = (
     mutation: BulkJobMutation,
@@ -369,6 +362,77 @@ export function JobsView() {
       .then(() => clearSelection())
       .catch(() => undefined);
   };
+
+  const mutateRetryPayloads = (
+    mutation: RetryFailedMutation,
+    payloads: readonly BulkRetryFailedRequest[],
+  ) => {
+    if (payloads.length === 1) {
+      mutation.mutate(payloads[0]!, {
+        onSuccess: () => clearSelection(),
+      });
+      return;
+    }
+    void Promise.all(payloads.map((payload) => mutation.mutateAsync(payload)))
+      .then(() => clearSelection())
+      .catch(() => undefined);
+  };
+
+  const mutatePendingPreparationPayloads = (
+    mutation: RunPendingPreparationMutation,
+    payloads: readonly BulkRunPendingPreparationRequest[],
+    options?: { clearSelectionOnSuccess?: boolean },
+  ) => {
+    if (payloads.length === 1) {
+      if (options?.clearSelectionOnSuccess === false) {
+        mutation.mutate(payloads[0]!);
+        return;
+      }
+      mutation.mutate(payloads[0]!, {
+        onSuccess: () => clearSelection(),
+      });
+      return;
+    }
+    void Promise.all(payloads.map((payload) => mutation.mutateAsync(payload)))
+      .then(() => {
+        if (options?.clearSelectionOnSuccess !== false) {
+          clearSelection();
+        }
+      })
+      .catch(() => undefined);
+  };
+
+  useEffect(() => {
+    if (
+      !data ||
+      runPendingPreparation.isPending ||
+      hasLocalFilters ||
+      search.deleted !== "active"
+    ) {
+      return;
+    }
+    const payloads = pendingPreparationPayloads();
+    const requestKey = JSON.stringify(payloads);
+    if (autoPendingPreparationKeys.current.has(requestKey)) {
+      return;
+    }
+    autoPendingPreparationKeys.current.add(requestKey);
+    mutatePendingPreparationPayloads(runPendingPreparation, payloads, {
+      clearSelectionOnSuccess: false,
+    });
+  }, [
+    data?.items,
+    hasLocalFilters,
+    runPendingPreparation,
+    search.applyStatus,
+    search.deleted,
+    search.maxFitScore,
+    search.minFitScore,
+    search.q,
+    search.stage,
+    search.state,
+    stageTriggerConfigs,
+  ]);
 
   const mutateSelected = (mutation: BulkJobMutation, label: string) => {
     const count = allMatchingSelected
@@ -399,23 +463,44 @@ export function JobsView() {
   };
 
   const retryFailedSelected = () => {
-    mutateSelected(retryFailedJobs, "Retry");
+    const count = allMatchingSelected
+      ? (data?.pagination.total ?? 0)
+      : selectedKeys.length;
+    if (!count) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Retry ${count} selected job${count === 1 ? "" : "s"}?`,
+      )
+    ) {
+      return;
+    }
+    mutateRetryPayloads(retryFailedJobs, selectedRetryPayloads());
   };
 
   const retryAllFailed = () => {
     if (!window.confirm("Retry all failed jobs matching the current filters?")) {
       return;
     }
-    mutatePayloads(
+    mutateRetryPayloads(
       retryFailedJobs,
       bulkJobFilters(search, { deleted: "active", state: "failed" }).map(
         (filter) => ({
           allMatching: true,
           filter,
           jobKeys: [],
+          ...retryRunOptions(stageTriggerConfigs),
         }),
       ),
     );
+  };
+
+  const continuePendingPreparation = () => {
+    if (!window.confirm("Continue pending preparation for matching active jobs? This will not run apply.")) {
+      return;
+    }
+    mutatePendingPreparationPayloads(runPendingPreparation, pendingPreparationPayloads());
   };
 
   const permanentlyDeleteSelected = () => {
@@ -461,6 +546,7 @@ export function JobsView() {
           onPermanentlyDeleteSelected={permanentlyDeleteSelected}
           onRetryFailedSelected={retryFailedSelected}
           onRetryAllFailed={retryAllFailed}
+          onRunPendingPreparation={continuePendingPreparation}
           onResetStaleSuccess={clearSelection}
           onMaintenanceSuccess={clearSelection}
         />

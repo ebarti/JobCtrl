@@ -117,6 +117,7 @@ def create_client(provider: str | None = None, model: str | None = None) -> "LLM
 
 _MAX_RETRIES = 5
 _TIMEOUT = 180  # seconds — Gemini thinking models can take >120s on a single call.
+_JSON_PARSE_RETRIES = 2
 
 # Base wait on first 429/503 (doubles each retry, caps at 60s).
 # Gemini free tier is 15 RPM = 4s minimum between requests; 10s gives headroom.
@@ -177,7 +178,7 @@ class LLMClient:
         self,
         messages: list[dict],
         temperature: float,
-        max_tokens: int,
+        max_tokens: int | None,
         response_schema: dict | None,
         thinking_budget: int | None,
     ) -> str:
@@ -203,10 +204,9 @@ class LLMClient:
                 # Gemini uses "model" instead of "assistant"
                 contents.append({"role": "model", "parts": [{"text": text}]})
 
-        generation_config: dict = {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-        }
+        generation_config: dict = {"temperature": temperature}
+        if max_tokens is not None:
+            generation_config["maxOutputTokens"] = max_tokens
         if response_schema is not None:
             # Native Gemini wants JSON mode + the schema spelled inline.
             generation_config["responseMimeType"] = "application/json"
@@ -223,7 +223,9 @@ class LLMClient:
             payload["systemInstruction"] = {"parts": system_parts}
 
         url = f"{_GEMINI_NATIVE_BASE}/models/{self.model}:generateContent"
-        params = {"temperature": temperature, "max_tokens": max_tokens}
+        params = {"temperature": temperature}
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
         if response_schema is not None:
             params["response_schema"] = "<json_schema>"
         if thinking_budget is not None:
@@ -256,7 +258,7 @@ class LLMClient:
         self,
         messages: list[dict],
         temperature: float,
-        max_tokens: int,
+        max_tokens: int | None,
         response_schema: dict | None,
         thinking_budget: int | None,
     ) -> str:
@@ -269,8 +271,9 @@ class LLMClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         if response_schema is not None:
             payload["response_format"] = {
                 "type": "json_schema",
@@ -287,7 +290,9 @@ class LLMClient:
                 "google": {"thinking_config": thinking_config}
             }
 
-        params = {"temperature": temperature, "max_tokens": max_tokens}
+        params = {"temperature": temperature}
+        if max_tokens is not None:
+            params["max_tokens"] = max_tokens
         if response_schema is not None:
             params["response_schema"] = "<json_schema>"
         if thinking_budget is not None:
@@ -321,7 +326,7 @@ class LLMClient:
         self,
         messages: list[dict],
         temperature: float = 0.0,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         response_schema: dict | None = None,
         thinking_budget: int | None = None,
     ) -> str:
@@ -421,7 +426,7 @@ class LLMClient:
         *,
         response_schema: dict,
         temperature: float = 0.0,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         thinking_budget: int | None = None,
     ) -> dict:
         """Like :meth:`chat` but expects a JSON object back and parses it.
@@ -430,16 +435,32 @@ class LLMClient:
         Raises ``json.JSONDecodeError`` if the content was not valid JSON
         (which should not happen when ``response_schema`` is honored, but
         the LLM gateway is the only writer that can guarantee that —
-        fail loudly so the caller surfaces the schema/contract drift).
+        retry the structured-output request before surfacing the
+        schema/contract drift).
         """
-        text = self.chat(
-            messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_schema=response_schema,
-            thinking_budget=thinking_budget,
-        )
-        return json.loads(text)
+        last_error: json.JSONDecodeError | None = None
+        for attempt in range(_JSON_PARSE_RETRIES + 1):
+            text = self.chat(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_schema=response_schema,
+                thinking_budget=thinking_budget,
+            )
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                if attempt >= _JSON_PARSE_RETRIES:
+                    break
+                log.warning(
+                    "LLM returned invalid structured JSON; retrying %d/%d: %s",
+                    attempt + 1,
+                    _JSON_PARSE_RETRIES,
+                    exc,
+                )
+        assert last_error is not None
+        raise last_error
 
     def ask(self, prompt: str, **kwargs) -> str:
         """Convenience: single user prompt -> assistant response."""

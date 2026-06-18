@@ -1,3 +1,4 @@
+import { IconSearch } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 
 export interface GoogleAddressSelection {
@@ -31,34 +32,46 @@ interface GooglePlaceDetails {
   fetchFields?: (request: { fields: string[] }) => Promise<void>;
 }
 
+interface GoogleFormattableText {
+  text?: string;
+  toString?: () => string;
+}
+
 interface GooglePlacePrediction {
+  placeId?: string;
+  text?: GoogleFormattableText | string;
+  mainText?: GoogleFormattableText | string;
+  secondaryText?: GoogleFormattableText | string;
   toPlace(): GooglePlaceDetails;
 }
 
-interface GooglePlacePredictionSelectEvent extends Event {
+interface GoogleAutocompleteSuggestion {
   placePrediction?: GooglePlacePrediction;
 }
 
-interface GooglePlaceAutocompleteElement extends HTMLElement {
-  description?: string;
+interface GoogleAutocompleteRequest {
+  input: string;
   includedPrimaryTypes?: string[];
-  placeholder?: string;
-  value?: string;
+  sessionToken?: unknown;
 }
 
 interface GoogleMapsPlacesLibrary {
-  PlaceAutocompleteElement: new (options: {
-    description?: string;
-    includedPrimaryTypes?: string[];
-    name?: string;
-    placeholder?: string;
-    value?: string;
-  }) => GooglePlaceAutocompleteElement;
+  AutocompleteSessionToken: new () => unknown;
+  AutocompleteSuggestion: {
+    fetchAutocompleteSuggestions: (
+      request: GoogleAutocompleteRequest,
+    ) => Promise<{
+      suggestions: GoogleAutocompleteSuggestion[];
+    }>;
+  };
 }
 
 interface GoogleMapsApi {
   maps: {
-    importLibrary?: (libraryName: string, ...args: unknown[]) => Promise<unknown>;
+    importLibrary?: (
+      libraryName: string,
+      ...args: unknown[]
+    ) => Promise<unknown>;
     [callbackName: string]: unknown;
   };
 }
@@ -73,7 +86,24 @@ const GOOGLE_MAPS_SCRIPT_ID = "jobhunter-google-maps-places";
 const GOOGLE_MAPS_CALLBACK = "__jobhunterGoogleMapsReady";
 const ADDRESS_INPUT_ID = "profile-address-search";
 const ADDRESS_STATUS_ID = "profile-address-validation-status";
+const ADDRESS_RESULTS_ID = "profile-address-search-results";
 let googleMapsPlacesPromise: Promise<GoogleMapsPlacesLibrary> | null = null;
+
+type AddressSearchStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "searching"
+  | "validating"
+  | "validated"
+  | "no-results"
+  | "error";
+
+interface AddressPredictionOption {
+  id: string;
+  label: string;
+  placePrediction: GooglePlacePrediction;
+}
 
 export function GoogleAddressSearchField({
   apiKey,
@@ -81,16 +111,17 @@ export function GoogleAddressSearchField({
   onAddressChange,
   onAddressSelect,
 }: GoogleAddressSearchFieldProps) {
-  const widgetHostRef = useRef<HTMLDivElement>(null);
-  const widgetRef = useRef<GooglePlaceAutocompleteElement | null>(null);
   const onAddressChangeRef = useRef(onAddressChange);
   const onAddressSelectRef = useRef(onAddressSelect);
-  const statusRef = useRef<"idle" | "loading" | "ready" | "validating" | "validated" | "error">("idle");
   const valueRef = useRef(value);
-  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "validating" | "validated" | "error">(
-    "idle",
-  );
+  const placesLibraryRef = useRef<GoogleMapsPlacesLibrary | null>(null);
+  const [status, setStatus] = useState<AddressSearchStatus>("idle");
+  const [predictions, setPredictions] = useState<AddressPredictionOption[]>([]);
   const trimmedKey = apiKey.trim();
+  const canSearch =
+    Boolean(trimmedKey) &&
+    Boolean(value.trim()) &&
+    !["loading", "searching", "validating"].includes(status);
 
   useEffect(() => {
     onAddressChangeRef.current = onAddressChange;
@@ -101,31 +132,17 @@ export function GoogleAddressSearchField({
   }, [onAddressSelect]);
 
   useEffect(() => {
-    statusRef.current = status;
-  }, [status]);
-
-  useEffect(() => {
     valueRef.current = value;
-    const widget = widgetRef.current;
-    if (widget && widget.value !== value) {
-      widget.value = value;
-    }
   }, [value]);
 
   useEffect(() => {
     if (!trimmedKey) {
       setStatus("idle");
-      return;
-    }
-    const host = widgetHostRef.current;
-    if (!host) {
+      placesLibraryRef.current = null;
+      setPredictions([]);
       return;
     }
     let disposed = false;
-    let widget: GooglePlaceAutocompleteElement | null = null;
-    let selectListener: ((event: Event) => void) | null = null;
-    let inputListener: (() => void) | null = null;
-    let errorListener: (() => void) | null = null;
 
     setStatus("loading");
     void loadGoogleMapsPlaces(trimmedKey)
@@ -133,96 +150,89 @@ export function GoogleAddressSearchField({
         if (disposed) {
           return;
         }
-
-        widget = new placesLibrary.PlaceAutocompleteElement({
-          description: "Search Google Maps for an address.",
-          includedPrimaryTypes: ["street_address"],
-          name: "profile-address-search-google",
-          placeholder: "Search address",
-          value: valueRef.current,
-        });
-        widget.id = ADDRESS_INPUT_ID;
-        widget.classList.add("google-address-widget");
-        widget.setAttribute("aria-describedby", ADDRESS_STATUS_ID);
-        widget.value = valueRef.current;
-        widgetRef.current = widget;
-
-        selectListener = (event: Event) => {
-          const currentWidget = widget;
-          if (currentWidget) {
-            void handleGoogleAddressSelection(event as GooglePlacePredictionSelectEvent, currentWidget);
-          }
-        };
-        inputListener = () => {
-          onAddressChangeRef.current(widget?.value ?? "");
-          if (statusRef.current === "validated") {
-            setStatus("ready");
-          }
-        };
-        errorListener = () => setStatus("error");
-
-        widget.addEventListener("gmp-select", selectListener);
-        widget.addEventListener("input", inputListener);
-        widget.addEventListener("gmp-error", errorListener);
-        host.replaceChildren(widget);
+        placesLibraryRef.current = placesLibrary;
         setStatus("ready");
       })
       .catch(() => {
         if (!disposed) {
+          placesLibraryRef.current = null;
           setStatus("error");
         }
       });
 
-    async function handleGoogleAddressSelection(
-      event: GooglePlacePredictionSelectEvent,
-      autocompleteWidget: GooglePlaceAutocompleteElement,
-    ) {
-      const placePrediction = event.placePrediction;
-      if (!placePrediction) {
-        setStatus("error");
-        return;
-      }
-
-      setStatus("validating");
-      try {
-        const place = placePrediction.toPlace();
-        await place.fetchFields?.({ fields: ["addressComponents"] });
-        if (!disposed) {
-          const selection = addressSelectionFromGooglePlace(place, autocompleteWidget.value ?? valueRef.current);
-          if (!selection) {
-            setStatus("error");
-            return;
-          }
-          onAddressSelectRef.current(selection);
-          setStatus("validated");
-        }
-      } catch {
-        if (!disposed) {
-          setStatus("error");
-        }
-      }
-    }
-
     return () => {
       disposed = true;
-      if (widget && selectListener) {
-        widget.removeEventListener("gmp-select", selectListener);
-      }
-      if (widget && inputListener) {
-        widget.removeEventListener("input", inputListener);
-      }
-      if (widget && errorListener) {
-        widget.removeEventListener("gmp-error", errorListener);
-      }
-      if (widgetRef.current === widget) {
-        widgetRef.current = null;
-      }
-      host.replaceChildren();
     };
   }, [trimmedKey]);
 
+  const searchGoogleAddress = async () => {
+    const query = valueRef.current.trim();
+    const placesLibrary = placesLibraryRef.current;
+    if (!trimmedKey || !query || !placesLibrary) {
+      return;
+    }
+    setStatus("searching");
+    setPredictions([]);
+    try {
+      const sessionToken = new placesLibrary.AutocompleteSessionToken();
+      const response =
+        await placesLibrary.AutocompleteSuggestion.fetchAutocompleteSuggestions(
+          {
+            input: query,
+            includedPrimaryTypes: ["street_address"],
+            sessionToken,
+          },
+        );
+      const nextPredictions = response.suggestions
+        .map((suggestion, index) => {
+          const placePrediction = suggestion.placePrediction;
+          if (!placePrediction) {
+            return null;
+          }
+          const label = placePredictionLabel(placePrediction);
+          if (!label) {
+            return null;
+          }
+          return {
+            id: placePrediction.placeId || `${label}-${index}`,
+            label,
+            placePrediction,
+          };
+        })
+        .filter((option): option is AddressPredictionOption => option !== null);
+      setPredictions(nextPredictions);
+      setStatus(nextPredictions.length ? "ready" : "no-results");
+    } catch {
+      setStatus("error");
+    }
+  };
+
+  const validatePrediction = async (prediction: AddressPredictionOption) => {
+    setStatus("validating");
+    try {
+      const place = prediction.placePrediction.toPlace();
+      await place.fetchFields?.({
+        fields: ["addressComponents", "formattedAddress"],
+      });
+      const selection = addressSelectionFromGooglePlace(
+        place,
+        valueRef.current,
+      );
+      if (!selection) {
+        setStatus("error");
+        return;
+      }
+      setPredictions([]);
+      onAddressSelectRef.current(selection);
+      setStatus("validated");
+    } catch {
+      setStatus("error");
+    }
+  };
+
   const statusText = addressStatusText(status, Boolean(trimmedKey));
-  const showGoogleWidget = Boolean(trimmedKey) && (status === "ready" || status === "validating" || status === "validated");
+  const showSearchButton = Boolean(trimmedKey);
+  const searchButtonLabel = status === "searching" ? "Searching" : "Search";
 
   return (
     <div className="field google-address-field">
@@ -236,21 +246,66 @@ export function GoogleAddressSearchField({
           {statusText}
         </span>
       </div>
-      <div className="google-address-widget-host" hidden={!showGoogleWidget} ref={widgetHostRef} />
-      {!showGoogleWidget ? (
+      <div className="google-address-control">
         <input
           autoComplete="street-address"
+          aria-controls={predictions.length ? ADDRESS_RESULTS_ID : undefined}
           aria-describedby={ADDRESS_STATUS_ID}
+          aria-expanded={predictions.length ? true : undefined}
+          aria-autocomplete={showSearchButton ? "list" : undefined}
           id={ADDRESS_INPUT_ID}
           type="search"
           value={value}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && showSearchButton) {
+              event.preventDefault();
+              void searchGoogleAddress();
+            }
+          }}
           onChange={(event) => {
             onAddressChange(event.target.value);
+            setPredictions([]);
             if (status === "validated") {
+              setStatus(trimmedKey ? "ready" : "idle");
+            } else if (status === "no-results" || status === "error") {
               setStatus(trimmedKey ? "ready" : "idle");
             }
           }}
         />
+        {showSearchButton ? (
+          <button
+            aria-label="Search address"
+            className="google-address-search-button"
+            disabled={!canSearch}
+            type="button"
+            onClick={() => void searchGoogleAddress()}
+          >
+            <IconSearch size={14} aria-hidden="true" />
+            <span>{searchButtonLabel}</span>
+          </button>
+        ) : null}
+      </div>
+      {predictions.length ? (
+        <ul
+          aria-label="Address search results"
+          className="google-address-results"
+          id={ADDRESS_RESULTS_ID}
+          role="listbox"
+        >
+          {predictions.map((prediction) => (
+            <li key={prediction.id} role="presentation">
+              <button
+                className="google-address-result"
+                disabled={status === "validating"}
+                role="option"
+                type="button"
+                onClick={() => void validatePrediction(prediction)}
+              >
+                {prediction.label}
+              </button>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );
@@ -261,15 +316,27 @@ export function addressSelectionFromGooglePlace(
   typedAddress: string,
 ): GoogleAddressSelection | null {
   const components = place.addressComponents ?? place.address_components ?? [];
-  if (!components.length && !place.formattedAddress && !place.formatted_address) {
+  if (
+    !components.length &&
+    !place.formattedAddress &&
+    !place.formatted_address
+  ) {
     return null;
   }
 
   const streetNumber = componentLongName(components, "street_number");
   const route = componentLongName(components, "route");
   const streetAddress = componentLongName(components, "street_address");
-  const formattedAddress = (place.formattedAddress ?? place.formatted_address)?.split(",").at(0)?.trim() ?? "";
-  const address = [streetNumber, route].filter(Boolean).join(" ") || streetAddress || formattedAddress || typedAddress;
+  const formattedAddress =
+    (place.formattedAddress ?? place.formatted_address)
+      ?.split(",")
+      .at(0)
+      ?.trim() ?? "";
+  const address =
+    [streetNumber, route].filter(Boolean).join(" ") ||
+    streetAddress ||
+    formattedAddress ||
+    typedAddress;
   const country = componentLongName(components, "country");
   const countryCode = componentShortName(components, "country");
 
@@ -281,7 +348,10 @@ export function addressSelectionFromGooglePlace(
       componentLongName(components, "sublocality_level_1") ||
       componentLongName(components, "administrative_area_level_2"),
     country,
-    postalCode: [componentLongName(components, "postal_code"), componentLongName(components, "postal_code_suffix")]
+    postalCode: [
+      componentLongName(components, "postal_code"),
+      componentLongName(components, "postal_code_suffix"),
+    ]
       .filter(Boolean)
       .join("-"),
     provinceState: isUnitedStatesAddressCountry(country, countryCode)
@@ -290,27 +360,68 @@ export function addressSelectionFromGooglePlace(
   };
 }
 
-function componentLongName(components: GoogleAddressComponent[], type: string): string {
-  const component = components.find((candidate) => candidate.types.includes(type));
+function componentLongName(
+  components: GoogleAddressComponent[],
+  type: string,
+): string {
+  const component = components.find((candidate) =>
+    candidate.types.includes(type),
+  );
   return component?.longText ?? component?.long_name ?? "";
 }
 
-function componentShortName(components: GoogleAddressComponent[], type: string): string {
-  const component = components.find((candidate) => candidate.types.includes(type));
+function componentShortName(
+  components: GoogleAddressComponent[],
+  type: string,
+): string {
+  const component = components.find((candidate) =>
+    candidate.types.includes(type),
+  );
   return component?.shortText ?? component?.short_name ?? "";
 }
 
-export function isUnitedStatesAddressCountry(country: string, countryCode = ""): boolean {
+function placePredictionLabel(prediction: GooglePlacePrediction): string {
+  return (
+    formattableTextValue(prediction.text) ||
+    [
+      formattableTextValue(prediction.mainText),
+      formattableTextValue(prediction.secondaryText),
+    ]
+      .filter(Boolean)
+      .join(", ")
+      .trim()
+  );
+}
+
+function formattableTextValue(
+  value: GoogleFormattableText | string | undefined,
+): string {
+  if (!value) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return value.text ?? value.toString?.() ?? "";
+}
+
+export function isUnitedStatesAddressCountry(
+  country: string,
+  countryCode = "",
+): boolean {
   const normalizedCountryCode = countryCode.trim().toUpperCase();
   if (normalizedCountryCode === "US" || normalizedCountryCode === "USA") {
     return true;
   }
   const normalizedCountry = country.trim().toLowerCase();
-  return normalizedCountry === "united states" || normalizedCountry === "united states of america";
+  return (
+    normalizedCountry === "united states" ||
+    normalizedCountry === "united states of america"
+  );
 }
 
 function addressStatusText(
-  status: "idle" | "loading" | "ready" | "validating" | "validated" | "error",
+  status: AddressSearchStatus,
   configured: boolean,
 ): string {
   if (!configured) {
@@ -319,12 +430,16 @@ function addressStatusText(
   switch (status) {
     case "loading":
       return "loading";
+    case "searching":
+      return "searching";
     case "ready":
       return "search ready";
     case "validating":
       return "validating";
     case "validated":
       return "validated";
+    case "no-results":
+      return "no results";
     case "error":
       return "maps unavailable";
     case "idle":
@@ -332,17 +447,23 @@ function addressStatusText(
   }
 }
 
-function loadGoogleMapsPlaces(apiKey: string): Promise<GoogleMapsPlacesLibrary> {
+function loadGoogleMapsPlaces(
+  apiKey: string,
+): Promise<GoogleMapsPlacesLibrary> {
   const googleWindow = getGoogleMapsWindow();
   if (googleWindow.google?.maps.importLibrary) {
-    return googleWindow.google.maps.importLibrary("places") as Promise<GoogleMapsPlacesLibrary>;
+    return googleWindow.google.maps.importLibrary(
+      "places",
+    ) as Promise<GoogleMapsPlacesLibrary>;
   }
   if (googleMapsPlacesPromise) {
     return googleMapsPlacesPromise;
   }
 
   const google = installGoogleMapsImportLibrary(apiKey);
-  googleMapsPlacesPromise = google.maps.importLibrary?.("places") as Promise<GoogleMapsPlacesLibrary>;
+  googleMapsPlacesPromise = google.maps.importLibrary?.(
+    "places",
+  ) as Promise<GoogleMapsPlacesLibrary>;
   return googleMapsPlacesPromise;
 }
 
@@ -361,9 +482,15 @@ function installGoogleMapsImportLibrary(apiKey: string): GoogleMapsApi {
     scriptLoadPromise ??= new Promise<void>((resolve, reject) => {
       maps[GOOGLE_MAPS_CALLBACK] = resolve;
 
-      const existingScript = document.getElementById(GOOGLE_MAPS_SCRIPT_ID) as HTMLScriptElement | null;
+      const existingScript = document.getElementById(
+        GOOGLE_MAPS_SCRIPT_ID,
+      ) as HTMLScriptElement | null;
       if (existingScript) {
-        existingScript.addEventListener("error", () => reject(new Error("Google Maps failed to load.")), { once: true });
+        existingScript.addEventListener(
+          "error",
+          () => reject(new Error("Google Maps failed to load.")),
+          { once: true },
+        );
         return;
       }
 
@@ -379,7 +506,11 @@ function installGoogleMapsImportLibrary(apiKey: string): GoogleMapsApi {
       script.async = true;
       script.defer = true;
       script.src = `https://maps.googleapis.com/maps/api/js?${params.toString()}`;
-      script.addEventListener("error", () => reject(new Error("Google Maps failed to load.")), { once: true });
+      script.addEventListener(
+        "error",
+        () => reject(new Error("Google Maps failed to load.")),
+        { once: true },
+      );
       document.head.appendChild(script);
     });
 
@@ -387,7 +518,10 @@ function installGoogleMapsImportLibrary(apiKey: string): GoogleMapsApi {
       if (maps.importLibrary === bootstrapImportLibrary) {
         throw new Error("Google Maps importLibrary did not initialize.");
       }
-      return maps.importLibrary?.(libraryName, ...args) ?? Promise.reject(new Error("Google Maps importLibrary missing."));
+      return (
+        maps.importLibrary?.(libraryName, ...args) ??
+        Promise.reject(new Error("Google Maps importLibrary missing."))
+      );
     });
   };
 

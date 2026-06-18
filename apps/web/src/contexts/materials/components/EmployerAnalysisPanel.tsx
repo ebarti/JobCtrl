@@ -33,6 +33,32 @@ interface RequirementAssessmentRow {
   readonly tone?: "ok" | "warn" | "info" | "muted";
 }
 
+function compactTextValues(values: readonly unknown[] | null | undefined): string[] {
+  if (!values) return [];
+  return values.flatMap((value) => {
+    if (typeof value !== "string") return [];
+    const trimmed = value.trim();
+    return trimmed.length ? [trimmed] : [];
+  });
+}
+
+function pushTextRow(
+  rows: RequirementAssessmentRow[],
+  row: {
+    readonly label: string;
+    readonly values: readonly unknown[] | null | undefined;
+    readonly tone?: RequirementAssessmentRow["tone"];
+  },
+): void {
+  const values = compactTextValues(row.values);
+  if (!values.length) return;
+  if (row.tone) {
+    rows.push({ label: row.label, values, tone: row.tone });
+    return;
+  }
+  rows.push({ label: row.label, values });
+}
+
 function normalizeText(value: string): string {
   return value
     .toLowerCase()
@@ -138,70 +164,64 @@ function requirementFitAssessment(assessment: RequirementFitAssessment): Require
 }
 
 function requirementFitRows(assessment: RequirementFitAssessment): RequirementAssessmentRow[] {
-  const rows: RequirementAssessmentRow[] = [
-    {
-      label: "Score contribution",
-      values: [
-        `${formatPoints(assessment.contribution.awardedPoints)} / ${formatPoints(
-          assessment.contribution.maxPoints,
-        )} points`,
-      ],
-      tone: assessment.fit.kind === "matched" ? "ok" : assessment.fit.kind === "transferable" ? "info" : "warn",
-    },
-    {
-      label: "Tailoring directive",
-      values: [
-        `${formatToken(assessment.tailoring.action)} · priority ${weightPercent(
-          assessment.tailoring.priority,
-        )}`,
-      ],
-      tone: assessment.tailoring.action === "avoid_claim" ? "warn" : "info",
-    },
-  ];
+  const rows: RequirementAssessmentRow[] = [];
+  pushTextRow(rows, {
+    label: "Score contribution",
+    values: [
+      `${formatPoints(assessment.contribution.awardedPoints)} / ${formatPoints(
+        assessment.contribution.maxPoints,
+      )} points`,
+    ],
+    tone: assessment.fit.kind === "matched" ? "ok" : assessment.fit.kind === "transferable" ? "info" : "warn",
+  });
+  pushTextRow(rows, {
+    label: "Tailoring directive",
+    values: [
+      `${formatToken(assessment.tailoring.action)} · priority ${weightPercent(
+        assessment.tailoring.priority,
+      )}`,
+    ],
+    tone: assessment.tailoring.action === "avoid_claim" ? "warn" : "info",
+  });
 
   if (assessment.fit.kind === "matched" || assessment.fit.kind === "transferable") {
-    rows.push({
+    pushTextRow(rows, {
       label: "Profile evidence IDs",
       values: assessment.fit.evidenceIds,
       tone: assessment.fit.kind === "matched" ? "ok" : "info",
     });
   }
   if (assessment.fit.kind === "transferable") {
-    rows.push(
-      { label: "Gap", values: [assessment.fit.gap], tone: "warn" },
-      { label: "Bridge", values: [assessment.fit.bridge], tone: "info" },
-    );
+    pushTextRow(rows, { label: "Gap", values: [assessment.fit.gap], tone: "warn" });
+    pushTextRow(rows, { label: "Bridge", values: [assessment.fit.bridge], tone: "info" });
   }
   if (assessment.fit.kind === "missing") {
-    rows.push({ label: "Missing reason", values: [assessment.fit.reason], tone: "warn" });
+    pushTextRow(rows, { label: "Missing reason", values: [assessment.fit.reason], tone: "warn" });
   }
   if (assessment.fit.kind === "blocked") {
-    rows.push({ label: "Blocker", values: [assessment.fit.blocker], tone: "warn" });
+    pushTextRow(rows, { label: "Blocker", values: [assessment.fit.blocker], tone: "warn" });
   }
   if (assessment.fit.kind === "not_assessed") {
-    rows.push({ label: "Reason", values: [assessment.fit.reason], tone: "muted" });
+    pushTextRow(rows, { label: "Reason", values: [assessment.fit.reason], tone: "muted" });
   }
-  if (assessment.tailoring.targetKeywords.length) {
-    rows.push({ label: "Target keywords", values: assessment.tailoring.targetKeywords, tone: "info" });
-  }
-  if (assessment.tailoring.prohibitedClaims.length) {
-    rows.push({ label: "Do not claim", values: assessment.tailoring.prohibitedClaims, tone: "warn" });
-  }
+  pushTextRow(rows, { label: "Target keywords", values: assessment.tailoring.targetKeywords, tone: "info" });
+  pushTextRow(rows, { label: "Do not claim", values: assessment.tailoring.prohibitedClaims, tone: "warn" });
   if (assessment.artifactCoverage) {
     const coverage = assessment.artifactCoverage;
+    const coverageExamples = Array.isArray(coverage.examples) ? coverage.examples : [];
     const coverageValues = [
       `${formatArtifactCoverageState(coverage.state)} · ${coverage.bulletCount} bullet${
         coverage.bulletCount === 1 ? "" : "s"
       }`,
-      ...coverage.examples,
+      ...coverageExamples,
     ];
-    rows.push({
+    pushTextRow(rows, {
       label: "Artifact coverage",
       values: coverageValues,
       tone: coverage.state === "covered" ? "ok" : coverage.state === "not_recorded" ? "muted" : "warn",
     });
   }
-  return rows.filter((row) => row.values.some((value) => value.trim().length > 0));
+  return rows;
 }
 
 function formatArtifactCoverageState(state: string): string {

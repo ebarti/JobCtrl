@@ -439,6 +439,9 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   if (command.jobKey !== PIPELINE_ACTION_JOB_KEY) {
     params.jobUrl = command.jobKey;
   }
+  if (command.jobKeys && command.jobKeys.length > 0) {
+    params.jobUrls = command.jobKeys;
+  }
   return params;
 }
 
