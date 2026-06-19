@@ -19,7 +19,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 
 - [x] **Phase 17: Source Registry & Access Policy** - Users can inspect which compensation sources are available, licensed, disabled, or blocked.
 - [x] **Phase 18: Posted Compensation Facts** - Users can inspect structured posted salary facts with source text, confidence, warnings, and raw fallback.
-- [ ] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
+- [x] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
 - [ ] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
 - [ ] **Phase 21: Jobs Triage UX & Warning-Only Floor** - Users can scan and inspect compensation evidence in Jobs triage without salary data becoming an automatic gate.
 - [ ] **Phase 22: Product-Path QA & Safety Release** - Users can rely on v1.3 compensation behavior being verified with synthetic/public data and no prohibited actions.
@@ -59,7 +59,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   3. User can see when a public baseline is an occupation/location aggregate rather than a company-specific market range.
   4. User can see statistical confidence for every market estimate, including band or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
   5. User can see assumptions, source conflict warnings, broad aggregate warnings, or insufficient-evidence explanations instead of a precise market range when source support is too weak.
-**Plans**: TBD
+**Plans**: 19-01 Market Estimate Domain And Persistence; 19-02 Market Estimate Inspection API
 
 ### Phase 20: Canonical Read Model & Realtime API
 **Goal**: Users and API consumers receive compensation summaries and audit details from canonical persisted rows, with parity-safe projections and safe event payloads.
@@ -108,7 +108,7 @@ Phases execute in numeric order: 17 -> 18 -> 19 -> 20 -> 21 -> 22
 |-------|----------------|--------|-----------|
 | 17. Source Registry & Access Policy | 2/2 | Complete | 2026-06-19 |
 | 18. Posted Compensation Facts | 2/2 | Complete | 2026-06-19 |
-| 19. Europe Public Market Estimates | 0/TBD | Not started | - |
+| 19. Europe Public Market Estimates | 2/2 | Complete | 2026-06-19 |
 | 20. Canonical Read Model & Realtime API | 0/TBD | Not started | - |
 | 21. Jobs Triage UX & Warning-Only Floor | 0/TBD | Not started | - |
 | 22. Product-Path QA & Safety Release | 0/TBD | Not started | - |
@@ -141,4 +141,4 @@ Artifacts:
 - Duplicate mappings: 0
 
 ---
-*Last updated: 2026-06-19 after Phase 18 verification*
+*Last updated: 2026-06-19 after Phase 19 verification*

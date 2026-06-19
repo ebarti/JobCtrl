@@ -16,21 +16,21 @@
 ### Europe Salary Sources
 
 - [x] **SRC-01**: User can see a salary-source registry entry for every configured compensation source, including access mode, terms/source URL, license status, source type, freshness policy, attribution requirement, supported fields, and disabled reason when unavailable.
-- [ ] **SRC-02**: User can use Europe-only public baseline sources for v1.3: Eurostat Structure of Earnings Survey for Europe-wide wage baselines, ESCO for occupation mapping, and Spain INE Wage Structure Survey for Spain-specific wage baselines.
-- [ ] **SRC-03**: User can see when a public baseline is an occupation/location aggregate rather than a company-specific market range.
+- [x] **SRC-02**: User can use Europe-only public baseline sources for v1.3: Eurostat Structure of Earnings Survey for Europe-wide wage baselines, ESCO for occupation mapping, and Spain INE Wage Structure Survey for Spain-specific wage baselines.
+- [x] **SRC-03**: User can see when a public baseline is an occupation/location aggregate rather than a company-specific market range.
 - [x] **SRC-04**: User can see Levels.fyi and Glassdoor represented only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
 - [x] **SRC-05**: User is protected from unauthorized Glassdoor scraping because the product does not fetch, scrape, cache, or display Glassdoor-derived salary data without explicit partner/API access or written permission.
 - [x] **SRC-06**: User is protected from unlicensed Levels.fyi use because the product does not fetch, scrape, cache, or display Levels.fyi-derived salary data without an explicitly configured permitted access mode and Europe coverage.
 
 ### Market Estimates And Statistical Confidence
 
-- [ ] **EST-01**: User can see a market estimate state for each job: not requested, unsupported, insufficient evidence, estimated range, or source unavailable.
-- [ ] **EST-02**: User can see Europe-only market estimates only when the estimator has enough source support for role, occupation, geography, seniority, compensation component, and freshness.
-- [ ] **EST-03**: User can see statistical confidence for every market estimate, including confidence band, score or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
-- [ ] **EST-04**: User can see an explicit insufficient-evidence explanation instead of a market range when source coverage, sample count, geography match, seniority match, or component compatibility is too weak.
+- [x] **EST-01**: User can see a market estimate state for each job: not requested, unsupported, insufficient evidence, estimated range, or source unavailable.
+- [x] **EST-02**: User can see Europe-only market estimates only when the estimator has enough source support for role, occupation, geography, seniority, compensation component, and freshness.
+- [x] **EST-03**: User can see statistical confidence for every market estimate, including confidence band, score or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
+- [x] **EST-04**: User can see an explicit insufficient-evidence explanation instead of a market range when source coverage, sample count, geography match, seniority match, or component compatibility is too weak.
 - [ ] **EST-05**: User can distinguish posted salary facts from benchmark-derived market estimates in every API and UI surface.
-- [ ] **EST-06**: User can see assumptions for remote-Europe, Spain-local, EU-wide, non-EU-Europe, and unknown-location mappings rather than having the system silently pick a market.
-- [ ] **EST-07**: User can see source conflict or broad aggregate warnings when public baselines and posted salary ranges diverge or when a range is too wide for precise triage.
+- [x] **EST-06**: User can see assumptions for remote-Europe, Spain-local, EU-wide, non-EU-Europe, and unknown-location mappings rather than having the system silently pick a market.
+- [x] **EST-07**: User can see source conflict or broad aggregate warnings when public baselines and posted salary ranges diverge or when a range is too wide for precise triage.
 
 ### Read Model And API
 
@@ -103,18 +103,18 @@ Which phases cover which requirements.
 | COMP-04 | Phase 18 | Complete |
 | COMP-05 | Phase 18 | Complete |
 | SRC-01 | Phase 17 | Complete |
-| SRC-02 | Phase 19 | Pending |
-| SRC-03 | Phase 19 | Pending |
+| SRC-02 | Phase 19 | Complete |
+| SRC-03 | Phase 19 | Complete |
 | SRC-04 | Phase 17 | Complete |
 | SRC-05 | Phase 17 | Complete |
 | SRC-06 | Phase 17 | Complete |
-| EST-01 | Phase 19 | Pending |
-| EST-02 | Phase 19 | Pending |
-| EST-03 | Phase 19 | Pending |
-| EST-04 | Phase 19 | Pending |
+| EST-01 | Phase 19 | Complete |
+| EST-02 | Phase 19 | Complete |
+| EST-03 | Phase 19 | Complete |
+| EST-04 | Phase 19 | Complete |
 | EST-05 | Phase 20 | Pending |
-| EST-06 | Phase 19 | Pending |
-| EST-07 | Phase 19 | Pending |
+| EST-06 | Phase 19 | Complete |
+| EST-07 | Phase 19 | Complete |
 | API-01 | Phase 20 | Pending |
 | API-02 | Phase 20 | Pending |
 | API-03 | Phase 20 | Pending |
@@ -141,4 +141,4 @@ Which phases cover which requirements.
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after Phase 18 verification*
+*Last updated: 2026-06-19 after Phase 19 verification*
