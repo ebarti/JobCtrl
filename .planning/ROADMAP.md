@@ -17,7 +17,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 - Integer phases (17, 18, 19): Planned milestone work continuing after v1.2 Phase 16.
 - Decimal phases (17.1, 17.2): Urgent insertions only, if needed later.
 
-- [ ] **Phase 17: Source Registry & Access Policy** - Users can inspect which compensation sources are available, licensed, disabled, or blocked.
+- [x] **Phase 17: Source Registry & Access Policy** - Users can inspect which compensation sources are available, licensed, disabled, or blocked.
 - [ ] **Phase 18: Posted Compensation Facts** - Users can inspect structured posted salary facts with source text, confidence, warnings, and raw fallback.
 - [ ] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
 - [ ] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
@@ -35,7 +35,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   2. User can see Levels.fyi and Glassdoor only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
   3. User is protected from unauthorized Glassdoor and Levels.fyi use because the product does not fetch, scrape, cache, or display either source without permitted access.
   4. User can distinguish unavailable licensed-source seams from Europe public baseline sources in compensation source evidence.
-**Plans**: TBD
+**Plans**: 17-01 Backend Source Registry; 17-02 Settings Source Policy UI
 
 ### Phase 18: Posted Compensation Facts
 **Goal**: Users can inspect posted salary facts parsed from job postings, including source text, normalized values, confidence, warnings, and legacy raw fallback.
@@ -106,7 +106,7 @@ Phases execute in numeric order: 17 -> 18 -> 19 -> 20 -> 21 -> 22
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 17. Source Registry & Access Policy | 0/TBD | Not started | - |
+| 17. Source Registry & Access Policy | 2/2 | Complete | 2026-06-19 |
 | 18. Posted Compensation Facts | 0/TBD | Not started | - |
 | 19. Europe Public Market Estimates | 0/TBD | Not started | - |
 | 20. Canonical Read Model & Realtime API | 0/TBD | Not started | - |
@@ -141,4 +141,4 @@ Artifacts:
 - Duplicate mappings: 0
 
 ---
-*Last updated: 2026-06-19 for v1.3 roadmap creation*
+*Last updated: 2026-06-19 after Phase 17 verification*
