@@ -66,11 +66,10 @@
 - **SRC-F02**: User can connect Glassdoor only when explicit partner/API access or written permission exists for the intended use.
 - **SRC-F03**: User can add other licensed compensation providers through the salary-source registry and source-port model.
 
-### Geography Expansion
+### Europe Expansion
 
-- **GEO-F01**: User can add U.S. public baselines such as BLS/OEWS, O*NET, and OFLC in a later milestone.
-- **GEO-F02**: User can add non-European public baselines with region-specific source policies and confidence rules.
-- **GEO-F03**: User can compare spot-FX and purchasing-power converted salary ranges with source/date attribution.
+- **GEO-F01**: User can deepen European public baseline coverage with additional national statistical institutes and region-specific source policies.
+- **GEO-F02**: User can compare spot-FX and purchasing-power converted European salary ranges with source/date attribution.
 
 ### Product Expansion
 
@@ -85,7 +84,7 @@
 |---------|--------|
 | Glassdoor scraping | Glassdoor terms require express permission for automated scraping/mining; v1.3 only supports disabled/licensed seams. |
 | Unlicensed Levels.fyi scraping | Levels.fyi data/API access must be permitted and licensed before use; v1.3 only supports disabled/licensed seams. |
-| U.S. public baselines | The scoped milestone is Europe-only. BLS/O*NET/OFLC can be added later. |
+| Non-European public baselines | JobHunter is Europe-first; non-European salary baselines are not part of the active product direction. |
 | Automatic salary ranking/filtering/blockers | The user chose warning-only floor behavior for v1.3. |
 | Employer-side compensation screening | JobHunter is applicant-side local triage, not an employer-side selection system. |
 | Deep equity/RSU/bonus/OTE modeling | Public Europe baselines are wage/salary aggregates; total compensation modeling needs licensed structured data. |
@@ -94,51 +93,52 @@
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
+Which phases cover which requirements.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| COMP-01 | TBD | Pending |
-| COMP-02 | TBD | Pending |
-| COMP-03 | TBD | Pending |
-| COMP-04 | TBD | Pending |
-| COMP-05 | TBD | Pending |
-| SRC-01 | TBD | Pending |
-| SRC-02 | TBD | Pending |
-| SRC-03 | TBD | Pending |
-| SRC-04 | TBD | Pending |
-| SRC-05 | TBD | Pending |
-| SRC-06 | TBD | Pending |
-| EST-01 | TBD | Pending |
-| EST-02 | TBD | Pending |
-| EST-03 | TBD | Pending |
-| EST-04 | TBD | Pending |
-| EST-05 | TBD | Pending |
-| EST-06 | TBD | Pending |
-| EST-07 | TBD | Pending |
-| API-01 | TBD | Pending |
-| API-02 | TBD | Pending |
-| API-03 | TBD | Pending |
-| API-04 | TBD | Pending |
-| API-05 | TBD | Pending |
-| UI-01 | TBD | Pending |
-| UI-02 | TBD | Pending |
-| UI-03 | TBD | Pending |
-| UI-04 | TBD | Pending |
-| UI-05 | TBD | Pending |
-| UI-06 | TBD | Pending |
-| QA-01 | TBD | Pending |
-| QA-02 | TBD | Pending |
-| QA-03 | TBD | Pending |
-| QA-04 | TBD | Pending |
-| QA-05 | TBD | Pending |
-| QA-06 | TBD | Pending |
+| COMP-01 | Phase 18 | Pending |
+| COMP-02 | Phase 18 | Pending |
+| COMP-03 | Phase 18 | Pending |
+| COMP-04 | Phase 18 | Pending |
+| COMP-05 | Phase 18 | Pending |
+| SRC-01 | Phase 17 | Pending |
+| SRC-02 | Phase 19 | Pending |
+| SRC-03 | Phase 19 | Pending |
+| SRC-04 | Phase 17 | Pending |
+| SRC-05 | Phase 17 | Pending |
+| SRC-06 | Phase 17 | Pending |
+| EST-01 | Phase 19 | Pending |
+| EST-02 | Phase 19 | Pending |
+| EST-03 | Phase 19 | Pending |
+| EST-04 | Phase 19 | Pending |
+| EST-05 | Phase 20 | Pending |
+| EST-06 | Phase 19 | Pending |
+| EST-07 | Phase 19 | Pending |
+| API-01 | Phase 20 | Pending |
+| API-02 | Phase 20 | Pending |
+| API-03 | Phase 20 | Pending |
+| API-04 | Phase 20 | Pending |
+| API-05 | Phase 20 | Pending |
+| UI-01 | Phase 21 | Pending |
+| UI-02 | Phase 21 | Pending |
+| UI-03 | Phase 21 | Pending |
+| UI-04 | Phase 21 | Pending |
+| UI-05 | Phase 21 | Pending |
+| UI-06 | Phase 21 | Pending |
+| QA-01 | Phase 22 | Pending |
+| QA-02 | Phase 22 | Pending |
+| QA-03 | Phase 22 | Pending |
+| QA-04 | Phase 22 | Pending |
+| QA-05 | Phase 22 | Pending |
+| QA-06 | Phase 22 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 35 total
-- Mapped to phases: 0
-- Unmapped: 35
+- Mapped to phases: 35
+- Unmapped: 0
+- Duplicate mappings: 0
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after v1.3 requirements definition*
+*Last updated: 2026-06-19 after v1.3 roadmap creation*

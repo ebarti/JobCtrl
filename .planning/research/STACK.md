@@ -42,7 +42,6 @@ Use a tiered estimator. The UI should show the best available salary evidence an
 | Eurostat Structure of Earnings Survey (SES) | Eurostat public datasets/API; annual/monthly/hourly earnings datasets such as `earn_ses_annual`, `earn_ses_monthly`, `earn_ses_hourly` | Aggregate survey data by occupation/activity/geography/demographics. Not company-specific, not live, and some detailed microdata requires research access/safe-centre rules. | SES is 4-yearly at microdata level; public datasets expose harmonized earnings measures with publication/update timestamps. | **Use as default Europe-wide public baseline.** Label as occupation/location aggregate and degrade confidence for broad mappings. |
 | ESCO | European Commission ESCO web-service API or local API | Occupation taxonomy/mapping only; it does not itself provide salary amounts. Requires careful mapping from noisy job titles to ESCO/ISCO concepts. | ESCO API page lists current version ESCO v1.2.1, last update 2025-12-10. | **Use for Europe occupation mapping.** Pair with Eurostat/INE wage data. |
 | Spain INE Wage Structure Survey | INE public tables/downloads/API where available | Spain-specific official statistics; not company-specific and may use broad occupation/activity groupings. | INE published final 2024 Wage Structure Survey data on 2026-05-28. | **Use as Spain-specific public baseline/corroborator.** Best fit for the user's Europe-only scope when jobs are Spain-local or Spain-remote. |
-| BLS/O*NET/OFLC | U.S. public sources | Strong public U.S. wage data, but outside the selected v1.3 geography. | Current, but not relevant to Europe-only v1.3. | **Out of scope for v1.3.** Keep as future milestone option only. |
 | Salary.com DaaS / CompAnalyst APIs | Commercial APIs | Commercial model; likely requires customer relationship. More employer/HR-oriented than local job seeker MVP. | Vendor-managed. | **Defer.** Consider only if user wants commercial provider support beyond Levels.fyi. |
 | Scraper marketplaces / unofficial APIs | Apify, Bright Data, Piloterr, OpenWeb Ninja, similar | Legal/licensing ambiguity, provenance dilution, possible ToS conflict with source sites, and more infra than needed. | Vendor-dependent. | **Do not add for v1.3.** They undermine the audit-first trust model unless separately licensed and approved. |
 
@@ -158,7 +157,7 @@ Display `confidence`, `source_count`, `sample_count` where available, `freshness
 | Is Glassdoor explicitly licensed/partner-accessible for this project? | Without written permission or partner API access, Glassdoor should be excluded. |
 | What Europe geography granularity is in scope for public baselines? | Eurostat/INE data can be country/region/occupation/activity aggregates. Requirements should define how Spain-local, Europe-remote, EU-wide, and non-EU-Europe jobs map to estimates or unsupported states. |
 | Is the estimate base salary only or total compensation? | Posted salary and Eurostat/INE public baselines are base/wage oriented; Levels.fyi can include total compensation when licensed. Mixing them without labels will mislead users. |
-| How should remote jobs map to location? | Remote U.S., Europe remote, global remote, and company HQ produce different ranges. This needs explicit assumptions. |
+| How should remote jobs map to location? | Spain-local, Europe-remote, EU-wide, non-EU-Europe, unknown-location, and company-HQ markets produce different ranges. This needs explicit assumptions. |
 | What minimum sample/source count is required to show a market range? | Prevents false precision for sparse licensed data or broad public aggregate data. |
 | Should profile floor comparison use minimum acceptable salary, expectation, or range overlap? | Profile has `salary_expectation`, `salary_range_min`, and `salary_range_max`; UI wording depends on which is authoritative. |
 
@@ -178,13 +177,6 @@ Display `confidence`, `source_count`, `sample_count` where available, `freshness
 - Levels.fyi data/benchmarking offering: https://www.levels.fyi/offerings/data/
 - Glassdoor Terms of Use: https://www.glassdoor.com/about/terms/
 - Glassdoor Jobs API documentation: https://www.glassdoor.com/developer/jobsApiActions.htm
-- BLS OEWS home: https://www.bls.gov/oes/
-- BLS OEWS documentation: https://www.bls.gov/oes/oes_doc.htm
-- BLS Public Data API getting started and FAQ: https://www.bls.gov/developers/home.htm and https://www.bls.gov/developers/api_faqs.htm
-- O*NET Web Services and reference manual: https://services.onetcenter.org/ and https://services.onetcenter.org/reference/
-- O*NET OnLine external data source freshness: https://www.onetonline.org/help/online/datasources
-- DOL OFLC disclosure/performance data: https://www.dol.gov/agencies/eta/foreign-labor/performance
-- FLAG prevailing wages: https://flag.dol.gov/programs/prevailingwages
 - Salary.com API overview: https://developers.salary.com/apis/welcome
 - Eurostat Structure of Earnings Survey microdata overview: https://ec.europa.eu/eurostat/web/microdata/collections-research/structure-of-earnings-survey
 - Eurostat API introduction: https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-introduction

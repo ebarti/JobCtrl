@@ -186,9 +186,9 @@ Phases with standard patterns (skip research-phase):
 
 - Levels.fyi access: confirm whether the user has or wants paid/API/MCP/CLI/data-stream access, whether it covers the relevant European markets, and what retention/redistribution is allowed.
 - Glassdoor access: confirm whether explicit partner/API access or written permission exists; otherwise exclude it from implementation.
-- Geography: v1.3 targets Europe-only public baselines. U.S. BLS/O*NET/OFLC support is out of scope unless a later milestone reopens it.
+- Geography: v1.3 targets Europe-only public baselines. Non-European public salary baselines are outside the active product direction.
 - Compensation scope: decide whether estimates are base salary only, total compensation, OTE, or component-separated display.
-- Remote mapping: define how remote U.S., Europe remote, global remote, and company-HQ markets should affect estimates.
+- Remote mapping: define how Spain-local, Europe-remote, EU-wide, non-EU-Europe, unknown-location, and company-HQ markets should affect estimates.
 - Profile floor: decide which profile field is canonical for "floor" and whether comparisons use annualized base pay only.
 - Confidence thresholds: define minimum source/sample counts, freshness cutoffs, role/location/seniority match requirements, and rounding bands.
 - Market workflow: decide whether market estimation is automatic for every enriched job, on-demand in the drawer, or automatic only after a fit-score threshold.

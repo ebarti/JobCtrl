@@ -134,12 +134,12 @@ For JobHunter, the safest design is: `posted compensation fact` first, `licensed
 
 ### Pitfall 2: Geography and Work-Arrangement Mismatch
 
-**What goes wrong:** Remote-US, Spain-local, Europe-remote, city, metro, country, and global benchmarks are blended into one range.
+**What goes wrong:** Spain-local, Europe-remote, EU-wide, non-EU-Europe, unknown-location, company-HQ, city, metro, and country benchmarks are blended into one range.
 
 **Prevention:**
 - Normalize location at multiple levels: city, metro/region, country, remote scope, and source-specific market.
 - Confidence should drop when a benchmark is only country-level for a city-specific role or when remote scope is unknown.
-- For Spain/Europe target workflows, treat US-heavy Levels.fyi/software-engineering data as low confidence unless the source supports the exact country/region and role.
+- For Spain/Europe target workflows, treat broad or non-European Levels.fyi/software-engineering data as low confidence unless the source supports the exact country/region and role.
 
 ### Pitfall 3: Seniority and Level Taxonomy Drift
 
@@ -271,8 +271,6 @@ For JobHunter, the safest design is: `posted compensation fact` first, `licensed
   - Confidence: HIGH. Official source. Key findings: paid tiers, enterprise API/MCP access, data granularity, validation claims, and freshness claims.
 - Levels.fyi public salary pages indexed with AI-readable `.md` and attribution notices, accessed 2026-06-19 via search results such as https://www.levels.fyi/t/software-engineer
   - Confidence: MEDIUM. Official page snippets indicate structured AI resources and attribution requirements, but implementation should verify current robots/llms guidance before use.
-- U.S. Bureau of Labor Statistics OEWS research estimates, accessed 2026-06-19: https://www.bls.gov/oes/oes_research_2024.htm
-  - Confidence: HIGH. Official source. Key findings: salary estimates from sample surveys have sampling and nonsampling error; PRSE is used to communicate reliability.
 - European Central Bank euro foreign exchange reference rates, accessed 2026-06-19: https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html
   - Confidence: HIGH. Official source. Key findings: updated on working days; informational reference rates, discouraged for transaction use.
 - OECD Purchasing Power Parities dataset, accessed 2026-06-19: https://www.oecd.org/en/data/datasets/purchasing-power-parities.html
