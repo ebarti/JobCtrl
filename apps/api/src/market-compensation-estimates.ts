@@ -24,7 +24,7 @@ type MarketCompensationEstimateRow = {
   estimate_state: string;
   currency: string | null;
   period: "year" | "month";
-  component: "base_salary" | "gross_annual_salary" | "gross_monthly_salary";
+  component: "base_salary" | "total_compensation";
   minimum_amount: number | null;
   maximum_amount: number | null;
   confidence_band: "none" | "low" | "medium" | "high";
@@ -44,6 +44,12 @@ type MarketCompensationEstimateRow = {
   warnings_json: string;
   estimator_version: string;
   estimated_at: string;
+  company_name: string | null;
+  normalized_company: string | null;
+  role_title: string | null;
+  normalized_role: string | null;
+  company_tier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
+  match_scope: "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none";
 };
 
 type MarketCompensationRecordedEstimateRow = MarketCompensationEstimateRow & {
@@ -51,37 +57,34 @@ type MarketCompensationRecordedEstimateRow = MarketCompensationEstimateRow & {
 };
 
 const WARNING_MESSAGES: Record<MarketCompensationWarningCode, string> = {
-  aggregate_baseline: "The market estimate is based on public occupation/location aggregate data.",
-  broad_aggregate_band: "The public aggregate band is broad enough to reduce precision.",
-  eu_wide_assumption: "The estimate uses an EU or Europe-wide aggregate assumption.",
-  low_sample_count: "The public source sample support is low.",
-  non_eu_europe_assumption: "The estimate uses a non-EU Europe aggregate assumption.",
-  remote_europe_assumption: "The estimate maps a remote-Europe role to a Europe aggregate baseline.",
-  source_conflict_with_posted_salary: "The public baseline diverges materially from the posted salary.",
-  spain_local_assumption: "The estimate uses a Spain-local public wage baseline assumption.",
-  stale_source_snapshot: "A source snapshot is stale under the freshness policy.",
-  unknown_location_assumption: "The job location is not specific enough for a precise market mapping.",
+  company_role_fallback: "The estimate fell back from exact company-role evidence to adjacent company or tier evidence.",
+  location_mismatch: "Reported compensation locations did not strongly match the job location.",
+  low_sample_count: "Reported compensation sample support is low.",
+  reported_compensation_sample: "The estimate uses reported compensation rows for the job company and role.",
+  source_conflict_with_posted_salary: "Reported compensation diverges materially from the posted salary.",
+  stale_source_snapshot: "A reported compensation source snapshot is stale under the freshness policy.",
+  trimodal_tier_inferred: "The company tier was inferred from reported compensation amounts.",
 };
 
 const REASON_MESSAGES: Record<MarketCompensationReasonCode, string> = {
-  low_sample_count: "Public source sample support is below the configured confidence threshold.",
-  missing_occupation_mapping: "No supported ESCO occupation mapping was available.",
-  missing_salary_observation: "No public wage baseline row was available for the mapped occupation/location.",
-  source_dispersion_too_high: "Public source ranges diverged too much to emit a precise market range.",
-  stale_source_snapshot: "A required public source snapshot is stale under the freshness policy.",
-  unsupported_component: "The compensation component is outside the supported public wage baseline model.",
-  unsupported_geography: "The job geography is outside the Europe-first source scope.",
+  low_sample_count: "Reported compensation sample support is below the configured confidence threshold.",
+  missing_company: "The job has no company name to match reported compensation.",
+  missing_reported_observation: "No reported compensation row matched this job's company and role.",
+  missing_role: "The job has no title/role text to match reported compensation.",
+  source_dispersion_too_high: "Reported compensation rows diverged too much to emit a precise range.",
+  stale_source_snapshot: "A required reported compensation source snapshot is stale under the freshness policy.",
+  unsupported_component: "The compensation component is outside the supported reported compensation model.",
   unsupported_source: "Unsupported source evidence was rejected.",
-  weak_component_match: "Component compatibility was too weak for a range.",
-  weak_geography_match: "Geography support was too weak for a range.",
-  weak_occupation_match: "Occupation mapping support was too weak for a range.",
-  weak_seniority_match: "Seniority support was too weak for a range.",
+  weak_company_match: "Company match support was too weak for a range.",
+  weak_level_match: "Level/seniority support was too weak for a range.",
+  weak_location_match: "Location support was too weak for a range.",
+  weak_role_match: "Role match support was too weak for a range.",
 };
 
 const SOURCE_IDS = new Set<MarketCompensationSourceId>([
-  "eurostat_structure_of_earnings",
-  "esco_occupation_taxonomy",
-  "spain_ine_salary_structure",
+  "levels_fyi",
+  "glassdoor",
+  "manual_reported_compensation",
 ]);
 const RECORDED_ESTIMATE_STATES = new Set([
   "unsupported",
@@ -93,50 +96,52 @@ const SOURCE_DEFAULTS: Record<
   MarketCompensationSourceId,
   {
     displayName: string;
-    sourceType: "public_wage_baseline" | "occupation_taxonomy";
+    sourceType: "reported_compensation";
     snapshotVersion: string;
     geographyScope: string;
     aggregateBucket: string;
     attribution: string;
   }
 > = {
-  eurostat_structure_of_earnings: {
-    displayName: "Eurostat Structure of Earnings Survey",
-    sourceType: "public_wage_baseline",
-    snapshotVersion: "synthetic-public-fixture",
-    geographyScope: "EU",
-    aggregateBucket: "Eurostat SES occupation/country aggregate",
-    attribution: "Eurostat public statistical aggregate",
+  levels_fyi: {
+    displayName: "Levels.fyi",
+    sourceType: "reported_compensation",
+    snapshotVersion: "reported-compensation-import-v1",
+    geographyScope: "reported",
+    aggregateBucket: "reported company-role compensation",
+    attribution: "Levels.fyi reported compensation data",
   },
-  esco_occupation_taxonomy: {
-    displayName: "ESCO occupation taxonomy",
-    sourceType: "occupation_taxonomy",
-    snapshotVersion: "synthetic-public-fixture",
-    geographyScope: "Europe",
-    aggregateBucket: "ESCO occupation mapping",
-    attribution: "ESCO public occupation taxonomy",
+  glassdoor: {
+    displayName: "Glassdoor",
+    sourceType: "reported_compensation",
+    snapshotVersion: "reported-compensation-import-v1",
+    geographyScope: "reported",
+    aggregateBucket: "reported company-role compensation",
+    attribution: "Glassdoor reported compensation data",
   },
-  spain_ine_salary_structure: {
-    displayName: "Spain INE Wage Structure Survey",
-    sourceType: "public_wage_baseline",
-    snapshotVersion: "synthetic-public-fixture",
-    geographyScope: "Spain",
-    aggregateBucket: "Spain INE occupation aggregate",
-    attribution: "Spain INE public statistical aggregate",
+  manual_reported_compensation: {
+    displayName: "Manual reported compensation import",
+    sourceType: "reported_compensation",
+    snapshotVersion: "reported-compensation-import-v1",
+    geographyScope: "reported",
+    aggregateBucket: "reported company-role compensation",
+    attribution: "Manual reported compensation import",
   },
 };
 const SAFE_AGGREGATE_BUCKETS = new Set(Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket));
-const SAFE_GEOGRAPHY_SCOPES = new Set(["remote_europe", "spain", "eu_wide", "non_eu_europe", "unknown"]);
+const SAFE_GEOGRAPHY_SCOPES = new Set(["Europe", "reported"]);
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "agreement",
+  "company",
   "component",
   "freshness",
-  "geography",
-  "occupation",
+  "level",
+  "location",
+  "role",
   "sample",
-  "seniority",
+  "trimodal_tier",
 ]);
-const DEFAULT_FACTOR_REASON = "Market estimate factor recorded by the deterministic Europe public estimator.";
+const DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator.";
 
 export function getMarketCompensationEstimate(
   db: SqliteDatabase,
@@ -149,6 +154,7 @@ export function getMarketCompensationEstimate(
   if (!tableExists(db, "job_market_compensation_estimates")) {
     return notRequested(job);
   }
+  const tableColumns = columnsFor(db, "job_market_compensation_estimates");
   const row = getRow<MarketCompensationEstimateRow>(
     db,
     `
@@ -157,13 +163,22 @@ export function getMarketCompensationEstimate(
            source_count, sample_count, aggregate_bucket, geography_scope,
            occupation_code, occupation_label, seniority_label, source_snapshot_json,
            factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
-           source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at
+           source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at,
+           ${columnOrNull(tableColumns, "company_name")} AS company_name,
+           ${columnOrNull(tableColumns, "normalized_company")} AS normalized_company,
+           ${columnOrNull(tableColumns, "role_title")} AS role_title,
+           ${columnOrNull(tableColumns, "normalized_role")} AS normalized_role,
+           ${columnOrDefault(tableColumns, "company_tier", "unknown")} AS company_tier,
+           ${columnOrDefault(tableColumns, "match_scope", "none")} AS match_scope
     FROM job_market_compensation_estimates
     WHERE tenant_id = ? AND job_url = ?
     `,
     [DEFAULT_TENANT, jobKey],
   );
   if (!row) {
+    return notRequested(job);
+  }
+  if (!row.estimator_version.startsWith("company-role-reported-compensation-")) {
     return notRequested(job);
   }
   if (!isRecordedEstimateRow(row)) {
@@ -203,6 +218,12 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     occupationCode: nullableText(row.occupation_code),
     occupationLabel: nullableText(row.occupation_label),
     seniorityLabel: nullableText(row.seniority_label),
+    companyName: nullableText(row.company_name),
+    normalizedCompany: nullableText(row.normalized_company),
+    roleTitle: nullableText(row.role_title),
+    normalizedRole: nullableText(row.normalized_role),
+    companyTier: companyTier(row.company_tier),
+    matchScope: matchScope(row.match_scope),
     sources,
     factors: parseFactors(row.factor_reasons_json),
     warnings: parseWarnings(row.warnings_json),
@@ -350,6 +371,31 @@ function safeAggregateBucket(
 function safeGeographyScope(value: string | null | undefined): string | null {
   const text = nullableText(value);
   return text && SAFE_GEOGRAPHY_SCOPES.has(text) ? text : null;
+}
+
+function companyTier(value: unknown): "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown" {
+  return value === "tier_1_local" || value === "tier_2_ambitious" || value === "tier_3_top_of_market"
+    ? value
+    : "unknown";
+}
+
+function matchScope(value: unknown): "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none" {
+  return value === "exact_company_role" || value === "company_adjacent_role" || value === "tier_role_fallback"
+    ? value
+    : "none";
+}
+
+function columnsFor(db: SqliteDatabase, tableName: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function columnOrNull(columns: Set<string>, columnName: string): string {
+  return columns.has(columnName) ? columnName : "NULL";
+}
+
+function columnOrDefault(columns: Set<string>, columnName: string, fallback: string): string {
+  return columns.has(columnName) ? columnName : `'${fallback}'`;
 }
 
 function nullableNumber(value: unknown): number | null {

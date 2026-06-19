@@ -1,4 +1,4 @@
-"""Deterministic Europe public market compensation estimates."""
+"""Deterministic company-role reported compensation estimates."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
-ESTIMATOR_VERSION = "market-compensation-v1"
+ESTIMATOR_VERSION = "company-role-reported-compensation-v1"
 
 MarketEstimateState = Literal[
     "not_requested",
@@ -17,48 +17,45 @@ MarketEstimateState = Literal[
     "insufficient_evidence",
     "estimated_range",
 ]
-MarketSourceId = Literal[
-    "eurostat_structure_of_earnings",
-    "esco_occupation_taxonomy",
-    "spain_ine_salary_structure",
-]
+MarketSourceId = Literal["levels_fyi", "glassdoor", "manual_reported_compensation"]
 MarketConfidenceBand = Literal["none", "low", "medium", "high"]
-MarketComponent = Literal["base_salary", "gross_annual_salary", "gross_monthly_salary"]
+MarketComponent = Literal["base_salary", "total_compensation"]
 MarketPeriod = Literal["year", "month"]
+CompanyCompensationTier = Literal["tier_1_local", "tier_2_ambitious", "tier_3_top_of_market", "unknown"]
+MarketMatchScope = Literal["exact_company_role", "company_adjacent_role", "tier_role_fallback", "none"]
 MarketConfidenceFactorName = Literal[
-    "occupation",
-    "geography",
-    "seniority",
+    "company",
+    "role",
+    "level",
+    "location",
     "component",
     "freshness",
     "sample",
     "agreement",
+    "trimodal_tier",
 ]
 MarketWarningCode = Literal[
-    "aggregate_baseline",
-    "broad_aggregate_band",
+    "reported_compensation_sample",
     "source_conflict_with_posted_salary",
     "stale_source_snapshot",
     "low_sample_count",
-    "remote_europe_assumption",
-    "spain_local_assumption",
-    "eu_wide_assumption",
-    "non_eu_europe_assumption",
-    "unknown_location_assumption",
+    "company_role_fallback",
+    "trimodal_tier_inferred",
+    "location_mismatch",
 ]
 MarketReasonCode = Literal[
     "unsupported_source",
-    "unsupported_geography",
     "unsupported_component",
-    "missing_occupation_mapping",
+    "missing_company",
+    "missing_role",
+    "missing_reported_observation",
     "stale_source_snapshot",
-    "weak_occupation_match",
-    "weak_geography_match",
-    "weak_seniority_match",
-    "weak_component_match",
+    "weak_company_match",
+    "weak_role_match",
+    "weak_level_match",
+    "weak_location_match",
     "low_sample_count",
     "source_dispersion_too_high",
-    "missing_salary_observation",
 ]
 
 MARKET_ESTIMATE_STATES: tuple[MarketEstimateState, ...] = (
@@ -69,112 +66,56 @@ MARKET_ESTIMATE_STATES: tuple[MarketEstimateState, ...] = (
     "estimated_range",
 )
 MARKET_SOURCE_IDS: tuple[MarketSourceId, ...] = (
-    "eurostat_structure_of_earnings",
-    "esco_occupation_taxonomy",
-    "spain_ine_salary_structure",
+    "levels_fyi",
+    "glassdoor",
+    "manual_reported_compensation",
 )
 MARKET_CONFIDENCE_BANDS: tuple[MarketConfidenceBand, ...] = ("none", "low", "medium", "high")
 MARKET_WARNING_CODES: tuple[MarketWarningCode, ...] = (
-    "aggregate_baseline",
-    "broad_aggregate_band",
+    "reported_compensation_sample",
     "source_conflict_with_posted_salary",
     "stale_source_snapshot",
     "low_sample_count",
-    "remote_europe_assumption",
-    "spain_local_assumption",
-    "eu_wide_assumption",
-    "non_eu_europe_assumption",
-    "unknown_location_assumption",
+    "company_role_fallback",
+    "trimodal_tier_inferred",
+    "location_mismatch",
 )
 MARKET_REASON_CODES: tuple[MarketReasonCode, ...] = (
     "unsupported_source",
-    "unsupported_geography",
     "unsupported_component",
-    "missing_occupation_mapping",
+    "missing_company",
+    "missing_role",
+    "missing_reported_observation",
     "stale_source_snapshot",
-    "weak_occupation_match",
-    "weak_geography_match",
-    "weak_seniority_match",
-    "weak_component_match",
+    "weak_company_match",
+    "weak_role_match",
+    "weak_level_match",
+    "weak_location_match",
     "low_sample_count",
     "source_dispersion_too_high",
-    "missing_salary_observation",
 )
 
-EU_COUNTRIES = frozenset(
-    {
-        "austria",
-        "belgium",
-        "bulgaria",
-        "croatia",
-        "cyprus",
-        "czechia",
-        "czech republic",
-        "denmark",
-        "estonia",
-        "finland",
-        "france",
-        "germany",
-        "greece",
-        "hungary",
-        "ireland",
-        "italy",
-        "latvia",
-        "lithuania",
-        "luxembourg",
-        "malta",
-        "netherlands",
-        "poland",
-        "portugal",
-        "romania",
-        "slovakia",
-        "slovenia",
-        "spain",
-        "sweden",
-    }
-)
-NON_EU_EUROPE_COUNTRIES = frozenset({"norway", "switzerland", "iceland", "liechtenstein", "united kingdom", "uk"})
-NON_EUROPE_COUNTRIES = frozenset({"united states", "usa", "us", "canada", "australia", "india", "brazil"})
-SUPPORTED_COMPONENTS = frozenset({"base_salary", "gross_annual_salary", "gross_monthly_salary"})
-SALARY_SOURCE_IDS = frozenset({"eurostat_structure_of_earnings", "spain_ine_salary_structure"})
-STALE_THRESHOLD_MONTHS = 60
-LOW_SAMPLE_THRESHOLD = 500
-MIN_SAMPLE_THRESHOLD = 100
-MIN_ESTIMATE_SCORE = 0.72
-MIN_CRITICAL_FACTOR_SCORE = 0.60
-MAX_DISPERSION_RATIO = 0.25
+SUPPORTED_COMPONENTS = frozenset({"base_salary", "total_compensation"})
+STALE_THRESHOLD_MONTHS = 36
+LOW_SAMPLE_THRESHOLD = 3
+MIN_ESTIMATE_SCORE = 0.62
+MIN_CRITICAL_FACTOR_SCORE = 0.55
+MAX_DISPERSION_RATIO = 0.45
 POSTED_CONFLICT_RATIO = 0.30
 SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
-    "eurostat_structure_of_earnings": "Eurostat Structure of Earnings Survey",
-    "esco_occupation_taxonomy": "ESCO occupation taxonomy",
-    "spain_ine_salary_structure": "Spain INE Wage Structure Survey",
+    "levels_fyi": "Levels.fyi",
+    "glassdoor": "Glassdoor",
+    "manual_reported_compensation": "Manual reported compensation import",
 }
-SOURCE_DEFAULT_GEOGRAPHY_SCOPE: dict[MarketSourceId, str] = {
-    "eurostat_structure_of_earnings": "EU",
-    "esco_occupation_taxonomy": "Europe",
-    "spain_ine_salary_structure": "Spain",
-}
-SOURCE_DEFAULT_SNAPSHOT_VERSION: dict[MarketSourceId, str] = {
-    "eurostat_structure_of_earnings": "synthetic-public-fixture",
-    "esco_occupation_taxonomy": "synthetic-public-fixture",
-    "spain_ine_salary_structure": "synthetic-public-fixture",
-}
-SOURCE_DEFAULT_AGGREGATE_BUCKET: dict[MarketSourceId, str] = {
-    "eurostat_structure_of_earnings": "Eurostat SES occupation/country aggregate",
-    "esco_occupation_taxonomy": "ESCO occupation mapping",
-    "spain_ine_salary_structure": "Spain INE occupation aggregate",
-}
+SOURCE_DEFAULT_SNAPSHOT_VERSION = "reported-compensation-import-v1"
 SOURCE_DEFAULT_ATTRIBUTION: dict[MarketSourceId, str] = {
-    "eurostat_structure_of_earnings": "Eurostat public statistical aggregate",
-    "esco_occupation_taxonomy": "ESCO public occupation taxonomy",
-    "spain_ine_salary_structure": "Spain INE public statistical aggregate",
+    "levels_fyi": "Levels.fyi reported compensation data",
+    "glassdoor": "Glassdoor reported compensation data",
+    "manual_reported_compensation": "Manual reported compensation import",
 }
 UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"glassdoor",
-        r"levels(?:\.fyi)?",
-        r"salary\.com",
         r"rawproviderpayload",
         r"credential",
         r"secret",
@@ -185,15 +126,50 @@ UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
         r"file://",
         r"/users/",
         r"\\users\\",
-        r"\bbls\b",
-        r"\bsoc\b",
-        r"\bonet\b",
-        r"\bo\*net\b",
-        r"\bunited states\b",
-        r"\bu\.s\.",
-        r"\bus\b",
-        r"\busa\b",
     )
+)
+LEGAL_SUFFIX_RE = re.compile(
+    r"\b(?:inc|incorporated|ltd|limited|llc|gmbh|ag|sa|sas|sarl|sl|plc|bv|nv|ab|oy|srl|spa)\b\.?",
+    re.IGNORECASE,
+)
+SENIORITY_WORDS = frozenset(
+    {
+        "junior",
+        "jr",
+        "mid",
+        "senior",
+        "sr",
+        "staff",
+        "principal",
+        "lead",
+        "manager",
+        "director",
+        "head",
+    }
+)
+ROLE_STOP_WORDS = frozenset({"remote", "full", "time", "the"})
+EUROPE_MARKERS = frozenset(
+    {
+        "europe",
+        "eu",
+        "emea",
+        "spain",
+        "madrid",
+        "barcelona",
+        "france",
+        "germany",
+        "netherlands",
+        "ireland",
+        "united kingdom",
+        "uk",
+        "switzerland",
+        "poland",
+        "portugal",
+        "italy",
+        "sweden",
+        "denmark",
+        "norway",
+    }
 )
 
 
@@ -209,7 +185,7 @@ class MarketConfidenceFactor:
 class MarketSourceSnapshot:
     source_id: MarketSourceId
     display_name: str
-    source_type: Literal["public_wage_baseline", "occupation_taxonomy"]
+    source_type: Literal["reported_compensation"]
     release_year: int | None
     snapshot_version: str
     geography_scope: str
@@ -219,25 +195,22 @@ class MarketSourceSnapshot:
 
 
 @dataclass(frozen=True)
-class PublicMarketBaseline:
+class ReportedCompensationObservation:
     source_id: MarketSourceId
-    occupation_code: str
-    occupation_label: str
-    geography_scope: str
-    aggregate_bucket: str
+    company_name: str
+    role_title: str
     minimum_amount: int | None
     maximum_amount: int | None
     currency: str = "EUR"
     period: MarketPeriod = "year"
-    component: MarketComponent = "base_salary"
-    release_year: int | None = 2024
-    snapshot_version: str = "synthetic-public-fixture"
-    sample_count: int | None = None
-    attribution: str = "Synthetic public aggregate fixture"
-    seniority_label: str = "aggregate"
-    occupation_match_score: float = 1.0
-    geography_match_score: float = 1.0
-    seniority_match_score: float = 0.75
+    component: MarketComponent = "total_compensation"
+    location: str | None = None
+    level_label: str | None = None
+    company_tier: CompanyCompensationTier = "unknown"
+    release_year: int | None = 2026
+    snapshot_version: str = SOURCE_DEFAULT_SNAPSHOT_VERSION
+    sample_count: int | None = 1
+    attribution: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,101 +240,94 @@ class MarketCompensationEstimate:
     warnings: tuple[MarketWarningCode, ...]
     estimator_version: str
     estimated_at: str
+    company_name: str | None = None
+    normalized_company: str | None = None
+    role_title: str | None = None
+    normalized_role: str | None = None
+    company_tier: CompanyCompensationTier = "unknown"
+    match_scope: MarketMatchScope = "none"
 
 
 def estimate_market_compensation(
     *,
     job_url: str,
     title: str,
+    company: str | None,
     location: str | None,
-    baselines: tuple[PublicMarketBaseline, ...],
+    observations: tuple[ReportedCompensationObservation, ...],
     tenant_id: str = "local",
-    component: str = "base_salary",
+    component: str = "total_compensation",
     seniority_label: str | None = None,
     posted_annualized_minimum: int | None = None,
     posted_annualized_maximum: int | None = None,
     estimated_at: str | None = None,
 ) -> MarketCompensationEstimate:
-    """Estimate a Europe public market range from deterministic local baseline rows."""
+    """Estimate compensation from reported company-role salary observations."""
 
     now = estimated_at or datetime.now(timezone.utc).isoformat()
-    warnings: list[MarketWarningCode] = ["aggregate_baseline"]
+    warnings: list[MarketWarningCode] = ["reported_compensation_sample"]
     unsupported_reasons: list[MarketReasonCode] = []
     source_unavailable_reasons: list[MarketReasonCode] = []
     insufficient_reasons: list[MarketReasonCode] = []
     factors: list[MarketConfidenceFactor] = []
+    component_value = _market_component(component)
 
-    if component not in SUPPORTED_COMPONENTS:
+    normalized_company = _normalize_company(company)
+    normalized_role = _normalize_role(title)
+    inferred_level = seniority_label or _level_from_title(title)
+
+    if component_value is None:
         unsupported_reasons.append("unsupported_component")
         factors.append(_factor("component", 0.0, "Unsupported compensation component."))
         return _estimate(
             tenant_id=tenant_id,
             job_url=job_url,
             state="unsupported",
-            component="base_salary",
+            component="total_compensation",
             factors=factors,
             unsupported=unsupported_reasons,
             warnings=warnings,
             estimated_at=now,
+            company_name=_clean_display(company),
+            normalized_company=normalized_company or None,
+            role_title=_clean_display(title),
+            normalized_role=normalized_role or None,
+        )
+    if not normalized_company:
+        insufficient_reasons.append("missing_company")
+        factors.append(_factor("company", 0.0, "The job has no company name to match reported compensation."))
+        return _estimate(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            state="insufficient_evidence",
+            component=component_value,
+            factors=factors,
+            insufficient=insufficient_reasons,
+            warnings=warnings,
+            estimated_at=now,
+            role_title=_clean_display(title),
+            normalized_role=normalized_role or None,
+        )
+    if not normalized_role:
+        insufficient_reasons.append("missing_role")
+        factors.append(_factor("role", 0.0, "The job title has no role terms to match reported compensation."))
+        return _estimate(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            state="insufficient_evidence",
+            component=component_value,
+            factors=factors,
+            insufficient=insufficient_reasons,
+            warnings=warnings,
+            estimated_at=now,
+            company_name=_clean_display(company),
+            normalized_company=normalized_company,
         )
 
-    source_ids = {baseline.source_id for baseline in baselines}
-    unsupported_sources = sorted(str(source_id) for source_id in source_ids if source_id not in MARKET_SOURCE_IDS)
+    unsupported_sources = sorted(str(row.source_id) for row in observations if row.source_id not in MARKET_SOURCE_IDS)
     if unsupported_sources:
         unsupported_reasons.append("unsupported_source")
-        factors.append(_factor("occupation", 0.0, "Unsupported compensation source evidence was rejected."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_url=job_url,
-            state="unsupported",
-            component=_market_component(component),
-            factors=factors,
-            unsupported=unsupported_reasons,
-            warnings=warnings,
-            estimated_at=now,
-        )
-
-    geography_score, geography_scope, geography_reason, geography_warnings, geography_unsupported = _geography(
-        location
-    )
-    warnings.extend(geography_warnings)
-    factors.append(_factor("geography", geography_score, geography_reason))
-    if geography_unsupported:
-        unsupported_reasons.append("unsupported_geography")
-        return _estimate(
-            tenant_id=tenant_id,
-            job_url=job_url,
-            state="unsupported",
-            component=_market_component(component),
-            factors=factors,
-            unsupported=unsupported_reasons,
-            warnings=warnings,
-            geography_scope=geography_scope,
-            estimated_at=now,
-        )
-
-    if "esco_occupation_taxonomy" not in source_ids:
-        unsupported_reasons.append("missing_occupation_mapping")
-        factors.append(_factor("occupation", 0.0, "No ESCO occupation mapping evidence was provided."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_url=job_url,
-            state="unsupported",
-            component=_market_component(component),
-            factors=factors,
-            unsupported=unsupported_reasons,
-            warnings=warnings,
-            geography_scope=geography_scope,
-            estimated_at=now,
-        )
-
-    component_value = _market_component(component)
-    unsupported_allowed_rows = tuple(
-        baseline for baseline in baselines if baseline.source_id in MARKET_SOURCE_IDS and not _baseline_scope_supported(baseline)
-    )
-    if unsupported_allowed_rows:
-        unsupported_reasons.append("unsupported_source")
-        factors.append(_factor("occupation", 0.0, "Unsupported or non-European source evidence was rejected."))
+        factors.append(_factor("company", 0.0, "Unsupported reported-compensation source evidence was rejected."))
         return _estimate(
             tenant_id=tenant_id,
             job_url=job_url,
@@ -370,163 +336,193 @@ def estimate_market_compensation(
             factors=factors,
             unsupported=unsupported_reasons,
             warnings=warnings,
-            geography_scope=geography_scope,
             estimated_at=now,
+            company_name=_clean_display(company),
+            normalized_company=normalized_company,
+            role_title=_clean_display(title),
+            normalized_role=normalized_role,
         )
 
-    salary_rows = tuple(baseline for baseline in baselines if baseline.source_id in SALARY_SOURCE_IDS)
-    if not salary_rows:
-        insufficient_reasons.append("missing_salary_observation")
-        factors.append(_factor("occupation", 0.75, f"ESCO mapping supports {title}, but no wage baseline row exists."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_url=job_url,
-            state="insufficient_evidence",
-            component=component_value,
-            factors=factors,
-            insufficient=insufficient_reasons,
-            warnings=warnings,
-            geography_scope=geography_scope,
-            estimated_at=now,
-        )
-
-    component_rows = tuple(row for row in salary_rows if _component_matches(row, component_value))
+    component_rows = tuple(row for row in observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value)
     if not component_rows:
-        insufficient_reasons.append("weak_component_match")
-        factors.append(_factor("component", 0.0, f"No public wage baseline row matched {component_value}."))
-        return _estimate(
+        insufficient_reasons.append("missing_reported_observation")
+        factors.append(_factor("component", 0.0, f"No reported compensation observations use {component_value}."))
+        return _insufficient(
             tenant_id=tenant_id,
             job_url=job_url,
-            state="insufficient_evidence",
             component=component_value,
+            company=company,
+            normalized_company=normalized_company,
+            role=title,
+            normalized_role=normalized_role,
             factors=factors,
             insufficient=insufficient_reasons,
             warnings=warnings,
-            geography_scope=geography_scope,
             estimated_at=now,
         )
 
-    usable_rows: list[PublicMarketBaseline] = []
+    usable_rows: list[ReportedCompensationObservation] = []
     for row in component_rows:
         if row.release_year is not None and _age_months(row.release_year, now) > STALE_THRESHOLD_MONTHS:
             source_unavailable_reasons.append("stale_source_snapshot")
             warnings.append("stale_source_snapshot")
             continue
-        if row.minimum_amount is None or row.maximum_amount is None:
-            insufficient_reasons.append("missing_salary_observation")
+        if row.minimum_amount is None and row.maximum_amount is None:
+            insufficient_reasons.append("missing_reported_observation")
             continue
-        if row.sample_count is not None and row.sample_count < MIN_SAMPLE_THRESHOLD:
+        if (row.sample_count or 1) <= 0:
             insufficient_reasons.append("low_sample_count")
             warnings.append("low_sample_count")
             continue
         usable_rows.append(row)
 
     if source_unavailable_reasons and not usable_rows:
-        factors.append(_factor("freshness", 0.0, "Required wage baseline source snapshots are stale."))
+        factors.append(_factor("freshness", 0.0, "Reported compensation source snapshots are stale."))
         return _estimate(
             tenant_id=tenant_id,
             job_url=job_url,
             state="source_unavailable",
-            component=_market_component(component),
+            component=component_value,
             factors=factors,
             source_unavailable=source_unavailable_reasons,
             warnings=warnings,
-            geography_scope=geography_scope,
             estimated_at=now,
+            company_name=_clean_display(company),
+            normalized_company=normalized_company,
+            role_title=_clean_display(title),
+            normalized_role=normalized_role,
         )
     if not usable_rows:
-        factors.append(_factor("sample", 0.0, "No wage baseline row had enough sample support."))
-        return _estimate(
+        factors.append(_factor("sample", 0.0, "No reported compensation row had usable amount evidence."))
+        return _insufficient(
             tenant_id=tenant_id,
             job_url=job_url,
-            state="insufficient_evidence",
-            component=_market_component(component),
+            component=component_value,
+            company=company,
+            normalized_company=normalized_company,
+            role=title,
+            normalized_role=normalized_role,
             factors=factors,
-            insufficient=insufficient_reasons or ["missing_salary_observation"],
+            insufficient=insufficient_reasons or ["missing_reported_observation"],
             warnings=warnings,
-            geography_scope=geography_scope,
             estimated_at=now,
         )
 
-    selected_rows = _prefer_rows(usable_rows, geography_scope)
-    snapshots = tuple(_snapshot(row) for row in selected_rows) + tuple(
-        _snapshot(row) for row in baselines if row.source_id == "esco_occupation_taxonomy"
+    selected_rows, match_scope, scope_warning = _select_rows(
+        usable_rows,
+        normalized_company=normalized_company,
+        normalized_role=normalized_role,
     )
-    minimum = min(row.minimum_amount for row in selected_rows if row.minimum_amount is not None)
-    maximum = max(row.maximum_amount for row in selected_rows if row.maximum_amount is not None)
-    sample_count = sum(row.sample_count or 0 for row in selected_rows) or None
-    source_count = len({row.source_id for row in selected_rows})
-    aggregate_bucket = _join_unique(_safe_aggregate_bucket(row) for row in selected_rows)
-    occupation_code = selected_rows[0].occupation_code
-    occupation_label = selected_rows[0].occupation_label
+    if scope_warning:
+        warnings.append(scope_warning)
+    if not selected_rows:
+        factors.extend(
+            [
+                _factor("company", 0.0, f"No reported compensation rows matched company {company}."),
+                _factor("role", 0.0, f"No reported compensation rows matched role {title}."),
+            ]
+        )
+        return _insufficient(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            component=component_value,
+            company=company,
+            normalized_company=normalized_company,
+            role=title,
+            normalized_role=normalized_role,
+            factors=factors,
+            insufficient=["missing_reported_observation"],
+            warnings=warnings,
+            estimated_at=now,
+        )
 
-    occupation_score = min(row.occupation_match_score for row in selected_rows)
-    seniority_score = min(row.seniority_match_score for row in selected_rows)
+    company_scores = tuple(_company_score(normalized_company, row.company_name) for row in selected_rows)
+    role_scores = tuple(_role_score(normalized_role, row.role_title) for row in selected_rows)
+    level_scores = tuple(_level_score(inferred_level, row.level_label) for row in selected_rows)
+    location_scores = tuple(_location_score(location, row.location) for row in selected_rows)
+    freshness_scores = tuple(_freshness_score(row.release_year, now) for row in selected_rows)
+    source_count = len({row.source_id for row in selected_rows})
+    sample_count = sum(row.sample_count or 1 for row in selected_rows)
     sample_score = _sample_score(sample_count)
-    freshness_score = min(_freshness_score(row.release_year, now) for row in selected_rows)
-    component_score = 1.0
     agreement_score, dispersion_warning, dispersion_insufficient = _agreement_score(selected_rows)
-    if dispersion_warning:
-        warnings.append("broad_aggregate_band")
-    if dispersion_insufficient:
-        insufficient_reasons.append("source_dispersion_too_high")
-    if sample_count is not None and sample_count < LOW_SAMPLE_THRESHOLD:
+    company_tier, tier_inferred = _company_tier(selected_rows)
+    tier_score = _tier_score(company_tier, match_scope)
+
+    if tier_inferred:
+        warnings.append("trimodal_tier_inferred")
+    if sample_count < LOW_SAMPLE_THRESHOLD:
         warnings.append("low_sample_count")
         insufficient_reasons.append("low_sample_count")
-    if _is_broad_band(minimum, maximum):
-        warnings.append("broad_aggregate_band")
+    if min(location_scores) < MIN_CRITICAL_FACTOR_SCORE:
+        warnings.append("location_mismatch")
+        insufficient_reasons.append("weak_location_match")
+    if dispersion_warning:
+        warnings.append("company_role_fallback")
+    if dispersion_insufficient:
+        insufficient_reasons.append("source_dispersion_too_high")
+
+    minimum = min(_row_minimum(row) for row in selected_rows)
+    maximum = max(_row_maximum(row) for row in selected_rows)
     if _posted_conflicts(minimum, maximum, posted_annualized_minimum, posted_annualized_maximum):
         warnings.append("source_conflict_with_posted_salary")
 
+    company_score = min(company_scores)
+    role_score = min(role_scores)
+    if match_scope == "company_adjacent_role":
+        role_score = max(role_score, 0.62)
+    level_score = min(level_scores)
+    location_score = min(location_scores)
+    freshness_score = min(freshness_scores)
     factors.extend(
         [
-            _factor("occupation", occupation_score, f"Occupation mapped to {occupation_label}."),
-            _factor("seniority", seniority_score, f"Seniority support: {seniority_label or selected_rows[0].seniority_label}."),
-            _factor("component", component_score, f"Component {component_value} is compatible with public wage baselines."),
-            _factor("freshness", freshness_score, "Source snapshots are inside the freshness policy window."),
-            _factor("sample", sample_score, f"Combined public sample count: {sample_count or 'not published'}."),
-            _factor("agreement", agreement_score, "Public baseline rows are within dispersion tolerance."),
+            _factor("company", company_score, f"Reported rows matched company {company}."),
+            _factor("role", role_score, f"Reported rows matched role {title}."),
+            _factor("level", level_score, f"Level support: {inferred_level}."),
+            _factor("location", location_score, "Location compatibility was evaluated but company-role evidence is primary."),
+            _factor("component", 1.0, f"Component {component_value} matches the reported compensation rows."),
+            _factor("freshness", freshness_score, "Reported source snapshots are inside the freshness window."),
+            _factor("sample", sample_score, f"Reported compensation sample count: {sample_count}."),
+            _factor("agreement", agreement_score, "Selected reported compensation rows are within dispersion tolerance."),
+            _factor("trimodal_tier", tier_score, f"Company tier context: {company_tier}."),
         ]
     )
 
-    critical_scores = [
-        occupation_score,
-        geography_score,
-        seniority_score,
-        component_score,
-        freshness_score,
-        sample_score,
-        agreement_score,
-    ]
-    confidence_score = round(min(critical_scores), 2)
-    if occupation_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_occupation_match")
-    if geography_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_geography_match")
-    if seniority_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_seniority_match")
-    if component_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_component_match")
+    if company_score < MIN_CRITICAL_FACTOR_SCORE:
+        insufficient_reasons.append("weak_company_match")
+    if role_score < MIN_CRITICAL_FACTOR_SCORE:
+        insufficient_reasons.append("weak_role_match")
+    if level_score < MIN_CRITICAL_FACTOR_SCORE:
+        insufficient_reasons.append("weak_level_match")
 
-    if confidence_score < MIN_ESTIMATE_SCORE or insufficient_reasons:
+    confidence_score = round(
+        min(company_score, role_score, level_score, location_score, freshness_score, sample_score, agreement_score, tier_score),
+        2,
+    )
+    if confidence_score < MIN_ESTIMATE_SCORE or dispersion_insufficient:
         return _estimate(
             tenant_id=tenant_id,
             job_url=job_url,
             state="insufficient_evidence",
             component=component_value,
             factors=factors,
-            insufficient=insufficient_reasons or ["weak_geography_match"],
+            insufficient=insufficient_reasons or ["missing_reported_observation"],
             warnings=warnings,
-            sources=snapshots,
+            sources=tuple(_snapshot(row) for row in selected_rows),
             source_count=source_count,
             sample_count=sample_count,
-            aggregate_bucket=aggregate_bucket,
-            geography_scope=geography_scope,
-            occupation_code=occupation_code,
-            occupation_label=occupation_label,
-            seniority_label=seniority_label or selected_rows[0].seniority_label,
+            aggregate_bucket=_aggregate_bucket(company, title, match_scope),
+            geography_scope=_geography_scope(location, selected_rows),
+            occupation_code=normalized_company,
+            occupation_label=normalized_role,
+            seniority_label=inferred_level,
             confidence_score=confidence_score,
             estimated_at=now,
+            company_name=_clean_display(company),
+            normalized_company=normalized_company,
+            role_title=_clean_display(title),
+            normalized_role=normalized_role,
+            company_tier=company_tier,
+            match_scope=match_scope,
         )
 
     return _estimate(
@@ -540,16 +536,22 @@ def estimate_market_compensation(
         maximum_amount=maximum,
         factors=factors,
         warnings=warnings,
-        sources=snapshots,
+        sources=tuple(_snapshot(row) for row in selected_rows),
         source_count=source_count,
         sample_count=sample_count,
-        aggregate_bucket=aggregate_bucket,
-        geography_scope=geography_scope,
-        occupation_code=occupation_code,
-        occupation_label=occupation_label,
-        seniority_label=seniority_label or selected_rows[0].seniority_label,
+        aggregate_bucket=_aggregate_bucket(company, title, match_scope),
+        geography_scope=_geography_scope(location, selected_rows),
+        occupation_code=normalized_company,
+        occupation_label=normalized_role,
+        seniority_label=inferred_level,
         confidence_score=confidence_score,
         estimated_at=now,
+        company_name=_clean_display(company),
+        normalized_company=normalized_company,
+        role_title=_clean_display(title),
+        normalized_role=normalized_role,
+        company_tier=company_tier,
+        match_scope=match_scope,
     )
 
 
@@ -565,8 +567,38 @@ def not_requested_market_estimate(
         tenant_id=tenant_id,
         job_url=job_url,
         state="not_requested",
-        component="base_salary",
+        component="total_compensation",
         estimated_at=estimated_at or datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _insufficient(
+    *,
+    tenant_id: str,
+    job_url: str,
+    component: MarketComponent,
+    company: str | None,
+    normalized_company: str | None,
+    role: str | None,
+    normalized_role: str | None,
+    factors: list[MarketConfidenceFactor],
+    insufficient: list[MarketReasonCode],
+    warnings: list[MarketWarningCode],
+    estimated_at: str,
+) -> MarketCompensationEstimate:
+    return _estimate(
+        tenant_id=tenant_id,
+        job_url=job_url,
+        state="insufficient_evidence",
+        component=component,
+        factors=factors,
+        insufficient=insufficient,
+        warnings=warnings,
+        estimated_at=estimated_at,
+        company_name=_clean_display(company),
+        normalized_company=normalized_company,
+        role_title=_clean_display(role),
+        normalized_role=normalized_role,
     )
 
 
@@ -595,6 +627,12 @@ def _estimate(
     occupation_label: str | None = None,
     seniority_label: str | None = None,
     confidence_score: float = 0.0,
+    company_name: str | None = None,
+    normalized_company: str | None = None,
+    role_title: str | None = None,
+    normalized_role: str | None = None,
+    company_tier: CompanyCompensationTier = "unknown",
+    match_scope: MarketMatchScope = "none",
 ) -> MarketCompensationEstimate:
     if state != "estimated_range":
         currency = None
@@ -626,74 +664,80 @@ def _estimate(
         warnings=_dedupe_warnings(warnings or []),
         estimator_version=ESTIMATOR_VERSION,
         estimated_at=estimated_at,
+        company_name=company_name,
+        normalized_company=normalized_company,
+        role_title=role_title,
+        normalized_role=normalized_role,
+        company_tier=company_tier,
+        match_scope=match_scope,
     )
 
 
-def _geography(location: str | None) -> tuple[float, str, str, list[MarketWarningCode], bool]:
-    normalized = _normalize_location(location)
-    if not normalized.strip():
-        return 0.5, "unknown", "Location is unknown; no European market can be selected precisely.", [
-            "unknown_location_assumption"
-        ], False
-    tokens = _tokens(normalized)
-    if "remote" in tokens and _is_eu_scope(normalized):
-        return 0.78, "remote_europe", "Remote Europe role mapped to Europe aggregate baselines.", [
-            "remote_europe_assumption"
-        ], False
-    if _contains_geo_term(normalized, {"spain", "barcelona", "madrid"}):
-        return 0.95, "spain", "Spain-local role can use Spain INE where available.", ["spain_local_assumption"], False
-    if _contains_geo_term(normalized, NON_EUROPE_COUNTRIES):
-        return 0.0, "non_europe", "Known non-European location is outside Phase 19 scope.", [], True
-    if _contains_geo_term(normalized, NON_EU_EUROPE_COUNTRIES):
-        return 0.72, "non_eu_europe", "Non-EU Europe role uses broad Europe aggregate assumptions.", [
-            "non_eu_europe_assumption"
-        ], False
-    if _is_eu_scope(normalized) or _contains_geo_term(normalized, EU_COUNTRIES):
-        return 0.82, "eu_wide", "EU/Europe role mapped to Europe aggregate baselines.", ["eu_wide_assumption"], False
-    return 0.5, "unknown", "Location is not specific enough to choose a European market.", [
-        "unknown_location_assumption"
-    ], False
+def _select_rows(
+    rows: list[ReportedCompensationObservation],
+    *,
+    normalized_company: str,
+    normalized_role: str,
+) -> tuple[list[ReportedCompensationObservation], MarketMatchScope, MarketWarningCode | None]:
+    exact = [
+        row
+        for row in rows
+        if _company_score(normalized_company, row.company_name) >= 0.95 and _role_score(normalized_role, row.role_title) >= 0.72
+    ]
+    if exact:
+        return exact, "exact_company_role", None
+
+    adjacent = [
+        row
+        for row in rows
+        if _company_score(normalized_company, row.company_name) >= 0.95 and _role_score(normalized_role, row.role_title) >= 0.30
+    ]
+    if adjacent:
+        return adjacent, "company_adjacent_role", "company_role_fallback"
+
+    company_rows = [row for row in rows if _company_score(normalized_company, row.company_name) >= 0.95]
+    company_tier, _ = _company_tier(company_rows)
+    if company_tier != "unknown":
+        tier_rows = [
+            row
+            for row in rows
+            if row.company_tier == company_tier and _role_score(normalized_role, row.role_title) >= 0.72
+        ]
+        if tier_rows:
+            return tier_rows, "tier_role_fallback", "company_role_fallback"
+
+    return [], "none", None
 
 
-def _prefer_rows(rows: list[PublicMarketBaseline], geography_scope: str) -> tuple[PublicMarketBaseline, ...]:
-    if geography_scope == "spain":
-        spain_rows = tuple(row for row in rows if row.source_id == "spain_ine_salary_structure")
-        if spain_rows:
-            return spain_rows
-    return tuple(rows)
-
-
-def _snapshot(row: PublicMarketBaseline) -> MarketSourceSnapshot:
-    source_type: Literal["public_wage_baseline", "occupation_taxonomy"] = (
-        "occupation_taxonomy" if row.source_id == "esco_occupation_taxonomy" else "public_wage_baseline"
-    )
+def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
     return sanitize_market_source_snapshot(
         MarketSourceSnapshot(
             source_id=row.source_id,
             display_name=_display_name(row.source_id),
-            source_type=source_type,
+            source_type="reported_compensation",
             release_year=row.release_year,
             snapshot_version=row.snapshot_version,
-            geography_scope=row.geography_scope,
-            aggregate_bucket=row.aggregate_bucket,
-            attribution=row.attribution,
+            geography_scope=_safe_text(_reported_geography(row.location)),
+            aggregate_bucket="reported company-role compensation",
+            attribution=row.attribution or SOURCE_DEFAULT_ATTRIBUTION[row.source_id],
             sample_count=row.sample_count,
         )
     )
 
 
 def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourceSnapshot:
-    """Return a safe public-source snapshot for persistence or API serialization."""
+    """Return a safe reported-source snapshot for persistence or API serialization."""
 
+    source_id = source.source_id if source.source_id in MARKET_SOURCE_IDS else "manual_reported_compensation"
     return MarketSourceSnapshot(
-        source_id=source.source_id,
-        display_name=_display_name(source.source_id),
-        source_type="occupation_taxonomy" if source.source_id == "esco_occupation_taxonomy" else "public_wage_baseline",
+        source_id=source_id,
+        display_name=_display_name(source_id),
+        source_type="reported_compensation",
         release_year=source.release_year,
-        snapshot_version=SOURCE_DEFAULT_SNAPSHOT_VERSION[source.source_id],
-        geography_scope=SOURCE_DEFAULT_GEOGRAPHY_SCOPE[source.source_id],
-        aggregate_bucket=SOURCE_DEFAULT_AGGREGATE_BUCKET[source.source_id],
-        attribution=SOURCE_DEFAULT_ATTRIBUTION[source.source_id],
+        snapshot_version=SOURCE_DEFAULT_SNAPSHOT_VERSION,
+        geography_scope=_safe_text(source.geography_scope) or "reported",
+        aggregate_bucket="reported company-role compensation",
+        attribution=SOURCE_DEFAULT_ATTRIBUTION[source_id],
         sample_count=source.sample_count,
     )
 
@@ -701,11 +745,14 @@ def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourc
 def _display_name(source_id: str) -> str:
     if source_id in SOURCE_DISPLAY_NAMES:
         return SOURCE_DISPLAY_NAMES[source_id]  # type: ignore[index]
-    return "Unsupported compensation source"
+    return "Manual reported compensation import"
 
 
-def _safe_aggregate_bucket(row: PublicMarketBaseline) -> str:
-    return SOURCE_DEFAULT_AGGREGATE_BUCKET[row.source_id]
+def _safe_text(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or _contains_unsafe_source_text(text):
+        return ""
+    return text[:160]
 
 
 def _contains_unsafe_source_text(value: str) -> bool:
@@ -713,59 +760,8 @@ def _contains_unsafe_source_text(value: str) -> bool:
     return any(pattern.search(text) for pattern in UNSAFE_SOURCE_TEXT_PATTERNS)
 
 
-def _baseline_scope_supported(row: PublicMarketBaseline) -> bool:
-    if row.source_id not in MARKET_SOURCE_IDS:
-        return False
-    if _contains_unsafe_source_text(row.geography_scope):
-        return False
-    normalized = _normalize_location(row.geography_scope)
-    if not normalized:
-        return row.source_id == "esco_occupation_taxonomy"
-    if row.source_id == "spain_ine_salary_structure":
-        return _contains_geo_term(normalized, {"spain", "barcelona", "madrid"})
-    if row.source_id in {"eurostat_structure_of_earnings", "esco_occupation_taxonomy"}:
-        return _is_eu_scope(normalized) or _contains_geo_term(normalized, EU_COUNTRIES | NON_EU_EUROPE_COUNTRIES)
-    return False
-
-
-def _component_matches(row: PublicMarketBaseline, component: MarketComponent) -> bool:
-    if component == "gross_monthly_salary":
-        return row.component == "gross_monthly_salary" and row.period == "month"
-    if component == "gross_annual_salary":
-        return row.component == "gross_annual_salary" and row.period == "year"
-    return row.component == "base_salary" and row.period == "year"
-
-
-def _normalize_location(value: str | None) -> str:
-    text = str(value or "").casefold()
-    text = re.sub(r"\bu\.s\.", " us ", text)
-    text = re.sub(r"\bu\.k\.", " uk ", text)
-    text = re.sub(r"\be\.u\.", " eu ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _tokens(value: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", value))
-
-
-def _is_eu_scope(value: str) -> bool:
-    tokens = _tokens(value)
-    return "europe" in tokens or "eu" in tokens or re.search(r"\beuropean\s+union\b", value) is not None
-
-
-def _contains_geo_term(value: str, terms: frozenset[str] | set[str]) -> bool:
-    tokens = _tokens(value)
-    for term in terms:
-        term_normalized = _normalize_location(term)
-        term_tokens = term_normalized.split()
-        if len(term_tokens) == 1:
-            if term_tokens[0] in tokens:
-                return True
-            continue
-        pattern = r"\b" + r"\s+".join(re.escape(token) for token in term_tokens) + r"\b"
-        if re.search(pattern, value):
-            return True
-    return False
+def _market_component(component: str) -> MarketComponent | None:
+    return component if component in SUPPORTED_COMPONENTS else None  # type: ignore[return-value]
 
 
 def _factor(name: MarketConfidenceFactorName, score: float, reason: str) -> MarketConfidenceFactor:
@@ -776,7 +772,7 @@ def _factor(name: MarketConfidenceFactorName, score: float, reason: str) -> Mark
 def _score_band(score: float) -> MarketConfidenceBand:
     if score >= 0.85:
         return "high"
-    if score >= 0.72:
+    if score >= 0.62:
         return "medium"
     if score > 0:
         return "low"
@@ -788,7 +784,7 @@ def _confidence_band(
     state: MarketEstimateState,
     warnings: list[MarketWarningCode],
 ) -> MarketConfidenceBand:
-    if state == "estimated_range" and score >= 0.85 and not {"low_sample_count", "broad_aggregate_band"} & set(warnings):
+    if state == "estimated_range" and score >= 0.85 and "low_sample_count" not in warnings:
         return "high"
     if state == "estimated_range" and score >= MIN_ESTIMATE_SCORE:
         return "medium"
@@ -797,8 +793,164 @@ def _confidence_band(
     return "none"
 
 
-def _market_component(component: str) -> MarketComponent:
-    return component if component in SUPPORTED_COMPONENTS else "base_salary"  # type: ignore[return-value]
+def _normalize_company(value: str | None) -> str:
+    text = str(value or "").casefold()
+    text = LEGAL_SUFFIX_RE.sub(" ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_role(value: str | None) -> str:
+    tokens = _role_tokens(value)
+    return " ".join(token for token in tokens if token not in SENIORITY_WORDS)
+
+
+def _role_tokens(value: str | None) -> tuple[str, ...]:
+    text = str(value or "").casefold()
+    tokens = tuple(re.findall(r"[a-z0-9]+", text))
+    return tuple(token for token in tokens if token not in ROLE_STOP_WORDS)
+
+
+def _company_score(normalized_company: str, reported_company: str | None) -> float:
+    reported = _normalize_company(reported_company)
+    if not normalized_company or not reported:
+        return 0.0
+    if normalized_company == reported:
+        return 1.0
+    if normalized_company in reported or reported in normalized_company:
+        return 0.82
+    return 0.0
+
+
+def _role_score(normalized_role: str, reported_title: str | None) -> float:
+    reported = _normalize_role(reported_title)
+    if not normalized_role or not reported:
+        return 0.0
+    if normalized_role == reported:
+        return 1.0
+    wanted = set(normalized_role.split())
+    seen = set(reported.split())
+    if not wanted or not seen:
+        return 0.0
+    overlap = len(wanted & seen) / len(wanted | seen)
+    return round(overlap, 2)
+
+
+def _level_from_title(title: str | None) -> str:
+    tokens = set(_role_tokens(title))
+    if {"staff", "principal", "lead", "director", "head"} & tokens:
+        return "staff_plus"
+    if {"senior", "sr"} & tokens:
+        return "senior"
+    if {"junior", "jr"} & tokens:
+        return "junior"
+    if "manager" in tokens:
+        return "manager"
+    return "mid"
+
+
+def _level_score(expected: str | None, observed: str | None) -> float:
+    expected_level = _normalize_level(expected)
+    observed_level = _normalize_level(observed)
+    if observed_level == "unknown":
+        return 0.75
+    if expected_level == observed_level:
+        return 0.95
+    if expected_level == "senior" and observed_level == "staff_plus":
+        return 0.82
+    if expected_level == "staff_plus" and observed_level == "senior":
+        return 0.78
+    if expected_level == "mid" and observed_level in {"senior", "junior"}:
+        return 0.65
+    return 0.5
+
+
+def _normalize_level(value: str | None) -> str:
+    text = str(value or "").casefold()
+    tokens = set(re.findall(r"[a-z0-9]+", text))
+    if {"staff", "principal", "lead", "director", "head", "l6", "l7", "l8"} & tokens:
+        return "staff_plus"
+    if {"senior", "sr", "l5"} & tokens:
+        return "senior"
+    if {"junior", "jr", "graduate", "l3"} & tokens:
+        return "junior"
+    if {"manager"} & tokens:
+        return "manager"
+    if tokens:
+        return "mid"
+    return "unknown"
+
+
+def _location_score(job_location: str | None, observed_location: str | None) -> float:
+    job = _normalize_location(job_location)
+    observed = _normalize_location(observed_location)
+    if not job or not observed:
+        return 0.78
+    if job == observed or job in observed or observed in job:
+        return 0.95
+    if _is_europe(job) and _is_europe(observed):
+        return 0.78
+    return 0.5
+
+
+def _normalize_location(value: str | None) -> str:
+    text = str(value or "").casefold()
+    text = re.sub(r"\bu\.k\.", " uk ", text)
+    text = re.sub(r"\be\.u\.", " eu ", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _is_europe(value: str) -> bool:
+    tokens = set(value.split())
+    if tokens & EUROPE_MARKERS:
+        return True
+    return any(marker in value for marker in EUROPE_MARKERS if " " in marker)
+
+
+def _reported_geography(value: str | None) -> str:
+    normalized = _normalize_location(value)
+    if not normalized:
+        return "reported"
+    if _is_europe(normalized):
+        return "Europe"
+    return "reported"
+
+
+def _company_tier(
+    rows: list[ReportedCompensationObservation],
+) -> tuple[CompanyCompensationTier, bool]:
+    tiers = [row.company_tier for row in rows if row.company_tier != "unknown"]
+    if tiers:
+        return max(set(tiers), key=tiers.count), False
+    if not rows:
+        return "unknown", False
+    midpoint = median((_row_minimum(row) + _row_maximum(row)) / 2 for row in rows)
+    if midpoint >= 160_000:
+        return "tier_3_top_of_market", True
+    if midpoint >= 90_000:
+        return "tier_2_ambitious", True
+    return "tier_1_local", True
+
+
+def _tier_score(company_tier: CompanyCompensationTier, match_scope: MarketMatchScope) -> float:
+    if company_tier == "unknown":
+        return 0.62 if match_scope == "exact_company_role" else 0.45
+    if match_scope == "tier_role_fallback":
+        return 0.62
+    return 0.82
+
+
+def _row_minimum(row: ReportedCompensationObservation) -> int:
+    if row.minimum_amount is not None:
+        return int(row.minimum_amount)
+    return int(row.maximum_amount or 0)
+
+
+def _row_maximum(row: ReportedCompensationObservation) -> int:
+    if row.maximum_amount is not None:
+        return int(row.maximum_amount)
+    return int(row.minimum_amount or 0)
 
 
 def _age_months(release_year: int, estimated_at: str) -> int:
@@ -810,7 +962,7 @@ def _freshness_score(release_year: int | None, estimated_at: str) -> float:
     if release_year is None:
         return 0.72
     months = _age_months(release_year, estimated_at)
-    if months <= 24:
+    if months <= 12:
         return 0.95
     if months <= STALE_THRESHOLD_MONTHS:
         return 0.78
@@ -826,33 +978,29 @@ def _year(value: str) -> int:
 
 def _sample_score(sample_count: int | None) -> float:
     if sample_count is None:
-        return 0.72
-    if sample_count >= LOW_SAMPLE_THRESHOLD:
+        return 0.62
+    if sample_count >= 8:
         return 0.9
-    if sample_count >= MIN_SAMPLE_THRESHOLD:
-        return 0.55
+    if sample_count >= LOW_SAMPLE_THRESHOLD:
+        return 0.78
+    if sample_count >= 1:
+        return 0.62
     return 0.0
 
 
-def _agreement_score(rows: tuple[PublicMarketBaseline, ...]) -> tuple[float, bool, bool]:
+def _agreement_score(rows: list[ReportedCompensationObservation]) -> tuple[float, bool, bool]:
     if len(rows) < 2:
-        return 0.78, False, False
-    midpoints = [((row.minimum_amount or 0) + (row.maximum_amount or 0)) / 2 for row in rows]
+        return 0.72, False, False
+    midpoints = [(_row_minimum(row) + _row_maximum(row)) / 2 for row in rows]
     center = median(midpoints)
     if center <= 0:
         return 0.0, True, True
     dispersion = (max(midpoints) - min(midpoints)) / center
     if dispersion > MAX_DISPERSION_RATIO:
         return 0.4, True, True
-    if dispersion > 0.15:
-        return 0.72, True, False
-    return 0.9, False, False
-
-
-def _is_broad_band(minimum: int, maximum: int) -> bool:
-    if minimum <= 0:
-        return True
-    return (maximum - minimum) / minimum > 0.35
+    if dispersion > 0.25:
+        return 0.62, True, False
+    return 0.85, False, False
 
 
 def _posted_conflicts(
@@ -870,8 +1018,29 @@ def _posted_conflicts(
     return abs(market_mid - posted_mid) / market_mid > POSTED_CONFLICT_RATIO
 
 
-def _join_unique(values: object) -> str:
-    return ", ".join(dict.fromkeys(str(value) for value in values if value is not None))
+def _aggregate_bucket(company: str | None, title: str | None, match_scope: MarketMatchScope) -> str:
+    if match_scope == "exact_company_role":
+        return "reported company-role compensation"
+    if match_scope == "company_adjacent_role":
+        return "reported company adjacent-role compensation"
+    if match_scope == "tier_role_fallback":
+        return "trimodal tier role fallback"
+    return f"reported compensation for {_clean_display(company) or 'unknown company'} {_clean_display(title) or 'unknown role'}"
+
+
+def _geography_scope(location: str | None, rows: list[ReportedCompensationObservation]) -> str:
+    if _is_europe(_normalize_location(location)):
+        return "Europe"
+    for row in rows:
+        geography = _reported_geography(row.location)
+        if geography:
+            return geography
+    return "reported"
+
+
+def _clean_display(value: str | None) -> str | None:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text[:240] if text else None
 
 
 def _dedupe_warnings(values: list[MarketWarningCode]) -> tuple[MarketWarningCode, ...]:
@@ -883,11 +1052,11 @@ def _dedupe_reasons(values: list[MarketReasonCode]) -> tuple[MarketReasonCode, .
 
 
 def _dedupe_sources(values: tuple[MarketSourceSnapshot, ...]) -> tuple[MarketSourceSnapshot, ...]:
-    seen: set[tuple[MarketSourceId, str, str]] = set()
+    seen: set[tuple[MarketSourceId, str]] = set()
     out: list[MarketSourceSnapshot] = []
     for value in values:
         value = sanitize_market_source_snapshot(value)
-        key = (value.source_id, value.snapshot_version, value.aggregate_bucket)
+        key = (value.source_id, value.snapshot_version)
         if key in seen:
             continue
         seen.add(key)

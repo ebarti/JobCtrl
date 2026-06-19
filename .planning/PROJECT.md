@@ -25,13 +25,13 @@ v1.3 will make compensation facts inspectable in Jobs triage by combining posted
 
 ## Current Milestone: v1.3 Salary Range Estimator
 
-**Goal:** Make salary facts in JobHunter inspectable and useful in Jobs triage by combining posted compensation extraction with Europe-only public market-range estimates, while preserving an audit trail for every displayed range.
+**Goal:** Make salary facts in JobHunter inspectable and useful in Jobs triage by combining posted compensation extraction with company-role reported compensation estimates, while preserving an audit trail for every displayed range.
 
 **Target features:**
 - Normalize compensation from raw job salary strings and compensation text in postings into a structured salary-range fact with source text, currency/period, statistical confidence, and parse warnings.
-- Add a market salary estimator that uses Eurostat Structure of Earnings Survey, ESCO occupation mapping, and Spain INE Wage Structure Survey as v1.3 public baselines, with licensed sources such as Levels.fyi or Glassdoor represented only as disabled/unavailable seams unless permitted access is explicitly configured.
+- Add a market salary estimator that uses reported compensation observations from Levels.fyi, Glassdoor, and manual local imports keyed by company and role, with automated provider access still gated by explicit permitted access configuration.
 - Maintain a salary-source registry/provenance model so every market estimate identifies source type, captured values, freshness, source agreement, sample/source count where available, assumptions, and whether the source supports the specific role/location/seniority claim.
-- Surface posted salary, Europe public baseline estimate, statistical confidence, source/freshness trail, and profile-floor comparison in the Jobs list/drawer audit triage.
+- Surface posted salary, company-role reported compensation estimate, statistical confidence, source/freshness trail, trimodal company-tier context, and profile-floor comparison in the Jobs list/drawer audit triage.
 - Keep compensation audit-first and warning-only in v1.3: show confidence, source gaps, and unknowns clearly; do not silently rank, filter, or block jobs from posted salaries or market estimates.
 
 ## Requirements

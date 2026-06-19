@@ -9,7 +9,7 @@
 
 ## Overview
 
-v1.3 makes compensation facts inspectable in Jobs triage without turning uncertain salary evidence into hidden ranking, filtering, or apply gates. The milestone first locks source-access policy, then adds posted salary facts, Europe-only public market estimates, canonical read-model/API propagation, Jobs list/drawer UX, and product-path QA that proves the feature stays warning-only and audit-first.
+v1.3 makes compensation facts inspectable in Jobs triage without turning uncertain salary evidence into hidden ranking, filtering, or apply gates. The milestone first locks source-access policy, then adds posted salary facts, company-role reported market estimates, canonical read-model/API propagation, Jobs list/drawer UX, and product-path QA that proves the feature stays warning-only and audit-first.
 
 ## Phases
 
@@ -49,16 +49,16 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   5. User can still see the legacy raw salary string when no structured compensation fact exists, without treating that raw string as the normalized source of truth.
 **Plans**: 18-01 Parser And Persistence; 18-02 Read API And Inspection Contract
 
-### Phase 19: Europe Public Market Estimates
-**Goal**: Users can see Europe-only public market estimates when evidence is strong enough, or explicit explanations when support is weak or unavailable.
+### Phase 19: Company-Role Reported Market Estimates
+**Goal**: Users can see company-role reported market estimates when evidence is strong enough, or explicit explanations when support is weak or unavailable.
 **Depends on**: Phase 18
 **Requirements**: SRC-02, SRC-03, EST-01, EST-02, EST-03, EST-04, EST-06, EST-07
 **Success Criteria** (what must be TRUE):
   1. User can see a market estimate state for each job: not requested, unsupported, insufficient evidence, estimated range, or source unavailable.
-  2. User can see Europe-only estimates from Eurostat Structure of Earnings Survey, ESCO occupation mapping, and Spain INE Wage Structure Survey only when role, occupation, geography, seniority, compensation component, and freshness are sufficiently supported.
-  3. User can see when a public baseline is an occupation/location aggregate rather than a company-specific market range.
+  2. User can see estimates from reported Levels.fyi, Glassdoor, or manual compensation observations only when company, role, level, component, freshness, sample count, and source agreement are sufficiently supported.
+  3. User can see whether the estimate is an exact company-role match, adjacent-role company fallback, or trimodal tier-role fallback.
   4. User can see statistical confidence for every market estimate, including band or bucket, source count, sample count when available, freshness, source agreement or dispersion, and factor-level reasons.
-  5. User can see assumptions, source conflict warnings, broad aggregate warnings, or insufficient-evidence explanations instead of a precise market range when source support is too weak.
+  5. User can see source conflict, low-sample, stale-source, fallback, trimodal-tier, or insufficient-evidence explanations instead of a precise market range when source support is too weak.
 **Plans**: 19-01 Market Estimate Domain And Persistence; 19-02 Market Estimate Inspection API
 
 ### Phase 20: Canonical Read Model & Realtime API
@@ -91,7 +91,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 **Depends on**: Phase 21
 **Requirements**: QA-01, QA-02, QA-03, QA-04, QA-05, QA-06
 **Success Criteria** (what must be TRUE):
-  1. Human verifier can exercise synthetic fixtures for below-floor posted salary, above-floor posted salary, missing posted salary, unparseable salary, broad posted range, OTE/equity ambiguity, Europe public baseline, Spain INE baseline, unsupported geography, stale source, source conflict, low-confidence estimate, and insufficient evidence.
+  1. Human verifier can exercise synthetic fixtures for below-floor posted salary, above-floor posted salary, missing posted salary, unparseable salary, broad posted range, OTE/equity ambiguity, exact company-role reported compensation, adjacent-role fallback, trimodal tier fallback, stale source, source conflict, low-confidence estimate, and insufficient evidence.
   2. Product-path QA shows salary estimates do not change fit score, apply readiness, apply-review handoff, ranking, filtering, or auto-apply behavior in v1.3.
   3. Backend, API, projection, and frontend tests prove parser confidence, market confidence, and canonical compensation data behave correctly across weak source quality and parity refresh paths.
   4. Frontend checks prove the Jobs list and Jobs drawer render posted, estimated, unavailable, insufficient-evidence, warning-only floor comparison, and source-conflict states.

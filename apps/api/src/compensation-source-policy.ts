@@ -25,11 +25,9 @@ export function listCompensationSources(
     ok: true,
     sources: [
       postedSalarySource(),
-      eurostatSource(),
-      escoSource(),
-      spainIneSource(),
       levelsSource(env),
       glassdoorSource(env),
+      manualReportedCompensationSource(),
     ],
   };
 }
@@ -58,94 +56,6 @@ function postedSalarySource(): CompensationSourcePolicySummary {
   };
 }
 
-function eurostatSource(): CompensationSourcePolicySummary {
-  return {
-    sourceId: "eurostat_structure_of_earnings",
-    displayName: "Eurostat Structure of Earnings Survey",
-    sourceType: "public_wage_baseline",
-    accessMode: "public_dataset",
-    availability: "available",
-    licenseStatus: "not_required",
-    termsUrl: "https://ec.europa.eu/eurostat/about-us/policies/copyright",
-    sourceUrl: "https://ec.europa.eu/eurostat/web/microdata/structure-of-earnings-survey",
-    freshnessPolicy: "Use the latest published Eurostat SES release available to the importer.",
-    attributionRequirement: "Attribute Eurostat as the public statistical source.",
-    supportedFields: [
-      "base_salary",
-      "gross_annual_salary",
-      "gross_monthly_salary",
-      "wage_percentiles",
-      "sample_count",
-      "freshness",
-      "attribution",
-    ],
-    disabledReason: null,
-    configured: true,
-    coverage: {
-      geography: "europe",
-      regions: ["EU", "EEA", "candidate countries where published"],
-      notes: "Europe-first public wage baseline for country and occupation level estimates.",
-    },
-    notes: ["Public statistical baseline; not employer-specific compensation intelligence."],
-  };
-}
-
-function escoSource(): CompensationSourcePolicySummary {
-  return {
-    sourceId: "esco_occupation_taxonomy",
-    displayName: "ESCO occupation taxonomy",
-    sourceType: "occupation_taxonomy",
-    accessMode: "public_taxonomy",
-    availability: "available",
-    licenseStatus: "not_required",
-    termsUrl: "https://esco.ec.europa.eu/en/about-esco/terms-use",
-    sourceUrl: "https://esco.ec.europa.eu/en",
-    freshnessPolicy: "Use the latest published ESCO taxonomy snapshot available to the importer.",
-    attributionRequirement: "Attribute ESCO when occupation mappings are displayed.",
-    supportedFields: ["occupation_mapping", "freshness", "attribution"],
-    disabledReason: null,
-    configured: true,
-    coverage: {
-      geography: "europe",
-      regions: ["Europe"],
-      notes: "Occupation mapping baseline for normalizing European job titles.",
-    },
-    notes: ["Taxonomy source only; it does not provide salary observations."],
-  };
-}
-
-function spainIneSource(): CompensationSourcePolicySummary {
-  return {
-    sourceId: "spain_ine_salary_structure",
-    displayName: "Spain INE salary structure survey",
-    sourceType: "public_wage_baseline",
-    accessMode: "public_dataset",
-    availability: "available",
-    licenseStatus: "not_required",
-    termsUrl: "https://www.ine.es/aviso_legal",
-    sourceUrl: "https://www.ine.es/en/prensa/ees_en.htm",
-    freshnessPolicy: "Use the latest published INE salary structure survey available to the importer.",
-    attributionRequirement: "Attribute INE as the public statistical source for Spain-specific rows.",
-    supportedFields: [
-      "base_salary",
-      "gross_annual_salary",
-      "gross_monthly_salary",
-      "wage_percentiles",
-      "sample_count",
-      "freshness",
-      "attribution",
-    ],
-    disabledReason: null,
-    configured: true,
-    coverage: {
-      geography: "spain",
-      regions: ["Spain"],
-      notes: "Spain-specific public wage baseline for Spanish target locations.",
-    },
-    notes: ["Public statistical baseline; not company-specific compensation intelligence."],
-  };
-}
-
 function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
   const accessMode = normalizeAccessMode(env["JOBHUNTER_LEVELS_FYI_ACCESS_MODE"]);
   const accessPermitted = accessMode ? LEVELS_ACCESS_MODES.has(accessMode) : false;
@@ -158,7 +68,7 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
   return {
     sourceId: "levels_fyi",
     displayName: "Levels.fyi",
-    sourceType: "licensed_market_benchmark",
+    sourceType: "reported_compensation",
     accessMode: reportedAccessMode,
     availability: available ? "available" : "unavailable",
     licenseStatus: available ? "permitted" : "requires_license",
@@ -181,7 +91,7 @@ function levelsSource(env: EnvLike): CompensationSourcePolicySummary {
         : "Europe coverage is not configured.",
     },
     notes: [
-      "Policy seam only; no Levels.fyi fetch, scrape, cache, credential, or salary import path is registered here.",
+      "Automated access requires a permitted provider mode. Exported or licensed rows can be supplied to jobhunter compensation-refresh --observations-json.",
     ],
   };
 }
@@ -196,7 +106,7 @@ function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
   return {
     sourceId: "glassdoor",
     displayName: "Glassdoor",
-    sourceType: "licensed_market_benchmark",
+    sourceType: "reported_compensation",
     accessMode: reportedAccessMode,
     availability: available ? "available" : "unavailable",
     licenseStatus: available ? "permitted" : "requires_permission",
@@ -219,8 +129,32 @@ function glassdoorSource(env: EnvLike): CompensationSourcePolicySummary {
         : "Coverage is not configured.",
     },
     notes: [
-      "Policy seam only; no Glassdoor fetch, scrape, cache, credential, or salary import path is registered here.",
+      "Automated access requires partner API access or written permission. Exported or permitted rows can be supplied to jobhunter compensation-refresh --observations-json.",
     ],
+  };
+}
+
+function manualReportedCompensationSource(): CompensationSourcePolicySummary {
+  return {
+    sourceId: "manual_reported_compensation",
+    displayName: "Manual reported compensation import",
+    sourceType: "reported_compensation",
+    accessMode: "manual_import",
+    availability: "available",
+    licenseStatus: "not_required",
+    termsUrl: null,
+    sourceUrl: null,
+    freshnessPolicy: "Uses the reported year/snapshot supplied in the local JSON import.",
+    attributionRequirement: "Show as a manual reported-compensation import unless the row carries a provider attribution.",
+    supportedFields: licensedBenchmarkFields(),
+    disabledReason: null,
+    configured: true,
+    coverage: {
+      geography: "import_file",
+      regions: ["Europe", "configured import scope"],
+      notes: "Coverage follows the rows supplied to the temporary compensation-refresh command.",
+    },
+    notes: ["Temporary local import path for reported company-role compensation rows."],
   };
 }
 
@@ -253,6 +187,7 @@ function isCompensationSourceAccessMode(value: string): value is CompensationSou
     value === "enterprise_mcp" ||
     value === "partner_api" ||
     value === "written_permission" ||
+    value === "manual_import" ||
     value === "unavailable_until_permitted"
   );
 }

@@ -17,24 +17,24 @@ requirements:
 
 ## Result
 
-Phase 19 passes. Europe public market estimates are deterministic local facts derived from allowed public sources only, persisted as canonical local rows, exposed through a narrow read-only inspection API, and kept separate from posted salary facts and future read-model/UI surfaces.
+Phase 19 passes. Company-role reported market estimates are deterministic local facts derived from Levels.fyi, Glassdoor, or manual reported compensation observations, persisted as canonical local rows, exposed through a narrow read-only inspection API, and kept separate from posted salary facts and future read-model/UI surfaces.
 
 ## Requirement Evidence
 
 | Requirement | Evidence |
 | --- | --- |
-| SRC-02 | Estimator and API allowlist Eurostat Structure of Earnings Survey, ESCO occupation taxonomy, and Spain INE Wage Structure Survey only. Tests reject disabled/licensed and non-European source evidence. |
-| SRC-03 | Market rows and API responses carry aggregate bucket, geography scope, attribution, source snapshots, and `aggregate_baseline` warnings rather than presenting public aggregates as company-specific market ranges. |
+| SRC-02 | Estimator and API allowlist Levels.fyi, Glassdoor, and manual reported compensation observations only. Tests reject unsupported source evidence. |
+| SRC-03 | Market rows and API responses carry company, normalized company, role, normalized role, match scope, trimodal tier, source snapshots, and fallback warnings rather than estimating from title/location aggregates. |
 | EST-01 | Domain, repository, and API tests cover `not_requested`, `unsupported`, `source_unavailable`, `insufficient_evidence`, and `estimated_range` states. |
-| EST-02 | Estimator gates ranges on ESCO occupation support, Europe geography, seniority, component/period compatibility, freshness, sample support, and source agreement. |
+| EST-02 | Estimator gates ranges on company support, role support, level compatibility, location compatibility, component compatibility, freshness, sample support, source agreement, and trimodal tier context. |
 | EST-03 | Persisted/API estimates expose confidence band/score, source count, sample count, source snapshots, factor names, factor scores, factor bands, and deterministic factor reasons. |
-| EST-04 | Weak source support, ESCO-only mapping, stale snapshots, low sample count, component mismatch, unsupported geography, and high dispersion degrade to non-range states with explicit reasons. |
-| EST-06 | Tests cover remote-Europe, Spain-local, EU-wide, European Union, non-EU Europe, unknown-location, and non-Europe mappings with explicit warnings or unsupported states. |
-| EST-07 | Broad aggregate ranges and posted-vs-market divergence are warning-only; server boundary tests prove no fit-score, filtering, apply-readiness, or apply-dispatch behavior changes. |
+| EST-04 | Missing company, missing company-role observations, stale snapshots, low sample count, component mismatch, weak matches, and high dispersion degrade to non-range states with explicit reasons. |
+| EST-06 | Tests cover supplied and inferred trimodal tiers. |
+| EST-07 | Company-role fallback, low sample, stale source, and posted-vs-market divergence are warning-only; server boundary tests prove no fit-score, filtering, apply-readiness, or apply-dispatch behavior changes. |
 
 ## Verification Commands
 
-- `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_market_compensation_estimator.py workers/automation/tests/test_market_compensation_repository.py -q` - passed, 33 tests.
+- `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_market_compensation_estimator.py workers/automation/tests/test_market_compensation_repository.py workers/automation/tests/test_compensation_refresh_cli.py -q` - passed, 18 tests.
 - `uv --project workers/automation run --extra dev ruff check workers/automation/src/jobhunter/domain/compensation workers/automation/src/jobhunter/infrastructure/compensation workers/automation/src/jobhunter/database.py workers/automation/tests/test_market_compensation_estimator.py workers/automation/tests/test_market_compensation_repository.py` - passed.
 - `corepack pnpm --filter @jobhunter/api exec vitest run test/market-compensation-estimates.test.ts` - passed, 8 tests.
 - `corepack pnpm --filter @jobhunter/api exec vitest run test/server.test.ts -t "market compensation boundary"` - passed, 1 test.
@@ -54,7 +54,7 @@ Phase 19 passes. Europe public market estimates are deterministic local facts de
 - No API write-on-read.
 - No live external network fetchers, browser scraping, mailbox access, auto-apply, or destructive local actions.
 - No U.S. salary baseline support.
-- ESCO is occupation taxonomy/mapping only, never wage observation.
+- Public occupation taxonomies are not used as wage observations.
 - No Glassdoor or Levels.fyi salary fetch/cache/display path.
 - No job list/detail projection changes, SSE invalidation, Jobs UI changes, profile-floor comparison, ranking, filtering, scoring, apply readiness, or apply dispatch behavior changes.
 - No full descriptions, provider raw payloads, credentials, local paths, private account state, stale free-text source payloads, or unsafe factor reason text in market rows returned by repository/API read paths.

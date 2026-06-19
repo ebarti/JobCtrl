@@ -56,19 +56,17 @@ describe("compensation source policy", () => {
       expect(body.ok).toBe(true);
       expect(body.sources.map((entry) => entry.sourceId)).toEqual([
         "posted_salary_text",
-        "eurostat_structure_of_earnings",
-        "esco_occupation_taxonomy",
-        "spain_ine_salary_structure",
         "levels_fyi",
         "glassdoor",
+        "manual_reported_compensation",
       ]);
-      expect(source(body, "eurostat_structure_of_earnings")).toMatchObject({
-        sourceType: "public_wage_baseline",
-        accessMode: "public_dataset",
+      expect(source(body, "manual_reported_compensation")).toMatchObject({
+        sourceType: "reported_compensation",
+        accessMode: "manual_import",
         availability: "available",
         licenseStatus: "not_required",
         configured: true,
-        coverage: { geography: "europe" },
+        coverage: { geography: "import_file" },
       });
       expect(source(body, "posted_salary_text")).toMatchObject({
         sourceType: "posted_salary",

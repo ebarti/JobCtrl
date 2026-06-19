@@ -36,7 +36,7 @@ function seedDatabase(dbPath: string, options: { estimateTable?: boolean }): voi
   db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
     "https://example.com/jobs/estimated",
     "Estimated Salary",
-    "€80,000-€95,000/year",
+    "€100,000-€130,000/year",
     "Short description",
     "Full private description that must never appear",
   );
@@ -61,7 +61,7 @@ function createEstimateTable(db: Database.Database): void {
       estimate_state TEXT NOT NULL,
       currency TEXT,
       period TEXT NOT NULL DEFAULT 'year',
-      component TEXT NOT NULL DEFAULT 'base_salary',
+      component TEXT NOT NULL DEFAULT 'total_compensation',
       minimum_amount INTEGER,
       maximum_amount INTEGER,
       confidence_band TEXT NOT NULL DEFAULT 'none',
@@ -81,6 +81,12 @@ function createEstimateTable(db: Database.Database): void {
       warnings_json TEXT NOT NULL DEFAULT '[]',
       estimator_version TEXT NOT NULL,
       estimated_at TEXT NOT NULL,
+      company_name TEXT,
+      normalized_company TEXT,
+      role_title TEXT,
+      normalized_role TEXT,
+      company_tier TEXT NOT NULL DEFAULT 'unknown',
+      match_scope TEXT NOT NULL DEFAULT 'none',
       PRIMARY KEY (tenant_id, job_url)
     );
   `);
@@ -103,12 +109,19 @@ function insertEstimate(
     occupationCode: string | null;
     occupationLabel: string | null;
     seniorityLabel: string | null;
+    companyName: string | null;
+    normalizedCompany: string | null;
+    roleTitle: string | null;
+    normalizedRole: string | null;
+    companyTier: string;
+    matchScope: string;
     sources: unknown[];
     factors: unknown[];
     insufficientReasons: string[];
     unsupportedReasons: string[];
     sourceUnavailableReasons: string[];
     warnings: string[];
+    estimatorVersion: string;
   }> = {},
 ): void {
   const db = new Database(dbPath);
@@ -118,63 +131,71 @@ function insertEstimate(
       confidence_band, confidence_score, source_count, sample_count, aggregate_bucket, geography_scope,
       occupation_code, occupation_label, seniority_label, source_snapshot_json, factor_reasons_json,
       insufficient_reasons_json, unsupported_reasons_json, source_unavailable_reasons_json, warnings_json,
-      estimator_version, estimated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      estimator_version, estimated_at, company_name, normalized_company, role_title, normalized_role,
+      company_tier, match_scope
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     "local",
     jobUrl,
     values.state ?? "estimated_range",
     values.currency === undefined ? "EUR" : values.currency,
     "year",
-    "base_salary",
-    values.minimumAmount === undefined ? 72_000 : values.minimumAmount,
-    values.maximumAmount === undefined ? 92_000 : values.maximumAmount,
+    "total_compensation",
+    values.minimumAmount === undefined ? 112_000 : values.minimumAmount,
+    values.maximumAmount === undefined ? 142_000 : values.maximumAmount,
     values.confidenceBand ?? "medium",
     values.confidenceScore ?? 0.82,
     values.sourceCount ?? 2,
-    values.sampleCount ?? 900,
-    values.aggregateBucket ?? "Eurostat SES occupation/country aggregate",
-    values.geographyScope ?? "remote_europe",
-    values.occupationCode ?? "2512.1",
-    values.occupationLabel ?? "Software developer",
-    values.seniorityLabel ?? "aggregate",
+    values.sampleCount ?? 7,
+    values.aggregateBucket ?? "reported company-role compensation",
+    values.geographyScope ?? "Europe",
+    values.occupationCode ?? "acme ai",
+    values.occupationLabel ?? "platform engineer",
+    values.seniorityLabel ?? "senior",
     JSON.stringify(
       values.sources ?? [
         {
-          source_id: "eurostat_structure_of_earnings",
-          display_name: "Eurostat Structure of Earnings Survey",
-          source_type: "public_wage_baseline",
-          release_year: 2024,
-          snapshot_version: "synthetic-public-fixture",
-          geography_scope: "EU",
-          aggregate_bucket: "Eurostat SES occupation/country aggregate",
-          attribution: "Eurostat public statistical aggregate",
-          sample_count: 900,
+          source_id: "levels_fyi",
+          display_name: "Levels.fyi",
+          source_type: "reported_compensation",
+          release_year: 2026,
+          snapshot_version: "reported-compensation-import-v1",
+          geography_scope: "Europe",
+          aggregate_bucket: "reported company-role compensation",
+          attribution: "Levels.fyi reported compensation data",
+          sample_count: 4,
         },
         {
-          source_id: "esco_occupation_taxonomy",
-          display_name: "ESCO occupation taxonomy",
-          source_type: "occupation_taxonomy",
-          release_year: 2024,
-          snapshot_version: "synthetic-public-fixture",
+          source_id: "glassdoor",
+          display_name: "Glassdoor",
+          source_type: "reported_compensation",
+          release_year: 2026,
+          snapshot_version: "reported-compensation-import-v1",
           geography_scope: "Europe",
-          aggregate_bucket: "ESCO software developer",
-          attribution: "ESCO public occupation taxonomy",
-          sample_count: null,
+          aggregate_bucket: "reported company-role compensation",
+          attribution: "Glassdoor reported compensation data",
+          sample_count: 3,
         },
       ],
     ),
     JSON.stringify(
       values.factors ?? [
-        { name: "occupation", score: 0.9, band: "high", reason: "Occupation mapped to Software developer." },
+        { name: "company", score: 1, band: "high", reason: "Company matched Acme AI." },
+        { name: "role", score: 1, band: "high", reason: "Role matched Senior Platform Engineer." },
       ],
     ),
     JSON.stringify(values.insufficientReasons ?? []),
     JSON.stringify(values.unsupportedReasons ?? []),
     JSON.stringify(values.sourceUnavailableReasons ?? []),
-    JSON.stringify(values.warnings ?? ["aggregate_baseline", "remote_europe_assumption"]),
-    "market-compensation-v1",
+    JSON.stringify(values.warnings ?? ["reported_compensation_sample"]),
+    values.estimatorVersion ?? "company-role-reported-compensation-v1",
     "2026-06-19T10:00:00Z",
+    values.companyName ?? "Acme AI",
+    values.normalizedCompany ?? "acme ai",
+    values.roleTitle ?? "Senior Platform Engineer",
+    values.normalizedRole ?? "platform engineer",
+    values.companyTier ?? "tier_2_ambitious",
+    values.matchScope ?? "exact_company_role",
   );
   db.close();
 }
@@ -189,7 +210,7 @@ function estimateCount(dbPath: string): number {
 }
 
 describe("market compensation estimates API", () => {
-  it("serves a recorded estimated range with Europe public aggregate evidence", async () => {
+  it("serves a recorded company-role reported compensation range", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, "https://example.com/jobs/estimated");
     try {
@@ -209,28 +230,30 @@ describe("market compensation estimates API", () => {
           estimateState: "estimated_range",
           currency: "EUR",
           period: "year",
-          component: "base_salary",
-          minimumAmount: 72_000,
-          maximumAmount: 92_000,
+          component: "total_compensation",
+          minimumAmount: 112_000,
+          maximumAmount: 142_000,
           confidenceBand: "medium",
           confidenceScore: 0.82,
           sourceCount: 2,
-          sampleCount: 900,
+          sampleCount: 7,
+          companyName: "Acme AI",
+          normalizedCompany: "acme ai",
+          roleTitle: "Senior Platform Engineer",
+          normalizedRole: "platform engineer",
+          companyTier: "tier_2_ambitious",
+          matchScope: "exact_company_role",
           warnings: [
             {
-              code: "aggregate_baseline",
-              message: "The market estimate is based on public occupation/location aggregate data.",
-            },
-            {
-              code: "remote_europe_assumption",
-              message: "The estimate maps a remote-Europe role to a Europe aggregate baseline.",
+              code: "reported_compensation_sample",
+              message: "The estimate uses reported compensation rows for the job company and role.",
             },
           ],
         },
       });
       expect(body.recordStatus === "recorded" && body.estimate.sources.map((source) => source.sourceId)).toEqual([
-        "eurostat_structure_of_earnings",
-        "esco_occupation_taxonomy",
+        "levels_fyi",
+        "glassdoor",
       ]);
     } finally {
       await app.close();
@@ -263,7 +286,7 @@ describe("market compensation estimates API", () => {
       confidenceScore: 0,
       sourceCount: 0,
       sampleCount: null,
-      unsupportedReasons: ["unsupported_geography"],
+      unsupportedReasons: ["unsupported_component"],
       warnings: [],
     });
     insertEstimate(dbPath, "https://example.com/jobs/unavailable", {
@@ -281,7 +304,7 @@ describe("market compensation estimates API", () => {
       maximumAmount: null,
       confidenceBand: "low",
       confidenceScore: 0.55,
-      insufficientReasons: ["low_sample_count"],
+      insufficientReasons: ["missing_reported_observation"],
       warnings: ["low_sample_count"],
     });
     try {
@@ -384,25 +407,38 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("defensively treats unknown persisted states as not requested", async () => {
+  it("defensively treats unknown states and stale public-estimator rows as not requested", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, "https://example.com/jobs/estimated", {
       state: "corrupt_state",
-      minimumAmount: 72_000,
-      maximumAmount: 92_000,
+      minimumAmount: 112_000,
+      maximumAmount: 142_000,
+    });
+    const db = new Database(dbPath);
+    db.prepare("INSERT INTO jobs (url, title, salary, description, full_description) VALUES (?, ?, ?, ?, ?)").run(
+      "https://example.com/jobs/public-stale",
+      "Public stale",
+      "",
+      "Short",
+      "Private",
+    );
+    db.close();
+    insertEstimate(dbPath, "https://example.com/jobs/public-stale", {
+      estimatorVersion: "market-compensation-v1",
     });
     try {
-      const response = await app.inject({
-        method: "GET",
-        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
-      });
-
-      expect(response.statusCode, response.body).toBe(200);
-      expect(response.json()).toEqual({
-        ok: true,
-        recordStatus: "not_requested",
-        jobKey: "https://example.com/jobs/estimated",
-      });
+      for (const jobKey of ["https://example.com/jobs/estimated", "https://example.com/jobs/public-stale"]) {
+        const response = await app.inject({
+          method: "GET",
+          url: `/v1/jobs/${encodeURIComponent(jobKey)}/compensation/market`,
+        });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json()).toEqual({
+          ok: true,
+          recordStatus: "not_requested",
+          jobKey,
+        });
+      }
     } finally {
       await app.close();
       cleanup();
@@ -425,38 +461,38 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("drops unsafe source JSON and does not leak private data", async () => {
+  it("drops unsafe source JSON but allows reported provider identities", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, "https://example.com/jobs/estimated", {
       sources: [
         {
-          source_id: "eurostat_structure_of_earnings",
-          display_name: "Glassdoor private payload",
-          source_type: "public_wage_baseline",
-          release_year: 2024,
-          snapshot_version: "us-private-version",
-          geography_scope: "EU",
-          aggregate_bucket: "US private page",
-          attribution: "US public aggregate",
-          sample_count: 900,
-        },
-        {
-          source_id: "glassdoor",
-          display_name: "Glassdoor",
-          source_type: "licensed_market_benchmark",
+          source_id: "levels_fyi",
+          display_name: "Levels.fyi private payload",
+          source_type: "reported_compensation",
           release_year: 2026,
           snapshot_version: "rawProviderPayload",
           geography_scope: "/Users/private",
-          aggregate_bucket: "US private page",
+          aggregate_bucket: "private page",
           attribution: "credential secret",
-          sample_count: 1,
+          sample_count: 7,
+        },
+        {
+          source_id: "eurostat_structure_of_earnings",
+          display_name: "Eurostat stale public row",
+          source_type: "public_wage_baseline",
+          release_year: 2024,
+          snapshot_version: "synthetic-public-fixture",
+          geography_scope: "EU",
+          aggregate_bucket: "Eurostat aggregate",
+          attribution: "Eurostat",
+          sample_count: 900,
         },
       ],
-      warnings: ["aggregate_baseline", "unknown_warning"],
+      warnings: ["reported_compensation_sample", "unknown_warning"],
       unsupportedReasons: ["unsupported_source", "unknown_reason"],
-      aggregateBucket: "US private page",
-      geographyScope: "/Users/private United States",
-      factors: [{ name: "occupation", score: 0.9, band: "high", reason: "Glassdoor private /Users/local credential" }],
+      aggregateBucket: "private page",
+      geographyScope: "/Users/private",
+      factors: [{ name: "company", score: 1, band: "high", reason: "private /Users/local credential" }],
     });
     try {
       const response = await app.inject({
@@ -467,20 +503,15 @@ describe("market compensation estimates API", () => {
       expect(response.statusCode, response.body).toBe(200);
       const serialized = JSON.stringify(response.json()).toLowerCase();
       const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
-      expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["eurostat_structure_of_earnings"]);
+      expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["levels_fyi"]);
       expect(body.estimate.sources[0]).toMatchObject({
-        displayName: "Eurostat Structure of Earnings Survey",
+        displayName: "Levels.fyi",
+        sourceType: "reported_compensation",
       });
+      expect(serialized).toContain("levels.fyi");
       expect(serialized).not.toContain("full private description");
-      expect(serialized).not.toContain("glassdoor");
-      expect(serialized).not.toContain("levels");
-      expect(serialized).not.toContain("united states");
-      expect(serialized).not.toContain("us private");
-      expect(serialized).not.toContain("us public");
+      expect(serialized).not.toContain("eurostat");
       expect(serialized).not.toContain("private page");
-      expect(serialized).not.toContain("us-private");
-      expect(serialized).not.toContain("bls");
-      expect(serialized).not.toContain("soc");
       expect(serialized).not.toContain("rawproviderpayload");
       expect(serialized).not.toContain("/users/");
       expect(serialized).not.toContain("/users/local");
@@ -488,7 +519,7 @@ describe("market compensation estimates API", () => {
       expect(serialized).not.toContain("credential secret");
       expect(body.estimate.geographyScope).toBeNull();
       expect(body.estimate.factors[0]?.reason).toBe(
-        "Market estimate factor recorded by the deterministic Europe public estimator.",
+        "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
       );
     } finally {
       await app.close();

@@ -12,30 +12,30 @@ function policyResponse(): CompensationSourceRegistryResponse {
     ok: true,
     sources: [
       {
-        sourceId: "eurostat_structure_of_earnings",
-        displayName: "Eurostat Structure of Earnings Survey",
-        sourceType: "public_wage_baseline",
-        accessMode: "public_dataset",
+        sourceId: "manual_reported_compensation",
+        displayName: "Manual reported compensation import",
+        sourceType: "reported_compensation",
+        accessMode: "manual_import",
         availability: "available",
         licenseStatus: "not_required",
-        termsUrl: "https://ec.europa.eu/eurostat/about-us/policies/copyright",
-        sourceUrl: "https://ec.europa.eu/eurostat/web/microdata/structure-of-earnings-survey",
-        freshnessPolicy: "Use the latest published Eurostat SES release available to the importer.",
-        attributionRequirement: "Attribute Eurostat as the public statistical source.",
-        supportedFields: ["base_salary", "wage_percentiles", "sample_count", "freshness", "attribution"],
+        termsUrl: null,
+        sourceUrl: null,
+        freshnessPolicy: "Uses the reported year/snapshot supplied in the local JSON import.",
+        attributionRequirement: "Show as a manual reported-compensation import.",
+        supportedFields: ["base_salary", "total_compensation", "sample_count", "freshness", "attribution"],
         disabledReason: null,
         configured: true,
         coverage: {
-          geography: "europe",
-          regions: ["EU", "EEA"],
-          notes: "Europe-first public wage baseline.",
+          geography: "import_file",
+          regions: ["Europe"],
+          notes: "Coverage follows imported rows.",
         },
-        notes: ["Public statistical baseline; not employer-specific compensation intelligence."],
+        notes: ["Temporary local import path for reported company-role compensation rows."],
       },
       {
         sourceId: "levels_fyi",
         displayName: "Levels.fyi",
-        sourceType: "licensed_market_benchmark",
+        sourceType: "reported_compensation",
         accessMode: "unavailable_until_permitted",
         availability: "unavailable",
         licenseStatus: "requires_license",
@@ -52,13 +52,13 @@ function policyResponse(): CompensationSourceRegistryResponse {
           notes: "Europe coverage is not configured.",
         },
         notes: [
-          "Policy seam only; no Levels.fyi fetch, scrape, cache, credential, or salary import path is registered here.",
+          "Automated access requires a permitted provider mode. Exported or licensed rows can be supplied to jobhunter compensation-refresh --observations-json.",
         ],
       },
       {
         sourceId: "glassdoor",
         displayName: "Glassdoor",
-        sourceType: "licensed_market_benchmark",
+        sourceType: "reported_compensation",
         accessMode: "unavailable_until_permitted",
         availability: "unavailable",
         licenseStatus: "requires_permission",
@@ -75,7 +75,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
           notes: "Coverage is not configured.",
         },
         notes: [
-          "Policy seam only; no Glassdoor fetch, scrape, cache, credential, or salary import path is registered here.",
+          "Automated access requires partner API access or written permission. Exported or permitted rows can be supplied to jobhunter compensation-refresh --observations-json.",
         ],
       },
     ],
@@ -83,7 +83,7 @@ function policyResponse(): CompensationSourceRegistryResponse {
 }
 
 describe("<CompensationSourcePolicyPanel>", () => {
-  it("renders public Europe baselines and disabled licensed seams with required policy fields", async () => {
+  it("renders reported compensation sources with required policy fields", async () => {
     renderWithProviders(<CompensationSourcePolicyPanel />, {
       ports: buildTestPorts({
         api: { compensationSources: vi.fn(async () => policyResponse()) },
@@ -92,16 +92,16 @@ describe("<CompensationSourcePolicyPanel>", () => {
 
     expect(screen.getByRole("heading", { name: "Compensation sources" })).toBeInTheDocument();
     const table = await screen.findByRole("table", { name: "Compensation source policy" });
-    expect(table).toHaveTextContent("Eurostat Structure of Earnings Survey");
-    expect(table).toHaveTextContent("public wage baseline");
+    expect(table).toHaveTextContent("Manual reported compensation import");
+    expect(table).toHaveTextContent("reported compensation");
     expect(table).toHaveTextContent("available");
     expect(table).toHaveTextContent("not required");
-    expect(table).toHaveTextContent("public dataset");
-    expect(table).toHaveTextContent("Use the latest published Eurostat SES release");
-    expect(table).toHaveTextContent("Attribute Eurostat as the public statistical source.");
+    expect(table).toHaveTextContent("manual import");
+    expect(table).toHaveTextContent("Uses the reported year/snapshot supplied");
+    expect(table).toHaveTextContent("Show as a manual reported-compensation import.");
     expect(table).toHaveTextContent("base salary");
-    expect(table).toHaveTextContent("wage percentiles");
-    expect(table).toHaveTextContent("EU, EEA");
+    expect(table).toHaveTextContent("total compensation");
+    expect(table).toHaveTextContent("Europe");
     expect(table).toHaveTextContent("Levels.fyi");
     expect(table).toHaveTextContent(
       "Requires licensed Levels.fyi access mode and explicit Europe coverage confirmation.",
@@ -142,7 +142,7 @@ describe("<CompensationSourcePolicyPanel>", () => {
       }),
     });
 
-    await screen.findByText("Eurostat Structure of Earnings Survey");
+    await screen.findByText("Manual reported compensation import");
     expect(container.querySelectorAll(".card .card")).toHaveLength(0);
   });
 
@@ -153,7 +153,7 @@ describe("<CompensationSourcePolicyPanel>", () => {
       }),
     });
 
-    await screen.findByText("Eurostat Structure of Earnings Survey");
+    await screen.findByText("Manual reported compensation import");
     expect(await axe(view.container)).toHaveNoViolations();
   });
 });

@@ -1978,6 +1978,7 @@ export const COMPENSATION_SOURCE_TYPES = [
   "public_wage_baseline",
   "occupation_taxonomy",
   "licensed_market_benchmark",
+  "reported_compensation",
 ] as const;
 export type CompensationSourceType = (typeof COMPENSATION_SOURCE_TYPES)[number];
 
@@ -1990,6 +1991,7 @@ export const COMPENSATION_SOURCE_ACCESS_MODES = [
   "enterprise_mcp",
   "partner_api",
   "written_permission",
+  "manual_import",
   "unavailable_until_permitted",
 ] as const;
 export type CompensationSourceAccessMode = (typeof COMPENSATION_SOURCE_ACCESS_MODES)[number];
@@ -2503,9 +2505,9 @@ export const MARKET_COMPENSATION_ESTIMATE_STATES = [
 export type MarketCompensationEstimateState = (typeof MARKET_COMPENSATION_ESTIMATE_STATES)[number];
 
 export const MARKET_COMPENSATION_SOURCE_IDS = [
-  "eurostat_structure_of_earnings",
-  "esco_occupation_taxonomy",
-  "spain_ine_salary_structure",
+  "levels_fyi",
+  "glassdoor",
+  "manual_reported_compensation",
 ] as const;
 export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];
 
@@ -2514,8 +2516,7 @@ export type MarketCompensationConfidenceBand = (typeof MARKET_COMPENSATION_CONFI
 
 export const MARKET_COMPENSATION_COMPONENTS = [
   "base_salary",
-  "gross_annual_salary",
-  "gross_monthly_salary",
+  "total_compensation",
 ] as const;
 export type MarketCompensationComponent = (typeof MARKET_COMPENSATION_COMPONENTS)[number];
 
@@ -2523,43 +2524,42 @@ export const MARKET_COMPENSATION_PERIODS = ["year", "month"] as const;
 export type MarketCompensationPeriod = (typeof MARKET_COMPENSATION_PERIODS)[number];
 
 export const MARKET_COMPENSATION_FACTOR_NAMES = [
-  "occupation",
-  "geography",
-  "seniority",
+  "company",
+  "role",
+  "level",
+  "location",
   "component",
   "freshness",
   "sample",
   "agreement",
+  "trimodal_tier",
 ] as const;
 export type MarketCompensationFactorName = (typeof MARKET_COMPENSATION_FACTOR_NAMES)[number];
 
 export const MARKET_COMPENSATION_WARNING_CODES = [
-  "aggregate_baseline",
-  "broad_aggregate_band",
+  "reported_compensation_sample",
   "source_conflict_with_posted_salary",
   "stale_source_snapshot",
   "low_sample_count",
-  "remote_europe_assumption",
-  "spain_local_assumption",
-  "eu_wide_assumption",
-  "non_eu_europe_assumption",
-  "unknown_location_assumption",
+  "company_role_fallback",
+  "trimodal_tier_inferred",
+  "location_mismatch",
 ] as const;
 export type MarketCompensationWarningCode = (typeof MARKET_COMPENSATION_WARNING_CODES)[number];
 
 export const MARKET_COMPENSATION_REASON_CODES = [
   "unsupported_source",
-  "unsupported_geography",
   "unsupported_component",
-  "missing_occupation_mapping",
+  "missing_company",
+  "missing_role",
+  "missing_reported_observation",
   "stale_source_snapshot",
-  "weak_occupation_match",
-  "weak_geography_match",
-  "weak_seniority_match",
-  "weak_component_match",
+  "weak_company_match",
+  "weak_role_match",
+  "weak_level_match",
+  "weak_location_match",
   "low_sample_count",
   "source_dispersion_too_high",
-  "missing_salary_observation",
 ] as const;
 export type MarketCompensationReasonCode = (typeof MARKET_COMPENSATION_REASON_CODES)[number];
 
@@ -2583,7 +2583,7 @@ export interface MarketCompensationFactor {
 export interface MarketCompensationSourceSnapshot {
   sourceId: MarketCompensationSourceId;
   displayName: string;
-  sourceType: "public_wage_baseline" | "occupation_taxonomy";
+  sourceType: "reported_compensation";
   releaseYear: number | null;
   snapshotVersion: string;
   geographyScope: string;
@@ -2605,6 +2605,12 @@ interface MarketCompensationEstimateBase {
   occupationCode: string | null;
   occupationLabel: string | null;
   seniorityLabel: string | null;
+  companyName: string | null;
+  normalizedCompany: string | null;
+  roleTitle: string | null;
+  normalizedRole: string | null;
+  companyTier: "tier_1_local" | "tier_2_ambitious" | "tier_3_top_of_market" | "unknown";
+  matchScope: "exact_company_role" | "company_adjacent_role" | "tier_role_fallback" | "none";
   sources: MarketCompensationSourceSnapshot[];
   factors: MarketCompensationFactor[];
   warnings: MarketCompensationWarning[];

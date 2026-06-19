@@ -27,17 +27,17 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 Phase: 20 of 22 (4 of 6 in v1.3)
 Plan: TBD
 Status: Phase 19 complete; Phase 20 ready to plan
-Last activity: 2026-06-19 - Phase 19 delivered deterministic Europe public market estimates and a read-only inspection API.
+Last activity: 2026-06-19 - Phase 19 delivered deterministic company-role reported market estimates, the temporary compensation-refresh trigger, and a read-only inspection API.
 Progress: [#####-----] 50%
 
 ## Active Milestone Summary
 
-Milestone v1.3 makes compensation facts inspectable in Jobs triage by combining posted salary extraction with Europe-only public market salary baselines. The milestone keeps salary evidence audit-first and warning-only: confidence, source gaps, unknowns, and profile-floor comparisons must be visible, but v1.3 must not silently rank, filter, block, or apply based on salary facts or market estimates.
+Milestone v1.3 makes compensation facts inspectable in Jobs triage by combining posted salary extraction with company-role reported compensation estimates. The milestone keeps salary evidence audit-first and warning-only: confidence, source gaps, unknowns, and profile-floor comparisons must be visible, but v1.3 must not silently rank, filter, block, or apply based on salary facts or market estimates.
 
 Scoped source strategy:
 
-- Public v1.3 baselines: Eurostat Structure of Earnings Survey, ESCO occupation mapping, and Spain INE Wage Structure Survey.
-- Levels.fyi and Glassdoor: disabled/unavailable seams only unless explicit permitted access exists.
+- Reported v1.3 benchmark sources: Levels.fyi, Glassdoor, and manual local reported-compensation imports keyed by company and role.
+- Levels.fyi and Glassdoor automated provider access remains gated by explicit permitted access; local imports must use permitted/exported rows.
 - Profile-floor comparison: warning-only in v1.3.
 
 ## Roadmap
@@ -46,7 +46,7 @@ Scoped source strategy:
 |-------|------|--------|--------------|
 | 17 | Source Registry & Access Policy | Complete | SRC-01, SRC-04, SRC-05, SRC-06 |
 | 18 | Posted Compensation Facts | Complete | COMP-01..COMP-05 |
-| 19 | Europe Public Market Estimates | Complete | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
+| 19 | Company-Role Reported Market Estimates | Complete | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
 | 20 | Canonical Read Model & Realtime API | Not started | EST-05, API-01..API-05 |
 | 21 | Jobs Triage UX & Warning-Only Floor | Not started | UI-01..UI-06 |
 | 22 | Product-Path QA & Safety Release | Not started | QA-01..QA-06 |
@@ -70,12 +70,12 @@ Next command: `/gsd-plan-phase 20`.
 ### Decisions
 
 - v1.3 starts at Phase 17 because v1.2 ended at Phase 16.
-- v1.3 uses Europe-only public baselines: Eurostat SES, ESCO, and Spain INE.
-- Levels.fyi and Glassdoor remain disabled unless permitted access exists; no unauthorized scraping, fetching, caching, or display.
+- v1.3 uses reported company-role compensation observations from Levels.fyi, Glassdoor, and manual imports; it does not estimate from title/location aggregates alone.
+- Levels.fyi and Glassdoor automated access remains disabled unless permitted access exists; no unauthorized scraping, fetching, caching, or display.
 - Profile-floor comparison is warning-only and must not affect ranking, filtering, apply readiness, blockers, or auto-apply behavior.
 - Phase 17 exposes compensation source policy through a deterministic metadata-only API and Settings panel; no provider network path was added.
 - Phase 18 persists posted compensation facts in `job_posted_compensation_facts`, keeps `jobs.salary` as raw fallback, and exposes a read-only inspection API without changing job list/detail compensation summaries, ranking, filtering, scoring, apply readiness, or apply dispatch.
-- Phase 19 persists deterministic Europe public market estimates in `job_market_compensation_estimates`, canonicalizes safe source metadata on stale reads, keeps ESCO as occupation mapping only, and exposes a read-only inspection API without changing projections, Jobs UI, ranking, filtering, scoring, apply readiness, or apply dispatch.
+- Phase 19 persists deterministic company-role reported compensation estimates in `job_market_compensation_estimates`, canonicalizes safe source metadata on stale reads, supports the temporary `jobhunter compensation-refresh` import trigger, and exposes a read-only inspection API without changing Jobs UI, ranking, filtering, scoring, apply readiness, or apply dispatch.
 
 ### Pending Todos
 

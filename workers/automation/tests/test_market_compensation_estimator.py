@@ -1,239 +1,156 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from jobhunter.domain.compensation import PublicMarketBaseline, estimate_market_compensation
+from jobhunter.domain.compensation import ReportedCompensationObservation, estimate_market_compensation
 
 
-def _esco(*, score: float = 0.95) -> PublicMarketBaseline:
-    return PublicMarketBaseline(
-        source_id="esco_occupation_taxonomy",
-        occupation_code="2512.1",
-        occupation_label="Software developer",
-        geography_scope="Europe",
-        aggregate_bucket="ESCO software developer",
-        minimum_amount=None,
-        maximum_amount=None,
-        release_year=2024,
-        sample_count=None,
-        attribution="ESCO public occupation taxonomy",
-        occupation_match_score=score,
-    )
-
-
-def _eurostat(
+def _levels(
     *,
-    minimum: int = 72_000,
-    maximum: int = 92_000,
-    sample_count: int | None = 900,
-    release_year: int = 2024,
-    geography_scope: str = "EU",
-    occupation_score: float = 0.9,
-    seniority_score: float = 0.82,
-    component: str = "base_salary",
-    period: str = "year",
-    aggregate_bucket: str = "Eurostat SES occupation/country aggregate",
-    attribution: str = "Eurostat public statistical aggregate",
-    snapshot_version: str = "synthetic-public-fixture",
-) -> PublicMarketBaseline:
-    return PublicMarketBaseline(
-        source_id="eurostat_structure_of_earnings",
-        occupation_code="2512.1",
-        occupation_label="Software developer",
-        geography_scope=geography_scope,
-        aggregate_bucket=aggregate_bucket,
+    company: str = "Acme AI",
+    role: str = "Senior Platform Engineer",
+    minimum: int = 118_000,
+    maximum: int = 142_000,
+    level: str = "Senior",
+    tier: str = "tier_2_ambitious",
+    sample_count: int = 4,
+    release_year: int = 2026,
+) -> ReportedCompensationObservation:
+    return ReportedCompensationObservation(
+        source_id="levels_fyi",
+        company_name=company,
+        role_title=role,
+        level_label=level,
+        company_tier=tier,  # type: ignore[arg-type]
+        location="Remote Europe",
         minimum_amount=minimum,
         maximum_amount=maximum,
-        release_year=release_year,
-        snapshot_version=snapshot_version,
         sample_count=sample_count,
-        attribution=attribution,
-        occupation_match_score=occupation_score,
-        seniority_match_score=seniority_score,
-        component=component,  # type: ignore[arg-type]
-        period=period,  # type: ignore[arg-type]
+        release_year=release_year,
+        attribution="Levels.fyi reported compensation data",
     )
 
 
-def _ine(
+def _glassdoor(
     *,
-    minimum: int = 76_000,
-    maximum: int = 96_000,
-    sample_count: int | None = 800,
-    release_year: int = 2025,
-) -> PublicMarketBaseline:
-    return PublicMarketBaseline(
-        source_id="spain_ine_salary_structure",
-        occupation_code="2512.1",
-        occupation_label="Software developer",
-        geography_scope="Spain",
-        aggregate_bucket="INE software occupation Spain aggregate",
+    company: str = "Acme AI",
+    role: str = "Senior Software Engineer",
+    minimum: int = 112_000,
+    maximum: int = 136_000,
+    sample_count: int = 3,
+) -> ReportedCompensationObservation:
+    return ReportedCompensationObservation(
+        source_id="glassdoor",
+        company_name=company,
+        role_title=role,
+        level_label="Senior",
+        company_tier="tier_2_ambitious",
+        location="Madrid, Spain",
         minimum_amount=minimum,
         maximum_amount=maximum,
-        release_year=release_year,
         sample_count=sample_count,
-        attribution="INE public statistical aggregate",
-        occupation_match_score=0.92,
-        seniority_match_score=0.84,
+        attribution="Glassdoor reported compensation data",
     )
 
 
-def test_estimates_spain_local_range_preferring_ine_baseline() -> None:
+def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/platform",
+        company="Acme AI Ltd.",
         title="Senior Platform Engineer",
-        location="Madrid, Spain",
-        component="base_salary",
-        baselines=(_esco(), _eurostat(), _ine()),
-        posted_annualized_minimum=70_000,
-        posted_annualized_maximum=95_000,
+        location="Remote Europe",
+        observations=(_levels(), _glassdoor(role="Senior Platform Engineer")),
+        posted_annualized_minimum=100_000,
+        posted_annualized_maximum=135_000,
         estimated_at="2026-06-19T10:00:00Z",
     )
 
     assert estimate.estimate_state == "estimated_range"
+    assert estimate.component == "total_compensation"
     assert estimate.currency == "EUR"
-    assert estimate.minimum_amount == 76_000
-    assert estimate.maximum_amount == 96_000
-    assert estimate.confidence_band in {"medium", "high"}
-    assert estimate.geography_scope == "spain"
-    assert estimate.source_count == 1
-    assert estimate.sample_count == 800
-    assert "spain_local_assumption" in estimate.warnings
-    assert "aggregate_baseline" in estimate.warnings
-    assert {source.source_id for source in estimate.sources} == {
-        "spain_ine_salary_structure",
-        "esco_occupation_taxonomy",
-    }
+    assert estimate.minimum_amount == 112_000
+    assert estimate.maximum_amount == 142_000
+    assert estimate.company_name == "Acme AI Ltd."
+    assert estimate.normalized_company == "acme ai"
+    assert estimate.normalized_role == "platform engineer"
+    assert estimate.company_tier == "tier_2_ambitious"
+    assert estimate.match_scope == "exact_company_role"
+    assert estimate.source_count == 2
+    assert estimate.sample_count == 7
+    assert {source.source_id for source in estimate.sources} == {"levels_fyi", "glassdoor"}
+    assert "reported_compensation_sample" in estimate.warnings
+    assert "company_role_fallback" not in estimate.warnings
 
 
-def test_eu_wide_estimate_uses_eurostat_aggregate_warning() -> None:
+def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/eu",
-        title="Software Developer",
+        job_url="https://example.com/jobs/backend",
+        company="Acme AI",
+        title="Senior Backend Engineer",
         location="Remote Europe",
-        baselines=(_esco(), _eurostat()),
+        observations=(_levels(role="Senior Platform Engineer"), _glassdoor(role="Senior Software Engineer")),
         estimated_at="2026-06-19T10:00:00Z",
     )
 
     assert estimate.estimate_state == "estimated_range"
-    assert estimate.minimum_amount == 72_000
-    assert estimate.maximum_amount == 92_000
-    assert "remote_europe_assumption" in estimate.warnings
-    assert "aggregate_baseline" in estimate.warnings
+    assert estimate.match_scope == "company_adjacent_role"
+    assert "company_role_fallback" in estimate.warnings
 
 
-@pytest.mark.parametrize(
-    ("location", "expected_scope", "expected_warning"),
-    [
-        ("European Union", "eu_wide", "eu_wide_assumption"),
-        ("Remote European Union", "remote_europe", "remote_europe_assumption"),
-    ],
-)
-def test_european_union_phrase_is_supported(location: str, expected_scope: str, expected_warning: str) -> None:
+def test_company_role_observations_are_required_before_estimating() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/european-union",
-        title="Software Developer",
-        location=location,
-        baselines=(_esco(), _eurostat()),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.geography_scope == expected_scope
-    assert expected_warning in estimate.warnings
-
-
-def test_esco_only_mapping_is_insufficient_because_it_has_no_salary_observation() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/esco",
-        title="Software Developer",
+        job_url="https://example.com/jobs/missing",
+        company="Different Company",
+        title="Senior Platform Engineer",
         location="Remote Europe",
-        baselines=(_esco(),),
+        observations=(_levels(company="Acme AI"), _glassdoor(company="OtherCo")),
         estimated_at="2026-06-19T10:00:00Z",
     )
 
     assert estimate.estimate_state == "insufficient_evidence"
     assert estimate.minimum_amount is None
     assert estimate.maximum_amount is None
-    assert "missing_salary_observation" in estimate.insufficient_reasons
+    assert "missing_reported_observation" in estimate.insufficient_reasons
 
 
-@pytest.mark.parametrize(
-    ("location", "expected_warning"),
-    [
-        ("Zurich, Switzerland", "non_eu_europe_assumption"),
-        ("", "unknown_location_assumption"),
-    ],
-)
-def test_location_assumptions_are_explicit(location: str, expected_warning: str) -> None:
+def test_missing_company_is_insufficient_instead_of_location_title_estimation() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/location",
-        title="Software Developer",
-        location=location,
-        baselines=(_esco(), _eurostat()),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert expected_warning in estimate.warnings
-    if location == "":
-        assert estimate.estimate_state == "insufficient_evidence"
-        assert estimate.minimum_amount is None
-
-
-def test_known_non_europe_location_is_unsupported() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/us",
-        title="Software Developer",
-        location="San Francisco, United States",
-        baselines=(_esco(), _eurostat()),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "unsupported"
-    assert "unsupported_geography" in estimate.unsupported_reasons
-    assert estimate.minimum_amount is None
-
-
-@pytest.mark.parametrize("location", ["Eugene, Oregon", "Eureka, California"])
-def test_eu_substrings_do_not_count_as_europe(location: str) -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/substrings",
-        title="Software Developer",
-        location=location,
-        baselines=(_esco(), _eurostat()),
+        job_url="https://example.com/jobs/no-company",
+        company="",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(_levels(), _glassdoor()),
         estimated_at="2026-06-19T10:00:00Z",
     )
 
     assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.geography_scope == "unknown"
-    assert "unknown_location_assumption" in estimate.warnings
+    assert "missing_company" in estimate.insufficient_reasons
     assert estimate.minimum_amount is None
 
 
-def test_europe_country_names_do_not_match_us_substrings() -> None:
+def test_stale_reported_sources_are_source_unavailable() -> None:
     estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/austria",
-        title="Software Developer",
-        location="Vienna, Austria",
-        baselines=(_esco(), _eurostat()),
+        job_url="https://example.com/jobs/stale",
+        company="Acme AI",
+        title="Senior Platform Engineer",
+        location="Remote Europe",
+        observations=(_levels(release_year=2020),),
         estimated_at="2026-06-19T10:00:00Z",
     )
 
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.geography_scope == "eu_wide"
-    assert "unsupported_geography" not in estimate.unsupported_reasons
+    assert estimate.estimate_state == "source_unavailable"
+    assert "stale_source_snapshot" in estimate.source_unavailable_reasons
+    assert estimate.minimum_amount is None
 
 
-@pytest.mark.parametrize("component", ["ote", "equity", "bonus", "commission"])
-def test_unsupported_components_never_emit_range(component: str) -> None:
+def test_unsupported_components_never_emit_range() -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/component",
-        title="Software Developer",
+        company="Acme AI",
+        title="Senior Platform Engineer",
         location="Remote Europe",
-        component=component,
-        baselines=(_esco(), _eurostat()),
+        component="equity",
+        observations=(_levels(),),
         estimated_at="2026-06-19T10:00:00Z",
     )
 
@@ -243,213 +160,30 @@ def test_unsupported_components_never_emit_range(component: str) -> None:
     assert estimate.maximum_amount is None
 
 
-def test_supported_component_requires_matching_baseline_component_and_period() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/component-mismatch",
-        title="Software Developer",
-        location="Remote Europe",
-        component="gross_monthly_salary",
-        baselines=(_esco(), _eurostat()),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert "weak_component_match" in estimate.insufficient_reasons
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
-
-
-def test_supported_monthly_component_uses_matching_monthly_baseline() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/monthly",
-        title="Software Developer",
-        location="Remote Europe",
-        component="gross_monthly_salary",
-        baselines=(
-            _esco(),
-            _eurostat(minimum=6_000, maximum=8_000, component="gross_monthly_salary", period="month"),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.component == "gross_monthly_salary"
-    assert estimate.period == "month"
-    assert estimate.minimum_amount == 6_000
-    assert estimate.maximum_amount == 8_000
-
-
-def test_stale_source_snapshot_is_source_unavailable() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/stale",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(_esco(), _eurostat(release_year=2019)),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "source_unavailable"
-    assert "stale_source_snapshot" in estimate.source_unavailable_reasons
-    assert "stale_source_snapshot" in estimate.warnings
-    assert estimate.minimum_amount is None
-
-
-def test_low_sample_count_degrades_to_insufficient_evidence() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/low-sample",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(_esco(), _eurostat(sample_count=120)),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert "low_sample_count" in estimate.insufficient_reasons
-    assert "low_sample_count" in estimate.warnings
-    assert estimate.minimum_amount is None
-
-
-def test_source_dispersion_degrades_to_insufficient_evidence() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/dispersion",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(
-            _esco(),
-            _eurostat(minimum=70_000, maximum=90_000),
-            _ine(minimum=120_000, maximum=150_000),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert "source_dispersion_too_high" in estimate.insufficient_reasons
-    assert "broad_aggregate_band" in estimate.warnings
-    assert estimate.minimum_amount is None
-
-
-def test_broad_range_and_posted_conflict_are_warnings_only() -> None:
+@pytest.mark.parametrize(
+    ("posted_min", "posted_max", "expected_warning"),
+    [
+        (70_000, 80_000, "source_conflict_with_posted_salary"),
+        (110_000, 140_000, None),
+    ],
+)
+def test_posted_salary_conflict_is_explicit(
+    posted_min: int,
+    posted_max: int,
+    expected_warning: str | None,
+) -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/conflict",
-        title="Software Developer",
+        company="Acme AI",
+        title="Senior Platform Engineer",
         location="Remote Europe",
-        baselines=(_esco(), _eurostat(minimum=60_000, maximum=95_000)),
-        posted_annualized_minimum=150_000,
-        posted_annualized_maximum=180_000,
+        observations=(_levels(), _glassdoor(role="Senior Platform Engineer")),
+        posted_annualized_minimum=posted_min,
+        posted_annualized_maximum=posted_max,
         estimated_at="2026-06-19T10:00:00Z",
     )
 
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.minimum_amount == 60_000
-    assert "broad_aggregate_band" in estimate.warnings
-    assert "source_conflict_with_posted_salary" in estimate.warnings
-
-
-def test_rejects_unlicensed_and_non_european_source_ids_without_serializing_them() -> None:
-    bad_source = PublicMarketBaseline(  # type: ignore[arg-type]
-        source_id="glassdoor",
-        occupation_code="2512.1",
-        occupation_label="Software developer",
-        geography_scope="United States",
-        aggregate_bucket="US private page",
-        minimum_amount=100_000,
-        maximum_amount=140_000,
-        attribution="/Users/local/rawProviderPayload",
-    )
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/bad-source",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(_esco(), bad_source),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value)))
-    assert estimate.estimate_state == "unsupported"
-    assert "unsupported_source" in estimate.unsupported_reasons
-    assert estimate.sources == ()
-    assert "glassdoor" not in serialized.lower()
-    assert "levels" not in serialized.lower()
-    assert "rawproviderpayload" not in serialized.lower()
-    assert "/users/" not in serialized.lower()
-
-
-def test_allowed_source_free_text_is_sanitized_before_serialization() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/sanitized-source",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(
-            _esco(),
-            _eurostat(
-                aggregate_bucket="/Users/local/rawProviderPayload Glassdoor BLS SOC",
-                attribution="credential secret token file:///Users/local/private",
-                snapshot_version="rawProviderPayload",
-            ),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value))).casefold()
-    assert estimate.estimate_state == "estimated_range"
-    assert {source.source_id for source in estimate.sources} == {
-        "eurostat_structure_of_earnings",
-        "esco_occupation_taxonomy",
-    }
-    assert "glassdoor" not in serialized
-    assert "levels" not in serialized
-    assert "bls" not in serialized
-    assert "soc" not in serialized
-    assert "rawproviderpayload" not in serialized
-    assert "credential" not in serialized
-    assert "secret" not in serialized
-    assert "/users/" not in serialized
-
-
-def test_allowed_source_bare_us_and_private_text_are_canonicalized() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/private-source-text",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(
-            _esco(),
-            _eurostat(
-                aggregate_bucket="US private page",
-                attribution="US public aggregate",
-                snapshot_version="us-private-version",
-            ),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value))).casefold()
-    assert estimate.estimate_state == "estimated_range"
-    assert "us private" not in serialized
-    assert "us public" not in serialized
-    assert "private page" not in serialized
-    assert "us-private" not in serialized
-
-
-def test_allowed_source_with_non_europe_geography_is_rejected() -> None:
-    estimate = estimate_market_compensation(
-        job_url="https://example.com/jobs/us-baseline",
-        title="Software Developer",
-        location="Remote Europe",
-        baselines=(
-            _esco(),
-            _eurostat(
-                geography_scope="United States",
-                aggregate_bucket="BLS SOC software developer",
-                attribution="US source payload",
-            ),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value))).casefold()
-    assert estimate.estimate_state == "unsupported"
-    assert "unsupported_source" in estimate.unsupported_reasons
-    assert estimate.sources == ()
-    assert "united states" not in serialized
-    assert "bls" not in serialized
-    assert "soc" not in serialized
+    if expected_warning is None:
+        assert "source_conflict_with_posted_salary" not in estimate.warnings
+    else:
+        assert expected_warning in estimate.warnings
