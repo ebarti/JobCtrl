@@ -633,7 +633,7 @@ def build_master_tailor_prompt(
     ]
     style_lines = [
         f"- Tone: {writing_style['tone']}",
-        f"- Bullet style: {writing_style['bullet_style']}",
+        f"- Bullet standards: {', '.join(writing_style['bullet_styles'])}",
         f"- Verbosity: {writing_style['verbosity']}",
         f"- Keyword density: {writing_style['keyword_density']}",
         f"- Avoid first person: {'yes' if writing_style['avoid_first_person'] else 'no'}",

@@ -296,6 +296,7 @@ def test_writing_style_clamps_unknown_enum_values():
     )
     assert style.tone == "direct"
     assert style.bullet_style == "balanced"
+    assert style.bullet_styles == ("impact", "technical_depth", "leadership")
     assert style.verbosity == "balanced"
     assert style.keyword_density == "natural"
     assert style.avoid_first_person is True

@@ -772,7 +772,7 @@ def test_tailor_prompt_includes_writing_style_and_custom_guidance():
 
     assert "WRITING STYLE:" in prompt
     assert "- Tone: technical" in prompt
-    assert "- Bullet style: impact" in prompt
+    assert "- Bullet standards: impact, technical_depth, leadership" in prompt
     assert "USER ADDITIONAL TAILORING PROMPT:" in prompt
     assert "Use concise platform leadership language." in prompt
 

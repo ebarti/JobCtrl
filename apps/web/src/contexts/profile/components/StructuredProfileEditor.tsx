@@ -114,6 +114,12 @@ const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
   ["evidence_reframing", "Evidence reframing"],
 ];
 
+const BULLET_STANDARD_OPTIONS: Array<[string, string]> = [
+  ["impact", "Impact"],
+  ["technical_depth", "Technical depth"],
+  ["leadership", "Leadership"],
+];
+
 const ROLE_AREA_LABEL = "Role areas";
 const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
 const TARGET_LOCATION_LABEL = "Locations and work models";
@@ -847,6 +853,20 @@ export function StructuredProfileEditor({
     );
   };
 
+  const bulletStandardsField = () => (
+    <fieldset className="field wide checkbox-group-field bullet-standards-group">
+      <legend>Bullet standards</legend>
+      <div className="checkbox-options">
+        {BULLET_STANDARD_OPTIONS.map(([value, label]) => (
+          <label className="choice target-choice" key={value}>
+            <input type="checkbox" checked readOnly value={value} />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+
   const targetSearchSection = () => (
     <section className="form-section">
       <h3>Target search</h3>
@@ -1378,12 +1398,7 @@ export function StructuredProfileEditor({
                 ["confident", "Confident"],
                 ["warm", "Warm"],
               ])}
-              {selectField("resume.tailoring_rules.writing_style.bullet_style", "Bullet style", [
-                ["balanced", "Balanced"],
-                ["impact", "Impact"],
-                ["technical_depth", "Technical depth"],
-                ["leadership", "Leadership"],
-              ])}
+              {bulletStandardsField()}
               {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
                 ["concise", "Concise"],
                 ["balanced", "Balanced"],

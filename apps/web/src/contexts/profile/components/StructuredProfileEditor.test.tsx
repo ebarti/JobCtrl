@@ -48,11 +48,11 @@ vi.mock("./GoogleAddressSearchField.js", () => ({
 function StatefulEditor({
   initialProfile = sampleProfileResponse.profile,
   mode,
-  onLatestProfile,
+  onLatestProfile = () => undefined,
 }: {
   initialProfile?: unknown;
   mode?: "profile" | "preferences";
-  onLatestProfile: (value: string) => void;
+  onLatestProfile?: (value: string) => void;
 }) {
   const [profileText, setProfileText] = useState(JSON.stringify(initialProfile, null, 2));
   const [styleText, setStyleText] = useState(JSON.stringify(sampleProfileResponse.style, null, 2));
@@ -89,6 +89,16 @@ describe("<StructuredProfileEditor>", () => {
     expect(profile.resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes).toEqual([
       "verified_only",
     ]);
+  });
+
+  it("renders bullet standards as a combined fixed set", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    expect(screen.queryByLabelText("Bullet style")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Bullet standards" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Impact" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Technical depth" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Leadership" })).toBeChecked();
   });
 
   it("adds, edits, and removes achievement evidence", async () => {
