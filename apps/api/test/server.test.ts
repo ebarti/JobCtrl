@@ -1593,18 +1593,19 @@ describe("local TypeScript API", () => {
       salary: "€55,000/year",
       compensationSummary: {
         legacyRawSalary: "€55,000/year",
-        warningCount: 2,
+        warningCount: 1,
         posted: {
           recordStatus: "not_recorded",
           parseState: null,
           displayRange: null,
         },
         market: {
+          sourceKind: "reported_company_role_market",
           recordStatus: "recorded",
           estimateState: "estimated_range",
-          displayRange: "EUR 72000-92000/year",
+          displayRange: "EUR 112000-142000/year",
           sourceCount: 2,
-          warningCount: 2,
+          warningCount: 1,
         },
       },
     });
@@ -1630,9 +1631,10 @@ describe("local TypeScript API", () => {
       compensationSummary: {
         posted: { recordStatus: "not_recorded", parseState: null },
         market: {
+          sourceKind: "reported_company_role_market",
           recordStatus: "recorded",
           estimateState: "estimated_range",
-          displayRange: "EUR 72000-92000/year",
+          displayRange: "EUR 112000-142000/year",
         },
       },
     });
@@ -1647,8 +1649,10 @@ describe("local TypeScript API", () => {
         recordStatus: "recorded",
         estimate: {
           estimateState: "estimated_range",
-          minimumAmount: 72000,
-          maximumAmount: 92000,
+          minimumAmount: 112000,
+          maximumAmount: 142000,
+          companyName: "Example",
+          matchScope: "exact_company_role",
         },
       },
     });
@@ -6177,10 +6181,24 @@ function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string)
         geography_scope: "Europe",
         aggregate_bucket: "reported company-role compensation",
         attribution: "Levels.fyi reported compensation data",
-        sample_count: 7,
+        sample_count: 4,
+      },
+      {
+        source_id: "glassdoor",
+        display_name: "Glassdoor",
+        source_type: "reported_compensation",
+        release_year: 2026,
+        snapshot_version: "reported-compensation-import-v1",
+        geography_scope: "Europe",
+        aggregate_bucket: "reported company-role compensation",
+        attribution: "Glassdoor reported compensation data",
+        sample_count: 3,
       },
     ]),
-    JSON.stringify([{ name: "company", score: 1, band: "high", reason: "Company matched." }]),
+    JSON.stringify([
+      { name: "company", score: 1, band: "high", reason: "Company matched." },
+      { name: "role", score: 1, band: "high", reason: "Role matched." },
+    ]),
     "[]",
     "[]",
     "[]",
