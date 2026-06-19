@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Salary Range Estimator
 status: active
-last_updated: "2026-06-19T16:03:26Z"
+last_updated: "2026-06-19T16:25:00Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 6
+  total_plans: 8
   completed_plans: 6
-  percent: 50
+  percent: 43
 ---
 
 # Project State
@@ -20,15 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Phase 20 - Canonical Read Model & Realtime API is ready to plan.
+**Current focus:** Phase 20 - Canonical Read Model & Realtime API is planned and ready to execute.
 
 ## Current Position
 
 Phase: 20 of 22 (4 of 6 in v1.3)
-Plan: TBD
-Status: Phase 19 complete; Phase 20 ready to plan
-Last activity: 2026-06-19 - Phase 19 delivered deterministic company-role reported market estimates, the temporary compensation-refresh trigger, and a read-only inspection API.
-Progress: [#####-----] 50%
+Plan: 20-01 Compensation Projection Parity
+Status: Phase 20 planned; 20-01 ready to execute
+Last activity: 2026-06-19 - Phase 20 planned compensation projection parity and additive API/SSE invalidation.
+Progress: [####------] 43%
 
 ## Active Milestone Summary
 
@@ -47,11 +47,11 @@ Scoped source strategy:
 | 17 | Source Registry & Access Policy | Complete | SRC-01, SRC-04, SRC-05, SRC-06 |
 | 18 | Posted Compensation Facts | Complete | COMP-01..COMP-05 |
 | 19 | Company-Role Reported Market Estimates | Complete | SRC-02, SRC-03, EST-01..EST-04, EST-06, EST-07 |
-| 20 | Canonical Read Model & Realtime API | Not started | EST-05, API-01..API-05 |
+| 20 | Canonical Read Model & Realtime API | Planned | EST-05, API-01..API-05 |
 | 21 | Jobs Triage UX & Warning-Only Floor | Not started | UI-01..UI-06 |
 | 22 | Product-Path QA & Safety Release | Not started | QA-01..QA-06 |
 
-Next command: `/gsd-plan-phase 20`.
+Next command: `/gsd-execute-phase 20`.
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Next command: `/gsd-plan-phase 20`.
 - Phase 17: 2/2 plans complete.
 - Phase 18: 2/2 plans complete.
 - Phase 19: 2/2 plans complete.
+- Phase 20: 0/2 plans planned.
 
 ## Accumulated Context
 
@@ -79,7 +80,7 @@ Next command: `/gsd-plan-phase 20`.
 
 ### Pending Todos
 
-- Phase 20 must project posted facts and market estimates into canonical job list/detail read models with Python/TypeScript parity and safe SSE invalidation payloads.
+- Execute 20-01 compensation projection parity, then 20-02 additive API/SSE invalidation.
 
 ### Blockers/Concerns
 

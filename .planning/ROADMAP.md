@@ -71,7 +71,7 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
   3. Python and TypeScript projection builders produce matching compensation summary/detail JSON for the same canonical fixture.
   4. User can see compensation facts update through the existing Operations/SSE invalidation path while existing raw `JobSummary.salary` compatibility remains intact.
   5. User compensation preferences, local source payloads, credentials, raw benchmark pages, local paths, and unsafe source details are excluded from events, fixtures, logs, and API responses beyond safe comparison facts and allowed excerpts.
-**Plans**: TBD
+**Plans**: 20-01 Compensation Projection Parity; 20-02 Additive API Contract And Realtime Invalidation
 
 ### Phase 21: Jobs Triage UX & Warning-Only Floor
 **Goal**: Users can scan and inspect compensation evidence in Jobs list and drawer triage without salary facts silently changing ranking, filtering, apply readiness, or blockers.
@@ -109,7 +109,7 @@ Phases execute in numeric order: 17 -> 18 -> 19 -> 20 -> 21 -> 22
 | 17. Source Registry & Access Policy | 2/2 | Complete | 2026-06-19 |
 | 18. Posted Compensation Facts | 2/2 | Complete | 2026-06-19 |
 | 19. Europe Public Market Estimates | 2/2 | Complete | 2026-06-19 |
-| 20. Canonical Read Model & Realtime API | 0/TBD | Not started | - |
+| 20. Canonical Read Model & Realtime API | 0/2 | Planned | - |
 | 21. Jobs Triage UX & Warning-Only Floor | 0/TBD | Not started | - |
 | 22. Product-Path QA & Safety Release | 0/TBD | Not started | - |
 
