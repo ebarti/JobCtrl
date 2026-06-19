@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from jobhunter.database import ensure_market_compensation_tables, init_db
-from jobhunter.domain.compensation import PublicMarketBaseline, estimate_market_compensation, parse_posted_compensation
+from jobhunter.domain.compensation import (
+    PublicMarketBaseline,
+    estimate_market_compensation,
+    not_requested_market_estimate,
+    parse_posted_compensation,
+)
 from jobhunter.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
 
 
@@ -125,6 +130,22 @@ def test_repository_round_trips_non_range_states(
     assert loaded.maximum_amount is None
     assert reason in (*loaded.unsupported_reasons, *loaded.insufficient_reasons)
     assert loaded.estimate_state == estimate.estimate_state
+
+
+def test_repository_does_not_persist_not_requested_marker(conn: sqlite3.Connection) -> None:
+    job_url = _seed_job(conn, url="https://example.com/jobs/not-requested")
+    repo = SqliteMarketCompensationRepository(conn)
+
+    with pytest.raises(ValueError, match="not_requested"):
+        repo.save_estimate(
+            not_requested_market_estimate(
+                job_url=job_url,
+                estimated_at="2026-06-19T10:00:00Z",
+            )
+        )
+
+    row = conn.execute("SELECT * FROM job_market_compensation_estimates WHERE job_url = ?", (job_url,)).fetchone()
+    assert row is None
 
 
 def test_backfill_is_idempotent_and_preserves_existing_salary_and_posted_facts(

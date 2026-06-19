@@ -13,6 +13,7 @@ from jobhunter.domain.compensation.market import (
     PublicMarketBaseline,
     estimate_market_compensation,
     not_requested_market_estimate,
+    sanitize_market_source_snapshot,
 )
 from jobhunter.domain.compensation.posted import (
     CONFIDENCE_LEVELS,
@@ -46,4 +47,5 @@ __all__ = [
     "estimate_market_compensation",
     "not_requested_market_estimate",
     "parse_posted_compensation",
+    "sanitize_market_source_snapshot",
 ]

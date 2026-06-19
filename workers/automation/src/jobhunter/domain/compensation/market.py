@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import median
@@ -143,6 +144,52 @@ MIN_ESTIMATE_SCORE = 0.72
 MIN_CRITICAL_FACTOR_SCORE = 0.60
 MAX_DISPERSION_RATIO = 0.25
 POSTED_CONFLICT_RATIO = 0.30
+SAFE_SOURCE_TEXT_LIMIT = 160
+
+SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
+    "eurostat_structure_of_earnings": "Eurostat Structure of Earnings Survey",
+    "esco_occupation_taxonomy": "ESCO occupation taxonomy",
+    "spain_ine_salary_structure": "Spain INE Wage Structure Survey",
+}
+SOURCE_DEFAULT_GEOGRAPHY_SCOPE: dict[MarketSourceId, str] = {
+    "eurostat_structure_of_earnings": "EU",
+    "esco_occupation_taxonomy": "Europe",
+    "spain_ine_salary_structure": "Spain",
+}
+SOURCE_DEFAULT_AGGREGATE_BUCKET: dict[MarketSourceId, str] = {
+    "eurostat_structure_of_earnings": "Eurostat SES occupation/country aggregate",
+    "esco_occupation_taxonomy": "ESCO occupation mapping",
+    "spain_ine_salary_structure": "Spain INE occupation aggregate",
+}
+SOURCE_DEFAULT_ATTRIBUTION: dict[MarketSourceId, str] = {
+    "eurostat_structure_of_earnings": "Eurostat public statistical aggregate",
+    "esco_occupation_taxonomy": "ESCO public occupation taxonomy",
+    "spain_ine_salary_structure": "Spain INE public statistical aggregate",
+}
+UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"glassdoor",
+        r"levels(?:\.fyi)?",
+        r"salary\.com",
+        r"rawproviderpayload",
+        r"credential",
+        r"secret",
+        r"api[_ -]?key",
+        r"token",
+        r"password",
+        r"file://",
+        r"/users/",
+        r"\\users\\",
+        r"\bbls\b",
+        r"\bsoc\b",
+        r"\bonet\b",
+        r"\bo\*net\b",
+        r"\bunited states\b",
+        r"\bu\.s\.",
+        r"\busa\b",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -303,6 +350,25 @@ def estimate_market_compensation(
             estimated_at=now,
         )
 
+    component_value = _market_component(component)
+    unsupported_allowed_rows = tuple(
+        baseline for baseline in baselines if baseline.source_id in MARKET_SOURCE_IDS and not _baseline_scope_supported(baseline)
+    )
+    if unsupported_allowed_rows:
+        unsupported_reasons.append("unsupported_source")
+        factors.append(_factor("occupation", 0.0, "Unsupported or non-European source evidence was rejected."))
+        return _estimate(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            state="unsupported",
+            component=component_value,
+            factors=factors,
+            unsupported=unsupported_reasons,
+            warnings=warnings,
+            geography_scope=geography_scope,
+            estimated_at=now,
+        )
+
     salary_rows = tuple(baseline for baseline in baselines if baseline.source_id in SALARY_SOURCE_IDS)
     if not salary_rows:
         insufficient_reasons.append("missing_salary_observation")
@@ -311,7 +377,23 @@ def estimate_market_compensation(
             tenant_id=tenant_id,
             job_url=job_url,
             state="insufficient_evidence",
-            component=_market_component(component),
+            component=component_value,
+            factors=factors,
+            insufficient=insufficient_reasons,
+            warnings=warnings,
+            geography_scope=geography_scope,
+            estimated_at=now,
+        )
+
+    component_rows = tuple(row for row in salary_rows if _component_matches(row, component_value))
+    if not component_rows:
+        insufficient_reasons.append("weak_component_match")
+        factors.append(_factor("component", 0.0, f"No public wage baseline row matched {component_value}."))
+        return _estimate(
+            tenant_id=tenant_id,
+            job_url=job_url,
+            state="insufficient_evidence",
+            component=component_value,
             factors=factors,
             insufficient=insufficient_reasons,
             warnings=warnings,
@@ -320,7 +402,7 @@ def estimate_market_compensation(
         )
 
     usable_rows: list[PublicMarketBaseline] = []
-    for row in salary_rows:
+    for row in component_rows:
         if row.release_year is not None and _age_months(row.release_year, now) > STALE_THRESHOLD_MONTHS:
             source_unavailable_reasons.append("stale_source_snapshot")
             warnings.append("stale_source_snapshot")
@@ -369,16 +451,15 @@ def estimate_market_compensation(
     maximum = max(row.maximum_amount for row in selected_rows if row.maximum_amount is not None)
     sample_count = sum(row.sample_count or 0 for row in selected_rows) or None
     source_count = len({row.source_id for row in selected_rows})
-    aggregate_bucket = _join_unique(row.aggregate_bucket for row in selected_rows)
+    aggregate_bucket = _join_unique(_safe_aggregate_bucket(row) for row in selected_rows)
     occupation_code = selected_rows[0].occupation_code
     occupation_label = selected_rows[0].occupation_label
-    component_value = _market_component(component)
 
     occupation_score = min(row.occupation_match_score for row in selected_rows)
     seniority_score = min(row.seniority_match_score for row in selected_rows)
     sample_score = _sample_score(sample_count)
     freshness_score = min(_freshness_score(row.release_year, now) for row in selected_rows)
-    component_score = 1.0 if component_value in SUPPORTED_COMPONENTS else 0.0
+    component_score = 1.0
     agreement_score, dispersion_warning, dispersion_insufficient = _agreement_score(selected_rows)
     if dispersion_warning:
         warnings.append("broad_aggregate_band")
@@ -544,24 +625,25 @@ def _estimate(
 
 
 def _geography(location: str | None) -> tuple[float, str, str, list[MarketWarningCode], bool]:
-    normalized = str(location or "").casefold()
+    normalized = _normalize_location(location)
     if not normalized.strip():
         return 0.5, "unknown", "Location is unknown; no European market can be selected precisely.", [
             "unknown_location_assumption"
         ], False
-    if "remote" in normalized and "europe" in normalized:
+    tokens = _tokens(normalized)
+    if "remote" in tokens and ("europe" in tokens or "eu" in tokens):
         return 0.78, "remote_europe", "Remote Europe role mapped to Europe aggregate baselines.", [
             "remote_europe_assumption"
         ], False
-    if "spain" in normalized or "barcelona" in normalized or "madrid" in normalized:
+    if _contains_geo_term(normalized, {"spain", "barcelona", "madrid"}):
         return 0.95, "spain", "Spain-local role can use Spain INE where available.", ["spain_local_assumption"], False
-    if any(country in normalized for country in NON_EUROPE_COUNTRIES):
+    if _contains_geo_term(normalized, NON_EUROPE_COUNTRIES):
         return 0.0, "non_europe", "Known non-European location is outside Phase 19 scope.", [], True
-    if any(country in normalized for country in NON_EU_EUROPE_COUNTRIES):
+    if _contains_geo_term(normalized, NON_EU_EUROPE_COUNTRIES):
         return 0.72, "non_eu_europe", "Non-EU Europe role uses broad Europe aggregate assumptions.", [
             "non_eu_europe_assumption"
         ], False
-    if "europe" in normalized or "eu" in normalized or any(country in normalized for country in EU_COUNTRIES):
+    if "europe" in tokens or "eu" in tokens or _contains_geo_term(normalized, EU_COUNTRIES):
         return 0.82, "eu_wide", "EU/Europe role mapped to Europe aggregate baselines.", ["eu_wide_assumption"], False
     return 0.5, "unknown", "Location is not specific enough to choose a European market.", [
         "unknown_location_assumption"
@@ -580,27 +662,108 @@ def _snapshot(row: PublicMarketBaseline) -> MarketSourceSnapshot:
     source_type: Literal["public_wage_baseline", "occupation_taxonomy"] = (
         "occupation_taxonomy" if row.source_id == "esco_occupation_taxonomy" else "public_wage_baseline"
     )
+    return sanitize_market_source_snapshot(
+        MarketSourceSnapshot(
+            source_id=row.source_id,
+            display_name=_display_name(row.source_id),
+            source_type=source_type,
+            release_year=row.release_year,
+            snapshot_version=row.snapshot_version,
+            geography_scope=row.geography_scope,
+            aggregate_bucket=row.aggregate_bucket,
+            attribution=row.attribution,
+            sample_count=row.sample_count,
+        )
+    )
+
+
+def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourceSnapshot:
+    """Return a safe public-source snapshot for persistence or API serialization."""
+
     return MarketSourceSnapshot(
-        source_id=row.source_id,
-        display_name=_display_name(row.source_id),
-        source_type=source_type,
-        release_year=row.release_year,
-        snapshot_version=row.snapshot_version,
-        geography_scope=row.geography_scope,
-        aggregate_bucket=row.aggregate_bucket,
-        attribution=row.attribution,
-        sample_count=row.sample_count,
+        source_id=source.source_id,
+        display_name=_display_name(source.source_id),
+        source_type="occupation_taxonomy" if source.source_id == "esco_occupation_taxonomy" else "public_wage_baseline",
+        release_year=source.release_year,
+        snapshot_version=_safe_source_text(source.snapshot_version, "synthetic-public-fixture"),
+        geography_scope=_safe_source_text(source.geography_scope, SOURCE_DEFAULT_GEOGRAPHY_SCOPE[source.source_id]),
+        aggregate_bucket=_safe_source_text(source.aggregate_bucket, SOURCE_DEFAULT_AGGREGATE_BUCKET[source.source_id]),
+        attribution=_safe_source_text(source.attribution, SOURCE_DEFAULT_ATTRIBUTION[source.source_id]),
+        sample_count=source.sample_count,
     )
 
 
 def _display_name(source_id: str) -> str:
-    if source_id == "eurostat_structure_of_earnings":
-        return "Eurostat Structure of Earnings Survey"
-    if source_id == "esco_occupation_taxonomy":
-        return "ESCO occupation taxonomy"
-    if source_id == "spain_ine_salary_structure":
-        return "Spain INE Wage Structure Survey"
-    return source_id
+    if source_id in SOURCE_DISPLAY_NAMES:
+        return SOURCE_DISPLAY_NAMES[source_id]  # type: ignore[index]
+    return "Unsupported compensation source"
+
+
+def _safe_aggregate_bucket(row: PublicMarketBaseline) -> str:
+    return _safe_source_text(row.aggregate_bucket, SOURCE_DEFAULT_AGGREGATE_BUCKET[row.source_id])
+
+
+def _safe_source_text(value: str, fallback: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text or _contains_unsafe_source_text(text):
+        return fallback
+    return text[:SAFE_SOURCE_TEXT_LIMIT]
+
+
+def _contains_unsafe_source_text(value: str) -> bool:
+    text = value.casefold()
+    return any(pattern.search(text) for pattern in UNSAFE_SOURCE_TEXT_PATTERNS)
+
+
+def _baseline_scope_supported(row: PublicMarketBaseline) -> bool:
+    if row.source_id not in MARKET_SOURCE_IDS:
+        return False
+    if _contains_unsafe_source_text(row.geography_scope):
+        return False
+    normalized = _normalize_location(row.geography_scope)
+    if not normalized:
+        return row.source_id == "esco_occupation_taxonomy"
+    if row.source_id == "spain_ine_salary_structure":
+        return _contains_geo_term(normalized, {"spain", "barcelona", "madrid"})
+    if row.source_id in {"eurostat_structure_of_earnings", "esco_occupation_taxonomy"}:
+        tokens = _tokens(normalized)
+        return "europe" in tokens or "eu" in tokens or _contains_geo_term(normalized, EU_COUNTRIES | NON_EU_EUROPE_COUNTRIES)
+    return False
+
+
+def _component_matches(row: PublicMarketBaseline, component: MarketComponent) -> bool:
+    if component == "gross_monthly_salary":
+        return row.component == "gross_monthly_salary" and row.period == "month"
+    if component == "gross_annual_salary":
+        return row.component == "gross_annual_salary" and row.period == "year"
+    return row.component == "base_salary" and row.period == "year"
+
+
+def _normalize_location(value: str | None) -> str:
+    text = str(value or "").casefold()
+    text = re.sub(r"\bu\.s\.", " us ", text)
+    text = re.sub(r"\bu\.k\.", " uk ", text)
+    text = re.sub(r"\be\.u\.", " eu ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _tokens(value: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", value))
+
+
+def _contains_geo_term(value: str, terms: frozenset[str] | set[str]) -> bool:
+    tokens = _tokens(value)
+    for term in terms:
+        term_normalized = _normalize_location(term)
+        term_tokens = term_normalized.split()
+        if len(term_tokens) == 1:
+            if term_tokens[0] in tokens:
+                return True
+            continue
+        pattern = r"\b" + r"\s+".join(re.escape(token) for token in term_tokens) + r"\b"
+        if re.search(pattern, value):
+            return True
+    return False
 
 
 def _factor(name: MarketConfidenceFactorName, score: float, reason: str) -> MarketConfidenceFactor:
@@ -721,6 +884,7 @@ def _dedupe_sources(values: tuple[MarketSourceSnapshot, ...]) -> tuple[MarketSou
     seen: set[tuple[MarketSourceId, str, str]] = set()
     out: list[MarketSourceSnapshot] = []
     for value in values:
+        value = sanitize_market_source_snapshot(value)
         key = (value.source_id, value.snapshot_version, value.aggregate_bucket)
         if key in seen:
             continue

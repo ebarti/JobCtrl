@@ -13,6 +13,7 @@ from jobhunter.domain.compensation import (
     MarketSourceSnapshot,
     PublicMarketBaseline,
     estimate_market_compensation,
+    sanitize_market_source_snapshot,
 )
 
 
@@ -24,6 +25,8 @@ class SqliteMarketCompensationRepository:
         ensure_market_compensation_tables(conn)
 
     def save_estimate(self, estimate: MarketCompensationEstimate) -> None:
+        if estimate.estimate_state == "not_requested":
+            raise ValueError("not_requested market estimates are read-side markers and must not be persisted")
         self._conn.execute(
             """
             INSERT INTO job_market_compensation_estimates (
@@ -188,6 +191,7 @@ def _row_to_estimate(row: sqlite3.Row | tuple[Any, ...]) -> MarketCompensationEs
 
 
 def _source_to_dict(source: MarketSourceSnapshot) -> dict[str, Any]:
+    source = sanitize_market_source_snapshot(source)
     return {
         "source_id": source.source_id,
         "display_name": source.display_name,

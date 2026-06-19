@@ -124,11 +124,11 @@ function insertEstimate(
     "local",
     jobUrl,
     values.state ?? "estimated_range",
-    values.currency ?? "EUR",
+    values.currency === undefined ? "EUR" : values.currency,
     "year",
     "base_salary",
-    values.minimumAmount ?? 72_000,
-    values.maximumAmount ?? 92_000,
+    values.minimumAmount === undefined ? 72_000 : values.minimumAmount,
+    values.maximumAmount === undefined ? 92_000 : values.maximumAmount,
     values.confidenceBand ?? "medium",
     values.confidenceScore ?? 0.82,
     values.sourceCount ?? 2,
@@ -352,6 +352,38 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it("defensively treats persisted not-requested rows as not requested", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
+      state: "not_requested",
+      minimumAmount: null,
+      maximumAmount: null,
+      confidenceBand: "none",
+      confidenceScore: 0,
+      sourceCount: 0,
+      sampleCount: null,
+      sources: [],
+      factors: [],
+      warnings: [],
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({
+        ok: true,
+        recordStatus: "not_requested",
+        jobKey: "https://example.com/jobs/estimated",
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("returns 404 for unknown jobs", async () => {
     const { app, cleanup } = withTempApp();
     try {
@@ -374,13 +406,13 @@ describe("market compensation estimates API", () => {
       sources: [
         {
           source_id: "eurostat_structure_of_earnings",
-          display_name: "Eurostat Structure of Earnings Survey",
+          display_name: "Glassdoor private payload",
           source_type: "public_wage_baseline",
           release_year: 2024,
-          snapshot_version: "synthetic-public-fixture",
-          geography_scope: "EU",
-          aggregate_bucket: "Eurostat SES aggregate",
-          attribution: "Eurostat public statistical aggregate",
+          snapshot_version: "rawProviderPayload",
+          geography_scope: "United States /Users/private",
+          aggregate_bucket: "BLS SOC private benchmark",
+          attribution: "credential secret",
           sample_count: 900,
         },
         {
@@ -408,9 +440,15 @@ describe("market compensation estimates API", () => {
       const serialized = JSON.stringify(response.json()).toLowerCase();
       const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
       expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["eurostat_structure_of_earnings"]);
+      expect(body.estimate.sources[0]).toMatchObject({
+        displayName: "Eurostat Structure of Earnings Survey",
+      });
       expect(serialized).not.toContain("full private description");
       expect(serialized).not.toContain("glassdoor");
       expect(serialized).not.toContain("levels");
+      expect(serialized).not.toContain("united states");
+      expect(serialized).not.toContain("bls");
+      expect(serialized).not.toContain("soc");
       expect(serialized).not.toContain("rawproviderpayload");
       expect(serialized).not.toContain("/users/");
       expect(serialized).not.toContain("credential secret");

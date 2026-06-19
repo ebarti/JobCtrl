@@ -21,7 +21,7 @@ type JobRow = {
 type MarketCompensationEstimateRow = {
   tenant_id: string;
   job_url: string;
-  estimate_state: "unsupported" | "source_unavailable" | "insufficient_evidence" | "estimated_range";
+  estimate_state: "not_requested" | "unsupported" | "source_unavailable" | "insufficient_evidence" | "estimated_range";
   currency: string | null;
   period: "year" | "month";
   component: "base_salary" | "gross_annual_salary" | "gross_monthly_salary";
@@ -44,6 +44,10 @@ type MarketCompensationEstimateRow = {
   warnings_json: string;
   estimator_version: string;
   estimated_at: string;
+};
+
+type MarketCompensationRecordedEstimateRow = MarketCompensationEstimateRow & {
+  estimate_state: "unsupported" | "source_unavailable" | "insufficient_evidence" | "estimated_range";
 };
 
 const WARNING_MESSAGES: Record<MarketCompensationWarningCode, string> = {
@@ -79,6 +83,63 @@ const SOURCE_IDS = new Set<MarketCompensationSourceId>([
   "esco_occupation_taxonomy",
   "spain_ine_salary_structure",
 ]);
+const SOURCE_DEFAULTS: Record<
+  MarketCompensationSourceId,
+  {
+    displayName: string;
+    sourceType: "public_wage_baseline" | "occupation_taxonomy";
+    snapshotVersion: string;
+    geographyScope: string;
+    aggregateBucket: string;
+    attribution: string;
+  }
+> = {
+  eurostat_structure_of_earnings: {
+    displayName: "Eurostat Structure of Earnings Survey",
+    sourceType: "public_wage_baseline",
+    snapshotVersion: "synthetic-public-fixture",
+    geographyScope: "EU",
+    aggregateBucket: "Eurostat SES occupation/country aggregate",
+    attribution: "Eurostat public statistical aggregate",
+  },
+  esco_occupation_taxonomy: {
+    displayName: "ESCO occupation taxonomy",
+    sourceType: "occupation_taxonomy",
+    snapshotVersion: "synthetic-public-fixture",
+    geographyScope: "Europe",
+    aggregateBucket: "ESCO occupation mapping",
+    attribution: "ESCO public occupation taxonomy",
+  },
+  spain_ine_salary_structure: {
+    displayName: "Spain INE Wage Structure Survey",
+    sourceType: "public_wage_baseline",
+    snapshotVersion: "synthetic-public-fixture",
+    geographyScope: "Spain",
+    aggregateBucket: "Spain INE occupation aggregate",
+    attribution: "Spain INE public statistical aggregate",
+  },
+};
+const UNSAFE_SOURCE_TEXT_PATTERNS = [
+  /glassdoor/i,
+  /levels(?:\.fyi)?/i,
+  /salary\.com/i,
+  /rawproviderpayload/i,
+  /credential/i,
+  /secret/i,
+  /api[_ -]?key/i,
+  /token/i,
+  /password/i,
+  /file:\/\//i,
+  /\/users\//i,
+  /\\users\\/i,
+  /\bbls\b/i,
+  /\bsoc\b/i,
+  /\bonet\b/i,
+  /\bo\*net\b/i,
+  /\bunited states\b/i,
+  /\bu\.s\./i,
+  /\busa\b/i,
+];
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "agreement",
   "component",
@@ -117,11 +178,18 @@ export function getMarketCompensationEstimate(
   if (!row) {
     return notRequested(job);
   }
+  if (!isRecordedEstimateRow(row)) {
+    return notRequested(job);
+  }
   return {
     ok: true,
     recordStatus: "recorded",
     estimate: mapEstimateRow(row),
   };
+}
+
+function isRecordedEstimateRow(row: MarketCompensationEstimateRow): row is MarketCompensationRecordedEstimateRow {
+  return row.estimate_state !== "not_requested";
 }
 
 function notRequested(job: JobRow): MarketCompensationEstimateResponse {
@@ -132,7 +200,7 @@ function notRequested(job: JobRow): MarketCompensationEstimateResponse {
   };
 }
 
-function mapEstimateRow(row: MarketCompensationEstimateRow): MarketCompensationEstimate {
+function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompensationEstimate {
   const base = {
     tenantId: row.tenant_id,
     jobKey: row.job_url,
@@ -218,16 +286,18 @@ function parseSources(value: string): MarketCompensationSourceSnapshot[] {
       const sourceId = stringValue(entry.source_id);
       const sourceType = stringValue(entry.source_type);
       if (!SOURCE_IDS.has(sourceId as MarketCompensationSourceId)) return null;
-      if (sourceType !== "public_wage_baseline" && sourceType !== "occupation_taxonomy") return null;
+      const typedSourceId = sourceId as MarketCompensationSourceId;
+      const defaults = SOURCE_DEFAULTS[typedSourceId];
+      if (sourceType !== defaults.sourceType) return null;
       return {
-        sourceId: sourceId as MarketCompensationSourceId,
-        displayName: stringValue(entry.display_name),
-        sourceType,
+        sourceId: typedSourceId,
+        displayName: defaults.displayName,
+        sourceType: defaults.sourceType,
         releaseYear: nullableNumber(entry.release_year),
-        snapshotVersion: stringValue(entry.snapshot_version),
-        geographyScope: stringValue(entry.geography_scope),
-        aggregateBucket: stringValue(entry.aggregate_bucket),
-        attribution: stringValue(entry.attribution),
+        snapshotVersion: safeSourceText(entry.snapshot_version, defaults.snapshotVersion),
+        geographyScope: safeSourceText(entry.geography_scope, defaults.geographyScope),
+        aggregateBucket: safeSourceText(entry.aggregate_bucket, defaults.aggregateBucket),
+        attribution: safeSourceText(entry.attribution, defaults.attribution),
         sampleCount: nullableNumber(entry.sample_count),
       };
     })
@@ -266,6 +336,14 @@ function confidenceBand(value: unknown): "none" | "low" | "medium" | "high" {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function safeSourceText(value: unknown, fallback: string): string {
+  const text = stringValue(value).replace(/\s+/g, " ").trim();
+  if (!text || UNSAFE_SOURCE_TEXT_PATTERNS.some((pattern) => pattern.test(text))) {
+    return fallback;
+  }
+  return text.slice(0, 160);
 }
 
 function nullableText(value: string | null | undefined): string | null {

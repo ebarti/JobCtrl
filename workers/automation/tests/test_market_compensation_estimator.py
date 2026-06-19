@@ -32,20 +32,28 @@ def _eurostat(
     geography_scope: str = "EU",
     occupation_score: float = 0.9,
     seniority_score: float = 0.82,
+    component: str = "base_salary",
+    period: str = "year",
+    aggregate_bucket: str = "Eurostat SES occupation/country aggregate",
+    attribution: str = "Eurostat public statistical aggregate",
+    snapshot_version: str = "synthetic-public-fixture",
 ) -> PublicMarketBaseline:
     return PublicMarketBaseline(
         source_id="eurostat_structure_of_earnings",
         occupation_code="2512.1",
         occupation_label="Software developer",
         geography_scope=geography_scope,
-        aggregate_bucket="Eurostat SES occupation/country aggregate",
+        aggregate_bucket=aggregate_bucket,
         minimum_amount=minimum,
         maximum_amount=maximum,
         release_year=release_year,
+        snapshot_version=snapshot_version,
         sample_count=sample_count,
-        attribution="Eurostat public statistical aggregate",
+        attribution=attribution,
         occupation_match_score=occupation_score,
         seniority_match_score=seniority_score,
+        component=component,  # type: ignore[arg-type]
+        period=period,  # type: ignore[arg-type]
     )
 
 
@@ -167,6 +175,36 @@ def test_known_non_europe_location_is_unsupported() -> None:
     assert estimate.minimum_amount is None
 
 
+@pytest.mark.parametrize("location", ["Eugene, Oregon", "Eureka, California"])
+def test_eu_substrings_do_not_count_as_europe(location: str) -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/substrings",
+        title="Software Developer",
+        location=location,
+        baselines=(_esco(), _eurostat()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.geography_scope == "unknown"
+    assert "unknown_location_assumption" in estimate.warnings
+    assert estimate.minimum_amount is None
+
+
+def test_europe_country_names_do_not_match_us_substrings() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/austria",
+        title="Software Developer",
+        location="Vienna, Austria",
+        baselines=(_esco(), _eurostat()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.geography_scope == "eu_wide"
+    assert "unsupported_geography" not in estimate.unsupported_reasons
+
+
 @pytest.mark.parametrize("component", ["ote", "equity", "bonus", "commission"])
 def test_unsupported_components_never_emit_range(component: str) -> None:
     estimate = estimate_market_compensation(
@@ -182,6 +220,42 @@ def test_unsupported_components_never_emit_range(component: str) -> None:
     assert "unsupported_component" in estimate.unsupported_reasons
     assert estimate.minimum_amount is None
     assert estimate.maximum_amount is None
+
+
+def test_supported_component_requires_matching_baseline_component_and_period() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/component-mismatch",
+        title="Software Developer",
+        location="Remote Europe",
+        component="gross_monthly_salary",
+        baselines=(_esco(), _eurostat()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert "weak_component_match" in estimate.insufficient_reasons
+    assert estimate.minimum_amount is None
+    assert estimate.maximum_amount is None
+
+
+def test_supported_monthly_component_uses_matching_monthly_baseline() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/monthly",
+        title="Software Developer",
+        location="Remote Europe",
+        component="gross_monthly_salary",
+        baselines=(
+            _esco(),
+            _eurostat(minimum=6_000, maximum=8_000, component="gross_monthly_salary", period="month"),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.component == "gross_monthly_salary"
+    assert estimate.period == "month"
+    assert estimate.minimum_amount == 6_000
+    assert estimate.maximum_amount == 8_000
 
 
 def test_stale_source_snapshot_is_source_unavailable() -> None:
@@ -277,3 +351,60 @@ def test_rejects_unlicensed_and_non_european_source_ids_without_serializing_them
     assert "levels" not in serialized.lower()
     assert "rawproviderpayload" not in serialized.lower()
     assert "/users/" not in serialized.lower()
+
+
+def test_allowed_source_free_text_is_sanitized_before_serialization() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/sanitized-source",
+        title="Software Developer",
+        location="Remote Europe",
+        baselines=(
+            _esco(),
+            _eurostat(
+                aggregate_bucket="/Users/local/rawProviderPayload Glassdoor BLS SOC",
+                attribution="credential secret token file:///Users/local/private",
+                snapshot_version="rawProviderPayload",
+            ),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value))).casefold()
+    assert estimate.estimate_state == "estimated_range"
+    assert {source.source_id for source in estimate.sources} == {
+        "eurostat_structure_of_earnings",
+        "esco_occupation_taxonomy",
+    }
+    assert "glassdoor" not in serialized
+    assert "levels" not in serialized
+    assert "bls" not in serialized
+    assert "soc" not in serialized
+    assert "rawproviderpayload" not in serialized
+    assert "credential" not in serialized
+    assert "secret" not in serialized
+    assert "/users/" not in serialized
+
+
+def test_allowed_source_with_non_europe_geography_is_rejected() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/us-baseline",
+        title="Software Developer",
+        location="Remote Europe",
+        baselines=(
+            _esco(),
+            _eurostat(
+                geography_scope="United States",
+                aggregate_bucket="BLS SOC software developer",
+                attribution="US source payload",
+            ),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value))).casefold()
+    assert estimate.estimate_state == "unsupported"
+    assert "unsupported_source" in estimate.unsupported_reasons
+    assert estimate.sources == ()
+    assert "united states" not in serialized
+    assert "bls" not in serialized
+    assert "soc" not in serialized
