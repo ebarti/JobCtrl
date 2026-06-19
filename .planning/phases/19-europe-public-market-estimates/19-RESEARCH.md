@@ -1,7 +1,7 @@
 # Phase 19: Europe Public Market Estimates - Research
 
-**Researched:** 2026-06-19  
-**Domain:** Europe-only public compensation market estimates, deterministic fixtures/imports, SQLite canonical facts, read-only API inspection  
+**Researched:** 2026-06-19
+**Domain:** Europe-only public compensation market estimates, deterministic fixtures/imports, SQLite canonical facts, read-only API inspection
 **Confidence:** MEDIUM
 
 ## User Constraints (from CONTEXT.md)
@@ -279,14 +279,14 @@ apps/api/test/
 
 ### Pattern 1: Discriminated Facts, Not Nullable Ranges
 
-**What:** market estimate rows carry a state, and range fields are meaningful only for `estimated_range`. [VERIFIED: 19-CONTEXT.md]  
-**When to use:** every market estimate read/write path in Phase 19. [VERIFIED: 19-CONTEXT.md]  
+**What:** market estimate rows carry a state, and range fields are meaningful only for `estimated_range`. [VERIFIED: 19-CONTEXT.md]
+**When to use:** every market estimate read/write path in Phase 19. [VERIFIED: 19-CONTEXT.md]
 **Example:** posted facts already branch DTO shape by `parse_state` and omit normalized range fields for non-range states. [VERIFIED: apps/api/src/posted-compensation-facts.ts]
 
 ### Pattern 2: Write During Backfill/Command, Never During GET
 
-**What:** API inspection reads canonical rows and returns explicit missing state; it does not compute or persist on demand. [VERIFIED: docs/local-ts-api.md]  
-**When to use:** `GET /v1/jobs/:jobKey/compensation/market`. [ASSUMED]  
+**What:** API inspection reads canonical rows and returns explicit missing state; it does not compute or persist on demand. [VERIFIED: docs/local-ts-api.md]
+**When to use:** `GET /v1/jobs/:jobKey/compensation/market`. [ASSUMED]
 **Example:** posted compensation API tests assert no row is written when returning `not_recorded`. [VERIFIED: apps/api/test/posted-compensation-facts.test.ts]
 
 ### Anti-Patterns to Avoid
@@ -308,21 +308,21 @@ apps/api/test/
 ## Common Pitfalls
 
 ### Pitfall 1: Precise Range From Weak Aggregates
-**What goes wrong:** broad public aggregates appear as exact job-level market salary. [ASSUMED]  
-**Why it happens:** aggregate occupation/location rows are easier to display than factor-level uncertainty. [ASSUMED]  
-**How to avoid:** emit `insufficient_evidence` or warnings when geography, occupation, seniority, sample, freshness, or dispersion is weak. [VERIFIED: 19-CONTEXT.md]  
+**What goes wrong:** broad public aggregates appear as exact job-level market salary. [ASSUMED]
+**Why it happens:** aggregate occupation/location rows are easier to display than factor-level uncertainty. [ASSUMED]
+**How to avoid:** emit `insufficient_evidence` or warnings when geography, occupation, seniority, sample, freshness, or dispersion is weak. [VERIFIED: 19-CONTEXT.md]
 **Warning signs:** range fields appear with `source_count = 1`, low sample count, unknown location, or broad aggregate bucket. [ASSUMED]
 
 ### Pitfall 2: Mixing Posted Salary And Market Estimate Contracts
-**What goes wrong:** consumers cannot tell employer-posted compensation from public benchmark estimates. [VERIFIED: 19-CONTEXT.md]  
-**Why it happens:** both are salary-like facts attached to a job. [ASSUMED]  
-**How to avoid:** separate tables, separate endpoints, separate DTOs, and explicit source type labels. [VERIFIED: 19-CONTEXT.md]  
+**What goes wrong:** consumers cannot tell employer-posted compensation from public benchmark estimates. [VERIFIED: 19-CONTEXT.md]
+**Why it happens:** both are salary-like facts attached to a job. [ASSUMED]
+**How to avoid:** separate tables, separate endpoints, separate DTOs, and explicit source type labels. [VERIFIED: 19-CONTEXT.md]
 **Warning signs:** `/v1/jobs` or `/v1/jobs/:key` shape changes in Phase 19. [VERIFIED: 19-CONTEXT.md]
 
 ### Pitfall 3: Licensed Or Non-European Data Leakage
-**What goes wrong:** disabled Glassdoor/Levels seams or US taxonomies leak into public estimate output. [VERIFIED: 19-CONTEXT.md]  
-**Why it happens:** source registry includes disabled licensed providers for policy transparency. [VERIFIED: apps/api/src/compensation-source-policy.ts]  
-**How to avoid:** allowlist exactly the three Phase 19 source IDs in estimator fixtures and API output. [VERIFIED: 19-CONTEXT.md]  
+**What goes wrong:** disabled Glassdoor/Levels seams or US taxonomies leak into public estimate output. [VERIFIED: 19-CONTEXT.md]
+**Why it happens:** source registry includes disabled licensed providers for policy transparency. [VERIFIED: apps/api/src/compensation-source-policy.ts]
+**How to avoid:** allowlist exactly the three Phase 19 source IDs in estimator fixtures and API output. [VERIFIED: 19-CONTEXT.md]
 **Warning signs:** serialized API response contains `glassdoor`, `levels`, `onet`, `soc`, `bls`, `salary.com`, or local paths. [ASSUMED]
 
 ## Code Examples
@@ -401,7 +401,7 @@ return MarketCompensationEstimate(state="estimated_range", minimum_amount=low, m
 | Python | Python domain/repository tests | yes | 3.14.4 [VERIFIED: local command] | None needed |
 | sqlite3 CLI | Schema inspection/manual debugging | yes | 3.51.0 [VERIFIED: local command] | Python sqlite3 module |
 
-**Missing dependencies with no fallback:** none found. [VERIFIED: local command]  
+**Missing dependencies with no fallback:** none found. [VERIFIED: local command]
 **Missing dependencies with fallback:** none found. [VERIFIED: local command]
 
 ## Validation Architecture
@@ -498,7 +498,7 @@ return MarketCompensationEstimate(state="estimated_range", minimum_amount=low, m
 - Public source characterization: MEDIUM - official pages were checked, but exact imported fixture rows and source-release files are not yet selected. [CITED: https://ec.europa.eu/eurostat/web/microdata/collections-research/structure-of-earnings-survey] [CITED: https://www.ine.es/dyngs/INEbase/en/operacion.htm?c=Estadistica_C&cid=1254736177025&idp=1254735976596]
 - Thresholds: LOW - recommended policy values are assumptions and need planner/user acceptance or tests proving conservative behavior. [ASSUMED]
 
-**Research date:** 2026-06-19  
+**Research date:** 2026-06-19
 **Valid until:** 2026-06-26 for source freshness claims; architecture guidance remains valid until Phase 20 changes compensation projections. [ASSUMED]
 
 ## RESEARCH COMPLETE
