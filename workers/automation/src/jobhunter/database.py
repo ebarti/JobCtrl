@@ -143,6 +143,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     # Run migrations for any columns added after initial schema
     ensure_columns(conn)
     ensure_posted_compensation_tables(conn)
+    ensure_market_compensation_tables(conn)
     ensure_state_tables(conn)
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
@@ -360,6 +361,54 @@ def ensure_posted_compensation_tables(conn: sqlite3.Connection | None = None) ->
         """
         CREATE INDEX IF NOT EXISTS idx_job_posted_compensation_parse_state
         ON job_posted_compensation_facts (tenant_id, parse_state)
+        """
+    )
+    conn.commit()
+    return []
+
+
+def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create canonical Europe public market compensation estimate storage."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_market_compensation_estimates (
+            tenant_id                         TEXT NOT NULL DEFAULT 'local',
+            job_url                           TEXT NOT NULL,
+            estimate_state                    TEXT NOT NULL,
+            currency                          TEXT,
+            period                            TEXT NOT NULL DEFAULT 'year',
+            component                         TEXT NOT NULL DEFAULT 'base_salary',
+            minimum_amount                    INTEGER,
+            maximum_amount                    INTEGER,
+            confidence_band                   TEXT NOT NULL DEFAULT 'none',
+            confidence_score                  REAL NOT NULL DEFAULT 0,
+            source_count                      INTEGER NOT NULL DEFAULT 0,
+            sample_count                      INTEGER,
+            aggregate_bucket                  TEXT,
+            geography_scope                   TEXT,
+            occupation_code                   TEXT,
+            occupation_label                  TEXT,
+            seniority_label                   TEXT,
+            source_snapshot_json              TEXT NOT NULL DEFAULT '[]',
+            factor_reasons_json               TEXT NOT NULL DEFAULT '[]',
+            insufficient_reasons_json         TEXT NOT NULL DEFAULT '[]',
+            unsupported_reasons_json          TEXT NOT NULL DEFAULT '[]',
+            source_unavailable_reasons_json   TEXT NOT NULL DEFAULT '[]',
+            warnings_json                     TEXT NOT NULL DEFAULT '[]',
+            estimator_version                 TEXT NOT NULL,
+            estimated_at                      TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_url),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_market_compensation_state
+        ON job_market_compensation_estimates (tenant_id, estimate_state)
         """
     )
     conn.commit()
