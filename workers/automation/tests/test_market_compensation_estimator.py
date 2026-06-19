@@ -124,6 +124,27 @@ def test_eu_wide_estimate_uses_eurostat_aggregate_warning() -> None:
     assert "aggregate_baseline" in estimate.warnings
 
 
+@pytest.mark.parametrize(
+    ("location", "expected_scope", "expected_warning"),
+    [
+        ("European Union", "eu_wide", "eu_wide_assumption"),
+        ("Remote European Union", "remote_europe", "remote_europe_assumption"),
+    ],
+)
+def test_european_union_phrase_is_supported(location: str, expected_scope: str, expected_warning: str) -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/european-union",
+        title="Software Developer",
+        location=location,
+        baselines=(_esco(), _eurostat()),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.geography_scope == expected_scope
+    assert expected_warning in estimate.warnings
+
+
 def test_esco_only_mapping_is_insufficient_because_it_has_no_salary_observation() -> None:
     estimate = estimate_market_compensation(
         job_url="https://example.com/jobs/esco",
@@ -383,6 +404,30 @@ def test_allowed_source_free_text_is_sanitized_before_serialization() -> None:
     assert "credential" not in serialized
     assert "secret" not in serialized
     assert "/users/" not in serialized
+
+
+def test_allowed_source_bare_us_and_private_text_are_canonicalized() -> None:
+    estimate = estimate_market_compensation(
+        job_url="https://example.com/jobs/private-source-text",
+        title="Software Developer",
+        location="Remote Europe",
+        baselines=(
+            _esco(),
+            _eurostat(
+                aggregate_bucket="US private page",
+                attribution="US public aggregate",
+                snapshot_version="us-private-version",
+            ),
+        ),
+        estimated_at="2026-06-19T10:00:00Z",
+    )
+
+    serialized = json.dumps(estimate, default=lambda value: getattr(value, "__dict__", str(value))).casefold()
+    assert estimate.estimate_state == "estimated_range"
+    assert "us private" not in serialized
+    assert "us public" not in serialized
+    assert "private page" not in serialized
+    assert "us-private" not in serialized
 
 
 def test_allowed_source_with_non_europe_geography_is_rejected() -> None:

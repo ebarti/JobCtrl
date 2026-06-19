@@ -144,8 +144,6 @@ MIN_ESTIMATE_SCORE = 0.72
 MIN_CRITICAL_FACTOR_SCORE = 0.60
 MAX_DISPERSION_RATIO = 0.25
 POSTED_CONFLICT_RATIO = 0.30
-SAFE_SOURCE_TEXT_LIMIT = 160
-
 SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
     "eurostat_structure_of_earnings": "Eurostat Structure of Earnings Survey",
     "esco_occupation_taxonomy": "ESCO occupation taxonomy",
@@ -155,6 +153,11 @@ SOURCE_DEFAULT_GEOGRAPHY_SCOPE: dict[MarketSourceId, str] = {
     "eurostat_structure_of_earnings": "EU",
     "esco_occupation_taxonomy": "Europe",
     "spain_ine_salary_structure": "Spain",
+}
+SOURCE_DEFAULT_SNAPSHOT_VERSION: dict[MarketSourceId, str] = {
+    "eurostat_structure_of_earnings": "synthetic-public-fixture",
+    "esco_occupation_taxonomy": "synthetic-public-fixture",
+    "spain_ine_salary_structure": "synthetic-public-fixture",
 }
 SOURCE_DEFAULT_AGGREGATE_BUCKET: dict[MarketSourceId, str] = {
     "eurostat_structure_of_earnings": "Eurostat SES occupation/country aggregate",
@@ -175,6 +178,7 @@ UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
         r"rawproviderpayload",
         r"credential",
         r"secret",
+        r"\bprivate\b",
         r"api[_ -]?key",
         r"token",
         r"password",
@@ -187,6 +191,7 @@ UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
         r"\bo\*net\b",
         r"\bunited states\b",
         r"\bu\.s\.",
+        r"\bus\b",
         r"\busa\b",
     )
 )
@@ -631,7 +636,7 @@ def _geography(location: str | None) -> tuple[float, str, str, list[MarketWarnin
             "unknown_location_assumption"
         ], False
     tokens = _tokens(normalized)
-    if "remote" in tokens and ("europe" in tokens or "eu" in tokens):
+    if "remote" in tokens and _is_eu_scope(normalized):
         return 0.78, "remote_europe", "Remote Europe role mapped to Europe aggregate baselines.", [
             "remote_europe_assumption"
         ], False
@@ -643,7 +648,7 @@ def _geography(location: str | None) -> tuple[float, str, str, list[MarketWarnin
         return 0.72, "non_eu_europe", "Non-EU Europe role uses broad Europe aggregate assumptions.", [
             "non_eu_europe_assumption"
         ], False
-    if "europe" in tokens or "eu" in tokens or _contains_geo_term(normalized, EU_COUNTRIES):
+    if _is_eu_scope(normalized) or _contains_geo_term(normalized, EU_COUNTRIES):
         return 0.82, "eu_wide", "EU/Europe role mapped to Europe aggregate baselines.", ["eu_wide_assumption"], False
     return 0.5, "unknown", "Location is not specific enough to choose a European market.", [
         "unknown_location_assumption"
@@ -685,10 +690,10 @@ def sanitize_market_source_snapshot(source: MarketSourceSnapshot) -> MarketSourc
         display_name=_display_name(source.source_id),
         source_type="occupation_taxonomy" if source.source_id == "esco_occupation_taxonomy" else "public_wage_baseline",
         release_year=source.release_year,
-        snapshot_version=_safe_source_text(source.snapshot_version, "synthetic-public-fixture"),
-        geography_scope=_safe_source_text(source.geography_scope, SOURCE_DEFAULT_GEOGRAPHY_SCOPE[source.source_id]),
-        aggregate_bucket=_safe_source_text(source.aggregate_bucket, SOURCE_DEFAULT_AGGREGATE_BUCKET[source.source_id]),
-        attribution=_safe_source_text(source.attribution, SOURCE_DEFAULT_ATTRIBUTION[source.source_id]),
+        snapshot_version=SOURCE_DEFAULT_SNAPSHOT_VERSION[source.source_id],
+        geography_scope=SOURCE_DEFAULT_GEOGRAPHY_SCOPE[source.source_id],
+        aggregate_bucket=SOURCE_DEFAULT_AGGREGATE_BUCKET[source.source_id],
+        attribution=SOURCE_DEFAULT_ATTRIBUTION[source.source_id],
         sample_count=source.sample_count,
     )
 
@@ -700,14 +705,7 @@ def _display_name(source_id: str) -> str:
 
 
 def _safe_aggregate_bucket(row: PublicMarketBaseline) -> str:
-    return _safe_source_text(row.aggregate_bucket, SOURCE_DEFAULT_AGGREGATE_BUCKET[row.source_id])
-
-
-def _safe_source_text(value: str, fallback: str) -> str:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    if not text or _contains_unsafe_source_text(text):
-        return fallback
-    return text[:SAFE_SOURCE_TEXT_LIMIT]
+    return SOURCE_DEFAULT_AGGREGATE_BUCKET[row.source_id]
 
 
 def _contains_unsafe_source_text(value: str) -> bool:
@@ -726,8 +724,7 @@ def _baseline_scope_supported(row: PublicMarketBaseline) -> bool:
     if row.source_id == "spain_ine_salary_structure":
         return _contains_geo_term(normalized, {"spain", "barcelona", "madrid"})
     if row.source_id in {"eurostat_structure_of_earnings", "esco_occupation_taxonomy"}:
-        tokens = _tokens(normalized)
-        return "europe" in tokens or "eu" in tokens or _contains_geo_term(normalized, EU_COUNTRIES | NON_EU_EUROPE_COUNTRIES)
+        return _is_eu_scope(normalized) or _contains_geo_term(normalized, EU_COUNTRIES | NON_EU_EUROPE_COUNTRIES)
     return False
 
 
@@ -749,6 +746,11 @@ def _normalize_location(value: str | None) -> str:
 
 def _tokens(value: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", value))
+
+
+def _is_eu_scope(value: str) -> bool:
+    tokens = _tokens(value)
+    return "europe" in tokens or "eu" in tokens or re.search(r"\beuropean\s+union\b", value) is not None
 
 
 def _contains_geo_term(value: str, terms: frozenset[str] | set[str]) -> bool:

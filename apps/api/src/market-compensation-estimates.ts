@@ -21,7 +21,7 @@ type JobRow = {
 type MarketCompensationEstimateRow = {
   tenant_id: string;
   job_url: string;
-  estimate_state: "not_requested" | "unsupported" | "source_unavailable" | "insufficient_evidence" | "estimated_range";
+  estimate_state: string;
   currency: string | null;
   period: "year" | "month";
   component: "base_salary" | "gross_annual_salary" | "gross_monthly_salary";
@@ -83,6 +83,12 @@ const SOURCE_IDS = new Set<MarketCompensationSourceId>([
   "esco_occupation_taxonomy",
   "spain_ine_salary_structure",
 ]);
+const RECORDED_ESTIMATE_STATES = new Set([
+  "unsupported",
+  "source_unavailable",
+  "insufficient_evidence",
+  "estimated_range",
+]);
 const SOURCE_DEFAULTS: Record<
   MarketCompensationSourceId,
   {
@@ -119,27 +125,8 @@ const SOURCE_DEFAULTS: Record<
     attribution: "Spain INE public statistical aggregate",
   },
 };
-const UNSAFE_SOURCE_TEXT_PATTERNS = [
-  /glassdoor/i,
-  /levels(?:\.fyi)?/i,
-  /salary\.com/i,
-  /rawproviderpayload/i,
-  /credential/i,
-  /secret/i,
-  /api[_ -]?key/i,
-  /token/i,
-  /password/i,
-  /file:\/\//i,
-  /\/users\//i,
-  /\\users\\/i,
-  /\bbls\b/i,
-  /\bsoc\b/i,
-  /\bonet\b/i,
-  /\bo\*net\b/i,
-  /\bunited states\b/i,
-  /\bu\.s\./i,
-  /\busa\b/i,
-];
+const SAFE_AGGREGATE_BUCKETS = new Set(Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket));
+const SAFE_GEOGRAPHY_SCOPES = new Set(["remote_europe", "spain", "eu_wide", "non_eu_europe", "unknown"]);
 const FACTOR_NAMES = new Set<MarketCompensationFactorName>([
   "agreement",
   "component",
@@ -189,7 +176,7 @@ export function getMarketCompensationEstimate(
 }
 
 function isRecordedEstimateRow(row: MarketCompensationEstimateRow): row is MarketCompensationRecordedEstimateRow {
-  return row.estimate_state !== "not_requested";
+  return RECORDED_ESTIMATE_STATES.has(row.estimate_state);
 }
 
 function notRequested(job: JobRow): MarketCompensationEstimateResponse {
@@ -201,6 +188,7 @@ function notRequested(job: JobRow): MarketCompensationEstimateResponse {
 }
 
 function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompensationEstimate {
+  const sources = parseSources(row.source_snapshot_json);
   const base = {
     tenantId: row.tenant_id,
     jobKey: row.job_url,
@@ -209,12 +197,12 @@ function mapEstimateRow(row: MarketCompensationRecordedEstimateRow): MarketCompe
     confidenceScore: Number(row.confidence_score ?? 0),
     sourceCount: Number(row.source_count ?? 0),
     sampleCount: nullableNumber(row.sample_count),
-    aggregateBucket: nullableText(row.aggregate_bucket),
-    geographyScope: nullableText(row.geography_scope),
+    aggregateBucket: safeAggregateBucket(row.aggregate_bucket, sources),
+    geographyScope: safeGeographyScope(row.geography_scope),
     occupationCode: nullableText(row.occupation_code),
     occupationLabel: nullableText(row.occupation_label),
     seniorityLabel: nullableText(row.seniority_label),
-    sources: parseSources(row.source_snapshot_json),
+    sources,
     factors: parseFactors(row.factor_reasons_json),
     warnings: parseWarnings(row.warnings_json),
     estimatorVersion: row.estimator_version,
@@ -294,10 +282,10 @@ function parseSources(value: string): MarketCompensationSourceSnapshot[] {
         displayName: defaults.displayName,
         sourceType: defaults.sourceType,
         releaseYear: nullableNumber(entry.release_year),
-        snapshotVersion: safeSourceText(entry.snapshot_version, defaults.snapshotVersion),
-        geographyScope: safeSourceText(entry.geography_scope, defaults.geographyScope),
-        aggregateBucket: safeSourceText(entry.aggregate_bucket, defaults.aggregateBucket),
-        attribution: safeSourceText(entry.attribution, defaults.attribution),
+        snapshotVersion: defaults.snapshotVersion,
+        geographyScope: defaults.geographyScope,
+        aggregateBucket: defaults.aggregateBucket,
+        attribution: defaults.attribution,
         sampleCount: nullableNumber(entry.sample_count),
       };
     })
@@ -338,20 +326,29 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function safeSourceText(value: unknown, fallback: string): string {
-  const text = stringValue(value).replace(/\s+/g, " ").trim();
-  if (!text || UNSAFE_SOURCE_TEXT_PATTERNS.some((pattern) => pattern.test(text))) {
-    return fallback;
-  }
-  return text.slice(0, 160);
-}
-
 function nullableText(value: string | null | undefined): string | null {
   if (value === undefined || value === null) {
     return null;
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function safeAggregateBucket(
+  value: string | null | undefined,
+  sources: MarketCompensationSourceSnapshot[],
+): string | null {
+  const text = nullableText(value);
+  if (text && SAFE_AGGREGATE_BUCKETS.has(text)) {
+    return text;
+  }
+  const buckets = Array.from(new Set(sources.map((source) => source.aggregateBucket)));
+  return buckets.length ? buckets.join(", ") : null;
+}
+
+function safeGeographyScope(value: string | null | undefined): string | null {
+  const text = nullableText(value);
+  return text && SAFE_GEOGRAPHY_SCOPES.has(text) ? text : null;
 }
 
 function nullableNumber(value: unknown): number | null {

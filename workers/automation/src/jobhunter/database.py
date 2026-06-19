@@ -377,13 +377,19 @@ def ensure_market_compensation_tables(conn: sqlite3.Connection | None = None) ->
         CREATE TABLE IF NOT EXISTS job_market_compensation_estimates (
             tenant_id                         TEXT NOT NULL DEFAULT 'local',
             job_url                           TEXT NOT NULL,
-            estimate_state                    TEXT NOT NULL,
+            estimate_state                    TEXT NOT NULL CHECK (
+                estimate_state IN ('unsupported', 'source_unavailable', 'insufficient_evidence', 'estimated_range')
+            ),
             currency                          TEXT,
-            period                            TEXT NOT NULL DEFAULT 'year',
-            component                         TEXT NOT NULL DEFAULT 'base_salary',
+            period                            TEXT NOT NULL DEFAULT 'year' CHECK (period IN ('year', 'month')),
+            component                         TEXT NOT NULL DEFAULT 'base_salary' CHECK (
+                component IN ('base_salary', 'gross_annual_salary', 'gross_monthly_salary')
+            ),
             minimum_amount                    INTEGER,
             maximum_amount                    INTEGER,
-            confidence_band                   TEXT NOT NULL DEFAULT 'none',
+            confidence_band                   TEXT NOT NULL DEFAULT 'none' CHECK (
+                confidence_band IN ('none', 'low', 'medium', 'high')
+            ),
             confidence_score                  REAL NOT NULL DEFAULT 0,
             source_count                      INTEGER NOT NULL DEFAULT 0,
             sample_count                      INTEGER,

@@ -384,6 +384,31 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it("defensively treats unknown persisted states as not requested", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, "https://example.com/jobs/estimated", {
+      state: "corrupt_state",
+      minimumAmount: 72_000,
+      maximumAmount: 92_000,
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${encodeURIComponent("https://example.com/jobs/estimated")}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toEqual({
+        ok: true,
+        recordStatus: "not_requested",
+        jobKey: "https://example.com/jobs/estimated",
+      });
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("returns 404 for unknown jobs", async () => {
     const { app, cleanup } = withTempApp();
     try {
@@ -409,10 +434,10 @@ describe("market compensation estimates API", () => {
           display_name: "Glassdoor private payload",
           source_type: "public_wage_baseline",
           release_year: 2024,
-          snapshot_version: "rawProviderPayload",
-          geography_scope: "United States /Users/private",
-          aggregate_bucket: "BLS SOC private benchmark",
-          attribution: "credential secret",
+          snapshot_version: "us-private-version",
+          geography_scope: "EU",
+          aggregate_bucket: "US private page",
+          attribution: "US public aggregate",
           sample_count: 900,
         },
         {
@@ -447,6 +472,10 @@ describe("market compensation estimates API", () => {
       expect(serialized).not.toContain("glassdoor");
       expect(serialized).not.toContain("levels");
       expect(serialized).not.toContain("united states");
+      expect(serialized).not.toContain("us private");
+      expect(serialized).not.toContain("us public");
+      expect(serialized).not.toContain("private page");
+      expect(serialized).not.toContain("us-private");
       expect(serialized).not.toContain("bls");
       expect(serialized).not.toContain("soc");
       expect(serialized).not.toContain("rawproviderpayload");
