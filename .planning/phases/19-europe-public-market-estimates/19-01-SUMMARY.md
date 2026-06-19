@@ -33,7 +33,7 @@ key-files:
 - Added confidence factors, source snapshots, warning codes, unsupported/insufficient/source-unavailable reasons, and conservative range gating.
 - Added canonical SQLite table `job_market_compensation_estimates` and repository helpers for save/read/backfill.
 - Added tests for Spain INE preference, Eurostat aggregate fallback, ESCO-only insufficiency, geography assumptions, unsupported non-Europe/component cases, stale source snapshots, low sample counts, dispersion, broad bands, posted-vs-market warnings, source allowlist, and persistence safety.
-- Hardened review findings for tokenized geography detection, `European Union` phrase support, component/period compatibility, canonical public-source snapshots on save and stale-row reads, non-persistence of the read-side `not_requested` marker, and SQLite state/component/period/confidence constraints for new market tables.
+- Hardened review findings for tokenized geography detection, `European Union` phrase support, component/period compatibility, canonical public-source snapshots on save and stale-row reads, stale-row geography/factor text scrubbing, non-persistence of the read-side `not_requested` marker, and SQLite state/component/period/confidence constraints for new market tables.
 
 ## Commits
 
@@ -43,6 +43,7 @@ key-files:
 | `0a206cc` | `fix(compensation): harden europe market estimate boundaries` |
 | `e1cf998` | `fix(compensation): canonicalize market source metadata` |
 | `e3fa90f` | `fix(compensation): sanitize market estimate reads` |
+| `8e22d66` | `fix(compensation): scrub stale market audit text` |
 
 ## Verification
 

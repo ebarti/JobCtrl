@@ -34,8 +34,8 @@ key-files:
 - Added `marketCompensationEstimate(jobKey)` to `@jobhunter/api-client`.
 - Added `GET /v1/jobs/:jobKey/compensation/market` as a read-only inspection endpoint backed by persisted `job_market_compensation_estimates` rows.
 - Added safe JSON parsing and source/reason/warning allowlists so unknown or unsafe persisted source entries are dropped from API responses.
-- Added defensive mapping for persisted `not_requested` and unknown-state rows, plus canonical source-owned metadata for already-persisted allowed source rows.
-- Added tests for recorded range responses, non-range states, not-requested no-write-on-read behavior, persisted not-requested rows, unknown persisted states, unknown jobs, unsafe source filtering, private-data leakage, and the warning-only product boundary.
+- Added defensive mapping for persisted `not_requested` and unknown-state rows, plus canonical source-owned metadata and scrubbed factor reasons for already-persisted allowed source rows.
+- Added tests for recorded range responses, non-range states, not-requested no-write-on-read behavior, persisted not-requested rows, unknown persisted states, unknown jobs, unsafe source/factor filtering, private-data leakage, and the warning-only product boundary.
 - Updated local API, architecture, and reliability QA documentation for the Phase 19 endpoint, canonical table, Europe-only source scope, and Phase 20/21 deferred boundaries.
 
 ## Commits
@@ -46,6 +46,7 @@ key-files:
 | `0a206cc` | `fix(compensation): harden europe market estimate boundaries` |
 | `e1cf998` | `fix(compensation): canonicalize market source metadata` |
 | `e3fa90f` | `fix(compensation): sanitize market estimate reads` |
+| `8e22d66` | `fix(compensation): scrub stale market audit text` |
 
 ## Verification
 
