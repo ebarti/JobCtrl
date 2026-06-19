@@ -19,8 +19,8 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 
 - [x] **Phase 17: Source Registry & Access Policy** - Users can inspect which compensation sources are available, licensed, disabled, or blocked.
 - [x] **Phase 18: Posted Compensation Facts** - Users can inspect structured posted salary facts with source text, confidence, warnings, and raw fallback.
-- [x] **Phase 19: Europe Public Market Estimates** - Users can see Europe-only baseline estimates or explicit insufficient-evidence states with confidence factors.
-- [ ] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
+- [x] **Phase 19: Company-Role Reported Market Estimates** - Users can see company-role reported estimates or explicit insufficient-evidence states with confidence factors.
+- [x] **Phase 20: Canonical Read Model & Realtime API** - Users and API consumers receive compensation audit data from canonical persisted rows safely and consistently.
 - [ ] **Phase 21: Jobs Triage UX & Warning-Only Floor** - Users can scan and inspect compensation evidence in Jobs triage without salary data becoming an automatic gate.
 - [ ] **Phase 22: Product-Path QA & Safety Release** - Users can rely on v1.3 compensation behavior being verified with synthetic/manual reported compensation data and no prohibited actions.
 
@@ -32,9 +32,9 @@ v1.3 makes compensation facts inspectable in Jobs triage without turning uncerta
 **Requirements**: SRC-01, SRC-04, SRC-05, SRC-06
 **Success Criteria** (what must be TRUE):
   1. User can inspect each configured compensation source's access mode, terms/source URL, license status, source type, freshness policy, attribution requirement, supported fields, and disabled reason.
-  2. User can see Levels.fyi and Glassdoor only as disabled or unavailable licensed-source seams unless explicit permitted access is configured.
-  3. User is protected from unauthorized Glassdoor and Levels.fyi use because the product does not fetch, scrape, cache, or display either source without permitted access.
-  4. User can distinguish unavailable licensed-source seams from Europe public baseline sources in compensation source evidence.
+  2. User can see Levels.fyi and Glassdoor automated access as disabled or unavailable unless explicit permitted access is configured.
+  3. User is protected from unauthorized Glassdoor and Levels.fyi use because the product does not fetch, scrape, cache, or display raw provider data without permitted access.
+  4. User can distinguish unavailable automated provider seams from posted salary text and manual reported-compensation import sources in compensation source evidence.
 **Plans**: 17-01 Backend Source Registry; 17-02 Settings Source Policy UI
 
 ### Phase 18: Posted Compensation Facts
@@ -109,7 +109,7 @@ Phases execute in numeric order: 17 -> 18 -> 19 -> 20 -> 21 -> 22
 | 17. Source Registry & Access Policy | 2/2 | Complete | 2026-06-19 |
 | 18. Posted Compensation Facts | 2/2 | Complete | 2026-06-19 |
 | 19. Europe Public Market Estimates | 2/2 | Complete | 2026-06-19 |
-| 20. Canonical Read Model & Realtime API | 0/2 | Planned | - |
+| 20. Canonical Read Model & Realtime API | 2/2 | Complete | 2026-06-19 |
 | 21. Jobs Triage UX & Warning-Only Floor | 0/TBD | Not started | - |
 | 22. Product-Path QA & Safety Release | 0/TBD | Not started | - |
 
@@ -141,4 +141,4 @@ Artifacts:
 - Duplicate mappings: 0
 
 ---
-*Last updated: 2026-06-19 after Phase 19 verification*
+*Last updated: 2026-06-19 after Phase 20 verification*
