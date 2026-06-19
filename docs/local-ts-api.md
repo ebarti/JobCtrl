@@ -227,6 +227,26 @@ Glassdoor remains unavailable unless `JOBHUNTER_GLASSDOOR_ACCESS_MODE` is
 `partner_api` or `written_permission`. The endpoint exposes whether those gates
 are configured; it does not describe, request, or return secrets.
 
+`GET /v1/jobs/:jobKey/compensation/posted` returns the Phase 18 read-only
+inspection contract for canonical posted-compensation facts. The endpoint reads
+`job_posted_compensation_facts` only; it does not parse, backfill, update,
+persist, refresh projections, call external providers, or run React-side
+normalization during a GET. For an existing job with a canonical row, the
+response is `{ ok: true, recordStatus: "recorded", fact }`, where `fact`
+contains the parse state (`missing`, `unparseable`, `ambiguous`, or
+`parsed_range`), bounded source text, legacy raw salary fallback, parser
+version, source hash, parse timestamp, confidence, warnings, and normalized
+currency/period/component/min/max/annualized fields only for legal parsed
+ranges. For an existing job without a canonical row, the response is
+`recordStatus: "not_recorded"` plus the current legacy raw `jobs.salary`
+fallback. Unknown jobs return `404`.
+
+Phase 18 does not add compensation summary or audit fields to `/v1/jobs` or
+`/v1/jobs/:key`, and it does not change fit score, sorting, filtering, apply
+readiness, apply-review handoff, or apply mutation behavior. Phase 20 owns job
+list/detail read-model propagation and SSE invalidation; Phase 21 owns the Jobs
+triage presentation.
+
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal
 workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`

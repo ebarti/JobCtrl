@@ -2381,6 +2381,118 @@ export interface DiscoveryPreviewResponse {
   generatedAt: string;
 }
 
+export const POSTED_COMPENSATION_PARSE_STATES = [
+  "missing",
+  "unparseable",
+  "ambiguous",
+  "parsed_range",
+] as const;
+export type PostedCompensationParseState = (typeof POSTED_COMPENSATION_PARSE_STATES)[number];
+
+export const POSTED_COMPENSATION_COMPONENTS = [
+  "base_salary",
+  "ote",
+  "bonus",
+  "commission",
+  "equity",
+  "unknown",
+] as const;
+export type PostedCompensationComponent = (typeof POSTED_COMPENSATION_COMPONENTS)[number];
+
+export const POSTED_COMPENSATION_PERIODS = ["hour", "month", "year", "unknown"] as const;
+export type PostedCompensationPeriod = (typeof POSTED_COMPENSATION_PERIODS)[number];
+
+export const POSTED_COMPENSATION_CONFIDENCE = ["none", "low", "medium", "high"] as const;
+export type PostedCompensationConfidence = (typeof POSTED_COMPENSATION_CONFIDENCE)[number];
+
+export const POSTED_COMPENSATION_WARNING_CODES = [
+  "ambiguous_multiple_amounts",
+  "bonus_component",
+  "broad_range",
+  "commission_component",
+  "equity_component",
+  "hourly_period",
+  "missing_currency",
+  "missing_period",
+  "monthly_period",
+  "no_amount_found",
+  "one_sided_range",
+  "ote_component",
+  "source_text_truncated",
+] as const;
+export type PostedCompensationWarningCode = (typeof POSTED_COMPENSATION_WARNING_CODES)[number];
+
+export interface PostedCompensationWarning {
+  code: PostedCompensationWarningCode;
+  message: string;
+}
+
+interface PostedCompensationFactBase {
+  tenantId: string;
+  jobKey: string;
+  sourceField: string;
+  legacyRawSalary: string | null;
+  parserVersion: string;
+  sourceHash: string;
+  parsedAt: string;
+  warnings: PostedCompensationWarning[];
+}
+
+export interface PostedCompensationMissingFact extends PostedCompensationFactBase {
+  parseState: "missing";
+  sourceText: null;
+  confidence: "none";
+}
+
+export interface PostedCompensationUnparseableFact extends PostedCompensationFactBase {
+  parseState: "unparseable";
+  sourceText: string;
+  confidence: "low";
+}
+
+export interface PostedCompensationAmbiguousFact extends PostedCompensationFactBase {
+  parseState: "ambiguous";
+  sourceText: string;
+  confidence: "low" | "medium";
+}
+
+export interface PostedCompensationParsedRangeFact extends PostedCompensationFactBase {
+  parseState: "parsed_range";
+  sourceText: string;
+  currency: string | null;
+  period: PostedCompensationPeriod;
+  component: PostedCompensationComponent;
+  minimumAmount: number | null;
+  maximumAmount: number | null;
+  annualizedMinimumAmount: number | null;
+  annualizedMaximumAmount: number | null;
+  annualizationAssumption: string | null;
+  confidence: "low" | "medium" | "high";
+}
+
+export type PostedCompensationFact =
+  | PostedCompensationMissingFact
+  | PostedCompensationUnparseableFact
+  | PostedCompensationAmbiguousFact
+  | PostedCompensationParsedRangeFact;
+
+export interface PostedCompensationFactRecordedResponse {
+  ok: true;
+  recordStatus: "recorded";
+  fact: PostedCompensationFact;
+}
+
+export interface PostedCompensationFactNotRecordedResponse {
+  ok: true;
+  recordStatus: "not_recorded";
+  jobKey: string;
+  legacyRawSalary: string | null;
+}
+
+export type PostedCompensationFactResponse =
+  | PostedCompensationFactRecordedResponse
+  | PostedCompensationFactNotRecordedResponse;
+
 export const QuarantineDecisionSchema = z
   .object({
     decision: z.enum(["approve", "reject"]),

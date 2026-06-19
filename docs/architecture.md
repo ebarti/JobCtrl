@@ -418,6 +418,11 @@ Job detail audit history is assembled at read time from allow-listed lifecycle
 events and append-only apply review/outcome records. It is a user-facing audit
 timeline, not a debug log: raw event payloads, debug messages, local paths, raw
 outcome notes, and email body text stay out of the response.
+Posted-compensation facts are persisted in `job_posted_compensation_facts`
+before inspection. Phase 18 exposes them through a narrow read-only API only;
+the projection-backed Jobs list/detail compensation summary and SSE invalidation
+are deferred to the Phase 20 read-model contract so Python and TypeScript
+projection builders can be updated in parity.
 
 ## Runtime Boundaries
 
@@ -777,6 +782,12 @@ rendering settings/template text, run visibility, apply-review decisions,
 application outcomes, linked email evidence, and outcome suggestions. The
 projection tables (above) are also stored here. Dashboard settings remain
 file-backed until their own storage migration.
+Posted compensation facts live in the canonical
+`job_posted_compensation_facts` table. The parser consumes only bounded salary
+source text such as `jobs.salary`, records explicit parse states and warnings,
+and keeps `jobs.salary` unchanged as a compatibility/raw fallback. It does not
+store full descriptions, provider raw payloads, credentials, local paths, or
+licensed-source salary data.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and
