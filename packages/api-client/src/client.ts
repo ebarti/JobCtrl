@@ -49,6 +49,7 @@ import type {
   ManualCaptureImportResponse,
   ManualCaptureListResponse,
   ManualApplicationOutcomeRequest,
+  MarketCompensationEstimateResponse,
   OutcomeSuggestionDecisionRequest,
   OutcomeSuggestionDecisionResponse,
   PaginatedResponse,
@@ -182,6 +183,10 @@ export class JobHunterApiClient {
 
   postedCompensationFact(jobKey: string): Promise<PostedCompensationFactResponse> {
     return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/compensation/posted`);
+  }
+
+  marketCompensationEstimate(jobKey: string): Promise<MarketCompensationEstimateResponse> {
+    return this.get(`/v1/jobs/${encodeURIComponent(jobKey)}/compensation/market`);
   }
 
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {

@@ -247,6 +247,32 @@ readiness, apply-review handoff, or apply mutation behavior. Phase 20 owns job
 list/detail read-model propagation and SSE invalidation; Phase 21 owns the Jobs
 triage presentation.
 
+`GET /v1/jobs/:jobKey/compensation/market` returns the Phase 19 read-only
+inspection contract for canonical Europe public market estimate rows. The
+endpoint reads `job_market_compensation_estimates` only; it does not estimate,
+backfill, update, persist, refresh projections, call public datasets, call
+licensed providers, scrape pages, or normalize anything in React during a GET.
+Existing jobs without a market row return
+`{ ok: true, recordStatus: "not_requested", jobKey }`; unknown jobs return
+`404`.
+
+Recorded market estimates expose one explicit state: `unsupported`,
+`source_unavailable`, `insufficient_evidence`, or `estimated_range`. Range
+fields are present only for `estimated_range`. Non-range states carry
+inspectable reasons, confidence factors, safe source snapshots, and warnings
+instead of nullable precision. Phase 19 source scope is Europe-only public
+aggregate evidence: Eurostat Structure of Earnings Survey and Spain INE Wage
+Structure Survey for public wage baselines, and ESCO only for occupation
+mapping. Glassdoor, Levels.fyi, U.S. baselines, raw benchmark pages,
+credentials, private account payloads, local paths, and user compensation
+preferences are not returned.
+
+Phase 19 still does not add compensation summary or audit fields to `/v1/jobs`
+or `/v1/jobs/:key`, and it does not change fit score, sorting, filtering,
+apply readiness, apply-review handoff, or apply mutation behavior. Phase 20
+owns projection propagation and SSE invalidation; Phase 21 owns the Jobs
+triage presentation.
+
 `/v1/workflow-runs` (PR 5 of the Temporal stack) reads `apply_run_projections`
 and projects each row to a `WorkflowRunSummary`, including the Temporal
 workflow id (equal to `runId` for apply runs — the Python `ApplyWorkflow`

@@ -1532,6 +1532,85 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps the market compensation boundary from changing fit score, filters, readiness, or apply dispatch", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb
+      .prepare("UPDATE jobs SET salary = ? WHERE url = ?")
+      .run("€55,000/year", "https://example.com/jobs/ready");
+    insertMarketCompensationEstimate(seedDb, "https://example.com/jobs/ready");
+    seedDb.close();
+
+    const dispatch = vi.fn(async () => ({ status: "queued", runId: "run-market-compensation-boundary" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const readyKey = encodeURIComponent("https://example.com/jobs/ready");
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?sort=fit_score&dir=desc&pageSize=3",
+    });
+    expect(list.statusCode, list.body).toBe(200);
+    const items = list.json().items as Array<Record<string, unknown>>;
+    expect(items.map((job) => job.jobKey)).toEqual([
+      "https://example.com/jobs/ready",
+      "https://example.com/jobs/failed-score",
+      "https://example.com/jobs/blocked-tailor",
+    ]);
+    expect(items[0]).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      fitScore: 9,
+      salary: "€55,000/year",
+    });
+    expect(items[0]).not.toHaveProperty("compensationSummary");
+    expect(items[0]).not.toHaveProperty("compensationAudit");
+    expect(items[0]).not.toHaveProperty("marketCompensationEstimate");
+
+    const filtered = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?minFitScore=9&sort=fit_score&dir=desc",
+    });
+    expect(filtered.statusCode, filtered.body).toBe(200);
+    expect(filtered.json().items.map((job: { jobKey: string }) => job.jobKey)).toEqual([
+      "https://example.com/jobs/ready",
+    ]);
+
+    const detail = await app.inject({ method: "GET", url: `/v1/jobs/${readyKey}` });
+    expect(detail.statusCode, detail.body).toBe(200);
+    const detailBody = detail.json();
+    expect(detailBody.job).toMatchObject({
+      jobKey: "https://example.com/jobs/ready",
+      salary: "€55,000/year",
+      fitScore: 9,
+    });
+    expect(detailBody.job).not.toHaveProperty("compensationSummary");
+    expect(detailBody.job).not.toHaveProperty("compensationAudit");
+    expect(detailBody.job).not.toHaveProperty("marketCompensationEstimate");
+    expect(detailBody.applyAudit).toMatchObject({
+      state: "preparing",
+      label: "materials preparing",
+      reviewEvidenceAvailable: true,
+    });
+
+    const apply = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${readyKey}/actions/apply`,
+      payload: {},
+    });
+    expect(apply.statusCode, apply.body).toBe(202);
+    expect(apply.json()).toMatchObject({
+      ok: true,
+      action: "apply",
+      status: "queued",
+      jobKey: "https://example.com/jobs/ready",
+      command: { dryRun: true },
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "apply", dryRun: true, jobKey: "https://example.com/jobs/ready" }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    await app.close();
+  });
+
   it("reconciles stale retryable stage projections from latest failure events", async () => {
     const seedDb = new Database(options.dbPath);
     seedDb
@@ -5951,6 +6030,87 @@ function insertPostedCompensationFact(db: Database.Database, jobUrl: string): vo
     "[]",
     "posted-compensation-v1",
     "b".repeat(64),
+    "2026-06-19T10:00:00Z",
+  );
+}
+
+function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_market_compensation_estimates (
+      tenant_id TEXT NOT NULL DEFAULT 'local',
+      job_url TEXT NOT NULL,
+      estimate_state TEXT NOT NULL,
+      currency TEXT,
+      period TEXT NOT NULL DEFAULT 'year',
+      component TEXT NOT NULL DEFAULT 'base_salary',
+      minimum_amount INTEGER,
+      maximum_amount INTEGER,
+      confidence_band TEXT NOT NULL DEFAULT 'none',
+      confidence_score REAL NOT NULL DEFAULT 0,
+      source_count INTEGER NOT NULL DEFAULT 0,
+      sample_count INTEGER,
+      aggregate_bucket TEXT,
+      geography_scope TEXT,
+      occupation_code TEXT,
+      occupation_label TEXT,
+      seniority_label TEXT,
+      source_snapshot_json TEXT NOT NULL DEFAULT '[]',
+      factor_reasons_json TEXT NOT NULL DEFAULT '[]',
+      insufficient_reasons_json TEXT NOT NULL DEFAULT '[]',
+      unsupported_reasons_json TEXT NOT NULL DEFAULT '[]',
+      source_unavailable_reasons_json TEXT NOT NULL DEFAULT '[]',
+      warnings_json TEXT NOT NULL DEFAULT '[]',
+      estimator_version TEXT NOT NULL,
+      estimated_at TEXT NOT NULL,
+      PRIMARY KEY (tenant_id, job_url)
+    );
+  `);
+  db.prepare(
+    `INSERT INTO job_market_compensation_estimates (
+      tenant_id, job_url, estimate_state, currency, period, component,
+      minimum_amount, maximum_amount, confidence_band, confidence_score,
+      source_count, sample_count, aggregate_bucket, geography_scope,
+      occupation_code, occupation_label, seniority_label, source_snapshot_json,
+      factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+      source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    "local",
+    jobUrl,
+    "estimated_range",
+    "EUR",
+    "year",
+    "base_salary",
+    72_000,
+    92_000,
+    "medium",
+    0.82,
+    2,
+    900,
+    "Eurostat SES occupation/country aggregate",
+    "remote_europe",
+    "2512.1",
+    "Software developer",
+    "aggregate",
+    JSON.stringify([
+      {
+        source_id: "eurostat_structure_of_earnings",
+        display_name: "Eurostat Structure of Earnings Survey",
+        source_type: "public_wage_baseline",
+        release_year: 2024,
+        snapshot_version: "synthetic-public-fixture",
+        geography_scope: "EU",
+        aggregate_bucket: "Eurostat SES occupation/country aggregate",
+        attribution: "Eurostat public statistical aggregate",
+        sample_count: 900,
+      },
+    ]),
+    JSON.stringify([{ name: "occupation", score: 0.9, band: "high", reason: "Occupation mapped." }]),
+    "[]",
+    "[]",
+    "[]",
+    JSON.stringify(["aggregate_baseline", "remote_europe_assumption"]),
+    "market-compensation-v1",
     "2026-06-19T10:00:00Z",
   );
 }

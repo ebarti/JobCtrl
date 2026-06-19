@@ -2493,6 +2493,171 @@ export type PostedCompensationFactResponse =
   | PostedCompensationFactRecordedResponse
   | PostedCompensationFactNotRecordedResponse;
 
+export const MARKET_COMPENSATION_ESTIMATE_STATES = [
+  "not_requested",
+  "unsupported",
+  "source_unavailable",
+  "insufficient_evidence",
+  "estimated_range",
+] as const;
+export type MarketCompensationEstimateState = (typeof MARKET_COMPENSATION_ESTIMATE_STATES)[number];
+
+export const MARKET_COMPENSATION_SOURCE_IDS = [
+  "eurostat_structure_of_earnings",
+  "esco_occupation_taxonomy",
+  "spain_ine_salary_structure",
+] as const;
+export type MarketCompensationSourceId = (typeof MARKET_COMPENSATION_SOURCE_IDS)[number];
+
+export const MARKET_COMPENSATION_CONFIDENCE_BANDS = ["none", "low", "medium", "high"] as const;
+export type MarketCompensationConfidenceBand = (typeof MARKET_COMPENSATION_CONFIDENCE_BANDS)[number];
+
+export const MARKET_COMPENSATION_COMPONENTS = [
+  "base_salary",
+  "gross_annual_salary",
+  "gross_monthly_salary",
+] as const;
+export type MarketCompensationComponent = (typeof MARKET_COMPENSATION_COMPONENTS)[number];
+
+export const MARKET_COMPENSATION_PERIODS = ["year", "month"] as const;
+export type MarketCompensationPeriod = (typeof MARKET_COMPENSATION_PERIODS)[number];
+
+export const MARKET_COMPENSATION_FACTOR_NAMES = [
+  "occupation",
+  "geography",
+  "seniority",
+  "component",
+  "freshness",
+  "sample",
+  "agreement",
+] as const;
+export type MarketCompensationFactorName = (typeof MARKET_COMPENSATION_FACTOR_NAMES)[number];
+
+export const MARKET_COMPENSATION_WARNING_CODES = [
+  "aggregate_baseline",
+  "broad_aggregate_band",
+  "source_conflict_with_posted_salary",
+  "stale_source_snapshot",
+  "low_sample_count",
+  "remote_europe_assumption",
+  "spain_local_assumption",
+  "eu_wide_assumption",
+  "non_eu_europe_assumption",
+  "unknown_location_assumption",
+] as const;
+export type MarketCompensationWarningCode = (typeof MARKET_COMPENSATION_WARNING_CODES)[number];
+
+export const MARKET_COMPENSATION_REASON_CODES = [
+  "unsupported_source",
+  "unsupported_geography",
+  "unsupported_component",
+  "missing_occupation_mapping",
+  "stale_source_snapshot",
+  "weak_occupation_match",
+  "weak_geography_match",
+  "weak_seniority_match",
+  "weak_component_match",
+  "low_sample_count",
+  "source_dispersion_too_high",
+  "missing_salary_observation",
+] as const;
+export type MarketCompensationReasonCode = (typeof MARKET_COMPENSATION_REASON_CODES)[number];
+
+export interface MarketCompensationWarning {
+  code: MarketCompensationWarningCode;
+  message: string;
+}
+
+export interface MarketCompensationReason {
+  code: MarketCompensationReasonCode;
+  message: string;
+}
+
+export interface MarketCompensationFactor {
+  name: MarketCompensationFactorName;
+  score: number;
+  band: MarketCompensationConfidenceBand;
+  reason: string;
+}
+
+export interface MarketCompensationSourceSnapshot {
+  sourceId: MarketCompensationSourceId;
+  displayName: string;
+  sourceType: "public_wage_baseline" | "occupation_taxonomy";
+  releaseYear: number | null;
+  snapshotVersion: string;
+  geographyScope: string;
+  aggregateBucket: string;
+  attribution: string;
+  sampleCount: number | null;
+}
+
+interface MarketCompensationEstimateBase {
+  tenantId: string;
+  jobKey: string;
+  estimateState: MarketCompensationEstimateState;
+  confidenceBand: MarketCompensationConfidenceBand;
+  confidenceScore: number;
+  sourceCount: number;
+  sampleCount: number | null;
+  aggregateBucket: string | null;
+  geographyScope: string | null;
+  occupationCode: string | null;
+  occupationLabel: string | null;
+  seniorityLabel: string | null;
+  sources: MarketCompensationSourceSnapshot[];
+  factors: MarketCompensationFactor[];
+  warnings: MarketCompensationWarning[];
+  estimatorVersion: string;
+  estimatedAt: string;
+}
+
+export interface MarketCompensationUnsupportedEstimate extends MarketCompensationEstimateBase {
+  estimateState: "unsupported";
+  unsupportedReasons: MarketCompensationReason[];
+}
+
+export interface MarketCompensationSourceUnavailableEstimate extends MarketCompensationEstimateBase {
+  estimateState: "source_unavailable";
+  sourceUnavailableReasons: MarketCompensationReason[];
+}
+
+export interface MarketCompensationInsufficientEvidenceEstimate extends MarketCompensationEstimateBase {
+  estimateState: "insufficient_evidence";
+  insufficientReasons: MarketCompensationReason[];
+}
+
+export interface MarketCompensationEstimatedRangeEstimate extends MarketCompensationEstimateBase {
+  estimateState: "estimated_range";
+  currency: string;
+  period: MarketCompensationPeriod;
+  component: MarketCompensationComponent;
+  minimumAmount: number;
+  maximumAmount: number;
+}
+
+export type MarketCompensationEstimate =
+  | MarketCompensationUnsupportedEstimate
+  | MarketCompensationSourceUnavailableEstimate
+  | MarketCompensationInsufficientEvidenceEstimate
+  | MarketCompensationEstimatedRangeEstimate;
+
+export interface MarketCompensationEstimateRecordedResponse {
+  ok: true;
+  recordStatus: "recorded";
+  estimate: MarketCompensationEstimate;
+}
+
+export interface MarketCompensationEstimateNotRequestedResponse {
+  ok: true;
+  recordStatus: "not_requested";
+  jobKey: string;
+}
+
+export type MarketCompensationEstimateResponse =
+  | MarketCompensationEstimateRecordedResponse
+  | MarketCompensationEstimateNotRequestedResponse;
+
 export const QuarantineDecisionSchema = z
   .object({
     decision: z.enum(["approve", "reject"]),

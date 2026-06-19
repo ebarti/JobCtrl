@@ -423,6 +423,15 @@ before inspection. Phase 18 exposes them through a narrow read-only API only;
 the projection-backed Jobs list/detail compensation summary and SSE invalidation
 are deferred to the Phase 20 read-model contract so Python and TypeScript
 projection builders can be updated in parity.
+Europe public market estimates are persisted in
+`job_market_compensation_estimates` before inspection. Phase 19 estimates are
+deterministic local facts derived from public aggregate fixture/import rows:
+Eurostat SES and Spain INE provide public wage baselines, while ESCO provides
+occupation mapping evidence only. These rows store explicit estimate states,
+confidence factors, safe source snapshots, warnings, and reasons. They do not
+store raw benchmark pages, licensed-provider payloads, credentials, local
+paths, private account state, user compensation preferences, or U.S. salary
+baselines.
 
 ## Runtime Boundaries
 
@@ -788,6 +797,14 @@ source text such as `jobs.salary`, records explicit parse states and warnings,
 and keeps `jobs.salary` unchanged as a compatibility/raw fallback. It does not
 store full descriptions, provider raw payloads, credentials, local paths, or
 licensed-source salary data.
+Market compensation estimates live in the canonical
+`job_market_compensation_estimates` table. The estimator consumes deterministic
+local Europe public aggregate rows, records explicit non-range states for
+unsupported, unavailable, and insufficient-evidence cases, and emits precise
+range fields only when confidence factors pass threshold. It does not alter
+posted compensation facts, raw `jobs.salary`, scoring, ranking, filtering,
+apply readiness, apply dispatch, projection refresh, or Jobs UI behavior in
+Phase 19.
 
 Generated resumes, cover letters, PDFs, logs, and imported PDFs stay on the
 local filesystem. They are registered in `job_artifacts` and
