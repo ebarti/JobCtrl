@@ -169,20 +169,21 @@ describe("compensation source policy", () => {
 
     expect(JSON.stringify(response)).not.toContain("levels-secret");
     expect(JSON.stringify(response)).not.toContain("glassdoor-token");
-    expect([...collectKeys(response)].sort()).not.toEqual(
-      expect.arrayContaining([
-        "apiKey",
-        "credential",
-        "credentials",
-        "localPath",
-        "rawPayload",
-        "rawProviderPayload",
-        "rawSalaryData",
-        "scrapedContent",
-        "secret",
-        "token",
-      ]),
-    );
+    const keys = collectKeys(response);
+    for (const forbiddenKey of [
+      "apiKey",
+      "credential",
+      "credentials",
+      "localPath",
+      "rawPayload",
+      "rawProviderPayload",
+      "rawSalaryData",
+      "scrapedContent",
+      "secret",
+      "token",
+    ]) {
+      expect(keys).not.toContain(forbiddenKey);
+    }
   });
 
   it("is deterministic and does not call network APIs", () => {

@@ -1,7 +1,7 @@
 # Phase 17: Source Registry & Access Policy - Research
 
-**Researched:** 2026-06-19  
-**Domain:** Local-first compensation source policy, licensing seams, TypeScript API contracts, React inspection surface  
+**Researched:** 2026-06-19
+**Domain:** Local-first compensation source policy, licensing seams, TypeScript API contracts, React inspection surface
 **Confidence:** HIGH for repo integration and Phase 17 scope; MEDIUM for external provider terms because official pages can change after 2026-06-19
 
 <user_constraints>
@@ -134,7 +134,7 @@ No external packages are recommended or installed in Phase 17. [VERIFIED: packag
 |---------|----------|-----|-----------|-------------|---------|-------------|
 | none | n/a | n/a | n/a | n/a | n/a | No install |
 
-**Packages removed due to [SLOP] verdict:** none  
+**Packages removed due to [SLOP] verdict:** none
 **Packages flagged as suspicious [SUS]:** none
 
 ## Architecture Patterns
@@ -185,7 +185,7 @@ apps/web/src/views/discovery/DiscoveryView.tsx
 
 ### Pattern 1: Contract-First Read Endpoint
 
-**What:** Define the response shape in `packages/contracts/src/schemas.ts`, have the API return that exact type, and have `@jobhunter/api-client` expose one method. [VERIFIED: packages/contracts/src/schemas.ts]  
+**What:** Define the response shape in `packages/contracts/src/schemas.ts`, have the API return that exact type, and have `@jobhunter/api-client` expose one method. [VERIFIED: packages/contracts/src/schemas.ts]
 **When to use:** Phase 17 is read-only policy metadata; no mutation or SSE invalidation is needed. [VERIFIED: .planning/phases/17-source-registry-access-policy/17-CONTEXT.md]
 
 ```typescript
@@ -225,7 +225,7 @@ export interface CompensationSourcePolicy {
 
 ### Pattern 2: Explicit Disabled Licensed Seams
 
-**What:** Seed Levels.fyi and Glassdoor as rows, but with disabled availability and no adapter entry point. [VERIFIED: .planning/REQUIREMENTS.md]  
+**What:** Seed Levels.fyi and Glassdoor as rows, but with disabled availability and no adapter entry point. [VERIFIED: .planning/REQUIREMENTS.md]
 **When to use:** Always in Phase 17; enabled licensed access is future scope unless explicit permitted access exists. [VERIFIED: .planning/STATE.md]
 
 ```typescript
@@ -249,7 +249,7 @@ export interface CompensationSourcePolicy {
 
 ### Pattern 3: Operations Hook, Context Component, View Composer
 
-**What:** The hook calls the API port; the component renders the domain table; the Discovery view composes the panel. [VERIFIED: docs/frontend-target.md]  
+**What:** The hook calls the API port; the component renders the domain table; the Discovery view composes the panel. [VERIFIED: docs/frontend-target.md]
 **When to use:** Phase 17 source policy inspection is user-facing read-only server state. [VERIFIED: apps/web/src/contexts/operations/hooks/useDiscoveryProductControlsQuery.ts]
 
 ```typescript
@@ -301,30 +301,30 @@ Eurostat SES is an EU/candidate/EFTA earnings survey and supports an aggregate p
 
 ### Pitfall 1: Conflating Discovery Sources With Compensation Sources
 
-**What goes wrong:** `/v1/discovery/sources` gains salary licensing fields, making job-board health and compensation evidence policy share one DTO. [VERIFIED: apps/api/src/discovery-controls.ts]  
-**Why it happens:** Existing Discovery source registry is nearby and visually similar. [VERIFIED: apps/web/src/contexts/discovery/components/DiscoveryProductControls.tsx]  
-**How to avoid:** Add `/v1/compensation/sources` and a compensation-specific DTO. [VERIFIED: .planning/phases/17-source-registry-access-policy/17-CONTEXT.md]  
+**What goes wrong:** `/v1/discovery/sources` gains salary licensing fields, making job-board health and compensation evidence policy share one DTO. [VERIFIED: apps/api/src/discovery-controls.ts]
+**Why it happens:** Existing Discovery source registry is nearby and visually similar. [VERIFIED: apps/web/src/contexts/discovery/components/DiscoveryProductControls.tsx]
+**How to avoid:** Add `/v1/compensation/sources` and a compensation-specific DTO. [VERIFIED: .planning/phases/17-source-registry-access-policy/17-CONTEXT.md]
 **Warning signs:** New fields such as `licenseStatus` appear on `SourceRegistryEntrySummary`. [VERIFIED: packages/contracts/src/schemas.ts]
 
 ### Pitfall 2: Disabled Licensed Seams Look Like Evidence
 
-**What goes wrong:** The UI lists Glassdoor or Levels.fyi beside Eurostat/INE as if they contributed salary evidence. [VERIFIED: .planning/REQUIREMENTS.md]  
-**Why it happens:** A single "source" label hides `availability` and `sourceType`. [VERIFIED: .planning/REQUIREMENTS.md]  
-**How to avoid:** Render disabled licensed seams with disabled status, disabled reason, no supported fields, and no sample/count/value fields. [CITED: https://www.levels.fyi/offerings/data/]  
+**What goes wrong:** The UI lists Glassdoor or Levels.fyi beside Eurostat/INE as if they contributed salary evidence. [VERIFIED: .planning/REQUIREMENTS.md]
+**Why it happens:** A single "source" label hides `availability` and `sourceType`. [VERIFIED: .planning/REQUIREMENTS.md]
+**How to avoid:** Render disabled licensed seams with disabled status, disabled reason, no supported fields, and no sample/count/value fields. [CITED: https://www.levels.fyi/offerings/data/]
 **Warning signs:** UI text contains provider names in a compensation estimate or evidence trail before permitted access exists. [VERIFIED: .planning/STATE.md]
 
 ### Pitfall 3: Adding Provider Code Too Early
 
-**What goes wrong:** A "future adapter" imports `httpx`, `fetch`, Playwright, or scraping helpers and can be accidentally invoked. [VERIFIED: .planning/phases/17-source-registry-access-policy/17-CONTEXT.md]  
-**Why it happens:** Adapter seams are often scaffolded with real network clients. [ASSUMED]  
-**How to avoid:** Phase 17 source modules should contain metadata only; grep tests should reject `levels.fyi`, `glassdoor`, `fetch(`, `httpx`, `EventSource`, or Playwright usage outside policy metadata/tests. [VERIFIED: codebase grep]  
+**What goes wrong:** A "future adapter" imports `httpx`, `fetch`, Playwright, or scraping helpers and can be accidentally invoked. [VERIFIED: .planning/phases/17-source-registry-access-policy/17-CONTEXT.md]
+**Why it happens:** Adapter seams are often scaffolded with real network clients. [ASSUMED]
+**How to avoid:** Phase 17 source modules should contain metadata only; grep tests should reject `levels.fyi`, `glassdoor`, `fetch(`, `httpx`, `EventSource`, or Playwright usage outside policy metadata/tests. [VERIFIED: codebase grep]
 **Warning signs:** New files named `levels_fyi.py`, `glassdoor.py`, or route handlers with URL fetch logic. [VERIFIED: workers/automation/src/jobhunter/domain/discovery/source_registry.py]
 
 ### Pitfall 4: Treating ESCO As Salary Data
 
-**What goes wrong:** ESCO is shown as a market salary source. [CITED: https://esco.ec.europa.eu/en/about-esco/escopedia/escopedia/esco-api]  
-**Why it happens:** ESCO is part of the v1.3 salary pipeline but only maps occupations. [VERIFIED: .planning/research/STACK.md]  
-**How to avoid:** Set `sourceType: "occupation_taxonomy"` and `supportedFields` to mapping fields only. [CITED: https://esco.ec.europa.eu/en/use-esco/use-esco-services-api]  
+**What goes wrong:** ESCO is shown as a market salary source. [CITED: https://esco.ec.europa.eu/en/about-esco/escopedia/escopedia/esco-api]
+**Why it happens:** ESCO is part of the v1.3 salary pipeline but only maps occupations. [VERIFIED: .planning/research/STACK.md]
+**How to avoid:** Set `sourceType: "occupation_taxonomy"` and `supportedFields` to mapping fields only. [CITED: https://esco.ec.europa.eu/en/use-esco/use-esco-services-api]
 **Warning signs:** ESCO row has `supportedFields` like `salaryRange` or `percentiles`. [VERIFIED: .planning/REQUIREMENTS.md]
 
 ## Code Examples
@@ -409,7 +409,7 @@ it("lists Glassdoor and Levels.fyi only as disabled licensed seams", async () =>
 | SQLite CLI | Local schema inspection / optional tests | yes | `3.51.0` | n/a |
 | `gsd-tools` PATH command | GSD seams | no | n/a | Use `/Users/eloibarti/.codex/gsd-core/bin/gsd-tools.cjs`. [VERIFIED: environment probe] |
 
-**Missing dependencies with no fallback:** none  
+**Missing dependencies with no fallback:** none
 **Missing dependencies with fallback:** `gsd-tools` command not on `PATH`; shim path works. [VERIFIED: environment probe]
 
 ## Validation Architecture
@@ -513,5 +513,5 @@ it("lists Glassdoor and Levels.fyi only as disabled licensed seams", async () =>
 - External source policy: MEDIUM - official pages were checked on 2026-06-19, but provider terms and API availability can change. [CITED: https://www.glassdoor.com/about/terms/]
 - Pitfalls: MEDIUM - repo-specific pitfalls are verified; future adapter-risk statement is assumed and logged. [ASSUMED]
 
-**Research date:** 2026-06-19  
+**Research date:** 2026-06-19
 **Valid until:** 2026-06-26 for external provider policy; 2026-07-19 for repo-internal architecture if no major frontend/API migration occurs.
