@@ -21,18 +21,18 @@ v1.2 made the audit path inspectable across the two surfaces where users decide 
 - The Jobs drawer to Apply Review handoff preserves the selected job through the route search state.
 - The folded v1.1 cleanup removed obsolete `lucide-react` usage and normalized final Tailwind 4/shadcn token, icon, font, and QA expectations.
 
-v1.3 will make compensation facts inspectable in Jobs triage by combining posted salary extraction with externally sourced market salary estimates, including statistical confidence and source provenance for every displayed range.
+v1.3 will make compensation facts inspectable in Jobs triage by combining posted salary extraction with Europe-only public market salary baselines, including statistical confidence and source provenance for every displayed range.
 
 ## Current Milestone: v1.3 Salary Range Estimator
 
-**Goal:** Make salary facts in JobHunter inspectable and useful in Jobs triage by combining posted compensation extraction with externally sourced market-range estimates, while preserving an audit trail for every displayed range.
+**Goal:** Make salary facts in JobHunter inspectable and useful in Jobs triage by combining posted compensation extraction with Europe-only public market-range estimates, while preserving an audit trail for every displayed range.
 
 **Target features:**
 - Normalize compensation from raw job salary strings and compensation text in postings into a structured salary-range fact with source text, currency/period, statistical confidence, and parse warnings.
-- Add a market salary estimator that uses researched external compensation sources, explicitly including sources like Levels.fyi and Glassdoor where appropriate, to produce role/location/seniority/company-aware ranges when enough benchmark evidence exists.
+- Add a market salary estimator that uses Eurostat Structure of Earnings Survey, ESCO occupation mapping, and Spain INE Wage Structure Survey as v1.3 public baselines, with licensed sources such as Levels.fyi or Glassdoor represented only as disabled/unavailable seams unless permitted access is explicitly configured.
 - Maintain a salary-source registry/provenance model so every market estimate identifies source type, captured values, freshness, source agreement, sample/source count where available, assumptions, and whether the source supports the specific role/location/seniority claim.
-- Surface posted salary, market estimate, statistical confidence, source/freshness trail, and profile-floor comparison in the Jobs list/drawer audit triage.
-- Keep uncertain compensation audit-first: show confidence, source gaps, and unknowns clearly; do not silently rank, filter, or block jobs from opaque estimates.
+- Surface posted salary, Europe public baseline estimate, statistical confidence, source/freshness trail, and profile-floor comparison in the Jobs list/drawer audit triage.
+- Keep compensation audit-first and warning-only in v1.3: show confidence, source gaps, and unknowns clearly; do not silently rank, filter, or block jobs from posted salaries or market estimates.
 
 ## Requirements
 
@@ -58,8 +58,8 @@ v1.3 will make compensation facts inspectable in Jobs triage by combining posted
 ### Active
 
 - [ ] Normalize posted compensation into structured, source-backed salary facts.
-- [ ] Estimate market salary ranges from researched external compensation sources with statistical confidence and provenance.
-- [ ] Surface salary facts, market estimates, source trail, and profile-floor comparison in Jobs triage without opaque automatic gating.
+- [ ] Estimate Europe-only public market salary ranges with statistical confidence and provenance.
+- [ ] Surface salary facts, market estimates, source trail, and profile-floor comparison in Jobs triage as warnings without automatic gating.
 
 ### Out of Scope
 
