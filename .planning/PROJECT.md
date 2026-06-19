@@ -11,6 +11,7 @@ A user can trust every line of a tailored resume because each bullet traces visi
 ## Current State
 
 **Shipped milestone:** v1.2 Apply Review Audit UX - Drawer + Resume Pins (2026-06-13)
+**Active milestone:** v1.3 Salary Range Estimator
 
 v1.2 made the audit path inspectable across the two surfaces where users decide whether a job and generated materials are ready:
 
@@ -20,7 +21,18 @@ v1.2 made the audit path inspectable across the two surfaces where users decide 
 - The Jobs drawer to Apply Review handoff preserves the selected job through the route search state.
 - The folded v1.1 cleanup removed obsolete `lucide-react` usage and normalized final Tailwind 4/shadcn token, icon, font, and QA expectations.
 
-No active milestone is currently defined. The next milestone should start with fresh requirements via `$gsd-new-milestone`.
+v1.3 will make compensation facts inspectable in Jobs triage by combining posted salary extraction with externally sourced market salary estimates, including statistical confidence and source provenance for every displayed range.
+
+## Current Milestone: v1.3 Salary Range Estimator
+
+**Goal:** Make salary facts in JobHunter inspectable and useful in Jobs triage by combining posted compensation extraction with externally sourced market-range estimates, while preserving an audit trail for every displayed range.
+
+**Target features:**
+- Normalize compensation from raw job salary strings and compensation text in postings into a structured salary-range fact with source text, currency/period, statistical confidence, and parse warnings.
+- Add a market salary estimator that uses researched external compensation sources, explicitly including sources like Levels.fyi and Glassdoor where appropriate, to produce role/location/seniority/company-aware ranges when enough benchmark evidence exists.
+- Maintain a salary-source registry/provenance model so every market estimate identifies source type, captured values, freshness, source agreement, sample/source count where available, assumptions, and whether the source supports the specific role/location/seniority claim.
+- Surface posted salary, market estimate, statistical confidence, source/freshness trail, and profile-floor comparison in the Jobs list/drawer audit triage.
+- Keep uncertain compensation audit-first: show confidence, source gaps, and unknowns clearly; do not silently rank, filter, or block jobs from opaque estimates.
 
 ## Requirements
 
@@ -45,7 +57,9 @@ No active milestone is currently defined. The next milestone should start with f
 
 ### Active
 
-None. New active requirements should be defined in the next milestone.
+- [ ] Normalize posted compensation into structured, source-backed salary facts.
+- [ ] Estimate market salary ranges from researched external compensation sources with statistical confidence and provenance.
+- [ ] Surface salary facts, market estimates, source trail, and profile-floor comparison in Jobs triage without opaque automatic gating.
 
 ### Out of Scope
 
@@ -132,4 +146,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-13 after v1.2 milestone completion*
+*Last updated: 2026-06-19 after v1.3 milestone start*

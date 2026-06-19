@@ -1,38 +1,44 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Apply Review Audit UX - Drawer + Resume Pins
-status: Awaiting next milestone
-stopped_at: v1.2 complete
-last_updated: "2026-06-13T08:37:07.825Z"
-last_activity: 2026-06-13 — Milestone v1.2 completed and archived
+milestone: v1.3
+milestone_name: Salary Range Estimator
+status: planning
+last_updated: "2026-06-19T09:02:26.262Z"
+last_activity: 2026-06-19
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-13)
+See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** A user can trust every line of a tailored resume because each bullet traces visibly to a real profile fact and a specific job requirement, with the reasoning and transform rule available for review.
-**Current focus:** Milestone v1.2 is archived; awaiting the next milestone definition.
+**Current focus:** Milestone v1.3 Salary Range Estimator is defining requirements.
 
 ## Current Position
 
-Phase: Milestone v1.2 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-13 — Milestone v1.2 completed and archived
+Status: Defining requirements
+Last activity: 2026-06-19 — Milestone v1.3 started
 
 ## Active Milestone Summary
 
-No active milestone is currently defined. Start the next cycle with `/gsd-new-milestone`.
+Milestone v1.3 will make salary facts inspectable in Jobs triage by combining posted compensation extraction with externally sourced market salary estimates.
+
+Target scope:
+
+- Normalize posted compensation into structured salary facts with source text, currency/period, statistical confidence, and parse warnings.
+- Use researched external compensation sources, including sources like Levels.fyi and Glassdoor where appropriate, for role/location/seniority/company-aware market estimates.
+- Preserve salary-source provenance: source type, captured values, freshness, source agreement, sample/source count where available, assumptions, and applicability to the specific job.
+- Surface posted salary, market estimate, statistical confidence, source/freshness trail, and profile-floor comparison in Jobs list/drawer triage without opaque automatic gating.
 
 ## Archived v1.2 Milestone Summary
 
