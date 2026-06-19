@@ -34,7 +34,8 @@ key-files:
 - Added `marketCompensationEstimate(jobKey)` to `@jobhunter/api-client`.
 - Added `GET /v1/jobs/:jobKey/compensation/market` as a read-only inspection endpoint backed by persisted `job_market_compensation_estimates` rows.
 - Added safe JSON parsing and source/reason/warning allowlists so unknown or unsafe persisted source entries are dropped from API responses.
-- Added tests for recorded range responses, non-range states, not-requested no-write-on-read behavior, unknown jobs, unsafe source filtering, private-data leakage, and the warning-only product boundary.
+- Added defensive mapping for persisted `not_requested` rows and canonical source-field sanitization for already-persisted allowed source rows.
+- Added tests for recorded range responses, non-range states, not-requested no-write-on-read behavior, persisted not-requested rows, unknown jobs, unsafe source filtering, private-data leakage, and the warning-only product boundary.
 - Updated local API, architecture, and reliability QA documentation for the Phase 19 endpoint, canonical table, Europe-only source scope, and Phase 20/21 deferred boundaries.
 
 ## Commits
@@ -42,15 +43,16 @@ key-files:
 | Commit | Description |
 | --- | --- |
 | `b4ea12f` | `feat(api): expose europe market estimates` |
+| `0a206cc` | `fix(compensation): harden europe market estimate boundaries` |
 
 ## Verification
 
-- `corepack pnpm --filter @jobhunter/api exec vitest run test/market-compensation-estimates.test.ts` - passed, 6 tests.
+- `corepack pnpm --filter @jobhunter/api exec vitest run test/market-compensation-estimates.test.ts` - passed, 7 tests.
 - `corepack pnpm --filter @jobhunter/api exec vitest run test/server.test.ts -t "market compensation boundary"` - passed, 1 test.
 - `corepack pnpm api:check` - passed.
 - `corepack pnpm --filter @jobhunter/contracts check` - passed.
 - `corepack pnpm --filter @jobhunter/api-client check` - passed.
-- `corepack pnpm api:test` - passed, 14 files and 240 tests.
+- `corepack pnpm api:test` - passed, 14 files and 241 tests.
 - `git diff --check` - passed.
 
 ## Deviations from Plan

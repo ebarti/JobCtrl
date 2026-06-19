@@ -33,16 +33,18 @@ key-files:
 - Added confidence factors, source snapshots, warning codes, unsupported/insufficient/source-unavailable reasons, and conservative range gating.
 - Added canonical SQLite table `job_market_compensation_estimates` and repository helpers for save/read/backfill.
 - Added tests for Spain INE preference, Eurostat aggregate fallback, ESCO-only insufficiency, geography assumptions, unsupported non-Europe/component cases, stale source snapshots, low sample counts, dispersion, broad bands, posted-vs-market warnings, source allowlist, and persistence safety.
+- Hardened review findings for tokenized geography detection, component/period compatibility, sanitized public-source snapshots, and non-persistence of the read-side `not_requested` marker.
 
 ## Commits
 
 | Commit | Description |
 | --- | --- |
 | `ca3984a` | `feat(worker): persist europe market estimates` |
+| `0a206cc` | `fix(compensation): harden europe market estimate boundaries` |
 
 ## Verification
 
-- `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_market_compensation_estimator.py workers/automation/tests/test_market_compensation_repository.py -q` — passed, 21 tests.
+- `uv --project workers/automation run --extra dev pytest -q workers/automation/tests/test_market_compensation_estimator.py workers/automation/tests/test_market_compensation_repository.py -q` — passed, 29 tests.
 - `uv --project workers/automation run --extra dev ruff check workers/automation/src/jobhunter/domain/compensation workers/automation/src/jobhunter/infrastructure/compensation workers/automation/src/jobhunter/database.py workers/automation/tests/test_market_compensation_estimator.py workers/automation/tests/test_market_compensation_repository.py` — passed.
 
 ## Deviations from Plan
