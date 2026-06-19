@@ -142,6 +142,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 
     # Run migrations for any columns added after initial schema
     ensure_columns(conn)
+    ensure_posted_compensation_tables(conn)
     ensure_state_tables(conn)
     ensure_profile_tables(conn)
     ensure_score_tables(conn)
@@ -316,6 +317,53 @@ def ensure_columns(conn: sqlite3.Connection | None = None) -> list[str]:
         conn.commit()
 
     return added
+
+
+def ensure_posted_compensation_tables(conn: sqlite3.Connection | None = None) -> list[str]:
+    """Create canonical posted compensation fact storage.
+
+    The legacy ``jobs.salary`` column remains the raw compatibility fallback.
+    This table stores deterministic parser output separately so downstream
+    read models can distinguish raw posting text from normalized facts.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_posted_compensation_facts (
+            tenant_id                    TEXT NOT NULL DEFAULT 'local',
+            job_url                      TEXT NOT NULL,
+            source_field                 TEXT NOT NULL DEFAULT 'jobs.salary',
+            source_text                  TEXT,
+            legacy_raw_salary            TEXT,
+            parse_state                  TEXT NOT NULL,
+            currency                     TEXT,
+            period                       TEXT NOT NULL DEFAULT 'unknown',
+            component                    TEXT NOT NULL DEFAULT 'unknown',
+            minimum_amount               INTEGER,
+            maximum_amount               INTEGER,
+            annualized_minimum_amount    INTEGER,
+            annualized_maximum_amount    INTEGER,
+            annualization_assumption     TEXT,
+            confidence                   TEXT NOT NULL DEFAULT 'none',
+            warnings_json                TEXT NOT NULL DEFAULT '[]',
+            parser_version               TEXT NOT NULL,
+            source_hash                  TEXT NOT NULL,
+            parsed_at                    TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, job_url),
+            FOREIGN KEY (job_url) REFERENCES jobs(url) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_job_posted_compensation_parse_state
+        ON job_posted_compensation_facts (tenant_id, parse_state)
+        """
+    )
+    conn.commit()
+    return []
 
 
 def drop_legacy_apply_runs_tables(conn: sqlite3.Connection | None = None) -> list[str]:

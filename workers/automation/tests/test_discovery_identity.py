@@ -25,6 +25,7 @@ from jobhunter.domain.ports.discovery import ScrapedJobPosting
 from jobhunter.domain.ports.events import EventHandler, Subscription
 from jobhunter.domain.tenant import LOCAL_TENANT
 from jobhunter.infrastructure.discovery import SqliteJobRepository
+from jobhunter.infrastructure.compensation import SqlitePostedCompensationRepository
 
 
 @pytest.fixture
@@ -652,6 +653,13 @@ def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_bl
     assert rediscovered is not None
     assert rediscovered.metadata.salary == "$180,000"
     assert rediscovered.metadata.description == "Lead engineering teams in Spain."
+
+    compensation_repo = SqlitePostedCompensationRepository(conn)
+    compensation_repo.backfill_from_legacy_jobs(parsed_at="2026-06-19T10:00:00Z")
+    fact = compensation_repo.get_fact(str(LOCAL_TENANT), str(rediscovered.job_id))
+    assert fact is not None
+    assert fact.legacy_raw_salary == "$180,000"
+    assert fact.minimum_amount == 180_000
 
 
 def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
