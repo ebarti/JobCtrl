@@ -172,12 +172,19 @@ def _row_to_estimate(row: sqlite3.Row | tuple[Any, ...]) -> MarketCompensationEs
         confidence_score=float(_row_value(row, "confidence_score") or 0),
         source_count=int(_row_value(row, "source_count") or 0),
         sample_count=_nullable_int(_row_value(row, "sample_count")),
-        aggregate_bucket=_nullable_str(_row_value(row, "aggregate_bucket")),
+        aggregate_bucket=_safe_aggregate_bucket(
+            _nullable_str(_row_value(row, "aggregate_bucket")),
+            _json_list(_row_value(row, "source_snapshot_json")),
+        ),
         geography_scope=_nullable_str(_row_value(row, "geography_scope")),
         occupation_code=_nullable_str(_row_value(row, "occupation_code")),
         occupation_label=_nullable_str(_row_value(row, "occupation_label")),
         seniority_label=_nullable_str(_row_value(row, "seniority_label")),
-        sources=tuple(_source_from_dict(item) for item in _json_list(_row_value(row, "source_snapshot_json"))),
+        sources=tuple(
+            source
+            for item in _json_list(_row_value(row, "source_snapshot_json"))
+            if (source := _source_from_dict(item)) is not None
+        ),
         factors=tuple(_factor_from_dict(item) for item in _json_list(_row_value(row, "factor_reasons_json"))),
         insufficient_reasons=tuple(str(item) for item in _json_list(_row_value(row, "insufficient_reasons_json"))),
         unsupported_reasons=tuple(str(item) for item in _json_list(_row_value(row, "unsupported_reasons_json"))),
@@ -205,19 +212,38 @@ def _source_to_dict(source: MarketSourceSnapshot) -> dict[str, Any]:
     }
 
 
-def _source_from_dict(value: Any) -> MarketSourceSnapshot:
+def _source_from_dict(value: Any) -> MarketSourceSnapshot | None:
     data = value if isinstance(value, dict) else {}
-    return MarketSourceSnapshot(
-        source_id=str(data.get("source_id") or "eurostat_structure_of_earnings"),  # type: ignore[arg-type]
-        display_name=str(data.get("display_name") or ""),
-        source_type=str(data.get("source_type") or "public_wage_baseline"),  # type: ignore[arg-type]
-        release_year=_nullable_int(data.get("release_year")),
-        snapshot_version=str(data.get("snapshot_version") or ""),
-        geography_scope=str(data.get("geography_scope") or ""),
-        aggregate_bucket=str(data.get("aggregate_bucket") or ""),
-        attribution=str(data.get("attribution") or ""),
-        sample_count=_nullable_int(data.get("sample_count")),
+    source_id = str(data.get("source_id") or "")
+    if source_id not in {"eurostat_structure_of_earnings", "esco_occupation_taxonomy", "spain_ine_salary_structure"}:
+        return None
+    source_type = "occupation_taxonomy" if source_id == "esco_occupation_taxonomy" else "public_wage_baseline"
+    return sanitize_market_source_snapshot(
+        MarketSourceSnapshot(
+            source_id=source_id,  # type: ignore[arg-type]
+            display_name=str(data.get("display_name") or ""),
+            source_type=source_type,
+            release_year=_nullable_int(data.get("release_year")),
+            snapshot_version=str(data.get("snapshot_version") or ""),
+            geography_scope=str(data.get("geography_scope") or ""),
+            aggregate_bucket=str(data.get("aggregate_bucket") or ""),
+            attribution=str(data.get("attribution") or ""),
+            sample_count=_nullable_int(data.get("sample_count")),
+        )
     )
+
+
+def _safe_aggregate_bucket(value: str | None, source_values: list[Any]) -> str | None:
+    safe_buckets = {
+        "Eurostat SES occupation/country aggregate",
+        "ESCO occupation mapping",
+        "Spain INE occupation aggregate",
+    }
+    if value in safe_buckets:
+        return value
+    sources = tuple(source for item in source_values if (source := _source_from_dict(item)) is not None)
+    buckets = tuple(dict.fromkeys(source.aggregate_bucket for source in sources))
+    return ", ".join(buckets) if buckets else None
 
 
 def _factor_to_dict(factor: MarketConfidenceFactor) -> dict[str, Any]:

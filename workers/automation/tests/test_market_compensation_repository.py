@@ -203,3 +203,63 @@ def test_persisted_json_contains_only_safe_public_fields(conn: sqlite3.Connectio
     assert "rawproviderpayload" not in serialized
     assert "/users/" not in serialized
     assert "credential" not in serialized
+
+
+def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.Connection) -> None:
+    job_url = _seed_job(conn, url="https://example.com/jobs/stale-source-json")
+    repo = SqliteMarketCompensationRepository(conn)
+    conn.execute(
+        """
+        INSERT INTO job_market_compensation_estimates (
+            tenant_id, job_url, estimate_state, currency, period, component,
+            minimum_amount, maximum_amount, confidence_band, confidence_score,
+            source_count, sample_count, aggregate_bucket, geography_scope,
+            occupation_code, occupation_label, seniority_label, source_snapshot_json,
+            factor_reasons_json, insufficient_reasons_json, unsupported_reasons_json,
+            source_unavailable_reasons_json, warnings_json, estimator_version, estimated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "local",
+            job_url,
+            "estimated_range",
+            "EUR",
+            "year",
+            "base_salary",
+            72_000,
+            92_000,
+            "medium",
+            0.82,
+            1,
+            900,
+            "US private page",
+            "remote_europe",
+            "2512.1",
+            "Software developer",
+            "aggregate",
+            '[{"source_id":"eurostat_structure_of_earnings","display_name":"Glassdoor private payload",'
+            '"source_type":"public_wage_baseline","release_year":2024,"snapshot_version":"us-private-version",'
+            '"geography_scope":"EU","aggregate_bucket":"US private page","attribution":"US public aggregate",'
+            '"sample_count":900}]',
+            "[]",
+            "[]",
+            "[]",
+            "[]",
+            "[]",
+            "market-compensation-v1",
+            "2026-06-19T10:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    loaded = repo.get_estimate("local", job_url)
+    serialized = str(loaded).casefold()
+
+    assert loaded is not None
+    assert loaded.aggregate_bucket == "Eurostat SES occupation/country aggregate"
+    assert loaded.sources[0].display_name == "Eurostat Structure of Earnings Survey"
+    assert loaded.sources[0].snapshot_version == "synthetic-public-fixture"
+    assert "glassdoor" not in serialized
+    assert "private" not in serialized
+    assert "us public" not in serialized
+    assert "us-private" not in serialized
