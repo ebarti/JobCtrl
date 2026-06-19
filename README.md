@@ -96,6 +96,8 @@ Local API and web UI:
 
 - Node.js 20.19 or newer.
 - pnpm through Corepack.
+- Optional `VITE_GOOGLE_MAPS_API_KEY` for Google Maps address search in the
+  Profile form.
 
 Auto-apply:
 
@@ -163,6 +165,9 @@ At minimum, confirm:
 - your profile and resume facts are accurate;
 - your search configuration is narrow enough for a first run;
 - your LLM key or local model endpoint is configured;
+- optional frontend-only keys such as `VITE_GOOGLE_MAPS_API_KEY` are available
+  from repo `.env`, `~/.jobhunter/.env`, or `~/Jobhunter/.env` before starting
+  `pnpm dev`;
 - `pdflatex` is available if you need PDFs;
 - `pdftoppm` is available if you need PDF page previews in the web UI;
 - Chrome and Claude Code are available only if you intend to use auto-apply.
@@ -253,12 +258,17 @@ In the local web UI, dashboard KPIs open matching Jobs filters. Failures opens
 failed jobs so you can retry selected failures or retry all currently matching
 failed jobs after confirmation. The active Jobs toolbar keeps `retry all failed`
 available outside the failed-state filter; it retries failed jobs matching the
-current non-state filters. Viewing the Jobs page also picks up eligible visible
-pending preparation substages (`enrich`, `score`, `tailor`, or `cover`) by
-starting the job-scoped pipeline at that substage. This pickup is paced and
-eligibility-gated, so a page of pending rows does not start skip-only worker
-runs for jobs that are not ready for the requested substage. A retry from a job
-detail drawer resumes
+current non-state filters. Bulk failed retries reset the failed preparation
+substage and immediately queue grouped preparation workflows for `enrich`,
+`score`, `tailor`, or `cover` with the worker count from the saved pipeline
+controls. The same toolbar also exposes `continue pending prep`, which queues
+eligible active pending preparation work without resetting failures. Both bulk
+actions run only preparation substages (`enrich`, `score`, `tailor`, or
+`cover`) and do not auto-run `apply`. Viewing the Jobs page also picks up
+eligible visible pending preparation substages by starting the job-scoped
+pipeline at that substage. This pickup is paced and eligibility-gated, so a
+page of pending rows does not start skip-only worker runs for jobs that are not
+ready for the requested substage. A retry from a job detail drawer resumes
 the remaining preparation pipeline for that job (`enrich` -> `score` ->
 `tailor` -> `cover`, starting at the retried stage); application submission
 remains a separate explicit action. Cover remains retryable preparation work,
@@ -415,6 +425,9 @@ The Vite dev server proxies `/v1/*` to the local API by default. Set
 The Jobs tab can filter by stage, state, and fit-score range. Its source column
 shows the posting owner and the discovery source separately when available, so
 broad-board results can be distinguished from canonical employer or ATS sources.
+Product data grids, including Jobs, Discovery sources, Runs, Artifacts, and
+Debug activity, expose resizable column handles in the headers so long local
+data can be inspected without changing code or global density settings.
 
 The Jobs tab separates posting lifecycle state from manual suppression. Closed
 jobs are postings the system verified as unavailable, expired, removed, or
@@ -548,10 +561,10 @@ Create or update the Candidate Profile through the local Profile page or the
 resume-import flow so profile data, rendering settings, and template text are
 stored in SQLite.
 
-Profile, Preferences, Discovery target search, and Settings forms autosave five
-seconds after the last edit through the same local API mutations as the Save
-buttons. Checkbox, select, and other non-text setting controls keep an
-in-session undo history for Ctrl+Z / Cmd+Z.
+Profile, Preferences, Discovery target search, Discovery automation settings,
+and Settings forms autosave five seconds after the last edit through the same
+local API mutations as the Save buttons. Checkbox, select, and other non-text
+setting controls keep an in-session undo history for Ctrl+Z / Cmd+Z.
 
 Preferences includes resume tailoring controls for claim mode, auto-approvable
 claim modes, adjacent achievement drafts, writing style, and custom tailoring
@@ -564,7 +577,9 @@ claims remain review material.
 Discovery runtime settings are edited on the Discovery page and stored in the
 SQLite `discovery_settings` table. JobSpy board selection uses the `boards`
 field in that row, and target roles/locations from the Discovery target-search
-form are overlaid by the worker before any source persists jobs.
+form are overlaid by the worker before any source persists jobs. The Discovery
+page also owns the automation settings for minimum fit score and auto apply;
+the Settings page keeps execution controls such as apply concurrency.
 
 The legacy `sites` key is still accepted for the compatibility window and logs
 a warning instead of failing. When both keys are present, `boards` wins. The

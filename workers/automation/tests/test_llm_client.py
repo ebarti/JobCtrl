@@ -129,3 +129,49 @@ def test_openai_compat_path_sends_strict_tailoring_schema() -> None:
     schema = response_format["json_schema"]["schema"]
     experience_item = schema["properties"]["experience_updates"]["items"]
     assert set(experience_item["required"]) == {"id", "title", "bullets"}
+
+
+def test_chat_json_retries_malformed_structured_output_without_token_cap() -> None:
+    requests: list[dict] = []
+
+    def _openai_response(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        requests.append(payload)
+        content = '{"score":' if len(requests) == 1 else '{"score": 8}'
+        return httpx.Response(
+            status_code=200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": content},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    client = LLMClient(
+        base_url="https://api.openai.com/v1",
+        model="gpt-test",
+        api_key="test-key",
+    )
+    client._client.close()
+    client._client = httpx.Client(transport=httpx.MockTransport(_openai_response))
+
+    try:
+        response = client.chat_json(
+            [{"role": "user", "content": "score"}],
+            response_schema={
+                "title": "Score",
+                "type": "object",
+                "properties": {"score": {"type": "integer"}},
+                "required": ["score"],
+            },
+        )
+    finally:
+        client.close()
+
+    assert response == {"score": 8}
+    assert len(requests) == 2
+    assert all("max_tokens" not in request for request in requests)

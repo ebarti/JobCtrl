@@ -215,6 +215,7 @@ def run_stage(params: dict[str, Any]) -> WorkflowStartSpec:
             float(raw_judge_min_score) if raw_judge_min_score is not None else None
         ),
         job_url=params.get("jobUrl") if params.get("jobUrl") else None,
+        job_urls=_job_urls(params),
         headless=bool(params.get("headless", False)),
         model=str(params.get("model", "default")),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),

@@ -306,6 +306,58 @@ while true; do sleep 1; done
     }
   });
 
+  it("loads user-local frontend env before starting the web process", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobhunter-dev-launcher-"));
+    const devDir = join(tempDir, "dev-state");
+    const callsLog = join(tempDir, "calls.log");
+    const pidFile = join(devDir, "pids/web.pid");
+    let webPid: number | undefined;
+    let env: NodeJS.ProcessEnv | undefined;
+
+    try {
+      mkdirSync(join(tempDir, "Jobhunter"), { recursive: true });
+      writeFileSync(join(tempDir, "Jobhunter", ".env"), "VITE_GOOGLE_MAPS_API_KEY=maps-test-key\n");
+      writeFileSync(
+        join(tempDir, "pnpm"),
+        `#!/usr/bin/env bash
+echo "fake pnpm $*" >> "${callsLog}"
+echo "maps=$VITE_GOOGLE_MAPS_API_KEY" >> "${callsLog}"
+echo "  Local:   http://127.0.0.1:5175/"
+trap 'echo "fake pnpm terminated $$" >> "${callsLog}"; exit 0' TERM INT
+while true; do sleep 1; done
+`,
+      );
+      chmodSync(join(tempDir, "pnpm"), 0o755);
+      env = devScriptEnv(devDir, {
+        HOME: tempDir,
+        PATH: `${tempDir}:${process.env.PATH ?? ""}`,
+        JOBHUNTER_BINDING_WAIT_TICKS: "20",
+        JOBHUNTER_BINDING_WAIT_INTERVAL_SECONDS: "0.05",
+        JOBHUNTER_STOP_WAIT_TICKS: "10",
+        JOBHUNTER_STOP_WAIT_INTERVAL_SECONDS: "0.05",
+      });
+
+      execFileSync(devScript, ["start", "web"], { cwd: repoRoot, env });
+      webPid = await waitForPidFile(pidFile);
+      await waitForFileText(callsLog, "maps=maps-test-key");
+
+      expect(processExists(webPid)).toBe(true);
+    } finally {
+      try {
+        execFileSync(devScript, ["stop", "web"], {
+          cwd: repoRoot,
+          env: env ?? devScriptEnv(devDir),
+        });
+      } catch {
+        // The process may already be stopped if an assertion failed late.
+      }
+      if (webPid !== undefined && processExists(webPid)) {
+        process.kill(webPid, "SIGKILL");
+      }
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("runs attached processes and cleans PID files on termination", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobhunter-dev-launcher-"));
     const devDir = join(tempDir, "dev-state");

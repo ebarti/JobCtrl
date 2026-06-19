@@ -267,6 +267,10 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
                 "expectedDbPath": "/tmp/jobhunter/jobhunter.db",
                 "stage": "score",
                 "stages": ["score", "tailor"],
+                "jobUrls": [
+                    "https://example.com/job/score-a",
+                    "https://example.com/job/score-b",
+                ],
                 "limit": 5,
                 "workers": 2,
                 "minScore": 8,
@@ -297,6 +301,10 @@ def test_run_stage_starts_job_pipeline_workflow(tmp_db: Path) -> None:
         expected_app_dir="/tmp/jobhunter",
         expected_db_path="/tmp/jobhunter/jobhunter.db",
         stages=["score", "tailor"],
+        job_urls=(
+            "https://example.com/job/score-a",
+            "https://example.com/job/score-b",
+        ),
         min_score=8,
         workers=2,
         limit=5,
@@ -675,6 +683,65 @@ def test_selected_score_activity_runs_only_requested_urls(monkeypatch) -> None:
     assert result["errors"] == {}
     assert result["stages"][0]["selected"] == 2
     assert result["stages"][0]["scored"] == 2
+
+
+def test_selected_score_activity_uses_requested_workers(monkeypatch) -> None:
+    calls: list[str] = []
+    submitted: list[str] = []
+    executor_workers: list[int] = []
+
+    class FakeFuture:
+        def __init__(self, result: object) -> None:
+            self._result = result
+
+        def result(self) -> object:
+            return self._result
+
+    class RecordingExecutor:
+        def __init__(self, max_workers: int) -> None:
+            executor_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def submit(self, fn, url: str):  # noqa: ANN001 - test double mirrors concurrent.futures
+            submitted.append(url)
+            return FakeFuture(fn(url))
+
+    def fake_score_job_by_url(url: str, **_kwargs: object) -> SimpleNamespace:
+        calls.append(url)
+        return SimpleNamespace(ok=True, error=None)
+
+    monkeypatch.setattr("jobhunter.scoring.scorer.score_job_by_url", fake_score_job_by_url)
+    monkeypatch.setattr(scoring_activities_mod, "ThreadPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(scoring_activities_mod, "as_completed", lambda futures: futures)
+
+    result = scoring_activities_mod._run_selected_scores(
+        ScoreActivityInput(
+            tenant_id="local",
+            job_urls=(
+                "https://example.com/job/score-a",
+                "https://example.com/job/score-b",
+                "https://example.com/job/score-c",
+            ),
+            workers=3,
+            llm_model="local:score",
+        )
+    )
+
+    assert executor_workers == [3]
+    assert submitted == [
+        "https://example.com/job/score-a",
+        "https://example.com/job/score-b",
+        "https://example.com/job/score-c",
+    ]
+    assert calls == submitted
+    assert result["errors"] == {}
+    assert result["stages"][0]["selected"] == 3
+    assert result["stages"][0]["scored"] == 3
 
 
 def test_current_policy_score_activity_skips_current_policy_scores(

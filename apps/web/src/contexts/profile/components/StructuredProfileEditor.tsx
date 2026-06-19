@@ -1,6 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 
+import {
+  GoogleAddressSearchField,
+  isUnitedStatesAddressCountry,
+  type GoogleAddressSelection,
+} from "./GoogleAddressSearchField.js";
 import {
   asTextArray,
   cloneJsonRecord,
@@ -109,11 +114,19 @@ const AUTO_APPROVABLE_CLAIM_MODE_OPTIONS: Array<[string, string]> = [
   ["evidence_reframing", "Evidence reframing"],
 ];
 
+const BULLET_STANDARD_OPTIONS: Array<[string, string]> = [
+  ["impact", "Impact"],
+  ["technical_depth", "Technical depth"],
+  ["leadership", "Leadership"],
+];
+
 const ROLE_AREA_LABEL = "Role areas";
 const ROLE_AREA_PLACEHOLDER = "Engineering, security, platform";
 const TARGET_LOCATION_LABEL = "Locations and work models";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
 
 export interface StructuredProfileEditorProps {
+  applicationConfigurationFields?: ReactNode;
   mode?: "profile" | "preferences" | "target-search";
   profileText: string;
   styleText: string;
@@ -122,6 +135,7 @@ export interface StructuredProfileEditorProps {
 }
 
 export function StructuredProfileEditor({
+  applicationConfigurationFields,
   mode = "profile",
   profileText,
   styleText,
@@ -360,6 +374,27 @@ export function StructuredProfileEditor({
           }
         />
       </label>
+    );
+  };
+
+  const addressSearchField = () => {
+    const applyAddressSelection = (selection: GoogleAddressSelection) => {
+      updateProfileDraft((draft) => {
+        setPathValue(draft, "personal.address", selection.address);
+        setPathValue(draft, "personal.city", selection.city);
+        setPathValue(draft, "personal.province_state", selection.provinceState);
+        setPathValue(draft, "personal.country", selection.country);
+        setPathValue(draft, "personal.postal_code", selection.postalCode);
+      });
+    };
+
+    return (
+      <GoogleAddressSearchField
+        apiKey={GOOGLE_MAPS_API_KEY}
+        value={textAt(profile, "personal.address")}
+        onAddressChange={(value) => updateProfilePath("personal.address", value)}
+        onAddressSelect={applyAddressSelection}
+      />
     );
   };
 
@@ -818,6 +853,20 @@ export function StructuredProfileEditor({
     );
   };
 
+  const bulletStandardsField = () => (
+    <fieldset className="field wide checkbox-group-field bullet-standards-group">
+      <legend>Bullet standards</legend>
+      <div className="checkbox-options">
+        {BULLET_STANDARD_OPTIONS.map(([value, label]) => (
+          <label className="choice target-choice" key={value}>
+            <input type="checkbox" checked readOnly value={value} />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+
   const targetSearchSection = () => (
     <section className="form-section">
       <h3>Target search</h3>
@@ -883,6 +932,7 @@ export function StructuredProfileEditor({
   const requiredSkillIds = new Set(
     textArrayAt(profile, "resume.tailoring_rules.required_skill_category_ids"),
   );
+  const showProvinceStateField = isUnitedStatesAddressCountry(textAt(profile, "personal.country"));
 
   return (
     <div className="profile-sections">
@@ -895,11 +945,15 @@ export function StructuredProfileEditor({
               {textField("personal.preferred_name", "Preferred name")}
               {textField("personal.email", "Email", "email", { required: true })}
               {textField("personal.phone", "Phone", "tel")}
-              {textField("personal.address", "Address")}
-              {textField("personal.city", "City")}
-              {textField("personal.province_state", "State / province")}
-              {textField("personal.country", "Country")}
-              {textField("personal.postal_code", "Postal code")}
+              {addressSearchField()}
+              {textField("personal.city", "City", "text", { autoComplete: "address-level2" })}
+              {showProvinceStateField
+                ? textField("personal.province_state", "State / province", "text", {
+                    autoComplete: "address-level1",
+                  })
+                : null}
+              {textField("personal.country", "Country", "text", { autoComplete: "country-name" })}
+              {textField("personal.postal_code", "Postal code", "text", { autoComplete: "postal-code" })}
               {textField("personal.linkedin_url", "LinkedIn URL", "url")}
               {textField("personal.github_url", "GitHub URL", "url")}
               {textField("personal.portfolio_url", "Portfolio URL", "url")}
@@ -1293,8 +1347,9 @@ export function StructuredProfileEditor({
       ) : (
         <>
           <section className="form-section">
-            <h3>Application defaults</h3>
+            <h3>Application configurations</h3>
             <div className="field-grid">
+              {applicationConfigurationFields}
               {selectField("work_authorization.legally_authorized_to_work", "Legally authorized to work", [
                 "Yes",
                 "No",
@@ -1343,12 +1398,7 @@ export function StructuredProfileEditor({
                 ["confident", "Confident"],
                 ["warm", "Warm"],
               ])}
-              {selectField("resume.tailoring_rules.writing_style.bullet_style", "Bullet style", [
-                ["balanced", "Balanced"],
-                ["impact", "Impact"],
-                ["technical_depth", "Technical depth"],
-                ["leadership", "Leadership"],
-              ])}
+              {bulletStandardsField()}
               {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
                 ["concise", "Concise"],
                 ["balanced", "Balanced"],

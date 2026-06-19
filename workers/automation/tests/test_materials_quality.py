@@ -278,6 +278,7 @@ def test_build_tailoring_plan_selects_evidence_controls_keywords_and_seniority()
 
     assert plan.claim_mode == "evidence_reframing"
     assert plan.writing_style["bullet_style"] == "leadership"
+    assert plan.writing_style["bullet_styles"] == ["impact", "technical_depth", "leadership"]
     assert plan.target_seniority == "senior"
 
 

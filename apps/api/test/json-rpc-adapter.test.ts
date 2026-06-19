@@ -462,6 +462,35 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
     expect(fake.calls[0]?.method).toBe("run_stage");
   });
 
+  it("passes selected job URLs through global run-stage RPC", async () => {
+    const fake = new FakeDispatcher();
+    const dispatcher = createActionDispatcher(fake);
+
+    await dispatcher(
+      {
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobKeys: ["https://example.com/jobs/a", "https://example.com/jobs/b"],
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
+        limit: 2,
+        workers: 14,
+      },
+      { appDir: "/tmp", dbPath: "/tmp/jobhunter.db" },
+    );
+
+    expect(fake.calls[0]).toEqual({
+      method: "run_stage",
+      params: expect.objectContaining({
+        jobUrls: ["https://example.com/jobs/a", "https://example.com/jobs/b"],
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
+        limit: 2,
+        workers: 14,
+      }),
+    });
+  });
+
   it("passes tailoring model controls through run-stage RPC without reusing apply model", async () => {
     const fake = new FakeDispatcher();
     const dispatcher = createActionDispatcher(fake);

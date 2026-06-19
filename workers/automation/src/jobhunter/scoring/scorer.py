@@ -28,7 +28,12 @@ from typing import Any, Mapping, Protocol
 from jobhunter.config import RESUME_PATH
 from jobhunter.database import get_connection, get_jobs_by_stage, load_job_with_enrichment
 from jobhunter.domain.identifiers import JobId
-from jobhunter.domain.job_content_identity import job_content_fingerprint
+from jobhunter.domain.job_content_identity import (
+    job_content_fingerprint,
+    normalize_location_for_repost_match,
+    role_title_has_reference_suffix,
+    role_titles_match_as_repost,
+)
 from jobhunter.domain.materials.analysis import EmployerAnalysis
 from jobhunter.domain.ports.events import EventPublisher
 from jobhunter.domain.ports.materials import EmployerAnalysisRepository
@@ -325,6 +330,31 @@ def run_scoring(
     jobs_to_compute: list[dict[str, Any]] = []
     reused_results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     for job in jobs:
+        reusable_repost_score = _preferred_direct_score_for_repost(
+            conn=conn,
+            job=job,
+            repository=repository,
+            tenant_id=tenant_id,
+            criteria=criteria,
+            profile_snapshot=profile_snapshot,
+        )
+        if reusable_repost_score is not None:
+            try:
+                outcome = _persist_reused_score(
+                    repository=repository,
+                    tenant_id=tenant_id,
+                    job=job,
+                    source_score=reusable_repost_score,
+                )
+            except Exception as exc:  # noqa: BLE001 — surface as a stage failure
+                log.error("Score reuse failed for repost %r: %s", job.get("title", "?"), exc)
+                outcome = ScoreJobOutcome(
+                    ok=False,
+                    score=None,
+                    error=f"Score reuse failed: {exc}",
+                )
+            reused_results.append((job, outcome))
+            continue
         content_key = _score_content_key(job)
         if content_key is None:
             jobs_to_compute.append(job)
@@ -456,6 +486,7 @@ def run_scoring(
             )
 
     errors = sum(1 for _, outcome in results if not outcome.ok)
+    scored_count = len(results) - errors
 
     finished_at = utc_now()
     for job, outcome in results:
@@ -505,13 +536,13 @@ def run_scoring(
 
     elapsed = time.time() - t0
     log.info(
-        "Done: %d scored in %.1fs (%.1f jobs/sec)",
-        len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0,
+        "Done: %d scored, %d failed in %.1fs (%.1f jobs/sec)",
+        scored_count, errors, elapsed, scored_count / elapsed if elapsed > 0 else 0,
     )
 
     distribution = _score_distribution(repository, tenant_id)
     return {
-        "scored": len(results),
+        "scored": scored_count,
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,
@@ -566,6 +597,34 @@ def score_job_by_url(
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
     existing = repository.load(tenant_id, JobId(job_url))
+    reusable_repost_score = _preferred_direct_score_for_repost(
+        conn=conn,
+        job=job,
+        repository=repository,
+        tenant_id=tenant_id,
+        criteria=criteria,
+        profile_snapshot=profile_snapshot,
+    )
+    if reusable_repost_score is not None and (
+        rescore
+        or existing is None
+        or not _scores_equal_for_display(existing, reusable_repost_score)
+    ):
+        outcome = _persist_reused_score(
+            repository=repository,
+            tenant_id=tenant_id,
+            job=job,
+            source_score=reusable_repost_score,
+        )
+        if outcome.ok and outcome.score is not None:
+            _record_score_stage_succeeded(
+                conn,
+                job=job,
+                score=outcome.score,
+                started_at=utc_now(),
+                validate_transition=False,
+            )
+        return outcome
     if existing is not None and not rescore:
         _ensure_existing_score_stage_succeeded(
             conn,
@@ -707,6 +766,41 @@ def _ensure_existing_score_stage_succeeded(
         "StageCompleted",
         message=f"Fit score {score.fit_score.value}/10",
         payload={"keywords": list(score.matched_keywords)},
+    )
+    _sync_score_eligibility_stage_state(conn, job_url, score, now=finished_at)
+    conn.commit()
+
+
+def _record_score_stage_succeeded(
+    conn: sqlite3.Connection,
+    *,
+    job: dict[str, Any],
+    score: JobScore,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    validate_transition: bool = False,
+) -> None:
+    job_url = str(score.job_id)
+    finished_at = finished_at or utc_now()
+    ensure_job_stage_rows(conn, job_url, discovered_at=job.get("discovered_at"))
+    set_stage_state(
+        conn,
+        job_url,
+        "score",
+        "succeeded",
+        attempt_count=1,
+        started_at=started_at or finished_at,
+        finished_at=finished_at,
+        validate_transition=validate_transition,
+    )
+    record_job_event(
+        conn,
+        job_url,
+        "score",
+        "StageCompleted",
+        message=f"Fit score {score.fit_score.value}/10",
+        payload={"keywords": list(score.matched_keywords)},
+        occurred_at=finished_at,
     )
     _sync_score_eligibility_stage_state(conn, job_url, score, now=finished_at)
     conn.commit()
@@ -859,6 +953,141 @@ def _retrieval_source_limit(limit: int) -> int:
     if limit <= 0:
         return 0
     return max(limit * 5, 50)
+
+
+def _preferred_direct_score_for_repost(
+    *,
+    conn: sqlite3.Connection,
+    job: dict[str, Any],
+    repository: ScoreRepository,
+    tenant_id: TenantId,
+    criteria: ScoringCriteria,
+    profile_snapshot: ProfileSnapshot,
+) -> JobScore | None:
+    """Return a direct canonical score for a reference-suffixed repost.
+
+    Duplicate detection can legitimately miss agency/recruiter reposts when
+    their descriptions are rewritten. Scoring still needs one user-facing
+    answer for the same effective opportunity, so a board row with an opaque
+    reference suffix reuses an already-scored direct ATS row when the role
+    title and location line up.
+    """
+
+    if not _is_reference_repost_candidate(conn, job, tenant_id=tenant_id):
+        return None
+    deleted_join = (
+        """
+        LEFT JOIN jobhunter_deleted_jobs d
+          ON d.job_url = j.url
+         AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at))
+        """
+        if _table_exists(conn, "jobhunter_deleted_jobs")
+        else ""
+    )
+    deleted_filter = "AND d.job_url IS NULL" if deleted_join else ""
+    rows = conn.execute(
+        f"""
+        SELECT j.url, j.title, j.location,
+               COALESCE(je.application_url, j.application_url) AS application_url,
+               COALESCE(c.ats_kind, 'other') AS ats_kind,
+               s.scored_at
+        FROM jobs j
+        LEFT JOIN job_enrichments je ON je.job_url = j.url
+        LEFT JOIN job_canonical_identities c
+          ON c.tenant_id = ? AND c.job_url = j.url
+        {deleted_join}
+        INNER JOIN (
+            SELECT job_url, MAX(version) AS max_version
+            FROM job_scores
+            WHERE tenant_id = ?
+            GROUP BY job_url
+        ) latest ON latest.job_url = j.url
+        INNER JOIN job_scores s
+          ON s.tenant_id = ?
+         AND s.job_url = latest.job_url
+         AND s.version = latest.max_version
+        WHERE j.url != ?
+          {deleted_filter}
+          AND (
+            COALESCE(je.application_url, j.application_url, '') != ''
+            OR COALESCE(c.ats_kind, 'other') != 'other'
+          )
+        ORDER BY
+          CASE WHEN COALESCE(c.ats_kind, 'other') != 'other' THEN 0 ELSE 1 END,
+          s.scored_at DESC
+        """,
+        (str(tenant_id), str(tenant_id), str(tenant_id), str(job.get("url") or "")),
+    ).fetchall()
+    for row in rows:
+        candidate = dict(row)
+        if not _same_reference_repost_opportunity(job, candidate):
+            continue
+        score = repository.load(tenant_id, JobId(str(candidate["url"])))
+        if score is None:
+            continue
+        if not _score_matches_context(
+            score=score,
+            criteria=criteria,
+            profile_snapshot=profile_snapshot,
+        ):
+            continue
+        return score
+    return None
+
+
+def _is_reference_repost_candidate(
+    conn: sqlite3.Connection,
+    job: dict[str, Any],
+    *,
+    tenant_id: TenantId,
+) -> bool:
+    if (job.get("application_url") or "").strip():
+        return False
+    if not role_title_has_reference_suffix(job.get("title")):
+        return False
+    job_url = str(job.get("url") or "")
+    if not job_url:
+        return False
+    row = conn.execute(
+        """
+        SELECT ats_kind
+        FROM job_canonical_identities
+        WHERE tenant_id = ? AND job_url = ?
+        ORDER BY confidence DESC
+        LIMIT 1
+        """,
+        (str(tenant_id), job_url),
+    ).fetchone()
+    if row is None:
+        return True
+    return str(row["ats_kind"] or "other") == "other"
+
+
+def _same_reference_repost_opportunity(
+    repost: dict[str, Any],
+    direct: dict[str, Any],
+) -> bool:
+    if not role_titles_match_as_repost(repost.get("title"), direct.get("title")):
+        return False
+    repost_location = normalize_location_for_repost_match(repost.get("location"))
+    direct_location = normalize_location_for_repost_match(direct.get("location"))
+    return bool(repost_location and repost_location == direct_location)
+
+
+def _scores_equal_for_display(left: JobScore, right: JobScore) -> bool:
+    return (
+        left.fit_score.value == right.fit_score.value
+        and left.trace.criteria_version == right.trace.criteria_version
+        and left.trace.profile_snapshot_version == right.trace.profile_snapshot_version
+    )
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return row is not None
 
 
 def _score_content_key(job: dict[str, Any]) -> str | None:

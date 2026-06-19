@@ -376,6 +376,7 @@ AUTO_APPROVABLE_CLAIM_MODES = ("verified_only", "evidence_reframing")
 EVIDENCE_STRENGTHS = ("verified", "supported", "inferred", "draft")
 WRITING_TONES = ("direct", "executive", "technical", "confident", "warm")
 BULLET_STYLES = ("balanced", "impact", "technical_depth", "leadership")
+BULLET_STYLE_STANDARDS = ("impact", "technical_depth", "leadership")
 VERBOSITY_LEVELS = ("concise", "balanced", "detailed")
 KEYWORD_DENSITIES = ("natural", "moderate", "high")
 
@@ -456,6 +457,7 @@ class TailoringPolicy:
 class WritingStyle:
     tone: str = "direct"
     bullet_style: str = "balanced"
+    bullet_styles: tuple[str, ...] = BULLET_STYLE_STANDARDS
     verbosity: str = "balanced"
     keyword_density: str = "natural"
     avoid_first_person: bool = True
@@ -471,6 +473,7 @@ class WritingStyle:
         return cls(
             tone=pick("tone", WRITING_TONES, "direct"),
             bullet_style=pick("bullet_style", BULLET_STYLES, "balanced"),
+            bullet_styles=BULLET_STYLE_STANDARDS,
             verbosity=pick("verbosity", VERBOSITY_LEVELS, "balanced"),
             keyword_density=pick("keyword_density", KEYWORD_DENSITIES, "natural"),
             avoid_first_person=_bool(data.get("avoid_first_person"), True),

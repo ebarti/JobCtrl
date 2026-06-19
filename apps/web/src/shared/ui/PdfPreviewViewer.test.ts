@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { pdfTextLines, type PdfAuditLineTarget } from "./pdf-audit-lines.js";
+import { pageImageUrlForPreview } from "./PdfPreviewViewer.js";
 
 const pdfjs = {
   Util: {
@@ -219,5 +220,17 @@ describe("PdfAuditPreviewViewer line geometry", () => {
     );
 
     expect(lines[0]?.resumeLineNumber).toBeNull();
+  });
+});
+
+describe("pageImageUrlForPreview", () => {
+  it("uses the server-rendered page image endpoint for artifact PDF previews", () => {
+    expect(pageImageUrlForPreview("/v1/artifacts/resume-artifact/preview.pdf?v=3", 2)).toBe(
+      "http://localhost:3000/v1/artifacts/resume-artifact/preview/page/2.png?v=3",
+    );
+  });
+
+  it("does not rewrite profile PDF previews to an endpoint the API does not expose", () => {
+    expect(pageImageUrlForPreview("/v1/profile/preview.pdf?v=3", 1)).toBeNull();
   });
 });

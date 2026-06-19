@@ -13,6 +13,8 @@ export interface JobBulkActionsProps {
   hasAnyMatching: boolean;
   hasLocalFilters?: boolean;
   loading: boolean;
+  retryLoading?: boolean;
+  pendingPreparationLoading?: boolean;
   onSetDeleted: (deleted: JobsSearch["deleted"]) => void;
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
@@ -22,6 +24,7 @@ export interface JobBulkActionsProps {
   onPermanentlyDeleteSelected: () => void;
   onRetryFailedSelected?: () => void;
   onRetryAllFailed?: () => void;
+  onRunPendingPreparation?: () => void;
   onResetStaleSuccess?: () => void;
   onMaintenanceSuccess?: () => void;
 }
@@ -36,6 +39,8 @@ export function JobBulkActions({
   hasAnyMatching,
   hasLocalFilters = false,
   loading,
+  retryLoading = loading,
+  pendingPreparationLoading = loading,
   onSetDeleted,
   onSelectPage,
   onSelectAllMatching,
@@ -45,6 +50,7 @@ export function JobBulkActions({
   onPermanentlyDeleteSelected,
   onRetryFailedSelected = () => {},
   onRetryAllFailed = () => {},
+  onRunPendingPreparation = () => {},
   onResetStaleSuccess = () => {},
   onMaintenanceSuccess = () => {},
 }: JobBulkActionsProps) {
@@ -153,21 +159,31 @@ export function JobBulkActions({
           <button
             className="tab on"
             type="button"
-            disabled={!selectedCount || loading}
+            disabled={!selectedCount || retryLoading}
             onClick={onRetryFailedSelected}
           >
             retry selected
           </button>
       ) : null}
       {retryAllFailures ? (
-        <button
-          className="tab"
-          type="button"
-          disabled={hasLocalFilters || loading}
-          onClick={onRetryAllFailed}
-        >
-          retry all failed
-        </button>
+        <>
+          <button
+            className="tab"
+            type="button"
+            disabled={hasLocalFilters || pendingPreparationLoading}
+            onClick={onRunPendingPreparation}
+          >
+            continue pending prep
+          </button>
+          <button
+            className="tab"
+            type="button"
+            disabled={hasLocalFilters || retryLoading}
+            onClick={onRetryAllFailed}
+          >
+            retry all failed
+          </button>
+        </>
       ) : null}
       {!hidden ? (
         <button

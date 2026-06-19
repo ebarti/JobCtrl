@@ -208,6 +208,84 @@ describe("<JobBulkActions>", () => {
     expect(onRetryAll).toHaveBeenCalledTimes(1);
   });
 
+  it("shows continue pending prep for active jobs", async () => {
+    const user = userEvent.setup();
+    const onRunPendingPreparation = vi.fn();
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, state: "pending" }}
+        selectedCount={0}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+        onRunPendingPreparation={onRunPendingPreparation}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /continue pending prep/i }));
+
+    expect(onRunPendingPreparation).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps retry all failed available while pending preparation is loading", async () => {
+    const user = userEvent.setup();
+    const onRetryAll = vi.fn();
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, state: "pending" }}
+        selectedCount={0}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        pendingPreparationLoading
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+        onRetryAllFailed={onRetryAll}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /continue pending prep/i })).toBeDisabled();
+    const retryAllFailed = screen.getByRole("button", { name: /retry all failed/i });
+    expect(retryAllFailed).not.toBeDisabled();
+
+    await user.click(retryAllFailed);
+
+    expect(onRetryAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides continue pending prep outside active jobs", () => {
+    renderWithProviders(
+      <JobBulkActions
+        search={{ ...baseSearch, deleted: "hidden" }}
+        selectedCount={0}
+        hasItems
+        hasAnyMatching
+        loading={false}
+        onSetDeleted={() => {}}
+        onSelectPage={() => {}}
+        onSelectAllMatching={() => {}}
+        onClearSelection={() => {}}
+        onPrimaryAction={() => {}}
+        onHideSelected={() => {}}
+        onPermanentlyDeleteSelected={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /continue pending prep/i })).not.toBeInTheDocument();
+  });
+
   it("invokes permanent delete from deleted jobs", async () => {
     const user = userEvent.setup();
     const onPermanentDelete = vi.fn();

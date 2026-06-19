@@ -597,18 +597,48 @@ export const BulkJobMutationFilterSchema = z
   .strict();
 export type BulkJobMutationFilter = z.infer<typeof BulkJobMutationFilterSchema>;
 
-export const BulkJobMutationRequestSchema = z
-  .object({
-    jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
-    allMatching: z.boolean().default(false),
-    filter: BulkJobMutationFilterSchema.optional(),
-    reason: z.string().trim().max(400).optional(),
-  })
+const BulkJobMutationRequestBaseSchema = z.object({
+  jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
+  allMatching: z.boolean().default(false),
+  filter: BulkJobMutationFilterSchema.optional(),
+  reason: z.string().trim().max(400).optional(),
+});
+
+export const BulkJobMutationRequestSchema = BulkJobMutationRequestBaseSchema
   .strict()
   .refine((value) => value.allMatching || value.jobKeys.length > 0, {
     message: "Provide jobKeys or set allMatching.",
   });
 export type BulkJobMutationRequest = z.infer<typeof BulkJobMutationRequestSchema>;
+
+export const BulkRetryFailedRequestSchema = BulkJobMutationRequestBaseSchema
+  .extend({
+    runAfter: z.boolean().default(false),
+    workers: z.coerce.number().int().min(1).max(16).default(1),
+    minScore: z.coerce.number().int().min(0).max(10).default(7),
+    validationMode: z.enum(PIPELINE_VALIDATION_MODES).default("normal"),
+    dryRun: z.boolean().default(false),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
+  })
+  .strict()
+  .refine((value) => value.allMatching || value.jobKeys.length > 0, {
+    message: "Provide jobKeys or set allMatching.",
+  });
+export type BulkRetryFailedRequest = z.infer<typeof BulkRetryFailedRequestSchema>;
+
+export const BulkRunPendingPreparationRequestSchema = BulkJobMutationRequestBaseSchema
+  .extend({
+    workers: z.coerce.number().int().min(1).max(16).default(1),
+    minScore: z.coerce.number().int().min(0).max(10).default(7),
+    validationMode: z.enum(PIPELINE_VALIDATION_MODES).default("normal"),
+    dryRun: z.boolean().default(false),
+    llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
+  })
+  .strict()
+  .refine((value) => value.allMatching || value.jobKeys.length > 0, {
+    message: "Provide jobKeys or set allMatching.",
+  });
+export type BulkRunPendingPreparationRequest = z.infer<typeof BulkRunPendingPreparationRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Profile schemas — mirror packages/domain-types/src/profile/profile.ts
@@ -1881,6 +1911,23 @@ export interface JobMutationResponse {
   ok: true;
   count: number;
   jobKeys: string[];
+}
+
+export interface BulkRetryFailedResponse extends JobMutationResponse {
+  status: string;
+  runAfter: boolean;
+  stageCounts: Partial<Record<Stage, number>>;
+  actions: ActionRunResponse[];
+  eventCursor?: string | null;
+  message?: string;
+}
+
+export interface BulkRunPendingPreparationResponse extends JobMutationResponse {
+  status: string;
+  stageCounts: Partial<Record<Stage, number>>;
+  actions: ActionRunResponse[];
+  eventCursor?: string | null;
+  message?: string;
 }
 
 export interface RescoreJobResponse extends JobMutationResponse {

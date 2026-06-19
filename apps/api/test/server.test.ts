@@ -3472,6 +3472,288 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("dispatches run-after bulk retry as grouped preparation workflows", async () => {
+    const secondFailedUrl = "https://example.com/jobs/failed-score-two";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: secondFailedUrl,
+      title: "Second Failed Score",
+      site: "ExampleCo",
+      fitScore: null,
+      scoredAt: null,
+    });
+    insertStage(seedDb, secondFailedUrl, "discover", "succeeded");
+    insertStage(seedDb, secondFailedUrl, "enrich", "succeeded");
+    insertStage(seedDb, secondFailedUrl, "score", "failed", "LLM_ERROR");
+    seedDb.close();
+    const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({
+      status: "queued",
+      workflowId: "retry-score-workflow",
+      runId: "retry-score-run",
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: false,
+        jobKeys: [
+          "https://example.com/jobs/failed-score",
+          secondFailedUrl,
+          "https://example.com/jobs/ready",
+        ],
+        runAfter: true,
+        workers: 14,
+        minScore: 8,
+        validationMode: "strict",
+        dryRun: false,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      count: 2,
+      jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+      stageCounts: { score: 2 },
+      runAfter: true,
+      status: "queued",
+      actions: [
+        {
+          action: "run_stage",
+          status: "queued",
+          jobKey: "pipeline",
+          workflowId: "retry-score-workflow",
+          runId: "retry-score-run",
+          command: {
+            action: "run_stage",
+            jobKey: "pipeline",
+            jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+            stage: "score",
+            stages: ["score", "tailor", "cover"],
+            workers: 14,
+            limit: 2,
+            minScore: 8,
+            validationMode: "strict",
+            dryRun: false,
+          },
+        },
+      ],
+    });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobKeys: ["https://example.com/jobs/failed-score", secondFailedUrl],
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
+        workers: 14,
+        limit: 2,
+        minScore: 8,
+        validationMode: "strict",
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    const db = new Database(options.dbPath);
+    const states = db
+      .prepare("SELECT job_url, state FROM job_stage_states WHERE stage = 'score' AND job_url IN (?, ?) ORDER BY job_url")
+      .all("https://example.com/jobs/failed-score", secondFailedUrl) as Array<{ job_url: string; state: string }>;
+    const queuedEvents = db
+      .prepare("SELECT job_url, event_type, payload_json FROM job_events WHERE event_type = 'StageQueued' ORDER BY job_url")
+      .all() as Array<{ job_url: string; event_type: string; payload_json: string }>;
+    db.close();
+
+    expect(states).toEqual([
+      { job_url: "https://example.com/jobs/failed-score", state: "queued" },
+      { job_url: secondFailedUrl, state: "queued" },
+    ]);
+    expect(queuedEvents).toHaveLength(2);
+    expect(JSON.parse(queuedEvents[0]!.payload_json)).toMatchObject({
+      source: "bulk_retry_failed",
+      workflowId: "retry-score-workflow",
+      runId: "retry-score-run",
+      requestedWorkers: 14,
+      requestedLimit: 2,
+    });
+
+    await app.close();
+  });
+
+  it("dispatches eligible pending preparation as grouped workflows without resetting failures or apply", async () => {
+    const pendingEnrichUrl = "https://example.com/jobs/pending-enrich";
+    const pendingScoreUrl = "https://example.com/jobs/pending-score-bulk";
+    const pendingTailorUrl = "https://example.com/jobs/pending-tailor-bulk";
+    const pendingApplyUrl = "https://example.com/jobs/pending-apply";
+    const lowFitTailorUrl = "https://example.com/jobs/low-fit-pending-tailor";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: pendingEnrichUrl,
+      title: "Pending Enrich",
+      site: "ExampleCo",
+      fullDescription: "",
+      fitScore: null,
+      scoredAt: null,
+    });
+    insertStage(seedDb, pendingEnrichUrl, "discover", "succeeded");
+    insertStage(seedDb, pendingEnrichUrl, "enrich", "pending");
+    insertJob(seedDb, {
+      url: pendingScoreUrl,
+      title: "Pending Score",
+      site: "ExampleCo",
+      fitScore: null,
+      scoredAt: null,
+    });
+    insertStage(seedDb, pendingScoreUrl, "discover", "succeeded");
+    insertStage(seedDb, pendingScoreUrl, "enrich", "succeeded");
+    insertStage(seedDb, pendingScoreUrl, "score", "pending");
+    insertJob(seedDb, {
+      url: pendingTailorUrl,
+      title: "Pending Tailor",
+      site: "ExampleCo",
+      fitScore: 8,
+    });
+    insertScore(seedDb, pendingTailorUrl, 1, 8);
+    insertStage(seedDb, pendingTailorUrl, "discover", "succeeded");
+    insertStage(seedDb, pendingTailorUrl, "enrich", "succeeded");
+    insertStage(seedDb, pendingTailorUrl, "score", "succeeded");
+    insertStage(seedDb, pendingTailorUrl, "tailor", "pending");
+    insertJob(seedDb, {
+      url: lowFitTailorUrl,
+      title: "Low Fit Pending Tailor",
+      site: "ExampleCo",
+      fitScore: 5,
+    });
+    insertScore(seedDb, lowFitTailorUrl, 1, 5);
+    insertStage(seedDb, lowFitTailorUrl, "discover", "succeeded");
+    insertStage(seedDb, lowFitTailorUrl, "enrich", "succeeded");
+    insertStage(seedDb, lowFitTailorUrl, "score", "succeeded");
+    insertStage(seedDb, lowFitTailorUrl, "tailor", "pending");
+    insertJob(seedDb, {
+      url: pendingApplyUrl,
+      title: "Pending Apply",
+      site: "ExampleCo",
+      fitScore: 9,
+      tailoredPath: "/tmp/resume.pdf",
+    });
+    insertScore(seedDb, pendingApplyUrl, 1, 9);
+    insertStage(seedDb, pendingApplyUrl, "discover", "succeeded");
+    insertStage(seedDb, pendingApplyUrl, "enrich", "succeeded");
+    insertStage(seedDb, pendingApplyUrl, "score", "succeeded");
+    insertStage(seedDb, pendingApplyUrl, "tailor", "succeeded");
+    insertStage(seedDb, pendingApplyUrl, "cover", "succeeded");
+    insertStage(seedDb, pendingApplyUrl, "apply", "pending");
+    seedDb.close();
+    const dispatch = vi.fn(async (command: ActionCommandPayload): Promise<ActionDispatchResult> => ({
+      status: "queued",
+      workflowId: `pending-${command.stage}-workflow`,
+      runId: `pending-${command.stage}-run`,
+    }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-run-pending-preparation",
+      payload: {
+        allMatching: false,
+        jobKeys: [
+          pendingEnrichUrl,
+          pendingScoreUrl,
+          pendingTailorUrl,
+          lowFitTailorUrl,
+          pendingApplyUrl,
+          "https://example.com/jobs/failed-score",
+        ],
+        workers: 14,
+        minScore: 7,
+        validationMode: "normal",
+        dryRun: false,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      count: 3,
+      jobKeys: [pendingEnrichUrl, pendingScoreUrl, pendingTailorUrl],
+      stageCounts: { enrich: 1, score: 1, tailor: 1 },
+      status: "queued",
+    });
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobKeys: [pendingEnrichUrl],
+        stage: "enrich",
+        stages: ["enrich", "score", "tailor", "cover"],
+        workers: 14,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobKeys: [pendingScoreUrl],
+        stage: "score",
+        stages: ["score", "tailor", "cover"],
+        workers: 14,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "run_stage",
+        jobKey: "pipeline",
+        jobKeys: [pendingTailorUrl],
+        stage: "tailor",
+        stages: ["tailor", "cover"],
+        workers: 14,
+      }),
+      expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
+    );
+
+    const db = new Database(options.dbPath);
+    const queuedStates = db
+      .prepare(
+        `SELECT job_url, stage, state FROM job_stage_states
+         WHERE job_url IN (?, ?, ?) AND state = 'queued'
+         ORDER BY job_url`,
+      )
+      .all(pendingEnrichUrl, pendingScoreUrl, pendingTailorUrl) as Array<{
+        job_url: string;
+        stage: string;
+        state: string;
+      }>;
+    const failed = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'score'")
+      .get("https://example.com/jobs/failed-score") as { state: string };
+    const apply = db
+      .prepare("SELECT state FROM job_stage_states WHERE job_url = ? AND stage = 'apply'")
+      .get(pendingApplyUrl) as { state: string };
+    const queuedEvent = db
+      .prepare("SELECT payload_json FROM job_events WHERE event_type = 'StageQueued' AND job_url = ?")
+      .get(pendingScoreUrl) as { payload_json: string };
+    db.close();
+
+    expect(queuedStates).toEqual([
+      { job_url: pendingEnrichUrl, stage: "enrich", state: "queued" },
+      { job_url: pendingScoreUrl, stage: "score", state: "queued" },
+      { job_url: pendingTailorUrl, stage: "tailor", state: "queued" },
+    ]);
+    expect(failed.state).toBe("failed");
+    expect(apply.state).toBe("pending");
+    expect(JSON.parse(queuedEvent.payload_json)).toMatchObject({
+      source: "bulk_run_pending_preparation",
+      workflowId: "pending-score-workflow",
+      requestedWorkers: 14,
+    });
+
+    await app.close();
+  });
+
   it("skips non-retryable failed stages in the bulk retry action", async () => {
     const seedDb = new Database(options.dbPath);
     seedDb

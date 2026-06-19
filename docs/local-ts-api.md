@@ -23,6 +23,16 @@ The web Profile, Preferences, Discovery target search, and Settings forms
 autosave five seconds after the last edit using the same profile/settings
 mutation paths as the explicit Save buttons; failed validation or mutation
 errors stay on the local form surface.
+The Preferences Application configurations section owns the user-editable
+Location filter control and persists it through the local settings mutation;
+the Discovery page owns target search plus automation controls such as minimum
+fit score and auto apply. The Settings page keeps execution-only controls such
+as apply concurrency.
+When `VITE_GOOGLE_MAPS_API_KEY` is available to the web dev process, the Profile
+Address field progressively enhances into a Google Maps Places address search.
+Selecting a Google result updates the existing address, city, state/province,
+country, and postal-code profile fields; without the key, the field remains a
+normal editable street-address input.
 
 Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
@@ -304,6 +314,14 @@ work. The Jobs page uses this route for eligible viewed rows that are `pending`
 on a visible preparation substage, and starts at most one pickup per unchanged
 list snapshot so pending preparation continues autonomously without page-render
 fanout.
+- `POST /v1/jobs/bulk-run-pending-preparation` accepts selected jobs or all
+  matching jobs. It does not reset stages. It selects the first eligible pending
+  preparation substage per job (`enrich`, `score`, `tailor`, or `cover`),
+  groups those jobs by substage, and dispatches bounded `run_stage` workflows
+  with selected job URLs and the requested worker count. Known-ineligible,
+  failed, exhausted, already-complete, low-fit, and `apply`-pending rows are
+  ignored. The Jobs toolbar exposes this as `continue pending prep` so pending
+  preparation backlogs are not dependent on page-local pickup.
 
 The `limit` field is forwarded to every selected stage. For `discover`, the
 Python runner passes it into JobSpy, Workday, Smart Extract, Discovery's
@@ -342,10 +360,24 @@ Current-version preparation maintenance actions are separate endpoints:
   `cover`, starting at the retried stage). `apply` retry still dispatches the
   explicit apply action; retries do not auto-submit applications unless the
   requested stage is `apply`.
+- `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
+  With the default `runAfter: false` it only resets each retryable failed stage
+  to `pending`. With `runAfter: true`, the API groups reset preparation stages
+  (`enrich`, `score`, `tailor`, `cover`) and dispatches bounded batch
+  `run_stage` workflows with the selected job URLs and requested worker count.
+  The route records pipeline workflow metadata plus per-job `StageQueued`
+  events with `source: "bulk_retry_failed"` so later debugging can tell which
+  action picked up the reset rows. `apply` failures are reset but not
+  auto-run from the bulk retry route.
 - The active Jobs bulk toolbar exposes `retry all failed` outside the failed
   state filter. It posts the current Jobs filters with `state: failed` and
-  `deleted: active`, so users can recover failed substages from pending or
-  mixed-state views without selecting each failed row first.
+  `deleted: active`, sets `runAfter: true`, and sends the saved pipeline worker
+  controls so users can recover failed substages from pending or mixed-state
+  views without selecting each failed row first.
+- The active Jobs bulk toolbar also exposes `continue pending prep`, posting
+  the current Jobs filters with `state: pending` and `deleted: active` to the
+  bulk pending-preparation endpoint. The endpoint still filters out application
+  work, so this control never auto-submits applications.
 
 First-time manual tailoring is not a re-tailor action. The job detail stage
 timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal

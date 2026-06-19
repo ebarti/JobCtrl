@@ -1,20 +1,60 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
 import { StructuredProfileEditor } from "./StructuredProfileEditor.js";
 
+type ProfileFixture = Record<string, unknown> & {
+  personal: Record<string, unknown>;
+};
+
+const googleAddressSelection = vi.hoisted(() => ({
+  current: {
+    address: "17 Carrer Joan Maragall",
+    city: "Cabrera de Mar",
+    country: "Spain",
+    postalCode: "08349",
+    provinceState: "",
+  },
+}));
+
+vi.mock("./GoogleAddressSearchField.js", () => ({
+  GoogleAddressSearchField: ({
+    value,
+    onAddressChange,
+    onAddressSelect,
+  }: {
+    value: string;
+    onAddressChange: (value: string) => void;
+    onAddressSelect: (selection: typeof googleAddressSelection.current) => void;
+  }) => (
+    <div className="field google-address-field">
+      <label htmlFor="mock-google-address">Address</label>
+      <input
+        id="mock-google-address"
+        value={value}
+        onChange={(event) => onAddressChange(event.target.value)}
+      />
+      <button type="button" onClick={() => onAddressSelect(googleAddressSelection.current)}>
+        Select Google address
+      </button>
+    </div>
+  ),
+  isUnitedStatesAddressCountry: (country: string) =>
+    ["us", "usa", "united states", "united states of america"].includes(country.trim().toLowerCase()),
+}));
+
 function StatefulEditor({
+  initialProfile = sampleProfileResponse.profile,
   mode,
-  onLatestProfile,
+  onLatestProfile = () => undefined,
 }: {
+  initialProfile?: unknown;
   mode?: "profile" | "preferences";
-  onLatestProfile: (value: string) => void;
+  onLatestProfile?: (value: string) => void;
 }) {
-  const [profileText, setProfileText] = useState(
-    JSON.stringify(sampleProfileResponse.profile, null, 2),
-  );
+  const [profileText, setProfileText] = useState(JSON.stringify(initialProfile, null, 2));
   const [styleText, setStyleText] = useState(JSON.stringify(sampleProfileResponse.style, null, 2));
   const updateProfile = (value: string) => {
     onLatestProfile(value);
@@ -51,6 +91,16 @@ describe("<StructuredProfileEditor>", () => {
     ]);
   });
 
+  it("renders bullet standards as a combined fixed set", () => {
+    render(<StatefulEditor mode="preferences" />);
+
+    expect(screen.queryByLabelText("Bullet style")).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Bullet standards" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Impact" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Technical depth" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Leadership" })).toBeChecked();
+  });
+
   it("adds, edits, and removes achievement evidence", async () => {
     let latestProfile = JSON.stringify(sampleProfileResponse.profile, null, 2);
     render(<StatefulEditor onLatestProfile={(value) => { latestProfile = value; }} />);
@@ -74,5 +124,90 @@ describe("<StructuredProfileEditor>", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Remove achievement evidence 1" }));
     expect(JSON.parse(latestProfile).resume.experience_entries[0].achievement_evidence).toEqual([]);
+  });
+
+  it("hides state/province for non-US profiles", () => {
+    const baseProfile = sampleProfileResponse.profile as ProfileFixture;
+    const initialProfile = {
+      ...baseProfile,
+      personal: {
+        ...baseProfile.personal,
+        country: "Spain",
+        province_state: "Catalunya",
+      },
+    };
+
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={() => undefined} />);
+
+    expect(screen.queryByLabelText("State / province")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Country")).toHaveValue("Spain");
+  });
+
+  it("shows state/province for US profiles", () => {
+    const baseProfile = sampleProfileResponse.profile as ProfileFixture;
+    const initialProfile = {
+      ...baseProfile,
+      personal: {
+        ...baseProfile.personal,
+        country: "United States",
+        province_state: "California",
+      },
+    };
+
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={() => undefined} />);
+
+    expect(screen.getByLabelText("State / province")).toHaveValue("California");
+  });
+
+  it("replaces structured address fields from a validated Google address selection", () => {
+    const baseProfile = sampleProfileResponse.profile as ProfileFixture;
+    const initialProfile = {
+      ...baseProfile,
+      personal: {
+        ...baseProfile.personal,
+        address: "Old address",
+        city: "Old city",
+        country: "Old country",
+        postal_code: "99999",
+        province_state: "Old state",
+      },
+    };
+    let latestProfile = JSON.stringify(initialProfile, null, 2);
+    render(
+      <StatefulEditor
+        initialProfile={initialProfile}
+        onLatestProfile={(value) => {
+          latestProfile = value;
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Google address" }));
+
+    expect(JSON.parse(latestProfile).personal).toMatchObject({
+      address: "17 Carrer Joan Maragall",
+      city: "Cabrera de Mar",
+      country: "Spain",
+      postal_code: "08349",
+      province_state: "",
+    });
+
+    googleAddressSelection.current = {
+      address: "1 Plaza Mayor",
+      city: "Madrid",
+      country: "Spain",
+      postalCode: "",
+      provinceState: "",
+    };
+
+    fireEvent.click(screen.getByRole("button", { name: "Select Google address" }));
+
+    expect(JSON.parse(latestProfile).personal).toMatchObject({
+      address: "1 Plaza Mayor",
+      city: "Madrid",
+      country: "Spain",
+      postal_code: "",
+      province_state: "",
+    });
   });
 });

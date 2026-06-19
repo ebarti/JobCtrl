@@ -33,6 +33,7 @@ from jobhunter.domain.scoring import (
     ScoreBreakdown,
     ScoringCriteria,
     ScoringPolicy,
+    ScoreTrace,
     WeightedScoreDimension,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT
@@ -199,11 +200,12 @@ def _seed_pending_job_with_description(
     discovered_at: str,
     company: str = "Acme",
     location: str = "Remote",
+    application_url: str | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO jobs (url, title, company, site, location, full_description, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (url, title, company, "linkedin", location, description, discovered_at),
+        "INSERT INTO jobs (url, title, company, site, location, full_description, discovered_at, application_url) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (url, title, company, "linkedin", location, description, discovered_at, application_url),
     )
     conn.commit()
 
@@ -439,6 +441,101 @@ def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
     }
     assert {row["error_code"] for row in rows} == {"SCORE_ELIGIBILITY_BLOCKED"}
     assert all("candidate requires sponsorship" in row["error_message"] for row in rows)
+
+
+def test_score_job_by_url_reuses_direct_score_for_reference_repost(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+) -> None:
+    direct_url = "https://es.indeed.com/viewjob?jk=direct-ai-security"
+    repost_url = "https://www.linkedin.com/jobs/view/reference-ai-security"
+    criteria = ScoringCriteria()
+    _seed_pending_job_with_description(
+        conn,
+        url=direct_url,
+        title="AI Security Director",
+        company="Arxada",
+        location="Barcelona, Catalonia, Spain",
+        description="Lead AI security strategy, governance, controls, risk, and senior stakeholder alignment.",
+        discovered_at="2026-06-17T18:51:29+00:00",
+        application_url="https://example.workdayjobs.com/job/AI-Security-Director_R53680",
+    )
+    _seed_pending_job_with_description(
+        conn,
+        url=repost_url,
+        title="AI Security Director - TWE45972",
+        company="twentyAI",
+        location="Barcelona, Catalonia, Spain",
+        description="Establish and lead an AI Security capability across a large enterprise.",
+        discovered_at="2026-06-17T18:51:30+00:00",
+    )
+    conn.execute(
+        """
+        INSERT INTO job_canonical_identities (
+            tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+        ) VALUES ('local', ?, ?, 'workday', 'AI-Security-Director_R53680', 0.82, ?)
+        """,
+        (
+            direct_url,
+            "https://example.workdayjobs.com/job/AI-Security-Director_R53680",
+            "2026-06-17T18:51:29+00:00",
+        ),
+    )
+    repo = SqliteScoreRepository(conn)
+    repo.save(
+        JobScore.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(direct_url),
+            fit_score=FitScore.create(9),
+            breakdown=ScoreBreakdown(reasoning="Direct canonical score."),
+            matched_keywords=MatchedKeywords.from_iterable(["AI Security"]),
+            scored_at="2026-06-18T12:52:15+00:00",
+            criteria=criteria,
+            trace=ScoreTrace(
+                criteria_version=criteria.criteria_version,
+                profile_snapshot_version=profile_snapshot.version,
+            ),
+        )
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 10,
+            "technical_fit": 10,
+            "experience_fit": 10,
+            "role_fit": 10,
+            "keywords": ["AI Security"],
+            "reasoning": "would drift if called",
+        }
+    )
+
+    outcome = scorer_module.score_job_by_url(
+        repost_url,
+        profile_snapshot=profile_snapshot,
+        resume_text="AI security leader.",
+        criteria=criteria,
+        repository=repo,
+        llm_port=llm,
+    )
+
+    assert outcome.ok is True
+    assert llm.calls == 0
+    repost_score = repo.load(LOCAL_TENANT, JobId(repost_url))
+    assert repost_score is not None
+    assert repost_score.fit_score.value == 9
+    event = conn.execute(
+        """
+        SELECT event_type, message
+        FROM job_events
+        WHERE job_url = ? AND stage = 'score'
+        ORDER BY event_id DESC
+        LIMIT 1
+        """,
+        (repost_url,),
+    ).fetchone()
+    assert event["event_type"] == "StageCompleted"
+    assert event["message"] == "Fit score 9/10"
 
 
 def test_score_job_prompt_uses_company_not_source(
@@ -729,6 +826,7 @@ def test_run_scoring_fails_before_llm_when_employer_analysis_fails(
         analyze_use_case=analyze,
     )
 
+    assert summary["scored"] == 0
     assert summary["errors"] == 1
     assert analyze.calls == 1
     assert llm.calls == 0
@@ -869,6 +967,87 @@ def test_run_scoring_reuses_existing_same_content_score_without_llm(
     assert pending_score is not None and pending_score.fit_score.value == 9
 
 
+def test_run_scoring_reuses_direct_score_for_reference_repost_without_llm(
+    conn: sqlite3.Connection, profile_snapshot, monkeypatch
+) -> None:
+    direct_url = "https://es.indeed.com/viewjob?jk=direct-ai-security"
+    repost_url = "https://www.linkedin.com/jobs/view/reference-ai-security"
+    criteria = ScoringCriteria()
+    _seed_pending_job_with_description(
+        conn,
+        url=direct_url,
+        title="AI Security Director",
+        company="Arxada",
+        location="Barcelona, Catalonia, Spain",
+        description="Lead AI security strategy, governance, controls, risk, and senior stakeholder alignment.",
+        discovered_at="2026-06-17T18:51:29+00:00",
+        application_url="https://example.workdayjobs.com/job/AI-Security-Director_R53680",
+    )
+    _seed_pending_job_with_description(
+        conn,
+        url=repost_url,
+        title="AI Security Director - TWE45972",
+        company="twentyAI",
+        location="Barcelona, Catalonia, Spain",
+        description="Establish and lead an AI Security capability across a large enterprise.",
+        discovered_at="2026-06-17T18:51:30+00:00",
+    )
+    conn.execute(
+        """
+        INSERT INTO job_canonical_identities (
+            tenant_id, job_url, canonical_url, ats_kind, source_native_id, confidence, resolved_at
+        ) VALUES ('local', ?, ?, 'workday', 'AI-Security-Director_R53680', 0.82, ?)
+        """,
+        (
+            direct_url,
+            "https://example.workdayjobs.com/job/AI-Security-Director_R53680",
+            "2026-06-17T18:51:29+00:00",
+        ),
+    )
+    repo = SqliteScoreRepository(conn)
+    repo.save(
+        JobScore.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=JobId(direct_url),
+            fit_score=FitScore.create(9),
+            breakdown=ScoreBreakdown(reasoning="Direct canonical score."),
+            matched_keywords=MatchedKeywords.from_iterable(["AI Security"]),
+            scored_at="2026-06-18T12:52:15+00:00",
+            criteria=criteria,
+            trace=ScoreTrace(
+                criteria_version=criteria.criteria_version,
+                profile_snapshot_version=profile_snapshot.version,
+            ),
+        )
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    llm = _ScriptedLlm(
+        {
+            "score": 10,
+            "technical_fit": 10,
+            "experience_fit": 10,
+            "role_fit": 10,
+            "keywords": ["AI Security"],
+            "reasoning": "would drift if called",
+        }
+    )
+
+    summary = scorer_module.run_scoring(
+        profile_snapshot=profile_snapshot,
+        repository=repo,
+        llm_port=llm,
+        resume_text="AI security leader.",
+        criteria=criteria,
+    )
+
+    assert summary["scored"] == 1
+    assert summary["errors"] == 0
+    assert llm.calls == 0
+    repost_score = repo.load(LOCAL_TENANT, JobId(repost_url))
+    assert repost_score is not None
+    assert repost_score.fit_score.value == 9
+
+
 def test_run_scoring_records_failure_state_when_llm_returns_garbage(
     conn: sqlite3.Connection, profile_snapshot, monkeypatch
 ) -> None:
@@ -893,7 +1072,7 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
         llm_port=llm,
         resume_text="anything",
     )
-    assert summary["scored"] == 1
+    assert summary["scored"] == 0
     assert summary["errors"] == 1
     assert repo.load(LOCAL_TENANT, JobId(url)) is None
 

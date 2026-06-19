@@ -1,3 +1,4 @@
+import type { RequirementFitReport } from "@jobhunter/contracts";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
@@ -97,6 +98,52 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Experience with Kubernetes-based developer platforms",
     });
     expect(within(transferable).getByText("missing from profile · 0 bullets")).toBeInTheDocument();
+  });
+
+  it("keeps rendering legacy transferable assessments when a persisted row value is missing", () => {
+    const transferableAssessment = populatedRequirementFitReport.assessments[1]!;
+    const legacyReport = {
+      ...populatedRequirementFitReport,
+      assessments: [
+        populatedRequirementFitReport.assessments[0]!,
+        {
+          ...transferableAssessment,
+          fit: {
+            kind: "transferable",
+            evidenceIds: transferableAssessment.fit.kind === "transferable" ? transferableAssessment.fit.evidenceIds : [],
+            bridge:
+              "Kubernetes operations evidence can support adjacent platform experience.",
+          },
+          tailoring: {
+            ...transferableAssessment.tailoring,
+            targetKeywords: undefined,
+            prohibitedClaims: undefined,
+          },
+          artifactCoverage: {
+            ...transferableAssessment.artifactCoverage,
+            examples: undefined,
+          },
+        },
+      ],
+    } as unknown as RequirementFitReport;
+
+    render(
+      <EmployerAnalysisPanel
+        analysis={populatedEmployerAnalysis}
+        requirementFitReport={legacyReport}
+      />,
+    );
+
+    const transferable = screen.getByRole("article", {
+      name: "Requirement: Experience with Kubernetes-based developer platforms",
+    });
+    expect(within(transferable).getByText("transferable")).toBeInTheDocument();
+    expect(within(transferable).getByText("Bridge")).toBeInTheDocument();
+    expect(
+      within(transferable).getByText("Kubernetes operations evidence can support adjacent platform experience."),
+    ).toBeInTheDocument();
+    expect(within(transferable).getByText("ev-k8s")).toBeInTheDocument();
+    expect(within(transferable).queryByText("Gap")).not.toBeInTheDocument();
   });
 
   it("shows not assessed when no requirement fit report exists", () => {

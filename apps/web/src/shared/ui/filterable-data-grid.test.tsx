@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
@@ -43,6 +43,12 @@ const columns: Array<DataGridColumn<TestRow>> = [
     render: (row) => row.observed,
     getSortValue: (row) => row.observed,
   },
+];
+
+const resizableColumns: Array<DataGridColumn<TestRow>> = [
+  { ...columns[0]!, width: 200, minWidth: 120 },
+  { ...columns[1]!, width: 180, minWidth: 120 },
+  { ...columns[2]!, width: 120, minWidth: 80 },
 ];
 
 function renderGrid() {
@@ -262,6 +268,43 @@ describe("FilterableDataGrid", () => {
     expect(onPageRowsChange).toHaveBeenLastCalledWith([rows[0]]);
   });
 
+  it("resizes columns from header handles with keyboard and pointer input", async () => {
+    render(
+      <FilterableDataGrid
+        title="Grid view"
+        data={rows}
+        columns={resizableColumns}
+        getRowId={(row) => row.id}
+        loading={false}
+        loadingMessage="Loading rows."
+        emptyMessage="No rows."
+        initialSort={{ columnId: "company", direction: "asc" }}
+      />,
+    );
+    const user = userEvent.setup();
+    const companyHandle = screen.getByRole("button", {
+      name: "Resize Company column",
+    });
+    const companyCol = document.querySelector<HTMLTableColElement>(
+      'col[data-column-id="company"]',
+    );
+
+    expect(companyCol).toHaveStyle({ width: "200px" });
+
+    companyHandle.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(companyCol).toHaveStyle({ width: "216px" });
+
+    fireEvent(
+      companyHandle,
+      new MouseEvent("pointerdown", { bubbles: true, clientX: 100 }),
+    );
+    fireEvent(window, new MouseEvent("pointermove", { clientX: 160 }));
+    fireEvent(window, new MouseEvent("pointerup"));
+
+    expect(companyCol).toHaveStyle({ width: "276px" });
+  });
+
   it("keeps dense grid focus indicators tied to the standard ring token", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
 
@@ -271,6 +314,9 @@ describe("FilterableDataGrid", () => {
     );
     expect(css).toMatch(
       /\.data-grid-column-filter-button:focus-visible\s*\{[^}]*--ring/s,
+    );
+    expect(css).toMatch(
+      /\.data-grid-column-resizer:focus-visible\s*\{[^}]*--ring/s,
     );
   });
 });

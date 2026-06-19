@@ -132,6 +132,7 @@ class _ScriptedLlm:
     def __init__(self, *responses: dict) -> None:
         self._queue: list[dict] = [dict(r) for r in responses]
         self.calls: list[list[LlmMessage]] = []
+        self.kwargs: list[dict[str, Any]] = []
 
     def chat(  # pragma: no cover — structured-output cutover routes through chat_json
         self,
@@ -156,6 +157,15 @@ class _ScriptedLlm:
         thinking_budget=None,
     ) -> dict:
         self.calls.append(list(messages))
+        self.kwargs.append(
+            {
+                "response_schema": response_schema,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "thinking_budget": thinking_budget,
+            }
+        )
         if not self._queue:
             raise AssertionError("ScriptedLlm exhausted")
         return self._queue.pop(0)
@@ -256,6 +266,35 @@ def _profile_snapshot_with_evidence(tmp_path):
         },
     }
     repo = build_profile_repository(db_path=tmp_path / "profile-evidence.db")
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
+    return repo.load_snapshot(LOCAL_TENANT)
+
+
+def _profile_snapshot_with_education(tmp_path):
+    profile = {
+        "personal": {"full_name": "Tester"},
+        "resume": {
+            "executive_profile": {"baseline_text": "Security engineering leader."},
+            "experience_entries": [
+                {
+                    "id": "security_leadership",
+                    "title": "Security Engineering Lead",
+                    "company": "Acme",
+                    "bullets": ["Led enterprise security governance programmes."],
+                }
+            ],
+            "education_entries": [
+                {
+                    "id": "security_degree",
+                    "degree": "Bachelor of Science in Information Security",
+                    "institution": "State University",
+                    "date": "2016",
+                }
+            ],
+            "skill_categories": [],
+        },
+    }
+    repo = build_profile_repository(db_path=tmp_path / "profile-education.db")
     repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, profile))
     return repo.load_snapshot(LOCAL_TENANT)
 
@@ -532,6 +571,101 @@ def test_score_job_happy_path_persists_and_publishes(profile_snapshot) -> None:
     assert len(received) == 1
     assert received[0].event_type == "JobScored"
     assert received[0].payload["fit_score"] == 8
+
+
+def test_score_job_omits_structured_output_token_cap(profile_snapshot) -> None:
+    repo = _MemoryRepo()
+    llm = _ScriptedLlm(_strong_llm_response())
+
+    outcome = ScoreJobUseCase(repository=repo, llm=llm).score(
+        job=_job(),
+        profile_snapshot=profile_snapshot,
+    )
+
+    assert outcome.ok is True
+    assert llm.kwargs[0]["max_tokens"] is None
+    assert llm.kwargs[0]["temperature"] == 0.0
+    assert llm.kwargs[0]["thinking_budget"] == 0
+
+
+def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
+    score_repo = _MemoryRepo()
+    report_repo = _MemoryRequirementFitRepo()
+    job = {
+        **_job("https://example.com/job/education-fit"),
+        "full_description": "Bachelor's degree in Information Security or equivalent experience required.",
+    }
+    snapshot = _profile_snapshot_with_education(tmp_path)
+    canonical = JobAnalysis(
+        role_framing="Security leadership.",
+        inferred_seniority="senior",
+        ideal_candidate_narrative="A security leader with relevant education.",
+        requirements=[
+            Requirement(
+                id="req-degree",
+                text="Bachelor's degree in Information Security or equivalent experience.",
+                tier="must_have",
+                weight=0.55,
+                evidence_span="Bachelor's degree in Information Security",
+            )
+        ],
+        keywords=[
+            ReasonedKeyword(
+                keyword="Information Security",
+                evidence_span="Information Security",
+                requirement_ref="req-degree",
+            )
+        ],
+    )
+    analysis = EmployerAnalysis.build(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId(job["url"]),
+        generation=1,
+        snapshot_hash=compute_snapshot_hash(job["full_description"]),
+        canonical=canonical,
+        sub_analyses=(),
+        failures=(),
+        agreement=AnalysisAgreement(score=1.0),
+        legs_attempted=1,
+    )
+    llm = _ScriptedLlm(
+        {
+            **_strong_llm_response(),
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-degree",
+                    "requirement_text": "Bachelor's degree in Information Security or equivalent experience.",
+                    "tier": "must_have",
+                    "weight": 0.55,
+                    "job_evidence_span": "Bachelor's degree in Information Security",
+                    "fit": {
+                        "kind": "matched",
+                        "evidence_ids": ["education:security_degree"],
+                        "strength": "direct",
+                    },
+                }
+            ],
+        }
+    )
+
+    outcome = ScoreJobUseCase(
+        repository=score_repo,
+        llm=llm,
+        requirement_fit_repository=report_repo,
+    ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
+
+    assert outcome.ok is True
+    prompt_payload = llm.calls[0][1].content
+    assert '"id": "education:security_degree"' in prompt_payload
+    assert "Bachelor of Science in Information Security | State University | 2016" in prompt_payload
+    assert outcome.score is not None
+    assert (
+        "requirement_fit_matched_without_evidence:req-degree"
+        not in outcome.score.trace.parser_warnings
+    )
+    assert report_repo.saved[0][1].assessments[0].fit.kind == "matched"
+    assert report_repo.saved[0][1].resolved_fit_score is not None
+    assert report_repo.saved[0][1].resolved_fit_score.value == 10
 
 
 def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_snapshot) -> None:

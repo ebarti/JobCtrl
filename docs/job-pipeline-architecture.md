@@ -70,6 +70,8 @@ implementations where possible, but they differ in orchestration.
 | --- | --- | --- | --- |
 | Pipelines UI | `POST /v1/pipeline/actions/run-stage` | TS API sends `discover` or `apply` through JSON-RPC `run_stage`. `discover` starts one `JobPipelineWorkflow` and drains preparation subwork; `apply` stays on `JobPipelineWorkflow` and delegates to child `ApplyWorkflow`. | User-facing Discover and Apply |
 | Jobs view pending pickup | `POST /v1/jobs/:jobKey/actions/run-stage` | Viewing Jobs can start one visible `pending` internal preparation substage (`enrich`, `score`, `tailor`, or `cover`) for the selected job without resetting stage state. The web page paces pickup to one unchanged list snapshot, and the API refreshes projections plus gates dispatch on observable stage eligibility before starting a job-scoped `JobPipelineWorkflow`. | Internal preparation pickup |
+| Jobs bulk pending prep | `POST /v1/jobs/bulk-run-pending-preparation` | The Jobs toolbar can explicitly continue active pending preparation backlogs. The API selects the first eligible pending preparation substage per matching job, groups selected job URLs by `enrich`, `score`, `tailor`, or `cover`, and dispatches bounded `run_stage` workflows without resetting failures or running `apply`. | Internal preparation recovery |
+| Jobs bulk failed retry | `POST /v1/jobs/bulk-retry-failed` | The API resets retryable failed stages, and with `runAfter: true` groups reset preparation rows by internal stage before dispatching batch `run_stage` workflows with explicit `jobUrls` and requested workers. The route records the workflow id, job URLs, worker count, and per-job `StageQueued` events with `source: "bulk_retry_failed"`; it never auto-runs `apply`. | Internal preparation recovery |
 | CLI batch run | `jobhunter run ...` | Python `run_pipeline()` executes selected stages sequentially or streaming. `jobhunter discover` / `jobhunter run discover` is the normal preparation path; low-level `score`, `tailor`, and `cover` remain maintenance/diagnostic commands. | Discover plus internal maintenance stages |
 | Temporal pipeline workflow | `JobPipelineWorkflow` | Serial workflow that dispatches selected non-apply stages as Temporal activities and delegates `apply` to child `ApplyWorkflow`. A Discover activity owns enrichment plus preparation queue drain. | Discover and Apply |
 | Temporal apply workflow | `ApplyWorkflow` | Per-job apply workflow with one activity and apply-specific retry policy. | Apply |
@@ -628,6 +630,11 @@ sequenceDiagram
   `tailor`, or `cover` can dispatch a job-scoped run from that substage without
   resetting attempts or failure metadata. The API route is the safety boundary:
   known-ineligible rows return `not_eligible` and do not start worker activity.
+- The Jobs toolbar `continue pending prep` action covers the backlog case that
+  page-visible pickup intentionally throttles. It sends matching active pending
+  jobs to `/v1/jobs/bulk-run-pending-preparation`; the API reuses the same
+  eligibility boundary, groups selected job URLs by preparation substage, and
+  records `StageQueued` with `source: "bulk_run_pending_preparation"`.
 - Work item lifecycle events are part of the SSE catalog, so Operations can
   invalidate dashboard, job detail, artifact, and activity projections while
   Discover is still running.
@@ -647,6 +654,12 @@ Each work item is claimed, completed, failed, or retried independently. A
 failed score does not block unrelated tailoring/suppression work for other jobs,
 and a failed tailoring job can be retried without rediscovering the posting.
 `limit` bounds each drain pass so local debug runs can stay small.
+
+Bulk failed retry is an API-owned recovery path, not a side effect of visiting
+the Jobs page. When `runAfter: true`, the route sends the exact reset job URL
+set across JSON-RPC and selected scoring honors the requested `workers` value
+while processing that set. Rows already claimed by a fast worker are not moved
+backward to `queued`.
 
 ## Internal Preparation Context: Score
 
@@ -1165,7 +1178,8 @@ causes by itself.
 
 Primary implementation files:
 
-- `apps/api/src/server.ts`: `/v1/pipeline/actions/run-stage`.
+- `apps/api/src/server.ts`: `/v1/pipeline/actions/run-stage`,
+  `/v1/jobs/bulk-retry-failed`.
 - `apps/api/src/local-actions.ts`: maps UI commands to JSON-RPC methods and
   interprets results.
 - `apps/api/src/json-rpc-adapter.ts`: long-lived subprocess JSON-RPC adapter.

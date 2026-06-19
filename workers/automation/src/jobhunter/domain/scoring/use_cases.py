@@ -64,7 +64,7 @@ from jobhunter.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobhunter.domain.tenant import LOCAL_TENANT, TenantId
-from jobhunter.resume_profile import get_achievement_evidence
+from jobhunter.resume_profile import get_achievement_evidence, get_education_entries
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ log = logging.getLogger(__name__)
 
 SCORE_PROMPT_VERSION = "score-fit-assessment-v2"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v2"
+SCORE_THINKING_BUDGET = 0
 
 
 SCORE_PROMPT = """You are a job fit evaluator for an applicant-side local tool. Given a candidate profile, saved scoring criteria, and a job description, produce an explainable fit assessment.
@@ -339,6 +340,26 @@ def _build_requirement_fit_inputs_blob(
 
 def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
+    for raw in get_education_entries(profile_snapshot.as_dict()):
+        if not isinstance(raw, dict):
+            continue
+        entry_id = str(raw.get("id") or "").strip()
+        parts = [
+            str(raw.get("degree") or "").strip(),
+            str(raw.get("institution") or "").strip(),
+            str(raw.get("location") or "").strip(),
+            str(raw.get("date") or "").strip(),
+        ]
+        source_text = " | ".join(part for part in parts if part)
+        if not entry_id or not source_text:
+            continue
+        items.append(
+            {
+                "id": f"education:{entry_id}",
+                "source_text": source_text,
+                "evidence_type": "education",
+            }
+        )
     for raw in get_achievement_evidence(profile_snapshot.as_dict()):
         if not isinstance(raw, dict):
             continue
@@ -356,7 +377,7 @@ def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[di
             "tags": _text_list(raw.get("tags")),
         }
         items.append({key: value for key, value in item.items() if value})
-        if len(items) >= 24:
+        if len(items) >= 32:
             break
     return items
 
@@ -624,9 +645,9 @@ class ScoreJobUseCase:
             ),
         ]
         # Structured outputs: the LLM gateway returns a JSON object that
-        # already conforms to SCORE_SCHEMA. max_tokens is generous because
-        # Gemini thinking models spend invisible tokens on internal
-        # reasoning before emitting the schema fill.
+        # already conforms to SCORE_SCHEMA. Do not pass max_tokens here:
+        # long postings plus requirement assessments need room to emit the
+        # full schema fill.
         with otel_trace.get_tracer("jobhunter.scoring").start_as_current_span("scoring.score_job") as span:
             span.set_attribute("langfuse.observation.type", "span")
             span.set_attribute("jobhunter.scoring.prompt_version", SCORE_PROMPT_VERSION)
@@ -638,8 +659,8 @@ class ScoreJobUseCase:
                 payload = self._llm.chat_json(
                     messages,
                     response_schema=SCORE_SCHEMA,
-                    max_tokens=4096,
-                    temperature=0.2,
+                    temperature=0.0,
+                    thinking_budget=SCORE_THINKING_BUDGET,
                 )
             except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
                 log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)

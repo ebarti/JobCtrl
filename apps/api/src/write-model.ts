@@ -27,6 +27,16 @@ import { matchingJobKeys, readSettingsConfig } from "./read-model.js";
 
 export class InputError extends Error {}
 
+export interface RetryFailedJobTarget {
+  readonly jobUrl: string;
+  readonly stage: Stage;
+}
+
+export interface RetryFailedJobsResult extends JobMutationResponse {
+  readonly targets: RetryFailedJobTarget[];
+  readonly stageCounts: Partial<Record<Stage, number>>;
+}
+
 const DEFAULT_MAX_ATTEMPTS: Record<Stage, number> = {
   discover: 1,
   enrich: 3,
@@ -151,7 +161,7 @@ export function resetJobStage(
   return { jobUrl, stage: getStageState(db, jobUrl, stage) };
 }
 
-export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): JobMutationResponse {
+export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): RetryFailedJobsResult {
   const candidates = mutableJobKeys(db, request);
   const targets = candidates
     .map((jobUrl) => ({ jobUrl, stage: currentFailedStage(db, jobUrl) }))
@@ -162,7 +172,70 @@ export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequ
     }
   });
   transaction(targets);
-  return { ok: true, count: targets.length, jobKeys: targets.map((target) => target.jobUrl) };
+  return {
+    ok: true,
+    count: targets.length,
+    jobKeys: targets.map((target) => target.jobUrl),
+    targets,
+    stageCounts: stageCountsForRetryTargets(targets),
+  };
+}
+
+function stageCountsForRetryTargets(targets: readonly RetryFailedJobTarget[]): Partial<Record<Stage, number>> {
+  const counts: Partial<Record<Stage, number>> = {};
+  for (const target of targets) {
+    counts[target.stage] = (counts[target.stage] ?? 0) + 1;
+  }
+  return counts;
+}
+
+export function queueRetriedJobsForWorkflow(
+  db: SqliteDatabase,
+  targets: readonly RetryFailedJobTarget[],
+  workflow: {
+    readonly workflowId?: string;
+    readonly runId?: string;
+    readonly actionId?: string;
+    readonly requestedWorkers?: number;
+    readonly requestedLimit?: number;
+    readonly source?: string;
+    readonly message?: string;
+  },
+): void {
+  const source = workflow.source ?? "bulk_retry_failed";
+  const transaction = db.transaction((rows: readonly RetryFailedJobTarget[]) => {
+    for (const target of rows) {
+      const current = getRow<{ state?: string }>(
+        db,
+        "SELECT state FROM job_stage_states WHERE job_url = ? AND stage = ?",
+        [target.jobUrl, target.stage],
+      );
+      if (current?.state && current.state !== "pending") {
+        continue;
+      }
+      upsertStageState(db, target.jobUrl, target.stage, "queued", {
+        retryable: true,
+      });
+      recordActionEvent(db, {
+        jobUrl: target.jobUrl,
+        stage: target.stage,
+        eventType: "StageQueued",
+        level: "info",
+        message: workflow.message ?? `${target.stage} queued after bulk retry`,
+        payload: {
+          source,
+          workflowId: workflow.workflowId ?? null,
+          workflow_id: workflow.workflowId ?? null,
+          runId: workflow.runId ?? null,
+          run_id: workflow.runId ?? null,
+          actionId: workflow.actionId ?? null,
+          requestedWorkers: workflow.requestedWorkers ?? null,
+          requestedLimit: workflow.requestedLimit ?? null,
+        },
+      });
+    }
+  });
+  transaction(targets);
 }
 
 export function markJobApplied(

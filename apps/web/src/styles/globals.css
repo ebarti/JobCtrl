@@ -368,6 +368,128 @@ textarea:focus-visible {
   resize: vertical;
 }
 
+.field-hint {
+  min-height: 16px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.google-address-field input[type="search"] {
+  appearance: textfield;
+}
+
+.google-address-label-row {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.google-address-label-row label {
+  min-width: 0;
+  color: var(--muted-foreground);
+}
+
+.google-address-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.google-address-control input[type="search"] {
+  min-width: 0;
+  flex: 1;
+}
+
+.google-address-search-button {
+  display: inline-flex;
+  min-width: 84px;
+  height: 33px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.google-address-search-button:hover:not(:disabled) {
+  border-color: var(--ring);
+  background: var(--muted);
+}
+
+.google-address-search-button:disabled {
+  cursor: not-allowed;
+  color: var(--muted-foreground);
+  opacity: 0.65;
+}
+
+.google-address-search-button:focus-visible,
+.google-address-result:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.google-address-results {
+  display: flex;
+  margin: 0;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--input);
+  border-radius: calc(var(--radius) * 0.8);
+  background: var(--popover);
+  padding: 0;
+  color: var(--foreground);
+  list-style: none;
+}
+
+.google-address-result {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  padding: 8px 10px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.google-address-results li:last-child .google-address-result {
+  border-bottom: 0;
+}
+
+.google-address-result:hover:not(:disabled) {
+  background: var(--muted);
+}
+
+.google-address-result:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.address-validation-status {
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
+.address-validation-status.validated {
+  color: var(--success);
+}
+
+.address-validation-status.error {
+  color: var(--destructive);
+}
+
 .field.wide,
 .form-actions {
   grid-column: 1 / -1;
@@ -542,21 +664,6 @@ textarea:focus-visible {
 .meta {
   font-family: var(--font-mono);
   font-size: 11px;
-}
-
-.min-fit-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.min-fit-control input {
-  width: 48px;
-  height: 26px;
-  padding: 4px 6px;
-  text-align: center;
 }
 
 .bar {
@@ -1861,6 +1968,10 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
+.filterable-data-grid-table thead th.data-grid-column-resizable {
+  padding-right: 14px;
+}
+
 .filterable-data-grid-table tbody th {
   min-width: 180px;
   font-weight: 500;
@@ -1877,6 +1988,47 @@ textarea:focus-visible {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.data-grid-column-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  padding: 0;
+  touch-action: none;
+}
+
+.data-grid-column-resizer::after {
+  position: absolute;
+  top: 7px;
+  right: 3px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.data-grid-column-resizer:hover::after,
+.data-grid-column-resizer:focus-visible::after {
+  width: 2px;
+  background: var(--ring);
+}
+
+.data-grid-column-resizer:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.data-grid-column-resizing,
+.data-grid-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 .data-grid-column-filter-button {
@@ -2007,10 +2159,39 @@ textarea:focus-visible {
 
 .activity-data-grid-table {
   min-width: 980px;
+  table-layout: fixed;
+}
+
+.activity-data-grid-table .activity-level-cell {
+  width: 74px;
+}
+
+.activity-data-grid-table .activity-stage-cell {
+  width: 74px;
+}
+
+.activity-data-grid-table .activity-event-cell {
+  width: 120px;
 }
 
 .activity-data-grid-table .activity-time-cell {
   width: 170px;
+}
+
+.activity-data-grid-table .activity-message-cell {
+  min-width: 0;
+  white-space: normal;
+}
+
+.activity-data-grid-table .activity-message-cell .activity-main {
+  max-width: 100%;
+}
+
+.activity-data-grid-table .activity-message-cell .activity-main b {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .data-grid-sort-button {

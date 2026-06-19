@@ -159,6 +159,7 @@ DEFAULT_TAILORING_POLICY = {
 DEFAULT_WRITING_STYLE = {
     "tone": "direct",
     "bullet_style": "balanced",
+    "bullet_styles": ["impact", "technical_depth", "leadership"],
     "verbosity": "balanced",
     "keyword_density": "natural",
     "avoid_first_person": True,
@@ -286,6 +287,7 @@ def get_writing_style(profile: dict) -> dict:
     for key, options in allowed.items():
         if style.get(key) not in options:
             style[key] = DEFAULT_WRITING_STYLE[key]
+    style["bullet_styles"] = list(DEFAULT_WRITING_STYLE["bullet_styles"])
     style["avoid_first_person"] = bool(style.get("avoid_first_person", DEFAULT_WRITING_STYLE["avoid_first_person"]))
     return style
 
