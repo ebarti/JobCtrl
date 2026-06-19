@@ -21,6 +21,7 @@ import type {
   BulkRescoreJobsNotOnCurrentScoringPolicyRequest,
   BulkRetailorCurrentPolicyRequest,
   CancelJobActionRequest,
+  CompensationSourceRegistryResponse,
   CredentialKey,
   CorrectScoreRequest,
   CorrectScoreResponse,
@@ -172,6 +173,10 @@ export class JobHunterApiClient {
 
   discoverySourcePreview(sourceId: string): Promise<DiscoveryPreviewResponse> {
     return this.get(`/v1/discovery/sources/${encodeURIComponent(sourceId)}/preview`);
+  }
+
+  compensationSources(): Promise<CompensationSourceRegistryResponse> {
+    return this.get("/v1/compensation/sources");
   }
 
   discoveryLocatorCandidates(): Promise<SourceLocatorListResponse> {
