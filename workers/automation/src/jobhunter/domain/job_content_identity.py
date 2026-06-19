@@ -14,6 +14,11 @@ _CONTENT_TOKEN_RE = re.compile(r"[\w+]+")
 _DESCRIPTION_SHINGLE_SIZE = 5
 _MIN_DESCRIPTION_TOKENS_FOR_SIMILARITY = 80
 _DESCRIPTION_SHINGLE_JACCARD_THRESHOLD = 0.83
+_ROLE_REFERENCE_SUFFIX_RE = re.compile(
+    r"\s+-\s+(?=[a-z0-9-]*\d)[a-z][a-z0-9-]{2,24}$",
+    re.IGNORECASE,
+)
+_LOCATION_REMOTE_MARKER_RE = re.compile(r"\s*\((?:remote|hybrid)\)\s*$", re.IGNORECASE)
 _PUNCT_TRANSLATION = str.maketrans(
     {
         "\u2018": "'",
@@ -45,6 +50,47 @@ def normalize_description_text(value: object) -> str:
     text = _MARKDOWN_ESCAPE_RE.sub(r"\1", text)
     text = _MARKDOWN_MARKER_RE.sub("", text)
     return _WHITESPACE_RE.sub(" ", text).strip()
+
+
+def normalize_role_title_for_repost_match(value: object) -> str:
+    """Return a stable role-title key for repost score-consistency checks.
+
+    Staffing/recruiting reposts commonly append opaque requisition codes
+    (for example ``"AI Security Director - TWE45972"``). Those codes are
+    not part of the role identity, but arbitrary title words are. Keep the
+    normalization intentionally narrow so unrelated same-city roles do not
+    collapse just because their titles are generally similar.
+    """
+
+    text = normalize_identity_text(value)
+    return _ROLE_REFERENCE_SUFFIX_RE.sub("", text).strip()
+
+
+def role_title_has_reference_suffix(value: object) -> bool:
+    """Return true when a role title carries a trailing reference code."""
+
+    return bool(_ROLE_REFERENCE_SUFFIX_RE.search(normalize_identity_text(value)))
+
+
+def normalize_location_for_repost_match(value: object) -> str:
+    """Return a location key for reference-suffixed repost matching."""
+
+    text = normalize_identity_text(value)
+    text = _LOCATION_REMOTE_MARKER_RE.sub("", text)
+    return _WHITESPACE_RE.sub(" ", text).strip()
+
+
+def role_titles_match_as_repost(left: object, right: object) -> bool:
+    """Return true for direct-title vs reference-suffixed repost matches."""
+
+    left_title = normalize_role_title_for_repost_match(left)
+    right_title = normalize_role_title_for_repost_match(right)
+    if not left_title or left_title != right_title:
+        return False
+    if not (role_title_has_reference_suffix(left) or role_title_has_reference_suffix(right)):
+        return False
+    content_tokens = _CONTENT_TOKEN_RE.findall(left_title)
+    return len(content_tokens) >= 3
 
 
 def job_content_fingerprint(
