@@ -34,8 +34,8 @@ key-files:
 - Added `marketCompensationEstimate(jobKey)` to `@jobhunter/api-client`.
 - Added `GET /v1/jobs/:jobKey/compensation/market` as a read-only inspection endpoint backed by persisted `job_market_compensation_estimates` rows.
 - Added safe JSON parsing and source/reason/warning allowlists so unknown or unsafe persisted source entries are dropped from API responses.
-- Added defensive mapping for persisted `not_requested` rows and canonical source-field sanitization for already-persisted allowed source rows.
-- Added tests for recorded range responses, non-range states, not-requested no-write-on-read behavior, persisted not-requested rows, unknown jobs, unsafe source filtering, private-data leakage, and the warning-only product boundary.
+- Added defensive mapping for persisted `not_requested` and unknown-state rows, plus canonical source-owned metadata for already-persisted allowed source rows.
+- Added tests for recorded range responses, non-range states, not-requested no-write-on-read behavior, persisted not-requested rows, unknown persisted states, unknown jobs, unsafe source filtering, private-data leakage, and the warning-only product boundary.
 - Updated local API, architecture, and reliability QA documentation for the Phase 19 endpoint, canonical table, Europe-only source scope, and Phase 20/21 deferred boundaries.
 
 ## Commits
@@ -44,15 +44,16 @@ key-files:
 | --- | --- |
 | `b4ea12f` | `feat(api): expose europe market estimates` |
 | `0a206cc` | `fix(compensation): harden europe market estimate boundaries` |
+| `e1cf998` | `fix(compensation): canonicalize market source metadata` |
 
 ## Verification
 
-- `corepack pnpm --filter @jobhunter/api exec vitest run test/market-compensation-estimates.test.ts` - passed, 7 tests.
+- `corepack pnpm --filter @jobhunter/api exec vitest run test/market-compensation-estimates.test.ts` - passed, 8 tests.
 - `corepack pnpm --filter @jobhunter/api exec vitest run test/server.test.ts -t "market compensation boundary"` - passed, 1 test.
 - `corepack pnpm api:check` - passed.
 - `corepack pnpm --filter @jobhunter/contracts check` - passed.
 - `corepack pnpm --filter @jobhunter/api-client check` - passed.
-- `corepack pnpm api:test` - passed, 14 files and 241 tests.
+- `corepack pnpm api:test` - passed, 14 files and 242 tests.
 - `git diff --check` - passed.
 
 ## Deviations from Plan
