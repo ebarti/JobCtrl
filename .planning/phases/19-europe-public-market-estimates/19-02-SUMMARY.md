@@ -45,6 +45,7 @@ key-files:
 | `b4ea12f` | `feat(api): expose europe market estimates` |
 | `0a206cc` | `fix(compensation): harden europe market estimate boundaries` |
 | `e1cf998` | `fix(compensation): canonicalize market source metadata` |
+| `e3fa90f` | `fix(compensation): sanitize market estimate reads` |
 
 ## Verification
 
